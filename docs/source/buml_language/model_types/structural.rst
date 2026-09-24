@@ -57,6 +57,48 @@ the linked diagram from the project (the NN option lists the project's NN diagra
 The :doc:`Backend <../../generators/backend>` and :doc:`Web App <../../generators/full_web_app>`
 generators turn NN-implemented methods into endpoints that run the network.
 
+Association Navigability
+------------------------
+
+Each end of a ``BinaryAssociation`` is a ``Property`` whose ``is_navigable`` flag (``True`` by
+default) states whether the associated class can be reached through that end. Both ends navigable
+gives a bidirectional association; one non-navigable end gives a one-way association. Two rules apply:
+
+- at least one end must be navigable;
+- in a composition, the non-composite (part) end must be navigable. The composite (whole) end may be
+  non-navigable.
+
+Creating an association that breaks either rule raises a ``ValueError``. Ends changed afterwards
+(e.g. ``end.is_navigable = False``) are reported as errors by ``DomainModel.validate()``.
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.structural import (
+        BinaryAssociation, Class, DomainModel, Multiplicity, Property,
+    )
+
+    order = Class(name="Order")
+    line = Class(name="OrderLine")
+
+    # Composition: Order (whole) owns its lines; the line -> order direction is not navigable
+    order_end = Property(name="order", type=order, multiplicity=Multiplicity(1, 1),
+                         is_composite=True, is_navigable=False)
+    lines_end = Property(name="lines", type=line, multiplicity=Multiplicity(0, "*"))
+    order_lines = BinaryAssociation(name="Order_Lines", ends={order_end, lines_end})
+
+    model = DomainModel(name="Shop", types={order, line}, associations={order_lines})
+    assert model.validate(raise_exception=False)["success"]
+
+    lines_end.is_navigable = False  # now no end is navigable, and the part end of the composition is not
+    for error in model.validate(raise_exception=False)["errors"]:
+        print(error)
+    # Association 'Order_Lines': at least one end must be navigable, but both 'lines' (OrderLine) and 'order' (Order) are non-navigable
+    # Association 'Order_Lines': the non-composite end 'lines' (OrderLine) of a composition must be navigable
+
+In the web modeling editor, every plain association is drawn as an *Association* whose ends each carry
+a *Navigable* toggle; compositions and aggregations carry the same per-end toggle. Diagrams saved with the
+former *Unidirectional* association type are loaded as an *Association* whose source end is not navigable.
+
 Validation
 ----------
 
@@ -67,6 +109,9 @@ The structural metamodel performs validation at multiple levels:
 - **Attribute shadowing**: ``DomainModel.validate()`` checks that subclass attributes do not
   shadow inherited attributes from parent classes. A warning is raised if a subclass defines
   an attribute with the same name as one already present in a superclass.
+- **Association navigability**: ``DomainModel.validate()`` reports binary associations with no
+  navigable end, and compositions whose part end is not navigable (see
+  `Association Navigability`_).
 
 .. code-block:: python
 

@@ -467,8 +467,48 @@ def _process_relationships(
         # Handle each type of relationship
         if rel_type == "ClassBidirectional" or rel_type == "ClassUnidirectional" or rel_type == "ClassComposition" or rel_type == "ClassAggregation" :
             is_composite = rel_type == "ClassComposition"
-            source_navigable = rel_type != "ClassUnidirectional"
-            target_navigable = True
+            # Navigability is primarily an explicit per-end boolean set by the
+            # user in the association editor (source.navigable / target.navigable).
+            # Older diagrams saved before this field existed only carry the
+            # relationship "type", so fall back to the legacy inference from
+            # ClassUnidirectional/ClassBidirectional for backward compatibility.
+            if "navigable" in source:
+                source_navigable = bool(source.get("navigable"))
+            else:
+                source_navigable = rel_type != "ClassUnidirectional"
+
+            if "navigable" in target:
+                target_navigable = bool(target.get("navigable"))
+            else:
+                target_navigable = True
+
+            # In a composition, the non-composite end (source) must remain
+            # navigable -- BUML's BinaryAssociation rejects a composition
+            # otherwise. The editor already blocks this in the UI, but fall
+            # back safely instead of failing the whole import for a
+            # malformed/older payload.
+            if is_composite and not source_navigable:
+                logger.warning(
+                    "Relationship %s: non-composite end must be navigable; defaulting source to navigable.",
+                    rel_id,
+                )
+                all_warnings.append(
+                    f"Relationship '{rel_id}': the non-composite end was not navigable, defaulted it to navigable."
+                )
+                source_navigable = True
+
+            # A binary association with no navigable end is invalid (BUML's
+            # BinaryAssociation rejects it) -- the editor already prevents
+            # this, but fall back safely instead of failing the whole import
+            # for a malformed/older payload.
+            if not source_navigable and not target_navigable:
+                logger.warning(
+                    "Relationship %s has no navigable end; defaulting target to navigable.", rel_id
+                )
+                all_warnings.append(
+                    f"Relationship '{rel_id}': both ends were non-navigable, defaulted target end to navigable."
+                )
+                target_navigable = True
 
             source_multiplicity = parse_multiplicity(source.get("multiplicity", "1"))
             target_multiplicity = parse_multiplicity(target.get("multiplicity", "1"))

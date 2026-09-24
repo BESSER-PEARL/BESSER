@@ -27,6 +27,7 @@ import time
 
 from besser.spec_driven_agent.planning.gap_analyzer import _chat_supports_kwargs, _is_real_provider
 from besser.spec_driven_agent.planning.specification import validate_specification
+from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
 from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
 )
@@ -373,28 +374,8 @@ def _call_with_tool(llm_client, system: str, prompt: str, tool: dict, *,
     if payload is None:
         logger.warning("Requirements ledger: %s returned no usable tool input", tool["name"])
         return None
-    return _decode_stringified_arrays(payload, tool)
-
-
-def _decode_stringified_arrays(payload: dict, tool: dict) -> dict:
-    """Sonnet 5 sends about half of its forced tool calls with the array
-    field as a JSON string, often wrapping the whole input again
-    (``{"requirements": '{"requirements": [...]}'}``). Decode it back to
-    the list; anything else is left for the caller's shape check."""
-    properties = tool.get("input_schema", {}).get("properties", {})
-    for key, schema in properties.items():
-        value = payload.get(key)
-        if schema.get("type") != "array" or not isinstance(value, str):
-            continue
-        try:
-            decoded = json.loads(value)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(decoded, dict):
-            decoded = decoded.get(key)
-        if isinstance(decoded, list):
-            payload = {**payload, key: decoded}
-    return payload
+    # The client already coerced tool_use input; this also covers the prose fallback.
+    return coerce_to_schema(payload, tool["input_schema"])
 
 
 def _tool_input(response: dict, tool_name: str) -> dict | None:

@@ -31,6 +31,7 @@ from besser.spec_driven_agent.providers.model_settings import (
     reasoning_effort_for_tools,
     sampling_kwargs,
 )
+from besser.spec_driven_agent.providers.tool_input import normalize_tool_blocks
 
 logger = logging.getLogger(__name__)
 
@@ -850,7 +851,7 @@ class ClaudeLLMClient(LLMProvider):
                 self.usage.record(response.usage, model=model_override)
                 return {
                     "stop_reason": response.stop_reason,
-                    "content": response.content,
+                    "content": normalize_tool_blocks(response.content, tools),
                 }
             except Exception as e:
                 last_error = e
@@ -894,7 +895,7 @@ class ClaudeLLMClient(LLMProvider):
                     yield {
                         "type": "message_done",
                         "stop_reason": response.stop_reason,
-                        "content": _clean_content_blocks(response.content),
+                        "content": normalize_tool_blocks(_clean_content_blocks(response.content), tools),
                     }
                 return  # Success — exit retry loop
 
@@ -1258,7 +1259,8 @@ def _openai_response_to_common(response, tools: list[dict] | None = None) -> dic
     finish_reason = choice.finish_reason
     stop_reason = _openai_stop_reason(finish_reason, complete_tool_calls)
 
-    return {"stop_reason": stop_reason, "content": content, "provider_finish_reason": finish_reason}
+    return {"stop_reason": stop_reason, "content": normalize_tool_blocks(content, tools),
+            "provider_finish_reason": finish_reason}
 
 
 # ======================================================================
@@ -1651,7 +1653,7 @@ class OpenAIProvider(LLMProvider):
                 yield {
                     "type": "message_done",
                     "stop_reason": stop_reason,
-                    "content": content,
+                    "content": normalize_tool_blocks(content, tools),
                     "provider_finish_reason": finish_reason,
                 }
                 return  # Success — exit retry loop

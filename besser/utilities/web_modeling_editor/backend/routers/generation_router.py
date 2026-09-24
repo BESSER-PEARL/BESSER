@@ -66,6 +66,7 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_re
     load_default_agent_recommendation_config,
     extract_json_object,
     normalize_recommended_agent_config,
+    compute_recommended_changes,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_manual_mapping_utils import (
     get_manual_agent_config_mapping,
@@ -157,13 +158,8 @@ def _utc_now_iso() -> str:
 @handle_endpoint_errors("recommend_agent_config_llm")
 async def recommend_agent_config_llm(
     payload: Dict[str, Any] = Body(...),
-    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
-    """Recommend a structured agent configuration from a user profile using an LLM.
-
-    Requires authenticated GitHub session.
-    """
-    _require_github_session(github_session)
+    """Recommend a structured agent configuration from a user profile using an LLM."""
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")
@@ -217,6 +213,7 @@ async def recommend_agent_config_llm(
 
         return {
             "config": normalized_config,
+            "recommendedChanges": compute_recommended_changes(default_config, normalized_config),
             "source": "openai",
             "model": llm_model,
             "generatedAt": _utc_now_iso(),
@@ -294,13 +291,8 @@ async def get_agent_config_manual_mapping(
 @handle_endpoint_errors("recommend_agent_config_mapping")
 async def recommend_agent_config_mapping(
     payload: Dict[str, Any] = Body(...),
-    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
-    """Recommend a structured agent configuration using deterministic mapping rules.
-
-    Requires authenticated GitHub session.
-    """
-    _require_github_session(github_session)
+    """Recommend a structured agent configuration using deterministic mapping rules."""
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")
@@ -315,8 +307,12 @@ async def recommend_agent_config_mapping(
         current_config=current_config,
     )
 
+    normalized_config = recommendation["config"]
+    default_config = load_default_agent_recommendation_config()
+
     return {
-        "config": recommendation["config"],
+        "config": normalized_config,
+        "recommendedChanges": compute_recommended_changes(default_config, normalized_config),
         "matchedRules": recommendation.get("matchedRules", []),
         "signals": recommendation.get("signals", {}),
         "source": "manual_mapping",

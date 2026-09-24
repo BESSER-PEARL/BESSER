@@ -311,3 +311,28 @@ def normalize_recommended_agent_config(
     }
 
     return normalized
+
+
+def compute_recommended_changes(
+    default_config: Dict[str, Any],
+    recommended_config: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Return a flat list of fields that differ between default and recommended configs.
+
+    Each entry has the shape ``{"field": "section.key", "from": <default>, "to": <recommended>}``.
+    Only scalar leaf values are compared; nested containers (interfaceStyle, voiceStyle) are
+    expanded one level so individual sub-fields appear in the list.
+    """
+    changes: List[Dict[str, Any]] = []
+
+    def _collect(defaults: Dict[str, Any], recommended: Dict[str, Any], prefix: str) -> None:
+        for key, default_val in defaults.items():
+            rec_val = recommended.get(key)
+            path = f"{prefix}.{key}" if prefix else key
+            if isinstance(default_val, dict) and isinstance(rec_val, dict):
+                _collect(default_val, rec_val, path)
+            elif rec_val != default_val and rec_val is not None:
+                changes.append({"field": path, "from": default_val, "to": rec_val})
+
+    _collect(default_config, recommended_config, "")
+    return changes

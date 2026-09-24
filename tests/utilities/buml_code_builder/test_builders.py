@@ -1623,6 +1623,36 @@ class TestDomainModelBuilderAdvanced:
 
         assert "is_navigable=False" in code
 
+    def test_navigability_roundtrip_exec(self, tmp_path):
+        """Per-end navigability survives DomainModel -> code -> exec() for plain and composite associations."""
+        a = Class(name="A")
+        b = Class(name="B")
+        one_way = BinaryAssociation(name="a_b_assoc", ends={
+            Property(name="a", type=a, multiplicity=Multiplicity(1, 1), is_navigable=False),
+            Property(name="b", type=b, multiplicity=Multiplicity(0, "*")),
+        })
+        # Composition whose composite (whole) end is non-navigable; the part end stays navigable.
+        composition = BinaryAssociation(name="a_parts", ends={
+            Property(name="whole", type=a, multiplicity=Multiplicity(1, 1), is_composite=True, is_navigable=False),
+            Property(name="parts", type=b, multiplicity=Multiplicity(0, "*")),
+        })
+        model = DomainModel(name="NavModel", types={a, b}, associations={one_way, composition})
+
+        file_path = str(tmp_path / "nav_roundtrip.py")
+        domain_model_to_code(model, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        namespace = {}
+        exec(code, namespace)
+
+        recreated = namespace["domain_model"]
+        ends = {end.name: end for assoc in recreated.associations for end in assoc.ends}
+        assert ends["a"].is_navigable is False
+        assert ends["b"].is_navigable is True
+        assert ends["whole"].is_navigable is False and ends["whole"].is_composite is True
+        assert ends["parts"].is_navigable is True and ends["parts"].is_composite is False
+        assert recreated.validate(raise_exception=False)["success"] is True
+
     def test_constraint_generated(self, tmp_path):
         """OCL constraints appear in the generated code."""
         cls = Class(name="Order")

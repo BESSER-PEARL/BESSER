@@ -498,45 +498,42 @@ def class_buml_to_json(domain_model):
         try:
             rel_id = str(uuid.uuid4())
             name = association.name if association.name else ""
-            # Sort ends by name for deterministic source/target assignment
-            # before applying the swap logic below.
+            # Sort ends by name for deterministic source/target assignment.
             ends = sorted(association.ends, key=lambda e: e.name)
             if len(ends) == 2:
                 source_prop, target_prop = ends
+                saved_rel = layout_positions.get(f"rel_{name}")
 
-                # Check navigability and composition, swap if needed
+                # Keep the orientation the diagram was drawn with (recorded by
+                # the JSON -> BUML processor), so the saved endpoint layout is
+                # applied to the right classes. Navigability does not affect the
+                # orientation: it is emitted explicitly per end below.
+                if saved_rel and saved_rel.get("source_role") == target_prop.name:
+                    source_prop, target_prop = target_prop, source_prop
+
+                # The composite (whole) end of a composition is always the target.
                 if source_prop.is_composite and not target_prop.is_composite:
                     source_prop, target_prop = target_prop, source_prop
-                elif not source_prop.is_composite and not target_prop.is_composite:
-                    if not source_prop.is_navigable and target_prop.is_navigable:
-                        pass
-                    elif source_prop.is_navigable and not target_prop.is_navigable:
-                        source_prop, target_prop = target_prop, source_prop
-                    elif not source_prop.is_navigable and not target_prop.is_navigable:
-                        logger.warning("Both ends of association %s are not navigable. Skipping this association.", name)
-                        continue
 
                 source_class = source_prop.type
                 target_class = target_prop.type
 
                 if source_class in class_id_map and target_class in class_id_map:
-                    # Determine relationship type.
+                    # Determine relationship type. Plain associations are always
+                    # emitted as ClassBidirectional; which ends are navigable is
+                    # carried by the explicit per-end "navigable" flags.
                     # NOTE: ClassAggregation cannot be reconstructed here because the
                     # B-UML metamodel does not carry an aggregation flag on Property.
                     # Aggregation associations are round-tripped as ClassBidirectional.
                     rel_type = (
                         RELATIONSHIP_TYPES["composition"]
                         if target_prop.is_composite
-                        else (
-                            RELATIONSHIP_TYPES["bidirectional"]
-                            if source_prop.is_navigable and target_prop.is_navigable
-                            else RELATIONSHIP_TYPES["unidirectional"]
-                        )
+                        else RELATIONSHIP_TYPES["bidirectional"]
                     )
 
-                    # Check for saved layout positions from a previous round-trip
-                    saved_rel = layout_positions.get(f"rel_{name}")
-                    if saved_rel:
+                    # Restore saved layout positions from a previous round-trip
+                    # ("source_role" alone is orientation, not layout).
+                    if saved_rel and any(key != "source_role" for key in saved_rel):
                         # Restore saved layout
                         rel_bounds = saved_rel.get("bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
                         path_points = saved_rel.get("path", [{"x": 0, "y": 0}, {"x": 0, "y": 0}])
@@ -585,6 +582,7 @@ def class_buml_to_json(domain_model):
                             "element": class_id_map[source_class],
                             "multiplicity": _format_multiplicity_label(source_prop.multiplicity),
                             "role": source_prop.name,
+                            "navigable": source_prop.is_navigable,
                             "direction": source_dir,
                             "bounds": source_bounds,
                         },
@@ -592,6 +590,7 @@ def class_buml_to_json(domain_model):
                             "element": class_id_map[target_class],
                             "multiplicity": _format_multiplicity_label(target_prop.multiplicity),
                             "role": target_prop.name,
+                            "navigable": target_prop.is_navigable,
                             "direction": target_dir,
                             "bounds": target_bounds,
                         },

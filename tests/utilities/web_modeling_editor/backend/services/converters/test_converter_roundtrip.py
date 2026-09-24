@@ -891,7 +891,7 @@ class TestClassDiagramRoundtrip:
         assert roles == {"company", "department"}
 
     def test_unidirectional_association(self):
-        """Unidirectional association survives the roundtrip."""
+        """A legacy unidirectional association survives the roundtrip as a one-way association."""
         json_data = {
             "title": "UniModel",
             "model": {
@@ -937,9 +937,14 @@ class TestClassDiagramRoundtrip:
         domain_model = process_class_diagram(json_data)
         result = class_buml_to_json(domain_model)
 
-        uni_rels = _extract_relationships_by_type(result, "ClassUnidirectional")
-        assert len(uni_rels) == 1
-        assert uni_rels[0]["name"] == "uses"
+        # A legacy ClassUnidirectional comes back as ClassBidirectional with explicit
+        # per-end navigability (source non-navigable), orientation unchanged.
+        assert _extract_relationships_by_type(result, "ClassUnidirectional") == []
+        rels = _extract_relationships_by_type(result, "ClassBidirectional")
+        assert len(rels) == 1
+        assert rels[0]["name"] == "uses"
+        assert rels[0]["source"]["role"] == "classA" and rels[0]["source"]["navigable"] is False
+        assert rels[0]["target"]["role"] == "classB" and rels[0]["target"]["navigable"] is True
 
     def test_diagram_type_preserved(self, minimal_class_diagram_json):
         """The output JSON has the correct diagram type."""
@@ -1082,6 +1087,122 @@ class TestClassDiagramRoundtrip:
                 break
         else:
             pytest.fail("Could not find 'retries' attribute in result JSON")
+
+
+# ===========================================================================
+# Association navigability roundtrip tests
+# ===========================================================================
+
+_OMIT = object()
+
+
+def _with_writes_relationship(diagram_json, rel_type, source_navigable=_OMIT, target_navigable=_OMIT):
+    """Return a copy of *diagram_json* whose Author -> Book 'writes' relationship has the
+    given type and per-end ``navigable`` values (``_OMIT`` leaves the key out, as legacy payloads do)."""
+    data = json.loads(json.dumps(diagram_json))
+    rel = data["model"]["relationships"]["rel-writes"]
+    rel["type"] = rel_type
+    if source_navigable is not _OMIT:
+        rel["source"]["navigable"] = source_navigable
+    if target_navigable is not _OMIT:
+        rel["target"]["navigable"] = target_navigable
+    return data
+
+
+def _roundtrip_writes(diagram_json):
+    """Run JSON -> BUML -> JSON and return (domain_model, the single output association relationship)."""
+    domain_model = process_class_diagram(diagram_json)
+    result = class_buml_to_json(domain_model)
+    elements = result["elements"]
+    rels = [
+        r for r in result["relationships"].values()
+        if r.get("type") in ("ClassBidirectional", "ClassUnidirectional", "ClassComposition", "ClassAggregation")
+    ]
+    assert len(rels) == 1
+    rel = rels[0]
+    rel["_source_class"] = elements[rel["source"]["element"]]["name"]
+    rel["_target_class"] = elements[rel["target"]["element"]]["name"]
+    return domain_model, rel
+
+
+class TestAssociationNavigabilityRoundtrip:
+    """Per-end navigability survives JSON -> BUML -> JSON with the drawn orientation kept."""
+
+    @pytest.mark.parametrize("in_type, src_nav, tgt_nav, out_type, out_src, out_tgt", [
+        ("ClassBidirectional", True, True, "ClassBidirectional", True, True),
+        ("ClassBidirectional", False, True, "ClassBidirectional", False, True),
+        ("ClassBidirectional", True, False, "ClassBidirectional", True, False),
+        # Legacy payload without "navigable": ClassUnidirectional => source non-navigable
+        ("ClassUnidirectional", _OMIT, _OMIT, "ClassBidirectional", False, True),
+        ("ClassComposition", True, True, "ClassComposition", True, True),
+        # Composition whose composite (whole, target) end is non-navigable
+        ("ClassComposition", True, False, "ClassComposition", True, False),
+        # BUML has no aggregation flag: aggregation comes back as ClassBidirectional, navigability kept
+        ("ClassAggregation", True, False, "ClassBidirectional", True, False),
+        ("ClassAggregation", False, True, "ClassBidirectional", False, True),
+    ])
+    def test_navigability_and_orientation_preserved(
+        self, minimal_class_diagram_json, in_type, src_nav, tgt_nav, out_type, out_src, out_tgt
+    ):
+        payload = _with_writes_relationship(minimal_class_diagram_json, in_type, src_nav, tgt_nav)
+        domain_model, rel = _roundtrip_writes(payload)
+
+        assert rel["type"] == out_type
+        assert rel["source"]["navigable"] is out_src
+        assert rel["target"]["navigable"] is out_tgt
+        # Orientation as drawn: Author (role "author") is the source, Book (role "book") the target
+        assert (rel["_source_class"], rel["source"]["role"]) == ("Author", "author")
+        assert (rel["_target_class"], rel["target"]["role"]) == ("Book", "book")
+        assert domain_model.ocl_warnings == []
+
+    def test_saved_endpoint_layout_stays_on_its_end(self, minimal_class_diagram_json):
+        """A one-way association keeps each saved endpoint layout on the end it was drawn on."""
+        payload = _with_writes_relationship(minimal_class_diagram_json, "ClassBidirectional", True, False)
+        rel_in = payload["model"]["relationships"]["rel-writes"]
+        rel_in["bounds"] = {"x": 160, "y": 40, "width": 140, "height": 1}
+        rel_in["path"] = [{"x": 0, "y": 0}, {"x": 140, "y": 0}]
+        rel_in["source"].update(direction="Left", bounds={"x": 300, "y": 40, "width": 0, "height": 0})
+        rel_in["target"].update(direction="Right", bounds={"x": 160, "y": 40, "width": 0, "height": 0})
+
+        _, rel = _roundtrip_writes(payload)
+        assert rel["_source_class"] == "Author"
+        assert rel["source"]["direction"] == "Left"
+        assert rel["source"]["bounds"] == {"x": 300, "y": 40, "width": 0, "height": 0}
+        assert rel["_target_class"] == "Book"
+        assert rel["target"]["direction"] == "Right"
+        assert rel["target"]["bounds"] == {"x": 160, "y": 40, "width": 0, "height": 0}
+
+    def test_no_navigable_end_is_corrected_with_warning(self, minimal_class_diagram_json):
+        payload = _with_writes_relationship(minimal_class_diagram_json, "ClassBidirectional", False, False)
+        domain_model, rel = _roundtrip_writes(payload)
+
+        assert rel["source"]["navigable"] is False
+        assert rel["target"]["navigable"] is True
+        assert any("rel-writes" in w and "at least one end must be navigable" in w
+                   for w in domain_model.ocl_warnings)
+
+    def test_composition_part_end_non_navigable_is_corrected_with_warning(self, minimal_class_diagram_json):
+        payload = _with_writes_relationship(minimal_class_diagram_json, "ClassComposition", False, True)
+        domain_model, rel = _roundtrip_writes(payload)
+
+        assert rel["type"] == "ClassComposition"
+        assert rel["source"]["navigable"] is True
+        assert rel["target"]["navigable"] is True
+        assert any("rel-writes" in w and "part (source) end of a composition must be navigable" in w
+                   for w in domain_model.ocl_warnings)
+
+    @pytest.mark.parametrize("bad_value", ["false", None, 0, "true"])
+    def test_non_bool_navigable_falls_back_with_warning(self, minimal_class_diagram_json, bad_value):
+        """A non-boolean ``navigable`` is not coerced (``"false"`` must not become True): the legacy
+        default for the relationship type is used and a warning is recorded."""
+        payload = _with_writes_relationship(minimal_class_diagram_json, "ClassUnidirectional", bad_value, True)
+        domain_model, rel = _roundtrip_writes(payload)
+
+        # Legacy default for a ClassUnidirectional source end is non-navigable
+        assert rel["source"]["navigable"] is False
+        assert rel["target"]["navigable"] is True
+        assert any("rel-writes" in w and "source 'navigable' must be true or false" in w
+                   for w in domain_model.ocl_warnings)
 
 
 # ===========================================================================

@@ -371,6 +371,32 @@ def _process_classes(
     return class_id_to_class, method_id_to_method
 
 
+def _read_end_navigable(
+    end: dict[str, Any], legacy_default: bool, side: str, rel_id: str, all_warnings: list[str]
+) -> bool:
+    """Return the navigability of a relationship end.
+
+    Uses the explicit ``navigable`` boolean when present. When the key is
+    missing (payload saved before per-end navigability existed) the legacy
+    default inferred from the relationship type is used. A present but
+    non-boolean value (e.g. ``"false"`` or ``null``) is invalid: the legacy
+    default is used and a warning is recorded.
+    """
+    if "navigable" not in end:
+        return legacy_default
+    value = end["navigable"]
+    if isinstance(value, bool):
+        return value
+    logger.warning(
+        "Relationship %s: %s.navigable is not a boolean (%r); using %s.", rel_id, side, value, legacy_default
+    )
+    all_warnings.append(
+        f"Relationship '{rel_id}': {side} 'navigable' must be true or false (got {value!r}); "
+        f"defaulted it to {'navigable' if legacy_default else 'non-navigable'}."
+    )
+    return legacy_default
+
+
 def _process_relationships(
     relationships: dict[str, Any],
     elements: dict[str, Any],
@@ -470,8 +496,41 @@ def _process_relationships(
         # Handle each type of relationship
         if rel_type == "ClassBidirectional" or rel_type == "ClassUnidirectional" or rel_type == "ClassComposition" or rel_type == "ClassAggregation" :
             is_composite = rel_type == "ClassComposition"
-            source_navigable = rel_type != "ClassUnidirectional"
-            target_navigable = True
+            # Navigability is an explicit per-end boolean (source.navigable /
+            # target.navigable); this applies to plain associations,
+            # compositions and aggregations alike. Payloads saved before the
+            # field existed only carry the relationship type, so fall back to
+            # the legacy inference (ClassUnidirectional => source non-navigable).
+            source_navigable = _read_end_navigable(
+                source, rel_type != "ClassUnidirectional", "source", rel_id, all_warnings
+            )
+            target_navigable = _read_end_navigable(target, True, "target", rel_id, all_warnings)
+
+            # BinaryAssociation rejects a composition whose part end (source;
+            # the composite end is target) is not navigable. Correct such an
+            # invalid payload and report it, rather than failing the import.
+            if is_composite and not source_navigable:
+                logger.warning(
+                    "Relationship %s: the part end of a composition must be navigable; made source navigable.",
+                    rel_id,
+                )
+                all_warnings.append(
+                    f"Relationship '{rel_id}': the part (source) end of a composition must be navigable; "
+                    f"it was made navigable."
+                )
+                source_navigable = True
+
+            # BinaryAssociation also rejects an association with no navigable
+            # end. Correct the payload and report it, rather than failing the import.
+            if not source_navigable and not target_navigable:
+                logger.warning(
+                    "Relationship %s has no navigable end; made target navigable.", rel_id
+                )
+                all_warnings.append(
+                    f"Relationship '{rel_id}': at least one end must be navigable but both were not; "
+                    f"the target end was made navigable."
+                )
+                target_navigable = True
 
             source_multiplicity = parse_multiplicity(source.get("multiplicity", "1"))
             target_multiplicity = parse_multiplicity(target.get("multiplicity", "1"))
@@ -532,8 +591,10 @@ def _process_relationships(
             # Store the association for association class processing
             association_by_id[rel_id] = association
 
-            # Capture layout bounds for the relationship and its endpoints
-            rel_layout: dict[str, Any] = {}
+            # Capture layout bounds for the relationship and its endpoints.
+            # "source_role" records the drawn orientation so BUML -> JSON puts
+            # each end (and its saved endpoint layout) back on the same side.
+            rel_layout: dict[str, Any] = {"source_role": source_role}
             if "bounds" in relationship:
                 rel_layout["bounds"] = relationship["bounds"]
             if "path" in relationship:
@@ -549,8 +610,7 @@ def _process_relationships(
                 rel_layout["target_bounds"] = target["bounds"]
             if target.get("direction"):
                 rel_layout["target_direction"] = target["direction"]
-            if rel_layout:
-                layout_positions[f"rel_{association_name}"] = rel_layout
+            layout_positions[f"rel_{association_name}"] = rel_layout
 
         elif rel_type == "ClassInheritance":
             generalization = Generalization(general=target_class, specific=source_class)

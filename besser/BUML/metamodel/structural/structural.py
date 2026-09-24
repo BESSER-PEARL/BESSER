@@ -1548,7 +1548,8 @@ class BinaryAssociation(Association):
 
         Raises:
             ValueError: if the association ends are not exactly two, or if both ends are tagged as aggregation, or
-            if both ends are tagged as composition.
+            if both ends are tagged as composition, or if neither end is navigable, or if the non-composite end of
+            a composition is not navigable.
             TypeError: if any element in ends is not a Property instance.
         """
         # Type checking: ensure all elements are Property instances (before any attribute access)
@@ -1558,9 +1559,45 @@ class BinaryAssociation(Association):
 
         if len(ends) != 2:
             raise ValueError("A binary association must have exactly two ends")
-        if list(ends)[0].is_composite is True and list(ends)[1].is_composite is True:
+        end_a, end_b = list(ends)
+        if end_a.is_composite is True and end_b.is_composite is True:
             raise ValueError("The composition attribute cannot be tagged at both ends")
+        navigability_errors = self._navigability_errors(ends)
+        if navigability_errors:
+            raise ValueError(navigability_errors[0])
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
+
+    def _navigability_errors(self, ends: set[Property] = None) -> list[str]:
+        """Return the navigability rule violations of a binary association.
+
+        A binary association needs at least one navigable end, and the non-composite (part) end of a
+        composition must be navigable. Used by the ``ends`` setter (construction time) and by
+        ``DomainModel.validate()`` (to report ends made non-navigable after construction).
+
+        Args:
+            ends (set[Property]): The ends to check (defaults to the current ends).
+
+        Returns:
+            list[str]: One message per violated rule; empty when the ends are valid.
+            The ``ends`` setter raises the first one.
+        """
+        ends = self.ends if ends is None else ends
+        if len(ends) != 2:
+            return []
+        errors: list[str] = []
+        end_a, end_b = sorted(ends, key=lambda e: e.name or "")
+        if end_a.is_navigable is False and end_b.is_navigable is False:
+            errors.append(
+                f"Association '{self.name}': at least one end must be navigable, but both "
+                f"'{end_a.name}' ({end_a.type.name}) and '{end_b.name}' ({end_b.type.name}) are non-navigable"
+            )
+        for whole, part in ((end_a, end_b), (end_b, end_a)):
+            if whole.is_composite is True and part.is_navigable is False:
+                errors.append(
+                    f"Association '{self.name}': the non-composite end '{part.name}' ({part.type.name}) "
+                    f"of a composition must be navigable"
+                )
+        return errors
 
     def __repr__(self):
         return f'BinaryAssociation({self.name}, {self.ends}, {self.timestamp}, {self.metadata}, is_derived={self.is_derived})'
@@ -2304,7 +2341,8 @@ class DomainModel(Model):
                 )
 
     def _validate_associations(self, errors: list[str]):
-        """Validate that association ends reference types in the model."""
+        """Validate that association ends reference types in the model and that binary associations respect
+        the navigability rules (at least one navigable end; the part end of a composition is navigable)."""
         for association in self.__associations:
             for end in association.ends:
                 if end.type not in self.__types:
@@ -2312,6 +2350,8 @@ class DomainModel(Model):
                         f"Association '{association.name}' has end '{end.name}' "
                         f"referencing type '{end.type.name}' which is not in the domain model '{self.name}'."
                     )
+            if isinstance(association, BinaryAssociation):
+                errors.extend(association._navigability_errors())
 
     def _validate_multiplicities(self, errors: list[str]):
         """Validate that multiplicities on association ends and attributes are well-formed."""

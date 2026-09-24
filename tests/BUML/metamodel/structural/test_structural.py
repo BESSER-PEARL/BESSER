@@ -125,6 +125,85 @@ def test_binary_association():
     assert "A binary association must have exactly two ends" in str(excinfo.value)
 
 
+def _navigability_ends(a_navigable=True, b_navigable=True, a_composite=False, b_composite=False):
+    whole: Class = Class(name="Whole")
+    part: Class = Class(name="Part")
+    end_a = Property(name="parts", type=part, multiplicity=Multiplicity(0, "*"),
+                     is_navigable=a_navigable, is_composite=a_composite)
+    end_b = Property(name="whole", type=whole, multiplicity=Multiplicity(1, 1),
+                     is_navigable=b_navigable, is_composite=b_composite)
+    return whole, part, end_a, end_b
+
+
+# Testing that a binary association needs at least one navigable end
+def test_binary_association_requires_a_navigable_end():
+    _, _, end_a, end_b = _navigability_ends(a_navigable=False, b_navigable=False)
+    with pytest.raises(ValueError) as excinfo:
+        BinaryAssociation(name="Contains", ends={end_a, end_b})
+    message = str(excinfo.value)
+    assert "Association 'Contains'" in message
+    assert "at least one end must be navigable" in message
+    assert "'parts' (Part)" in message and "'whole' (Whole)" in message
+
+
+# The part (non-composite) end of a composition must be navigable, whichever end is the composite one
+@pytest.mark.parametrize("composite_on", ["a", "b"])
+def test_composition_part_end_must_be_navigable(composite_on):
+    if composite_on == "a":
+        # end_a is composite -> end_b is the part end
+        _, _, end_a, end_b = _navigability_ends(a_composite=True, b_navigable=False)
+        part_end = "'whole' (Whole)"
+    else:
+        _, _, end_a, end_b = _navigability_ends(b_composite=True, a_navigable=False)
+        part_end = "'parts' (Part)"
+    with pytest.raises(ValueError) as excinfo:
+        BinaryAssociation(name="Contains", ends={end_a, end_b})
+    message = str(excinfo.value)
+    assert "Association 'Contains'" in message
+    assert f"the non-composite end {part_end} of a composition must be navigable" in message
+
+
+@pytest.mark.parametrize("a_navigable, b_navigable, a_composite", [
+    (True, True, False),    # bidirectional
+    (True, False, False),   # one-way
+    (False, True, False),   # one-way, other direction
+    (False, True, True),    # composition whose composite (whole) end is non-navigable
+    (True, True, True),     # composition navigable both ways
+])
+def test_valid_navigability_combinations(a_navigable, b_navigable, a_composite):
+    _, _, end_a, end_b = _navigability_ends(a_navigable=a_navigable, b_navigable=b_navigable,
+                                            a_composite=a_composite)
+    association = BinaryAssociation(name="Contains", ends={end_a, end_b})
+    assert end_a.is_navigable is a_navigable
+    assert end_b.is_navigable is b_navigable
+    assert association._navigability_errors() == []
+
+
+# Ends made non-navigable after construction are reported by DomainModel.validate()
+def test_validate_reports_post_construction_navigability_violations():
+    whole, part, end_a, end_b = _navigability_ends(b_navigable=False)
+    association = BinaryAssociation(name="Contains", ends={end_a, end_b})
+    model = DomainModel(name="M", types={whole, part}, associations={association})
+    assert model.validate(raise_exception=False)["success"] is True
+
+    end_a.is_navigable = False
+    result = model.validate(raise_exception=False)
+    assert result["success"] is False
+    assert any("Association 'Contains': at least one end must be navigable" in e for e in result["errors"])
+    with pytest.raises(ValueError, match="at least one end must be navigable"):
+        model.validate()
+
+    # Composition whose part end is made non-navigable later
+    whole2, part2, c_a, c_b = _navigability_ends(b_composite=True)
+    composition = BinaryAssociation(name="Composes", ends={c_a, c_b})
+    model2 = DomainModel(name="M2", types={whole2, part2}, associations={composition})
+    assert model2.validate(raise_exception=False)["success"] is True
+    c_a.is_navigable = False
+    errors = model2.validate(raise_exception=False)["errors"]
+    assert any("Association 'Composes': the non-composite end 'parts' (Part) of a composition must be navigable"
+               in e for e in errors)
+
+
 # Testing the creation of an association class with an attribute
 def test_association_class():
     class1: Class = Class(name="name1", attributes=None)

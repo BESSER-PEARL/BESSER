@@ -10,6 +10,7 @@ the atomic requirements once, judge each against the generated code on every
 Phase 3 pass, re-check every citation, and feed the misses to the fix loop.
 """
 
+import json
 import os
 
 import pytest
@@ -775,3 +776,40 @@ class TestTheDigestIsNotPythonOnly:
 
         assert len(digest) <= ledger._DIGEST_MAX_TOTAL_CHARS, len(digest)
         assert "truncated" in digest or "omitted" in digest
+
+
+# ------------------------------------------------------ stringified arrays
+
+# Sonnet 5 via PIA, 2026-09-24: 16 of 30 fresh forced calls sent the array as
+# a JSON string wrapping the whole input again; Haiku 4.5 did it 0 of 10.
+_STRINGIFIED_REQUIREMENTS = (
+    '{"requirements":[\n'
+    '{"kind":"uniqueness","text":"Each person (employee or guest) has a unique identifying number."},\n'
+    '{"kind":"validation","text":"An email address must have a mailbox name, an at sign, a domain and a suffix."}\n'
+    ']}'
+)
+
+
+@pytest.mark.parametrize("answer", [
+    _STRINGIFIED_REQUIREMENTS,
+    json.dumps(json.loads(_STRINGIFIED_REQUIREMENTS)["requirements"]),
+])
+def test_requirements_sent_as_a_json_string_are_still_extracted(answer):
+    extracted = ledger.extract_requirements(INSTRUCTIONS, _ToolClient([{"requirements": answer}]))
+    assert [r["kind"] for r in extracted] == ["uniqueness", "validation"]
+    assert extracted[0]["text"].startswith("Each person")
+
+
+@pytest.mark.parametrize("answer", ["not json", '{"other": []}', '"a string"', '{"requirements": {"text": "x"}}'])
+def test_a_string_that_is_not_the_list_still_fails_extraction(answer):
+    assert ledger.extract_requirements(INSTRUCTIONS, _ToolClient([{"requirements": answer}])) is None
+
+
+def test_verdicts_sent_as_a_json_string_are_still_judged():
+    reqs = [{"id": 1, "text": "a", "kind": ""}, {"id": 2, "text": "b", "kind": ""}]
+    answer = json.dumps({"verdicts": [
+        {"id": 1, "status": "implemented", "evidence": "x.py: return a"},
+        {"id": 2, "status": "missing", "evidence": ""},
+    ]})
+    verdicts = ledger.judge_coverage(reqs, "### x.py\nreturn a", _ToolClient([{"verdicts": answer}]))
+    assert [v["status"] for v in verdicts] == ["implemented", "missing"]

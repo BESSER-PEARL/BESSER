@@ -369,7 +369,32 @@ def _call_with_tool(llm_client, system: str, prompt: str, tool: dict, *,
         except Exception:
             logger.warning("Requirements ledger: %s call failed", tool["name"], exc_info=True)
             return None
-    return _tool_input(response, tool["name"])
+    payload = _tool_input(response, tool["name"])
+    if payload is None:
+        logger.warning("Requirements ledger: %s returned no usable tool input", tool["name"])
+        return None
+    return _decode_stringified_arrays(payload, tool)
+
+
+def _decode_stringified_arrays(payload: dict, tool: dict) -> dict:
+    """Sonnet 5 sends about half of its forced tool calls with the array
+    field as a JSON string, often wrapping the whole input again
+    (``{"requirements": '{"requirements": [...]}'}``). Decode it back to
+    the list; anything else is left for the caller's shape check."""
+    properties = tool.get("input_schema", {}).get("properties", {})
+    for key, schema in properties.items():
+        value = payload.get(key)
+        if schema.get("type") != "array" or not isinstance(value, str):
+            continue
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(decoded, dict):
+            decoded = decoded.get(key)
+        if isinstance(decoded, list):
+            payload = {**payload, key: decoded}
+    return payload
 
 
 def _tool_input(response: dict, tool_name: str) -> dict | None:
@@ -409,6 +434,8 @@ def extract_requirements(instructions: str, llm_client) -> list[dict] | None:
         return None
     extracted = payload.get("requirements")
     if not isinstance(extracted, list):
+        logger.warning("Requirements ledger: 'requirements' came back as %s, not a list",
+                       type(extracted).__name__)
         return None
     requirements: list[dict] = []
     for item in extracted:

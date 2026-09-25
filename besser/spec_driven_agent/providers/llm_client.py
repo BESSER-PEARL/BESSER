@@ -1,5 +1,5 @@
 """
-LLM client adapter for the BESSER augmented generator.
+LLM client adapter for the spec-driven agent.
 
 Features:
 - **Provider abstraction** — ``LLMProvider`` interface with Anthropic, OpenAI,
@@ -103,7 +103,7 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
     "gpt-4o-mini": {"input": 0.15, "output": 0.6,  "cache_write": 0, "cache_read": 0.075},
     "gpt-4o":      {"input": 2.5,  "output": 10.0, "cache_write": 0, "cache_read": 1.25},
     "gpt-5.6-sol":   {"input": 5.0, "output": 30.0, "cache_write": 0, "cache_read": 0.5},
-    # Official model pages, verified 2026-09-19 (standard requests <=272K input).
+    # Official model pages (standard requests <=272K input).
     "gpt-5.6-terra": {"input": 2.0, "output": 12.0, "cache_write": 0, "cache_read": 0.2},
     "gpt-5.6-luna":  {"input": 0.2, "output": 1.2,  "cache_write": 0, "cache_read": 0.02},
     "gpt-5.5":     {"input": 5.0,  "output": 30.0, "cache_write": 0, "cache_read": 0.5},
@@ -120,7 +120,7 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
     # matters; $2 / $6 is the conservative (higher) of the two.
     "mistral-large": {"input": 2.0, "output": 6.0, "cache_write": 0, "cache_read": 2.0},
     # Nebius Token Factory — open-weight models served on Nebius hardware.
-    # Read off the endpoint properties in the Nebius console 2026-09-18:
+    # Read off the endpoint properties in the Nebius console:
     # $0.10 / 1M in, $0.30 / 1M out (~70 tok/s). Nebius publishes these rates
     # only in the console, not in fetchable docs. Nebius publishes no
     # prompt-cache discount, so cache_read == input rather than a fictional
@@ -177,12 +177,9 @@ def _is_free_local_model(model_lower: str) -> bool:
         return False
     if model_lower.endswith("-latest"):
         # A vendor API alias, not a checkout. Mistral's paid ids are tagless
-        # and un-namespaced - ``mistral-small-latest``, ``codestral-latest``,
-        # ``devstral-small-latest``, ``devstral-medium-latest`` - so they fell
-        # to the family list below, matched "mistral-small"/"codestral"/
-        # "devstral", and were priced at $0, which silently disabled the cost
-        # cap on four paid models. One of them is the Mistral planning model,
-        # so it ran uncapped on every Mistral run. Self-hosted Ollama says
+        # and un-namespaced (``mistral-small-latest``, ``codestral-latest``,
+        # ...) and would otherwise match the family list below and price at
+        # $0, silently disabling the cost cap. Self-hosted Ollama says
         # ``mistral-small:latest`` with a colon, which rule 2 already caught
         # above, so nothing free is lost by treating the hyphen as billed.
         return False
@@ -204,8 +201,8 @@ def _vendored_price_index() -> dict[str, dict[str, float]]:
 
     Model ids reach us in whatever case the caller typed, and the published
     keys are mixed case themselves (``nebius/Qwen/Qwen3-30B-A3B-Instruct-2507``).
-    An exact-case ``dict.get`` silently missed and fell through to the coarse
-    tier table.
+    An exact-case ``dict.get`` would silently miss and fall through to the
+    coarse tier table.
     """
     return {key.lower(): value for key, value in _vendored_prices().items()}
 
@@ -360,8 +357,8 @@ class UsageTracker:
             # Only a REAL switch (e.g. LongCat -> qwen fallback) is a warning.
             # Aggregators alias one model under several spellings
             # ("meituan/LongCat-2.0:free" vs "LongCat-2.0") and flip between
-            # them call-to-call; that churn logged a warning per flip and read
-            # as a model switch (2026-09-10 campaign: 14+ spurious flips/run).
+            # them call-to-call, and a warning per flip would read as a model
+            # switch.
             logger.warning(
                 "UsageTracker: served model changed mid-run: %s → %s",
                 self.served_model, name,
@@ -582,8 +579,8 @@ class LLMProvider(ABC):
 # ======================================================================
 
 _RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
-_MAX_RETRIES = 4  # total 5 attempts (bumped from 3 so a brief provider
-                  # rate-limit doesn't kill a multi-turn customization run)
+_MAX_RETRIES = 4  # total 5 attempts, so a brief provider rate-limit
+                  # doesn't kill a multi-turn customization run
 _INITIAL_BACKOFF = 0.5  # seconds
 _MAX_BACKOFF = 5.0  # seconds — cap for ordinary (5xx/timeout) retries
 # Rate limits (429) need a longer ceiling: some providers (notably
@@ -639,8 +636,7 @@ def _is_rate_limit(error: Exception) -> bool:
 def _is_quota_exhausted(error: Exception) -> bool:
     """True when a 429 is a DAILY/period quota exhaustion, not a transient throttle.
 
-    Measured on the free tier (2026-09-10 campaign): Command Code's free LongCat
-    returns ``429 "You've used all 100 free LongCat 2.0 requests for today. Your
+    E.g. Command Code's free LongCat returns ``429 "You've used all 100 free LongCat 2.0 requests for today. Your
     quota resets at …"``. That will not recover inside a retry window, so the
     5-attempt backoff (0.5s → 30s cap) just burns ~15-40s per call before the
     fallback finally engages. Classify it so callers skip retries and fall back
@@ -660,7 +656,7 @@ def _normalize_model_id(name: str | None) -> str:
     """Canonical form of a served-model id for equality checks.
 
     Aggregators alias the same model under several spellings and flip between
-    them call-to-call (seen live: ``meituan/LongCat-2.0:free`` vs ``LongCat-2.0``).
+    them call-to-call (e.g. ``meituan/LongCat-2.0:free`` vs ``LongCat-2.0``).
     Strip the vendor prefix and tier suffix and casefold so only a REAL switch
     (e.g. LongCat → qwen) compares unequal.
     """
@@ -953,24 +949,14 @@ def _with_tool_cache(tools: list[dict]) -> list[dict]:
     return cached
 
 
-# Rolling prompt-cache breakpoint on the GROWING conversation. Today only the
-# system prompt and the last tool definition carry a cache breakpoint, so the
-# whole message history — the part that actually grows each turn — is re-billed
-# as fresh input on every call (O(N^2) over a run). Every mature agent loop
-# (Cline, Roo, OpenHands, SWE-agent) instead marks cache_control on the LAST
-# message each turn, so the entire prior prefix is served from cache at ~0.1x.
+# Rolling prompt-cache breakpoint on the GROWING conversation. Without it only
+# the system prompt and the last tool definition carry a cache breakpoint, so
+# the whole message history — the part that actually grows each turn — is
+# re-billed as fresh input on every call (O(N^2) over a run). Like other agent
+# loops (Cline, Roo, OpenHands, SWE-agent), cache_control goes on the LAST
+# message each turn, so the entire prior prefix is served from cache at ~0.1x:
+# per-turn input stays flat instead of growing with the transcript.
 # Anthropic path only (the OpenAI/free path caches automatically by prefix).
-#
-# ON by default since 2026-09-21, when the paid verification this comment used
-# to ask for was run: four growing turns on claude-sonnet-5 through the PIA
-# gateway, flag off then on, everything else identical.
-#
-#   OFF  input 890 -> 2,602 -> 5,136 -> 8,492   cache_read 0 -> 14,535   63.1% hit
-#   ON   input   2 ->     4 ->     6 ->     8   cache_read 4,845 -> 24,510  100% hit
-#
-# Off, re-sent history is billed as fresh input and the per-turn cost grows
-# with the transcript; on, it is flat. A real 54-turn run measured 4,097,784
-# uncached input tokens at a 25.2% hit rate -- about half its cost.
 # Set BESSER_LLM_ROLLING_CACHE=0 to opt out.
 _ROLLING_MESSAGE_CACHE = os.environ.get("BESSER_LLM_ROLLING_CACHE", "1") == "1"
 
@@ -1036,13 +1022,11 @@ def _needs_reasoning_none_for_tools(model: str, base_url: str | None = None) -> 
     re-serves these models validates ``reasoning_effort`` against its own enum,
     and ``none`` is not in it: the keyless free tier (api.commandcode.ai)
     answers 400 ``Invalid option: expected one of
-    "low"|"medium"|"high"|"xhigh"|"max"``. That killed the tool-driven
-    customization loop mid-run, so the user got a deterministic-only bundle
-    plus an "output may be incomplete" warning.
+    "low"|"medium"|"high"|"xhigh"|"max"``, which would kill the tool-driven
+    customization loop mid-run.
 
-    Tools need no such flag there — verified 2026-09-16 against gpt-5.6-luna on
-    api.commandcode.ai: ``none`` -> 400, while omitted / ``low`` / ``medium``
-    each returned a proper ``write_file`` tool call. So send the parameter only
+    Tools need no such flag there: with the parameter omitted / ``low`` /
+    ``medium``, gpt-5.6 returns proper tool calls. So send the parameter only
     when talking to OpenAI itself, and omit it on any custom endpoint.
 
     The test is the HOST, not merely "a base_url was passed": the sponsored
@@ -1404,8 +1388,8 @@ class OpenAIProvider(LLMProvider):
         self._model = fb_model
         self._on_fallback = True
         # Why we fell back — lets the runner/UI say "free daily quota exhausted"
-        # instead of a generic "primary unavailable" (measured: the free tier's
-        # 100-requests/day cap caused 39/39 fallbacks in the 2026-09-10 campaign).
+        # instead of a generic "primary unavailable" (the daily quota is the
+        # common cause on the free tier).
         self.fallback_reason = "quota_exhausted" if _is_quota_exhausted(error) else "unavailable"
         return True
 
@@ -2001,7 +1985,7 @@ def _resolve_free_fallback_config() -> tuple[str, str, str] | None:
     (e.g. an aggregator's free pool shedding requests with 429/5xx for
     longer than the retry budget): after the primary's retries exhaust,
     the provider switches to this endpoint for the rest of the run.
-    Typically points at the self-hosted LIST qwen endpoint.
+    Typically points at a self-hosted qwen endpoint.
     """
     base_url = os.environ.get("BESSER_FREE_LLM_FALLBACK_BASE_URL", "").strip()
     model = os.environ.get("BESSER_FREE_LLM_FALLBACK_MODEL", "").strip()
@@ -2020,14 +2004,15 @@ def free_fallback_model() -> str:
 def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
     """Ordered keyless-tier fallback chain for a run pinned to ``chosen``.
 
-    Order is deliberate: CLOUD alternatives first, the self-hosted box LAST.
+    Order is deliberate: CLOUD alternatives first, the self-hosted endpoint
+    LAST.
 
         1. every ``BESSER_FREE_LLM_ALT_MODELS`` entry, on the PRIMARY endpoint
-           and token — the primary's usual failure is its 100-requests/day
+           and token — the primary's usual failure is its daily request
            quota, and another model on that endpoint has its own
-        2. ``BESSER_FREE_LLM_FALLBACK_*`` — our own Ollama box: a single shared
-           Tesla V100, one request at a time, 60-75s to load a model cold. A
-           true last resort, not a peer.
+        2. ``BESSER_FREE_LLM_FALLBACK_*`` — typically a self-hosted Ollama
+           server with limited capacity (one request at a time, slow cold
+           loads). A true last resort, not a peer.
 
     ``chosen`` is skipped wherever it appears: a run already pinned to a model
     must never "fall back" to the model it is already using.
@@ -2048,15 +2033,14 @@ def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
 
 
 def free_pilot_model() -> str:
-    """The keyless model a PILOT session should default to, or ``""``.
+    """The keyless model a pilot session should default to, or ``""``.
 
-    Read from ``BESSER_PILOT_LLM_MODEL``. Pilot participants arrive through
-    ``?pilot=<label>`` and are a small, known population, so they can start on a
-    stronger model without changing what everyone else gets. Server-side on
-    purpose: which model is "the good one" has changed several times, and
-    swapping it should be an env edit, not a frontend release.
+    Read from ``BESSER_PILOT_LLM_MODEL``. Sessions opened with
+    ``?pilot=<label>`` can start on a different model without changing what
+    everyone else gets. Server-side so that changing it is an env edit, not a
+    frontend release.
 
-    Returns ``""`` when unset (pilots then get the ordinary default), or when
+    Returns ``""`` when unset (pilot sessions then get the ordinary default), or when
     the configured id is not one the server actually offers -- advertising a
     default we would refuse to honour is worse than having none.
     """
@@ -2078,9 +2062,8 @@ def free_alt_models() -> list[str]:
     properly-paired branch instead.
 
     Why this exists: the upstream aggregator meters each free model SEPARATELY,
-    per model rather than per account. Our primary is capped at 100
-    requests/day, while an alt such as ``poolside/laguna-s-2.1-free`` publishes
-    no daily quota at all. Empty by default.
+    per model rather than per account, so an alt model adds capacity when the
+    primary's daily quota runs out. Empty by default.
     """
     raw = os.environ.get("BESSER_FREE_LLM_ALT_MODELS", "")
     if not raw.strip():
@@ -2228,7 +2211,7 @@ def create_llm_client(
             base_url=free_base_url,
             default_headers=headers,
             # Full chain: any OTHER alt model on this endpoint first, then the
-            # self-hosted box last. An alt sits on the same shared cloud endpoint
+            # self-hosted fallback last. An alt sits on the same shared cloud endpoint
             # and sheds requests the same way, so it needs the chain too.
             fallback=_resolve_free_fallback_chain(chosen),
             **kwargs,

@@ -18,10 +18,10 @@ indicate whether the entity appears in the app (not executed acceptance):
 
 Most generated React frontends put every request behind one api module
 (``api.create('carpark', payload)`` → ``fetch(url, {method:'POST'})``),
-so the literal POST never appears in the file that names the entity. A
-``.post(`` scan alone reported "no create path" for 302 entities across
-apps a live probe had just driven end to end. ``_client_create_calls``
-resolves those calls instead of demanding a literal in one file.
+so the literal POST never appears in the file that names the entity, and a
+``.post(`` scan alone would report "no create path" for working apps.
+``_client_create_calls`` resolves those calls instead of demanding a
+literal in one file.
 
 The matrix is deliberately REPORT-ONLY (warnings + a recipe field, never
 blockers): a GUI-model-driven run may legitimately scope the UI to a
@@ -88,9 +88,8 @@ def _blank_literals(text: str) -> str:
     """Blank comments and string bodies, keeping every offset in place.
 
     Offsets and newlines are preserved so `_HELPER_DEF_RE` positions still
-    index into the original source. A per-character rewrite allocated a list
-    the size of the file on every call and exhausted memory on the sweep;
-    substituting only the matched spans keeps it proportional to the literals.
+    index into the original source. Substituting only the matched spans keeps
+    memory proportional to the literals, not to the file.
     """
     return _BLANKABLE_RE.sub(lambda m: _KEEP_NEWLINES_RE.sub(" ", m.group()), text)
 
@@ -172,8 +171,7 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
     the file-mention test already stands on.
 
     ``helper_cache`` is keyed by module path: one api client is imported by
-    every page, and scanning it once per importer is what made this sweep
-    run out of memory.
+    every page, so it is scanned once rather than once per importer.
     """
     calls = []
     for binding, spec in _import_bindings(source):

@@ -253,8 +253,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         enable_checkpointing: bool = True,
         # Both default OFF: they enable run_command / install_dependencies, the
         # arbitrary-shell capability the hosted gate exists to withhold. Opt in
-        # explicitly. (The 20-run experiment on 2026-09-11/12 produced its apps
-        # with shell tools off, so the old permissive default bought nothing.)
+        # explicitly; generation does not need them.
         enable_toolchain_validation: bool = False,
         allow_shell_tools: bool = False,
         target_generator: str | None = None,
@@ -324,7 +323,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             per_write_diagnostics=per_write_diagnostics,
             # The executor enforces this too. Hiding the tools from the
             # advertised list is not a gate: the model can name a tool it was
-            # never offered, and the dispatch table used to run it anyway.
+            # never offered, and a dispatch table alone would run it anyway.
             allow_shell=allow_shell_tools,
         )
         self.executor.app_validator = self._validate_app
@@ -358,13 +357,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.auto_fix_issues = auto_fix_issues
         # Phase 3 toolchain checks (tsc / cargo / kotlinc) compile real
         # projects and can add minutes of wall-clock per run. The web
-        # runner disables them per deploy (BESSER_LLM_ENABLE_TOOLCHAIN_
-        # VALIDATION); library users keep the default. The cheap checks
-        # In-process checks always run; shell/toolchain checks are gated.
+        # runner can disable them (BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION);
+        # library users keep the default. In-process checks always run.
         self.enable_toolchain_validation = enable_toolchain_validation
         # Phase 3 import smoke check: import the generated ORM module in a
         # subprocess and configure its mappers (~0.5s). Deliberately NOT tied
-        # to allow_shell_tools - the hosted deploy has that off, and it is
+        # to allow_shell_tools - the hosted deployment has that off, and it is
         # where a mapper that fails on first use ships as a green run.
         self.enable_import_smoke_check = enable_import_smoke_check
         # Requirements ledger: the user's verbatim request turned into atomic
@@ -394,17 +392,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._should_continue = should_continue
         self.tool_calls_log: list[dict] = []
         self.total_turns = 0
-        # (loop key, succeeded) per non-readonly call. Success matters: run
-        # 0c537a4e (2026-09-18) was told "called 4 times in a row. Move on."
-        # on two SUCCESSFUL edits because only the names were counted.
+        # (loop key, succeeded) per non-readonly call. Success matters: counting
+        # names alone flags a run of SUCCESSFUL edits as a loop.
         self._recent_tool_calls: list[tuple[str, bool]] = []
         # Parallel ring buffer of (tool_name, path) entries used by the
         # per-file modify-loop guard. ``path`` is None for tools that
         # don't operate on a single file (e.g. ``list_files``,
         # ``run_command``) — those entries break any in-progress
         # modify_file streak. Kept separate from ``_recent_tool_calls``
-        # so the legacy uniform-tool ``_is_stuck`` heuristic stays
-        # exactly as it was.
+        # so the uniform-tool ``_is_stuck`` heuristic stays independent
+        # of it.
         self._recent_modify_targets: list[tuple[str, str | None]] = []
         # Path most recently warned about — prevents the per-file
         # reminder from firing turn after turn while the LLM is still
@@ -501,10 +498,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._checkpoint_phase = "phase2"
         self._phase3_interrupted = False
         # Why the fix loop interrupted itself, when it did: a provider failure
-        # or a stop_reason the loop cannot answer. 40 of the 43 runs that ended
-        # mid-attempt across verification/spec-iterations were still making
-        # paid, working calls with most of their budget left, and the trace
-        # recorded only that repair "was interrupted" - not by what.
+        # or a stop_reason the loop cannot answer. Traced so an interrupted
+        # repair records what interrupted it, not only that it stopped.
         self._phase3_interrupt_detail: str = ""
         # Which guard ended the Phase 3 repair loop ("no-progress streak",
         # "plateau", "attempt cap", a budget/cancellation reason, or "all
@@ -525,8 +520,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._phase2_stop_reason: str = "max_turns"
         # Which branch produced that reason, when the reason alone is
         # ambiguous. "validation_required" is set both by the end_turn blocker
-        # gate and by the bounded-inspection handoff, and across
-        # verification/spec-iterations those are 75 and 96 runs of very
+        # gate and by the bounded-inspection handoff, two exits of very
         # different character. Traced only; the runner still reads
         # ``_phase2_stop_reason``, whose values are unchanged.
         self._phase2_stop_detail: str = ""
@@ -544,12 +538,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # what was ASKED (e.g. "web app" requested but no frontend files).
         self._instructions: str = ""
 
-        # Incremental vibe-modify state. ``modify()`` seeds ``output_dir``
+        # Incremental modify state. ``modify()`` seeds ``output_dir``
         # from a previous run's files and edits them in place instead of
         # rebuilding from scratch. ``_modify_mode`` is the single flag that
         # threads through ``_build_system_prompt`` to prepend the
         # "preserve what works" directive; it stays False on the run() /
-        # resume() paths so those prompts are byte-identical to today's.
+        # resume() paths so those prompts are unaffected.
         # ``_seed_generator_used`` records which deterministic generator
         # first produced the seeded base (read back from the seed's
         # recipe) so the inventory / new recipe frame the run correctly.
@@ -561,7 +555,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # defect the seed run shipped survives forever because later
         # runs never look at it again.
         self._seed_unresolved_issues: list[str] = []
-        # Model-sync during vibe-MODIFY (class-diagram only). When a
+        # Model-sync during modify (class-diagram only). When a
         # ``modify()`` instruction implies new domain entities (e.g. "add
         # authentication" → a ``User`` class), ``_derive_and_apply_model_deltas``
         # mutates ``self.domain_model`` IN PLACE and re-serialises an updated
@@ -689,7 +683,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # generator already emitted the manifest. Phase 0.5 only
         # intervenes when Phase 1 was a no-op — i.e. the target is a
         # stack BESSER doesn't generate (Next.js, Rust, Kotlin / Spring).
-        # This keeps the Python paths byte-identical to today's output.
+        # This leaves the Python paths untouched.
         self._run_phase0_5_metadata(instructions)
 
         # -- Adaptive budget: raise the cap for from-scratch runs ---------
@@ -898,7 +892,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return self.output_dir
 
     # ==================================================================
-    # Incremental vibe-modify entry point
+    # Incremental modify entry point
     # ==================================================================
 
 
@@ -919,7 +913,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
 
     # ==================================================================
-    # Model-sync during vibe-MODIFY (class-diagram only)
+    # Model-sync during modify (class-diagram only)
     # ==================================================================
 
     # Common attribute-type spellings the LLM might return, mapped to the
@@ -949,7 +943,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _run_phase1(self, instructions: str) -> None:
         """Select and run the best generator, then inventory the output."""
         # Almost every BESSER generator needs a domain model. When the
-        # user drove smart-generation from a state-machine / agent /
+        # user drove generation from a state-machine / agent /
         # quantum-only project, there is nothing for Phase 1 to do —
         # skip straight to Phase 2, where the LLM writes from the
         # primary model using write_file / run_command.
@@ -967,7 +961,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self.primary_kind,
             )
             if self.on_progress:
-                # Surface the skip so the smart-gen card shows a `generate`
+                # Surface the skip so the progress card shows a `generate`
                 # row with a clear "skipped — no model" message instead of
                 # silently jumping from `select` to `gap`.
                 self.on_progress(0, "__skipped__", "no_model")
@@ -1002,7 +996,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase1_failure_reason = f"{generator_name}: {error_text}"
                 logger.warning("Phase 1: Generator failed: %s", error_text)
                 # Surface the failure on the SSE stream — without this
-                # the smart-gen card shows "generating" forever and the
+                # the progress card shows "generating" forever and the
                 # user never learns why the scaffold was skipped.
                 if self.on_progress:
                     self.on_progress(
@@ -1143,7 +1137,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # Offering an unavailable generator (e.g. generate_web_app
             # with no GUI model) lets the LLM pick it, Phase 1 fails,
             # and the run silently degrades to expensive from-scratch
-            # generation — seen in production logs.
+            # generation.
             from besser.spec_driven_agent.agent.tools import GENERATOR_TOOLS
             selectable_names = get_available_generator_names(
                 has_domain_model=self.domain_model is not None,
@@ -1406,10 +1400,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """Pre-create a minimal build-metadata file for non-Python stacks.
 
         BESSER's deterministic generators only cover the Python family.
-        For Next.js / Rust / Kotlin requests, the customise loop has
-        historically been expected to invent ``tsconfig.json`` /
-        ``Cargo.toml`` / ``build.gradle.kts`` from scratch — which it
-        occasionally forgets, breaking the per-project compile check.
+        For Next.js / Rust / Kotlin requests, the customise loop would
+        otherwise have to invent ``tsconfig.json`` / ``Cargo.toml`` /
+        ``build.gradle.kts`` from scratch — which it occasionally forgets,
+        breaking the per-project compile check.
 
         This step writes a stack-appropriate manifest as a floor under
         the customise loop. The LLM is free to extend it (adding
@@ -1418,10 +1412,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         Guarantees:
           - No-op when Phase 1 actually ran a generator (Python stacks
-            are byte-identical to today's output).
+            are untouched).
           - No-op when the target stack isn't one we have a template
-            for (e.g. Go, Ruby, Express — left to the customise loop
-            as before, until templates are added).
+            for (e.g. Go, Ruby, Express — left to the customise loop).
           - Strictly additive: if a file already exists at the target
             path, it is preserved (covers the rare case where the
             executor wrote one before Phase 0.5 ran).
@@ -1477,7 +1470,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self._trace.write(EVENT_PHASE_EXIT, phase="phase0_5", stack=stack_id)
         if self.on_progress:
-            # Use the same "skipped" sentinel shape so the smart-gen
+            # Use the same "skipped" sentinel shape so the
             # progress card stays compact — we don't want a new top-level
             # row for what is essentially a tiny scaffolding step.
             self.on_progress(
@@ -1514,9 +1507,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         stop at the explicit cap rather than silently spending more.
         """
         # Scaffolded runs get the wider ceiling too: a customisation turn writes
-        # whole NEW files the scaffold never emitted (React pages, auth modules).
-        # Observed live 2026-09-10: a scaffolded run overran 16_384 on its FIRST
-        # customisation turn and Phase 2 exited with zero LLM writes.
+        # whole NEW files the scaffold never emitted (React pages, auth modules),
+        # and can overrun a 16_384 limit on its very first turn.
 
         # Widen the per-call output-token limit: a from-scratch run
         # writes large files with no scaffold underneath them, which is
@@ -1668,7 +1660,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """
         # Drop sub-generator tools already covered by the chosen primary, so
         # the agent can't scatter redundant pydantic/ sqlalchemy/ rest_api/
-        # dirs next to the assembled backend/ (observed on every FastAPI run).
+        # dirs next to the assembled backend/.
         self._drop_redundant_generator_tools()
 
         # Ship a .gitignore so a pushed/cloned repo doesn't carry caches, a
@@ -1716,11 +1708,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 gap_tasks == []
                 and self._generator_used
                 and not scoped_issues
-                # A vibe-modify run must never skip Phase 2: the user asked
+                # A modify run must never skip Phase 2: the user asked
                 # to add/change a feature on top of the seeded app, so an
                 # empty gap list ("scaffold already covers it") is never a
                 # reason to no-op here. ``_modify_mode`` is False on the
-                # from-scratch path, keeping run() behaviour identical.
+                # from-scratch path, so run() is unaffected.
                 and not self._modify_mode
             ):
                 # Backstop: the deterministic scaffold never includes auth,
@@ -1858,8 +1850,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             except InvalidApiKeyError:
                 # Auth failures must PROPAGATE so the runner reports INVALID_KEY,
                 # not a misleading INTERNAL/api_error or a fake "incomplete
-                # success" (#27 — the runner's INVALID_KEY branch was dead because
-                # this blanket except swallowed it into api_error).
+                # success".
                 raise
             except Exception as e:
                 logger.error("LLM API call failed on turn %d: %s", turn + 1, e)
@@ -2007,12 +1998,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # re-execute the same tool calls on resume. We save
                 # after appending results so the rehydrated message
                 # list starts cleanly with the next assistant turn.
-                # Cost alone cannot explain itself. A run that re-bills its
-                # history reads as "expensive" with no way to see why until
-                # the recipe is written at the end; run
-                # claude-sonnet-5-q0yzuo43 ended at a 25.2% cache hit rate and
-                # nothing before its final summary would have shown it. The
-                # tracker already holds all four counters, so carry them.
+                # The cost event carries the tracker's token counters so a
+                # run that re-bills its history (a low cache hit rate) is
+                # visible per turn, not only in the final recipe.
                 self._trace.write(
                     EVENT_COST_UPDATE,
                     turn=turn + 1,
@@ -2031,7 +2019,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # The model hit its OUTPUT token limit mid-turn (typically a
                 # large write_file). That is not a provider failure — report it
                 # honestly as truncation instead of the misleading
-                # "unexpected stop_reason: length" provider error. (#29)
+                # "unexpected stop_reason: length" provider error.
                 # The truncated tool call is intentionally NOT appended to
                 # ``messages`` / executed — a partial write_file's JSON
                 # arguments are usually invalid, so nothing gets written to
@@ -2044,10 +2032,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "adaptive_budget_applied=%s)",
                     turn + 1, current_max_tokens, self._adaptive_budget_applied,
                 )
-                # Recoverable: the model can simply emit less next turn. Ending
-                # Phase 2 on the FIRST truncation threw whole runs away (live
-                # 2026-09-10: died on turn 1 with zero LLM writes). Feed the
-                # truncation back, bounded by _MAX_TRUNCATION_RETRIES.
+                # Recoverable: the model can simply emit less next turn, and
+                # ending Phase 2 on the FIRST truncation throws whole runs away.
+                # Feed the truncation back, bounded by _MAX_TRUNCATION_RETRIES.
                 if self._truncation_retries < self._MAX_TRUNCATION_RETRIES:
                     self._truncation_retries += 1
                     messages.append({"role": "user", "content": [{
@@ -2112,10 +2099,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 novel = True
         return novel
 
-    # Keys worth keeping in the trace when a tool reports them. From a real
-    # post-mortem (2026-09-11): a run burned 11 of 80 turns on failed
-    # modify_file calls and the trace recorded only ``status: error`` with no
-    # reason, so the failures could not be diagnosed afterwards at all.
+    # Keys worth keeping in the trace when a tool reports them. Without them
+    # a failed call records only ``status: error`` with no reason, and the
+    # failure cannot be diagnosed afterwards.
     _TRACE_DIAG_TEXT = ("error", "note", "advice", "warning", "matched_by",
                         "did_you_mean", "diagnostic_message", "rejection_kind", "edit_recovery")
     _TRACE_DIAG_MAX_CHARS = 400
@@ -2126,7 +2112,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         ``on_progress`` is public API of a published package, so a caller may
         still supply the original three-argument callback. Passing four
-        arguments unconditionally raised TypeError for them; the detail is a
+        arguments unconditionally would raise TypeError for them; the detail is a
         diagnostic nicety and must never break a run.
         """
         if not self.on_progress:
@@ -2177,8 +2163,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Tools whose effect is a WRITE to a specific path. Two of these on the
     # same path inside one turn must not run concurrently: each does
     # read -> transform -> write, so racing them silently drops the earlier
-    # edit (last writer wins). The tool description used to invite exactly
-    # that ("different sections ... in the SAME turn ... in parallel").
+    # edit (last writer wins).
     _WRITE_TOOLS = frozenset({"modify_file", "replace_file_lines", "write_file", "delete_file"})
 
     def _serial_key(self, block) -> str:
@@ -2199,8 +2184,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Set before any block runs so every tool_call event in this turn can
         # report it. A model that emits ONE call per turn needs ~4x the turns of
         # one that batches, which makes MAX_TURNS mean wildly different things
-        # per model — invisible until this is recorded (see 2026-09-11: 80 turns,
-        # 80 calls, 18 files).
+        # per model — invisible unless this is recorded.
         self._blocks_in_turn = len(tool_blocks)
         """
         Execute tool call blocks, in parallel where that is SAFE.
@@ -2308,10 +2292,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     loop_key = f"{tool_name}:{raw_loop_path.replace(chr(92), '/').strip()}"
         elif tool_name == "task_list":
             # Bookkeeping is not a loop when it works, which is why task_list
-            # is read-only for loop purposes. Nine consecutive REFUSED calls
-            # is a loop: run n_6i2i5r spent turns 12-20 marking tasks 9-17
-            # done, one per turn, every one rejected for supplying no evidence
-            # at all. _is_stuck only fires when every call in the window
+            # is read-only for loop purposes. A streak of REFUSED calls (e.g.
+            # marking tasks done one per turn, each rejected for supplying no
+            # evidence) is a loop. _is_stuck only fires when every call in the window
             # failed, so a healthy batch still never trips it.
             loop_key = "task_list"
         else:
@@ -2321,8 +2304,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # ALL tools so that unrelated work between modify calls breaks the
         # streak. ``read_file`` captures its path too: re-reading the very
         # file you have just failed to edit is part of the flail, not a
-        # break from it, and treating it as a break is what let run
-        # a5dce952 alternate modify/read on one file for 38 pairs.
+        # break from it; treating it as a break lets a modify/read
+        # alternation on one file run unchecked.
         # ``replace_file_lines`` counts as an edit: the recovery ladder
         # steers a flailing model straight into it, so recording it as a
         # path-less tool would let reaching recovery disarm this guard.
@@ -2353,8 +2336,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         execution = self.executor.execute_typed(tool_name, block.input)
         # A landed edit may have satisfied a checkable item. Close it here
-        # rather than making the model spend a turn arguing for it: run
-        # ys4gfj4v made 22 task_list calls against 9 edits, 12 refused.
+        # rather than making the model spend turns arguing for it.
         if execution.succeeded and tool_name in _WRITE_TOOLS_ON_RECORD:
             closed = self.executor.autoclose_verified_tasks()
             if closed:
@@ -2550,8 +2532,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """Phase 3 findings with the Phase 0 model-contract ones kept in front.
 
         Every wholesale reassignment of ``_validation_issues`` goes through
-        here. Without it a clean Phase 3 erased the mandatory-creation-cycle
-        blocker and the run reported ``incomplete: false``.
+        here. Without it a clean Phase 3 would erase the mandatory-creation-cycle
+        blocker and the run would report ``incomplete: false``.
         """
         return list(self._model_contract_issues) + list(issues)
 
@@ -2607,15 +2589,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         raw.extend(collect_frontend_schema_issues(self.output_dir))
         # Only a finding that PROVES the app cannot boot may skip the probe.
-        # This early return used to fire on the whole list above - including
-        # ``frontend contract:`` (a React form field), a per-endpoint schema
-        # mismatch and any undefined name anywhere - so on a weak model, which
-        # always leaves something static on the floor, the boot probe never ran
-        # and the fix loop optimised a static list against a tree nobody had
-        # run. Nine of the 23 runs on 2026-09-19 (7aybctis, iw82zzoc, se7k3zbx,
-        # p_qopu92, pcovsppe, uvobkl4u, w7zoeszt, yxdo58mr, z1ayv8bq) shipped
-        # with no runtime verdict for that reason; re-probing 7aybctis's
-        # delivered tree found POST /booking/ raising TypeError on every call.
+        # Skipping on any static finding (a frontend field, a schema mismatch)
+        # means a weak model, which always leaves something static behind,
+        # never gets a runtime verdict, and a route that crashes on every call
+        # ships unnoticed.
         if any(item.startswith("missing module:") for item in raw):
             self._record_runtime_verdict(None)
             return list(dict.fromkeys(raw))
@@ -2714,7 +2691,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 item = "runtime unverified: " + item
             elif item.startswith("action unverified: "):
                 # Same shape as the create side. Without this promotion the
-                # finding stayed a warning the blocker-only fix loop ignored.
+                # finding stays a warning the blocker-only fix loop ignores.
                 match = _re.match(r"action unverified: (.+?): POST (\S+) -", item)
                 if match and (match.group(1), match.group(2).rstrip("/")) in exercised:
                     continue
@@ -2890,11 +2867,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     except SyntaxError as e:
                         raw_issues.append(f"Syntax error in {rel} line {e.lineno}: {e.msg}")
 
-                # Check Dockerfiles. Matching only the exact name "Dockerfile"
-                # skipped every multi-service layout: an app with
-                # Dockerfile.frontend / Dockerfile.backend ran none of the checks
-                # below and failed `docker compose build` on `npm ci`
-                # (2026-09-11).
+                # Check Dockerfiles, including multi-service layouts
+                # (Dockerfile.frontend / Dockerfile.backend), not only the
+                # exact name "Dockerfile".
                 if _is_dockerfile(fname):
                     try:
                         with open(fpath, "r", encoding="utf-8") as f:
@@ -2904,7 +2879,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         # Searched across the WHOLE project, not just beside the
                         # Dockerfile: a root Dockerfile.frontend typically COPYs
                         # from a frontend/ subdirectory, so docker_dir alone
-                        # missed lockfiles that existed.
+                        # would miss lockfiles that exist.
                         if "npm ci" in content:
                             if not _project_has_npm_lockfile(self.output_dir):
                                 # Auto-fix this common mistake
@@ -3025,9 +3000,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 collect_endpoint_coherence_issues,
             )
 
-            # Warning mode for the first campaign: _classify_issue deliberately
-            # leaves this prefix at the conservative warning default. Promote to
-            # blocker only after measured false-positive review.
+            # Warning severity: _classify_issue deliberately leaves this prefix
+            # at the conservative warning default. Promote to blocker only after
+            # a measured false-positive review.
             raw_issues.extend(collect_endpoint_coherence_issues(self.output_dir))
         except Exception:
             logger.debug("Endpoint coherence validation failed", exc_info=True)
@@ -3051,7 +3026,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         execution_issues = self._collect_execution_issues()
         # An enabled ledger that extracted nothing verified nothing. Saying so
         # is the difference between "the user asked for nothing" and "we never
-        # looked" — run 7aybctis reported the former on an empty extraction.
+        # looked".
         if (self.enable_requirements_ledger and self._requirements is None
                 and self._requirement_extraction_attempts):
             raw_issues.append(_check_did_not_run(
@@ -3085,11 +3060,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # filesystem: no install, no bundler, no shell, so unlike
         # ``frontend_build`` below it runs in every configuration.
         #
-        # A browser sweep of the recorded corpus on 2026-09-21 drove seven
-        # generated apps in Chrome: four rendered a blank page, and three of
-        # those four carried a PERFECT probe score. The probe boots the
-        # backend and drives HTTP; it never renders a page, so nothing in the
-        # pipeline was looking at the one thing the user sees.
+        # The probe boots the backend and drives HTTP; it never renders a page,
+        # so a blank frontend can carry a perfect probe score.
         # ``React is not defined`` is a runtime error in a bundle that builds
         # cleanly, which is why the build check cannot substitute for this.
         from besser.spec_driven_agent.validation.frontend_resolution import (
@@ -3131,17 +3103,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """Install the deterministic frontend's declared packages, once.
 
         The scaffold ships a package.json and no node_modules, so the first
-        thing the model tries against the frontend fails. On run
-        claude-sonnet-5-q0yzuo43 it reached for ``npx tsc`` at turn 27, spent
-        turns 28-40 discovering why, and installed at turn 41: 14 turns, 171s
-        and 32% of that run's spend to obtain a prerequisite nothing was
-        gating. The validator deliberately refuses to install (it must report
+        thing the model tries against the frontend fails, and discovering why
+        costs many turns and a large share of the run's spend. The validator
+        deliberately refuses to install (it must report
         the workspace, not change it -- see ``test_validation_honesty``), so
         this belongs here, at scaffold time, where writing files is the point.
 
         Best-effort and silent on failure: the model keeps its own
         ``install_dependencies`` tool, and ``collect_frontend_build_issues``
-        still reports an uninstalled frontend exactly as before.
+        still reports an uninstalled frontend.
         """
         import subprocess
 
@@ -3170,11 +3140,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _collect_framework_switch_issues(self) -> list[str]:
         """BLOCKER when generated code imports a rival framework.
 
-        Live finding (2026-09-02): the free model rewrote a FastAPI
-        scaffold into a Flask hybrid via write_file (delete-protection
-        never fired), burned the runtime cap mid-restructure, and shipped
-        an unbootable mix. The HARD-CONSTRAINTS prompt forbids this; now
-        Phase 3 enforces it.
+        A weak model can rewrite a FastAPI scaffold into a Flask hybrid via
+        write_file (bypassing delete protection) and ship an unbootable mix.
+        The HARD-CONSTRAINTS prompt forbids this; Phase 3 enforces it.
         """
         family = self._scaffold_family()
         # A rival the USER asked for is the request, not a switch.
@@ -3210,11 +3178,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             f"Remove the rewrite and extend the existing {family} app."
         ]
 
-    # "web application" was the miss that mattered: the trailing \b could
-    # not match after "app" when the word continued into "lication", so the
-    # single most natural phrasing of the request slipped past and 9 of 10
-    # sweep runs shipped backend-only while reporting success. Every
-    # alternative here has to tolerate the word being spelled out.
+    # "web application" must match: a trailing \b after "app" cannot match
+    # when the word continues into "lication", and that is the most natural
+    # phrasing of the request. Every alternative here has to tolerate the
+    # word being spelled out.
     # Deliberately NOT included: "spa" — a hotel spec has one.
     _WEBAPP_ASK_RE = _re.compile(
         r"\b(web[ -]?app(?:lication)?s?|front[ -]?end|web ?site|"
@@ -3246,7 +3213,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _deterministic_gap_tasks(self) -> list[str]:
         """Checklist items the harness ADDS regardless of the planner.
 
-        Devstral A/B finding: with a backend-only scaffold, no layer
+        With a backend-only scaffold, no layer
         explicitly ORDERS the frontend — the gap planner assumes the
         scaffold has screens, and prompt Rule 15 is prose a terse model
         skips. Making it a checklist item puts it behind the end_turn
@@ -3322,9 +3289,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         The pydantic generator declines a constraint that spans relationships
         and leaves a NOTE in the schema (pydantic_classes_template.py.j2). The
         rule is the user's own words in the model, so it is checklist work,
-        not a comment: run 19h35 (2026-09-18) shipped without the guest-
-        capacity rule its model carried. FastAPI scaffolds only - the
-        placement names a router file.
+        not a comment that can be shipped unimplemented. FastAPI scaffolds
+        only - the placement names a router file.
         """
         if self._scaffold_family() != "fastapi" or self.domain_model is None:
             return []
@@ -3354,8 +3320,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _collect_missing_frontend_issue(self) -> list[str]:
         """BLOCKER when the user asked for a web app and got no frontend.
 
-        The hotel audit's defect #4: 'build a hotel reservation web app'
-        shipped an API-only tree — presence of a backend read as success.
+        Otherwise 'build a hotel reservation web app' can ship an API-only
+        tree — presence of a backend reads as success.
         High-precision: fires only when the instructions explicitly name a
         web app / frontend / UI AND the workspace holds not a single
         frontend artifact (js/ts/tsx/jsx/html or a package.json).
@@ -3434,11 +3400,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         # Two workspace-wide sweeps, not per-file lints: the bad read and the
         # declaration that would excuse it live in different files, so neither
-        # can be decided from one file's text. Both were written, tested and
-        # measured against the labelled corpus while having no call site at
-        # all - they scored zero false positives on every known-working app
-        # and never ran on a real generation.
-        # Both already return finished ``data contract:`` messages.
+        # can be decided from one file's text. Both score zero false positives
+        # on known-working apps, and both return finished ``data contract:``
+        # messages.
         issues.extend(collect_inverted_end_issues(self.output_dir, contract))
         issues.extend(collect_undeclared_attribute_issues(self.output_dir, contract))
         return issues
@@ -3446,9 +3410,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _planner_instructions(self, instructions: str) -> str:
         """The request, then the requirements ledger as numbered lines.
 
-        The planner already reads the verbatim spec, and on the 19h35 model
-        it still skipped the unique room number and the extra charges. A
-        numbered list is something to diff against, not prose to skim. The
+        The planner already reads the verbatim spec and still skips
+        requirements. A numbered list is something to diff against, not
+        prose to skim. The
         extraction happens here, once per run, so Phase 2 and Phase 3 hold
         the model to the same list.
         """
@@ -3513,9 +3477,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _collect_requirement_issues(self) -> list[str]:
         """``requirement:`` blockers for what the user asked for and the code
-        does not do. Run 19h35 (2026-09-18) planned the guest-capacity rule and
-        shipped without it, and never planned the unique room number or the
-        extra charges; nothing checked the app against the request itself.
+        does not do: the check of the app against the request itself, which
+        catches planned-but-unimplemented and never-planned requirements.
         """
         if not self.enable_requirements_ledger:
             findings = ([required_check_unverified(
@@ -3610,9 +3573,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirement_extraction_attempts += 1
         self._requirements = _requirements_ledger.extract_requirements(instructions, self.client)
         if self._requirements is None:
-            # extract_requirements has five silent None paths. Run 7aybctis
-            # (Qwen) recorded requirements: [] in the recipe, which reads as
-            # "the user asked for nothing" rather than "we never looked".
+            # extract_requirements has five silent None paths; an empty list
+            # in the recipe would read as "the user asked for nothing" rather
+            # than "we never looked".
             logger.warning(
                 "Requirements ledger: extraction returned nothing on attempt %d "
                 "(model %s); requirement verification will not run",
@@ -3883,11 +3846,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         focused checklist produced by the cheap gap-analyzer LLM call.
         """
         # Optionally inline small scaffold files (BESSER_LLM_INLINE_SCAFFOLD=1)
-        # to save the first read_file turns. OFF by default since 2026-09-17:
-        # the copy is a per-run constant, so after the model edits a file it is
-        # stale, and quoting from it is what produced the modify_file misses.
-        # Like other coding agents, file text now reaches the model only
-        # through read_file, which is current; reads batch four to a turn.
+        # to save the first read_file turns. OFF by default: the copy is a
+        # per-run constant, so after the model edits a file it is stale, and
+        # quoting from it produces modify_file misses. Like other coding agents,
+        # file text reaches the model only through read_file, which is current;
+        # reads batch four to a turn.
         scaffold_snapshot = ""
         if (
             os.environ.get("BESSER_LLM_INLINE_SCAFFOLD", "0").lower()
@@ -3947,8 +3910,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         threshold), never per turn — so it doesn't repeatedly bust the prompt
         cache. It's lighter-touch than summarization and often drops the history
         back under the threshold so no summarize is needed; if not, the summarize
-        below still runs on top. Gated OFF by default and unverified live — see
-        history_eviction.py.
+        below still runs on top. Gated OFF by default and not yet verified
+        end to end — see history_eviction.py.
         """
         model = getattr(self.client, "model", None)
         # The reserve must match the output the model is actually ALLOWED to
@@ -3984,8 +3947,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             primary_kind=self.primary_kind,
             # Clamps the threshold to the model's context window — the
             # fixed default overflows genuinely small local models long
-            # before it trips. See HARNESS_LIMITS_AUDIT.md for why the
-            # window table must never guess LOW.
+            # before it trips. See compaction.py for why the window table
+            # must never guess LOW.
             model=model,
             reserve=reserve,
             # Carried through the summary: without it the model resumes after a
@@ -4102,10 +4065,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         ``DomainModel.validate`` only warns about a mandatory creation cycle:
         an association with 1..1 on both ends is legal UML, and BESSER's own
         ``user_reference_domain_model`` ships three of them. Here the intent
-        IS to generate a CRUD API, and a cycle makes that API unusable — live
-        2026-09-18, ``BookingCreate`` required a ReservedRoom id while
-        ``ReservedRoomCreate`` required a Booking id, so the delivered app
-        served 69 paths and could not create either class.
+        IS to generate a CRUD API, and a cycle makes that API unusable — if
+        ``BookingCreate`` requires a ReservedRoom id while
+        ``ReservedRoomCreate`` requires a Booking id, neither class can ever
+        be created.
 
         Recorded once, before Phase 1, and deliberately NOT part of
         ``_collect_validation_issues``: the Phase 3 fix loop edits code, and
@@ -4158,16 +4121,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return files
 
 
-    # Repeats of an edit the executor already rejected, per path. Two live
-    # runs on 2026-09-18 (0c537a4e: 13 identical misses; 57160293: 16
-    # identical no-ops) alternated read_file / modify_file for ~30 turns while
-    # every advisory guard was ignored or never fired. Aider stops after three
-    # reflections and hands the prompt to a human; headless, the runtime has
-    # to change editing strategy, not permanently close the file before the
-    # model has a way to recover. Ignoring recovery remains bounded.
+    # Repeats of an edit the executor already rejected, per path. Advisory
+    # guards alone let a model alternate read_file / modify_file for dozens of
+    # turns. Aider stops after three reflections and hands the prompt to a
+    # human; headless, the runtime has to change editing strategy, not
+    # permanently close the file before the model has a way to recover.
+    # Ignoring recovery remains bounded.
     _REPEAT_FORCE_AT = 3
     _REPEAT_STOP_AT = 7
-    # ``executor.last_repeat`` now also reports refusals counted per TARGET
+    # ``executor.last_repeat`` also reports refusals counted per TARGET
     # (same path + same anchor, redrafted text) once they pass the executor's
     # own _TARGET_REPEAT_AT, through this same channel. So _REPEAT_STOP_AT is
     # deliberately also the target-refusal ceiling: seven refusals at one
@@ -4206,8 +4168,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """Read the session history from an existing recipe, best-effort.
 
         Legacy recipes (written before the history field existed) get one
-        entry synthesized from their own instructions + tool log, so the
-        first modify after this ships still sees the seed run.
+        entry synthesized from their own instructions + tool log, so a
+        modify run still sees the seed run.
         """
         if not os.path.isfile(recipe_path):
             return []
@@ -4244,16 +4206,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Build file manifest. Dependency / build directories are pruned:
         # an LLM-run ``npm install`` would otherwise put thousands of
         # node_modules entries in the manifest, ballooning the recipe
-        # past the SSE embed cap (a production run hit 4.9 MB and the
-        # whole recipe was dropped from the done event).
+        # past the SSE embed cap (which drops the whole recipe from the
+        # done event).
         output_files = []
         generator_files = self.executor._generator_files if hasattr(self.executor, '_generator_files') else set()
         # ``source`` records who CREATED the file, and resume re-seeds the
         # scaffold guardrail from it, so it must keep its two values. It
-        # therefore cannot answer "did the LLM change this?": run 7aybctis
-        # landed 13 edits and still reported from_llm=1, because all but one
-        # were edits to generator files. That is the number that says which
-        # work regeneration would overwrite, so record it separately.
+        # therefore cannot answer "did the LLM change this?" for edits to
+        # generator files. That is the number that says which work
+        # regeneration would overwrite, so record it separately.
         llm_edited = self._llm_edited_paths()
         try:
             for root, dirs, fnames in os.walk(self.output_dir):
@@ -4423,8 +4384,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
 def _sanitize_for_log(data: Any) -> Any:
     """Bound string values for the logs with a marker that cannot be read as
-    code. The old ``v[:500] + "..."`` was twice diagnosed as a model-written
-    elision (runs 3f9a34b8 and 57160293, 2026-09-18). The marker names the
+    code. A plain ``"..."`` suffix is easily mistaken for a model-written
+    elision. The marker names the
     cut, its size and a fingerprint, so two different over-budget inputs
     never render identically."""
     if isinstance(data, dict):

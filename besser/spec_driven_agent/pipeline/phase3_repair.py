@@ -1,17 +1,15 @@
 """Phase 3: validate the delivered tree, repair it, and keep the best version.
 
-The repair loop's guards are the interesting part and every number in them is
-mined from recorded runs rather than chosen: 69% of 393 runs ended on a stall
-guard, leaving 6,774 turns and $514 of declared budget unspent, and a round of
-REJECTED edits is byte-identical on disk to a barren one -- which is why a
-rejected round gets a second attempt (57% wrote source next round) while a
-read-only replay ends immediately (0 of 4 ever wrote again).
+The repair loop's guards are calibrated on recorded runs rather than chosen.
+A round of REJECTED edits is byte-identical on disk to a barren one, but the
+rejections reach the next prompt and the following round often writes source,
+so a rejected round gets a second attempt while a read-only replay ends
+immediately.
 
 Snapshot/rollback lives here too because it is the same decision: the snapshot
 is re-taken on every strictly better tree and the BEST is restored, not the
-last, ranked runtime-first. Run 673hzu0z walked 6-10-7-2-9-11-9-2-6-6-6 and
-shipped 6; 10 of 22 runs with a repair loop ended worse than a state they had
-already reached.
+last, ranked runtime-first - a repair loop can oscillate and end worse than a
+state it already reached.
 
 Mixed into ``LLMOrchestrator``; all run state is reached through ``self``.
 """
@@ -106,15 +104,15 @@ class Phase3RepairMixin:
     def _repair_obligations_revision(self) -> str:
         """Test corrections and checklist evidence are progress without source edits.
 
-        Two things deliberately do NOT move it, because both moved it without
-        anything being discharged and so reset the no-progress streak:
+        Two things deliberately do NOT move it, because neither discharges
+        anything and both would reset the no-progress streak:
 
         * ``attempts`` in the task snapshot - a REFUSED ``task_list(done=...)``
-          increments it, so failing to close an item read as closing one;
+          increments it, so failing to close an item would read as closing one;
         * the scenario KEY - the model may pass its own ``scenario_id``, so
-          re-registering identical requests under a new name minted a new
+          re-registering identical requests under a new name would mint a new
           entry. Only distinct scenario CONTENT counts, so a rename is not a
-          new obligation. 84 rounds across 65 runs survived on these two.
+          new obligation.
         """
         tasks = [{k: v for k, v in task.items() if k != "attempts"}
                  for task in self.executor.task_snapshot()]
@@ -129,8 +127,8 @@ class Phase3RepairMixin:
         """Validate, repair, then apply the runtime exit gate.
 
         The gate runs on EVERY exit from the repair cycle - clean, stalled,
-        budget-exhausted or crashed - because those are exactly the paths a
-        dead app used to leave through quietly. See ``_apply_runtime_gate``.
+        budget-exhausted or crashed - so a dead app cannot leave through any
+        of them quietly. See ``_apply_runtime_gate``.
         """
         try:
             self._run_phase3_repair_cycle()
@@ -159,11 +157,7 @@ class Phase3RepairMixin:
         remaining turn, cost and runtime budgets. An attempt that writes
         nothing, one unchanged/repeated source state, or two rounds that edit
         the tree without improving its score stop retries; unresolved blockers
-        remain explicitly incomplete, never accepted as verified output. This
-        closes the gap where Phase 3 used to surface tsc errors as
-        warnings (no fix attempt) and never invoked cargo / kotlinc
-        at all, leaving the per-project compile-pass at 0/n for TS /
-        Rust / Kotlin runs.
+        remain explicitly incomplete, never accepted as verified output.
         """
         # The final allowed editing turn still deserves validation. The turn
         # cap prevents another repair interaction, not local checks/final review.
@@ -247,9 +241,8 @@ class Phase3RepairMixin:
         # Best tree seen so far, and the snapshot that holds it. The snapshot
         # starts as the Phase 3 entry tree; every strictly better tree replaces
         # it, so the restore at the end returns the BEST state reached rather
-        # than the last. Run 673hzu0z walked 6-10-7-2-9-11-9-2-6-6-6 and shipped
-        # 6; 10 of the 22 runs with a repair loop ended worse than a state they
-        # had already reached.
+        # than the last: a repair loop can oscillate and end worse than a state
+        # it already reached.
         best_issues = list(blockers_before)
         best_score = prev_score = self._phase3_tree_score(blockers_before)
         progress = self._repair_progress
@@ -320,8 +313,8 @@ class Phase3RepairMixin:
             obligations_changed = obligations_before != self._repair_obligations_revision()
             checkpoint_progress()
             if not edits:
-                # The one line that was missing from run 7f918e11's log: the
-                # attempt burned its turns and changed nothing.
+                # Make it visible that the attempt burned its turns and
+                # changed nothing.
                 logger.warning(
                     "Phase 3: attempt %d ended with no successful edit (verification changed=%s)",
                     attempts_run, obligations_changed,
@@ -333,9 +326,8 @@ class Phase3RepairMixin:
             if mid_attempt_stop:
                 exit_reason = mid_attempt_stop
                 break
-            # Re-validate. The bench's per-project compile-pass score
-            # only cares about a clean toolchain, so re-running these
-            # is what actually drives the metric.
+            # Re-validate: re-running the checks is the only evidence that
+            # the repair actually compiles.
             issues_after = self._collect_validation_issues()
             last_issues = issues_after
             self._validation_issues = self._with_model_contract(issues_after)
@@ -390,27 +382,19 @@ class Phase3RepairMixin:
             # a checklist item or correcting a scenario discharges a blocker on
             # its own - that is exactly what ``_repair_obligations_revision``
             # measures - and a re-validation can clear findings an earlier
-            # round's edits had already fixed. Run 053ydac9 (2026-09-20,
-            # gpt-5.6-terra) spent its last round on test_api / read_file /
-            # task_list, took 10 blockers to 4, wrote no source, and was stopped
-            # as "this attempt cannot have moved anything" still holding 86 of
-            # its 120 turns and $4.13 of its $5. So the question a stall guard
-            # has to ask is not "did it write" but "did anything measurably
-            # move": a better tree score, a changed source tree, or a
-            # discharged obligation. Zero writes is no longer its own stop -
-            # it is one no-progress round like any other.
+            # round's edits had already fixed. So the stall guard asks not "did
+            # it write" but "did anything measurably move": a better tree
+            # score, a changed source tree, or a discharged obligation. Zero
+            # writes is one no-progress round like any other.
             improved = score_after < prev_score
             # An attempt that changed nothing AND never reached for the editor
             # leaves the next prompt identical to this one, so the next round
             # really would be this round again: end it here, on the first
             # occurrence. An attempt whose edits were all REJECTED is the
-            # opposite case - it is the commonest way a weak model spends a
-            # round (a third of Qwen3-30B's edit calls fail), the rejections
-            # reach the next prompt, and across the pre-guard corpus the round
-            # after one wrote source 57% of the time and cut the blocker count
-            # 20% (n=30). Those get the second round; at ~8 turns an attempt
-            # that is ~1.2 turns per run, against the ~10 turns per run that
-            # granting it to every barren round would cost.
+            # opposite case - the commonest way a weak model spends a round -
+            # since the rejections reach the next prompt and the following
+            # round often writes source and cuts blockers. Those get a second
+            # round; granting it to every barren round would cost far more.
             replay = edits == 0 and not source_changed and attempted_writes == 0
             if not improved and (
                 (not source_changed and not obligations_changed)
@@ -449,15 +433,13 @@ class Phase3RepairMixin:
             # The tree changed but the score did not improve ON THE PREVIOUS
             # ROUND. ``state`` above can never catch this: it keys on a content
             # hash, so any edit at all - including a different useless one each
-            # round - reads as a new state. Run mbzbzhq9 ran six attempts that
-            # each ended at exactly 13 blockers, hit the 120-turn cap and
-            # shipped a dead app.
+            # round - reads as a new state, and a run can burn its whole turn
+            # cap at a flat blocker count.
             #
             # Measured against the previous round rather than the best ever, on
             # purpose: fixing one import legitimately exposes the errors behind
             # it, and 11 -> 45 -> 40 -> 35 is a repair converging, not a stall.
-            # Oscillation (673hzu0z: 6-10-7-2-9-11-9-2-6-6-6) is the best-tree
-            # snapshot's problem, not this guard's.
+            # Oscillation is the best-tree snapshot's problem, not this guard's.
             if score_after >= prev_score:
                 plateau_streak += 1
                 if plateau_streak >= _PHASE3_PLATEAU_ROUNDS:
@@ -512,17 +494,16 @@ class Phase3RepairMixin:
 
         ``(boot broken, entities not confirmed created, actions not confirmed
         effective, hard blockers)`` - the runtime evidence, with the blocker
-        count last because it is the weakest signal there is: across the 23
-        runs of 2026-09-19 it correlated +0.21 with whether the delivered app
-        worked, i.e. the wrong sign at noise magnitude. Boot dominates on
+        count last because it is the weakest signal: it correlates only at
+        noise level with whether the delivered app works. Boot dominates on
         purpose, so a tree that starts can never be discarded for one that
         does not.
 
         The middle two come from the probe's own per-entity and per-action
         records where it measured THIS tree. Counting issue strings instead
-        was a re-derivation of facts we already had, and it counts what was
-        rendered: an action the probe silently confirmed effective and one it
-        never reached scored the same. Strings remain the fallback for a tree
+        would re-derive facts already held and count what was rendered: an
+        action the probe silently confirmed effective and one it never reached
+        would score the same. Strings remain the fallback for a tree
         no probe measured (no backend, or the probe did not run).
         """
         boot_broken = int(bool(self._startup_blockers(issues)))
@@ -551,9 +532,9 @@ class Phase3RepairMixin:
     def _runtime_gate_finding(self) -> str | None:
         """The gate's refusal text, or None when the app is clear to ship.
 
-        Detection alone is provably not enough: run mbzbzhq9 held its fatal
-        ``mapper config:`` blocker in top-priority position for six attempts
-        and shipped anyway. So this is a gate, not a finding - when it returns
+        Detection alone is not enough: a fatal ``mapper config:`` blocker can
+        sit in top-priority position across attempts and still ship. So this
+        is a gate, not a finding - when it returns
         text the run cannot report itself complete, and the text names the
         runtime failure rather than burying it among forty lint lines.
 
@@ -561,13 +542,10 @@ class Phase3RepairMixin:
         backend to probe), and silent when the probe booted the app and every
         entity create and modelled action came back settled.
 
-        Also silent on an UNSETTLED result, and that restraint is measured. A
-        guessed fixture a business rule legitimately refuses is the normal
-        answer from a correct app: rescoring the 2026-09-19 batch against a
-        corrected acceptance probe (``verification/rescore_corrected_probe.json``)
-        shows 308z4wo2 passing 11/11 while every one of its create routes came
-        back ``create unverified:``, and dp3trml9 - the accepted artifact -
-        answering the probe's ReservedRoom payload with a correct 409. Those
+        Also silent on an UNSETTLED result: a guessed fixture that a business
+        rule legitimately refuses (e.g. a correct 409) is the normal answer
+        from a correct app, so an app can pass acceptance while its create
+        routes come back ``create unverified:``. Those
         routes stay reported through their own ``runtime unverified:`` blocker;
         they are not grounds for the gate to refuse a working application.
         """
@@ -641,14 +619,11 @@ class Phase3RepairMixin:
         (there would also be nothing to undo). A rising count *during* the
         loop is expected, since fixing an import exposes the errors behind it,
         so only the final state counts. And only hard blockers count, because
-        two judge passes on one app returned 12 then 22 missing requirements.
+        two judge passes on the same app can disagree widely.
 
-        Run trilraak entered Phase 3 with 11 blockers; attempt 2 wrote six
-        files, added an association table using ``Table`` without importing
-        it, took the count to 45, and the run shipped that: ``sql_alchemy.py``
-        no longer imported, so every router that star-imports it was dead.
-        ``_restore_snapshot`` existed and was unit-tested, but nothing in
-        production ever called it.
+        Example: a repair that uses ``Table`` without importing it stops
+        ``sql_alchemy.py`` importing, so every router that star-imports it is
+        dead and the blocker count jumps; the pre-repair tree ships instead.
 
         The code is reverted, the findings are not: what the repaired tree
         revealed is recorded, so a real defect a partial fix exposed does not
@@ -665,23 +640,19 @@ class Phase3RepairMixin:
         # snapshot now holds, not necessarily the Phase 3 entry state.
         #
         # The score MUST be the one computed while that tree was the tree on
-        # disk. _phase3_tree_score reads ``_runtime_probe_facts``, and by the
-        # time we get here those facts describe the FINAL tree: recomputing
-        # the entry score here gave both trees the same middle two components
-        # (entities not created, actions not effective), they cancelled, and
-        # the comparison collapsed to (boot, hard count) - the component this
-        # ranking exists to demote. A repair that broke three entity creates
-        # and removed one hard blocker then scored as an improvement and
-        # shipped. Callers inside the repair loop pass ``best_score``;
+        # disk. _phase3_tree_score reads ``_runtime_probe_facts``, which by now
+        # describe the FINAL tree: recomputing the entry score here would give
+        # both trees the same middle two components, collapsing the comparison
+        # to (boot, hard count) - the component this ranking exists to demote.
+        # Callers inside the repair loop pass ``best_score``;
         # ``None`` means "no probe has measured a different tree since", which
         # only holds for a direct call.
         if entry_score is None:
             entry_score = self._phase3_tree_score(entry_blockers)
         final_score = self._phase3_tree_score(final_blockers)
-        # A count cannot see a TRADE. Run mbzbzhq9 held 13 blockers flat across
-        # six attempts while swapping a hard blocker for a broken ORM mapper,
-        # so "not more than we started with" was true and the run shipped an
-        # app whose every endpoint returned 500. Introducing a blocker that
+        # A count cannot see a TRADE: swapping a hard blocker for a broken ORM
+        # mapper keeps the count flat while every endpoint returns 500.
+        # Introducing a blocker that
         # stops the app starting is never an acceptable trade, at any count.
         broke_startup = (self._startup_blockers(final_blockers)
                          - self._startup_blockers(entry_blockers))
@@ -860,10 +831,9 @@ class Phase3RepairMixin:
         )
         prompt_parts.extend(f"- {i.message}" for i in sorted(blockers, key=self._repair_priority))
 
-        # Show the offending lines. Measured 2026-09-18 on the model that had
-        # just failed here: with only "file line N" it spends a turn on
-        # read_file (6/6); with the excerpt it calls modify_file immediately
-        # (6/6). A BOUNDED window is the point -- SWE-agent's ablation scores
+        # Show the offending lines: with only "file line N" a model spends a
+        # turn on read_file; with the excerpt it calls modify_file immediately.
+        # A BOUNDED window is the point -- SWE-agent's ablation scores
         # a 100-line window above the whole file (18.0 vs 12.7 on SWE-bench
         # Lite), so this never pastes an entire file.
         excerpts = self._excerpts_for(blockers)
@@ -894,8 +864,7 @@ class Phase3RepairMixin:
 
         # When the blockers include toolchain errors, instruct the LLM
         # to drive the toolchain itself with run_command — that's the
-        # only way to know whether a fix actually compiles, and it's
-        # the bench's per-project compile-pass criterion. We do this
+        # only way to know whether a fix actually compiles. We do this
         # as additional text in the same user turn (vs. a separate
         # message) so the LLM sees the request as part of the brief.
         if toolchain_blockers:
@@ -978,7 +947,7 @@ class Phase3RepairMixin:
                     )
             except InvalidApiKeyError:
                 # Same rule as Phase 2: an auth failure must PROPAGATE so the
-                # runner reports INVALID_KEY. Swallowed here it read as
+                # runner reports INVALID_KEY. Swallowed here it would read as
                 # "repair interrupted", which tells the user nothing about the
                 # one thing they can fix.
                 raise
@@ -1033,8 +1002,7 @@ class Phase3RepairMixin:
                 and getattr(block, "name", None)
             ]
             # Through the Phase 2 path, so the trace, recipe and sidecar see
-            # these calls; run 7f918e11's ten turns went through the raw
-            # executor and left no record of what they were.
+            # these calls; the raw executor would leave no record of them.
             logged_before = len(self.tool_calls_log)
             tool_results = self._execute_tool_blocks(tool_blocks, self.total_turns - 1)
             edits += sum(
@@ -1043,13 +1011,12 @@ class Phase3RepairMixin:
             )
             messages.append({"role": "user", "content": tool_results})
             # The same streak/repeat guards Phase 2 and the fix cycle get.
-            # Omitting them here left the bounded repair loop running on
-            # _is_stuck alone, on a tighter budget than either.
+            # Without them the bounded repair loop would run on _is_stuck
+            # alone, on a tighter budget than either.
             if self._apply_edit_loop_guards(messages, where="phase 3 repair"):
-                # Falling out of the loop without this returned ``None``, so
-                # an attempt that DID write reported zero writes to the outer
-                # cycle, to the trace and to the log line that says the
-                # attempt changed nothing.
+                # Falling out of the loop would return ``None``, so an attempt
+                # that DID write would report zero writes to the outer cycle,
+                # the trace and the log.
                 return edits
             self._save_phase3_checkpoint()
 
@@ -1125,8 +1092,8 @@ class Phase3RepairMixin:
 
         Built in a staging directory and swapped in by rename: deleting the
         existing snapshot first and copying after leaves the run with no
-        rollback target at all if the copy dies partway, and this now runs
-        several times per Phase 3 rather than once.
+        rollback target at all if the copy dies partway, and this runs
+        several times per Phase 3.
         """
         snapshot_path = os.path.join(self.output_dir, _SNAPSHOT_DIR)
         staging_path = os.path.join(self.output_dir, _SNAPSHOT_STAGING_DIR)

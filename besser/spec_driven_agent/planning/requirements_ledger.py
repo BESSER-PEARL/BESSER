@@ -1,10 +1,7 @@
 """Requirements ledger: what the user asked for, checked against the app.
 
-The gap analyser plans from the spec, but a plan is not a verification. Run
-19h35 (2026-09-18, hotel, Qwen3-30B) planned the guest-capacity rule twice and
-shipped without it, and never planned the unique room number or the extra
-charges at all; every static gate said the run succeeded. A coding agent that
-reads the spec directly (the opencode build of the same spec) got all three.
+The gap analyser plans from the spec, but a plan is not a verification: a run
+can plan a business rule, ship without it, and still pass every static gate.
 
 Two LLM calls close that gap. Before Phase 3 the user's verbatim request is
 turned once into atomic, testable requirements. Each Phase 3 pass then asks
@@ -34,7 +31,7 @@ from besser.spec_driven_agent.validation.write_diagnostics import (
 
 logger = logging.getLogger(__name__)
 
-# The modeling agent appends the user's own text under this heading (see
+# The modeling agent appends the user's own text under this heading (see its
 # smart_generation_handler.py); everything before it is an LLM summary.
 VERBATIM_MARKER = "## The user's original request, verbatim"
 
@@ -48,16 +45,15 @@ _EXTRACTION_INCOMPLETE = (
 _STATUSES = ("implemented", "partial", "missing", "unverified")
 
 # What the judge reads: the schemas and the ORM first (validators, unique
-# columns), then the routers (where rules are enforced), then the pages. The
-# whole 19h35 hotel app compacts to ~150k chars (~38k tokens); a router with
-# nested creation is ~20k on its own, so the per-file cap must hold one.
+# columns), then the routers (where rules are enforced), then the pages. A
+# mid-sized app compacts to ~150k chars (~38k tokens); a router with nested
+# creation is ~20k on its own, so the per-file cap must hold one.
 _DIGEST_MAX_TOTAL_CHARS = 200_000
 _DIGEST_MAX_FILE_CHARS = 24_000
 
 # For these kinds an "implemented" verdict must cite a line that enforces
-# something. On the 19h35 app the judge marked the unique room number, the
-# at-least-one-room rule and the guest-capacity rule implemented by citing a
-# column or a relationship; none of the three is enforced anywhere.
+# something; otherwise the judge marks uniqueness or capacity rules implemented
+# by citing a column or a relationship that enforces nothing.
 _ENFORCEMENT_TOKENS = (
     "unique", "primary_key", "raise", "validat", "assert",
     "httpexception", "valueerror", "min_length", "max_length", "pattern",
@@ -88,8 +84,8 @@ _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
 
 def _normalise_quote(text: str) -> str:
     """The judge's quote, made comparable to file text: literal escape
-    sequences become spaces, single quotes become double quotes (the live
-    judge rewrote ``Mapped_["Booking"]`` as ``Mapped_['Booking']``), and
+    sequences become spaces, single quotes become double quotes (a judge may
+    rewrite ``Mapped_["Booking"]`` as ``Mapped_['Booking']``), and
     only the first quoted line counts - later lines are often abridged."""
     text = text.replace("\\n", "\n").replace("\\t", " ")
     first = text.strip().split("\n", 1)[0]
@@ -124,12 +120,10 @@ _DIGEST_SKIP_DIRS = frozenset({
 })
 _ARTIFACT_ROOT_DIRS = frozenset({"reports", "logs"})
 # Every language the agent is expected to produce, because this one set feeds
-# BOTH the digest the judge reads and the citation checker. Limiting it to
-# Python/JS handed the judge an empty digest on any other stack -- "Files
-# shown: 0" -- while still instructing it to "decide from the CODE ONLY", so
-# every requirement came back missing or unverified, and both classify as
-# BLOCKERS. A Rust or .NET run failed every requirement and spent its whole fix
-# budget chasing citations against files this could not open.
+# BOTH the digest the judge reads and the citation checker. A missing language
+# gives the judge an empty digest on that stack, so every requirement comes
+# back missing or unverified - both BLOCKERS - and the fix budget is spent
+# chasing citations against files this cannot open.
 #
 # Derived from the stacks stack_metadata.py targets (_IDIOM_KEYWORDS and
 # _GENERIC_IDIOM_KEYWORDS), so the two lists move together.
@@ -205,18 +199,10 @@ _SUBMIT_REQUIREMENTS_TOOL = {
     },
 }
 
-# An adversarial review of 17 live runs measured the judge call - never the
-# extraction call, which shares _call_with_tool and the client but sends a
-# prompt two orders of magnitude smaller - returning nothing usable in 3 of
-# them (fcdh0s9k, n_6i2i5r, ys4gfj4v), every time in under a second: too
-# fast to be real inference over a prompt that can hold a 200k-char digest,
-# and consistent with a raised exception or an empty completion rather than
-# a slow response that got cut off. The digest was ~195k chars in all three
-# failures and, built from a fourth run on the same spec that succeeded
-# (lsrnaime), ~195k chars there too - so digest size alone does not explain
-# the difference. That points at an intermittent failure, which a bounded
-# retry has real expected value against; a deterministic one would just
-# fail the retry identically and cost double for nothing.
+# The judge call (unlike the much smaller extraction call) intermittently
+# returns nothing usable within a second - an exception or empty completion,
+# not a timeout, and not explained by digest size. One bounded retry is worth
+# its cost against an intermittent failure.
 _JUDGE_MAX_ATTEMPTS = 2
 _JUDGE_RETRY_BACKOFF_SECONDS = 2.0
 
@@ -631,7 +617,7 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
     if application_requirements:
         judge_prompt = (authority + repair_context + f"## Requirements\n\n{listing}"
                         f"\n\n## Generated code\n\n{digest}")
-        # The first attempt keeps today's planning-model-first behaviour; a
+        # The first attempt uses the planning model first; a
         # retry forces the primary model straight away (see _call_with_tool)
         # instead of repeating the exact call that just failed or came back
         # empty. Bounded to _JUDGE_MAX_ATTEMPTS: every attempt is a full,
@@ -647,9 +633,8 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
             )
             time.sleep(_JUDGE_RETRY_BACKOFF_SECONDS)
     # Nothing usable came back at all, even after the retry above. That is a
-    # failed check, not one unverified verdict per requirement: run lsrnaime
-    # (Qwen) filled in "no verdict returned" for all 104 and reported 104
-    # blockers, burying the eleven real ones. The caller has a single honest
+    # failed check, not one unverified verdict per requirement, which would
+    # bury the real blockers under one per requirement. The caller has a single
     # finding for this, and it must still fire once retries are exhausted.
     if not verdicts and application_requirements:
         logger.warning(
@@ -882,15 +867,12 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
         )
         # The judge is asked for ``<path>:<line>`` and sometimes answers with
         # the CLASS the line belongs to - ``Person: id: Mapped_[int] =
-        # mapped_column(Integer_, primary_key=True)``. 161 of those landed on
-        # three apps the probe drove end to end, at the same rate per app as
-        # on dead ones, so the check was separating nothing. Accept the class
-        # as a locator only when the tree really defines one class by that
-        # name: that is what distinguishes it from the 2026-09-18 run whose
-        # judge wrote the literal word "path" for all 40 citations, which
-        # names no class and stays unverified. This never widens the search
-        # for a citation that does name a file, and every later test
-        # (comment, statement kind, diagnostics, enforcement) still applies.
+        # mapped_column(Integer_, primary_key=True)``. Accept the class as a
+        # locator only when the tree defines exactly one class by that name,
+        # so a placeholder such as the literal word "path" stays unverified.
+        # This never widens the search for a citation that does name a file,
+        # and every later test (comment, statement kind, diagnostics,
+        # enforcement) still applies.
         if not candidates and quoted and _IDENTIFIER_RE.match(path):
             homes = _class_homes(files, quote_cache).get(path, ())
             if len(homes) == 1:

@@ -15,12 +15,9 @@ What we save
   heaviest payload — full conversation history including tool results.
   Assistant content arrives as provider SDK block objects, which are
   converted to their JSON wire shape by :func:`_to_wire` before the
-  dump. That conversion is load-bearing: ``default=str`` used to
-  stringify a ``tool_use`` block into its ``repr()``, which destroyed
-  the block's ``id`` while the ``tool_result`` in the next message kept
-  referencing it. Every resume from a checkpoint saved mid-tool-turn
-  then sent the provider a ``tool_result`` with no matching
-  ``tool_use`` and was rejected with a 400.
+  dump. That conversion is load-bearing: stringifying a ``tool_use``
+  block loses its ``id``, so a resume would send a ``tool_result`` with
+  no matching ``tool_use`` and the provider rejects it with a 400.
 * Running costs, turn counter, compaction counter, tool-call log,
   validation issues, selected generator, inventory.
 * A project fingerprint (hash of primary-model names + instruction
@@ -273,8 +270,8 @@ def _to_wire(obj: Any) -> Any:
     if attrs and "type" in attrs:
         return {k: _to_wire(v) for k, v in attrs.items()
                 if not k.startswith("_") and v is not None}
-    # Our provider-agnostic blocks use __slots__, not __dict__. Stringifying
-    # them dropped every assistant tool call in run f6770633's checkpoint.
+    # Our provider-agnostic blocks use __slots__, not __dict__; stringifying
+    # them would drop every assistant tool call from the checkpoint.
     block_fields = {
         "text": ("type", "text"),
         "tool_use": ("type", "id", "name", "input"),

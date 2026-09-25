@@ -1,10 +1,8 @@
 """Shell runbook: the procedure that turns shell access into verification.
 
-Shell access on its own does not make a model verify anything. Two
-measurements say so: Qwen3-30B called ``test_api`` 0.06 times per run and
-0.00 times across 24 runs *after* the checklist named the tool; and OpenCode,
-with completely unrestricted shell, made 292 bash calls in one run and never
-once booted the application. Capability was never the missing piece.
+Shell access on its own does not make a model verify anything: models given
+a ``test_api`` tool rarely call it, and an agent with unrestricted shell can
+make hundreds of calls without ever booting the application.
 
 Two things are missing, and this module supplies both.
 
@@ -41,9 +39,8 @@ logger = logging.getLogger(__name__)
 PROBE_FILENAME = ".besser_probe.py"
 
 # Environment kill switch. Default on whenever shell tools are enabled;
-# ``0`` gives the shell without the procedure (the measurement's arm C, and
-# an operational escape hatch if the section ever misfires on a stack the
-# probe does not understand).
+# ``0`` gives the shell without the procedure (an escape hatch if the section
+# misfires on a stack the probe does not understand).
 _RUNBOOK_ENV = "BESSER_LLM_SHELL_RUNBOOK"
 
 

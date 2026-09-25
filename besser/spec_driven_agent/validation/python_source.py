@@ -9,8 +9,7 @@ from besser.spec_driven_agent.parsed_source import parse_source
 
 
 # Kept only because ``orchestrator`` re-exports them for external callers.
-# The check itself reads the syntax tree; these text patterns no longer
-# decide anything.
+# The check itself reads the syntax tree, not these text patterns.
 _CREATE_MODEL_RE = _re.compile(r"^class\s+(\w+Create)\s*\(([^)]*)\)\s*:", _re.M)
 _CREATE_FIELD_RE = _re.compile(r"^\s{4}(\w+)\s*:", _re.M)
 _ROUTER_READ_RE = _re.compile(r"\b(\w+)_data\.(\w+)\b")
@@ -97,11 +96,10 @@ def _declared(name: str, classes: dict, seen: frozenset = frozenset()):
 def _annotated_payloads(scope) -> dict:
     """``{parameter name: annotation}`` for this function's arguments.
 
-    The ``<entity>_data`` naming convention was the only way a payload was
-    recognised, so a handler written ``payload: BookingCreate`` was invisible
-    to this check however wrong its reads were. The annotation is the better
-    signal anyway: it NAMES the schema instead of guessing it from a
-    variable, so it also cannot mis-resolve when the two disagree.
+    Complements the ``<entity>_data`` naming convention, so a handler written
+    ``payload: BookingCreate`` is checked too. The annotation is the better
+    signal: it NAMES the schema instead of guessing it from a variable, so it
+    cannot mis-resolve when the two disagree.
     """
     if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return {}
@@ -123,9 +121,8 @@ def _unguarded_payload_reads(tree: ast.AST) -> list:
 
     A read the handler guards with ``hasattr``/``getattr`` on the same
     attribute is skipped: the author already handles the field being
-    absent, so the access cannot raise. Live tree ``...-d71pocck`` shipped
-    ``booking_data.id if hasattr(booking_data, 'id') ... else True`` and
-    served 11/11 workflow checks.
+    absent, so the access cannot raise (e.g.
+    ``booking_data.id if hasattr(booking_data, 'id') ... else True``).
     """
     reads: list = []
     examined: set = set()
@@ -167,12 +164,9 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
     Every occurrence is a guaranteed 500 on that endpoint, and the shape
     recurs because two authors own the two halves: the deterministic
     generator writes the router, the LLM edits the schema, and nothing
-    reconciles them. Three instances on 2026-09-17 alone --
-    ``createdAt``/``updatedAt`` read off a schema that excludes them, a
-    1:1 relationship field, and finally ``PersonCreate`` losing
-    ``lastName`` when the model rewrote the class to add an email
-    validator. That last one returned 500 on person, guest AND employee,
-    which is every way to get a row into the system.
+    reconciles them (e.g. ``createdAt``/``updatedAt`` read off a schema
+    that excludes them, or ``PersonCreate`` losing ``lastName`` when the
+    model rewrote the class to add a validator).
 
     Purely structural, so it cannot fire on a schema that merely looks
     unusual: the field is either declared on the class (or one of its
@@ -200,8 +194,8 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
             continue
         for receiver, annotation, field, line in _unguarded_payload_reads(tree):
             # An annotation names the schema outright; the ``_data`` suffix
-            # only guesses it. Prefer the annotation, and fall back so the
-            # unannotated handlers this check was written for still work.
+            # only guesses it. Prefer the annotation, and fall back so
+            # unannotated handlers are still checked.
             schema = None
             if annotation and annotation in classes and annotation.endswith("Create"):
                 schema = annotation

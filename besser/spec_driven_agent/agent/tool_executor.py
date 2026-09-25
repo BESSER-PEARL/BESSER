@@ -81,9 +81,8 @@ def _file_lock(path: str):
 ToolExecutionStatus = Literal["ok", "error", "skipped"]
 
 
-# A task whose verifier keeps refusing is retried at most this many times.
-# Unbounded retries livelocked a live run for 62 consecutive turns until the
-# turn cap killed it, with 87% of its time budget unused (2026-09-11).
+# A task whose verifier keeps refusing is retried at most this many times;
+# unbounded retries can livelock a run until the turn cap.
 _MAX_TASK_VERIFY_ATTEMPTS = 3
 
 
@@ -115,8 +114,7 @@ COMMAND_TIMEOUT = 120
 # 1:1 typographic → ASCII map used by modify_file's fallback matching.
 # Models routinely type an ASCII apostrophe/quote/dash where the file has
 # the typographic variant (’ etc.); the exact match then fails on
-# every retry — observed live as a 77-action, multi-million-token flail
-# on a single Dashboard.tsx edit. Every mapping is same-length so match
+# every retry. Every mapping is same-length so match
 # indices in the normalized text are valid in the original.
 _TYPOGRAPHIC_TRANSLATION = str.maketrans({
     "‘": "'", "’": "'", "‚": "'", "‛": "'",
@@ -130,7 +128,7 @@ _TYPOGRAPHIC_TRANSLATION = str.maketrans({
 # instructions can still cause damage within the workspace. It's a cheap
 # filter that stops the easy mistakes: fork bombs, root-fs rm, curl-pipe-
 # sh one-liners, writes to system paths, and credential theft from the
-# user's home dir. Strong isolation requires a container/VM (see roadmap).
+# user's home dir. Strong isolation requires a container/VM.
 _COMMAND_DENY_PATTERNS: tuple[re.Pattern, ...] = (
     re.compile(r"(?:^|[\s;&|])sudo(?:\s|$)"),
     re.compile(r"(?:^|[\s;&|])su\s+-"),
@@ -174,11 +172,9 @@ _UNSEARCHED_DIRS = frozenset({
 })
 
 # Maximum file content returned by read_file (chars)
-# Sized when context windows were small. A generated router runs to ~35k
-# chars, so the agent was editing a file it could see 59% of while
-# write_file asked it to reproduce the whole thing. 60k covers the
-# largest observed generated file with headroom and costs ~15k tokens
-# against an 80k compaction threshold.
+# A generated router runs to ~35k chars; 60k covers the largest observed
+# generated file with headroom and costs ~15k tokens against an 80k
+# compaction threshold.
 MAX_FILE_READ = 60_000
 
 
@@ -192,8 +188,7 @@ def _normalize_path_for_comparison(path: str) -> str:
     depending on whether the path exists at resolution time. When that
     happens, a naive ``full.startswith(workspace)`` check fails for
     legitimate paths inside the workspace and the caller sees a bogus
-    "Path traversal blocked" error — which is how the Rails output
-    ended up missing half its subdirectory files on Windows.
+    "Path traversal blocked" error.
 
     We strip the prefix from BOTH sides before comparison so the
     containment check is semantically correct regardless of whether
@@ -211,7 +206,7 @@ def _normalize_path_for_comparison(path: str) -> str:
 
 
 # Stderr fragments that indicate the requested binary isn't installed in
-# the execution container. The smart-gen runner image has Python +
+# the execution container. The runner image has Python +
 # Node + a few essentials; everything else (ruby, go, rustc, dotnet, ...)
 # routinely falls into this bucket. We treat these as soft skips so the
 # LLM doesn't surface "X is not installed" to the user as if it were a
@@ -243,8 +238,8 @@ def _looks_like_command_not_found(stderr: str) -> bool:
 _DEF_HEADER_RE = re.compile(r"^\s*(?:async\s+)?(def|class)\s+(\w+)", re.MULTILINE)
 
 # Recovery for an anchor the file does not hold. Never "use write_file": that
-# wording turned targeted edits into whole-file rewrites of scaffold code
-# (2026-09-17, see Orchestrator._build_modify_loop_reminder).
+# wording turns targeted edits into whole-file rewrites of scaffold code
+# (see Orchestrator._build_modify_loop_reminder).
 _ANCHOR_ADVICE = (
     "To add code that does not exist yet, anchor on a line that IS in the file: "
     "old_text = that line copied from read_file output, new_text = that line "
@@ -290,10 +285,9 @@ def _anchored_occurrences(content: str, old_text: str) -> list[int]:
     """Start offsets of ``old_text`` that do not begin inside a line's
     indentation. A quote whose first line is under-indented still matches as
     a substring a few characters into the file's line; replacing that span
-    keeps the file's leading spaces and writes the rest at the quote's indent.
-    Run 57160293 t19 (2026-09-18) produced a second ``try:`` at the enclosing
-    level that way. A hit at column 0, or after real text (a partial-line
-    edit), is fine."""
+    keeps the file's leading spaces and writes the rest at the quote's indent
+    (e.g. a second ``try:`` at the enclosing level). A hit at column 0, or
+    after real text (a partial-line edit), is fine."""
     out: list[int] = []
     pos = content.find(old_text)
     while pos != -1:
@@ -309,10 +303,8 @@ def _new_syntax_error(rel_path: str, before: str, after: str) -> tuple[str, int]
     did; ``None`` otherwise (unsupported language, or already broken).
 
     Python compiles; TS/TSX/JS/JSX go through the structural scanner in
-    ``validation.frontend_source``. This guard was Python-only until
-    2026-09-21, which is how 42 of 143 ``web_app`` runs shipped a
-    ``Booking.tsx`` that esbuild cannot parse - all 42 valid as generated and
-    corrupted by an edit this function waved through.
+    ``validation.frontend_source``, so an edit cannot corrupt a frontend file
+    that was valid as generated.
     """
     if frontend_source.supports(rel_path):
         return frontend_source.new_syntax_error(before, after)
@@ -333,11 +325,7 @@ def _new_syntax_error(rel_path: str, before: str, after: str) -> tuple[str, int]
 
 # The ORM module every router star-imports. Breaking it does not break one
 # file, it takes the whole application down, and the Phase 3 repair loop
-# reaches for it constantly: in run p_qopu92 all five of its edits went here
-# while ten of its blockers named booking_methods.py, and the app went from 7
-# hard blockers to 150. Same shape in iterations 2 (10 -> 45), 10 (2 -> 160)
-# and mbzbzhq9 (shipped dead). The phase rollback caught them, but a whole
-# attempt was wasted each time.
+# edits it often; a rollback catches that, but wastes the whole attempt.
 _STRUCTURAL_MODULES = ("sql_alchemy.py", "pydantic_classes.py")
 _IMPORT_SMOKE_TIMEOUT = 20
 
@@ -471,17 +459,15 @@ class ToolExecutor:
         self._modify_counts: dict[str, int] = {}
         # Consecutive failed modify_file attempts per path. Escalates the
         # error message from "not found" to "stop retyping old_text, read the
-        # file" — the pilot's 77-action flail was the same miss repeated.
+        # file".
         self._failed_modifies: dict[str, int] = {}
         # The old_text of the last miss per path. A byte-identical resend
-        # cannot succeed; run 0c537a4e (2026-09-18) sent one 13 times.
+        # cannot succeed.
         self._last_missed_old_text: dict[str, str] = {}
         # Every rejected modify_file this run, (path, old_text, new_text) ->
-        # times seen, and per path the highest repeat count. Run 57160293
-        # (2026-09-18) sent one no-op call (old_text == new_text) 16 times and
-        # nothing counted it; run 0c537a4e came back with one anchor for four
-        # 3-strike cycles because the refusal reset its own counter. Only a
-        # successful edit on the path clears these.
+        # times seen, and per path the highest repeat count; no-op calls
+        # (old_text == new_text) count too. Only a successful edit on the path
+        # clears these.
         self._rejected_edits: dict[tuple[str, str, str], int] = {}
         # The same TARGET refused again, whatever the draft: (path, anchor)
         # where anchor is old_text, or "lines N-M" for a range edit.
@@ -611,11 +597,10 @@ class ToolExecutor:
         """Close open items whose deterministic verifier now passes.
 
         A task with a real verifier does not need the model to argue for it:
-        the harness can see the endpoint is implemented. Run ys4gfj4v spent
-        22 task_list calls against 9 edits, and 12 of those calls were
-        refused - bookkeeping cost 2.4x the actual work. Anything checkable
-        is checked here instead, which also means a model that never learns
-        the checklist protocol still gets credit for what it built.
+        the harness can see the endpoint is implemented, and checklist
+        bookkeeping otherwise costs more turns than the edits. Checking here
+        also means a model that never learns the checklist protocol still gets
+        credit for what it built.
 
         Only verifier-backed items qualify. An evidence-only task still needs
         the model to cite its work, because nothing here can judge it.
@@ -638,12 +623,11 @@ class ToolExecutor:
     def reopen_unverifiable_tasks(self) -> list[int]:
         """Re-run verifiers on completed items and reopen those that now fail.
 
-        Restoring the pre-Phase-3 tree undoes the code but not the checklist.
-        Run uvobkl4u shipped all six action endpoints as done/verified while
-        every one of them was an HTTP 501 stub again: Phase 3 had implemented
-        them, the rollback put the stubs back, and nothing re-checked. Only
-        items with a deterministic verifier can be re-judged; evidence-only
-        completions are left alone rather than guessed at.
+        Restoring the pre-Phase-3 tree undoes the code but not the checklist,
+        so work Phase 3 implemented would otherwise stay done/verified over
+        restored stubs. Only items with a deterministic verifier can be
+        re-judged; evidence-only completions are left alone rather than
+        guessed at.
         """
         reopened = []
         for task in self._tasks:
@@ -750,9 +734,8 @@ class ToolExecutor:
             except (ValueError, OSError, UnicodeError):
                 return [], f"evidence path is not a readable workspace file: {rel}"
             # read_file numbers every line, so a quote copied straight out of
-            # it never matches. modify_file has stripped that prefix since the
-            # ladder's tier 5; the checklist did not, and live run 7aybctis
-            # recorded four genuinely-implemented tasks BLOCKED because of it.
+            # it never matches; strip that prefix as modify_file's ladder does,
+            # or implemented tasks end up BLOCKED.
             if quote not in content:
                 unnumbered = _strip_line_numbers(quote.splitlines())
                 if unnumbered is not None and "\n".join(unnumbered) in content:
@@ -798,7 +781,7 @@ class ToolExecutor:
     def _requested_task_ids(args: dict) -> tuple[list[int], list]:
         """Ids from ``ids=[...]`` or a single ``id=N``; also the unusable ones.
 
-        Accepting a LIST is the point: marking items done one per turn made
+        Accepting a list is the point: marking items done one per turn made
         bookkeeping 40% of all turns across a 10-run batch (83% in the worst
         run), because every turn pays a full prompt prefill.
         """
@@ -1004,8 +987,7 @@ class ToolExecutor:
         """action='drop' — also one entry of the `drop` list inside a mixed call.
 
         The honest exit for an item the user never asked for. Without
-        it the end-turn gate leaves only a false 'done' (live 2026-09-17:
-        "Added authentication capabilities" with nothing built).
+        it the end-turn gate leaves only a false 'done'.
         """
         task_id = args.get("id")
         reason = str(args.get("reason") or "").strip()
@@ -1030,11 +1012,9 @@ class ToolExecutor:
     def _do_add(self, args: dict) -> dict:
         """action='add' — also the `add_texts` verb inside a mixed call.
 
-        `texts` appends several in one call; `text` keeps the single
-        shape existing prompts and checkpoints use. Live run 4efe04ff
-        (2026-09-18) spent turns 11-23 on thirteen consecutive adds
-        building one checklist — the same waste the ``done`` batching
-        fixed, on the other action.
+        `texts` appends several in one call (one add per turn wastes turns,
+        as with ``done``); `text` keeps the single shape existing prompts and
+        checkpoints use.
         """
         raw = args.get("texts")
         batched = isinstance(raw, list)
@@ -1079,9 +1059,9 @@ class ToolExecutor:
     def _do_mixed(self, args: dict) -> dict:
         """action='mixed' — several checklist verbs in ONE call.
 
-        Run ys4gfj4v made 22 task_list calls against 9 edits: mixing a
-        ``done`` and an ``add`` in the same turn needed two calls (plus often
-        a ``list``) because ``action`` was a single enum. Each verb here
+        Mixing a ``done`` and an ``add`` in the same turn would otherwise need
+        two calls (plus often a ``list``) because ``action`` is a single enum.
+        Each verb here
         reuses the EXACT single-action handler that ``action='done'`` /
         ``'add'`` / ``'drop'`` / ``'blocked'`` calls, so every gate
         (evidence, deterministic verifiers, the block-after-N-attempts guard,
@@ -1228,9 +1208,8 @@ class ToolExecutor:
         """Attach bounded contract and parser feedback to a successful write.
 
         A framework name the file never imported is repaired here first, so
-        the break cannot cascade: three runs shipped an ORM module that had
-        stopped importing, which killed every router that star-imports it and
-        cost the whole Phase 3 repair to a rollback.
+        the break cannot cascade: an ORM module that stops importing kills
+        every router that star-imports it.
         """
         content = self._repair_imports(rel_path, content, result)
         warnings = self._contract_warnings(rel_path, content)
@@ -1386,15 +1365,11 @@ class ToolExecutor:
             )
             raise ValueError(f"Path traversal blocked: {rel_path}")
         # Return the NORMALISED path, not the raw realpath. self.workspace is
-        # stored prefix-free, so a returned "\\?\C:\..." made every downstream
+        # stored prefix-free, so a returned "\\?\C:\..." makes every downstream
         # os.path.relpath(path, self.workspace) raise "path is on mount
-        # '\\?\C:', start on mount 'C:'" — including the one in execute_typed
-        # that every file tool goes through. Seen 12 times across 9 Windows
-        # runs, always on write_file creating the first file in a new
-        # directory, alongside "[WinError 1450] Insufficient system
-        # resources": realpath keeps the prefix when the underlying
-        # _getfinalpathname fails transiently, which is why it never
-        # reproduced on demand. Containment was already proven against
+        # '\\?\C:', start on mount 'C:'". realpath keeps the prefix when
+        # _getfinalpathname fails transiently (e.g. WinError 1450), so the
+        # failure is intermittent. Containment was already proven against
         # full_cmp, so returning it is also the self-consistent answer.
         return full_cmp
 
@@ -1420,8 +1395,8 @@ class ToolExecutor:
     def _list_dir(self, directory: str) -> list[dict]:
         """List files recursively, relative to workspace.
 
-        Installed dependencies and caches are pruned: one npm install put
-        10k node_modules paths into a single listing and overflowed the
+        Installed dependencies and caches are pruned: a single npm install
+        can put 10k node_modules paths into one listing and overflow the
         model's context on the next turn.
         """
         from besser.spec_driven_agent.agent.prompt_builder import _SNAPSHOT_SKIP_DIRS
@@ -1896,13 +1871,12 @@ class ToolExecutor:
             result["lines_read"] = end - start
         elif total_lines > 200:
             # A whole large file still fits in MAX_FILE_READ; pagination is for
-            # the ones that do not. Inviting it unconditionally is what taught
-            # run trilraak to crawl a 598-line router in 10-line windows.
+            # the ones that do not. Inviting it unconditionally teaches the
+            # model to crawl a file in tiny windows.
             result["total_lines"] = total_lines
 
-        # Crawling: run trilraak read routers/booking.py 36 times across 29
-        # distinct 10-line spans, about a third of its 80-turn budget, on a
-        # file that fits in one read. Prose in the tool description did not
+        # Crawling a file that fits in one read in 10-line windows can burn a
+        # third of the turn budget. Prose in the tool description does not
         # stop it, so say it where the behaviour happens.
         rel = args["path"].replace("\\", "/").strip()
         self._read_counts[rel] = self._read_counts.get(rel, 0) + 1
@@ -1919,11 +1893,9 @@ class ToolExecutor:
         return result
 
     # Consecutive range-edit refusals on one path before the ladder sends the
-    # model back to text matching. Pooled over six live Qwen runs modify_file
-    # lands 86-92% while replace_file_lines lands 15-43%: the tool added to
-    # rescue a broken modify_file is now the weaker one. Run se7k3zbx spent 17
-    # of 20 range edits failing, 11 of them refused by the syntax guard on one
-    # Python file, while the ladder kept steering back into it 29 times.
+    # model back to text matching. Measured on Qwen, modify_file lands 86-92%
+    # of edits while replace_file_lines lands 15-43%, so the ladder must not
+    # keep steering into a failing range edit.
     _RANGE_EDIT_GIVE_UP = 3
 
     def _add_edit_recovery(self, tool: str, args: dict, result: dict) -> None:
@@ -1949,9 +1921,9 @@ class ToolExecutor:
                 if tool == "replace_file_lines":
                     # A range edit carries no old_text for _modify_file's own
                     # fingerprinting, so key the rejection on the selected
-                    # range. Without this, eight identical refused range edits
-                    # left last_repeat None: nothing counted, and neither
-                    # _REPEAT_STOP_AT nor the per-file streak guard could fire.
+                    # range. Without this, identical refused range edits leave
+                    # last_repeat None and neither _REPEAT_STOP_AT nor the
+                    # per-file streak guard can fire.
                     self._failed_modifies[path] = self._failed_modifies.get(path, 0) + 1
                     self._note_rejection(
                         path, f"lines {args.get('start_line')}-{args.get('end_line')}",
@@ -1960,8 +1932,8 @@ class ToolExecutor:
                     self._range_edit_failures[path] = self._range_edit_failures.get(path, 0) + 1
         exhausted = self._range_edit_failures.get(path, 0) >= self._RANGE_EDIT_GIVE_UP
         # _modify_file already bracketed the target and issued a read_id for it,
-        # so steer on the FIRST miss: the two turns this used to cost (re-read,
-        # then guess line numbers) are exactly what the span removes.
+        # so steer on the FIRST miss: the span saves a re-read and a guess at
+        # line numbers.
         located = result.get("located_range") if tool == "modify_file" else None
         # The located-range assist is a FIRST-miss aid only. Once two edits on
         # this path have been refused the ladder escalates to a whole-file
@@ -1977,14 +1949,9 @@ class ToolExecutor:
         if self._edit_recovery.get(path, 0) < 2 or self._frozen(path):
             return
         # Two refused edits on this path -> rewrite the whole file.
-        # NOT because write_file is more reliable - measured, it is not: of 108
-        # corpus calls, 99 are new frontend files at 0% refusal, while on
-        # existing scaffold files it was 5 calls and 5 refusals. The reason is
-        # damage. A 96-run A/B found 27 lost scaffold items across 6 apps when
-        # the ladder ended at replace_file_lines and 0 when it ended here
-        # (p=0.027, the only significant result in that experiment), and the
-        # losses were traced to successful range edits on a drifted view
-        # overwriting neighbouring classes.
+        # NOT because write_file is more reliable (it is not): successful range
+        # edits on a drifted view overwrite neighbouring classes, so ending the
+        # ladder at replace_file_lines measurably loses scaffold code.
         if tool in {"modify_file", "replace_file_lines", "read_file"}:
             result["edit_recovery"] = {
                 "next_tool": "write_file", "path": path,
@@ -2047,10 +2014,9 @@ class ToolExecutor:
         if (type(start) is not int or type(end) is not int
                 or not view[2] <= start <= end <= view[3]):
             # read_file's ``offset`` is a 0-based skip; the numbers printed
-            # beside each line are 1-based. Run 7aybctis read offset=50, asked
-            # for start_line=50 against a 51-108 view, was refused, and sent
-            # the identical call again — so name the correction, don't restate
-            # the range.
+            # beside each line are 1-based. Models confuse the two and resend
+            # the identical call, so name the correction, don't restate the
+            # range.
             hint = ""
             if type(start) is int and start == view[2] - 1:
                 hint = (f" You selected {start}, one before the first displayed line: "
@@ -2066,13 +2032,9 @@ class ToolExecutor:
             return {"error": "new_text must be a string containing the complete replacement."}
         replacement = replacement.replace("\r\n", "\n")
         # read_file numbers what the model sees, and a model that selected a
-        # range by those numbers often pastes them back. modify_file's ladder
-        # has always stripped them from BOTH sides; this tool shipped without
-        # that and wrote them to disk. Run fcdh0s9k, turn 29: modify_file
-        # refused 107 numbered lines. Turn 31: replace_file_lines accepted 293
-        # and baked " 101|       </nav>" into Booking.tsx, so lines 101-393 of
-        # the delivered frontend were not valid TSX. The backend probe passed
-        # and nothing else noticed, because tsc was disabled on that run.
+        # range by those numbers often pastes them back. Strip them as
+        # modify_file's ladder does, or " 101|       </nav>" lands on disk as
+        # invalid source that nothing downstream may catch (e.g. with tsc off).
         numbering = _strip_line_numbers(replacement.split("\n"))
         stripped_numbering = numbering is not None
         if stripped_numbering:
@@ -2172,16 +2134,11 @@ class ToolExecutor:
             return frozen
 
         # read_file numbers what the model sees and Qwen pastes the gutter
-        # back. modify_file's ladder strips it (tier 5) and
-        # replace_file_lines strips it for the reason recorded at its own
-        # call site; this was the one write path that did not, so a rewrite
-        # arriving as "   1| import re" was refused as "unexpected indent at
-        # line 1" and the model resent it unchanged. Measured over the
-        # 2026-09-20 corpus: 35 Qwen write_file calls carried a gutter and 1
-        # landed (2.9%), against 98.5% for the 726 clean ones - 34 of
-        # write_file's 56 Qwen refusals. Every one of the 35 is strippable.
+        # back. Strip it as modify_file and replace_file_lines do, or a rewrite
+        # arriving as "   1| import re" is refused as "unexpected indent at
+        # line 1" and resent unchanged (most of Qwen's write_file refusals).
         # Safe because the guard is "most content lines carry NNN| ", which
-        # 0 lines out of 1.2M in besser/ and the generated apps satisfy.
+        # no real source file satisfies.
         content = args.get("content")
         if isinstance(content, str) and content:
             unnumbered = _strip_line_numbers(content.split("\n"))
@@ -2189,7 +2146,7 @@ class ToolExecutor:
                 args = {**args, "content": "\n".join(unnumbered)}
 
         # Rewriting a file the model has never seen this run is a rewrite
-        # from memory - the edit that lost scaffold code (2026-09-17).
+        # from memory, which loses scaffold code.
         if os.path.isfile(path) and rel_path.strip() not in self._known_paths:
             return {"error": (
                 f"{args['path']} exists and you have not read it this run. Call "
@@ -2222,7 +2179,7 @@ class ToolExecutor:
                     ),
                 }
 
-        # ARM B: size rule INVERTED. A whole-file rewrite is cheapest and
+        # Size rule: a whole-file rewrite is cheapest and
         # safest on a SMALL file (<=200 lines), which the model can reproduce
         # faithfully after one read; it is a large file that risks dropping
         # code. So small generated files unlock write_file immediately and
@@ -2314,10 +2271,9 @@ class ToolExecutor:
 
     # Refusals at one target before the orchestrator's escalation is told,
     # counting redrafts. One above the exact-text threshold (_REPEAT_FORCE_AT
-    # = 3): run se7k3zbx alternated two byte-identical drafts at booking.py
-    # 301-400 (t24/26/28/30/32) so the exact-text counter only reached 3 on
-    # the fifth call, but run mbzbzhq9 landed the THIRD genuinely different
-    # edit to one range. Advisory - it steers strategy, it refuses nothing.
+    # = 3): alternating drafts slow the exact-text counter, yet a third
+    # genuinely different edit to one range can still land. Advisory - it
+    # steers strategy, it refuses nothing.
     _TARGET_REPEAT_AT = 4
 
     def _note_rejection(self, rel_path: str, old_text: str, new_text: str) -> int:
@@ -2398,8 +2354,8 @@ class ToolExecutor:
             return result
         # Sticky stop. After three misses a call the executor has ALREADY
         # rejected is refused without running the ladder, and only a
-        # successful edit on this path clears it (the old refusal popped its
-        # own counter: four 3-strike cycles on one anchor in run 0c537a4e).
+        # successful edit on this path clears it (a refusal must never reset
+        # its own counter).
         # A NEW anchor still goes to the ladder below.
         if (
             self.consecutive_modify_misses(rel_path) >= self._MAX_MODIFY_MISSES
@@ -2416,14 +2372,12 @@ class ToolExecutor:
                 ),
             }
         if old_text == new_text:
-            # A no-op is a rejection like any other. Run 57160293 sent one 16
-            # times and this branch returned before every counter.
+            # A no-op is a rejection like any other and must reach the counters.
             self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
             seen = self._note_rejection(rel_path, old_text, new_text)
             where = ""
             # locate_chunk, not `in`: the ladder re-indents new_text on a
-            # tier-2 apply, and a byte-exact check then misses its own output
-            # (run 4efe04ff, turns 65/68/70).
+            # tier-2 apply, and a byte-exact check then misses its own output.
             line_no = locate_chunk(content, new_text) if new_text.strip() else None
             if line_no:
                 where = (
@@ -2446,16 +2400,12 @@ class ToolExecutor:
                     "new_text = the changed lines."
                 ),
             }
-        # Refuse to write an abbreviation into the file. Observed 2026-09-18:
-        # every new_text in a 38-call run carried "..." and the one edit that
-        # landed wrote `contact_id:...` into sql_alchemy.py. Gemini CLI rejects
-        # this pre-flight for the same reason; the carve-out is theirs too --
-        # a placeholder already present in old_text is being preserved, not
-        # introduced.
-        # An ellipsis the quoted region already carried may legitimately be
-        # rewritten back; a NEW one is an abbreviation. Comparing the lines
-        # rather than mere presence closes the hole that let 6 elisions
-        # through in run 36e9c8a6 because old_text happened to contain one.
+        # Refuse to write an abbreviation (e.g. `contact_id:...`) into the
+        # file. Gemini CLI rejects this pre-flight for the same reason; the
+        # carve-out is theirs too -- a placeholder already present in old_text
+        # is being preserved, not introduced.
+        # Compare the lines rather than mere presence, so one ellipsis in
+        # old_text does not license new ones.
         new_elision = find_elision(new_text)
         if new_elision and new_elision[1].strip() not in elided_lines(old_text):
             line_no, line = new_elision
@@ -2484,8 +2434,8 @@ class ToolExecutor:
         # Only line-anchored hits (or hits after real text: a partial-line
         # edit) count as exact. A hit inside a line's indentation is the quote
         # under-indented - see _anchored_occurrences.
-        # Insertion edits retain their anchor inside new_text. Reapplying them
-        # used to report success and grow the file forever (f6770633: 75 writes).
+        # Insertion edits retain their anchor inside new_text; reapplying them
+        # must not report success and grow the file forever.
         # Exclude only anchors INSIDE completed replacement regions, not other
         # sites that still need this edit. This guards against duplication after
         # resume, but existing content alone must NEVER claim a successful edit.
@@ -2547,9 +2497,8 @@ class ToolExecutor:
                 if rel_path.strip() not in self._known_paths else ""
             )
             # An elided quote can never match, and "check your whitespace" sends
-            # the model to re-read and re-elide: 37 of 38 misses in one live run
-            # (2026-09-18) were a shortened quote, and the generic message was
-            # what kept it looping. Name the real cause first.
+            # the model to re-read and re-elide in a loop. Name the real cause
+            # first.
             elision = find_elision(old_text)
             # A retained anchor inside matching replacement content warrants a
             # safe refusal, not a success claim. Multi-line incidental matches
@@ -2629,7 +2578,7 @@ class ToolExecutor:
             if escaped:
                 err["error"] = escaped + " " + err["error"]
 
-            # A bracketed span replaces the old recovery detour (miss -> miss ->
+            # A bracketed span replaces the recovery detour (miss -> miss ->
             # read_file -> guess a range) with one pre-filled replace_file_lines.
             # Both documented range-edit failure modes are line-number selection
             # errors, so the numbers come from here, not from the model.
@@ -2681,9 +2630,7 @@ class ToolExecutor:
                          "this is not evidence of completion. Read the current region for a different change.",
             }
 
-        # A valid file must never leave this tool unparseable. Run 57160293 t19
-        # wrote a second `try:` at the enclosing level, the executor computed
-        # "expected 'except' or 'finally' block", returned it - and kept it.
+        # A valid file must never leave this tool unparseable.
         broke = _new_syntax_error(rel_path, content, new_content)
         if broke:
             msg, line_no = broke
@@ -2909,7 +2856,7 @@ class ToolExecutor:
         - The command itself runs in a namespace sandbox that binds only this
           run's directory and gives it its own PID 1 (see execution.sandbox).
           The path lock covers tool arguments; the sandbox covers the command
-          string, which is where `cd ../<other_run>` lived.
+          string (e.g. `cd ../<other_run>`).
         - Timeout enforced
         - Output truncated to prevent context blow-up, full log spilled to
           the workspace when it is

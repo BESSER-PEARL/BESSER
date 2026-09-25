@@ -113,7 +113,7 @@ class LLMGenerator(GeneratorInterface):
         allow_shell_tools: bool = False,
         enable_toolchain_validation: bool = False,
     ):
-        # ``model`` (DomainModel) is optional now — smart generation
+        # ``model`` (DomainModel) is optional — generation
         # can also be driven from a state machine, agent, GUI, object,
         # or quantum circuit alone. ``GeneratorInterface`` expects
         # SOMETHING in model slot, so when there is no domain model we
@@ -129,7 +129,7 @@ class LLMGenerator(GeneratorInterface):
             anchor_model = state_machines[0] if isinstance(state_machines, (list, tuple)) else state_machines
         super().__init__(anchor_model, output_dir)
         # Preserve the "is there actually a DomainModel?" signal separately —
-        # ``self.model`` may now be pointing at any BUML artifact, so we
+        # ``self.model`` may be pointing at any BUML artifact, so we
         # can't use it as the domain-model truth source downstream.
         self.domain_model = model
         self.instructions = instructions

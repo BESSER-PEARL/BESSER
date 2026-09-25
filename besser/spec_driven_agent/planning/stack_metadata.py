@@ -11,9 +11,8 @@ file (tsconfig.json, Cargo.toml, build.gradle.kts, …).
 Two problems with that approach:
 
 1. The customise LLM occasionally forgets one of these files (no
-   tsconfig.json, no Cargo.toml). The artifact then fails the bench's
-   per-project compile check 0/n even when the source files themselves
-   are correct.
+   tsconfig.json, no Cargo.toml). The project then fails its compile
+   check even when the source files themselves are correct.
 2. When the LLM does emit the metadata, it often invents dependency
    versions that don't exist on the registry.
 
@@ -37,7 +36,7 @@ dependencies, no opinionated source structure). They DO commit to:
   project root, settings.gradle.kts next to build.gradle.kts).
 
 The detection heuristic is a deliberately cheap substring match.
-Adding a richer parser would be overkill given the bench's
+Adding a richer parser would be overkill given the usual
 instruction format ("Build a Next.js …", "Build a Rust …").
 """
 
@@ -90,15 +89,7 @@ def _contains_word(text: str, needle: str) -> bool:
     what stops ``rust`` matching ``trustworthy``. Anchoring an edge that is
     punctuation does the opposite: ``\b`` before the ``.`` of ``.net`` requires
     the PRECEDING character to be a word character, so ``\b\.net\b`` matches
-    only inside ``asp.net`` and never after a space. "Build a .NET 8 API"
-    silently got no idiom guidance, which is the one spelling someone added
-    ``.net`` to the keyword list for.
-
-    The previous test decided on the needle with its punctuation stripped and
-    then built the pattern from the unstripped needle, so ``.net`` (-> "net",
-    alnum) took the boundary branch it could never satisfy, and ``next.js``
-    (-> "nextjs", alnum) also took it -- working only by luck, since its
-    leading ``n`` is a word character.
+    only inside ``asp.net`` and never in "Build a .NET 8 API".
     """
     lowered = text.lower()
     needle = needle.lower()
@@ -382,14 +373,11 @@ def supported_stacks() -> Iterable[str]:
 # Idiomatic-conventions prompt injection
 # ---------------------------------------------------------------------------
 #
-# A vibe-bench run found LLM-generated code LESS idiomatic than a naive-LLM
-# baseline in ~80% of scenarios: Spring Boot entities reaching for `Int`
-# instead of `Long` ids, Flask/FastAPI storing money as `float`, axum
-# handlers `unwrap()`-ing instead of returning `Result`, entities reused as
-# request bodies instead of dedicated DTOs, .... The customise-loop prompt
-# said nothing about stack-specific conventions, so the LLM defaulted to
-# whatever's most common in its training data rather than what an
-# experienced dev on that stack would write.
+# Without stack-specific guidance the LLM defaults to what is most common in
+# its training data rather than what an experienced dev on that stack would
+# write: `Int` instead of `Long` ids in Spring Boot entities, money stored as
+# `float`, axum handlers that `unwrap()` instead of returning `Result`,
+# entities reused as request bodies instead of dedicated DTOs.
 #
 # This section adds a SHORT, targeted "idiomatic conventions" block to the
 # system prompt when the instructions name a recognisable stack. It's
@@ -553,21 +541,13 @@ _PYTHON_WEB_RIVALS: dict[str, tuple[str, ...]] = {
 def effective_rivals(family: str | None, instructions: str) -> tuple[str, ...]:
     r"""Rival frameworks that would be a SWITCH, excluding any the user asked for.
 
-    The framework-switch guard exists for a real incident (2026-09-02: a free
-    model rewrote a FastAPI scaffold into an unbootable Flask hybrid). But it
-    compared generated imports against the scaffold alone, so it could not tell
-    that rewrite from a user who wrote "build a Flask REST API" -- got a FastAPI
-    scaffold anyway, because the generator selector maps "backend"/"API"/"REST"
-    to FastAPI -- and was then blocked for obeying them.
-
-    The gap sanitizer already draws this line (``r not in low_instr``); the two
-    enforcing sites, Phase 3 validation and the per-write lint, did not. This is
-    that rule, in one place, so they cannot drift apart again.
-
-    Naming the rival is enough: "do not use Flask" also suppresses the blocker,
-    which is the safe direction. Nothing here fixes the selector picking FastAPI
-    for a Flask request -- it stops the user being told their own request is a
-    hard-constraint violation.
+    The framework-switch guard stops a model rewriting the scaffold into an
+    unbootable hybrid (e.g. FastAPI into Flask). Comparing imports against the
+    scaffold alone would also block a user who asked for Flask but got a
+    FastAPI scaffold (the selector maps "backend"/"API"/"REST" to FastAPI).
+    The gap sanitizer, Phase 3 validation and the per-write lint share this
+    rule so they cannot drift apart. Naming the rival is enough: "do not use
+    Flask" also suppresses the blocker, which is the safe direction.
     """
     rivals = _PYTHON_WEB_RIVALS.get(family or "")
     if not rivals:

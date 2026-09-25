@@ -1,7 +1,5 @@
 """Tuning constants and small pure helpers for the orchestrator.
 
-Extracted from ``orchestrator.py``, which had grown to 6,771 lines with three
-hundred of them being module-level configuration before the class even began.
 Nothing here holds run state; every value is a constant or a pure function of
 its arguments, which is what lets the orchestrator's mixins import it without
 a cycle back to the module they are mixed into.
@@ -34,9 +32,8 @@ _ROLLBACK_DISCARD_DIR = ".besser_rollback_discard"
 _SNAPSHOT_STAGING_DIR = ".besser_snapshot_staging"
 
 # Installed dependency caches, never LLM-authored, excluded from the snapshot.
-# Phase 3 now re-snapshots on every improvement, and copying an installed
-# node_modules several times per run is gigabytes of pointless IO on a host
-# whose C: drive has hit zero free bytes mid-session before.
+# Phase 3 re-snapshots on every improvement, and copying an installed
+# node_modules several times per run is gigabytes of pointless IO and disk.
 _SNAPSHOT_IGNORED_DIRS = ("node_modules", "__pycache__", ".venv", "venv")
 
 # Run bookkeeping that a rollback must NOT revert. The snapshot predates them,
@@ -139,8 +136,7 @@ def _tool_call_detail(tool_name: str, tool_input: object, blocks_in_turn: int) -
 
     Streamed alongside the tool name so a finished run can be read back from the
     durable event store. ``blocks_in_turn`` is included because 1 means the model
-    batched nothing, and every turn costs a full prompt prefill - across a 10-run
-    live batch every single turn carried exactly one call.
+    batched nothing, and every turn costs a full prompt prefill.
     """
     parts: list[str] = []
     if isinstance(tool_input, dict):
@@ -208,7 +204,7 @@ _SCAFFOLD_INSTALL_TIMEOUT_SECONDS = 180
 
 # Turns per fix attempt. An attempt that reaches the cap, or ends in prose,
 # without one successful write gets exactly one more turn with modify_file
-# forced (run 7f918e11, 2026-09-18: two attempts, ten turns, no edit).
+# forced, so an attempt cannot end having only described the fix.
 _PHASE3_FIX_TURNS = 10
 _PHASE3_NO_EDIT_REMINDER = (
     "<system-reminder>This attempt has not edited any file, and the blocker is "
@@ -220,15 +216,12 @@ _PHASE3_NO_EDIT_REMINDER = (
 
 # Consecutive no-progress rounds tolerated before the repair loop ends.
 #
-# Was 1, which is right for a round that is genuinely a replay of the last one
-# and wrong for every other kind. The loop now decides that per round (see
-# ``replay`` below): a round that never reached for the editor still ends the
-# loop on the spot, and only a round that DID something it can carry into the
-# next prompt gets this allowance.
+# The loop decides per round (see ``replay``): a round that never reached for
+# the editor ends the loop on the spot; only a round that DID something it can
+# carry into the next prompt gets this allowance.
 #
-# Measured over the 221 spec-iteration runs recorded before the zero-write
-# stop existed (verification/spec-iterations, 2026-09-19..20), on the round
-# that FOLLOWED a round which wrote nothing and left the tree byte-identical:
+# Measured over 221 recorded runs, on the round that FOLLOWED a round which
+# wrote nothing and left the tree byte-identical:
 #
 #   the round attempted edits, all rejected  n= 30  next wrote 57%, cut 20%
 #   the round made tool calls, none an edit  n=209  next wrote 18%, cut 11%
@@ -243,11 +236,11 @@ _PHASE3_NO_PROGRESS_ROUNDS = 2
 # of every source file, so ANY write - including a different useless one each
 # round - reads as a new state and the guard never fires.
 #
-# Was 2, which stopped the loop one round before the payoff. Same corpus,
-# counting a round as non-improving when the blocker count did not fall: after
-# two consecutive non-improving rounds the NEXT round still improved 36% of
-# the time (n=125) against a 46% baseline with no plateau behind it; only at
-# three does the payoff halve (23%, n=60) and at four collapse (15%, n=107).
+# Same corpus, counting a round as non-improving when the blocker count did
+# not fall: after two consecutive non-improving rounds the NEXT round still
+# improved 36% of the time (n=125) against a 46% baseline with no plateau
+# behind it; only at three does the payoff halve (23%, n=60) and at four
+# collapse (15%, n=107).
 _PHASE3_PLATEAU_ROUNDS = 3
 
 # Runtime-gate verdicts, ordered worst-last so a tuple compares as a score.
@@ -259,9 +252,8 @@ _RUNTIME_OK, _RUNTIME_UNVERIFIED, _RUNTIME_FAILED = 0, 1, 2
 # ``api scenario:`` is deliberately NOT here. A retained workflow is a
 # model-authored assertion, and the tool that owns it says so ("a generated
 # assertion can be wrong; explain any correction against that specification").
-# Run dynioweu delivers an app that passes 11/11 corrected acceptance checks
-# and still fails its own booking_overlap_violation scenario, so a gate keyed
-# on it refuses a working application.
+# An app can pass every acceptance check and still fail its own generated
+# scenario, so a gate keyed on it would refuse a working application.
 _RUNTIME_OBSERVED_FAILURE_PREFIXES = (
     "mapper config:", "application startup:", "create contract:", "action call:",
 )
@@ -287,33 +279,25 @@ _RUNTIME_UNVERIFIED_PREFIXES = (
 # Checkpoint history eviction (see history_eviction.py). When enabled, stale
 # file bodies in older messages are stubbed at the compaction checkpoint to cut
 # the re-sent context. OFF by default: it rewrites history the provider
-# re-serializes and hasn't been live-verified (gen is rate-limited). Enable with
-# BESSER_LLM_HISTORY_EVICTION=1 after a verification run.
+# re-serializes and is not yet verified end to end. Enable with
+# BESSER_LLM_HISTORY_EVICTION=1.
 _HISTORY_EVICTION_ENABLED = os.environ.get("BESSER_LLM_HISTORY_EVICTION", "0") == "1"
 
-# Sub-generator tools that a chosen PRIMARY generator already bundles, so
-# offering them to the Phase-2 agent only lets it scatter redundant top-level
-# _gen_dir folders (e.g. a FastAPI backend already contains SQLAlchemy models,
-# Pydantic schemas and REST routers inside backend/ — the standalone
-# generate_pydantic / generate_sqlalchemy / generate_rest_api tools would emit
-# duplicate pydantic/ sqlalchemy/ rest_api/ dirs next to it). The Phase-1
-# SELECTOR is already told "generate_fastapi_backend includes SQLAlchemy +
-# Pydantic — don't pick those separately", but that guidance never reached the
-# Phase-2 agent; this removes the tools so it CANNOT call them.
 # Generators that produce a WHOLE application. Once one of them has built the
 # scaffold, none of them may run again: re-running the primary regenerates
 # over every edit Phase 2 has made, and a rival stack drops a second
-# application beside the assembled one - the failure the frontend contract's
-# "rival framework imported into the scaffold" check exists to catch.
-# Measured across twelve runs the model never called one, so this removes a
-# risk and ~200 tokens per request rather than a capability it was using.
-# Single-artefact generators (rdf, supabase, java/python classes) stay: a user
-# can legitimately ask for one alongside the app.
+# application beside the assembled one. Single-artefact generators (rdf,
+# supabase, java/python classes) stay: a user can legitimately ask for one
+# alongside the app.
 _APPLICATION_PRIMARY_TOOLS = frozenset({
     "generate_web_app", "generate_django", "generate_flutter",
     "generate_fastapi_backend", "generate_rest_api",
 })
 
+# Sub-generator tools that a chosen PRIMARY generator already bundles (e.g. a
+# FastAPI backend already contains SQLAlchemy models, Pydantic schemas and REST
+# routers). Removed from the Phase-2 toolset so the agent CANNOT emit duplicate
+# top-level pydantic/ sqlalchemy/ rest_api/ folders next to the scaffold.
 _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY = {
     "generate_fastapi_backend": {
         "generate_pydantic", "generate_sqlalchemy", "generate_rest_api",

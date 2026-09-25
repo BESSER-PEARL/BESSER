@@ -1,15 +1,9 @@
 """Structural syntax check for TS/TSX/JS/JSX, with no Node toolchain.
 
-``_new_syntax_error`` has refused a Python edit that would not compile since
-the ``try:`` duplication of run 57160293. It returned ``None`` for every other
-extension, so the same class of damage went to disk unchallenged in the
-frontend. Measured over the 143 ``web_app`` runs of
-``verification/spec-iterations``: 42 shipped a ``frontend/src/pages/Booking.tsx``
-that esbuild cannot parse, 42 of 42 regenerate from their own
-``effective_project.json`` as valid TSX, and every one was corrupted by a
-recorded ``modify_file`` / ``replace_file_lines`` call that the harness
-accepted. ``tsc`` was disabled on all 42, so nothing downstream caught it
-either.
+``_new_syntax_error`` refuses a Python edit that would not compile; this module
+gives frontend files the same protection, so an edit (``modify_file`` /
+``replace_file_lines``) that leaves a TSX file unparseable is refused rather
+than written, even when ``tsc`` is not available downstream.
 
 Two checks, both deliberately conservative - this runs as a REFUSAL, and a
 false refusal costs the model a turn:
@@ -21,16 +15,15 @@ tracked: prose inside JSX text carries unbalanced ones and delimiter damage
 never shows up only there.
 
 ``json_container_faults`` parses the ``attr={{...}}`` containers that are
-written as strict JSON - the generated table config, where every one of the 42
-breaks landed. A container using JS object syntax (bare identifier keys,
+written as strict JSON - the generated table config, where such breaks
+typically land. A container using JS object syntax (bare identifier keys,
 shorthand properties) never was JSON and is skipped; a trailing comma is legal
 TS and is not a defect.
 
-Calibration, 2026-09-21: zero findings against 4,391 generated frontend files
-and 7,208 real-world ``node_modules``/BESSER-frontend files that esbuild
-parses, and a finding on all 42 broken ones. Both callers apply it as a
-regression test - ``before`` clean, ``after`` not - so a file the scanner
-cannot read is never protected rather than falsely refused.
+Calibrated to zero findings on thousands of generated and real-world files
+that esbuild parses, and a finding on every known broken one. Both callers
+apply it as a regression test - ``before`` clean, ``after`` not - so a file
+the scanner cannot read is never protected rather than falsely refused.
 """
 
 from __future__ import annotations

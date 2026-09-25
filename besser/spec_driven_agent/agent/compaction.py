@@ -26,8 +26,7 @@ logger = logging.getLogger(__name__)
 # compaction is a lossy summarisation, and anything it drops that the model
 # still needs gets RE-READ, which costs more than it saved. A threshold set
 # too low therefore does not "save context" - it produces a read/compact/
-# re-read spiral (observed live 2026-09-10: 40 turns of read_file until the
-# runtime cap, see pilot-experiment/HARNESS_LIMITS_AUDIT.md).
+# re-read spiral that can run until the runtime cap.
 COMPACT_TOKEN_THRESHOLD = max(
     8_000, int(os.environ.get("BESSER_LLM_COMPACT_THRESHOLD", "80000") or 80_000)
 )
@@ -38,11 +37,9 @@ COMPACT_TOKEN_THRESHOLD = max(
 _OPERATOR_CAP: int | None = (
     COMPACT_TOKEN_THRESHOLD if os.environ.get("BESSER_LLM_COMPACT_THRESHOLD") else None
 )
-# The preserved tail is sized in TOKENS, not messages. A fixed count (this
-# was 6) is the wrong unit: six write_file turns and six one-line turns
-# differ by two orders of magnitude, so the tail was either far larger than
-# the threshold it was meant to fit under (compaction that frees nothing) or
-# a few hundred tokens (the model loses its working set and re-reads).
+# The preserved tail is sized in TOKENS, not messages: six write_file turns
+# and six one-line turns differ by two orders of magnitude, so a fixed count
+# either frees nothing or leaves the model without its working set.
 # Expressed as a share of the LIVE threshold so a clamped small-window model
 # gets a proportionally smaller tail instead of one that fills its window.
 COMPACT_PRESERVE_TAIL_FRACTION = 0.3
@@ -70,35 +67,25 @@ COMPACT_RESERVE_TOKENS = 16_000
 # as a provider error), whereas an under-stated window compacts constantly
 # and silently destroys the model's working context.
 #
-# Removed 2026-09-10 after audit (HARNESS_LIMITS_AUDIT.md):
-#   ("qwen",     32_000)  qwen3.8:27b is served by Command Code, NOT by the
-#                         LIST ollama box the 32k figure was measured on.
-#                         The row was self-contradictory: it produced a
-#                         16k threshold while the same run requested 32_768
-#                         output tokens - more than the window it claimed.
-#                         Native window is 262_144. It caused the live
-#                         read/compact/re-read spiral described above.
-#   ("mistral",  32_000)  matched ``mistral-large-latest`` (256k), clamping
-#                         a paid frontier model to a 16k threshold.
-#   ("llama",    32_000)  no llama model is configured on any tier.
-#   ("deepseek", 64_000)  likewise.
+# Deliberately absent: a bare "qwen" row (hosted qwen models serve 262_144,
+# and a 32k row would request more output than the window it claims), a bare
+# "mistral" row (matches ``mistral-large-latest``, 256k), and "llama" /
+# "deepseek" (no evidence of a small served window).
 _SMALL_CONTEXT_WINDOWS: tuple = (
-    # Self-hosted on the LIST ollama box, which loads models with a 32k
-    # window (OLLAMA server config) regardless of the model's native
-    # maximum - verified via /api/ps on 2026-09-02. Re-verify before
-    # trusting: a restart of ``ollama serve`` without the env var falls
-    # back to a much smaller default, silently.
+    # Self-hosted Ollama loads these with a 32k window (server config)
+    # regardless of the model's native maximum; check via /api/ps. A restart
+    # of ``ollama serve`` without the env var falls back to a much smaller
+    # default, silently.
     ("devstral", 32_000),
     # Small self-hosted Mistral variants only. Deliberately NOT a bare
     # "mistral" marker, which would also match mistral-large (256k).
     ("mistral-small", 32_000),
     ("mistral-7b", 32_000),
-    # Our own Ollama box (one Tesla V100). OLLAMA_CONTEXT_LENGTH advertises
-    # 131_072, but that is capability, not usable window. Measured 2026-09-11 on
-    # qwen3-coder:30b: prefill runs ~950 tok/s and is paid every turn, and a 128k
-    # prompt comes back truncated to ~65_536 - from the FRONT, silently dropping
-    # the system prompt. 60_000 keeps history plus the 32_768 output reserve
-    # under that ceiling. Covers every qwen3 tag served from that box.
+    # Self-hosted Ollama (single GPU): OLLAMA_CONTEXT_LENGTH advertises
+    # 131_072, but that is capability, not usable window. On qwen3-coder:30b a
+    # 128k prompt comes back truncated to ~65_536 - from the FRONT, silently
+    # dropping the system prompt. 60_000 keeps history plus the 32_768 output
+    # reserve under that ceiling. Covers every self-hosted qwen3 tag.
     ("qwen3", 60_000),
 )
 
@@ -128,13 +115,13 @@ _CATALOG_LOADED = False
 #
 # Rows are generous on purpose. Overflow against a hosted API (OpenAI,
 # Anthropic, Command Code) surfaces as a clean provider error - loud and
-# recoverable - whereas our self-hosted Ollama box truncates silently from
+# recoverable - whereas a self-hosted Ollama server truncates silently from
 # the FRONT and eats the system prompt. An optimistic row is cheap here and
 # dangerous in the measured table, which is why the measured table wins
 # over everything below it. Family markers rather than exact ids so a point
 # release does not fall back to the default; each marker must be specific
-# enough not to catch a sibling family (see the bare "mistral" audit above).
-# Windows from the Command Code catalog (2026-09-17) and this file's audit.
+# enough not to catch a sibling family (see the bare "mistral" note above).
+# Windows from the Command Code catalog and provider documentation.
 _KNOWN_CONTEXT_WINDOWS: tuple = (
     ("claude-haiku", 200_000),
     ("claude-sonnet", 1_000_000),
@@ -147,8 +134,8 @@ _KNOWN_CONTEXT_WINDOWS: tuple = (
     ("gpt-4o", 128_000),
     ("gpt-4.1", 1_000_000),
     ("mistral-large", 256_000),
-    # Nebius Token Factory endpoint properties, read from the console
-    # 2026-09-18: 262K context, FP8, tool calling available.
+    # Nebius Token Factory endpoint properties: 262K context, FP8, tool
+    # calling available.
     ("qwen3-30b-a3b", 262_144),
 )
 
@@ -158,7 +145,8 @@ _KNOWN_CONTEXT_WINDOWS: tuple = (
 # is not on top, because the check runs before every request. 0.8 leaves
 # ~15-19% of the window for those and keeps every hosted row within one
 # file read of the flat default - gpt-4o (128k, the OpenAI default) is the
-# binding case at ~76k. A whole-window 0.5 put it at 31k, i.e. the spiral.
+# binding case at ~76k. A whole-window 0.5 would put it at 31k, i.e. the
+# re-read spiral.
 _USABLE_WINDOW_FRACTION = 0.8
 
 # Absolute ceiling on what an advertised window may hand back. A 1M window
@@ -254,10 +242,10 @@ def effective_threshold(
     if not model:
         return threshold
     low = model.lower()
-    # Every row below was measured on a SELF-HOSTED deployment (our Ollama
-    # box, the LIST box). Those serve bare ``name:tag`` ids. A cloud provider
+    # Every measured row is for a SELF-HOSTED deployment, which serves bare
+    # ``name:tag`` ids. A cloud provider
     # namespaces its ids by vendor ("Qwen/Qwen3-30B-A3B-Instruct-2507" on
-    # Nebius, 262k native), and clamping one of those to a self-hosted box's
+    # Nebius, 262k native), and clamping one of those to a self-hosted server's
     # measured window compacts constantly for no reason. The "/" is what
     # tells them apart, so a namespaced id skips the measured table and falls
     # through to the advertised/known windows below.
@@ -310,19 +298,13 @@ def _is_tool_result_message(msg: dict) -> bool:
     return False
 
 
-# Real-tokenizer singleton. We prefer ``tiktoken`` because it's widely
-# available and its BPE is close enough to Anthropic's tokenizer for the
-# ``is the context over threshold?`` decision. ``tiktoken`` is a DECLARED
-# dependency (requirements.txt) - it was previously imported but declared
-# nowhere, so the fallback below was the only path that ever ran in
-# production.
+# Real-tokenizer singleton. ``tiktoken`` (a declared dependency) is close
+# enough to Anthropic's tokenizer for the ``is the context over threshold?``
+# decision.
 #
-# If it is missing we fall back to chars/4. MEASURED 2026-09-10 on 387,836
-# chars of BESSER Python: the true ratio is 4.83 chars/token, so chars/4
-# reports ~121% of the real count and the threshold trips EARLY. (An older
-# comment here claimed it under-counts code by ~30% and trips late. That was
-# backwards, and believing it is what let an over-aggressive threshold go
-# unnoticed - see pilot-experiment/HARNESS_LIMITS_AUDIT.md.)
+# If it is missing we fall back to chars/4. Measured on BESSER Python source
+# the true ratio is 4.83 chars/token, so chars/4 reports ~121% of the real
+# count and the threshold trips EARLY, not late.
 _TOKENIZER: Any = None
 _TOKENIZER_LOADED = False
 
@@ -438,8 +420,7 @@ def maybe_compact(
             model's context window (small local models overflow the
             fixed default long before it trips).
         work_state: Optional open-work state; see :func:`_work_state_section`.
-            Omitted, the summary is exactly what it was before this argument
-            existed.
+            Omitted, no work-state section is rendered.
 
     Returns:
         A tuple of (compacted_messages, did_compact).
@@ -716,8 +697,8 @@ def _work_state_section(work_state: Any) -> str:
     * ``contract_rules`` — model-derived hard rules, as a list of short
       strings or one newline-separated block.
 
-    Anything else (including ``None``) renders nothing, which is what keeps
-    an unwired caller byte-identical to the pre-work-state summary.
+    Anything else (including ``None``) renders nothing, so an unwired caller
+    gets no work-state section.
     """
     if not isinstance(work_state, dict):
         return ""

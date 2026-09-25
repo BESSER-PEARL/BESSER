@@ -14,8 +14,8 @@ _ATTRIBUTE = re.compile(r"[\w:-]+")
 # parsed separately below; this scan never evaluates interpolation or code.
 # Only a template literal may span lines, so the two quoted alternatives stop
 # at a newline: without that bound, two ordinary apostrophes in JSX prose
-# ("Guest's" on one line, "Don't" on another) read as one string literal and
-# swallowed the whole <MethodButton> between them, hiding a real blocker.
+# ("Guest's" on one line, "Don't" on another) would read as one string literal
+# and swallow the whole <MethodButton> between them.
 _NON_CODE = re.compile(
     r"//[^\n]*|/\*[\s\S]*?\*/"
     r"|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`"

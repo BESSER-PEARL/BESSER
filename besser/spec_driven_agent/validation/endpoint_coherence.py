@@ -1,15 +1,14 @@
 """Static coherence checks between frontend HTTP calls and backend routes.
 
-This validator intentionally starts as report-only. It handles literal
+This validator is intentionally report-only. It handles literal
 ``fetch`` and Axios URLs with optional template parameters, which covers the
 high-confidence runtime-404 class without guessing about fully dynamic URLs.
 
 A URL built entirely out of interpolation is NOT such a call. The shared
 api-client module most generated frontends use issues every request from one
 wrapper, ``fetch(`${API_BASE}${path}`, options)``, which normalises to
-``/{param}`` — no literal segment, nothing to compare. Matched against the
-manifest anyway, ``POST /{param}`` matched ``/health`` and was reported as
-"the path exists only for GET". Those calls are now skipped: this validator
+``/{param}`` — no literal segment, nothing to compare (it would match
+``/health`` and be misreported). Those calls are skipped: this validator
 says nothing about a route the caller resolves at runtime. Reporting on the
 resolved call sites instead (``api.create('carpark', ...)`` → ``POST
 /carpark/``) would need the helper resolution ``acceptance._post_helpers``
@@ -31,9 +30,8 @@ _SKIP_DIRS = {"node_modules", "dist", "build", ".next", ".git", ".besser_snapsho
 # ``build_endpoint_manifest`` writes "  " + methods padded to 20 + " " + path.
 # The padding disappears once the method list is longer than 20 characters
 # ("GET, PUT, PATCH, DELETE" is 23), so the separator may be a single space;
-# and the root route's path is just "/". Demanding two spaces and a non-empty
-# path segment dropped both, and a call to a dropped route reads as a 404 --
-# every one of the 358 delivered trees lost its "GET /" this way.
+# and the root route's path is just "/". Both must parse, or a call to a
+# dropped route (e.g. "GET /") reads as a 404.
 _MANIFEST_ROUTE_RE = re.compile(
     r"^ {2}([A-Z][A-Z, ]*?)[ \t]+(/\S*)[ \t]*$", re.MULTILINE
 )

@@ -290,9 +290,9 @@ def serialize_domain_model(model: DomainModel) -> dict[str, Any]:
                 "multiplicity": _multiplicity_str(end.multiplicity),
             }
             # UML puts an end typed X on the class at the OPPOSITE end, so
-            # ``role`` is a property of ``owner``, not of ``class``. Leaving
-            # that to inference has produced the relation the wrong way round
-            # before; state it. (Binary associations only — an n-ary end has
+            # ``role`` is a property of ``owner``, not of ``class``. Left to
+            # inference, the relation can come out the wrong way round; state
+            # it. (Binary associations only — an n-ary end has
             # no single opposite.)
             if len(assoc_ends) == 2:
                 other = assoc_ends[1] if end is assoc_ends[0] else assoc_ends[0]
@@ -322,8 +322,8 @@ def serialize_domain_model(model: DomainModel) -> dict[str, Any]:
 
     # Build output — only include non-empty sections
     result: dict[str, Any] = {"name": model.name}
-    # An unlinked comment box lands on the model itself. It survives a save in
-    # the editor; it used to be the one piece of user prose the spec dropped.
+    # An unlinked comment box lands on the model itself; it is user prose that
+    # survives a save in the editor, so the spec carries it too.
     model_meta = _metadata_entry(model)
     if model_meta:
         result["metadata"] = model_meta

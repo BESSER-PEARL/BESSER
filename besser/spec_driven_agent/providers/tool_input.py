@@ -1,9 +1,8 @@
 """Coerce tool-call inputs back to the shapes their schema declares.
 
 Models sometimes send an array or object argument as a JSON string, often
-wrapping the whole input again: Sonnet 5 did it in 16 of 30 forced
-``submit_requirements`` calls (2026-09-24), Haiku 4.5 in 0 of 10. Decoding is
-schema-guided and provider-neutral: only a string where the schema allows no
+wrapping the whole input again (common on some Claude models for forced
+tool calls). Decoding is schema-guided and provider-neutral: only a string where the schema allows no
 string is touched, and only when it decodes to the declared shape.
 """
 

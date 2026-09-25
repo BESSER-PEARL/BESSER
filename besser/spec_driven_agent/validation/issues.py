@@ -38,9 +38,8 @@ def _hard_blockers(issues: list) -> list:
     guessed request being refused "does not prove this endpoint is broken".
     They stay blockers - an unverified app is not a verified one - but they
     may not rank one tree above another or force a rollback, because we do
-    not know that they describe a defect. Run gpt-5.6-terra-hzllh0l6 pinned
-    one of these at 1 blocker for 17 zero-write repair rounds, 108 turns and
-    $0.96: the app was correctly refusing to create an ABSTRACT entity.
+    not know that they describe a defect (e.g. an app correctly refusing to
+    create an ABSTRACT entity).
     """
     return [i for i in issues if not i.message.startswith((
         "requirement:", "requirement unverified:",
@@ -63,17 +62,12 @@ _UNKNOWN_PREFIXES = (
 def unresolved_defects(issues: list) -> list:
     """Completion issues that describe a DEFECT, not an unknown.
 
-    ``incomplete`` on the run card used to be any completion issue, and the
-    whole unverified family classifies as ``blocker`` severity -- so a run
-    reporting "Nothing we checked was found missing from the delivered code",
-    3 verified and 4 could-not-verify was still headlined
-    "Generated - incomplete". Nothing was wrong with it; we had simply not
-    been able to check four things.
-
+    The whole unverified family classifies as ``blocker`` severity, but an
+    app whose only open items are could-not-verify checks is not broken.
     "Incomplete" is reserved for output that does not work: a tree that will
     not parse, an app that cannot boot or create a record, a requirement the
     code demonstrably does not implement. An unknown keeps its place in the
-    ledger and in ``blockerCount``; it no longer sets the headline.
+    ledger and in ``blockerCount``; it does not set the headline.
     """
     return [
         i for i in issues
@@ -130,17 +124,14 @@ _RUFF_STYLE_CODES = frozenset({
     # star-imports sql_alchemy / pydantic_classes / bal_stdlib, so ruff
     # answers F403 ("cannot detect undefined names" — a notice that ruff is
     # blind, never a finding) and F405 ("may be undefined") in place of F821.
-    # Resolving every F405 name on the 74 known-working delivered trees
-    # against what those modules actually export cleared 32,032 of 32,036;
-    # the remaining 4 are what `undefined name:` already reports as a
-    # blocker with a proven verdict. E402 is the one import bal_stdlib
-    # places below its header.
+    # Real undefined names behind a star import are reported separately, as
+    # `undefined name:` blockers with a proven verdict. E402 is the one import
+    # bal_stdlib places below its header.
     "F403", "F405", "E402",
 })
 # F811 joins the undefined-name codes: a redefinition means the later name
 # silently wins — the ORM `User` shadowed by the Pydantic `User` and then
-# queried through the wrong one. All 4 hits across a 10-app live batch were
-# real defects (2026-09-11).
+# queried through the wrong one. In practice these hits are real defects.
 _RUFF_BLOCKER_CODES = frozenset({"F811", "F821", "F822", "F823"})
 _RUFF_LINE_RE = _re.compile(r"\b([EWFCNI]\d{2,4})\b")
 
@@ -210,9 +201,8 @@ def _classify_issue(message: str) -> ValidationIssue:
 
     # The domain model describes an aggregate no client can create. Legal UML
     # (DomainModel.validate only warns), fatal here: generating a CRUD API is
-    # exactly the intent this breaks. Live 2026-09-18 — Booking required a
-    # ReservedRoom id and ReservedRoom required a Booking id, so the shipped
-    # app served 69 paths and could not create either.
+    # exactly the intent this breaks (e.g. Booking requires a ReservedRoom id
+    # and ReservedRoom requires a Booking id, so neither can be created).
     if lower.startswith("model contract:"):
         return ValidationIssue("blocker", text)
 
@@ -221,9 +211,8 @@ def _classify_issue(message: str) -> ValidationIssue:
     # those reports use the separate create-unverified path.
     #
     # ``action call:`` is the action-endpoint twin of ``create contract:`` -
-    # constructibility.py observed a 500 from a handler it invoked. It was in
-    # no prefix list here, so it fell through to the default warning and the
-    # blocker-only fix loop never consumed it.
+    # constructibility.py observed a 500 from a handler it invoked. It must be
+    # a blocker, or the blocker-only fix loop never consumes it.
     if lower.startswith(("create contract:", "action call:")):
         return ValidationIssue("blocker", text)
 

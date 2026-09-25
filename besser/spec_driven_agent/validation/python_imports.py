@@ -11,8 +11,7 @@ The allowlist tables decide which import roots count as satisfied: the stdlib
 half is taken from the interpreter rather than hand-maintained, and the
 external half is what the generators are known to emit.
 
-Split out of ``orchestrator.py``. Every function here was already
-module-level and took a path - none of them ever touched run state.
+Every function here takes a path and touches no run state.
 """
 
 from __future__ import annotations
@@ -30,9 +29,8 @@ from besser.spec_driven_agent.parsed_source import parse_source
 
 
 # The stdlib half of the allowlist, taken from the interpreter rather than
-# hand-maintained: the hand-written set was missing argparse, sqlite3, glob,
-# zipfile and ~180 others, each of which would be reported as "this app
-# cannot start".
+# hand-maintained, so no stdlib module is reported as "this app cannot
+# start".
 _STDLIB_ROOTS = frozenset(getattr(sys, "stdlib_module_names", ())) | {
     "typing_extensions",  # not stdlib, but ubiquitous and always installed
 }
@@ -41,11 +39,8 @@ _STDLIB_ROOTS = frozenset(getattr(sys, "stdlib_module_names", ())) | {
 # fallback: the authoritative source is the app's own manifest (see
 # ``_declared_dependency_roots``). Kept because a generator can emit an
 # import before the manifest entry, and a missing manifest should not turn
-# every framework import into a blocker.
-#
-# Every non-FastAPI family used to be absent here, which is why a 2-class
-# Django app whose requirements.txt declares Django was reported with 10
-# blockers and "cannot start" (2026-09-17). All 20 generators were affected.
+# every framework import into a blocker. Covers every generator family,
+# not only FastAPI.
 _EXTERNAL_IMPORT_ROOTS = frozenset({
     # FastAPI / Starlette
     "fastapi", "pydantic", "pydantic_settings", "pydantic_core", "sqlalchemy",
@@ -160,15 +155,14 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
 
     Ruff cannot find these: ``from sql_alchemy import *`` makes it report
     "unable to detect undefined names", which EXCUSES every name instead of
-    flagging it, so a missing MODULE is invisible to F821. Live 2026-09-11: an
-    app imported ``sql_alchemy`` and ``pydantic_classes`` with neither file
-    present and still reported "0 blockers / 23 total", status=done.
+    flagging it, so a missing MODULE is invisible to F821 (e.g. an app
+    importing ``sql_alchemy`` with no such file present).
 
     Resolution rules, each learned from a false positive against a working app:
 
     * A service runs with its OWN folder as cwd (``uvicorn main_api:app`` from
-      ``backend/``), so that folder is importable from everything beneath it.
-      Resolving only against the file's own directory condemned six imports.
+      ``backend/``), so that folder is importable from everything beneath it,
+      not only from the file's own directory.
     * Any directory holding ``.py`` files is importable - Python 3 implicit
       namespace packages need no ``__init__.py``.
     * The module existing in SOME OTHER directory does not count: a copy under
@@ -194,10 +188,9 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
     package_dirs = set(provided)
 
     # A directory holding .py files is an importable package FROM ITS
-    # PARENT, not only as a sibling of the importing file. Without this,
-    # `from core.config import settings` in backend/routers/x.py was
-    # reported missing even though backend/core/ exists and backend/ is
-    # the service's cwd.
+    # PARENT, not only as a sibling of the importing file: e.g.
+    # `from core.config import settings` in backend/routers/x.py resolves
+    # to backend/core/ when backend/ is the service's cwd.
     for directory in package_dirs:
         parent = os.path.dirname(directory)
         if parent and parent != directory:
@@ -261,8 +254,8 @@ def _star_import_undefined_names(output_dir: str) -> list[str]:
     neither defines nor receives from the modules it star-imports.
 
     ruff cannot report these: with ``from x import *`` in scope every
-    unresolved name is F405 ("may be undefined"), never F821, so the delivered
-    app of 2026-09-18 shipped six NameError routes as "0 blockers". Files
+    unresolved name is F405 ("may be undefined"), never F821, so NameError
+    routes would otherwise pass as "0 blockers". Files
     without a star import are left to ruff, which reports them as F821
     already. Same resolver as the write-time check the model was shown.
     """
@@ -296,10 +289,10 @@ def _star_import_undefined_names(output_dir: str) -> list[str]:
 
 # The generated ORM module is imported and its mappers configured in a
 # subprocess. SQLAlchemy resolves the strings in relationship() lazily, on the
-# first query, so ast.parse and ruff both passed the 2026-09-18 live run
-# 52befadf while every database request returned 500: a class-body
-# ``relationship("Guest", secondary="booking_guest", ...)`` named a table that
-# does not exist. Import-time NameErrors surface here as well - the class ruff
+# first query, so ast.parse and ruff both pass a module where every database
+# request returns 500 (e.g. ``relationship("Guest",
+# secondary="booking_guest", ...)`` naming a table that does not exist).
+# Import-time NameErrors surface here as well - the class ruff
 # excuses under a star import. ~0.5s per module, no database, server or
 # network: the template keeps create_all under __main__.
 _IMPORT_SMOKE_TIMEOUT_SECONDS = 30

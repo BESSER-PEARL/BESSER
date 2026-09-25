@@ -73,21 +73,22 @@ is capped at `MAX_SPILL_SIZE` so a runaway command cannot fill the disk.
 
 | Area | Modules |
 | --- | --- |
-| Public entry and coordination | `__init__.py`, `llm_generator.py`, `orchestrator.py` |
-| Planning, prompts, discovery | `gap_analyzer.py`, `action_inventory.py`, `mutation_inventory.py`, `prompt_builder.py`, `model_serializer.py`, `stack_metadata.py` |
-| Authoritative request | `specification.py`, `user_request.py` |
-| Tool contracts and execution | `tools.py`, `tool_executor.py`, `edit_apply.py` |
-| Shared subprocess environment | `execution/process.py` |
-| Shared findings and source contracts | `validation/issues.py`, `validation/python_source.py`, `validation/frontend_schema.py`, `validation/frontend_build.py`, `validation/frontend_contract.py`, `validation/python_imports.py`, `validation/toolchain.py` |
-| Immediate source/model contracts | `write_diagnostics.py`, `contract_checks.py`, `frontend_bindings.py`, `endpoint_coherence.py` |
-| Deterministic repair (no model, no LLM) | `import_repair.py`, `scaffold_repair.py` |
-| Runtime probes | `constructibility.py`, `api_probe.py` |
-| Requirements and scoped acceptance | `requirements_ledger.py`, `acceptance.py`, `fix_target.py` |
-| Persistence, tracing, context | `checkpoint.py`, `tracing.py`, `compaction.py`, `history_eviction.py`, `errors.py` |
-| Providers, routing, usage | `llm_client.py` |
+| Public entry | `__init__.py`, `generator.py` (`LLMGenerator`), `errors.py` |
+| Run coordination | `pipeline/orchestrator.py`, `pipeline/modify_run.py`, `pipeline/phase3_repair.py`, `pipeline/edit_loop_guards.py`, `pipeline/constants.py` |
+| Planning, prompts, discovery | `planning/gap_analyzer.py`, `planning/action_inventory.py`, `planning/mutation_inventory.py`, `planning/stack_metadata.py`, `agent/prompt_builder.py`, `agent/runbook.py`, `model_serializer.py` |
+| Authoritative request | `planning/specification.py`, `planning/user_request.py` |
+| Tool contracts and execution | `agent/tools.py`, `agent/tool_executor.py`, `agent/edit_apply.py` |
+| Subprocess environment and sandbox | `execution/process.py`, `execution/sandbox.py` |
+| Shared findings and source contracts | `parsed_source.py`, `validation/issues.py`, `validation/python_source.py`, `validation/python_imports.py`, `validation/frontend_schema.py`, `validation/frontend_source.py`, `validation/frontend_resolution.py`, `validation/frontend_build.py`, `validation/frontend_contract.py`, `validation/toolchain.py` |
+| Immediate source/model contracts | `validation/write_diagnostics.py`, `validation/contract_checks.py`, `validation/frontend_bindings.py`, `validation/endpoint_coherence.py` |
+| Deterministic repair (no model, no LLM) | `repair/import_repair.py`, `repair/scaffold_repair.py` |
+| Runtime probes | `validation/constructibility.py`, `validation/api_probe.py` |
+| Requirements and scoped acceptance | `planning/requirements_ledger.py`, `planning/fix_target.py`, `validation/acceptance.py` |
+| Persistence, tracing, context | `state/checkpoint.py`, `state/tracing.py`, `agent/compaction.py`, `agent/history_eviction.py`, `run_report.py` |
+| Providers, routing, usage | `providers/llm_client.py`, `providers/model_settings.py`, `providers/tool_input.py`, `providers/data/model_prices.json` |
 
 The shared `validation/` and `execution/` modules do not import the orchestrator
-or executor. Existing imports from `orchestrator.py` and `tool_executor.py` remain
+or executor. Existing imports from `pipeline/orchestrator.py` and `agent/tool_executor.py` remain
 available as compatibility aliases. New shared checks belong below their callers,
 not in a coordinator imported by its own helpers.
 
@@ -102,7 +103,7 @@ router in `.../routers/spec_driven_router.py`, and request models in
 
 ## Providers and compatibility
 
-Provider defaults and accounting are defined in `llm_client.py`; callers may
+Provider defaults and accounting are defined in `providers/llm_client.py`; callers may
 override the run model. Planning uses `llm_client.planning_model` when supported,
 with the configured fallback behavior. The modeling-agent repository has separate
 model routing for editor/diagram generation.

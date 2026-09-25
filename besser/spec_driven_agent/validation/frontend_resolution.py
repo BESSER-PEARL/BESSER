@@ -1,21 +1,18 @@
 """Static resolution of a generated frontend: every import must actually exist.
 
-Motivated by a browser sweep of the recorded corpus on 2026-09-21. Four of the
-six apps driven in Chrome rendered nothing at all, and every one of them is
-labelled WORKING - the label comes from probe_case.py, which boots the backend
-and drives HTTP and never renders a page. The three failure shapes were:
+A backend that boots and answers HTTP says nothing about whether its frontend
+renders. Three failure shapes leave a blank page:
 
-    Qwen ... mjpuzh5s  App.jsx imports ./pages/OrderView.jsx, never written
-    Qwen ... mz30st3s  App.jsx imports ./pages/FineList.jsx, never written,
-                       and api.js imports axios, absent from package.json
-    terra s7a5e4er     App.jsx uses JSX without importing React, in a project
-    terra i4hedytk     with no vite.config and no @vitejs/plugin-react, so the
-                       classic runtime is used and the page dies on mount
+    - App.jsx imports ./pages/OrderView.jsx, which was never written
+    - api.js imports axios, which package.json does not declare
+    - App.jsx uses JSX without importing React, in a project with no
+      vite.config and no @vitejs/plugin-react, so the classic runtime is
+      used and the page dies on mount
 
 All three are decidable from the files on disk with no node_modules, no
 install and no shell. ``frontend_build.py`` would also catch them, but it is
-gated on ``enable_toolchain_validation and allow_shell``, which the hosted
-product turns off, so in the shipping configuration nothing looks.
+gated on ``enable_toolchain_validation and allow_shell``, which a hosted
+deployment typically turns off.
 
 The checks deliberately stay narrow - an unresolvable path, an undeclared
 package, a JSX file with no React in scope and no automatic runtime
@@ -166,8 +163,8 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
     as the other frontend findings. An undeclared package is the one a
     bundler can still satisfy (hoisting, a workspace link, an implicit peer),
     so it carries ``frontend dependency:``, which classifies as a warning:
-    recorded, not driving the repair loop. The evidence for keeping it at all
-    is run mz30st3s, whose blank page was an undeclared ``axios``.
+    recorded, not driving the repair loop (an undeclared ``axios`` can still
+    leave the page blank).
     """
     workspace = os.path.realpath(output_dir)
     issues: list[str] = []

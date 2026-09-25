@@ -1,34 +1,26 @@
 """One parse per distinct source text, shared across the validators.
 
-Thirteen call sites across ``validation/`` and ``planning/`` each read and
-parse the generated tree independently, so a single static pass parses every
-file about a dozen times. Measured on fixture ``run_7f918e11/web_app`` with
-only four of those sites exercised: **108 ``ast.parse`` calls for 25 distinct
-source texts, 77% redundant**, one text parsed 14 times. The full pass measures
-198 parses of 22 texts.
-
-That pass is not once per run. ``_collect_validation_issues`` runs it once per
-Phase 3 fix attempt, and ``max_attempts`` is the remaining turn budget -- so a
-60-file app over 40 attempts spends minutes re-parsing source that never
-changed between attempts.
+Many call sites across ``validation/`` and ``planning/`` each parse the
+generated tree independently, and ``_collect_validation_issues`` runs once per
+Phase 3 fix attempt, so without sharing the same unchanged source is parsed
+many times per run.
 
 Keyed on the source text, not the path: two callers reading the same file get
 one parse, and a file rewritten between attempts re-parses because its text
-differs. Hashing is ~143x cheaper than parsing (0.007 ms vs 0.94 ms per file
-on that fixture), so the lookup pays for itself even on a miss.
+differs. Hashing is two orders of magnitude cheaper than parsing, so the
+lookup pays for itself even on a miss.
 
 **Callers must treat the tree as read-only.** Nothing in this package mutates
-an AST today -- no ``NodeTransformer``, no ``.body`` assignment, and the four
-``ast.unparse`` calls only render a node back to text -- which is what makes
-sharing safe. A future transformer must parse its own copy.
+an AST (``ast.unparse`` calls only render a node back to text), which is
+what makes sharing safe. A future transformer must parse its own copy.
 """
 from __future__ import annotations
 
 import ast
 from functools import lru_cache
 
-# ~305 KB per tree on the measured fixture, so this bounds the cache at about
-# 20 MB. Generated apps run 15-60 Python files; 64 holds a whole app plus the
+# ~300 KB per tree for a typical generated file, so this bounds the cache at
+# about 20 MB. Generated apps run 15-60 Python files; 64 holds a whole app plus the
 # scaffold without evicting between validators in the same pass.
 _MAX_CACHED_TREES = 64
 

@@ -1,23 +1,14 @@
 """Add an import the model forgot, when the answer is not a guess.
 
-Three live Qwen runs shipped the same shape: an edit uses a framework name
-the file never imported, the module stops importing, every router that
-star-imports it dies, and Phase 3 rolls the whole repair back.
+A common failure: an edit uses a framework name the file never imported
+(e.g. ``Table(...)`` without ``from sqlalchemy import Table``), the module
+stops importing, every router that star-imports it dies, and Phase 3 rolls
+the whole repair back. Nothing about this needs a language model: the name
+is exported by exactly one module the app already depends on.
 
-    trilraak  booking_guest = Table(...)   # sqlalchemy.Table never imported
-    pcovsppe  datetime                     # same
-
-Run trilraak shipped a backend that could not start because of it, and runs
-pcovsppe and se7k3zbx lost otherwise-good repairs to the rollback it caused.
-Nothing about this needs a language model: the name is exported by exactly
-one module the app already depends on.
-
-NOT covered: an ALIASED name. trilraak also used ``dt_date`` (i.e. ``date as
-dt_date``), and no allowlisted module exports that attribute, so it is left
-alone. Recovering it means inferring which real name the alias stands for,
-which is the guess this module refuses. Repairing it from an alias the project
-demonstrably uses elsewhere would be evidence rather than a guess, but no trace
-survives showing the alias was attested, so it is not implemented on spec.
+NOT covered: an ALIASED name (e.g. ``dt_date`` for ``date as dt_date``).
+No allowlisted module exports it, and recovering it means inferring which
+real name the alias stands for, which is the guess this module refuses.
 
 Deliberately narrow. A name is repaired only when exactly ONE allowlisted
 module exports it, checked by importing that module rather than by matching

@@ -5,10 +5,7 @@ broken whatever the request was: a router with no home route (the app opens
 blank) and a submit handler that does nothing (the form is dead). Plus a
 method button wired to another entity's table, which sends the wrong id.
 
-Split out of ``orchestrator.py``, where these two sat 4,800 lines apart by
-accident of when they were written. Both already depended on
-``frontend_bindings``, and the collector read no run state but
-``output_dir``, so it takes that as an argument now.
+Both checks read only ``output_dir`` and depend on ``frontend_bindings``.
 """
 
 from __future__ import annotations
@@ -23,9 +20,9 @@ from besser.spec_driven_agent.validation.frontend_bindings import literal_compon
 def _method_button_source_issues(output_dir: str) -> list[str]:
     """A method button whose id comes from a table of another entity.
 
-    Run 19h35 (2026-09-18): Phase 2 copied the Bill page's ``registerPayment``
-    button into Booking.tsx and rebound it to the Booking table, so the page
-    posted ``/bill/<booking id>/methods/registerPayment/``. The generated
+    E.g. a Bill page's ``registerPayment`` button copied into Booking.tsx and
+    rebound to the Booking table posts
+    ``/bill/<booking id>/methods/registerPayment/``. The generated
     ``TableBlock`` names its entity in ``dataBinding``, so the mismatch is a
     one-file check; a button whose table is not on the page is left alone.
     """

@@ -56,13 +56,11 @@ _TERMINATORS = (ast.Return, ast.Raise, ast.Break, ast.Continue)
 def _unreachable_lines(tree: ast.AST) -> set[int]:
     """Lines that follow an unconditional exit in the SAME statement list.
 
-    An undefined name there cannot raise: nothing runs the line. Two apps
-    in the 74-app working corpus shipped an orphan block left after a
-    ``return`` by a botched edit (``...-3jkm7pib`` reading ``ids``,
-    ``...-omtn74nk`` reading ``product_list``), and both were reported as
-    blockers claiming a NameError on a tree that passed 10/10 workflow
-    checks. Only a terminator at the same nesting level counts, so a
-    ``return`` inside an ``if`` leaves the rest of the body live.
+    An undefined name there cannot raise: nothing runs the line. A botched
+    edit can leave an orphan block after a ``return``, and reporting a
+    NameError in it would be a false blocker on a working app. Only a
+    terminator at the same nesting level counts, so a ``return`` inside an
+    ``if`` leaves the rest of the body live.
     """
     dead: set[int] = set()
     for node in ast.walk(tree):
@@ -504,9 +502,9 @@ def _enum_column_value_misuse(
 
     SQLAlchemy's ORM returns the enum *member* for such a column, not its
     ``.value``, and a plain ``enum.Enum`` (no str/int mixin) never compares
-    equal to its own ``.value`` under Python's default equality - confirmed
-    live (run iw82zzoc): ``stored == MEMBER`` is True, ``stored ==
-    MEMBER.value`` is False. So the guard, or its inverse, can never fire.
+    equal to its own ``.value`` under Python's default equality:
+    ``stored == MEMBER`` is True, ``stored == MEMBER.value`` is False. So
+    the guard, or its inverse, can never fire.
 
     ``col``'s type is established from an actual ``Column(Enum(X))`` /
     ``mapped_column(Enum(X))`` declaration in the file's star-imported ORM
@@ -788,7 +786,7 @@ def _star_import_attribute_misuse(
     """``NAME.attr`` (plain access or a call) where ``NAME`` is provided only
     by a star import and the object actually bound to it has no ``attr``.
 
-    Live (run _abcgx9s): ``routers/booking_methods.py`` does ``from
+    Example: ``routers/booking_methods.py`` does ``from
     sql_alchemy import *``; ``sql_alchemy.py`` does ``from datetime import
     ..., time``, so the star import binds ``time`` to the *class*
     ``datetime.time``, not the ``time`` module. ``int(time.time())`` then
@@ -877,9 +875,8 @@ def _python_diagnostics(
     # Under ``from x import *`` pyflakes reports every unresolved load as
     # ImportStarUsage, never UndefinedName (checker.py, handleNodeLoad), and
     # every scaffold router star-imports sql_alchemy, pydantic_classes and
-    # bal_stdlib. Those modules are ours: read what they export and judge the
-    # name against it (run 0c537a4e, 2026-09-18, shipped five bodies with
-    # undefined names and no diagnostics because of this).
+    # bal_stdlib. Those modules are in the workspace: read what they export
+    # and judge the name against it, or undefined names there go unreported.
     try:
         from pyflakes.checker import Checker
     except ImportError:

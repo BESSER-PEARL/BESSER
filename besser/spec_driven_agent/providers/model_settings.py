@@ -2,8 +2,7 @@
 
 One table, one lookup. Everything here shapes the *request* we send:
 sampling parameters, the output-token ceiling, and model-specific request
-quirks. Anything not in the table gets the defaults, which are exactly the
-behaviour that shipped before this module existed -- an unknown model must
+quirks. Anything not in the table gets the defaults -- an unknown model must
 never be changed by adding a row for a different one.
 
 What deliberately does NOT live here:
@@ -25,15 +24,14 @@ left alone rather than guessed at.
 from dataclasses import dataclass, field
 
 # Output-token ceiling when neither the caller nor a row below says otherwise.
-# Single source for what used to be four identical ``DEFAULT_MAX_TOKENS = 16384``
-# class attributes (Claude / OpenAI / Mistral / Nebius providers).
+# Shared by the Claude / OpenAI / Mistral / Nebius providers.
 DEFAULT_MAX_OUTPUT_TOKENS = 16384
 
 
 @dataclass(frozen=True)
 class ModelSettings:
-    """Per-model request settings. Every field is optional; empty == today's
-    behaviour.
+    """Per-model request settings. Every field is optional; empty means the
+    provider default.
 
     ``sampling`` holds OpenAI-protocol parameters (``temperature``, ``top_p``)
     that every OpenAI-compatible endpoint accepts by definition.
@@ -59,36 +57,19 @@ class ModelSettings:
 # Both rows below are the NON-THINKING variants: each card states the model
 # "supports only non-thinking mode and does not generate <think></think> blocks",
 # and Instruct-2507 adds that "specifying enable_thinking=False is no longer
-# required". Confirmed live against Nebius 2026-09-20: an explicit
-# "think step by step" prompt returned no <think> tag and no reasoning_content.
+# required" (confirmed against Nebius: no <think> tag, no reasoning_content).
 # So there is no thinking knob to expose for these models, and none is added.
 _QWEN3_30B_A3B_INSTRUCT_2507 = ModelSettings(
     # generation_config.json: temperature 0.7, top_p 0.8, top_k 20.
     # Model card "Best Practices": Temperature=0.7, TopP=0.8, TopK=20, MinP=0.
+    # Aider ships the same values for Qwen3.
     #
-    # Corroborated by Aider, which ships the same four values for Qwen3
-    # (models.py apply_generic_model_settings: use_temperature 0.7,
-    # top_p 0.8, top_k 20, min_p 0.0) and publishes leaderboard runs behind
-    # them: on OpenRouter the recommended settings scored 54.7 vs 49.8 for
-    # provider defaults on the same model.
-    #
-    # Counter-example, recorded so the next reader does not have to rediscover
-    # it: OpenCode deliberately sends NO sampling for qwen and pins that with a
-    # test. Its position is that the serving stack should apply the model's own
-    # generation_config. That holds for a server that reads it (vLLM
-    # --generation-config auto, Ollama Modelfile); it does not hold for an
-    # aggregator that substitutes OpenAI protocol defaults. We send explicitly
-    # because we cannot tell which Nebius does -- see below.
-    #
-    # NOT MEASURED on our stack, and not measurable from outside: Nebius
-    # returns pre-temperature logprobs (identical top_logprobs for
-    # temperature 0.7 vs 1.0, probed 2026-09-20), and its FP8 serving is
-    # nondeterministic at the logit level -- two identical requests returned
-    # 0.817 and 0.776 for the same top token. So the endpoint's effective
-    # default cannot be read off, and greedy decoding is not achievable there
-    # regardless of what we send.
+    # Sent explicitly: a server that reads generation_config (vLLM, Ollama
+    # Modelfile) applies them anyway, but an aggregator may substitute OpenAI
+    # protocol defaults, and Nebius's effective default cannot be observed
+    # from outside (pre-temperature logprobs, nondeterministic FP8 serving).
     sampling={"temperature": 0.7, "top_p": 0.8},
-    # Nebius accepts both in extra_body (probed 2026-09-20, HTTP 200).
+    # Nebius accepts both in extra_body (HTTP 200).
     extra_body={"top_k": 20, "min_p": 0.0},
 )
 
@@ -100,7 +81,7 @@ _QWEN3_CODER_30B_A3B = ModelSettings(
     #
     # Only the two OpenAI-protocol values are sent. top_k and
     # repetition_penalty are deliberately withheld: this row serves the
-    # keyless tier and our self-hosted Ollama box, and neither endpoint has
+    # keyless tier and self-hosted Ollama, and neither endpoint has
     # been verified to tolerate a non-protocol extra_body key. An endpoint
     # that 400s on one would fail every call.
     sampling={"temperature": 0.7, "top_p": 0.8},
@@ -108,10 +89,9 @@ _QWEN3_CODER_30B_A3B = ModelSettings(
 
 _GPT_5_6 = ModelSettings(
     # No sampling parameters: OpenAI's reasoning models reject temperature /
-    # top_p on chat/completions. Leaving these empty is what ships today, and
-    # this configuration measures 12/12 on the product's own suite -- the row
-    # exists to record that "send nothing" is a decision, so a future global
-    # sampling default cannot silently reach gpt-5.6.
+    # top_p on chat/completions. The row records that "send nothing" is a
+    # decision, so a future global sampling default cannot silently reach
+    # gpt-5.6.
     #
     # gpt-5.6 rejects function tools unless reasoning is explicitly disabled;
     # the API answers "Function tools with reasoning_effort are not supported
@@ -133,7 +113,7 @@ _REGISTRY: tuple[tuple[str, ModelSettings], ...] = tuple(
         (
             # Nebius Token Factory: "Qwen/Qwen3-30B-A3B-Instruct-2507".
             ("qwen3-30b-a3b-instruct-2507", _QWEN3_30B_A3B_INSTRUCT_2507),
-            # Keyless tier + self-hosted Ollama box: "qwen3-coder:30b",
+            # Keyless tier + self-hosted Ollama: "qwen3-coder:30b",
             # "Qwen/Qwen3-Coder-30B-A3B-Instruct".
             ("qwen3-coder", _QWEN3_CODER_30B_A3B),
             # sol / terra / luna.
@@ -161,8 +141,7 @@ def settings_for(model: str | None) -> ModelSettings:
 def sampling_kwargs(model: str | None) -> dict:
     """Request kwargs carrying this model's sampling parameters.
 
-    Empty for an unknown model, so the caller's request is byte-identical to
-    what it sent before this module existed.
+    Empty for an unknown model, so the caller's request is left unchanged.
     """
     settings = settings_for(model)
     kwargs: dict = dict(settings.sampling)

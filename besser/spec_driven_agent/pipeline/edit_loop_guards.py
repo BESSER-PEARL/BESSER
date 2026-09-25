@@ -2,8 +2,8 @@
 
 A rejected edit is byte-identical on disk to no edit at all, so a model
 re-quoting an ``old_text`` it reconstructed wrongly looks exactly like one
-that has finished. Qwen's 33% edit-failure rate (terra: 5%) manufactures the
-barren rounds the Phase 3 stall guard then acts on, which is why these live
+that has finished. A high edit-failure rate on weaker models manufactures
+the barren rounds the Phase 3 stall guard then acts on, which is why these live
 separately from the stall guard itself: one detects flailing and redirects it,
 the other decides the loop is over.
 
@@ -44,12 +44,9 @@ class EditLoopGuardsMixin:
     def _apply_edit_loop_guards(self, messages: list[dict], *, where: str) -> bool:
         """Per-file modify streak + repeat-rejection escalation. True = stop.
 
-        One mechanism with three callers. It was pasted into Phase 2's loop
-        and the fix cycle and simply omitted from ``_invoke_phase3_fix_loop``,
-        so the bounded repair loop - the one place a model is asked to fix its
-        own mistakes on a 10-turn budget - ran on ``_is_stuck`` alone, the
-        weakest of the three, while the README claimed recovery was shared
-        across phases. Only the low-level executor ladder actually was.
+        One mechanism shared by Phase 2, the fix cycle and the Phase 3 repair
+        loop, so every phase gets the same recovery rather than ``_is_stuck``
+        alone.
         """
         stuck_path = self._consecutive_modify_on_same_file()
         if stuck_path is not None:
@@ -100,10 +97,8 @@ class EditLoopGuardsMixin:
             # read -> replace_file_lines is the loop it is already in.
             #
             # _force_tool_next is a single slot the executor's recovery ladder
-            # also writes, earlier in the same turn. An unconditional
-            # assignment here silently discarded that hint - including the
-            # "go back to modify_file" reversal - purely by write order. The
-            # executor saw the actual refusal, so leave its choice alone.
+            # also writes, earlier in the same turn. The executor saw the
+            # actual refusal, so never overwrite its choice.
             if self._force_tool_next is None:
                 self._force_tool_next = "read_file" if tool == "modify_file" else None
             strategy = (
@@ -144,9 +139,9 @@ class EditLoopGuardsMixin:
         (normalised) path that were ALL refused (the executor resets its
         miss count on a successful edit, so N good edits to one file never
         fire). A ``read_file`` on that same path does NOT break the streak:
-        re-reading the file you cannot edit is the flail's own rhythm — live
-        run a5dce952 alternated modify/read on one file for 38 pairs, 85
-        turns and $0.70 while this guard stayed silent. Any other tool, and
+        re-reading the file you cannot edit is the flail's own rhythm, and
+        counting it as movement lets a modify/read alternation run unchecked
+        for dozens of turns. Any other tool, and
         a read of a DIFFERENT file, still breaks it: those are real movement.
 
         Resets / suppresses repeat firing: once we've warned about a

@@ -59,9 +59,9 @@ class EndOwnership:
     UML puts an end typed ``X`` on the class at the OPPOSITE end, so a role
     named on the ``Booking`` end is a property of ``Employee`` — the same
     fact ``model_serializer`` already spells out as ``"owner"`` in the
-    prompt. Telling the model does not settle it: Qwen run
-    ``...2507-14h282p0`` read ``"owner": "Employee"`` and still wrote
-    ``_booking_object.bookingsHandled``, which 500s ``produceBill``.
+    prompt. Telling the model does not settle it: a model can read
+    ``"owner": "Employee"`` and still write ``booking.bookingsHandled``,
+    which raises at runtime.
 
     Only binary associations are recorded (an n-ary end has no single
     opposite) and only roles that resolve to exactly one owner model-wide.
@@ -136,10 +136,7 @@ def build_data_contract(domain_model) -> DataContract | None:
         # Count only parameters the CALLER must supply. A parameter with a
         # default is callable on an empty body, which is the only thing the
         # frontend's method button ever sends - so a method whose parameters
-        # all default belongs under the zero-argument rule below, and was
-        # being skipped by it. The serializer only began emitting a
-        # parameter's ``default`` recently, so this distinction could not be
-        # drawn before.
+        # all default belongs under the zero-argument rule below.
         arities = {
             str(method.name).split("(")[0].strip():
                 sum(1 for p in (getattr(method, "parameters", None) or [])
@@ -358,7 +355,7 @@ def _lint_frontend(rel: str, content: str, contract: DataContract) -> list:
 
 # relationship(..., secondary="<name>"): SQLAlchemy resolves the string on the
 # first query, so a name matching no table passes every static check and 500s
-# each request touching the class (live run 52befadf, 2026-09-18).
+# each request touching the class.
 _RELATIONSHIP_SECONDARY_RE = re.compile(
     r"relationship\([^)]*?\bsecondary\s*=\s*['\"]([^'\"]+)['\"]", re.S
 )
@@ -439,7 +436,7 @@ _FAILURE_KEYS = frozenset({"success", "succeeded", "ok", "result", "renewed"})
 def _is_failure_return(node) -> bool:
     """``return {"success": False, ...}`` - a refusal dressed as HTTP 200.
 
-    gpt-5.6-terra-053ydac9 answers the empty body with 200 and
+    E.g. a handler answering the empty body with 200 and
     ``{"success": false, "message": "An extended dueDate is required"}``,
     leaving dueDate untouched. The button is just as dead as on a 422, and
     a status-code-only reading scores it as a pass.
@@ -612,19 +609,15 @@ def _zero_arg_action_issues(rel: str, content: str, contract: DataContract) -> l
 
 # --- Nondeterministic business outcome -------------------------------------
 #
-# Six delivered apps (all Qwen, all `Order.confirmPayment`) answer the
-# action with `random.choice([True, False])` / `random.random() < 0.8`.
-# The coin flip IS the whole handler - no assignment, no commit - so the
-# app has no payment state at all, and the flake is only how an
-# unimplemented action becomes visible from outside. It also corrupts
-# measurement: such an app passes a single probe 50-90% of the time.
+# A handler that answers an action (e.g. `Order.confirmPayment`) with
+# `random.choice([True, False])` / `random.random() < 0.8` is an
+# unimplemented action: the coin flip is the whole handler, with no state
+# behind it, and it passes a single probe 50-90% of the time.
 #
-# The check keys on the random draw being a BOOLEAN that decides the
-# response, not on `random` being imported. Four other delivered apps
-# build a bill number with `random.choices(string.ascii_uppercase, k=6)`
-# and are correct, and demo-data seeders legitimately randomise flags -
-# hence the route-handler scope and the boolean test, which is what keeps
-# this module's zero-false-positive record.
+# The check keys on the random draw being a BOOLEAN that decides a route
+# handler's response, not on `random` being imported: random identifiers
+# (`random.choices(string.ascii_uppercase, k=6)`) and demo-data seeders
+# that randomise flags are legitimate.
 _RANDOM_MODULES = frozenset({"random", "secrets"})
 # Draws that are a coin flip once compared against anything.
 _COMPARED_DRAWS = frozenset({"random", "uniform", "randint", "randrange",
@@ -755,15 +748,13 @@ def _decisive_flip(function, flips: dict, aliases: frozenset):
 
 # --- Association end read off the wrong class ------------------------------
 #
-# Live Qwen run ...2507-14h282p0 answered `produceBill` with
-# `AttributeError: 'Booking' object has no attribute 'bookingsHandled'`.
-# The scaffold had it right everywhere (`Booking.handledBy`,
-# `Employee.bookingsHandled`); the LLM-authored method body inverted it.
-# The prompt states the ownership per end (`"owner": "Employee"`), so this
-# is enforcement, not instruction.
+# E.g. `AttributeError: 'Booking' object has no attribute 'bookingsHandled'`
+# where the scaffold declares `Booking.handledBy` / `Employee.bookingsHandled`
+# and an LLM-authored method body inverts them. The prompt states the
+# ownership per end (`"owner": "Employee"`), so this is enforcement, not
+# instruction.
 #
-# Three guards, each one calibrated against a false positive the corpus
-# produced:
+# Three guards, each against a known false positive:
 #
 # 1. The model's own member list excuses the name. An end owned by the
 #    receiver or by an ancestor, an attribute, a method, and any role name
@@ -773,11 +764,10 @@ def _decisive_flip(function, flips: dict, aliases: frozenset):
 #    link-navigation attributes named after the participant classes
 #    (``ReservedRoom.bookings``) that collide with real role names.
 #
-# 2. The APP's own declarations excuse the name. Six corpus runs rewrote
-#    the scaffold's `Booking.guest` as `Booking.guests` and then used that
-#    name consistently everywhere; two of them are probed-working apps.
-#    A rename that the whole app agrees on is not a defect, so the check
-#    reads every class body and every `Class.attr = ...` in the tree
+# 2. The APP's own declarations excuse the name. An app may rename the
+#    scaffold's `Booking.guest` to `Booking.guests` and use that name
+#    consistently; a rename the whole app agrees on is not a defect, so the
+#    check reads every class body and every `Class.attr = ...` in the tree
 #    first (plus `backref=` / `back_populates=`, which declare a member on
 #    the class at the far end) and only fires on a name that resolves
 #    NOWHERE. That is why this is a workspace sweep and not a per-file
@@ -1085,9 +1075,8 @@ def collect_inverted_end_issues(app_dir: str, contract: DataContract | None) -> 
                 """(class, hops) for ``value``, following to-one ends.
 
                 ``db_order.handledBy.warehouse`` needs the hop: the receiver
-                of the bad read is an expression, not a variable (live
-                inventory run ...2507-qr9osh7c). ``hops`` is what decides
-                severity - see below.
+                of the bad read is an expression, not a variable. ``hops``
+                is what decides severity - see below.
                 """
                 if isinstance(value, ast.Name):
                     return types.get(value.id), 0  # noqa: B023 - same iteration
@@ -1113,11 +1102,9 @@ def collect_inverted_end_issues(app_dir: str, contract: DataContract | None) -> 
                     shown = ast.unparse(node.value)
                 except Exception:  # pragma: no cover - total on parsed trees
                     shown = receiver
-                # Direct receiver: 2 corpus apps, both dead, and one of them
-                # is the AttributeError that started this. Through a hop:
-                # 3 corpus apps, 2 of which PASS their probe - the read is
-                # genuinely wrong but sits on a path nothing exercises, so
-                # it is reported and does not spend fix turns.
+                # A direct receiver is a blocker. Through a hop the read is
+                # just as wrong but often sits on a path nothing exercises,
+                # so it is reported as advisory and does not spend fix turns.
                 issues.append(((rel, node.lineno, node.attr),
                                _inverted_end_message(
                                    rel, node.lineno,
@@ -1195,9 +1182,9 @@ def _conditional_nodes(function) -> set:
     Per child, not per statement: an ``if`` TEST evaluates whenever control
     reaches it and only the branches do not, ``for`` evaluates its iterable
     but may never enter the body, ``try`` always runs its body, and ``a and
-    b`` always evaluates ``a``. Marking a whole statement conditional
-    demoted the exact reads the runtime probe watched crash, among them
-    ``if db_clerk.warehouse_id is None`` on ``...2507-2fqm5uj6``.
+    b`` always evaluates ``a``. Marking a whole statement conditional would
+    demote reads that always run, such as the test of
+    ``if db_clerk.warehouse_id is None``.
     """
     conditional: set = set()
 
@@ -1238,7 +1225,7 @@ def collect_undeclared_attribute_issues(app_dir: str,
     rather than only association roles. Roles stay that function's, so the
     two never report one read twice.
 
-    This is the largest runtime-crash class in the recorded corpus: a
+    This is a leading runtime-crash class in generated apps: a
     column named on the wrong class (``db_clerk.warehouse_id`` when
     ``warehouse_id`` is Product's), an audit field the scaffold never
     wrote (``db_loan.created_at``), a value the model invented
@@ -1249,8 +1236,8 @@ def collect_undeclared_attribute_issues(app_dir: str,
     Only reads that execute on EVERY call of their function are reported.
     A read inside a branch is just as wrong, but the runtime probe cannot
     always reach it, and a blocker on a path nothing exercises spends fix
-    turns on an app that works: ``...2507-n19svhnc`` passes its probe with
-    a real ``Loan.returnDate`` crash behind ``if status == RETURNED``.
+    turns on an app that works (e.g. a real ``Loan.returnDate`` crash
+    behind ``if status == RETURNED``).
     """
     if contract is None or contract.ends is None:
         return []
@@ -1339,7 +1326,7 @@ def _lint_python(rel: str, content: str, contract: DataContract) -> list:
 
     # The generated method endpoints legitimately answer "executed" after
     # actually running the modeled body (a ``_impl`` function call in the
-    # same file; body-less methods raise 501 since the template fix). Only
+    # same file; body-less methods raise 501). Only
     # an "executed" with no execution machinery anywhere in the file is
     # the fake-success facade.
     if "_impl(" not in content:

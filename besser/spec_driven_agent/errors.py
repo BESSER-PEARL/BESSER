@@ -1,13 +1,10 @@
-"""Typed exceptions for the LLM generator pipeline.
+"""Typed exceptions for the Spec-Driven Agent pipeline.
 
-The web runner maps worker exceptions to SSE error codes. Before this
-module existed it keyed on built-in types (``ValueError`` →
-``INVALID_KEY``, ``RuntimeError`` → ``UPSTREAM_LLM``), which mislabeled
-unrelated failures — e.g. a resume fingerprint mismatch surfaced as an
-invalid API key. Each class below subclasses the built-in it used to be
-raised as, so any existing ``except ValueError`` / ``except
-RuntimeError`` call sites keep working while the runner can now match
-on the specific type first.
+The web runner maps worker exceptions to SSE error codes by these types, so
+unrelated failures sharing a built-in type (e.g. a resume fingerprint
+mismatch vs. an invalid API key) are not mislabeled. Each class subclasses
+the built-in it specialises, so ``except ValueError`` / ``except
+RuntimeError`` call sites keep working.
 """
 
 

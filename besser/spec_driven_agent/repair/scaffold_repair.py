@@ -7,9 +7,9 @@ behind after removing the lockfile - either of which fails the image build
 for a reason that has nothing to do with the application. These functions put
 that back deterministically.
 
-Split out of ``orchestrator.py``: they take a path and return a value, touch
-no run state, and are repair rather than validation - which is why they sit
-beside ``import_repair.py`` rather than under ``validation/``.
+They take a path and return a value, touch no run state, and are repair
+rather than validation - which is why they sit beside ``import_repair.py``
+rather than under ``validation/``.
 """
 
 from __future__ import annotations
@@ -144,17 +144,10 @@ def _ensure_requirements_txt(docker_dir: str) -> bool:
 # file-by-file by the LLM against the orchestrator's frontend checklist. That
 # checklist names package.json / index.html / main.jsx / App.jsx / api.js /
 # pages and nothing else, so the build configuration around them is left to
-# chance. Across the 192 recorded runs under verification/spec-iterations:
-#
-#   192/192  no vite config of any kind
-#   168/192  @vitejs/plugin-react not even a dependency
-#    96/192  a JSX file with no `import React` -> with esbuild's default
-#            classic transform the page dies on mount with
-#            "ReferenceError: React is not defined" (reproduced in Chrome)
-#   185/192  a hardcoded http://localhost:8000 with no env override
-#    32/192  imports axios without declaring it
-#    20/192  "build": "vite", which starts a dev server instead of building
-#     0/192  a Dockerfile or a compose file
+# chance. Typical gaps: no vite config, no @vitejs/plugin-react (so a JSX file
+# without `import React` dies on mount with "React is not defined"), a
+# hardcoded http://localhost:8000, undeclared axios, "build": "vite" (starts a
+# dev server instead of building), and no Dockerfile or compose file.
 #
 # All of it is decidable and fixable from the files on disk. These functions
 # do that, deterministically and idempotently, instead of asking the model.

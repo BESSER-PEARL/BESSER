@@ -4,28 +4,19 @@ Every run's output directory accumulates four files as it goes:
 ``.besser_trace.jsonl`` (tracing.py), ``.besser_recipe.json`` (written once,
 at a clean finish, by the orchestrator), ``.besser_tool_inputs.jsonl`` (the
 untruncated inputs of write-tool calls only), and ``.besser_checkpoint.json``
-(checkpoint.py; present only while a run is resumable). Answering "what
-happened in this run?" today means reading these by hand. This module reads
+(checkpoint.py; present only while a run is resumable). This module reads
 them back and reports: which phases ran and how they ended, tool-call counts
 and success rates per tool (edit tools called out), why edits were refused
 grouped by reason, whether Phase 3 rolled back a repair and what that
 discarded, validation issues by severity and message prefix, and cost/turns.
 
-Formalizes ``verification/analyse_iteration.py`` (hand-written because the
-package offered nothing) and fixes the two things it got wrong: it raised on
-a truncated final JSONL line instead of skipping it (a real trace can have an
-unparseable line anywhere, not only at eof - observed on a torn write), and
-it reported ``max(turn_start payload)`` as the turn count. That undercounts:
-only Phase 2's loop emits ``turn_start``; Phase 3's fix-loop turns advance
-the same ``self.total_turns`` counter (confirmed against
-``besser/spec_driven_agent/orchestrator.py``) but never emit their own
-``turn_start`` event (each fix *attempt* resets its own local turn variable
-for its internal cap/nudge logic, but that variable is never traced). A real
-run's trace showed ``turn_start`` topping out at 34 while the run's own
-``total_turns`` bookkeeping - and its ``tool_call`` events' ``turn`` field -
-went to 108, then 147 across a resume. This module instead takes the max
-``turn``/``turns``/``total_turns`` value across every event and artefact
-that reports one, which is never lower than any single source.
+A torn write can leave an unparseable JSONL line anywhere, not only at eof,
+so lines are skipped individually. The turn count is NOT
+``max(turn_start)``: only Phase 2's loop emits ``turn_start``, while Phase
+3's fix-loop turns advance the same ``total_turns`` counter without one.
+This module takes the max ``turn``/``turns``/``total_turns`` value across
+every event and artefact that reports one, which is never lower than any
+single source.
 
 Contract: read-only (never writes to the run directory), tolerant (a missing
 or corrupt artefact degrades to "not available", a truncated JSONL file
@@ -55,8 +46,7 @@ from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
 
 # orchestrator.py defines this alongside ``.besser_recipe.json`` but is a
 # heavy module (provider SDK imports); this report has to stay usable
-# without those installed, so the filenames are literals here too, exactly
-# as ``verification/analyse_iteration.py`` already does.
+# without those installed, so the filenames are literals here too.
 RECIPE_FILENAME = ".besser_recipe.json"
 TOOL_INPUTS_FILENAME = ".besser_tool_inputs.jsonl"
 
@@ -87,8 +77,7 @@ def _read_jsonl(path: str) -> tuple[list[dict], int, str | None]:
     """Line-delimited JSON. Returns ``(records, skipped_count, error)``.
 
     Each line is parsed independently: a single truncated or torn-write line
-    (observed mid-file, not only at eof, in real traces) is skipped, not
-    fatal to the rest of the file.
+    (mid-file, not only at eof) is skipped, not fatal to the rest of the file.
     """
     if not os.path.isfile(path):
         return [], 0, "not found"
@@ -215,9 +204,8 @@ def _edit_refusal_summary(events: list[dict]) -> dict:
 
 
 def _describe_rollback(payload: dict) -> str:
-    """One sentence from whatever keys are present. Two schema variants have
-    been observed in real traces (a ``hard_blockers_*`` + a plain
-    ``blockers_*`` form); this reads either without assuming which."""
+    """One sentence from whatever keys are present. Reads either payload
+    variant (``hard_blockers_*`` or plain ``blockers_*``)."""
     def pick(*keys):
         return next((payload[k] for k in keys if k in payload), None)
 

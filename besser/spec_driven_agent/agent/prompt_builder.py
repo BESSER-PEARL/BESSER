@@ -81,8 +81,7 @@ def build_system_prompt(
 
     Each non-empty model is embedded as a JSON section so the LLM can reason
     over the full editor context, not just the class diagram. The LLM plans
-    its own task breakdown from ``instructions`` — we no longer pre-compute
-    a checklist (the keyword-based gap analyzer was deleted).
+    its own task breakdown from ``instructions``.
 
     Args:
         domain_model: Optional BUML domain model. When None, the LLM is
@@ -112,7 +111,7 @@ def build_system_prompt(
             cannot issue is worse than no procedure at all.
         output_dir: The run workspace. Required for the runbook, which
             installs its helper script there and names the backend it found.
-        modify_mode: When True the run is an incremental vibe-modify — the
+        modify_mode: When True the run is an incremental modify — the
             output_dir was seeded from a previous run's generated files and
             the LLM edits them in place. Prepends a directive that biases
             the model toward the smallest surgical change. MUST leave the
@@ -365,10 +364,9 @@ def build_system_prompt(
     # across runs for the same diagram — so we keep role, rules, tool
     # guidance, and the serialized models up top where they benefit from
     # ephemeral caching. The variable tail (inventory, user request, gap
-    # tasks, Phase 1 issues) changes per run and never gets cached. This
-    # rewrite was driven by a prompt-caching audit that found the
-    # previous order mixed variable content into the middle of the
-    # prompt, invalidating the cache on every new request.
+    # tasks, Phase 1 issues) changes per run and never gets cached; mixing
+    # variable content into the middle would invalidate the cache on every
+    # new request.
     # Primary-kind banner. When the user drove the run from anything
     # other than a ClassDiagram, we tell the LLM up front so it doesn't
     # default to "build a CRUD app". Omitted for class-diagram-driven
@@ -386,7 +384,7 @@ def build_system_prompt(
         }.get(primary_kind, f"Primary model kind: {primary_kind}")
         primary_banner = f"\n> Primary input: {friendly}\n"
 
-    # Stack-specific idiom reminders (#4b). ``instructions`` is constant
+    # Stack-specific idiom reminders. ``instructions`` is constant
     # across every turn of a single Phase 2 run, so — like ``primary_banner``
     # above — placing this in the cached stable_header doesn't cost any
     # turn-to-turn cache hits; it only varies between runs, same as the
@@ -396,21 +394,13 @@ def build_system_prompt(
     # Named only when offered: tools.py withholds these without a domain model.
     model_tools_section = _MODEL_TOOLS_SECTION if domain_model is not None else ""
 
-    # --- Previous header (kept for reference / easy rollback) ------------
-    # Weaker models (e.g. the free qwen tier) ignored this softer wording and
-    # would delete the whole generated FastAPI scaffold to rebuild in Flask.
-    # The forceful HARD-CONSTRAINTS block below replaced it; revert to this if
-    # the stronger wording ever hurts the paid models.
+    # The HARD-CONSTRAINTS header below is deliberately forceful: weaker
+    # models (e.g. the free qwen tier) ignore softer wording and delete the
+    # generated scaffold to rebuild it in another framework.
     #
-    #   You are an expert full-stack developer. You make targeted, scoped changes to code.
-    #
-    #   Read the generated code before changing it and keep changes tightly scoped to the user's request.
-    #   Do not rewrite generated files from scratch — make surgical modifications.{primary_banner}
-    # ---------------------------------------------------------------------
     # Rule 7 depends on whether a scaffold exists: a from-scratch project
     # needs its standard project file; a scaffold already ships one, and
-    # rewriting it (or adding an unrequested README) is what Rule 1 forbids -
-    # both happened live on 2026-09-17 under the old unconditional wording.
+    # rewriting it (or adding an unrequested README) is what Rule 1 forbids.
     has_scaffold = bool(scaffold_snapshot) or bool(
         inventory and "produced 0 files" not in inventory
     )
@@ -607,7 +597,7 @@ right packages to add, the right order. Do NOT exceed the request scope.
 When done, briefly summarize what you changed.
 """
 
-    # Incremental vibe-modify directive. Prepended (not woven into the
+    # Incremental-modify directive. Prepended (not woven into the
     # cached header) so the from-scratch prompt is byte-identical when
     # ``modify_mode`` is False — the whole point of the hard separation
     # between the from-scratch path and the modify path.
@@ -644,7 +634,7 @@ _TS_TYPES = {
 def _data_contract_section(domain_model) -> str:
     """Render the NON-NEGOTIABLE data-contract rules for the system prompt.
 
-    These four rules exist because generated apps kept shipping façades:
+    These four rules target the commonest façade failures in generated apps:
     string ids parseInt'd into NaN (edit/delete broken on first click),
     create forms sending server-owned fields, and unimplemented methods
     answering ``{"status": "executed"}``. The wording is deliberately
@@ -1020,10 +1010,8 @@ for _ext in (".jsx", ".ts", ".tsx", ".mjs"):
     _SYMBOL_PATTERNS[_ext] = _SYMBOL_PATTERNS[".js"]
 _SYMBOL_CAP = 10
 
-# Inventory hygiene. Measured on a 60-file web-app scaffold (2026-09-18): the
-# alphabetical 30-path cap spent 5 slots on .besser_* records and
-# __pycache__/*.pyc and listed none of the 33 frontend/src files; a delivered
-# app spent 16 slots on .pyc/.db and lost three routers off the end. Junk is
+# Inventory hygiene: an alphabetical path cap otherwise fills with .besser_*
+# records, __pycache__/*.pyc and .db files and drops real source. Junk is
 # skipped, code files sort first, and the cap is wide enough for any scaffold.
 _INVENTORY_SKIP_EXTENSIONS = {
     ".pyc", ".pyo", ".db", ".sqlite", ".sqlite3", ".lock", ".zip", ".gz", ".tar",
@@ -1067,7 +1055,7 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
         A human-readable inventory string.
     """
     # List files, each with its top-level symbols and their line numbers.
-    # The scaffold is no longer pasted into the prompt, so this map is how
+    # The scaffold is not pasted whole into the prompt, so this map is how
     # the model finds the region it needs and reads it with read_file
     # offset/limit instead of the whole file (aider's repo map, kept to
     # top-level names: a few hundred tokens). Code files first, so a cap

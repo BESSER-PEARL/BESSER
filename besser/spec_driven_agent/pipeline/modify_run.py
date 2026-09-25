@@ -57,10 +57,9 @@ class ModifyRunMixin:
             save exactly like ``run()``; drops the checkpoint on clean exit.
 
         The user may also have edited the model between runs;
-        ``self.domain_model`` reflects that. For the MVP this is a pure
-        code-edit — the inventory and gap analyzer already surface the
-        model's classes vs. the files on disk, so Phase 2 authors any
-        deltas via write_file / modify_file (no scaffold merge yet).
+        ``self.domain_model`` reflects that. The inventory and gap analyzer
+        surface the model's classes vs. the files on disk, so Phase 2
+        authors any deltas via write_file / modify_file (no scaffold merge).
 
         Returns the path to ``self.output_dir``.
         """
@@ -99,7 +98,7 @@ class ModifyRunMixin:
         # domain entity (e.g. a ``User`` class for "add authentication")
         # flows into Phase 2's inventory AND the updated model reaches the
         # push path. Fully guarded (see the method): an empty/failed/bad
-        # delta leaves the run proceeding EXACTLY as before — no model
+        # delta leaves the run proceeding unchanged — no model
         # change, no crash. Scoped to modify() only; run()/_run_phase1
         # never invoke it, so from-scratch output is byte-identical.
         self._derive_and_apply_model_deltas(instructions)
@@ -147,7 +146,7 @@ class ModifyRunMixin:
             self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
 
         # -- Phase 2: LLM edits the seeded files in place ------------------
-        # Forward the seed run's unresolved blockers (D1): they ride along
+        # Forward the seed run's unresolved blockers: they ride along
         # with the fresh Phase 1.5 findings so the modify run pays down
         # the known debt instead of preserving it forever.
         if self._seed_unresolved_issues:
@@ -315,8 +314,8 @@ class ModifyRunMixin:
 
         Sets ``self._fix_target`` and ``self._is_fix_run``. Best-effort — a
         parse failure (or a modify run with no fix/error vocabulary) leaves
-        the run ungated, so a plain feature-add modify behaves exactly as
-        before. NEVER invoked from run()/resume(); from-scratch generation
+        the run ungated, so a plain feature-add modify is not gated on a
+        target. NEVER invoked from run()/resume(); from-scratch generation
         is untouched.
         """
         try:
@@ -506,14 +505,14 @@ class ModifyRunMixin:
             unit tests driving the full ``modify()`` loop with a scripted
             client are unaffected.
           * Any failure (LLM error, malformed delta, serialisation error)
-            is swallowed: ``modify()`` proceeds EXACTLY as it does today —
+            is swallowed: ``modify()`` proceeds exactly as without it —
             no model change beyond what already applied, no crash. An empty
             result is the common, expected case.
 
         NEVER invoked from ``run()`` / ``resume()`` / ``_run_phase1`` — the
         from-scratch path is untouched and byte-identical.
         """
-        # Class-diagram-only MVP: nothing to sync without a domain model.
+        # Class-diagram only: nothing to sync without a domain model.
         if self.domain_model is None:
             return
         # Skip mock/duck-typed clients that don't look like a real provider

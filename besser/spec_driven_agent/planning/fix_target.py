@@ -15,7 +15,7 @@ Scope: this is the backend generator's LOCAL detector. It mirrors the
 *spirit* of the modeling-agent's ``_looks_like_fix_request`` /
 ``_FIX_INTENT_RE`` (a separate codebase) rather than importing it. It is
 used only on the ``modify()`` path — from-scratch ``run()`` never touches
-it, so first-generation behaviour is unchanged.
+it.
 
 Design rule (shared with ``contract_checks``): **precision over recall**.
 A target we cannot ground in concrete vocabulary falls back to a soft
@@ -317,11 +317,10 @@ def finding_matches_target(
     A soft target (no entities) matches nothing — we never promote a
     finding we cannot attribute to what the user actually reported.
 
-    Each form has to stand on its own: matched as a bare substring,
-    ``Book`` matched inside ``booking``, so a ``POST /booking/`` failure
-    promoted unrelated ``Book`` findings to blockers and pointed the fix
-    loop at the wrong entity. ``_`` and punctuation still count as
-    boundaries, so ``book_id`` and ``routers/book.py`` keep matching.
+    Each form must match as a whole word: as a bare substring ``Book``
+    would match inside ``booking`` and point the fix loop at the wrong
+    entity. ``_`` and punctuation count as boundaries, so ``book_id`` and
+    ``routers/book.py`` still match.
     """
     if target is None or not target.entities:
         return False

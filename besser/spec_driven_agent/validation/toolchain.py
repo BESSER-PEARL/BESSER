@@ -9,10 +9,9 @@ A missing or disabled compiler is an unverified check, never a source defect:
 reporting clean because nothing ran is how a frontend that does not compile
 passes validation.
 
-Split out of ``orchestrator.py``. The run state each collector read off
-``self`` - the workspace, the tool-call log, the two shell/toolchain
-permissions, the warn-once flag - is passed in instead. The flag stays an
-orchestrator attribute and comes back out with the ruff issue list.
+The run state each collector needs - the workspace, the tool-call log, the
+two shell/toolchain permissions, the warn-once flag - is passed in. The flag
+stays an orchestrator attribute and comes back out with the ruff issue list.
 """
 
 from __future__ import annotations
@@ -72,7 +71,7 @@ def _toolchain_commands_for(
             )
         elif tool == "kotlinc":
             # The .kt files under the module root, compiled to
-            # /dev/null. The bench uses kotlinc directly too.
+            # /dev/null.
             cmd = (
                 f"run_command: command='kotlinc -nowarn "
                 f"-d /tmp/out $(find {path} -name \"*.kt\")', "
@@ -144,9 +143,7 @@ def _collect_ruff_issues(
     ruff's undefined-name findings to blockers ("ships green, boots
     dead"), so when ruff is absent that whole class of defect is
     invisible and a "0 blockers" result is not the verification it
-    looks like. Found live 2026-09-10: ruff was never in the hosted
-    image (only in CI), so this path returned [] for every pilot run —
-    including the two that shipped a backend NameError-ing on import.
+    looks like.
 
     ``warned_missing`` comes in and goes back out with the issue list so the
     warning still fires once per orchestrator, which owns the flag.
@@ -197,7 +194,7 @@ def _collect_ruff_issues(
 
     # --exit-zero means findings alone never set a non-zero status, so a
     # non-zero code here is ruff itself failing (unreadable config, a
-    # panic). Without this the run reported clean having checked nothing.
+    # panic); treating it as clean would report a check that never ran.
     if result.returncode != 0:
         detail = (result.stderr or "").strip().splitlines()
         reason = detail[-1][:200] if detail else f"exit code {result.returncode}"
@@ -205,25 +202,16 @@ def _collect_ruff_issues(
 
     # Concise format is ``<path>:<line>:<col>: <rule> <message>``; ruff also
     # prints its own trailer ("Found 630 errors.", "No fixes available ..."),
-    # which carries no rule code, so _classify_issue made each one a warning
-    # about nothing. They were invisible only because cosmetic findings used
-    # to crowd them out of the cap.
+    # which carries no rule code and would become a warning about nothing.
     lines = [line.strip() for line in (result.stdout or "").strip().splitlines()
              if _CONCISE_FINDING_RE.match(line.strip())]
     if not lines:
         return [], warned_missing
-    # The cap used to take ruff's first 20 lines, which are sorted by
-    # path: on a 585-issue workspace that is always the same scaffold
-    # files, and a real F821 late in the alphabet never reached the fix
-    # loop at all. Keep every blocker-code line, then spend what is left
-    # of the budget on files the LLM actually edited this run.
-    # Ranking keys on the SEVERITY each line will be given, not only on the
-    # blocker codes. Cosmetic lines used to compete for the same 20 slots as
-    # real findings: every generated router star-imports sql_alchemy /
-    # pydantic_classes / bal_stdlib, so F403/F405/E402 alone fill the budget
-    # (59% of the kept lines across the labelled corpus, on apps that all
-    # truncate). Sorting them behind everything else keeps them reported and
-    # stops them hiding an actionable finding.
+    # ruff sorts by path, so a plain head-of-output cap keeps the same
+    # scaffold files and drops a real F821 late in the alphabet. Keep every
+    # blocker-code line, then actionable lines, then cosmetic ones (generated
+    # routers star-import, so F403/F405/E402 alone would fill the budget);
+    # within each tier, files the LLM edited this run come first.
     touched = _llm_edited_paths(output_dir, tool_calls_log, write_tools)
     blockers = []
     edited, rest = [], []                  # actionable
@@ -271,8 +259,8 @@ def _ruff_line_path(line: str, output_dir: str = "") -> str:
 
     Resolved against ``output_dir`` because ruff prints its paths relative to
     the CWD whenever the target sits under it. The caller compares against the
-    absolute paths in _llm_edited_paths, so from a cwd above the workspace
-    every comparison failed and the edited-files tier silently ranked nothing.
+    absolute paths in _llm_edited_paths, which would otherwise never match
+    from a cwd above the workspace.
     os.path.join returns the second argument unchanged when it is absolute, so
     this handles both spellings without branching.
     """
@@ -454,9 +442,8 @@ def _tsc_project_arg(project_dir: str, deps_installed: bool):
 
     A ``types`` entry naming an uninstalled package (``"types":
     ["vite/client"]``, which every Vite scaffold carries) makes tsc abort
-    at config resolution: it emits TS2688 and type-checks ZERO files. Run
-    36e9c8a6 shipped a frontend with 23 real errors whose entire tsc
-    output was that one line, so Phase 3 saw a clean frontend.
+    at config resolution: it emits TS2688 and type-checks ZERO files, so
+    a frontend with real errors would read as clean.
 
     Clearing ``types`` costs nothing when deps are missing — those types
     cannot resolve either way — and lets tsc actually read the source.
@@ -528,10 +515,8 @@ def _demote_tsc_without_deps(
     the host may not have, and on a proxied corporate network it fails
     outright. So tsc runs against an uninstalled tree, where every
     package import is unresolvable and the type errors cascade from
-    there. On the 2026-09-17 hotel run that produced
-    ``error TS2688: Cannot find type definition file for 'vite/client'``
-    and a "3 blocker-level issues remain — may not run as-is" verdict
-    on a frontend that starts and renders perfectly once installed.
+    there (e.g. ``error TS2688: Cannot find type definition file for
+    'vite/client'`` on a frontend that runs fine once installed).
 
     What tsc CAN still tell us truthfully is whether a locally
     referenced file exists: ``import Foo from './components/Foo'``
@@ -550,8 +535,7 @@ def _demote_tsc_without_deps(
             real.append(line)
         elif _TSC_SYNTAX_RE.search(line):
             # TS1xxx is the grammar, not the type system: an unparseable file
-            # is unparseable installed or not. Demoting these is how a
-            # Booking.tsx that no bundler can read reached "workflow_ok".
+            # is unparseable installed or not, so it stays a blocker.
             real.append(line)
         else:
             demoted += 1
@@ -574,8 +558,8 @@ def _collect_cargo_issues(output_dir: str) -> list[str]:
     for ``Cargo.toml`` files at any depth (skipping the snapshot
     dir and any ``target/`` build output) and runs ``cargo check
     --message-format=short`` per crate. Skips silently if ``cargo``
-    is not on PATH — matches the soft-skip pattern the bench uses
-    when the toolchain isn't installed on the run host.
+    is not on PATH, like the other toolchain checks when the
+    toolchain isn't installed on the run host.
 
     ``cargo check`` is used in preference to ``cargo build``: it
     runs the front-end and type-checker without producing artifacts,
@@ -691,7 +675,7 @@ def _collect_kotlinc_issues(output_dir: str) -> list[str]:
         module at a time.
 
     Soft-skips when ``kotlinc`` is not on PATH (no warning in the
-    recipe — the bench host either has it or doesn't).
+    recipe — the run host either has it or doesn't).
     """
     import shutil as _shutil
     import subprocess
@@ -759,8 +743,7 @@ def _collect_kotlinc_issues(output_dir: str) -> list[str]:
                 env=_safe_subprocess_env(),
             )
         except subprocess.TimeoutExpired:
-            # Was a bare `continue`: a timed-out module read as "compiled clean".
-            # cargo/tsc/ruff all report it; kotlinc was the only one that didn't.
+            # A timed-out module must not read as "compiled clean".
             issues.append(_check_did_not_run(f"kotlinc [{module_rel}]", "timed out after 180s"))
             continue
         except OSError as exc:

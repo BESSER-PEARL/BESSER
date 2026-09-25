@@ -1,9 +1,9 @@
 """Flexible ``old_text`` -> ``new_text`` application for ``ToolExecutor._modify_file``.
 
 Ported from (github.com/Aider-AI/aider, ``aider/coders/editblock_coder.py``
-@ 5dc9490, Apache-2.0 — retain this notice). Aider's own benchmark work is the
-evidence base: a lenient apply ladder plus a *diagnostic* failure message is what
-turns "old_text not found" from a multi-turn flail into a one-round-trip fix.
+@ 5dc9490, Apache-2.0 — retain this notice). A lenient apply ladder plus a
+*diagnostic* failure message turns "old_text not found" from a multi-turn flail
+into a one-round-trip fix.
 
 The ladder, most literal first — every tier is exact-by-construction, never
 similarity-scored:
@@ -14,17 +14,14 @@ similarity-scored:
 3. drop one spurious leading blank line (aider issue #25)
 4. blank-line runs compared by presence, not count - every non-blank line
    still exact. Generated scaffolds carry runs of 3-7 blank lines (Jinja
-   whitespace) that models collapse when quoting; measured 2026-09-17 on a
-   fresh FastAPI scaffold, a quote spanning a run missed tiers 1-3 in 23/25
-   windows of routers/bill.py - the largest single cause of "old_text not
-   found" on text the model had just read.
+   whitespace) that models collapse when quoting - the largest single cause
+   of "old_text not found" on text the model had just read.
 5. a uniform line-number prefix (``  12| ``, ``12:``, ``12<tab>``) on EVERY
    non-blank quoted line is stripped - the quote was copied from numbered
    output (modify_file's own post-edit snippet, ``cat -n``).
 
 Tiers 6-7 port one comparator and one boundary rule from sst/opencode's
-``edit.ts`` (github.com/sst/opencode, MIT) that aider does not have - found by
-direct comparison against it, 2026-09-19:
+``edit.ts`` (github.com/sst/opencode, MIT) that aider does not have:
 
 6. leading AND trailing whitespace forgiven per line, not just leading -
    opencode's ``LineTrimmedReplacer``. Tier 2's ``lstrip()`` leaves a quoted
@@ -34,62 +31,35 @@ direct comparison against it, 2026-09-19:
    the TRAILING end of the block, or both, just as often as the leading end
    that aider issue #25 covers - opencode's ``TrimmedBoundaryReplacer``.
 
-Tier 8 is ours, calibrated 2026-09-20 over the 411 refused ``old_text``
-values of 197 completed runs:
+Tier 8 is BESSER's own:
 
-8. a wrong indent on the quote's FIRST line alone is forgiven, lines 2..n
-   matching exactly. Of the 128 Qwen refusals tiers 1-7 cannot apply, 20 have
-   a window matching modulo whitespace; 18 are this one shape - a decorator
-   quoted at indent 4 above a body at 0, because the model reconstructs the
-   opening line from a prior instead of copying it - 2 are irregular, and NONE
-   is a uniform shift, so tier 2 never sees them. gpt-5.6 produces the shape
-   0 times in 116 refusals. The tier rescues 21 (the 18, plus 3 mixed-numbered
-   quotes whose unnumbered first line kept the model's own indent), each
-   byte-identical to what an exact apply of the same edit produces, and 17 of
-   the 18 Python ones would NOT parse if the replacement's first line were
-   written verbatim - which is why the prefix comes off new_text too, and why
-   a replacement that does not carry it is refused rather than guessed at.
-   Over 4.7M line windows of besser/ and 4,712 generated app files a quote
-   built this way never landed on a window other than its own; 283k ambiguous
-   ones are refused by require_unique. One run resent the same six edits from
-   turn 19 to turn 38 and landed none of them.
+8. a wrong indent on the quote's FIRST line alone is forgiven, in either
+   direction, lines 2..n matching exactly. Models reconstruct the opening line
+   from a prior instead of copying it (a decorator quoted at indent 4 above a
+   body at 0, a JSX tag quoted one space short); the shift is not uniform, so
+   tiers 2/6 never take it. The whitespace restored is the FILE's own, never
+   invented. The prefix comes off new_text too (most such Python replacements
+   would not parse verbatim), and a replacement that does not repeat the
+   quote's mistake is refused rather than guessed at - see
+   ``_first_line_replacement``. Calibrated over millions of line windows of
+   besser/ and generated apps: a quote built this way never landed on a
+   window other than its own.
 
-   7 of the 21 still leave a file that does not parse, unchanged by this tier:
-   those quotes stop one line short of a docstring's closing triple quote, a
-   separate defect that the same-turn write diagnostics name and the
-   "old_text not found" message could not.
-
-   The tier originally forgave OVER-indentation only, on the principle that
-   it should never add indent it invented. Widened 2026-09-20 to the signed
-   difference: of the three quotes left in the 79-case reconstructed-state
-   replay set that a window matches modulo whitespace, two are the mirror
-   shape - a JSX tag quoted one space short of where it sits, a def quoted a
-   level short of its body - and tier 2/6 cannot take either, because the
-   shift is not uniform and their single-prefix rule rejects the window. The
-   whitespace restored is the FILE's own, sliced off the line being matched,
-   never invented. The third stays refused: its replacement is authored a
-   level shallower than the body it would replace, which is the guard in
-   ``_first_line_replacement``. Re-calibrated over 300 generated app files /
-   36,357 sampled windows in both directions: zero landings on a window other
-   than the quote's own.
-
-One tier that looks obvious is deliberately absent. 11 refused quotes spell a
-regex with a doubled backslash where the file has one, and it is tempting to
-un-double and retry. BESSER's own pydantic generator emits the same regex
-twice one line apart - raw in the check, re-escaped inside the error message -
-so a quote spanning both carries BOTH conventions and no whole-quote
-un-doubling is right; replayed against the three live cases it rescues none.
-An un-doubled ``new_text`` would also write a DIFFERENT regex into a file that
-still parses, which is the silent-corruption failure this module refuses
-elsewhere. ``describe_escape_mismatch`` names the mistake instead.
+One tier that looks obvious is deliberately absent: un-doubling a regex quoted
+with a doubled backslash where the file has one. BESSER's own pydantic
+generator emits the same regex twice one line apart - raw in the check,
+re-escaped inside the error message - so a quote spanning both carries BOTH
+conventions and no whole-quote un-doubling is right. An un-doubled
+``new_text`` would also write a DIFFERENT regex into a file that still parses,
+which is the silent-corruption failure this module refuses elsewhere.
+``describe_escape_mismatch`` names the mistake instead.
 
 Three tiers are deliberately NOT ported. Opencode's
 ``WhitespaceNormalizedReplacer`` collapses runs of internal whitespace, which
 also collapses them inside a string literal: quoting ``BANNER = "Room 101"``
 against ``BANNER = "Room    101"`` matches, and the replacement then rewrites
-the literal the model never saw. Measured against 34 refused ``old_text``
-values from eleven live Qwen runs, it rescued none of them, so it carries a
-real corruption risk for no observed gain here. And two of aider's own:
+the literal the model never saw - a real corruption risk with no observed
+gain. And two of aider's own:
 
 * Its ``SequenceMatcher`` similarity tier (0.8 ratio) — aider disabled it in
   v0.11.2 because silently applying an 80%-similar edit is worse than a clean
@@ -103,12 +73,9 @@ real corruption risk for no observed gain here. And two of aider's own:
 model the closest actual lines so its retry can copy them verbatim.
 ``locate_anchored_span`` goes further where it safely can: it returns the LINE
 RANGE the quote brackets, so the executor hands back a pre-filled
-``replace_file_lines`` instead of a second guess. Measured over the 70 refused
-``old_text`` values from 21 live runs that the ladder above still cannot apply,
-it locates 31 (44%), and 20 of the 28 whose file is unchanged since the refusal
-(71%). One of the 31 closes on a later duplicate of the last anchor line - a
-span that starts right and stops short. Tolerable only because it never
-applies anything.
+``replace_file_lines`` instead of a second guess. It can close on a later
+duplicate of the last anchor line - a span that starts right and stops short -
+which is tolerable only because it never applies anything.
 """
 
 from __future__ import annotations
@@ -288,9 +255,9 @@ def _first_line_replacement(
     if not replace_lines or not replace_lines[0].strip():
         return None
     if delta > 0:
-        # Over-indented. The prefix comes off new_text too: 17 of the 18
-        # Python cases this tier was calibrated on would not parse if the
-        # replacement's first line were written verbatim.
+        # Over-indented. The prefix comes off new_text too: a Python
+        # replacement whose first line is written verbatim usually would not
+        # parse.
         if replace_lines[0][:delta].strip():
             return None
         return [replace_lines[0][delta:]] + replace_lines[1:]
@@ -450,23 +417,17 @@ def _strip_line_numbers(lines: list[str]) -> list[str] | None:
     when the block is not numbered.
 
     Every non-blank line numbered is the safe case. Mixed numbering is real
-    too - 11 inputs across 23 runs carried prefixes on all but one line, and
-    one of them was WRITTEN, baking ``NNN| `` into a shipped Booking.tsx. On a
-    mixed block only read_file's ``NNN| `` form counts, only as a majority of
-    at least two lines, and only with rising numbers. Calibrated over
-    2.27M line windows of besser/ and 23 generated apps: zero matches in text
-    that was not already numbered output.
+    too (prefixes on all but one line), and left in place it gets written
+    into the file. On a mixed block only read_file's ``NNN| `` form counts,
+    only as a majority of at least two lines, and only with rising numbers.
+    Calibrated over 2.27M line windows of besser/ and generated apps: zero
+    matches in text that was not already numbered output.
 
-    "Rising" was "strictly rising" until 2026-09-20. Qwen transcribes the
-    gutter by hand and sometimes drops a digit - live Booking.tsx turn 13
-    quoted ``228| 229| 30| 231|``, twice in 105 pairs - and an all-or-nothing
-    rule threw away the other 104 good prefixes and refused a 107-line quote
-    over two typos. A gutter still has to RISE, just not perfectly: a
-    MAJORITY of the steps must climb. The real guard was never this rule but
-    the one above it - most content lines carrying ``NNN| `` at all, which
-    unnumbered source does not do.
-    Measured over the whole corpus, 181 Qwen payloads carry a gutter and this
-    tier already stripped 178 of them; that run was one of the 3 it did not.
+    "Rising" means a MAJORITY of the steps climb, not all: models transcribe
+    the gutter by hand and sometimes drop a digit (``228| 229| 30| 231|``),
+    and one typo should not refuse a long quote. The real guard is the rule
+    above - most content lines carrying ``NNN| `` at all, which unnumbered
+    source does not do.
     """
     content = [ln for ln in lines if ln.strip()]
     if not content:
@@ -480,9 +441,8 @@ def _strip_line_numbers(lines: list[str]) -> list[str] | None:
     pairs = len(numbers) - 1
     rising = sum(1 for a, b in zip(numbers, numbers[1:]) if b > a)
     # A MAJORITY of the steps must rise. Two numbers still have to rise
-    # outright (1 pair: 0 rising fails, 1 passes), so nothing that used to be
-    # accepted on a short block is loosened, and exactly-half (10 3 11 2 12)
-    # is still refused.
+    # outright (1 pair: 0 rising fails, 1 passes), so a short block is not
+    # loosened, and exactly-half (10 3 11 2 12) is refused.
     if pairs and rising * 2 <= pairs:
         return None
     numbered = {i for i, _ in marked}
@@ -597,10 +557,10 @@ def locate_chunk(whole: str, part: str) -> int | None:
     """1-based line where the lines of ``part`` appear consecutively in
     ``whole``, each line's surrounding whitespace aside, else ``None``.
 
-    For the already-applied checks in ``_modify_file``. Those were byte-exact
-    and went blind after every tier-2 apply: run 4efe04ff (2026-09-18) landed
-    a block quoted at indent 4 in a file that holds it at 12, re-sent the same
-    call and was told "old_text not found". Diagnostic only, never an edit, so
+    For the already-applied checks in ``_modify_file``. A byte-exact check
+    goes blind after a tier-2 apply: a block quoted at indent 4 lands in a
+    file that holds it at 12, and a re-sent identical call would be told
+    "old_text not found". Diagnostic only, never an edit, so
     it is looser than the ladder: a model's copy of a block differs from the
     file's mostly in indentation.
     """
@@ -674,9 +634,7 @@ def describe_escape_mismatch(whole: str, part: str) -> str | None:
     so a quote spanning both carries BOTH conventions and no whole-quote
     un-doubling can be right. Worse, an un-doubled ``new_text`` would write
     ``r'[^\\\\s@]'`` - valid Python, valid regex, and a different regex from
-    the one the model read. 11 refused quotes across the 2026-09-20 corpus
-    carry the shape and a global un-double rescues none of them, so the model
-    gets told what it did instead.
+    the one the model read. So the model gets told what it did instead.
     """
     if "\\\\" not in part:
         return None
@@ -726,12 +684,8 @@ def find_similar_lines(
     # incumbent instead of whatever happened to be at the top of the file.
     #
     # In file order the prefilter barely fires: best_ratio starts at 0, so
-    # windows are compared against a weak incumbent and pay for the exact
-    # ratio anyway. Measured on the 468-line router in
-    # test_applied_edit_resend: 228 of 458 windows reached ratio(), 21.2s of
-    # the test's 21.7s. A missed anchor is not rare -- Qwen refuses about a
-    # third of its edits -- so this was seconds of latency per miss in live
-    # runs, spent building a diagnostic hint.
+    # most windows pay for the exact ratio - seconds of latency per missed
+    # anchor on a large file, and misses are common on small models.
     windows = []
     for i in range(len(content_lines) - n + 1):
         matcher.set_seq2("\n".join(content_lines[i:i + n]))
@@ -749,7 +703,7 @@ def find_similar_lines(
             break
         matcher.set_seq2("\n".join(content_lines[i:i + n]))
         ratio = matcher.ratio()
-        # Ties keep the earliest window, as a file-order scan did.
+        # Ties keep the earliest window, as a file-order scan would.
         if ratio > best_ratio or (ratio == best_ratio and 0 <= i < best_i):
             best_ratio, best_i = ratio, i
 
@@ -789,13 +743,13 @@ _OMISSION_PHRASES = (
 # separates an abbreviation from legitimate Python: `Field(...)`, `Query(...)`,
 # a Protocol stub `def f() -> int: ...`, or numpy `a[..., 0]` all have the dots
 # preceded by a space, an opening bracket or a comma. A GLUED colon does count:
-# `contact_id:...` is the live 2026-09-18 shape, while the stub writes `: ...`.
+# `contact_id:...` is a shape models produce, while a stub writes `: ...`.
 _GLUED_ELLIPSIS_RE = re.compile(r"[^\s.,(\[{=]\.\.\.\s*$", re.MULTILINE)
 
 # A line that is ONLY "..." means "the rest is unchanged"; aider treats the
 # same shape as an elision marker. Legal Python as a stub body, so it costs 2
-# false positives across besser/ -- worth it: an edit carrying one spliced a
-# second `try:` into an open one and left a module that fails to import.
+# false positives across besser/ -- worth it: an edit carrying one can splice
+# a second `try:` into an open one and leave a module that fails to import.
 _BARE_ELLIPSIS_RE = re.compile(r"^[ 	]*\.\.\.[ 	]*$", re.MULTILINE)
 
 

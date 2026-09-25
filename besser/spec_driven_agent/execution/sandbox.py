@@ -1,25 +1,20 @@
 """Namespace sandbox for the model-authored shell (``run_command``).
 
-Two confinement holes, both verified live inside the hosted worker:
+Two confinement holes in an unsandboxed shared worker:
 
 * the cwd lock constrains tool *arguments* (``path``, ``working_dir``), not
-  the command string. ``shell=True`` with no chroot meant
-  ``cd /workspace/runs/<other_run> && cat .besser_trace.jsonl`` read a second
-  user's spec out of ``payload.instructions`` — and that directory was
-  writable, so one run could tamper with a concurrent one;
+  the command string, so ``cd /workspace/runs/<other_run>`` could read and
+  write a concurrent user's run;
 * the worker is root in a single shared PID namespace, so ``/proc/1/environ``
-  handed back this container's own live tokens (``BESSER_FREE_LLM_TOKEN``
-  among them), straight past the ``_safe_subprocess_env`` scrub.
+  exposes the container's own tokens past the ``_safe_subprocess_env`` scrub.
 
-Both are visibility problems and both close with the same measure: run the
-command in a mount namespace where only this run's directory is bound, and a
-PID namespace where PID 1 is the sandbox's own init. Per-run containers stay
-the durable answer; this is the interim that costs one apt package.
+Both close with the same measure: run the command in a mount namespace where
+only this run's directory is bound, and a PID namespace where PID 1 is the
+sandbox's own init. Per-run containers would be the stronger isolation.
 
-bubblewrap over nsjail: ``bubblewrap`` is one package in Debian main, a single
-line in the image's existing apt layer. nsjail has no Debian package and has to
-be built from source (protobuf, libnl, bison, flex) onto an image already at
-4.3 GB against a 15 GB disk. Both provide the namespaces; only one is free.
+bubblewrap over nsjail: ``bubblewrap`` is one package in Debian main, whereas
+nsjail has to be built from source (protobuf, libnl, bison, flex), growing the
+image. Both provide the namespaces.
 
 Bubblewrap needs an unprivileged user namespace, and Docker's default seccomp
 profile gates ``unshare`` / ``mount`` / ``pivot_root`` on CAP_SYS_ADMIN — so the

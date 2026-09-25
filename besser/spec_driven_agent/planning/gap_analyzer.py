@@ -15,8 +15,7 @@ Model selection:
 
 Output contract (load-bearing — the orchestrator branches on it):
     * ``None``  — the analysis FAILED (LLM error, unparseable reply,
-      mock client). Phase 2 proceeds without a checklist, exactly as
-      before.
+      mock client). Phase 2 proceeds without a checklist.
     * ``[]``    — the model judged the scaffold ALREADY COVERS the
       user's request. The orchestrator may skip Phase 2 entirely.
     * ``[...]`` — a focused task list for Phase 2.
@@ -148,10 +147,9 @@ def analyze_gaps_via_llm(
 
     if not generator_used:
         if modify_mode:
-            # A seeded/imported app is already in the workspace (its
-            # recipe just didn't survive — e.g. a repo pushed before the
-            # recipe was included). "Build from scratch" framing here
-            # would invite the LLM to bulldoze the user's app.
+            # A seeded/imported app is already in the workspace (only its
+            # recipe is missing). "Build from scratch" framing here would
+            # invite the LLM to bulldoze the user's app.
             fallback = [
                 "An existing application is already present in the "
                 "workspace. Do NOT rebuild it from scratch: explore the "
@@ -223,8 +221,7 @@ def analyze_gaps_via_llm(
 
 # "to the domain model" as a TARGET, not "as defined in the domain model",
 # and not "in the model web_app/backend/sql_alchemy.py" — that names an
-# ORM source file, which is editable. Run n_6i2i5r annotated three such
-# tasks and pointed them away from the very file they named.
+# ORM source file, which is editable, so the task is left as it is.
 _MODEL_TARGET_RE = re.compile(
     r"(?<!as defined )(?<!as described )(?<!as specified )(?<!according to )"
     r"\b(?:to|in|into|on)\s+the\s+(?:b-?uml\s+|besser\s+)?(?:domain\s+)?model\b"
@@ -241,13 +238,10 @@ def _note_model_only_tasks(tasks: list, workspace_files: list) -> list:
     """Redirect a task that asks to edit the B-UML model into the code.
 
     Phase 2's model tools are query-only — there is no tool that mutates the
-    domain model. Live run 7aybctis (2026-09-19): three of sixteen tasks were
-    phrased "add an association class ... to the domain model" and "add a
-    constraint ... to the Booking class in the domain model". The agent
-    understood the intent and cited ``pydantic_classes.py``, but could not
-    produce write evidence for a file it had not changed, so each burned its
-    three checklist attempts and was recorded BLOCKED — nine of the run's
-    thirty-four turns. The requirement stays; only its target is corrected.
+    domain model. A task phrased "add a constraint ... to the Booking class in
+    the domain model" can never produce write evidence, so it burns its
+    checklist attempts and ends BLOCKED. The requirement stays; only its
+    target is corrected.
     """
     validator = next((path for path in workspace_files
                       if path.replace("\\", "/").endswith("pydantic_classes.py")), None)
@@ -276,13 +270,8 @@ def _placement_advice(task: str, target: str) -> str:
 
     A Pydantic ``model_validator`` sees only the request payload. A rule that
     navigates a relationship needs the related rows, so it can only run where
-    the database session exists. Run kinie9zr implemented
-    ``guestsWithinCapacity`` as ``sum(room.maxOccupancy for room in
-    self.rooms)`` inside the validator, where ``self.rooms`` holds link
-    objects carrying ``target``/``agreedPrice`` and no capacity at all. Every
-    POST /booking/ then raised AttributeError, which took the whole booking
-    half of the app down. The earlier version of this note named the
-    validator file first and so pointed the model straight at it.
+    the database session exists; implemented in the validator, it reads link
+    objects that lack the navigated fields and every POST raises.
     """
     if _RELATIONAL_OCL_RE.search(task):
         return (
@@ -301,10 +290,11 @@ def _placement_advice(task: str, target: str) -> str:
 def _note_action_placement(tasks: list[str], endpoints: list[ActionEndpoint]) -> list[str]:
     """Keep planning prose anchored to the handlers which actually serve it.
 
-    Run 8efe8fd4 put every action task in sql_alchemy.py; all six action
-    endpoints remained 501. Annotate explicit action references without
-    discarding requirements or guessing that an ORM method is connected.
-    Harness-owned action tasks enforce omissions independently of this hint.
+    Without it a planner may place action tasks in the ORM module and leave
+    every action endpoint returning 501. Annotate explicit action references
+    without discarding requirements or guessing that an ORM method is
+    connected. Harness-owned action tasks enforce omissions independently of
+    this hint.
     """
     noted = []
     for task in tasks:
@@ -350,10 +340,9 @@ def _task_key(text: str) -> str:
 def _dedupe(tasks: list) -> list:
     """Drop repeated tasks, first-seen order kept.
 
-    Live run (2026-09-17): the planner listed the same item three times;
-    the model noticed ("tasks 15, 16 and 18 are duplicated"), did the
-    work once, and then re-did it for each open copy. Runs before the cap
-    so repeats cannot crowd unique work out of the list.
+    A planner can list the same item several times, and the model then
+    re-does the work for each open copy. Runs before the cap so repeats
+    cannot crowd unique work out of the list.
     """
     seen: set = set()
     kept: list = []
@@ -372,11 +361,10 @@ def _sanitize_tasks(
 ) -> list:
     """Drop checklist items that would demolish the scaffold.
 
-    Live finding (Devstral A/B, 2026-09-02): the planner proposed
-    'delete react frontend scaffold' and 'install Flask' — a checklist
-    that would fight the Phase-2 HARD CONSTRAINTS and the framework-
-    switch blocker for the whole run. The prompt now forbids it; this
-    filter guarantees it. Rival-framework mentions are only dropped when
+    A planner can propose e.g. 'delete react frontend scaffold' and 'install
+    Flask' — a checklist that would fight the Phase-2 HARD CONSTRAINTS and
+    the framework-switch blocker for the whole run. The prompt forbids it;
+    this filter guarantees it. Rival-framework mentions are only dropped when
     the USER didn't ask for that framework themselves.
     """
     rivals = _GAP_SCAFFOLD_RIVALS.get(generator_used or "", ())
@@ -413,12 +401,11 @@ _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 def _drop_present_enumerations(tasks: list, domain_model) -> list:
     """Drop add-enumeration tasks whose literal set the model already has.
 
-    Live finding (2026-09-17): the planner proposed adding 'commercialStatus'
-    with AWAITING_PAYMENT/CONFIRMED/CANCELLED while the model carried
-    BookingCommercialStatus with exactly those literals. It matched on the
-    name - the unreliable part - and ignored the identical member set. The
-    proposed name is ignored here on purpose: every literal of an existing
-    enumeration (two or more) named in an add-enumeration task is the match.
+    A planner may propose adding 'commercialStatus' with AWAITING_PAYMENT/
+    CONFIRMED/CANCELLED while the model already carries an enumeration with
+    exactly those literals. Names are unreliable, so the proposed name is
+    ignored on purpose: every literal of an existing enumeration (two or
+    more) named in an add-enumeration task is the match.
     """
     if domain_model is None:
         return tasks
@@ -456,13 +443,12 @@ _ADD_VERB_RE = re.compile(r"\b(?:add|create|introduce|define|declare)\b", re.IGN
 _ATTR_KEYWORD_RE = re.compile(r"\battributes?\b", re.IGNORECASE)
 _QUOTED_IDENT_RE = re.compile(r"['\"`]([A-Za-z_][A-Za-z0-9_]*)['\"`]")
 
-# Naming the attribute is not the same as asking for the BEHAVIOUR behind it.
-# Live counterexample (se7k3zbx, 2026-09-19): "add a computed
-# 'commercialStatus' attribute that is derived from the bill's settlement
-# status, transitioning from 'awaiting payment' to 'confirmed' when the bill
-# is settled" names an attribute the model already has, but the transition
-# LOGIC - which the model does not encode - is the real ask. This downgrades
-# a drop to an annotation so the requirement itself is never lost.
+# Naming the attribute is not the same as asking for the BEHAVIOUR behind it:
+# "add a computed 'commercialStatus' attribute ... transitioning from
+# 'awaiting payment' to 'confirmed' when the bill is settled" names an
+# existing attribute, but the transition LOGIC the model does not encode is
+# the real ask. This downgrades a drop to an annotation so the requirement
+# itself is never lost.
 _ATTR_BEHAVIOR_RE = re.compile(
     r"\b(?:derive[ds]?\s+from|computed?\s+from|transition\w*|based\s+on|"
     r"calculat\w+|whenever|logic)\b",
@@ -518,17 +504,11 @@ _MAX_REJECTED_CONSTRAINT_TASKS = 6
 def _note_rejected_constraints(domain_model, tasks: list) -> list[str]:
     """Harness-owned tasks for OCL invariants the converter threw away.
 
-    The generator now leaves a TODO where it could not enforce a constraint
+    The generator leaves a TODO where it could not enforce a constraint
     (``pydantic_classes/ocl_utils.py``), which makes the omission visible but
-    does not make it anyone's job. Nothing turned a rejected invariant into
-    work: ``_rejected_constraint_names`` was only ever read defensively, to
-    stop an "already present" family from dropping a task that happened to
-    mention one. If the planner did not raise it, the rule shipped as a
-    comment.
-
-    So the harness raises it. Rejected invariants are exactly the rules the
-    deterministic path cannot express - the owner's directive is that the
-    agent implements those, not that the generator grows to cover them.
+    does not make it anyone's job; if the planner does not raise it, the rule
+    ships as a comment. Rejected invariants are exactly the rules the
+    deterministic path cannot express, so the agent implements them.
 
     Only constraints no existing task already names are added, since the
     planner's own phrasing carries the spec's wording and already gets
@@ -582,12 +562,9 @@ def _drop_present_attributes(tasks: list, domain_model) -> list:
     """Drop (or, when behaviour is also being asked for, annotate) an
     add-attribute task whose (class, attribute) pair the model already has.
 
-    Verified 2026-09-19 against verification/spec-iterations (18 real
-    recipes, one model shared across all of them): run fcdh0s9k's task 11
-    "Add a 'extraCharges' attribute to the ReservedRoom class" - ReservedRoom
-    already declares agreedPrice AND extraCharges, and the generated
-    sql_alchemy.py / pydantic_classes.py of every run already carry both end
-    to end.
+    Example: "Add a 'extraCharges' attribute to the ReservedRoom class" when
+    ReservedRoom already declares extraCharges and the generated ORM and
+    Pydantic classes already carry it end to end.
 
     Matching requires an exact (case-insensitive) attribute-name match on
     the NAMED class's OWN attributes: not a same-named attribute on an
@@ -693,18 +670,15 @@ def _note_present_regex_validations(tasks: list, domain_model) -> list:
     """Annotate (never drop) a task that asks to validate an attribute the
     model already enforces via a successfully-converted OCL regex invariant.
 
-    Verified 2026-09-19: 6 of 18 real runs re-asked for Person email/phone
-    validation while the model's validEmail/validPhone invariants already
-    convert and the generated PersonCreate already carries their exact
-    ``@field_validator`` (inherited by GuestCreate/EmployeeCreate, since both
-    subclass PersonCreate in every generated pydantic_classes.py).
+    Example: a task re-asks for Person email/phone validation while the
+    model's validEmail/validPhone invariants already convert and the
+    generated PersonCreate already carries their ``@field_validator``
+    (inherited by its subclass schemas).
 
-    Kept as an ANNOTATION, not a drop: run gpt-5.6-terra-dp3trml9's task 14
-    bundles the already-satisfied validEmail/validPhone re-ask together with
-    "enforce Person identifyingNumber uniqueness", which the model does NOT
-    carry anywhere. Dropping the whole task on the validEmail/validPhone
-    match would have silently discarded that second, genuine requirement -
-    exactly the failure mode this module must not reproduce.
+    Kept as an ANNOTATION, not a drop: the same task may bundle a genuine
+    requirement the model does NOT carry (e.g. "enforce Person
+    identifyingNumber uniqueness"), and dropping the whole task would
+    silently discard it.
     """
     if domain_model is None:
         return tasks
@@ -836,15 +810,15 @@ def _derived_enum_task_text(
 def _note_derived_enum_initial_state(domain_model, instructions: str) -> list[str]:
     """Harness-owned tasks for a derived enum attribute the generator left unset.
 
-    The owner's directive: when the model and the user's spec disagree, the
-    Spec-Driven Agent closes the gap in the GENERATED CODE — it does not
-    wait for a planner call to notice, and it does not ship the model's
-    silence as if it were a decision.
+    When the model and the user's spec disagree, the Spec-Driven Agent closes
+    the gap in the GENERATED CODE — it does not wait for a planner call to
+    notice, and it does not ship the model's silence as if it were a
+    decision.
 
     A required derived attribute with an unambiguous zero (int/float/str/bool)
     gets a server-side default at INSERT time; an enum has no zero, so its
-    column is emitted nullable instead — "use the first literal" would have
-    shipped every new booking already CHECKED_IN while the spec says a booking
+    column is emitted nullable instead — "use the first literal" could ship
+    every new booking already CHECKED_IN while the spec says a booking
     "starts out with the guests not yet arrived". Nullable keeps the app
     constructible without inventing that state, but it does not supply it:
     the row starts with no status, so this task remains the only stage that
@@ -940,11 +914,9 @@ def _nearest_existing(path: str, workspace_files: list[str]) -> list[str]:
 def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
     """Repair the file paths a task list names, against the real tree.
 
-    Live run (2026-09-18, Qwen3-30B on a 63-file ``generate_web_app``
-    scaffold): the planner named ``frontend/src/components/BookingForm.tsx``
-    and ``BookingDetails.tsx``, neither of which exists — the Booking screen
-    is ``frontend/src/pages/Booking.tsx``. Phase 2 failed both reads and then
-    re-ran the same four searches three times over: 18 turns, zero writes.
+    Planners invent plausible paths (``frontend/src/components/BookingForm.tsx``
+    when the screen is ``frontend/src/pages/Booking.tsx``), and Phase 2 then
+    burns turns on failed reads and repeated searches.
 
     Two deterministic repairs, no LLM call:
 
@@ -1016,12 +988,10 @@ def _class_name_pattern(name: str) -> str:
 def _note_dependent_rule_placement(tasks: list, domain_model) -> list:
     """Tell a create-time task about rows that cannot exist yet.
 
-    Live run 9a6063ed (2026-09-18): the planner emitted "add validation in
-    'create_booking' to enforce that the total number of guests does not
-    exceed the sum of room capacities across all BookedRooms", and Phase 2
-    wrote exactly that - at insert time. A BookedRoom needs a Booking id, so
-    when create_booking runs there are never any: capacity was 0, every
-    POST /booking/ was a 400, and the booking half of the app was dead.
+    A task like "validate in 'create_booking' that the guests do not exceed
+    the sum of room capacities across all BookedRooms" fails at insert time:
+    a BookedRoom needs a Booking id, so none exist yet, capacity is 0 and
+    every create is rejected.
 
     The dependency is in the model. For a task that creates X and names a
     class whose rows require an X, say where the rule can hold. The rule
@@ -1082,13 +1052,10 @@ _RELATIONSHIP_MARKER_RE = re.compile(
 # A rule that aggregates or compares ACROSS related rows (a capacity sum, an
 # overlap check) is not the plain existence/cardinality guard the router
 # already emits, even when it is phrased through a real association name.
-# Live finding (2026-09-19, several runs): the planner re-describes a
-# REJECTED constraint ("does not exceed the combined capacity of all rooms")
-# without naming it, so the name-based ``_mentions_rejected_constraint``
-# guard alone does not catch it - this catches it on the shape of the rule
-# instead. Both rejected constraints in the verified dataset are exactly
-# this shape (a capacity sum, a date overlap), so this guard is what keeps
-# every one of their paraphrases out of this function's reach.
+# The planner often re-describes a REJECTED constraint ("does not exceed the
+# combined capacity of all rooms") without naming it, so the name-based
+# ``_mentions_rejected_constraint`` guard alone does not catch it - this
+# catches it on the shape of the rule instead.
 _AGGREGATE_RULE_MARKER_RE = re.compile(
     r"\b(?:capacity|occupancy|overlap\w*|exceed\w*|combined|aggregate|sum)\b",
     re.IGNORECASE,
@@ -1123,15 +1090,11 @@ def _note_present_relationships(tasks: list, domain_model) -> list:
     """Annotate (never drop) a task that asks to validate an association
     end / relationship reference the model already declares.
 
-    Verified 2026-09-19: run trilraak asked, in 4 separate tasks phrased
-    "Ensure the '<end>' relationship in Booking enforces that ... is a
-    valid ... by validating ... in the create_booking endpoint", for exactly
-    the contact/guests/handledBy/rooms relationships - and the generated
-    web_app/backend/routers/booking.py of that same run already has the
-    400/404 existence check and the minimum-cardinality check for every one
-    of them, deterministically emitted from the model's multiplicities. All
-    four tasks sat at attempts=0: the agent recognised they were already
-    done and never touched them, but they still occupied a checklist slot.
+    Example: "Ensure the '<end>' relationship in Booking enforces that ... is
+    a valid ... in the create_booking endpoint", when the generated router
+    already has the 400/404 existence check and the minimum-cardinality check
+    for that end, emitted from the model's multiplicities. Such tasks occupy
+    a checklist slot for work that is already done.
 
     Kept as an ANNOTATION rather than a drop: the evidence that the router
     already enforces it is a property of a SPECIFIC generator's template
@@ -1255,10 +1218,9 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
 
     # Final fallback, NO tools: some OpenAI-compatible gateways (ollama
     # for certain models, e.g. devstral) reject a FORCED tool_choice with
-    # an error even though ordinary tool calling works — which silently
-    # killed the checklist (and with it the end_turn gate) on every free-
-    # tier run. A plain call asking for a bare JSON array sidesteps the
-    # gateway quirk entirely.
+    # an error even though ordinary tool calling works, which would drop
+    # the checklist (and with it the end_turn gate). A plain call asking for
+    # a bare JSON array sidesteps the gateway quirk entirely.
     try:
         response = llm_client.chat(
             system=_SYSTEM_PROMPT,
@@ -1324,7 +1286,7 @@ def _emit_phase_details(
 ) -> None:
     """Best-effort: surface the gap task list to the SSE consumer.
 
-    Builds a markdown bullet list from the tasks so the smart-gen card
+    Builds a markdown bullet list from the tasks so the run card
     can render it behind a chevron. Silently no-ops if the callback
     raises — the gap analyser must never break the run.
     """

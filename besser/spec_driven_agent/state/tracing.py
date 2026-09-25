@@ -1,4 +1,4 @@
-"""Structured per-turn trace logging for smart generation.
+"""Structured per-turn trace logging for Spec-Driven Agent runs.
 
 A ``TraceWriter`` appends JSON-lines records to ``.besser_trace.jsonl``
 inside the run's output directory. Each line is a self-contained record

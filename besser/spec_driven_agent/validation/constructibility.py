@@ -1,38 +1,28 @@
 """Phase 3: does the delivered app actually do the job, when driven?
 
-The harness verifies the application rather than asking the model to.
-Measured across ~150 Qwen runs, the agent called ``test_api`` 0.06 times per
-run against gpt-5.6's 13.1, left 14-21 of ~20 checklist items open, and
-reported ``completed`` once in 135 - on a median 66 turns of 120, so not a
-budget limit. Rewriting the checklist to name ``test_api`` literally produced
-0.00 calls across 24 runs. Three attempts at persuasion failed, so this
-module drives the workflow: create each aggregate, call each modelled action
-on it with the literal ``{}`` the generated button posts, and read the record
-back.
+The harness verifies the application rather than asking the model to: weaker
+models rarely call ``test_api`` or close their checklist on their own, however
+the prompt is worded. So this module drives the workflow itself: create each
+aggregate, call each modelled action on it with the literal ``{}`` the
+generated button posts, and read the record back.
 
-A status code is not a result. A live gpt-5.6-terra run answered its Renew
-button ``200 {"success": false, "message": "a dueDate is required"}`` and the
-acceptance oracle scored it 10/10, because nothing read past the status line.
-The probe snapshots the entity and the size of every collection either side
-of the call; an action that declares a refusal and changes nothing did not
-run. Refusing is often correct, though - cancelling a checked-out booking
-SHOULD fail - so the hard finding is entity-scoped and needs the aggregate to
-have been created one request earlier, no modelled action to have moved it in
-any lifecycle state its own create schema can select, and the model to state
-that the action takes no parameters. Anything short of that is
-``action unverified:``.
+A status code is not a result. A handler can answer
+``200 {"success": false, "message": "a dueDate is required"}``, and a
+status-only oracle scores that as a pass. The probe snapshots the entity and
+the size of every collection either side of the call; an action that
+declares a refusal and changes nothing did not run. Refusing is often
+correct, though - cancelling a checked-out booking SHOULD fail - so the hard
+finding is entity-scoped and needs the aggregate to have been created one
+request earlier, no modelled action to have moved it in any lifecycle state
+its own create schema can select, and the model to state that the action
+takes no parameters. Anything short of that is ``action unverified:``.
 
-The first question it asked is still the first one it asks:
-can every entity actually be created through the generated API?
-
-Live run 9a6063ed (2026-09-18): the gap analyser asked for "validation in
-create_booking that the guests do not exceed the room capacities across all
-BookedRooms", and Phase 2 wrote exactly that - at insert time. But a
-BookedRoom needs a Booking id, so at insert time a Booking never has any:
-capacity was always 0, every POST /booking/ was a 400, and with it Bill and
-BookedRoom were unreachable. The app passed every static gate (imports,
-mappers, star-import names, 61 routes, four entities creating fine) and
-shipped as "0 blockers".
+The first question it asks: can every entity actually be created through
+the generated API? A create-time rule can make that impossible while every
+static gate passes - e.g. "guests must not exceed the capacity of the booked
+rooms" checked at insert time, when a Booking cannot have BookedRooms yet
+(they need its id): every POST /booking/ is a 400, and every entity that
+needs a Booking is unreachable.
 
 No static check sees this: the rule is ordinary code, the schema is valid,
 and reachability of a ``raise`` depends on data flow. So this check runs the
@@ -52,12 +42,10 @@ fails to configure is ``mapper config:``. Unresolved creation dependencies
 are reported as unverified; they are not proof that no valid workflow exists.
 
 A finding names its fix site - the function serving the create route, the
-file and the line inside it that constructs the entity - because run
-7f918e11 (2026-09-18) showed a 30B model given only the symptom spending
-two fix attempts without touching ``routers/booking.py``. The line feeds the
-fix prompt's excerpt. When the refusal is a NOT NULL violation, the column
-is named too, and the create-time-rule advice (right for 9a6063ed, wrong
-here) is left out.
+file and the line inside it that constructs the entity - because a model
+given only the symptom tends to spend its fix attempts elsewhere. The line
+feeds the fix prompt's excerpt. When the refusal is a NOT NULL violation, the
+column is named too, and the create-time-rule advice is left out.
 
 Runs in two halves. The parent (``collect_constructibility_report``) is
 ordinary orchestrator code; it also hands the child the modelled action list
@@ -97,8 +85,7 @@ _MARKER = "BESSER_CONSTRUCTIBILITY_REPORT:"
 _ACTIONS_ENV = "BESSER_PROBE_MODEL_ACTIONS"
 # Entities the MODEL marks abstract. A generated router is right to refuse to
 # instantiate one ("Person is abstract; create a Patron or Librarian
-# instead"), so POSTing to it manufactures a blocker no repair can clear:
-# gpt-5.6-terra-hzllh0l6 spent 17 rounds, 108 turns and $0.96 on exactly that.
+# instead"), so POSTing to it manufactures a blocker no repair can clear.
 _ABSTRACT_ENV = "BESSER_PROBE_ABSTRACT_ENTITIES"
 _SKIP_DIRS = frozenset({
     "node_modules", "__pycache__", ".besser_snapshot", "dist", "build", "data",
@@ -119,11 +106,9 @@ _NOT_NULL_PATTERNS = (
 def collect_constructibility_report(output_dir: str, domain_model=None) -> dict:
     """``{"issues": [...], "backends": [{"backend": rel, ...}]}``.
 
-    The probe already computed per-entity and per-action runtime facts; the
-    caller used to see only the rendered strings and had to re-derive the
-    facts by matching prefixes back out of them. ``backends`` carries the
-    child's own report so ``_phase3_tree_score`` can rank a tree on what the
-    running app actually did.
+    ``backends`` carries the child's own per-entity and per-action report,
+    so ``_phase3_tree_score`` can rank a tree on what the running app
+    actually did instead of matching prefixes back out of the issue strings.
     """
     from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 
@@ -148,7 +133,7 @@ def _abstract_entities(domain_model) -> list[str]:
     """Class names the model marks ``is_abstract``.
 
     Read defensively: an older serializer, or a model with no such notion,
-    yields an empty list and the probe behaves exactly as before.
+    yields an empty list and no entity is skipped.
     """
     if domain_model is None:
         return []
@@ -165,12 +150,9 @@ def _abstract_entities(domain_model) -> list[str]:
 def _model_actions(domain_model) -> dict:
     """``entity -> [{"name", "parameters", "return_type"}]`` from the MODEL.
 
-    The parameter list and the return type only became readable today:
-    ``_method_entry`` omitted ``parameters`` for a zero-argument method
-    (a886947f) and the editor's newer format dropped the return type
-    (ab03f9d7). Both keys are read defensively - an absent ``parameters``
-    means "this serializer does not say", which disables every finding that
-    leans on the zero-argument contract rather than asserting it.
+    Both keys are read defensively - an absent ``parameters`` means "this
+    serializer does not say", which disables every finding that leans on the
+    zero-argument contract rather than asserting it.
     """
     if domain_model is None:
         return {}
@@ -409,10 +391,9 @@ def _action_issue_text(entry: dict, rel: str) -> str:
 def _inert_action_text(entry: dict, rel: str) -> str:
     """Render a 2xx that declared failure and left the world unchanged.
 
-    The status code is not the result. A live gpt-5.6-terra run answered the
-    Renew button ``200 {"success": false, "message": "a dueDate is required"}``
-    and the acceptance oracle scored it 10/10, because nothing read past the
-    status line. So the probe reads the record back: a call that reports a
+    The status code is not the result: a handler can answer
+    ``200 {"success": false, "message": "a dueDate is required"}`` and change
+    nothing. So the probe reads the record back: a call that reports a
     refusal and changes no row did not happen, whatever it returned.
 
     Refusing is often right, which is why this is entity-scoped: it fires only
@@ -565,17 +546,13 @@ def _is_duplicate_refusal(status: int, text: str) -> bool:
     """True when the app refused this create because the row already exists.
 
     Recognising it lets the caller retry against a FRESH reference instead of
-    reporting an unverified create. Matching only raw database errors -- the
-    previous rule, 409 plus a SQLite/Postgres constraint string -- penalised
-    exactly the apps that handle the error properly: a scaffold that lets
-    ``UNIQUE constraint failed`` escape got the retry, while one returning a
-    clean ``400 {"error": "Relationship already exists"}`` was reported as an
-    unverified create route and blocked a run.
+    reporting an unverified create. Clean app-level refusals
+    (``400 {"error": "Relationship already exists"}``) count as well as raw
+    database constraint errors; matching only the latter would penalise
+    exactly the apps that handle the error properly.
 
-    Observed on run claude-sonnet-5-3s9nd9go: the probe creates a Booking,
-    which materialises its own Room<->Booking link, then POSTs that same pair
-    to /reservedroom/ and is correctly refused. The app was right; the finding
-    was ours, and it held the fix loop open for two attempts.
+    Typical case: creating a Booking materialises its own Room<->Booking
+    link, so POSTing that same pair to /reservedroom/ is correctly refused.
     """
     if status not in (400, 409, 422):
         return False
@@ -753,9 +730,9 @@ def _build_payload(schema: dict, schemas: dict, relationships: dict, ids: dict,
             payload[field] = variant[2]
             continue
         # "Freshly created, in its initial state" has to mean it: a lifecycle
-        # flag starts false. Sampling True made the probe approve an
-        # already-approved timesheet and then read the handler's correct
-        # refusal as a defect (gpt-5.6-terra-1s14uohe, 5/5 checks passed).
+        # flag starts false. Sampling True would create, e.g., an
+        # already-approved timesheet and read approve()'s correct refusal
+        # as a defect.
         if variant[0] == "initial" and resolved.get("type") == "boolean":
             payload[field] = False
             continue
@@ -850,10 +827,9 @@ def _handler_site(app, path: str, entity: str) -> dict | None:
 #
 # A create probe proves nothing about these - they carry the app's actual
 # behaviour and a static stub-scan (action_inventory.py) only catches an
-# empty/placeholder body, not a handler with real code that is wrong. Live
-# case: run iw82zzoc's registerArrival/registerDeparture/cancel each compare
-# a loaded enum column to `SomeEnum.LITERAL.value` (a raw string) - that
-# comparison is never true, in ANY state, so the handler refuses every call.
+# empty/placeholder body, not a handler with real code that is wrong - e.g.
+# one comparing a loaded enum column to `SomeEnum.LITERAL.value` (a raw
+# string), which is never true in ANY state, so it refuses every call.
 #
 # A 4xx from one call is NOT evidence of a defect: refusing in the wrong
 # state is the entire point of a guarded action. The only way to tell
@@ -861,10 +837,10 @@ def _handler_site(app, path: str, entity: str) -> dict | None:
 # spec is to construct more than one state and see whether the same action
 # ever succeeds anywhere. That is only possible for entities whose own
 # create schema exposes the state-carrying field, and only names fields that
-# read as the entity's own lifecycle ("status"/"state"/"stage"/"phase") -
-# see Bill.settled in iw82zzoc, a required boolean that is NOT what
-# registerPayment's guard reads (it reads the *linked Booking's*
-# commercialStatus): varying it would have produced misleading evidence.
+# read as the entity's own lifecycle ("status"/"state"/"stage"/"phase"): a
+# required boolean like Bill.settled need not be what registerPayment's
+# guard reads (it may read the *linked Booking's* status), so varying it
+# would produce misleading evidence.
 # Each action is probed against its OWN fresh batch of instances, never
 # shared with another action, so one action's side effects can never taint
 # another's evidence.
@@ -1034,7 +1010,7 @@ async def _probe_actions(app, spec, request, read_state, schemas, orm, subclasse
     A. the aggregate's own first move - create it, read it, call the action
        with the literal ``{}`` the generated button posts, read it again.
        An action that reports a refusal and changes nothing did not run.
-    B. the state sweep that was here before - vary a status-like create field
+    B. the state sweep - vary a status-like create field
        and see whether the action ever succeeds in ANY state it can build.
     """
     reports: list = []
@@ -1059,11 +1035,10 @@ async def _probe_actions(app, spec, request, read_state, schemas, orm, subclasse
         # ---------------------------------------------------- pass A: first move
         #
         # "Initial state" is a guess, and a wrong guess invents a defect. The
-        # enum literal the create schema lists first is not the lifecycle's
-        # start: SessionStatus sorts CANCELLED before SCHEDULED, so the first
-        # build of this pass created a cancelled session and read cancel()'s
-        # correct refusal as a dead workflow (gpt-5.6-terra-5d9otfvo /
-        # jl_vbrf2, both 2/4). So where the entity's own create schema can
+        # enum literal the create schema lists first is not necessarily the
+        # lifecycle's start (a SessionStatus may sort CANCELLED before
+        # SCHEDULED, and cancel() then refuses correctly). So where the
+        # entity's own create schema can
         # select a lifecycle state, every literal is tried before concluding
         # that nothing moves - and only for an aggregate that would otherwise
         # be reported, so a healthy app pays for one pass.

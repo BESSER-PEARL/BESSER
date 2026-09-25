@@ -2,12 +2,11 @@
 
 Every stage that DECIDES on the request reads it whole. A head-clip is the
 worst shape for that text: stack declarations conventionally come LAST
-("Additionally, you must use: Frontend -> React"), and a selector that saw
-``instructions[:500]`` scaffolded a 4,622-char spec with no frontend
-(production, 2026-09-17). Three such clips were fixed separately that day,
-each believed to be the last. ``tests/spec_driven_agent/test_request_not_clipped.py``
-now fails on any bound that is not declared - here, with a stated reason,
-or with a ``bounded:`` comment on a display/fingerprint slice.
+("Additionally, you must use: Frontend -> React"), so a selector that sees
+only ``instructions[:500]`` can scaffold a long spec with no frontend.
+``tests/spec_driven_agent/test_request_not_clipped.py`` fails on any bound
+that is not declared - here, with a stated reason, or with a ``bounded:``
+comment on a display/fingerprint slice.
 """
 
 

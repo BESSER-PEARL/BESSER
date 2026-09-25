@@ -122,6 +122,7 @@ from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,
     _check_did_not_run,
     _classify_issue,
+    dependency_check_issue,
     is_completion_issue,
     required_check_unverified,
     required_dependency_setup as required_dependency_setup,
@@ -2973,12 +2974,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                 env=_safe_subprocess_env(),
                             )
                             if result.returncode != 0:
-                                # Extract the meaningful error
-                                err_lines = [line for line in result.stderr.strip().split("\n")
-                                             if line.strip() and "WARNING" not in line]
-                                if err_lines:
-                                    err = "\n".join(err_lines[-3:])
-                                    raw_issues.append(f"Dependency conflict in {rel}:\n{err}")
+                                issue = dependency_check_issue(rel, result.stderr)
+                                if issue:
+                                    raw_issues.append(issue)
                         except Exception:
                             pass  # pip not available or timeout — skip
 

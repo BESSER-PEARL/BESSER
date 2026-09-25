@@ -89,6 +89,37 @@ def _check_did_not_run(tool: str, reason: str) -> str:
     )
 
 
+# pip's signature of an index it could not reach. It then reports "No matching
+# distribution found" / ResolutionImpossible, which reads as a conflict.
+_PIP_NETWORK_MARKERS = (
+    "CERTIFICATE_VERIFY_FAILED", "SSLError", "ProxyError", "NewConnectionError",
+    "Failed to establish a new connection", "ConnectTimeoutError",
+    "ReadTimeoutError", "Temporary failure in name resolution", "getaddrinfo failed",
+)
+
+
+def dependency_check_issue(rel: str, stderr: str) -> str | None:
+    """The finding for a failed ``pip install --dry-run``, or ``None``.
+
+    A network/TLS failure is an unknown, not a conflict: behind a
+    TLS-inspecting proxy every run got a false "Dependency conflict" blocker.
+    The quoted lines skip pip's ``[notice]`` upgrade nag, which used to fill
+    the three-line excerpt and hide the actual error.
+    """
+    lines = [line.strip() for line in (stderr or "").splitlines()
+             if line.strip() and not line.lstrip().startswith("[notice]")]
+    network = next((line for line in lines
+                    if any(marker in line for marker in _PIP_NETWORK_MARKERS)), None)
+    if network:
+        return (f"validation: could not verify dependencies in {rel}: network/TLS error - "
+                f"pip could not reach the package index ({network[:300]}). This is not a "
+                "dependency conflict; the check was skipped.")
+    errors = [line for line in lines if "WARNING" not in line]
+    if not errors:
+        return None
+    return f"Dependency conflict in {rel}:\n" + "\n".join(errors[-3:])
+
+
 def required_check_unverified(check: str, reason: str) -> str:
     """A required check is unknown, not a source defect for the repair agent."""
     return (

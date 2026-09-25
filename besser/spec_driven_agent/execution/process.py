@@ -43,6 +43,16 @@ _SECRET_SUBSTRINGS: tuple[str, ...] = (
     "API_", "AUTH", "CERT", "SESSION",
 )
 
+# Trust-store locations. Behind a TLS-inspecting proxy pip / npm / curl fail
+# certificate verification without them, which surfaced as a false
+# "Dependency conflict" blocker. They name a CA bundle (public certificates),
+# not a credential, so they bypass the "CERT" deny substring - but only when
+# the value is an existing path, never inline content.
+_CA_BUNDLE_ENV: frozenset[str] = frozenset({
+    "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "PIP_CERT", "NPM_CONFIG_CAFILE",
+})
+
 
 def _safe_subprocess_env() -> dict[str, str]:
     """Return a minimal subprocess environment with secrets stripped.
@@ -61,6 +71,10 @@ def _safe_subprocess_env() -> dict[str, str]:
     safe: dict[str, str] = {}
     for name, value in os.environ.items():
         upper = name.upper()
+        if upper in _CA_BUNDLE_ENV:
+            if os.path.exists(value):
+                safe[name] = value
+            continue
         if upper not in allowed:
             continue
         if any(substr in upper for substr in _SECRET_SUBSTRINGS):

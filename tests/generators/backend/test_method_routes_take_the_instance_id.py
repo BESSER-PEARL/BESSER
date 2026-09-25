@@ -7,9 +7,7 @@ was registered at ``/booking/methods/cancel/`` with no id in the path. The React
 generator addresses every method button as ``/booking/{booking_id}/methods/cancel/``
 (serialization.py) and the GUI converter marks any run-method button wired to a
 table as an instance method (component_parsers.py), so the UI could never reach
-those routes. Live 2026-09-18, run 19h35 (hotel, 7 classes): all six modeled
-methods had ``code: ''``, every method button 404ed, and 12 of 18 acceptance
-scenarios were lost to that one mismatch. B-UML has no static methods - ``Method``
+those routes: with bodiless modeled methods, every method button 404ed. B-UML has no static methods - ``Method``
 carries no such flag - so an unimplemented method is an unimplemented INSTANCE
 method.
 """

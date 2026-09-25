@@ -43,8 +43,8 @@ def test_scrubber_does_not_follow_symlinks(tmp_path):
 # ----------------------------------------------------------------------
 # Redaction must never corrupt source code
 #
-# Live regression, 2026-09-11: across a batch of 10 generated apps, 4 files in
-# 2 apps came out unable to import. The name-based .env heuristic was being
+# Regression: generated files came out unable to import. The name-based .env
+# heuristic was being
 # applied to Python, where it matches on the variable NAME and replaces the
 # whole value with a bare [REDACTED] - legal in a .env file, a list containing
 # an undefined name in Python:

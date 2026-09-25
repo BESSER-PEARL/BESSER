@@ -1,9 +1,8 @@
 """The two server-side halves of surviving a TLS-inspecting corporate proxy.
 
-Netskope on LIST laptops buffers a response body before releasing it, and an
-SSE stream never finishes producing one. Verified live with Netskope ON: the
-REST endpoints and the agent WebSocket work, and *only* the spec-driven stream
-fails — either the initial POST's headers are held so the fetch never settles
+Such a proxy buffers a response body before releasing it, and an SSE stream
+never finishes producing one. Behind it the REST endpoints and the agent
+WebSocket work, and *only* the spec-driven stream fails — either the initial POST's headers are held so the fetch never settles
 ("Waiting for the first event…" forever), or the connection is torn down and
 the client reports "Failed to fetch".
 

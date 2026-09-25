@@ -6,9 +6,8 @@ must never supply. Before this fix, ``is_server_owned_attribute()`` checked
 only the surrogate ``id`` and the audit timestamps -- it never looked at
 ``is_derived`` -- so the ``*Create`` schema declared the derived attribute as
 a required field, forcing the client to invent a value for something the
-system is supposed to calculate. This was measured across 15 live hotel-app
-runs: ``BookingCreate`` required ``totalPrice``/``physicalStatus``/
-``commercialStatus`` in all 15.
+system is supposed to calculate (e.g. ``BookingCreate`` required
+``totalPrice``/``physicalStatus``/``commercialStatus``).
 
 The full (read) schema keeps the field, and a non-derived attribute is
 unaffected either way -- mirrors the audit-timestamp coverage in

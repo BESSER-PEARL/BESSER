@@ -1,6 +1,6 @@
 """Promoting a class to an association class must not orphan its own associations.
 
-Live report (2026-09-22, RestaurantOrderingSystem): the editor showed OrderLine
+Reported on a RestaurantOrderingSystem model: the editor showed OrderLine
 on the canvas, and validation insisted
 
     Association 'lines' has end 'orderline' referencing type 'OrderLine'
@@ -123,7 +123,7 @@ def test_the_promoted_class_knows_its_own_associations(restaurant_shape):
     """Ends were re-pointed at the new AssociationClass, but the associations
     stayed registered on the discarded Class, so association_ends() on the
     promoted class came back empty. Generators read it to render the link's
-    side of 'lines': live (2026-09-23) the web-app scaffold of a hotel model
+    side of 'lines': the web-app scaffold of a hotel model
     (ExtraCharge -> BookingRoom) failed at mapper configuration."""
     domain = _domain(restaurant_shape)
     line = next(t for t in domain.types if getattr(t, "name", None) == "OrderLine")

@@ -2,8 +2,7 @@
 Tests for the "did you mean" suggestion appended to dropped OCL invariants
 whose ``self.X`` navigation fails to resolve.
 
-Motivating case (BESSER-Experimental verification run,
-Qwen-Qwen3-30B-A3B-Instruct-2507-fcdh0s9k, ``input_project.json``): a
+Motivating case (a hotel model produced by the modeling assistant): a
 Guest<->Booking association rolls its role name "guests" onto the *Booking*
 end instead of the Guest end -- the classic UML "role on the wrong end"
 mistake. The converter's end-ownership rule (``class_diagram_processor.py``)
@@ -41,7 +40,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 # ---------------------------------------------------------------------------
 
 def _hotel_model():
-    """Booking/Guest/Room, wired exactly as in the real, live-verified model:
+    """Booking/Guest/Room, wired exactly as in the motivating model:
     the "guests" role sits on the Booking end (wrong end) and the Room<->Booking
     association leaves Booking's own end role blank (many-valued but singular).
     """

@@ -3,8 +3,7 @@
 A modeled ``createdAt`` / ``updatedAt`` (any case, with or without an underscore)
 is filled in by the server (the SQLAlchemy generator stamps it via
 ``default=``/``onupdate=``). Leaving it in the ``*Create`` schema would force the
-client to supply a value the server owns and break the generated app — the P4/P5
-pilot failure. The full (read) schema keeps the fields, and a declared ``is_id``
+client to supply a value the server owns and break the generated app. The full (read) schema keeps the fields, and a declared ``is_id``
 primary key is always client-supplied and stays in Create.
 """
 

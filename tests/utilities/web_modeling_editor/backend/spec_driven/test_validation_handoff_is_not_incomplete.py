@@ -1,6 +1,6 @@
 """The normal Phase 2 -> Phase 3 handoff must not be reported as incomplete.
 
-Reported live: a run showing "Nothing we checked was found missing from the
+Regression: a run showing "Nothing we checked was found missing from the
 delivered code" (0 unenforced), 3 verified and 4 could-not-verify was still
 headlined **"Generated — incomplete"**, with "The customization loop did not
 finish cleanly."

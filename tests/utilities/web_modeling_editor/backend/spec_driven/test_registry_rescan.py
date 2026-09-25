@@ -7,8 +7,8 @@ not: push-to-github and import-github-run stay on the backend (they need the
 process-local OAuth session), so every worker run is written to the shared
 volume AFTER the backend's one-shot scan.
 
-Proven live before the fix: the worker had 1 run on disk and the backend
-registry had 0 entries, so push-to-github 404'd for every worker run.
+Before the fix the worker had runs on disk while the backend registry had
+none, so push-to-github 404'd for every worker run.
 """
 import asyncio
 import json

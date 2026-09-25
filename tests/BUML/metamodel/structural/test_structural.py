@@ -1049,7 +1049,7 @@ def test_a_method_named_differently_from_every_attribute_is_accepted():
 # Constructibility: a model can be structurally valid and still describe an
 # application nobody can use.
 #
-# Live run 2026-09-18 (hotel booking, `latest.json`). validate() returned
+# Regression (hotel booking model): validate() returned
 # SUCCESS with 0 errors and 0 warnings. The generated FastAPI app booted,
 # served 69 paths, and its central aggregate could not be created by any
 # client: BookingCreate required a ReservedRoom id and ReservedRoomCreate
@@ -1174,7 +1174,7 @@ def test_duplicate_associations_over_one_class_pair_warn():
     """Two associations between the same pair: one concept drawn twice.
 
     A warning, not an error — parallel associations are legal UML
-    (homeAddress / workAddress) — but on the live model all three duplicated
+    (homeAddress / workAddress) — but in the motivating model all three duplicated
     pairs carried a `_1`-suffixed role, the collision marker, and each became
     a redundant foreign key in the generated schema.
     """

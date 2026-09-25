@@ -48,14 +48,14 @@ _TEMPLATE_FILES = sorted(_TEMPLATE_DIR.glob("*.json")) if _TEMPLATE_DIR.is_dir()
 #   Layer 'l3': input_var is required when previous module 'l2' returns multiple outputs
 #   Layer 'l5': input_var is required when previous module 'l4' returns multiple outputs
 #
-# The rule arrived in aa6d6399 (2026-09-10) and nothing caught it because this
+# The rule arrived in aa6d6399 and nothing caught it because this
 # template test was not collected until a9ed1991 ("collect the tests that never
 # ran"). A user drawing LSTM -> Dropout -> LSTM -> Linear in the editor hits it
 # too, so it is neither a template defect nor an editor defect.
 #
 # xfail(strict) rather than a fix: the rule and the template both belong to
 # mainline, and return_type="last" yields a single tensor, so only "full" should
-# require disambiguation -- whoever owns aa6d6399 should make that call.
+# require disambiguation; that call belongs with the owner of the rule.
 # strict=True means this fails loudly again the moment it is fixed upstream.
 _UPSTREAM_NN_VALIDATION_BUG = pytest.mark.xfail(
     strict=True,

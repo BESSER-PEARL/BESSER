@@ -1,6 +1,6 @@
 """Every generated 501 stub must name its method.
 
-Measured 2026-09-17 on a five-method class: the stub bodies were byte-identical
+On a five-method class the stub bodies were byte-identical
 for 14 lines, so a modify_file quoting one of them hit "old_text occurs 5 times
 and is ambiguous" - the model then either quoted a def line from memory (miss)
 or rewrote the whole file. The identity belongs in the comment the model
@@ -29,7 +29,7 @@ def test_each_501_stub_names_its_method(tmp_path):
         assert f"# Booking.{method}" in content, method
         assert f"Method '{method}' of Booking is modeled but has no implementation" in content, method
     assert "# Method body not defined in the model" not in content
-    # 2026-09-19: the rationale used to sit in the standalone comment itself
+    # The rationale used to sit in the standalone comment itself
     # ("...: no body in the model - be honest..."), so an agent that replaced
     # the raise but left the comment shipped a self-contradicting claim above
     # real code. It now lives only in detail=, deleted along with the raise.

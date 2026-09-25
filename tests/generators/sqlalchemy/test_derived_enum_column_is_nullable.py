@@ -13,7 +13,7 @@ ORM sent ``None`` and SQLite refused the INSERT::
 
     NOT NULL constraint failed: booking.commercialStatus
 
-measured on POST /booking/ (hotel) and POST /order/ (inventory) on every raw
+on POST /booking/ (hotel) and POST /order/ (inventory) on every raw
 generated app. The column is now nullable instead: a derived attribute has no
 client-supplied value at INSERT time, so NULL is what "not yet computed"
 looks like, and it matches the field's absence from the Create schema. It

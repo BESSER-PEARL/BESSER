@@ -1,6 +1,6 @@
 """Two entities that each require the other cannot both be created.
 
-Live 2026-09-17, the hotel run. Two symptoms with two different causes:
+Observed on a hotel model. Two symptoms with two different causes:
 
   1. ``BookingCreate`` required ``guest`` and ``GuestCreate`` required
      ``booking``, so neither could be created first. This needs only ONE
@@ -47,7 +47,7 @@ def _booking_guest(second_association: bool) -> DomainModel:
     """Booking and Guest, each required to the other.
 
     With ``second_association`` the pair is linked twice, which is what the
-    live model did: a booking's *contact* guest, plus the guests staying on
+    motivating model did: a booking's *contact* guest, plus the guests staying on
     the booking. That is what makes the FK ownership opposite and closes the
     table cycle.
     """

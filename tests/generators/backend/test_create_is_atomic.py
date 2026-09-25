@@ -2,9 +2,8 @@
 
 The create endpoint used to ``commit()`` the new row and only then validate
 the related ids, with no rollback anywhere in the function. The client got a
-400 and the half-created row stayed in the database — verified live on
-2026-09-18: posting a booking naming a BookingRoom id that does not exist
-returned 400 and left one orphan booking.
+400 and the half-created row stayed in the database: posting a booking naming
+a BookingRoom id that does not exist returned 400 and left one orphan booking.
 
 The bulk endpoint in the same template already did it correctly
 (``flush()  # Get ID without committing``); the single-create path now does

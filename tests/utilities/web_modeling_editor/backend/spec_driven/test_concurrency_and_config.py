@@ -313,7 +313,7 @@ def test_smart_generate_returns_429_when_saturated(monkeypatch):
 # ======================================================================
 # Dedicated blocking-work thread pool
 # ======================================================================
-# Smart-gen's long orchestrator runs on a dedicated pool, NOT asyncio's shared
+# The spec-driven orchestrator runs on a dedicated pool, NOT asyncio's shared
 # default executor — otherwise a burst of concurrent runs would occupy every
 # default-pool thread for minutes and stall the quick to_thread endpoints
 # (BUML conversion, exports, deploys). These tests lock that in.

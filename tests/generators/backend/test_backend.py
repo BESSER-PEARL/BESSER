@@ -249,7 +249,7 @@ def test_pydantic_multiplicity_constraints(relationship_model, tmpdir):
     # validates nor assigns `dt` - the value was accepted and silently
     # discarded. Worse, when BOTH ends are required the same branch made
     # both create schemas mandatory, so neither entity could be created
-    # first (live 2026-09-17). The N:1 branch already emitted nothing on
+    # first. The N:1 branch already emitted nothing on
     # the non-owning side; the 1:1 branch now matches it.
     assert "class PhysicalAssetCreate(BaseModel):" in pydantic_code
     physical_asset_create = pydantic_code.split("class PhysicalAssetCreate(BaseModel):")[1]

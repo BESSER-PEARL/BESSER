@@ -1,4 +1,4 @@
-"""Tests for the pilot-experiment telemetry system.
+"""Tests for the opt-in study-session telemetry system.
 
 Covers the collector gating (master switch + participant), the JSONL
 store schema, the three-way deterministic/LLM file split, the report

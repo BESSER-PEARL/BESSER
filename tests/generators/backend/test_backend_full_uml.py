@@ -334,7 +334,7 @@ def test_backend_generator_one_to_one_optional_field(tmpdir):
     # generated create_bserial endpoint neither validates nor assigns it,
     # so it was a field the API accepted and threw away. When both ends of
     # a 1:1 are required, emitting it on both sides made neither entity
-    # creatable (live 2026-09-17).
+    # creatable.
     assert "class BSerialCreate(BaseModel):" in pydantic_code
     bserial_create = pydantic_code.split("class BSerialCreate(BaseModel):")[1]
     bserial_create = bserial_create.split("class ")[0]

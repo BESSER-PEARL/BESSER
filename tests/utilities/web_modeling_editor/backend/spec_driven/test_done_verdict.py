@@ -1,11 +1,11 @@
-"""F2: the run's success/incomplete verdict must respect Phase-3 blockers.
+"""The run's success/incomplete verdict must respect Phase-3 blockers.
 
 Before this, `incomplete` keyed ONLY on Phase 2 emitting `end_turn`, so an app
 that parsed but had an unfixed blocker-class issue shipped as a green success.
 Now unresolved implementation issues mark the run incomplete, without assuming
 every blocker means the application cannot start.
 
-Narrowed 2026-09-22 (owner decision): a finding that says "we could not CHECK"
+A finding that says "we could not CHECK"
 no longer sets the verdict. The unverified family carries blocker severity, so a
 run reporting "Nothing we checked was found missing from the delivered code",
 3 verified and 4 could-not-verify was still headlined "Generated - incomplete".
@@ -93,12 +93,9 @@ def test_no_blockers_stays_complete(monkeypatch, required_check):
     try:
         done = _done_event(SmartGenerationRunner(_build_request()))
         # A check that could not RUN is an unknown, not a defect, and no
-        # longer sets the verdict. Owner decision 2026-09-22: a run reporting
-        # "Nothing we checked was found missing", 3 verified and 4
-        # could-not-verify was headlined "Generated - incomplete" with nothing
-        # wrong with it. The unknown still counts in blockerCount and still
-        # shows in the ledger's could-not-verify bucket -- it just does not
-        # claim the app is broken.
+        # longer sets the verdict. The unknown still counts in blockerCount
+        # and still shows in the ledger's could-not-verify bucket -- it just
+        # does not claim the app is broken.
         assert done["incomplete"] is False
         assert done["blockerCount"] == int(required_check)
     finally:
@@ -160,9 +157,6 @@ def test_failed_diagram_is_visible_and_bound_missing_inputs_fail_before_client(m
 # whose Phase 2 finished cleanly but whose WALL CLOCK blew the cap emitted
 # "Runtime cap reached ... Output may be incomplete" and then reported
 # `incomplete: False, incompleteReason: None`.
-#
-# Observed live on 2026-09-15, run 932f1367: TIMEOUT at 1342s against a 1200s
-# cap, 37 turns, followed by a done event claiming the run was complete.
 # ---------------------------------------------------------------------------
 class _SlowButCleanOrchestrator(_StubOrchestrator):
     """Phase 2 exits cleanly; the run as a whole overruns its time cap.

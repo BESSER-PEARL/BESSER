@@ -1,4 +1,4 @@
-"""The stale-role-name warning is DISABLED (2026-07-14).
+"""The stale-role-name warning is DISABLED.
 
 It was meant to flag a role name left stale by a visual-editor class rename
 (the editor rebuilds via ``Class.__init__``, bypassing the ``Class.name``

@@ -1,6 +1,6 @@
 """HTTP-level test: push prefers the run's model-synced export.
 
-A vibe-MODIFY run whose instruction implied new domain entities stores
+A MODIFY run whose instruction implied new domain entities stores
 an ``updated_project_export`` on its ``SmartRunEntry``. The push endpoint
 must write ``buml/diagrams.json`` from THAT export (so the pushed model
 matches the code), falling back to the request's ``projectExport`` only
@@ -138,7 +138,7 @@ def test_push_prefers_updated_project_export(monkeypatch):
     body = {
         "run_id": run_id,
         "projectExport": _export("REQUEST_PROJECT"),
-        "deploy_config": {"repo_name": "my-vibe-app"},
+        "deploy_config": {"repo_name": "my-generated-app"},
     }
     r = _post(body, headers={"X-GitHub-Session": "sess"})
     assert r.status_code == 200
@@ -158,7 +158,7 @@ def test_push_falls_back_to_request_export_when_no_delta(monkeypatch):
     body = {
         "run_id": run_id,
         "projectExport": _export("REQUEST_PROJECT"),
-        "deploy_config": {"repo_name": "my-vibe-app"},
+        "deploy_config": {"repo_name": "my-generated-app"},
     }
     r = _post(body, headers={"X-GitHub-Session": "sess"})
     assert r.status_code == 200

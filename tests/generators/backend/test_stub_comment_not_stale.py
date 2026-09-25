@@ -9,8 +9,7 @@ comment carrying both the method's identity AND the reason for the 501:
 
 When a Spec-Driven Agent run implements the method it naturally replaces the
 `raise` and leaves the comment above it untouched -- a self-contradicting
-"no body in the model" claim sitting above real, working code. Measured in
-9-13 of 15 runs, 1-6 stale instances per affected file (zero functional
+"no body in the model" claim sitting above real, working code (no functional
 impact, but it misleads the next pass, including the requirements judge,
 which reads the file as text).
 

@@ -1,6 +1,6 @@
 """An association class that another association points at needs its own key.
 
-Shape the modeling agent produces in 6 of 10 live hotel runs: Booking *-* Room
+A shape the modeling agent commonly produces for a hotel: Booking *-* Room
 through the association class ``BookedRoom``, and ``ExtraCharge`` recorded
 against one ``BookedRoom``. The routers already address that link by
 ``BookedRoom.id`` (``POST /extracharge/``, ``/bookedroom/{id}/charges/``), but

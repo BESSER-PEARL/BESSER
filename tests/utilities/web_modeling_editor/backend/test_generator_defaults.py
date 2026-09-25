@@ -1,6 +1,6 @@
 """A generator default must be a value that generator actually accepts.
 
-Live 2026-09-14: ``DEFAULT_SQL_DIALECT`` was ``"standard"``. ``SQLGenerator``
+Regression: ``DEFAULT_SQL_DIALECT`` was ``"standard"``. ``SQLGenerator``
 passes ``sql_dialect`` straight through as ``SQLAlchemyGenerator.generate(dbms=)``,
 whose ``VALID_DBMS`` does not contain it, so every ``POST /generate-output`` for
 ``sql`` without an explicit ``config.dialect`` raised::

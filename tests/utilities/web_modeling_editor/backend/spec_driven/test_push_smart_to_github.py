@@ -1,6 +1,6 @@
 """HTTP-level tests for POST /besser_api/spec-driven/push-to-github.
 
-The endpoint pushes the *stored* artifact of a finished vibe/spec-driven
+The endpoint pushes the *stored* artifact of a finished spec-driven
 run (by ``run_id``) plus the re-importable model source to GitHub. These
 tests mock ``GitHubService`` and seed ``SMART_RUN_REGISTRY`` with a fake
 ``SmartRunEntry`` pointing at a temp dir we build, so nothing touches the
@@ -149,7 +149,7 @@ def _seed_run(run_id: str, *, with_secret_env: bool = True) -> str:
     tmp = tempfile.mkdtemp(prefix="besser_smart_push_test_")
 
     with open(os.path.join(tmp, "main.py"), "w", encoding="utf-8") as fh:
-        fh.write("# vibe generated\nprint('hi')\n")
+        fh.write("# generated\nprint('hi')\n")
 
     # Internal artifact that must NOT be pushed.
     with open(os.path.join(tmp, ".besser_recipe.json"), "w", encoding="utf-8") as fh:
@@ -205,13 +205,13 @@ class TestPushSmartToGitHub:
         body = {
             "run_id": run_id,
             "projectExport": _project_export(),
-            "deploy_config": {"repo_name": "my-vibe-app", "is_private": True},
+            "deploy_config": {"repo_name": "my-generated-app", "is_private": True},
         }
         r = _post(body, headers={"X-GitHub-Session": "sess"})
         assert r.status_code == 200
         data = r.json()
         assert data["success"] is True
-        assert data["repo_url"] == "https://github.com/test-owner/my-vibe-app"
+        assert data["repo_url"] == "https://github.com/test-owner/my-generated-app"
         assert data["owner"] == "test-owner"
         assert data["files_uploaded"] >= 1
         assert data["is_first_push"] is True
@@ -226,7 +226,7 @@ class TestPushSmartToGitHub:
         body = {
             "run_id": "0" * 32,  # never seeded
             "projectExport": _project_export(),
-            "deploy_config": {"repo_name": "my-vibe-app"},
+            "deploy_config": {"repo_name": "my-generated-app"},
         }
         r = _post(body, headers={"X-GitHub-Session": "sess"})
         assert r.status_code == 404
@@ -241,7 +241,7 @@ class TestPushSmartToGitHub:
         body = {
             "run_id": run_id,
             "projectExport": _project_export(),
-            "deploy_config": {"repo_name": "my-vibe-app"},
+            "deploy_config": {"repo_name": "my-generated-app"},
         }
         r = _post(body)  # no X-GitHub-Session header
         assert r.status_code == 401
@@ -255,7 +255,7 @@ class TestPushSmartToGitHub:
         body = {
             "run_id": run_id,
             "projectExport": _project_export(),
-            "deploy_config": {"repo_name": "my-vibe-app"},
+            "deploy_config": {"repo_name": "my-generated-app"},
         }
         r = _post(body, headers={"X-GitHub-Session": "sess"})
         assert r.status_code == 200
@@ -264,7 +264,7 @@ class TestPushSmartToGitHub:
         # Model source injected under buml/.
         assert "buml/diagrams.json" in files
         assert "buml/domain_model.py" in files
-        # The stored vibe code is present.
+        # The stored generated code is present.
         assert "main.py" in files
         # The recipe rides along so continue-from-GitHub re-hydrates the
         # seed's generator + history; other internals and build dirs stay out.
@@ -286,7 +286,7 @@ class TestPushSmartToGitHub:
             "run_id": run_id,
             "projectExport": _project_export(),
             "deploy_config": {
-                "repo_name": "my-vibe-app",
+                "repo_name": "my-generated-app",
                 "use_existing": True,
                 "branch": "dev",
             },
@@ -298,7 +298,7 @@ class TestPushSmartToGitHub:
         # Reused, not created.
         assert fake.created is False
         assert fake.push["branch"] == "dev"
-        # Each vibe run is a full app → replace the tree.
+        # Each spec-driven run is a full app → replace the tree.
         assert fake.push["preserve_existing_files"] is False
 
     def test_use_existing_missing_repo_returns_404_repo_missing(self, monkeypatch):
@@ -310,7 +310,7 @@ class TestPushSmartToGitHub:
         body = {
             "run_id": run_id,
             "projectExport": _project_export(),
-            "deploy_config": {"repo_name": "my-vibe-app", "use_existing": True},
+            "deploy_config": {"repo_name": "my-generated-app", "use_existing": True},
         }
         r = _post(body, headers={"X-GitHub-Session": "sess"})
         assert r.status_code == 404

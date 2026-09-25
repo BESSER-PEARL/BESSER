@@ -243,8 +243,7 @@ def test_binary_associations_do_not_emit_nary_warning(tmpdir):
 # generated code, but this file is routinely edited afterwards by an LLM, which
 # writes ordinary Python. A nullable FK column genuinely wants
 # ``Mapped_[Optional[int]]``, and with only the aliases bound that raised
-# "undefined name 'Optional'" and the app would not import at all — observed in
-# a generated app on 2026-09-11.
+# "undefined name 'Optional'" and the app would not import at all.
 # ----------------------------------------------------------------------
 
 
@@ -304,8 +303,8 @@ def test_a_bare_Optional_annotation_still_imports(tmp_path):
 # 7. The same applies to the SQLAlchemy column types.
 #
 # Fixing only List/Optional above left the identical trap set for the thirteen
-# column types, which are aliased the same way. Verification run on 2026-09-11
-# walked straight into it: the LLM added a User class for JWT auth and wrote
+# column types, which are aliased the same way. A generation run walked
+# straight into it: the LLM added a User class for JWT auth and wrote
 #
 #     created_at: Mapped_[dt_datetime] = mapped_column(DateTime(), ...)
 #                                                      ^^^^^^^^
@@ -351,7 +350,7 @@ def test_bare_Mapped_is_bound_too(tmp_path):
 
 
 def test_the_live_auth_class_blocker_now_imports(tmp_path):
-    """Verbatim shape of the blocker from the 2026-09-11 verification run.
+    """Verbatim shape of the blocker observed in a generation run.
 
     An LLM adding JWT auth appends a User model written in ordinary Python:
     bare DateTime, String, Integer and Mapped. Before this fix the module

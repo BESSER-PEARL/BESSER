@@ -6,7 +6,7 @@ in a real run), and the entity carrying the derived enum has to come back
 ``created``.
 
 Before the fix both shapes below returned 409 on the create route of every
-raw generated app, measured against the two verification case models::
+raw generated app, for the two case models below::
 
     POST /booking/  NOT NULL constraint failed: booking.commercialStatus
     POST /order/    NOT NULL constraint failed: order.status
@@ -43,7 +43,7 @@ def _enum(name: str, *literals: str) -> Enumeration:
 
 
 def _hotel_model() -> DomainModel:
-    """verification/cases/hotel: Booking, two derived enums + a derived float."""
+    """Hotel case: Booking, two derived enums + a derived float."""
     commercial = _enum("BookingCommercialStatus",
                        "AWAITING_PAYMENT", "CONFIRMED", "CANCELLED")
     physical = _enum("BookingPhysicalStatus",
@@ -60,7 +60,7 @@ def _hotel_model() -> DomainModel:
 
 
 def _inventory_model() -> DomainModel:
-    """verification/cases/inventory: Order, one derived enum (``status``)."""
+    """Inventory case: Order, one derived enum (``status``)."""
     order_status = _enum("OrderStatus", "PENDING", "SHIPPED", "CANCELLED")
     order = Class(name="Order")
     order.attributes = {

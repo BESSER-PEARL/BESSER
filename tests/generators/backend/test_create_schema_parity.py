@@ -1,6 +1,6 @@
 """The router must only read fields the Create schema actually carries.
 
-Observed live 2026-09-17 on a generated hotel app: POST returned 500 for 7 of
+Observed on a generated hotel app: POST returned 500 for 7 of
 9 entities with ``AttributeError: 'PersonCreate' object has no attribute
 'createdAt'``. The app booted, every file parsed, every import resolved and the
 run was reported as a clean success -- nothing exercised a write.

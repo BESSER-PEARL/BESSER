@@ -1,12 +1,9 @@
-"""A facilitated pilot session may default to a stronger keyless model.
+"""A facilitated study session may default to a stronger keyless model.
 
-Pilots arrive through `?pilot=<label>` and are a small, known population we
-deliberately spend more on. `BESSER_PILOT_LLM_MODEL` lets the server point
-them at a better model without changing what anonymous visitors get.
-
-Server-side on purpose: which model is "the good one" changed three times in a
-single afternoon, so it must be an env edit plus a container restart, never a
-frontend release.
+Study sessions arrive through `?pilot=<label>`. `BESSER_PILOT_LLM_MODEL` lets
+the server point them at a different model without changing what anonymous
+visitors get. Server-side on purpose, so changing it is an env edit plus a
+restart, never a frontend release.
 """
 import pytest
 
@@ -41,7 +38,7 @@ def test_a_model_the_server_does_not_offer_is_refused(monkeypatch):
     """Advertising a default we would refuse to honour is worse than none.
 
     The client sends the pre-selected id as `llm_model`; an unknown id is
-    pinned back to the default server-side, so the pilot would silently get the
+    pinned back to the default server-side, so the session would silently get the
     public model while the UI showed something else.
     """
     monkeypatch.setenv("BESSER_PILOT_LLM_MODEL", "claude-sonnet-4-6")

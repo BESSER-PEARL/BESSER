@@ -2,8 +2,8 @@
 
 ``BESSER_LLM_ENABLE_SHELL_TOOLS`` is read once at import into a module
 constant and threaded to the orchestrator by the runner. That is what makes
-the hosted gate real: no request body can reach it, so a stranger on
-editor.besser-pearl.org cannot turn arbitrary shell on for their own run.
+the hosted gate real: no request body can reach it, so a user of a hosted
+editor cannot turn arbitrary shell on for their own run.
 ``test_shell_tool_gate.py`` and ``test_shell_tool_defaults.py`` pin the gate
 itself; these pin the two things that make the *local* opt-in workable.
 

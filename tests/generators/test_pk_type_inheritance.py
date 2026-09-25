@@ -1,6 +1,6 @@
 """A foreign key must use the PK type of the class it references.
 
-Observed live 2026-09-17 on a generated hotel app: Person carried a string
+Observed on a generated hotel app: Person carried a string
 uuid PK, Guest and Employee inherited it (joined-table inheritance, their id IS
 a ForeignKey to person.id) -- but every FK pointing at Guest or Employee came
 out ``Mapped_[int]``, and the matching Pydantic field came out ``guest: int``.

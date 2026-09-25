@@ -1,4 +1,4 @@
-"""Tests for the runner-side incremental vibe-modify seed arm.
+"""Tests for the runner-side incremental modify seed arm.
 
 Covers:
   * request-model fields (``base_run_id`` pattern, ``mode`` literal);

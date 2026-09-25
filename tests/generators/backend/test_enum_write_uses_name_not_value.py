@@ -1,14 +1,13 @@
 """router.py.j2 must not teach the LLM a `.value` idiom for enum attributes.
 
-Measured on live Spec-Driven Agent runs (2026-09, Qwen): the scaffold wrote enum
+Observed on Spec-Driven Agent runs: the scaffold wrote enum
 attributes as ``field=payload.field.value`` at every constructor/setattr call
 (write direction, where SQLAlchemy accepts either form). That was the ONLY enum
-idiom anywhere in the generated repo, and in 5 of 15 Qwen runs the model copied
+idiom anywhere in the generated repo, and the model repeatedly copied
 it verbatim into hand-authored READ-direction comparisons it had to write for
 modeled methods, e.g. ``if booking.physicalStatus != Status.ARRIVED.value:`` --
 which is always True, because a loaded SQLAlchemy Enum column holds the member,
-never the string, so ``member != member.value`` never matches. That killed four
-handlers in one run.
+never the string, so ``member != member.value`` never matches.
 
 The fix writes ``.name`` instead of ``.value`` at the same 9 sites. Not merely
 "equally harmless": this generator always defines enum literals as

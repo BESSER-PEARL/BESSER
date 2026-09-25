@@ -280,7 +280,7 @@ def test_how_is_capped_tighter_than_why():
 
 
 def test_the_cap_cannot_hide_a_whole_category():
-    """A live run had 86 unverified requirement verdicts; a plain head-25 cap
+    """A run can carry 86 unverified requirement verdicts; a plain head-25 cap
     dropped every skipped-check note off the end of the same list."""
     recipe = _hotel_recipe(
         requirements=[{"id": n, "kind": "rule", "text": f"Requirement {n}.",

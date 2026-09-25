@@ -1,13 +1,13 @@
 """A generated page must be editable by the agent that has to fix it.
 
 ``_format_prop`` serialised every structured prop with a compact
-``json.dumps``, so a table's whole options dict landed on one line. In the
-live hotel app ``Booking.tsx`` line 25 was **3,762 characters**, with six
+``json.dumps``, so a table's whole options dict landed on one line. In a
+generated hotel app one ``Booking.tsx`` line was **3,762 characters**, with six
 lines over 500 in a 38-line file.
 
 That is where the `frontend contract` blocker lived — an editable ``bill``
-field the backend will not accept — and it survived all four live Qwen runs
-(7aybctis, trilraak, lsrnaime, pcovsppe). Every attempt on that line came
+field the backend will not accept — and it survived every fix attempt. Every
+attempt on that line came
 back "old_text and new_text are identical": nothing retypes 3.7k characters
 and changes one field. It was the single least editable line in the codebase
 and it carried the defect the agent was asked to fix.

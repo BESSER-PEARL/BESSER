@@ -7,6 +7,7 @@ Handles all diagram validation endpoints for the BESSER web modeling editor back
 import logging
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -43,6 +44,12 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
+)
+
+# Consistency checking and object diagram generation using Alloy
+from besser.utilities.web_modeling_editor.backend.services.validators.sat_checker import (
+    check_consistency_alloy,
+    generate_object_diagram_alloy,
 )
 
 logger = logging.getLogger(__name__)
@@ -262,3 +269,48 @@ async def check_ocl(input_data: DiagramInput):
     """
     logger.warning("/check-ocl is deprecated. Use /validate-diagram instead.")
     return await validate_diagram(input_data)
+
+
+@router.post("/semantic-consistency-check")
+async def semantic_consistency_check_endpoint(input_data: DiagramInput) -> StreamingResponse:
+    """Checks semantic consistency of a class diagram by resorting to SAT solving, via an Alloy translation.
+
+    This is the unified semantic consistency check endpoint that:
+
+    1. Translates the class diagram, including its OCL constraints, into an Alloy model.
+    2. Checks the consistency of the class diagram by a satisfiability check on the Alloy model.
+	    Since the SAT based consistency check is performed up to a given scope, the check is performed
+	    on increasingly larger scopes until a SAT outcome is found, a max. scope is reached, or a timeout expires.
+
+    The translation and checking are encapsulated in check_alloy_consistency_stream from the sat_checker validator.
+    (see imports).
+
+    In order to gradually inform about the progress of the check, the result is channeled into a StreamingResponse."""
+    return StreamingResponse(
+        check_consistency_alloy(input_data),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # important for nginx
+        },
+    )
+
+@router.post("/generate-object-diagram")
+async def generate_object_diagram_endpoint(input_data: DiagramInput) -> StreamingResponse:
+    """Generates a semantically consistent object diagram, complying with the class diagram’s constraints,
+    including OCL constraints.
+
+    The obtained object diagram is produced by translating the class diagram into Alloy, generating an 
+    instance from the Alloy specification, and translating this instance back into an object diagram.
+
+    Alias of :func:`generate_alloy_do_stream_endpoint`, exposed under the
+    name expected by the current frontend (semantic generation action).
+    """
+    return StreamingResponse(
+        generate_object_diagram_alloy(input_data),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # important for nginx
+        },
+    )

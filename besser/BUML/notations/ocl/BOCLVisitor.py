@@ -1,4 +1,4 @@
-# Generated from ./BOCL.g4 by ANTLR 4.13.2
+# Generated from BOCL.g4 by ANTLR 4.13.2
 from antlr4 import *
 if "." in __name__:
     from .BOCLParser import BOCLParser
@@ -164,6 +164,11 @@ class BOCLVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by BOCLParser#arrowIncluding.
+    def visitArrowIncluding(self, ctx:BOCLParser.ArrowIncludingContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by BOCLParser#allInstancesExp.
     def visitAllInstancesExp(self, ctx:BOCLParser.AllInstancesExpContext):
         return self.visitChildren(ctx)
@@ -221,6 +226,11 @@ class BOCLVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BOCLParser#arrowIsEmpty.
     def visitArrowIsEmpty(self, ctx:BOCLParser.ArrowIsEmptyContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BOCLParser#arrowExcluding.
+    def visitArrowExcluding(self, ctx:BOCLParser.ArrowExcludingContext):
         return self.visitChildren(ctx)
 
 

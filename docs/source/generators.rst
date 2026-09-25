@@ -114,7 +114,17 @@ Choosing a Generator
      - .yml
      - You need a docker-compose.yml to run a swarm (``deploy.replicas: N``
        from the diagram multiplicity)
-
+   * - **Alloy**
+     - Structural
+     - .als files
+     - Generates an `Alloy specification <https://alloytools.org/>`_ from B-UML/OCL models, 
+       enabling semantic consistency checks and automated object diagram generation.
+   * - **Object Diagram**
+     - Structural
+     - .als files
+     - Employs the specification produced by the ``Alloy`` generator 
+       to perform semantic consistency checks and automated object diagram generation 
+       for B-UML/OCL models.
 
 Web Application
 ---------------
@@ -145,6 +155,8 @@ Generate code for various frameworks and programming languages:
    generators/java
    generators/flutter
    generators/react
+   generators/alloy
+   generators/object_diagram
 
 Data & API
 ----------

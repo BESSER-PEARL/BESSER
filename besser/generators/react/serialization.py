@@ -327,17 +327,26 @@ class GuiSerializationMixin:
 
         if isinstance(element, Form):
             inputs = []
+            # Document order (the processor numbers a form's inputs), then name
             for input_field in sorted(
-                getattr(element, "inputFields", []), key=lambda f: getattr(f, "name", "").lower()
+                getattr(element, "inputFields", []),
+                key=lambda f: (
+                    f.display_order is None, f.display_order or 0, getattr(f, "name", "").lower()
+                ),
             ):
                 field_options = getattr(input_field, "options", None)
+                # A plain <input placeholder="..."> keeps it as an attribute
+                placeholder = getattr(input_field, "placeholder", None) or (
+                    getattr(input_field, "custom_attributes", None) or {}
+                ).get("placeholder")
                 inputs.append(
                     self._clean_dict(
                         {
                             "id": getattr(input_field, "name", None),
-                            "label": getattr(input_field, "label", None) or self._humanize(getattr(input_field, "name", "")),
+                            **self._form_input_binding(element, input_field),
+                            "label": getattr(input_field, "label", None) or placeholder or self._humanize(getattr(input_field, "name", "")),
                             "type": self._enum_value(getattr(input_field, "field_type", None)),
-                            "placeholder": getattr(input_field, "placeholder", None),
+                            "placeholder": placeholder,
                             "required": getattr(input_field, "required", False) or None,
                             "default_value": getattr(input_field, "default_value", None),
                             "options": [{"value": o.value, "label": o.label} for o in field_options] if field_options else None,
@@ -351,6 +360,7 @@ class GuiSerializationMixin:
                 )
             if inputs:
                 node["inputs"] = inputs
+            node["submit_label"] = getattr(element, "submit_label", None) or "Submit"
 
         if isinstance(element, Menu):
             items = []
@@ -767,6 +777,18 @@ class GuiSerializationMixin:
             node["data_binding"] = binding_data
 
         return self._clean_dict(node)
+
+    @staticmethod
+    def _form_input_binding(form: Form, input_field: InputField) -> Dict[str, Any]:
+        """The attribute a bound form's input posts (``field``) and its type."""
+        if getattr(form, "data_binding", None) is None:
+            return {}
+        attribute = getattr(getattr(input_field, "data_binding", None), "data_field", None)
+        if attribute is None or is_server_owned_attribute(attribute):
+            return {}
+        attr_type = getattr(attribute, "type", None)
+        field_type = "enum" if isinstance(attr_type, Enumeration) else getattr(attr_type, "name", "str")
+        return {"field": attribute.name, "field_type": field_type}
 
     def _crud_button_target(self, button: Button) -> Optional[Dict[str, Any]]:
         """The table a create/update/delete button acts through.

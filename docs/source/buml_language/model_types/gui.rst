@@ -95,6 +95,16 @@ Forms
 ``show_cancel`` / ``cancel_label`` (optional cancel button), and ``columns`` (1–4
 uniform grid layout, default ``1``). All have backward-compatible defaults.
 
+A form that creates records of a class carries a ``data_binding``
+(``DataBinding(domain_concept=<Class>)``), and each of its ``InputField``\ s a
+``DataBinding`` whose ``data_field`` is the attribute it edits. When the
+editor's form is processed, the class comes from the form's ``data-source``
+(class id or name) or, without one, from the input names when they are all
+attributes of exactly one class; a ``<label>`` becomes its input's ``label``
+and the first submit button's text the ``submit_label``. The React generator
+renders a bound form as a ``FormBlock`` that POSTs to ``/<class>/`` (see
+:doc:`../../generators/react`).
+
 Alert
 -----
 

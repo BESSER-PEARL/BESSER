@@ -50,9 +50,11 @@ def _read(path):
 
 
 class GeneratedApp:
-    def __init__(self, gui_model, src):
+    def __init__(self, gui_model, src, class_json=None, gui_json=None):
         self.gui_model = gui_model
         self.src = src
+        self.class_json = class_json
+        self.gui_json = gui_json
 
     def page(self, name):
         return _read(os.path.join(self.src, "pages", f"{name}.tsx"))
@@ -65,10 +67,11 @@ class GeneratedApp:
 def build_app(tmp_path):
     def build(classes, pages):
         class_json = class_diagram(classes)
+        project_gui = gui_json(pages)
         domain = process_class_diagram({"title": "Domain", "model": class_json})
-        gui_model = process_gui_diagram(gui_json(pages), class_json, domain)
+        gui_model = process_gui_diagram(project_gui, class_json, domain)
         ReactGenerator(model=domain, gui_model=gui_model, output_dir=str(tmp_path)).generate()
-        return GeneratedApp(gui_model, os.path.join(str(tmp_path), "src"))
+        return GeneratedApp(gui_model, os.path.join(str(tmp_path), "src"), class_json, project_gui)
 
     return build
 

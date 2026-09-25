@@ -710,6 +710,8 @@ def _write_input_field(f, var_name, input_field):
     if hasattr(input_field, 'validationRules') and input_field.validationRules:
         params.append(f'validationRules="{_escape_string(input_field.validationRules)}"')
     _write_constructor(f, var_name, 'InputField', params, input_field)
+    if getattr(input_field, 'data_binding', None):
+        _write_data_binding_assignment(f, var_name, input_field.data_binding)
 
 
 def _write_form(f, var_name, form, created_vars, pending_button_events):
@@ -724,7 +726,13 @@ def _write_form(f, var_name, form, created_vars, pending_button_events):
 
     fields_str = f'{{{", ".join(field_vars)}}}' if field_vars else '{}'
     params = [f'name="{_escape_string(form.name)}"', f'description="{_escape_string(form.description or "")}"', f'inputFields={fields_str}']
+    if getattr(form, 'title', None):
+        params.append(f'title="{_escape_string(form.title)}"')
+    if getattr(form, 'submit_label', 'Submit') != 'Submit':
+        params.append(f'submit_label="{_escape_string(form.submit_label)}"')
     _write_constructor(f, var_name, 'Form', params, form)
+    if getattr(form, 'data_binding', None):
+        _write_data_binding_assignment(f, var_name, form.data_binding)
 
     # Write form events (e.g. OnSubmit)
     if hasattr(form, 'events') and form.events:

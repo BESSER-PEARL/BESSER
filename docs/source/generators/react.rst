@@ -65,6 +65,18 @@ and opens its dialog there. Update and delete report "Select a row in the
 table first" when nothing is selected. A CRUD button with no bound table is
 rendered as a plain button.
 
+FormBlock
+^^^^^^^^^
+
+A ``Form`` bound to a class (``Form.data_binding``) is rendered as a
+``FormBlock`` around its fields. Submitting it POSTs ``/<class>/`` with the
+value of every input bound to an attribute (typed from the attribute: int,
+float, bool, text; an empty field is left out so the backend applies its
+default), shows a success or error message (the backend's validation detail),
+and clears the form on success. Fields keep their labels; the submit button
+shows the form's ``submit_label``. An unbound form is rendered as a plain
+``<form>`` that does not submit.
+
 Chart Components
 ^^^^^^^^^^^^^^^^
 
@@ -158,6 +170,7 @@ Generated Structure
    │   │   │   ├── DataListBlock.tsx
    │   │   │   ├── MetricCardBlock.tsx
    │   │   │   ├── CrudButton.tsx
+   │   │   │   ├── FormBlock.tsx
    │   │   │   └── MapBlock.tsx
    │   │   ├── InputComponents.tsx
    │   │   └── MethodButton.tsx

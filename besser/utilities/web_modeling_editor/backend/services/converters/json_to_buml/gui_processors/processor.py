@@ -393,7 +393,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             isinstance(attributes, dict) and attributes.get("data-gui-type") == "Form"
         ):
             name = get_unique_name(component, "Form")
-            form = parse_form(component, styling, name, meta, parse_component_list)
+            form = parse_form(component, styling, name, meta, parse_component_list, class_model, domain_model)
             attach_meta(form, meta)
             return form
 

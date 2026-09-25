@@ -378,6 +378,12 @@ def _serialize_component(element: ViewComponent) -> Dict[str, Any]:
             serialized_child = _serialize_component(child)
             if serialized_child:
                 children.append(serialized_child)
+    if isinstance(element, Form):
+        # The form's inputs are its children in the editor
+        for child in _sorted_elements(getattr(element, "inputFields", None) or []):
+            serialized_child = _serialize_component(child)
+            if serialized_child:
+                children.append(serialized_child)
     if isinstance(element, Text):
         content = element.content or element.description or element.name or ""
         children = [{"type": "textnode", "content": content}]
@@ -712,6 +718,9 @@ def _apply_input_field_attributes(field: InputField, attrs: Dict[str, Any]) -> N
         attrs.setdefault("data-step", field.step)
     if getattr(field, "multiple", False):
         attrs.setdefault("data-multiple", "true")
+    bound_attribute = getattr(getattr(field, "data_binding", None), "data_field", None)
+    if bound_attribute is not None:
+        attrs.setdefault("data-field-name", bound_attribute.name)
 def _apply_form_attributes(form: Form, attrs: Dict[str, Any]) -> None:
     """Expose Form traits in the exported JSON.
 
@@ -733,6 +742,9 @@ def _apply_form_attributes(form: Form, attrs: Dict[str, Any]) -> None:
         attrs.setdefault("data-cancel-label", form.cancel_label)
     if getattr(form, "columns", None) is not None:
         attrs.setdefault("data-columns", form.columns)
+    domain = getattr(getattr(form, "data_binding", None), "domain_concept", None)
+    if domain is not None:
+        attrs.setdefault("data-source", domain.name)
 def _apply_image_attributes(image: Image, attrs: Dict[str, Any]) -> None:
     if getattr(image, "source", None):
         attrs.setdefault("src", image.source)

@@ -254,7 +254,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.binding import DataBinding\n")
         f.write("from besser.utilities.buml_code_builder.common import (\n")
-        f.write("    bind_data_source, bind_domain_field, build_data_binding\n")
+        f.write("    bind_association_end, bind_data_source, bind_domain_field, build_data_binding\n")
         f.write(")\n")
         f.write("\n")
 
@@ -477,8 +477,11 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
                 layout_var = _write_layout(f, component.layout, created_vars, f"{comp_var}_layout")
                 f.write(f'{comp_var}.layout = {layout_var}\n')
         else:
-            # Simple ViewComponent with no children
-            f.write(f'{comp_var} = ViewComponent(name="{_escape_string(component.name)}", description="{_escape_string(component.description or "")}")\n')
+            # Simple ViewComponent with no children; keeps its tag, attributes and
+            # display order like every other component (an <br> or empty slot
+            # otherwise re-imports as an unordered, tagless element).
+            params = [f'name="{_escape_string(component.name)}"', f'description="{_escape_string(component.description or "")}"']
+            _write_constructor(f, comp_var, 'ViewComponent', params, component)
 
     # Styling and metadata are now written by type-specific writers via _write_constructor
 
@@ -1025,7 +1028,7 @@ def _write_table(f, var_name, chart):
                 # Path property lives inside a BinaryAssociation's ends, not as a standalone variable.
                 # Generate a runtime lookup via domain_model.
                 path_var = f'{col_var}_path'
-                f.write(f'{path_var} = next(end for assoc in domain_model.associations for end in assoc.ends if end.name == "{_escape_string(path_name)}")\n')
+                f.write(f'{path_var} = bind_association_end(domain_model, "{_escape_string(path_name)}")\n')
                 f.write(f'{col_var} = LookupColumn(label="{_escape_string(col.label)}", path={path_var}, field={field_ref})\n')
             elif isinstance(col, ExpressionColumn):
                 f.write(f'{col_var} = ExpressionColumn(label="{_escape_string(col.label)}", expression="{_escape_string(col.expression)}")\n')

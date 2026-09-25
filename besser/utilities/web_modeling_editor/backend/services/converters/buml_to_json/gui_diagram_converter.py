@@ -33,6 +33,7 @@ from besser.BUML.metamodel.gui import dashboard as _dashboard_module
 from besser.BUML.metamodel.gui import events_actions as _events_module
 from besser.BUML.metamodel import structural as _structural_module
 from besser.utilities.buml_code_builder.common import (
+    bind_association_end,
     bind_data_source,
     bind_domain_field,
     build_data_binding,
@@ -229,6 +230,7 @@ def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Option
         "bind_domain_field": bind_domain_field,
         "build_data_binding": build_data_binding,
         "bind_data_source": bind_data_source,
+        "bind_association_end": bind_association_end,
     }
     cleaned_content = _strip_imports(content)
 
@@ -938,13 +940,13 @@ def _stylesheet_to_styles(
 
 
 def _sorted_elements(elements: Iterable[ViewComponent]) -> List[ViewComponent]:
-    return sorted(
-        elements or [],
-        key=lambda elem: (
-            getattr(elem, "display_order", 0),
-            getattr(elem, "name", ""),
-        ),
-    )
+    # An element built without a display_order (None) sorts after the ordered
+    # ones; comparing None with a number raised and emptied the whole import.
+    def _key(elem):
+        order = getattr(elem, "display_order", None)
+        return (order is None, order if order is not None else 0, getattr(elem, "name", "") or "")
+
+    return sorted(elements or [], key=_key)
 def _sorted_screens(screens: Iterable[Screen]) -> List[Screen]:
     return sorted(
         screens or [],

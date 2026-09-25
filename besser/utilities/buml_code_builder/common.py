@@ -168,6 +168,21 @@ def build_data_binding(domain_model, class_name: str, label_field=None, data_fie
     return binding
 
 
+def bind_association_end(domain_model, end_name: str):
+    """Return the association end named *end_name*, or ``None``.
+
+    A table's lookup column refers to an end that only exists inside its
+    ``BinaryAssociation``; the inline ``next(...)`` lookup emitted before was
+    refused by the safe BUML loader, so a project with such a table could be
+    exported but never re-imported.
+    """
+    for association in getattr(domain_model, "associations", ()) or ():
+        for end in association.ends:
+            if end.name == end_name:
+                return end
+    return None
+
+
 def bind_data_source(source, domain_model, class_name: str, field_names=None, label_field=None, value_field=None):
     """Bind a ``DataSourceElement`` to *class_name* when the domain model has it.
 

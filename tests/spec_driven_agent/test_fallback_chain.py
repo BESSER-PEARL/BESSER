@@ -1,14 +1,11 @@
 """The keyless-tier fallback is an ordered CHAIN, cloud first, local last.
 
-Before this, the free tier had exactly one fallback: when LongCat's
-100-requests/day quota ran out, every run dropped straight onto our
-self-hosted Tesla V100 — a box that serves one request at a time and pays
-60-75s to load a model cold. Measured 2026-09-11, that produced 8-minute
-turns and apps that never finished inside the runtime cap.
-
-A cloud alternative with its own quota (Laguna, which documents none) should
-be tried BEFORE the shared GPU. Each step carries its own endpoint and token,
-so a model id can never be sent with another endpoint's bearer.
+With a single fallback, an exhausted cloud quota sent every run straight to
+a self-hosted box that serves one request at a time and loads models cold,
+so runs routinely missed the runtime cap. A cloud alternative with its own
+quota is tried BEFORE the self-hosted box. Each step carries its own
+endpoint and token, so a model id can never be sent with another endpoint's
+bearer.
 """
 
 import pytest
@@ -20,7 +17,7 @@ from besser.spec_driven_agent.providers.llm_client import (
 )
 
 PRIMARY_URL = "https://api.commandcode.ai/provider/v1"
-LOCAL_URL = "https://ollama.besser-pearl.org/v1"
+LOCAL_URL = "http://ollama.example.invalid:11434/v1"
 PRIMARY = "meituan/LongCat-2.0:free"
 ALT = "poolside/laguna-s-2.1-free"
 LOCAL = "qwen3-coder:30b"

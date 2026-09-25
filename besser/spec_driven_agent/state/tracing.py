@@ -8,7 +8,7 @@ rehydrate exactly what happened without replaying the LLM.
 
 Design constraints:
 
-* **Append-only, crash-safe.** Each call does ``open("a", …)`` + flush so
+* **Append-only, crash-safe.** Each call does ``open("ab")`` + one write so
   a process crash never loses events that were already emitted. We
   intentionally re-open the file on every write — cheap compared to the
   LLM round-trip, and avoids keeping a file handle open for the entire
@@ -30,12 +30,18 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 TRACE_FILENAME = ".besser_trace.jsonl"
+
+# Parallel tool calls write from several threads. Two text-mode writes per
+# record, each open handle appending on its own (Windows emulates append with
+# seek + write), tore a line in a turn with six parallel calls.
+_WRITE_LOCK = threading.Lock()
 
 # Canonical event names. Use the constants below rather than inlining
 # strings so typos are caught at import time.
@@ -107,9 +113,10 @@ class TraceWriter:
             # Ensure the directory still exists — the orchestrator may
             # be midway through Phase 3 cleanup when an error is logged.
             os.makedirs(self.output_dir, exist_ok=True)
-            with open(self._path, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(record, default=str))
-                fh.write("\n")
+            line = (json.dumps(record, default=str) + "\n").encode("utf-8")
+            # One complete line, one write, under one lock.
+            with _WRITE_LOCK, open(self._path, "ab") as fh:
+                fh.write(line)
         except Exception as exc:
             # Instrumentation must not break the run.
             logger.debug("Failed to write trace record (%s): %s", event, exc)

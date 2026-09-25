@@ -166,19 +166,19 @@ class GeneratorInterface(ABC):
 
 The hybrid generator. Treat it as a peer of the deterministic generators, not a side project.
 
-- **`orchestrator.py`** (`LLMOrchestrator`) — owns the three phases and all the loop guards:
+- **`pipeline/orchestrator.py`** (`LLMOrchestrator`) — owns the three phases and all the loop guards:
   - Phase 1 deterministic generation (plus Phase 0.5 stack-metadata when no generator fits, and Phase 1.5 validation of the scaffold)
   - Phase 2 LLM customization loop
   - Phase 3 validation + bounded auto-fix (`_MAX_TOOLCHAIN_FIX_ITERATIONS = 5` is a FLOOR - the loop runs `max(5, max_turns - total_turns)` rounds, best-tree snapshot/restore). A **runtime gate** runs on every Phase 3 exit including budget exhaustion: a run cannot report complete while the delivered app cannot boot or create a record
   - Severity classification lives in `_classify_issue` (`validation/issues.py`, re-exported here): `blocker` / `warning` / `style`
   - Guards worth knowing: turn cap (`MAX_TURNS = 120`), cost/runtime caps checked at turn boundaries, truncation recovery (`_MAX_TRUNCATION_RETRIES = 4`, per run, never reset), per-file modify-loop detection (`_PER_FILE_MODIFY_THRESHOLD = 3`), parallel tool execution grouped by write path (`_MAX_PARALLEL_WORKERS = 4`), checklist end_turn gate (`_MAX_TASK_NUDGES = 2`, 4 when an open item carries a verifier)
-- **`tools.py`** — declares the LLM's tool surface (files, model queries, validation/bookkeeping, generators, shell). **If you add a tool, add it to `_TOOL_MODEL_REQUIREMENTS` in the same file** so it is only offered when the models it needs are present; `tests/spec_driven_agent/test_added_generator_tools.py` asserts every generator tool has an entry.
-- **`tool_executor.py`** — implements the tools, plus the `task_list` checklist (batch `ids=[...]`, bounded verification retries: `_MAX_TASK_VERIFY_ATTEMPTS = 3`, after which an item is recorded *blocked* and stops holding the gate open).
-- **`llm_client.py`** — provider clients (`anthropic`, `openai`, `mistral`), the keyless `free` tier and the `sponsored` tier, pricing tables, the cheap planning-model routing, and the free-tier fallback chain.
-- **`gap_analyzer.py`** — the cheap planning call that produces the Phase 2 checklist. Its return value is load-bearing: `None` = analysis failed, `[]` = scaffold already sufficient (Phase 2 *may* be skipped), a list = the task list.
-- **Validators**: `contract_checks.py` (model-derived data contract), `endpoint_coherence.py` (frontend fetch/axios URLs vs generated routes — report-only), `acceptance.py` (per-entity route/page/create matrix — report-only), `write_diagnostics.py` (same-turn parse + undefined-name check on every written file).
-- **Context / recovery**: `compaction.py` (lossy summarization above `BESSER_LLM_COMPACT_THRESHOLD`), `history_eviction.py` (lossless file-body stubbing, opt-in), `checkpoint.py` (`.besser_checkpoint.json`, written per turn, deleted only on a clean Phase 2 exit), `tracing.py` (`.besser_trace.jsonl`).
-- **`edit_apply.py`** — the lenient `old_text` → `new_text` match ladder behind `modify_file`.
+- **`agent/tools.py`** — declares the LLM's tool surface (files, model queries, validation/bookkeeping, generators, shell). **If you add a tool, add it to `_TOOL_MODEL_REQUIREMENTS` in the same file** so it is only offered when the models it needs are present; `tests/spec_driven_agent/test_added_generator_tools.py` asserts every generator tool has an entry.
+- **`agent/tool_executor.py`** — implements the tools, plus the `task_list` checklist (batch `ids=[...]`, bounded verification retries: `_MAX_TASK_VERIFY_ATTEMPTS = 3`, after which an item is recorded *blocked* and stops holding the gate open).
+- **`providers/llm_client.py`** — provider clients (`anthropic`, `openai`, `mistral`, `nebius`), the keyless `free` tier and the `sponsored` tier, pricing tables, the cheap planning-model routing, and the free-tier fallback chain.
+- **`planning/gap_analyzer.py`** — the cheap planning call that produces the Phase 2 checklist. Its return value is load-bearing: `None` = analysis failed, `[]` = scaffold already sufficient (Phase 2 *may* be skipped), a list = the task list.
+- **Validators** (`validation/`): `contract_checks.py` (model-derived data contract), `endpoint_coherence.py` (frontend fetch/axios URLs vs generated routes — report-only), `acceptance.py` (per-entity route/page/create matrix — report-only), `write_diagnostics.py` (same-turn parse + undefined-name check on every written file).
+- **Context / recovery**: `agent/compaction.py` (lossy summarization above `BESSER_LLM_COMPACT_THRESHOLD`), `agent/history_eviction.py` (lossless file-body stubbing, opt-in), `state/checkpoint.py` (`.besser_checkpoint.json`, written per turn, deleted only on a clean Phase 2 exit), `state/tracing.py` (`.besser_trace.jsonl`).
+- **`agent/edit_apply.py`** — the lenient `old_text` → `new_text` match ladder behind `modify_file`.
 
 Service layer (`backend/services/spec_driven/`):
 - **`runner.py`** — drives one run and emits SSE.
@@ -192,13 +192,14 @@ variables, defined in one place: `backend/constants/constants.py`. Two security-
 flags:
 
 - `BESSER_LLM_ENABLE_SHELL_TOOLS` — code default **off**, because arbitrary shell on a
-  shared BYOK host is RCE. It is deliberately **on** for the hosted experimental
-  deployment (`besser-wme-smartgen`), an owner decision taken so the agent has the same
-  capabilities as the tools it is measured against. That container is isolated and carries
-  no `env_file`; the sibling `besser-wme-backend` holds nine secrets and must stay off, so
-  enable it per service and never through the shared `.env`. Changing the *code* default,
-  or turning it on for any other service, is still a decision to bring to the owner.
-- `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` — **off** (SSRF). No exception has been granted.
+  shared BYOK host is RCE. `docker-compose.prod.yml` enables it only on the isolated
+  `besser-wme-smartgen` worker, which has no `env_file` and receives only the LLM
+  credentials, and each run's shell is confined by bubblewrap. Enable it per service,
+  never through the shared `.env`; changing the code default is a maintainer decision.
+- `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` — **off** by default (SSRF: the server would open a
+  user-supplied URL). A request carrying `base_url` (the editor's PIA and Local /
+  self-hosted providers, e.g. Ollama) is rejected unless it is set. Keep it off on shared
+  hosts; single-tenant or local installs that use those providers turn it on.
 
 See `docs/source/spec_driven_agent/` for the user-facing documentation.
 
@@ -354,7 +355,7 @@ A **fourth, separate** layer applies to Spec-Driven Agent output — static chec
 
 | Severity  | What lands there | What the auto-fix loop does |
 |-----------|------------------|-----------------------------|
-| `blocker` | Python syntax errors; dependency conflicts; a Dockerfile referencing a missing file; unresolvable local imports (`missing module:`); undefined names behind a star import (`undefined name:`); an ORM module that fails to import or to configure its mappers in the subprocess smoke check (`mapper config:`); a requirement the user stated that the code does not implement, or one whose verification is incomplete (`requirement:`, `requirement partial:`, `requirement unverified:` — unknown evidence is not proof of absent behaviour, but it does block *verified* completion); a method button bound to a table of another entity; frontend-contract violations (blank-on-load router, dead submit handler, web-app request with no frontend at all, rival framework imported into the scaffold); data-contract violations; an entity the running app refuses to create for every schema-valid request (`create contract:`); an action handler observed returning 500 (`action call:`); an app that cannot boot or create a record when Phase 3 exits (`runtime gate:`); ruff `F811`/`F821`/`F822`/`F823`; `tsc`/`cargo`/`kotlinc` errors | Drives the loop. Rounds of (fix turns → re-validate); stops at zero. Ends immediately on a **replay** — a round that called no tool at all, so the tree is byte-identical and the next round would repeat it (0 of 4 such rounds ever wrote again). A round whose edits were *rejected* gets a second attempt instead: 57% of those wrote source next round, against 18% for read-only rounds. Otherwise ends after **2** no-progress rounds or **3** on a blocker plateau. Progress counts a better score, changed source, **or a discharged obligation** — one run closed 6 of 10 blockers through `test_api` and `task_list` without a single write and was killed as though nothing had moved. These numbers come from mining all 393 recorded runs: 69% ended on a stall guard, leaving 6,774 turns and $514 of declared budget unspent, and a round of *failed* edits is byte-identical to a barren one, so Qwen's 33% edit-failure rate (terra: 5%) manufactures the barren rounds the guard then acts on. The snapshot is re-taken on every strictly better tree and the **best** is restored, not the last, ranked by (boot broken, entities not created, actions not callable, hard blockers) — runtime first, because blocker count correlates +0.21 with whether the app actually works. Ledger verdicts are excluded from that count: two judge passes on one app returned 12 then 22 |
+| `blocker` | Python syntax errors; dependency conflicts; a Dockerfile referencing a missing file; unresolvable local imports (`missing module:`); undefined names behind a star import (`undefined name:`); an ORM module that fails to import or to configure its mappers in the subprocess smoke check (`mapper config:`); a requirement the user stated that the code does not implement, or one whose verification is incomplete (`requirement:`, `requirement partial:`, `requirement unverified:` — unknown evidence is not proof of absent behaviour, but it does block *verified* completion); a method button bound to a table of another entity; frontend-contract violations (blank-on-load router, dead submit handler, web-app request with no frontend at all, rival framework imported into the scaffold); data-contract violations; an entity the running app refuses to create for every schema-valid request (`create contract:`); an action handler observed returning 500 (`action call:`); an app that cannot boot or create a record when Phase 3 exits (`runtime gate:`); ruff `F811`/`F821`/`F822`/`F823`; `tsc`/`cargo`/`kotlinc` errors | Drives the loop. Rounds of (fix turns → re-validate); stops at zero. Ends immediately on a **replay** — a round that called no tool at all, so the tree is byte-identical and the next round would repeat it. A round whose edits were *rejected* gets a second attempt instead, since those often write source on the next round. Otherwise ends after **2** no-progress rounds or **3** on a blocker plateau. Progress counts a better score, changed source, **or a discharged obligation** (e.g. blockers closed through `test_api` / `task_list` without a write). The snapshot is re-taken on every strictly better tree and the **best** is restored, not the last, ranked by (boot broken, entities not created, actions not callable, hard blockers) — runtime first, because blocker count alone tracks poorly with whether the app works. Ledger verdicts are excluded from that count because judge passes are not stable |
 | `warning` | Everything unclassified, including endpoint-coherence findings and the acceptance matrix | Recorded in the recipe only |
 | `style`   | Cosmetic ruff rules: `F401`, `F841`, `E501`, whitespace, blank lines, import order | Recorded only |
 
@@ -369,7 +370,7 @@ To add a new deterministic generator:
 4. Register in `utilities/web_modeling_editor/backend/config/generators.py` (`SUPPORTED_GENERATORS`, plus `get_filename_for_generator`)
 5. Add tests in `tests/generators/[name]/`
 6. Write `docs/source/generators/[name].rst` and add it to a toctree **and** the "Choosing a Generator" table in `docs/source/generators.rst`
-7. If the LLM agent should be able to call it, add a tool to `besser/spec_driven_agent/tools.py` **and** an entry to `_TOOL_MODEL_REQUIREMENTS`
+7. If the LLM agent should be able to call it, add a tool to `besser/spec_driven_agent/agent/tools.py` **and** an entry to `_TOOL_MODEL_REQUIREMENTS`
 
 ### Resource Management
 - Temp directories use the `besser_*` prefixes listed above so the cleanup task can find them
@@ -412,7 +413,7 @@ at module level, so without it pytest stops at *collection* — an error, not a 
 
 - **`.github/workflows/ci.yml`**: Three jobs on PRs to `master`/`development` — tests on Python **3.11 and 3.12**, Ruff lint (the exact invocation above), and a docs build gated by `docs/check-docs-warnings.sh`. It does **not** build the frontend.
 - **`.github/workflows/security.yml`**: CodeQL security scanning.
-- **`.github/workflows/deploy-wme.yml`**: Manual (`workflow_dispatch`) build + push of the backend/frontend images and deploy to EC2.
+- **`.github/workflows/deploy-wme.yml`**: Manual (`workflow_dispatch`) build + push of the backend / frontend / agent-simulator images and deploy to EC2; a backend deploy also recreates the `besser-wme-smartgen` worker and verifies the running build stamp.
 - **`.github/workflows/python-publish.yml`**: PyPI release.
 
 There is no `.github/dependabot.yml` in this repository.
@@ -499,8 +500,8 @@ output = template.render(model=domain_model, config=config)
 5. **Keep converters symmetric**: If JSON→BUML supports a feature, BUML→JSON must too
 6. **Test round-trips**: Especially for converters (JSON→BUML→JSON should be identity)
 7. **Update docs**: Backend changes often require `docs/source/` updates
-8. **Know which security default is settled and which was decided**: `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` is off on purpose and stays off. `BESSER_LLM_ENABLE_SHELL_TOOLS` defaults off but is **intentionally enabled on the hosted experimental deployment** — see the Spec-Driven Agent section. Don't re-litigate that call; do keep it scoped to the isolated container
-9. **A new agent tool needs two edits**: `tools.py` *and* `_TOOL_MODEL_REQUIREMENTS`, or it will be offered on projects that cannot satisfy it
+8. **Keep the security defaults**: `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` and `BESSER_LLM_ENABLE_SHELL_TOOLS` both default off in code; deployments opt in per service (see the Spec-Driven Agent section). Don't flip the code defaults
+9. **A new agent tool needs two edits**: `agent/tools.py` *and* `_TOOL_MODEL_REQUIREMENTS`, or it will be offered on projects that cannot satisfy it
 
 ## Debugging Tips
 

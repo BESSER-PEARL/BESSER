@@ -5,7 +5,7 @@
 Phase 3 test that touches it does ``patch.object(orch, "_restore_snapshot")``,
 so the missing call site was invisible.
 
-Live run trilraak (Qwen, 2026-09-19) entered Phase 3 with 11 blockers. Attempt
+A recorded run (Qwen) entered Phase 3 with 11 blockers. Attempt
 2 added an association table using ``Table`` without importing it; the count
 went to 45 and the run shipped that tree, with ``sql_alchemy.py`` no longer
 importable and every router that star-imports it dead. The class docstring and

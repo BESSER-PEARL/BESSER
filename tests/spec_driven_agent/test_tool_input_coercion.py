@@ -1,6 +1,6 @@
 """Stringified array/object tool arguments are decoded on every provider path.
 
-Live 2026-09-24: Sonnet 5 sent ``submit_requirements`` with the array as a JSON
+Observed live: Sonnet 5 sent ``submit_requirements`` with the array as a JSON
 string in 16 of 30 fresh calls (Haiku 4.5: 0 of 10), so the requirements
 ledger returned nothing. The same slip on ``generate_fastapi_backend`` turns
 ``http_methods`` into characters and generates a backend with no endpoints.

@@ -68,8 +68,8 @@ class TestRegistryValues:
     def test_qwen3_coder_sends_only_protocol_parameters(self):
         # Same family, different card: qwen3-coder recommends
         # repetition_penalty 1.05 rather than min_p. It is withheld along with
-        # top_k because this row serves the keyless tier and the self-hosted
-        # Ollama box, neither verified to tolerate a non-protocol body key.
+        # top_k because this row serves the keyless tier and a self-hosted
+        # Ollama endpoint, neither verified to tolerate a non-protocol body key.
         settings = settings_for("qwen3-coder:30b")
         assert settings.sampling == {"temperature": 0.7, "top_p": 0.8}
         assert settings.extra_body == {}

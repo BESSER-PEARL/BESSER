@@ -1,14 +1,14 @@
 """A modify_file call whose old_text equals its new_text is a rejection like
 any other: it must count, be fingerprinted, and stay refused once stopped.
 
-Live run 57160293 (2026-09-18, Nebius Qwen3-30B-A3B-Instruct): after one
+A recorded run (Nebius Qwen3-30B-A3B-Instruct): after one
 successful edit on routers/booking_methods.py the model sent that edit's
 new_text as BOTH old_text and new_text, sixteen times over thirty turns
 (read_file between every pair), and the executor answered "old_text and
 new_text are identical; no edit was applied" every time. That branch returned
 before the miss counter, so the 3-miss refusal, the resend stop and the
 orchestrator's streak reminder never fired; the run spent $0.24 of $0.29 on
-it. Run 0c537a4e showed the other half: the 3-miss refusal popped its own
+it. Recorded run 0c537a4e showed the other half: the 3-miss refusal popped its own
 counter, so one anchor came back for four full cycles (refusals at attempts
 4, 8 and 12).
 """

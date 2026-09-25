@@ -2,7 +2,7 @@
 
 ``source`` records who CREATED a file, and resume re-seeds the scaffold
 guardrail from it, so it stays two-valued. That makes it unable to answer the
-question a reviewer asks: what did the LLM touch? Live run 7aybctis landed 13
+question a reviewer asks: what did the LLM touch? A recorded run landed 13
 edits and reported ``from_llm: 1`` — all but one edit went into files the
 generator had created. That count is also what says which work a regeneration
 would overwrite.

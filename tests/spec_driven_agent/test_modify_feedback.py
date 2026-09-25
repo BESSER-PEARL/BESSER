@@ -1,7 +1,7 @@
 """What the edit tools tell the model, and what they refuse.
 
 The mechanisms mature coding agents converged on (OpenHands' str_replace
-editor, Claude Code's Edit, SWE-agent), missing here until 2026-09-17:
+editor, Claude Code's Edit, SWE-agent), previously missing here:
 
 * an ambiguous ``old_text`` says WHERE each occurrence is (enclosing def),
 * a successful ``modify_file`` echoes the edited region back, numbered,
@@ -72,7 +72,7 @@ class TestPostEditEcho:
         ex = _executor(tmp_path, **{"m.py": STUB})
         ex.mark_known(["m.py"])
         # The whole body: dropping only the try would orphan its except, and
-        # since 2026-09-18 an edit that leaves a valid file unparseable is
+        # an edit that leaves a valid file unparseable is
         # refused rather than written with a diagnostic.
         res = ex._modify_file({
             "path": "m.py",

@@ -210,7 +210,7 @@ def test_no_range_once_range_edits_are_exhausted_for_the_path(executor):
     """Run se7k3zbx failed 17 of 20 range edits on one file; past the give-up
     count the ladder must not offer a span.
 
-    What it steers to instead changed on 2026-09-20. It used to hand the
+    What it steers to instead has changed. It used to hand the
     model back to ``modify_file`` with the smallest unique quote; three
     refusals is also past the two that now escalate to a whole-file
     rewrite, so the rewrite tier answers first. The half that matters here

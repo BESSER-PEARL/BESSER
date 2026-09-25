@@ -1,6 +1,6 @@
 """``missing module:`` must not fire on a stack that isn't FastAPI.
 
-Observed 2026-09-17: a 2-class Django app whose ``requirements.txt``
+Observed live: a 2-class Django app whose ``requirements.txt``
 declares ``Django>=5.0`` was reported with 10 blocker-level "this app
 cannot start" issues, because ``django`` was simply absent from a
 hardcoded allowlist that only ever listed the FastAPI ecosystem. The same
@@ -112,7 +112,7 @@ def test_subpackage_reachable_from_service_cwd(tmp_path):
 
 
 def test_genuinely_missing_local_module_is_still_reported(tmp_path):
-    """The live 2026-09-11 defect this validator was written for."""
+    """The live defect this validator was written for."""
     _write(tmp_path, "requirements.txt", "fastapi\n")
     _write(tmp_path, "main_api.py", "from sql_alchemy import *\nfrom fastapi import FastAPI\n")
     problems = _unresolvable_local_imports(str(tmp_path))

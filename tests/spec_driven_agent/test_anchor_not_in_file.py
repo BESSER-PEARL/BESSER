@@ -1,7 +1,7 @@
 """A modify_file anchor that exists nowhere must be named as such, and a
 byte-identical resend must be stopped on its second attempt.
 
-Live run 0c537a4e (2026-09-18, Nebius Qwen/Qwen3-30B-A3B-Instruct-2507):
+Recorded run 0c537a4e (Nebius Qwen/Qwen3-30B-A3B-Instruct-2507):
 13 modify_file misses on routers/booking_methods.py, turns 21-50, every one
 sending the same 206-char old_text - a ``def computeAmountOwed`` stub that
 was never in the file. The file holds a CALL to that helper (the model wrote
@@ -63,7 +63,7 @@ def test_an_anchor_nothing_resembles_is_not_blamed_on_whitespace(executor):
 def test_it_says_how_to_add_code_without_suggesting_a_rewrite(executor):
     """The recovery is an edit anchored on a real line. It must not say
     write_file: that wording turned targeted edits into whole-file rewrites
-    of scaffold code (2026-09-17, see _build_modify_loop_reminder)."""
+    of scaffold code (see _build_modify_loop_reminder)."""
     err = _modify(executor, REAL_OLD_TEXT)["error"]
     assert "old_text = " in err and "new_text = " in err
     assert "write_file" not in err

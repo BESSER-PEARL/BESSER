@@ -1,4 +1,4 @@
-"""Tests for incremental vibe-modify on ``LLMOrchestrator``.
+"""Tests for incremental modify on ``LLMOrchestrator``.
 
 ``modify()`` seeds ``output_dir`` from a previous run's files and edits
 them in place instead of rebuilding from scratch. These tests pin the
@@ -395,7 +395,7 @@ def test_modify_forwards_seed_blockers_into_phase2(tmp_path, monkeypatch):
 
 
 # ----------------------------------------------------------------------
-# Session history (P2): runs remember what previous runs did
+# Session history: runs remember what previous runs did
 # ----------------------------------------------------------------------
 
 
@@ -503,7 +503,7 @@ def test_modify_run_raises_output_budget(tmp_path, monkeypatch):
     assert orch._adaptive_budget_applied is True
 
     # --- a scaffolded first-gen run() ALSO raises the ceiling ---
-    # Changed 2026-09-10. This used to assert the scaffolded path kept the
+    # This used to assert the scaffolded path kept the
     # 16384 default, on the theory that a scaffold underneath means smaller
     # responses. Live evidence says otherwise: a scaffolded run asked for a
     # React frontend, overran 16384 on its FIRST customisation turn, and

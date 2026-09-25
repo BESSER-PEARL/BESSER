@@ -1,6 +1,6 @@
 """The run is verified against what the user asked for, not only against the model.
 
-Run 19h35 (2026-09-18, hotel, Qwen3-30B): with the verbatim spec in hand the
+A recorded run (hotel, Qwen3-30B): with the verbatim spec in hand the
 gap analyser planned the guest-capacity rule twice (tasks 7 and 13) and the app
 still shipped without it; the unique room number and the extra charges were
 never planned at all. Every static gate reported success. An opencode build of
@@ -252,7 +252,7 @@ def test_a_must_have_field_labelled_validation_keeps_its_column():
 
 
 def test_escape_sequences_quote_style_and_later_lines_are_normalised():
-    """Live 2026-09-18: quotes arrived with literal backslash-n sequences,
+    """Observed live: quotes arrived with literal backslash-n sequences,
     single quotes where the file has double quotes, and abridged continuation
     lines; ten real citations were reported unverified."""
     quoted = (
@@ -267,7 +267,7 @@ def test_escape_sequences_quote_style_and_later_lines_are_normalised():
 
 
 def test_a_verbatim_line_needs_a_real_citation_path():
-    """Live 2026-09-18: the judge wrote the literal word 'path' as the file
+    """Observed live: the judge wrote the literal word 'path' as the file
     for all 40 citations. Searching all files then accepted the run's own
     recipe as evidence. A bad citation must be corrected, not rescued."""
     out = ledger.verify_evidence(
@@ -780,7 +780,7 @@ class TestTheDigestIsNotPythonOnly:
 
 # ------------------------------------------------------ stringified arrays
 
-# Sonnet 5 via PIA, 2026-09-24: 16 of 30 fresh forced calls sent the array as
+# Sonnet 5: 16 of 30 fresh forced calls sent the array as
 # a JSON string wrapping the whole input again; Haiku 4.5 did it 0 of 10.
 _STRINGIFIED_REQUIREMENTS = (
     '{"requirements":[\n'

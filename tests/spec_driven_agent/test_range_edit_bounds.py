@@ -91,7 +91,7 @@ def test_a_successful_range_edit_clears_the_escalation(executor):
 def test_a_refused_range_edit_arms_the_strategy_hint(executor):
     """Recovery advice must arm from range failures, not only ``modify_file``.
 
-    The tier it arms changed on 2026-09-20: two refusals used to buy a
+    The tier it arms has changed: two refusals used to buy a
     forced ``read_file`` on the way to another range edit, and now buy the
     whole-file rewrite. The property this test exists for is the same one -
     ``replace_file_lines`` refusals feed the same counter ``modify_file``
@@ -163,7 +163,7 @@ def test_the_ladder_stops_steering_into_range_edits_when_they_keep_failing(execu
     now the weaker one, and run se7k3zbx spent 17 of 20 range edits failing
     while the ladder steered back into it 29 times.
 
-    Renamed from ``..._goes_back_to_text_...`` on 2026-09-20: the
+    Renamed from ``..._goes_back_to_text_...``: the
     destination is no longer text quotation. The "smallest unique old_text"
     reversal it used to assert is genuinely obsolete - that tier sits below
     the two-refusal rewrite in ``_add_edit_recovery`` and can no longer be
@@ -204,8 +204,8 @@ def test_one_success_re_enables_the_range_editor(executor):
 def test_the_range_editor_is_a_first_miss_aid_only(executor):
     """The forward ladder is what fixed the 0%-edit runs; keep its first rung.
 
-    Renamed from ``test_two_failures_still_steer_toward_the_range_editor``
-    on 2026-09-20. The range editor was not dropped - it is still what the
+    Renamed from ``test_two_failures_still_steer_toward_the_range_editor``.
+    The range editor was not dropped - it is still what the
     FIRST miss buys, and that rung is asserted here rather than deleted -
     but it stopped being the destination for a file that keeps refusing
     edits. Two refusals now escalate past it to a whole-file rewrite, so a

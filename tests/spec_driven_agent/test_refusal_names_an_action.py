@@ -1,6 +1,6 @@
 """Every refusal must name a next action the model can actually take.
 
-Measured over the 1,825 refused Qwen3-30B-A3B edit calls in the 2026-09-20
+Measured over the 1,825 refused Qwen3-30B-A3B edit calls in a recorded
 corpus (362 run workspaces): 504 refusals (28%) ended without naming any next
 action, and 78 of those carried no ``did_you_mean`` / ``advice`` /
 ``edit_recovery`` field either - a dead end in the literal sense, all of them
@@ -116,7 +116,7 @@ class TestWriteFileStripsTheReadGutter:
     rewrite arriving as "   1| import re" was refused as "unexpected indent
     at line 1" and the model resent it unchanged.
 
-    Measured over the 2026-09-20 corpus (362 workspaces): 35 Qwen write_file
+    Measured over the same corpus (362 workspaces): 35 Qwen write_file
     calls carried a gutter and 1 landed (2.9%), against 98.5% for the 726
     clean ones - 34 of write_file's 56 Qwen refusals. gpt-5.6 never does it.
     The refusal was safe (nothing corrupt reached disk); the cost was the

@@ -4,10 +4,9 @@ The inventory spec says an order "can have its payment confirmed, which
 reports back whether the payment went through" and names nothing that
 decides it - no state to move to, no literal on OrderStatus, no payment
 record. Faced with the gap the model invented a decider: six delivered
-apps in ``verification/spec-iterations`` answer ``confirmPayment`` with
-``random.choice([True, False])`` (qr9osh7c, camnhfvj, dpuubqxt),
-``random.random() < 0.9`` (d1h3rte7), ``< 0.8`` (px3e31xt), and nine Trues
-and a False (iia3pn0_). All six are Qwen and all six are on that one
+apps in the recorded runs answer ``confirmPayment`` with
+``random.choice([True, False])`` (three apps), ``random.random() < 0.9``,
+``< 0.8``, and nine Trues and a False. All six are Qwen and all six are on that one
 action. In every one the coin flip is the ENTIRE handler - zero
 assignments, zero ``database.add``, zero ``database.commit`` - so the app
 holds no payment state at all.

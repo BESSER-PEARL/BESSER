@@ -1,6 +1,6 @@
 """A Phase 3 fix attempt must end in an edit, and must say what it did.
 
-Run 7f918e11 (2026-09-18, Qwen3-30B-A3B via Nebius): one blocker, two fix
+Recorded run 7f918e11 (Qwen3-30B-A3B via Nebius): one blocker, two fix
 attempts, ten LLM turns, $0.0032, and the file that needed a one-line change
 was never touched. The trace showed zero tool calls in Phase 3, which is not
 what happened: the loop ran ``executor.execute`` directly, so nothing it did

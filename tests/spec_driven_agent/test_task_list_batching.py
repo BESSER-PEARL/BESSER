@@ -1,6 +1,6 @@
 """The checklist must not cost one turn per item, and must not livelock.
 
-Measured across a 10-run live batch on 2026-09-11: 202 of 502 turns (40%) were
+Measured across a 10-run live batch: 202 of 502 turns (40%) were
 task_list calls; the worst run spent 71 of 86 turns there, ~62 CONSECUTIVE.
 Two causes, both fixed here:
 
@@ -362,8 +362,8 @@ def test_explicit_blocked_reason_survives_listing_and_resume(executor, tmp_path)
 # The other half: action='add'
 # ======================================================================
 #
-# The 2026-09-11 fix batched ``done`` and left ``add`` taking a single
-# ``text``. Live run 4efe04ff, 2026-09-18: turns 11-23 were THIRTEEN
+# An earlier fix batched ``done`` and left ``add`` taking a single
+# ``text``. In a later recorded run, turns 11-23 were THIRTEEN
 # consecutive ``add`` calls building a 32-item checklist, one item per round
 # trip, before a single line of code was written. The tool's own description
 # says "Batch them: one task per call wastes a turn each" while offering no

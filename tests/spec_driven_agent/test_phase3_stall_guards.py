@@ -1,7 +1,6 @@
 """The Phase 3 stall guards must stop a dead loop without stopping a live one.
 
-Measured over the 355 recorded runs in ``verification/spec-iterations``
-(2026-09-19..20). Those runs split cleanly in two by the commit that introduced
+Measured over 355 recorded runs. Those runs split cleanly in two by the commit that introduced
 the current guards, and the split is visible in the traces themselves: before
 it, 243 fix rounds that wrote nothing were followed by another round; after it,
 zero were, because the guard always ends the loop there.

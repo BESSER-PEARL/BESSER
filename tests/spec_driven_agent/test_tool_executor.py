@@ -36,7 +36,7 @@ def executor(tmp_path, simple_model):
 def shell_executor(tmp_path, simple_model):
     """An executor that opted into the shell tools.
 
-    Since 2026-09-14 ``allow_shell`` defaults to False and ``execute_typed``
+    ``allow_shell`` defaults to False and ``execute_typed``
     refuses run_command / install_dependencies outright, so the tests that
     exercise the shell implementations must ask for it explicitly. Using the
     plain ``executor`` fixture here would make them pass on the refusal

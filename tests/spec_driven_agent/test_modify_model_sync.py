@@ -1,4 +1,4 @@
-"""Tests for model-sync during vibe-MODIFY on ``LLMOrchestrator``.
+"""Tests for model-sync during incremental modify on ``LLMOrchestrator``.
 
 When a ``modify()`` instruction implies genuinely-new domain entities
 (e.g. "add authentication" → a ``User`` class), the orchestrator's

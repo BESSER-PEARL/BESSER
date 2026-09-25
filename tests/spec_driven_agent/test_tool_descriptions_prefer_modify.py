@@ -1,6 +1,6 @@
 """The file-tool descriptions must agree with the prompt and the executor.
 
-Until 2026-09-18 the schema told the model "1-2 edits per file; three or
+Previously the schema told the model "1-2 edits per file; three or
 more changes -> write_file" (tools.py, since 17886e0ff) while Rule 2 of the
 system prompt said modify_file for every change and the executor refused
 exactly those write_file calls. Aider's rule is the one the executor wants:

@@ -1,6 +1,6 @@
 """A method button must take its id from a table of the method's own entity.
 
-Run 19h35 (2026-09-18): the GUI model put ``registerPayment`` (a Bill method)
+In a recorded run the GUI model put ``registerPayment`` (a Bill method)
 on the Bill page, bound to the Bill table. Phase 2 then copied that button into
 ``Booking.tsx`` and rebound it to the Booking table, so the page posted
 ``/bill/{booking id}/methods/registerPayment/`` — booking 2, which has no

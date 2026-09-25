@@ -1,7 +1,7 @@
 """Two validators that reported the opposite of the truth.
 
 Both were found by comparing a validation verdict against the app it
-judged, on the 2026-09-17 hotel run:
+judged, on a recorded hotel run:
 
   1. The missing-frontend blocker never fired on "build a web application",
      because ``\\b(web ?app|...)\\b`` cannot match when "app" continues into

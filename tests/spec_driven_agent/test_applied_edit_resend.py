@@ -1,7 +1,7 @@
 """A re-send of an edit the ladder has recorded as applied must be recognized,
 even when the ladder re-indented new_text on write. A no-op is not that receipt.
 
-Live run 4efe04ff (2026-09-18, Nebius Qwen3-30B-A3B-Instruct), turns 62-70
+Recorded run 4efe04ff (Nebius Qwen3-30B-A3B-Instruct), turns 62-70
 on routers/booking.py. The model quoted the bulk-create validation block at
 indent 4; the file holds it at indent 12, so the edit landed through the
 uniform-indent tier with new_text shifted by +8. It then re-sent the same

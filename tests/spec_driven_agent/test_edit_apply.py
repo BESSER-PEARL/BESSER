@@ -257,7 +257,7 @@ def test_typed_execution_result_distinguishes_error_and_success(tmp_path):
 # ----------------------------------------------------------------------
 # Blank-line runs. Generated scaffolds carry runs of 3-7 blank lines (Jinja
 # whitespace); models collapse them to one when quoting. Measured on a fresh
-# FastAPI scaffold, 2026-09-17: a quote spanning a run missed the ladder in
+# FastAPI scaffold: a quote spanning a run missed the ladder in
 # 23/25 windows of routers/bill.py and 13/13 of main_api.py - the single
 # largest reason modify_file "could not find" text the model had just read.
 # ----------------------------------------------------------------------
@@ -471,7 +471,7 @@ def test_anchored_span_is_a_locator_and_never_applies():
 
 
 # -- tier 8: the quote's FIRST line alone is over-indented ----------------
-# Calibrated 2026-09-20 over 411 refused old_text values from 197 completed
+# Calibrated over 411 refused old_text values from 197 completed
 # runs: of the 20 Qwen misses with a window matching modulo whitespace, 18 are
 # this shape and none is a uniform shift, so tier 2 cannot reach them.
 
@@ -536,7 +536,7 @@ def test_first_line_overindent_comes_off_the_replacement_too():
 
 
 def test_first_line_tier_corrects_an_under_indented_first_line():
-    """Superseded 2026-09-20: the tier used to refuse this direction on the
+    """Superseded: the tier used to refuse this direction on the
     principle that it "never adds indent it invented". Two of the three real
     ladder gaps left in the Qwen corpus are exactly this shape (App.jsx t51,
     bill_methods.py t16), and tier 2/6 cannot take them - the shift is not

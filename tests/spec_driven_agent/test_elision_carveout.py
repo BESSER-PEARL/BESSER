@@ -1,6 +1,6 @@
 """A NEW ellipsis is an abbreviation even when old_text also had one.
 
-Run 36e9c8a6 (2026-09-18) let 6 elided edits through and refused 0. The guard
+A recorded run let 6 elided edits through and refused 0. The guard
 read ``if new_elision and not find_elision(old_text)``: any ellipsis anywhere
 in the quoted region excused every ellipsis in the replacement. The real edit
 below quoted a stub body (bare ``...`` on its own line) and wrote back

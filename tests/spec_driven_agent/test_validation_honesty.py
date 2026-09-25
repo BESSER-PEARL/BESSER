@@ -2,7 +2,7 @@
 
 Every one of these collectors returned ``[]`` on a timeout, a tool that failed
 to launch, or an internal error — which the Phase 3 verdict renders as
-"0 blockers". That is the exact shape of the pilot failure where backends that
+"0 blockers". That is the exact shape of the live failure where backends that
 NameError on import shipped as verified: the check had not run, and nothing in
 the result said so.
 

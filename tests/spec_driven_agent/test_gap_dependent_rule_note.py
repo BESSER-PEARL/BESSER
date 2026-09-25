@@ -1,6 +1,6 @@
 """A create-time task about rows that cannot exist yet must say where the rule can hold.
 
-Live run 9a6063ed (2026-09-18), task #8 of the gap analyser::
+A recorded run, task #8 of the gap analyser::
 
     In web_app/backend/routers/booking.py, add validation in the
     'create_booking' function to enforce that the total number of guests

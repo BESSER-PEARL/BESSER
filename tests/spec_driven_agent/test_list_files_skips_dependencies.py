@@ -1,6 +1,6 @@
 """``list_files`` must not list installed dependencies.
 
-Live hotel run (2026-09-23): Phase 1 installed the scaffold frontend's npm
+A recorded hotel run: Phase 1 installed the scaffold frontend's npm
 packages (10,304 files under ``web_app/frontend/node_modules`` next to 134
 project files). The model's first ``list_files`` returned all of them, the
 prompt jumped from 41k to 229k tokens, turn 2 exceeded the model's 262k

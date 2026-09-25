@@ -5,7 +5,7 @@ that ALL fail to match, the orchestrator must inject a high-salience
 reminder into the conversation BEFORE the next LLM call, telling it to
 read the file and copy ``old_text`` verbatim - never to rewrite the file
 from memory. N successful edits to one file are healthy (five methods in
-one router file) and must not trigger it: the live run of 2026-09-17
+one router file) and must not trigger it: a live run
 showed the old "call write_file" reminder firing on exactly that and
 turning targeted edits into whole-file rewrites of scaffold code.
 
@@ -147,7 +147,7 @@ class TestPerFileModifyGuard:
 
     def test_three_successful_edits_to_one_file_do_not_trigger(self, simple_model, tmp_path):
         """Three edits that each match and apply are ordinary work on one
-        file, not a flail. Live 2026-09-17: the reminder fired here and
+        file, not a flail. Observed live: the reminder fired here and
         ordered a whole-file rewrite of a router the model was editing
         method by method."""
         joined = _streak_turn4_text(
@@ -353,7 +353,7 @@ class TestPerFileModifyGuard:
 # Interleaved re-reads: the shape the guard could not see
 # ======================================================================
 #
-# Live run a5dce952 (2026-09-18, Qwen3-30B, hosted). Phase 2 alternated
+# A recorded run (Qwen3-30B). Phase 2 alternated
 # modify_file and read_file on ONE file for 38 consecutive pairs:
 #
 #     t9  modify_file web_app/backend/sql_alchemy.py

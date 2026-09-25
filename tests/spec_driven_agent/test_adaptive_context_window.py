@@ -21,7 +21,7 @@ from besser.spec_driven_agent.agent.compaction import (
     maybe_compact,
 )
 
-# Real ids and context_length values from the Command Code catalog, 2026-09-17.
+# Real ids and context_length values from the Command Code catalog.
 COMMAND_CODE = {
     "gpt-5.6-luna": 1_050_000,
     "moonshotai/Kimi-K2.7-Code": 256_000,
@@ -114,7 +114,7 @@ class TestCatalogLayer:
             assert c.effective_threshold("gpt-5.6-luna", reserve=RESERVE) == 120_000
 
     def test_measured_override_beats_a_larger_advertised_window(self, monkeypatch):
-        """The Ollama box advertises 131k and truncates at ~64k (measured, see
+        """The self-hosted Ollama endpoint advertises 131k and truncates at ~64k (measured, see
         _SMALL_CONTEXT_WINDOWS). A catalog figure must never out-vote that."""
         _install_catalog(monkeypatch, {"qwen3-coder:30b": 1_000_000})
         assert effective_threshold("qwen3-coder:30b", reserve=RESERVE) == 60_000 - RESERVE
@@ -306,7 +306,7 @@ class TestKnownWindows:
 
     def test_namespaced_form_of_a_measured_family_keeps_its_full_window(self):
         """The exception above must not swallow the cloud case: a vendor-
-        namespaced id is served by a provider, not by our box."""
+        namespaced id is served by a provider, not by the self-hosted endpoint."""
         for marker, window in c._KNOWN_CONTEXT_WINDOWS:
             if not any(m in marker for m, _ in c._SMALL_CONTEXT_WINDOWS):
                 continue

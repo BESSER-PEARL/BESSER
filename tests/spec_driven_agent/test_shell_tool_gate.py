@@ -81,7 +81,7 @@ def test_orchestrator_disables_shell_tools(tmp_path):
 
 
 def test_orchestrator_default_drops_shell_tools(tmp_path):
-    """The default is OFF as of 2026-09-14.
+    """The default is OFF.
 
     It used to be ON, and LLMGenerator never passed the argument, so every
     library run silently got run_command / install_dependencies — the exact
@@ -155,7 +155,7 @@ def test_hosted_constant_defaults_off(monkeypatch):
 # list. None asserted that executing it is refused — and it was not: the
 # handler table always held run_command/install_dependencies and
 # execute_typed did no membership check, so a model that named a tool it was
-# never offered got it. Verified live on 2026-09-14:
+# never offered got it. Verified live:
 #
 #     ToolExecutor(workspace=tmp).execute("run_command", {"command": "echo X"})
 #     -> {"exit_code": 0, "stdout": "X\n", "success": true}

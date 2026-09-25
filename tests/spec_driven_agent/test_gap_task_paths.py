@@ -1,6 +1,6 @@
 """The gap analyser must not point Phase 2 at files that do not exist.
 
-Live local repro (2026-09-18, Nebius ``Qwen/Qwen3-30B-A3B-Instruct-2507``,
+Live local repro (Nebius ``Qwen/Qwen3-30B-A3B-Instruct-2507``,
 ``generate_web_app`` + GUI model, 63-file scaffold). The planner emitted 16
 tasks. Fourteen named ``backend/...`` paths that exist once the ``web_app/``
 prefix is restored; the last two named components that exist nowhere::

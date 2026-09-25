@@ -1,6 +1,6 @@
 """Tests that the LLM generator pipeline works without a domain model.
 
-Covers the primary-model refactor: users can drive smart generation from
+Covers the primary-model refactor: users can drive spec-driven generation from
 any BESSER diagram (state machine, agent, GUI, quantum, object), not
 just a ClassDiagram. These tests assert that the wiring stays intact
 when ``domain_model`` is None — the orchestrator builds, tool filtering

@@ -1,8 +1,7 @@
 """When the executor rejects the same edit again, the orchestrator changes
 what the model can DO, in steps, instead of repeating what it is told.
 
-Two live runs on 2026-09-18 (0c537a4e: 13 identical misses; 57160293: 16
-identical no-op calls) alternated read_file / modify_file for ~30 turns each
+Two recorded runs (13 identical misses; 16 identical no-op calls) alternated read_file / modify_file for ~30 turns each
 while every guard either never fired or was ignored. Aider's answer is
 ``max_reflections = 3`` and then the human decides; headless, the runtime
 has to offer a different editing strategy, then stop only if the model
@@ -259,7 +258,7 @@ def test_a_range_edit_target_counts_across_redrafts(tmp_path):
     assert ex.last_repeat == ("app.py", 4)
 
 
-# -- two refusals -> rewrite the whole file (2026-09-20) ------------------
+# -- two refusals -> rewrite the whole file -------------------------------
 
 
 def test_two_refusals_on_one_path_escalate_to_a_whole_file_rewrite(tmp_path):

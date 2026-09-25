@@ -6,9 +6,8 @@ file-by-file by the LLM. The orchestrator's checklist names package.json /
 index.html / main.jsx / App.jsx / api.js / pages and nothing else, so the
 build configuration around them is left to chance.
 
-Live evidence, 2026-09-21. Run ``gpt-5.6-terra-053ydac9`` (in
-``verification/spec-iterations/``) was replayed in Chrome twice from the same
-source files. Untouched, it rendered nothing and the console showed
+Live evidence: a recorded gpt-5.6-terra run was replayed in Chrome twice from
+the same source files. Untouched, it rendered nothing and the console showed
 
     ReferenceError: React is not defined  at App (src/App.jsx:15:3)
 

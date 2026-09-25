@@ -1,6 +1,6 @@
 """tsc must actually read the source when node_modules is absent.
 
-Run 36e9c8a6 (2026-09-18) shipped a frontend that could not render: App.tsx
+A recorded run shipped a frontend that could not render: App.tsx
 used <Link> 8 times without importing it, and rendered <PersonPage /> and six
 siblings against imports bound to bare names (`import Person from ...`). 23
 TS2304 errors, first render threw, #root stayed empty on every route.
@@ -63,7 +63,7 @@ def test_the_probe_clears_types_so_tsc_does_not_abort(orchestrator, tmp_path):
 def test_the_probe_overrides_options_typescript_7_removed(orchestrator, tmp_path):
     """`target: es5` / `moduleResolution: node` are TS5108 on tsc 7 -- the same
     zero-files-checked abort the probe exists to prevent. Shipped once without
-    this and the probe was inert in production (run 773b8549)."""
+    this and the probe was inert in production."""
     arg, cleanup = orchestrator._tsc_project_arg(_project(tmp_path), deps_installed=False)
     try:
         opts = json.loads((tmp_path / arg).read_text(encoding="utf-8"))["compilerOptions"]

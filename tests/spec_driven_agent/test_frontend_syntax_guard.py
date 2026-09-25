@@ -1,7 +1,7 @@
 """A frontend edit that breaks the file must be refused, like a Python one.
 
 ``_new_syntax_error`` returned ``None`` for every path that did not end in
-``.py``. Over the 143 ``web_app`` runs in ``verification/spec-iterations``,
+``.py``. Over 143 recorded ``web_app`` runs,
 42 shipped a ``frontend/src/pages/Booking.tsx`` that esbuild cannot parse -
 29% of the runs scored ``workflow_ok`` - and no other file in the archive
 broke even once. All 42 regenerate from their own ``effective_project.json``

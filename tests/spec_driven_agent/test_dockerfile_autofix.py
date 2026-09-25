@@ -1,6 +1,6 @@
 """Dockerfile auto-fixes must reach multi-service layouts.
 
-Live 2026-09-11: a generated app had `Dockerfile.frontend` / `Dockerfile.backend`
+Observed live: a generated app had `Dockerfile.frontend` / `Dockerfile.backend`
 at the project root with `package.json` under `frontend/`. `docker compose build`
 failed twice over, and the user burned FIVE fix runs on it — the last one
 mis-diagnosed the problem entirely, declaring `npm ci --silent --no-optional`

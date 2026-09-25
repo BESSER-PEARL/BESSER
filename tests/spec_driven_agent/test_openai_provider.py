@@ -876,7 +876,7 @@ class TestReasoningEffortHelper:
         |"max"``, which aborted the Phase 2 customization loop and shipped a
         deterministic-only bundle with "output may be incomplete".
 
-        Tools need no flag there — verified 2026-09-16 against gpt-5.6-luna on
+        Tools need no flag there — verified against gpt-5.6-luna on
         api.commandcode.ai: ``none`` -> 400; omitted / ``low`` / ``medium``
         each returned a proper tool call.
         """

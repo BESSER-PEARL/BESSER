@@ -1,6 +1,6 @@
 """Calling a local ``async def`` without ``await`` must be reported at write time.
 
-Run 36e9c8a6 (2026-09-18) shipped a hotel app whose ``produceBill`` route did
+A recorded run shipped a hotel app whose ``produceBill`` route did
 ``booking_computeAndReturnAmountOwed(booking_id, database)["amountOwed"]`` — a
 call to a sibling async route function. ast.parse accepted it, pyflakes
 accepted it, Phase 3 passed with zero blockers, and the app booted; only

@@ -5,7 +5,7 @@
 such tier, so a model that copied the region it had just read was told its
 quote "is not present" in a file that contained it.
 
-Live run 7aybctis (Qwen, 2026-09-19): task 9 was genuinely implemented in
+A recorded run (Qwen): task 9 was genuinely implemented in
 ``sql_alchemy.py``, the model cited it three times straight from the numbered
 read, and the task was recorded BLOCKED. Four tasks failed this way, burning
 eleven turns — once edits started landing this became the run's top cost.

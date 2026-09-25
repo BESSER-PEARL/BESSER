@@ -3,7 +3,7 @@
 The pydantic generator declines OCL constraints that span relationships and
 leaves ``# NOTE: OCL constraint '...' is not enforced by this Create model``
 in the schema (pydantic_classes_template.py.j2). Nothing turned that marker
-into work: on run 19h35 (2026-09-18) the guest-capacity rule was in the model,
+into work: on a recorded run the guest-capacity rule was in the model,
 the planner happened to list it, and the app still shipped without it. The
 rule is the user's own words in the model; the harness seeds it as a checklist
 item so the end_turn gate holds until it is implemented or honestly dropped.

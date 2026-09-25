@@ -1,7 +1,7 @@
 """The Phase 0 ``model contract:`` blocker must reach the recipe.
 
 ``_collect_model_contract_issues`` detects a mandatory creation cycle — the
-live 2026-09-18 case where ``Booking`` required a ``ReservedRoom`` id and
+live case where ``Booking`` required a ``ReservedRoom`` id and
 ``ReservedRoom`` required a ``Booking`` id, so the shipped app served 69
 routes and could create neither entity. It is deliberately not part of
 ``_collect_validation_issues``: no edit to generated code can repair the

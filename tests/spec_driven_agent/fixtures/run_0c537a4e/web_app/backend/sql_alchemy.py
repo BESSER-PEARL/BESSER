@@ -5,7 +5,7 @@ import os
 # cannot shadow them. The PLAIN names are imported too because this file is
 # routinely edited afterwards by an LLM, which writes ordinary Python and has
 # no reason to know about our aliasing convention. Observed in generated apps
-# on 2026-09-11, each one an app that would not import:
+# each one an app that would not import:
 #
 #     Mapped_[Optional[int]]        undefined name 'Optional'
 #     mapped_column(DateTime())     undefined name 'DateTime'

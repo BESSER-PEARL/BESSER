@@ -1,6 +1,6 @@
 """Two ways a generated app shipped "0 blockers" while being unable to start.
 
-Both found in a 10-app live batch on 2026-09-11, where the run's own verdict
+Both found in a 10-app live batch, where the run's own verdict
 disagreed with the app in BOTH directions: one app reported "0 blockers /
 23 total, done" and could not import, while two reported INCOMPLETE and were
 fine (they had merely run out of turns).
@@ -19,7 +19,7 @@ fine (they had merely run out of turns).
 
 3. A relationship() whose string arguments resolve to nothing is invisible to
    every static gate, because SQLAlchemy configures mappers lazily, on the
-   first query. Live run 52befadf (2026-09-18) booted, passed ast.parse and
+   first query. A recorded run booted, passed ast.parse and
    ruff, and returned 500 on every database request.
 """
 
@@ -213,7 +213,7 @@ def test_a_raising_callback_never_breaks_the_run():
 # ------------------------------------------ mappers that fail on first use
 
 
-# Trimmed from the live download of run 52befadf (2026-09-18): Phase 2 added
+# Trimmed from that run's download: Phase 2 added
 # ``relationship(..., secondary="booking_guest", ...)`` inside the class body
 # of a file whose only many-to-many table is ``guests``. The module imports,
 # ast.parse and ruff pass, and every database request returned 500. Removing

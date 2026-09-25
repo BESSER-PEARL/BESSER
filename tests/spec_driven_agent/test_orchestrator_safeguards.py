@@ -401,9 +401,9 @@ class TestRuffAndTscValidation:
     ):
         """If ``ruff`` is not on PATH, the validator must say so LOUDLY.
 
-        Regression for the live 2026-09-10 finding: ruff was only ever
-        installed in CI, never in the hosted image, so this path silently
-        returned [] for every pilot run — and the F821 "ships green, boots
+        Regression for a live finding: ruff was only ever installed in CI,
+        never in the hosted image, so this path silently returned [] for
+        every hosted run — and the F821 "ships green, boots
         dead" blocker class was invisible. A missing binary now yields one
         visible validation note (a WARNING, never a blocker, so it can't
         trip the fix loop) and logs a warning exactly once per orchestrator.
@@ -679,7 +679,7 @@ class TestPhase2SystemPrompt:
             assert "inspection handoff, not verification" in orch._phase2_inspection_handoff
             # "validation_required" is also what the end_turn blocker gate
             # sets, and the two are 96 and 75 runs of very different character
-            # across verification/spec-iterations. The trace has to be able to
+            # across the recorded runs. The trace has to be able to
             # tell them apart.
             assert orch._phase2_stop_detail.startswith("inspection handoff")
             checkpoint = load_checkpoint(str(tmp_path))

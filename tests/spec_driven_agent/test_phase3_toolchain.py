@@ -92,8 +92,7 @@ class TestClassifier:
 
 # `tsc` isn't installed on every developer machine. The check has to
 # be opt-in via a binary lookup so we don't fail CI on hosts that
-# happen not to have Node + tsc set up. The bench host that drives
-# the smart-gen runs always has it.
+# happen not to have Node + tsc set up.
 _TSC_BIN = shutil.which("tsc") or shutil.which("tsc.cmd")
 
 
@@ -122,7 +121,7 @@ def _build_orchestrator(tmp_path) -> LLMOrchestrator:
         enable_tracing=False,
         enable_checkpointing=False,
         # Explicit: these tests exist to exercise the tsc/cargo/kotlinc path,
-        # which is opt-in as of 2026-09-14 (it shells out to whatever compiler
+        # which is opt-in (it shells out to whatever compiler
         # the host happens to have). Relying on the default would make this
         # file silently stop testing anything if the default moved again.
         enable_toolchain_validation=True,
@@ -380,8 +379,8 @@ def test_toolchain_fix_iteration_cap_bounded(tmp_path) -> None:
     It used to take two: the recording client always answers ``end_turn``,
     so the attempt writes nothing and the tree never changes, and a second
     round against an identical tree is the first round again. Tolerating
-    one such round cost 522 turns - 31% of every turn spent - across the 23
-    runs of 2026-09-19.
+    one such round cost 522 turns - 31% of every turn spent - across 23
+    recorded runs.
     """
     client = _RecordingClient()
     orch = LLMOrchestrator(

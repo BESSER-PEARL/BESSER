@@ -1,9 +1,7 @@
 """Phase 3 must stop burning turns, keep its best tree, and prove the app runs.
 
-Measured over the 23 spec-iteration runs of 2026-09-19
-(``verification/spec-iterations/``), scored against the CORRECTED acceptance
-probe (``verification/rescore_corrected_probe.json``; the first scoring was
-itself defective and understated the generator badly):
+Measured over 23 recorded runs, scored against the CORRECTED acceptance probe
+(the first scoring was itself defective and understated the generator badly):
 
 * 7 of those 23 delivered a fully working app. None of them may be refused by
   anything here - that is the acceptance criterion these tests defend.

@@ -25,7 +25,7 @@ and ``analyze_gaps_via_llm`` did not call them (the wiring tests would
 observe the un-annotated / un-dropped task list).
 
 Live counterexamples this suite pins as regressions, both found while
-verifying the real recipes in verification/spec-iterations:
+verifying the recipes of recorded runs:
   * se7k3zbx: "add a computed 'commercialStatus' attribute that is derived
     from the bill's settlement status, transitioning ..." names an
     attribute the model already has, but the transition LOGIC is the real,

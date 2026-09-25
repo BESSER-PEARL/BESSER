@@ -1,4 +1,4 @@
-"""The Phase 2 rules must not prescribe the failures seen live (2026-09-17).
+"""The Phase 2 rules must not prescribe the failures seen live.
 
 Read back from a real prompt, three rules were instructing the behaviour the
 run was blamed for: "three or more changes -> one write_file" (whole-file
@@ -44,7 +44,7 @@ class TestRulesDoNotPrescribeTheFailures:
 
         7cb06829 deleted "three or more changes -> one write_file" because it
         counted *successful* edits: three good edits to one router became a
-        whole-file rewrite. The 2026-09-20 edit-ladder change puts a
+        whole-file rewrite. A later edit-ladder change puts a
         whole-file rewrite back in these rules, but keyed on two *refused*
         edits on one path - the same trigger class the guard was re-pointed
         at, and the executor pops that counter on every landed edit (pinned

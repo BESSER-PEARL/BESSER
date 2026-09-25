@@ -310,7 +310,7 @@ def test_executed_with_real_impl_in_file_is_not_flagged():
 
 
 def test_string_pk_scaffold_mints_ids_and_types_fks(tmp_path):
-    """Audit defects #2/#3 (2026-09-02): a string-PK scaffold must mint the
+    """A string-PK scaffold must mint the
     id server-side (uuid default) and type relationship fields str."""
     import json as _json
     guest = Class(name="Guest")
@@ -343,7 +343,7 @@ def test_string_pk_scaffold_mints_ids_and_types_fks(tmp_path):
 
 
 def test_framework_switch_is_blocked_phase3(tmp_path):
-    """Live finding 2026-09-02: qwen rewrote a FastAPI scaffold into Flask.
+    """Observed live: qwen rewrote a FastAPI scaffold into Flask.
     Phase 3 must report it as a blocker."""
     (tmp_path / "backend").mkdir()
     (tmp_path / "backend" / "app.py").write_text(
@@ -428,7 +428,7 @@ class TestAFrameworkTheUserAskedForIsNotASwitch:
         assert LLMOrchestrator._collect_framework_switch_issues(shim) == []
 
     def test_the_original_incident_is_still_blocked(self, tmp_path):
-        """2026-09-02: a free model rewrote a FastAPI scaffold into an
+        """A free model rewrote a FastAPI scaffold into an
         unbootable Flask hybrid. Nothing in that request said Flask."""
         (tmp_path / "backend").mkdir()
         (tmp_path / "backend" / "app.py").write_text(self.FLASK, encoding="utf-8")

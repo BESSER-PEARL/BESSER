@@ -1,8 +1,7 @@
 """False blockers reproduced against apps that demonstrably work.
 
-Every case here was replayed over the 74 delivered trees in
-``verification/spec-iterations`` whose ``workflow_ok`` is true in
-``verification/batch_results.jsonl`` - the app boots, creates every entity
+Every case here was replayed over 74 recorded delivered trees whose
+``workflow_ok`` is true - the app boots, creates every entity
 and runs the workflow. A validator that reports a ``blocker`` on one of
 those is wrong by construction, and the run pays for it: a false blocker
 buys fix turns and can drive a rollback of a genuine repair.
@@ -527,7 +526,7 @@ def test_an_ambiguous_class_name_stays_unverified(tmp_path):
 
 
 def test_a_placeholder_word_for_the_path_is_never_rescued(tmp_path):
-    """Live 2026-09-18: the judge wrote the literal word 'path' for all 40
+    """Observed live: the judge wrote the literal word 'path' for all 40
     citations. It names no class, so locating by class name cannot rescue it
     however findable the quoted line is."""
     _write(tmp_path, "web_app/backend/sql_alchemy.py", _ORM)

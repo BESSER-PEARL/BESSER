@@ -1,7 +1,7 @@
 """``obj.enum_column != SomeEnum.MEMBER.value`` where ``enum_column`` is a
 ``Column(Enum(...))`` ORM attribute.
 
-Live run iw82zzoc: a generated hotel app's ``sql_alchemy.py`` declares
+A recorded run: a generated hotel app's ``sql_alchemy.py`` declares
 
     class BookingPhysicalStatus(PyEnum):
         NOT_YET_ARRIVED = "NOT_YET_ARRIVED"

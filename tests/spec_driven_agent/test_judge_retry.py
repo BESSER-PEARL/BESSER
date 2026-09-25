@@ -3,7 +3,7 @@
 An adversarial review of 17 live runs measured the judge call - never the
 extraction call, which shares ``_call_with_tool`` and the same client but
 sends a prompt two orders of magnitude smaller - returning nothing usable
-in 3 of them: fcdh0s9k, n_6i2i5r, ys4gfj4v. All three ran on Nebius/Qwen3-
+in 3 of them. All three ran on Nebius/Qwen3-
 30B, whose ``planning_model`` is ``None`` by design ("no cheap sibling"),
 and every failure completed in under a second - too fast to be genuine
 inference over a prompt that can carry a 200k-char digest, and consistent
@@ -70,7 +70,7 @@ def no_real_backoff(monkeypatch):
 
 
 def test_a_single_failed_call_now_gets_one_bounded_retry_and_recovers(no_real_backoff):
-    """Reproduces the live shape of fcdh0s9k / n_6i2i5r / ys4gfj4v: a
+    """Reproduces the live shape of those three runs: a
     provider with no planning-model sibling (Nebius) and a single failed
     judge call. Pre-fix: ``_call_with_tool`` catches the exception, sees
     ``planning_model`` is already ``None`` and returns ``None`` straight

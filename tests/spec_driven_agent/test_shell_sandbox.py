@@ -1,6 +1,6 @@
 """The model-authored shell runs confined, or it does not run.
 
-Two holes were verified live inside the hosted worker (2026-09-20):
+Two holes were verified live inside the hosted worker:
 
 1. the cwd lock constrains tool *arguments*, not the command string, so
    ``cd /workspace/runs/<other_run> && cat .besser_trace.jsonl`` read another

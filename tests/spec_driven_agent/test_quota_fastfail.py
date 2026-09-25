@@ -1,6 +1,6 @@
 """Tests for daily-quota fast-fail + served-model alias normalization.
 
-Measured on the free tier (2026-09-10 campaign): Command Code's free LongCat
+Measured on the free tier: Command Code's free LongCat
 returned ``429 "You've used all 100 free LongCat 2.0 requests for today…"`` on
 39/39 fallback activations. That quota cannot recover inside a retry window, yet
 the provider retried 5x (0.5s -> 30s backoff) per call before falling back —

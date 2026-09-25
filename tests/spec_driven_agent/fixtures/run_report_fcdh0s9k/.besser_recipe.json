@@ -111,11 +111,11 @@
     },
     {
       "severity": "warning",
-      "message": "ruff: verification\\spec-iterations\\Qwen-Qwen3-30B-A3B-Instruct-2507-fcdh0s9k\\app\\web_app\\backend\\bal_stdlib.py:68:1: E402 Module level import not at top of file"
+      "message": "ruff: app\\web_app\\backend\\bal_stdlib.py:68:1: E402 Module level import not at top of file"
     },
     {
       "severity": "blocker",
-      "message": "ruff: verification\\spec-iterations\\Qwen-Qwen3-30B-A3B-Instruct-2507-fcdh0s9k\\app\\web_app\\backend\\pydantic_classes.py:44:7: F811 Redefinition of unused `ReservedRoomLinkCreate` from line 27: `ReservedRoomLinkCreate` redefined here"
+      "message": "ruff: app\\web_app\\backend\\pydantic_classes.py:44:7: F811 Redefinition of unused `ReservedRoomLinkCreate` from line 27: `ReservedRoomLinkCreate` redefined here"
     },
     {
       "severity": "warning",

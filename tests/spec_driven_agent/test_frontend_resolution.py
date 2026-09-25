@@ -1,6 +1,6 @@
 """Phase 3 must look at the one thing the user actually sees.
 
-A browser sweep of the recorded corpus on 2026-09-21 drove seven generated
+A browser sweep of the recorded corpus drove seven generated
 apps in Chrome. Four rendered a blank page, and three of those four carried a
 PERFECT probe score - because the probe boots the backend and drives HTTP and
 never renders a page, so nothing in the pipeline was looking:

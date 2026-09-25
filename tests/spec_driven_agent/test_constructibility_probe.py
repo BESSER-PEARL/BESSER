@@ -1,6 +1,6 @@
 """Phase 3 must block an aggregate that no request can create.
 
-Run 9a6063ed (2026-09-18) delivered a hotel app that passed every static
+Recorded run 9a6063ed delivered a hotel app that passed every static
 gate - imports, mappers, star-import names, 61 routes, Person/Employee/
 Guest/Room all creating fine - and could not create a Booking by ANY
 sequence of requests. Phase 2 had implemented the gap analyser's task

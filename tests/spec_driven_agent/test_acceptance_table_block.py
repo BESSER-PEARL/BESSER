@@ -11,10 +11,8 @@ shared component (``TableComponent.tsx``, ``axios.post`` gated on
 ``modalMode === 'add'``), never by a literal call in the page file -- so the
 old check was structurally blind to the only pattern this generator produces.
 
-``PERSON_TSX`` and ``BOOKING_TSX`` below are copied verbatim from a real run,
-not read from ``verification/`` at test time -- source:
-verification/spec-iterations/gpt-5.6-terra-dp3trml9/app/web_app/frontend/src/pages/Person.tsx
-verification/spec-iterations/gpt-5.6-terra-dp3trml9/app/web_app/frontend/src/pages/Booking.tsx
+``PERSON_TSX`` and ``BOOKING_TSX`` below are copied verbatim from a real run's
+``web_app/frontend/src/pages/Person.tsx`` and ``Booking.tsx`` (gpt-5.6-terra).
 """
 
 from besser.BUML.metamodel.structural import (
@@ -44,8 +42,7 @@ def _workspace(tmp_path, files: dict):
         p.write_text(content, encoding="utf-8")
 
 
-# Verbatim: verification/spec-iterations/gpt-5.6-terra-dp3trml9/app/web_app/
-# frontend/src/pages/Person.tsx. A real run's fully-wired create page: a
+# Verbatim: a recorded run's web_app/frontend/src/pages/Person.tsx. A real run's fully-wired create page: a
 # <TableBlock> whose dataBinding names "Person"/"/person/" and whose
 # options.formColumns lists five editable fields plus a booking lookup.
 # There is no literal ".post(" / "method: 'POST'" anywhere in this file --

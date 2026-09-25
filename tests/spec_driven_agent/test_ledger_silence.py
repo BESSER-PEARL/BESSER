@@ -1,7 +1,7 @@
 """An enabled requirements ledger that extracted nothing must say so.
 
 ``extract_requirements`` has five paths that return ``None`` and only two of
-them log. Live run 7aybctis (Qwen, 2026-09-19) finished with
+them log. A recorded run (Qwen) finished with
 ``requirements: []`` in the recipe and no other signal — indistinguishable
 from "the user asked for nothing". On gpt-5.6 the same spec yields 38-51
 items, so the run silently skipped every requirement check.

@@ -1,7 +1,7 @@
 """``NAME.attr`` (a call or a plain attribute) where ``NAME`` is provided only
 by a star import and the real object behind it does not have ``attr``.
 
-Live run _abcgx9s: a generated hotel app's ``routers/booking_methods.py``
+A recorded run: a generated hotel app's ``routers/booking_methods.py``
 (``from pydantic_classes import *``) wrote
 
     billNumber=f"BIL-{booking_id}-{int(time.time())}",
@@ -10,8 +10,7 @@ Live run _abcgx9s: a generated hotel app's ``routers/booking_methods.py``
 so the star import binds ``time`` to the *class* ``datetime.time``, not the
 ``time`` module. ``time.time()`` raises ``AttributeError: type object
 'datetime.time' has no attribute 'time'`` on the first request that reaches
-it - confirmed live at
-verification/spec-iterations/Qwen-Qwen3-30B-A3B-Instruct-2507-_abcgx9s/app/web_app/backend/routers/booking_methods.py:45.
+it - confirmed live at ``routers/booking_methods.py:45`` of that app.
 ``time`` is genuinely bound, so pyflakes and ruff both pass, and the file
 ``ast.parse``s cleanly too: the same "ships green, boots dead" class as an
 undefined name behind a star import, one layer over.

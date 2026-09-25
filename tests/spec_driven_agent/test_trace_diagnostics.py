@@ -1,6 +1,6 @@
 """The trace must record WHY a tool failed, not just that it did.
 
-Written after a post-mortem that couldn't be completed: a run on 2026-09-11
+Written after a post-mortem that couldn't be completed: a run
 burned 11 of its 80 turns on failed ``modify_file`` calls, and the trace held
 only ``status: error`` with no reason. The single error message recoverable came
 from the checkpoint, because compaction had already discarded the rest. The

@@ -1,6 +1,6 @@
 """An abbreviated quote must be named as such, refused, and bounded.
 
-Live run 2026-09-18 (Qwen3-30B-A3B-Instruct): 38 modify_file calls, 37 failed.
+A recorded run (Qwen3-30B-A3B-Instruct): 38 modify_file calls, 37 failed.
 The model sent `contact_id:...` and `contact = rel...` instead of the real
 lines; "..." was in 37/38 old_text and 38/38 new_text, so the single edit that
 applied wrote an ellipsis into sql_alchemy.py. The error said "make sure
@@ -154,7 +154,7 @@ def test_a_placeholder_preserved_verbatim_is_allowed(executor, tmp_path):
 
 
 def test_a_placeholder_that_changed_text_is_refused(executor, tmp_path):
-    """Run 36e9c8a6 leaked 6 elisions and refused 0: an ellipsis anywhere in
+    """A recorded run leaked 6 elisions and refused 0: an ellipsis anywhere in
     old_text excused every ellipsis in new_text. A CHANGED elided line is a
     new abbreviation, not a preserved one."""
     (tmp_path / "doc.py").write_text("x = rel...\n", encoding="utf-8")
@@ -178,7 +178,7 @@ def test_a_good_edit_still_applies(executor, tmp_path):
     assert "default=0" in (tmp_path / "sql_alchemy.py").read_text(encoding="utf-8")
 
 
-# -- the bare "..." line (live 2026-09-18, run 15a8ac7d) -----------------
+# -- the bare "..." line (recorded run) ----------------------------------
 # The model used a dots-only line on 10 of 10 edits to booking_methods.py.
 # Four were rejected; the SIX THAT APPLIED spliced a second `try:` inside an
 # unclosed one, so the module failed to import: "line 37: expected 'except'

@@ -1,7 +1,7 @@
 """Apply-ladder tiers calibrated on refused Qwen3-30B-A3B edits.
 
-Every case here is a real refused ``old_text`` taken from the run corpus under
-``verification/spec-iterations`` (362 runs, 10,545 edit calls), replayed against
+Every case here is a real refused ``old_text`` taken from a corpus of recorded
+runs (362 runs, 10,545 edit calls), replayed against
 the file state reconstructed for that turn.
 
 The negatives matter as much as the positives: a weak model's quote must still
@@ -191,7 +191,7 @@ def test_escape_diagnostic_is_silent_when_nothing_is_doubled():
 # -- the numbered-read gutter, transcribed by hand -----------------------
 #
 # Qwen echoes read_file's "NNN| " gutter back inside old_text. Tier 5 has
-# stripped that since it was written, and over the 2026-09-20 corpus it
+# stripped that since it was written, and over the recorded corpus it
 # handles it well: 181 Qwen payloads carry a gutter, 136 of them land (75.1%,
 # slightly BETTER than the 71.2% of clean Qwen calls). It declined 3.
 #

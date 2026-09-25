@@ -15,7 +15,7 @@ GENERATOR_TOOLS ↔ ToolExecutor._handlers parity (including qiskit).
 --- from test_gap_false_gaps.py --------------------------------------
 The gap analyser must not propose work the model already carries.
 
-Live run, 2026-09-17: the planner emitted "Add 'commercialStatus'
+In a recorded run the planner emitted "Add 'commercialStatus'
 enumeration with literals AWAITING_PAYMENT, CONFIRMED, CANCELLED" while the
 model carried BookingCommercialStatus with exactly those literals. The data
 was in the prompt and the instruction was right; the MATCH failed on the
@@ -27,7 +27,7 @@ and must keep being emitted.
 --- from test_gap_spec_vs_model_diff.py ------------------------------
 The gap analyser must diff the SPEC against the MODEL, not only the code.
 
-Observed live on run ``ca48a6dd`` (2026-09-17). The user's hotel spec named
+Observed live on a recorded run. The user's hotel spec named
 five booking actions, two independent status dimensions, four validity rules
 and a price that belongs to the booking-room *link*. The modelling step
 captured two methods, one merged enum, zero constraints and no link class.
@@ -309,7 +309,7 @@ def _generated_file(tmp_path, lines: int, read: bool = True) -> tuple[ToolExecut
 
 
 def test_write_file_allowed_after_two_modifies(tmp_path):
-    """The size rule inverted on 2026-09-20: this is now the LARGE-file case.
+    """The size rule inverted: this is now the LARGE-file case.
 
     It used to be the small-file case (<=200 lines had to be modified twice
     before a rewrite unlocked, while anything larger could be rewritten
@@ -903,7 +903,7 @@ async def execute_order_approve(order_id):
 
 
 def test_action_task_names_the_instrument_rather_than_only_saying_verify(tmp_path):
-    """Measured 2026-09-20 over 211 completed runs: 1,189 of 2,985 checklist
+    """Measured over 211 completed runs: 1,189 of 2,985 checklist
     items say "verif*" and NOT ONE names a tool (``write_file`` is the only
     tool name that appears anywhere, in 159). Over 214 runs gpt-5.6 called
     ``test_api`` 13.1 times a run and Qwen 0.4 - 6 of 66 Qwen runs used it at

@@ -1,6 +1,6 @@
 """An undefined name behind ``from x import *`` must be reported at write time.
 
-Live run 0c537a4e (2026-09-18, Nebius Qwen/Qwen3-30B-A3B-Instruct-2507): five
+Recorded run 0c537a4e (Nebius Qwen/Qwen3-30B-A3B-Instruct-2507): five
 modify_file edits to routers/booking_methods.py each landed a body reading
 ``booking_id`` in an endpoint that has no such parameter, and one called
 ``computeAmountOwed(db_booking.id, database)``, a helper defined nowhere. All

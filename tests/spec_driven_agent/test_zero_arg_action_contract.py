@@ -3,8 +3,8 @@
 The library spec says a loan "can be renewed, which extends the due date"
 without saying by how much, and the model declares ``Loan.renew()`` with an
 empty parameter list. Faced with the gap the agent asked the caller instead of
-choosing: 20 of the 22 gpt-5.6-terra library runs in
-``verification/spec-iterations`` generated a ``renew`` handler that answers
+choosing: 20 of 22 recorded gpt-5.6-terra library runs generated a
+``renew`` handler that answers
 422 "A later dueDate is required" / "renew requires params.dueDate". The
 generated React MethodButton POSTs ``{}`` for a zero-parameter method
 (MethodButton.tsx.j2), so the delivered Renew button was uncallable.
@@ -112,7 +112,7 @@ def _messages(content: str, model: DomainModel | None = None) -> list:
     return [f.message for f in lint_file("routers/loan_methods.py", content, contract)]
 
 
-# Verbatim from verification/spec-iterations/gpt-5.6-terra-6oj40oh_.
+# Verbatim from a recorded gpt-5.6-terra run.
 _GUARD_THEN_422 = (
     '    if not params or not params.get("dueDate"):\n'
     '        raise HTTPException(status_code=422, detail="A later dueDate is required to renew a loan")\n'

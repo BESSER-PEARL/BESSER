@@ -1,6 +1,6 @@
 """The user's request reaches every deciding stage whole.
 
-Live failure, 2026-09-17: a 4,622-char spec ending "Frontend -> React" was
+Live failure: a 4,622-char spec ending "Frontend -> React" was
 scaffolded with no frontend, because the generator selector saw only
 ``instructions[:500]``. Stack declarations conventionally come LAST, so a
 head-clip is the worst shape for that decision. Three such clips were found

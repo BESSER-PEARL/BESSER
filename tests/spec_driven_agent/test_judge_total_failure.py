@@ -5,7 +5,7 @@ judge skipped — correct when it judged most and missed a few. When the call
 comes back with nothing usable, that same fill-in turns one failure into one
 blocker per requirement.
 
-Live run lsrnaime (Qwen, 2026-09-19): 104 requirements extracted, 104 verdicts
+A recorded run (Qwen): 104 requirements extracted, 104 verdicts
 of ``unverified`` / "no verdict returned", and a recipe reporting **115
 blockers** — burying the eleven real ones. The caller already has a single
 honest finding for a judge that returns nothing; it just never fired, because

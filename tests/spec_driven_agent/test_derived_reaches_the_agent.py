@@ -1,6 +1,6 @@
 """A derived attribute must be visible to the agent, not just to the generator.
 
-Observed live 2026-09-18: the spec said the booking statuses are "not set by
+Observed live: the spec said the booking statuses are "not set by
 hand" and the total price is "not typed in"; the model marked all three
 ``is_derived``; and the generated create schema demanded all three. The agent
 could not have fixed it — ``_attribute_entry`` never emitted ``is_derived``,

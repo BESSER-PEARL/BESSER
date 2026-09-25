@@ -1,7 +1,7 @@
 """An old_text that matches INSIDE a line's indentation must be refused, and a
 tool call may never turn a parseable file into an unparseable one.
 
-Live run 57160293, turn 19 (2026-09-18, Nebius Qwen3-30B-A3B-Instruct). The
+Recorded run 57160293, turn 19 (Nebius Qwen3-30B-A3B-Instruct). The
 scaffold's stub comment sits at indent 8; the model quoted it at indent 4
 with the other five lines exact. The plain ``old_text in content`` check
 matched four characters into the line, ``str.replace`` kept the file's first

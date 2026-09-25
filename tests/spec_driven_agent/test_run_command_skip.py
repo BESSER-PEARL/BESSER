@@ -1,7 +1,7 @@
 """Tests for the run_command soft-skip behavior added for #4.
 
 When the LLM invokes a shell command whose binary isn't installed in the
-smart-gen container (e.g. ``ruby -c file.rb`` on an image without Ruby),
+generation container (e.g. ``ruby -c file.rb`` on an image without Ruby),
 the tool used to return a real ``exit_code != 0`` with the stderr "ruby:
 command not found". The LLM would dutifully surface that to the user as
 if it were a failure ("I attempted to validate the Ruby syntax with

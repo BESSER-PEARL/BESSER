@@ -1,6 +1,6 @@
 """The inventory lists the code the model must edit, not the junk beside it.
 
-Measured on a healthy 60-file web-app scaffold (2026-09-18): the alphabetical
+Measured on a healthy 60-file web-app scaffold: the alphabetical
 30-path cap listed .besser_* records and __pycache__/*.pyc in 5 slots and
 listed 0 of the 33 frontend/src files ("... and 35 more files"); on a
 delivered app 16 slots were .pyc/.db and three routers fell off the end. A

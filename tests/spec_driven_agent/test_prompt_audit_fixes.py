@@ -1,4 +1,4 @@
-"""Findings of the 2026-09-24 prompt audit, each pinned to what the code does.
+"""Findings of a prompt audit, each pinned to what the code does.
 
 The prompts serve Sonnet 5, gpt-5.6, Qwen3-Coder and mistral-small alike, so
 these fixes remove contradictions and wrong contracts, not guidance a weaker

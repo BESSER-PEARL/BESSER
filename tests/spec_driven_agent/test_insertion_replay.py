@@ -1,4 +1,4 @@
-"""Insertion replay regression from EC2 run f6770633, turns 31--105."""
+"""Insertion replay regression from a recorded run, turns 31--105."""
 import json
 
 import pytest

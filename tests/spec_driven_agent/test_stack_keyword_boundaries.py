@@ -10,7 +10,7 @@ the pattern from the unstripped needle: ``.net`` -> "net".isalnum() -> took a
 boundary branch it could never satisfy. ``next.js`` took the same branch and
 worked only by luck, its leading ``n`` being a word character.
 
-The guidance block this gates exists because a vibe-bench run found generated
+The guidance block this gates exists because a benchmark run found generated
 code LESS idiomatic than a naive-LLM baseline in ~80% of scenarios, so losing
 it silently for a whole stack is not cosmetic.
 """

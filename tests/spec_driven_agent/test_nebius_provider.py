@@ -127,7 +127,7 @@ class TestNebiusPricing:
 
     def test_target_model_uses_the_nebius_row(self):
         p = _get_pricing(NEBIUS_MODEL)
-        # Console endpoint properties, 2026-09-18.
+        # Console endpoint properties.
         assert p["input"] == 0.1
         assert p["output"] == 0.3
 
@@ -248,8 +248,8 @@ class TestNebiusContextWindow:
     """The console reports 262K context for Qwen3-30B-A3B-Instruct-2507.
 
     ``_SMALL_CONTEXT_WINDOWS`` carries a measured ``("qwen3", 60_000)`` row for
-    our own Ollama box. It matches by substring, so before the namespace guard
-    the Nebius model was clamped to that box's window and compacted constantly.
+    a self-hosted Ollama endpoint. It matches by substring, so before the
+    namespace guard the Nebius model was clamped to that endpoint's window and compacted constantly.
     """
 
     def test_namespaced_nebius_id_is_not_clamped_to_the_ollama_window(self):
@@ -257,7 +257,7 @@ class TestNebiusContextWindow:
         nebius = effective_threshold("Qwen/Qwen3-30B-A3B-Instruct-2507")
         ollama = effective_threshold("qwen3-coder:30b")
         assert nebius > ollama, (
-            "a 262k cloud endpoint must not inherit the V100 box's 60k window")
+            "a 262k cloud endpoint must not inherit the self-hosted 60k window")
 
     def test_self_hosted_qwen3_still_uses_the_measured_window(self):
         """The row protects the production free tier — it must keep working."""

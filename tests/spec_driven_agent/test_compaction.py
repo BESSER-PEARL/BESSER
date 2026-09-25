@@ -284,26 +284,26 @@ class TestHarnessUpgrades:
 
     def test_effective_threshold_clamps_genuinely_small_models(self):
         from besser.spec_driven_agent.agent.compaction import effective_threshold
-        # Self-hosted on the LIST ollama box at a server-configured 32k.
+        # Self-hosted on Ollama at a server-configured 32k.
         assert effective_threshold("devstral:24b") == 16_000
         assert effective_threshold("mistral-small-latest") == 16_000
 
     def test_effective_threshold_does_not_clamp_on_a_misattribution(self):
-        """Regression for the read/compact/re-read spiral of 2026-09-10.
+        """Regression for a read/compact/re-read spiral.
 
         A window stated too LOW is far worse than one left unknown: it made
         every few file reads trigger a lossy compaction, the model re-read what
         it lost, and a run burned 40 turns of read_file until the runtime cap.
 
         The rule is NOT "never clamp" - it is "clamp only on evidence from the
-        deployment we actually call". Two corrections, both from 2026-09-11:
+        deployment we actually call". Two corrections:
 
         - A bare "mistral" marker matched ``mistral-large-latest`` (256k),
           clamping a frontier cloud model to a 16k threshold. Still wrong; this
           test pins that it stays unclamped.
         - The qwen row WAS justified, just with a stale number. The model is
-          served from our own Ollama box (ollama.besser-pearl.org, NOT Command
-          Code as first concluded), and measurement there showed prefill is the
+          served from a self-hosted Ollama endpoint (not Command Code), and
+          measurement there showed prefill is the
           binding cost and >64k prompts get truncated. It is clamped again, now
           at 60k - see test_self_hosted_qwen_is_clamped_to_fit_its_prefill_budget.
         """
@@ -315,9 +315,9 @@ class TestHarnessUpgrades:
         assert 8_000 <= qwen < STANDALONE_THRESHOLD
 
     def test_self_hosted_qwen_is_clamped_to_fit_its_prefill_budget(self):
-        """The local Ollama box advertises 131k but cannot usefully serve it.
+        """The self-hosted Ollama endpoint advertises 131k but cannot usefully serve it.
 
-        Measured 2026-09-11: prefill runs ~950 tok/s, so context size translates
+        Measured: prefill runs ~950 tok/s, so context size translates
         directly into per-turn latency, and a >64k prompt came back truncated.
         The clamp must keep history + max output inside 60k.
         """

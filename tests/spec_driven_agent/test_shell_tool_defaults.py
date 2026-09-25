@@ -6,7 +6,7 @@ argument. The hosted backend explicitly gates shell tools off
 (``BESSER_LLM_ENABLE_SHELL_TOOLS``, default False) because ``run_command`` and
 ``install_dependencies`` execute arbitrary commands in the workspace -- so the
 library path silently handed out exactly the capability the hosted gate exists
-to withhold (2026-09-14).
+to withhold.
 
 Both defaults are now off, and both are exposed on ``LLMGenerator`` so a local
 run can opt in deliberately. The hosted runner passes its own values and must

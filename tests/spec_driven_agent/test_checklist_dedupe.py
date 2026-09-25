@@ -1,6 +1,6 @@
 """Duplicate checklist items cost turns, and the plan preamble cost more.
 
-Live run, 2026-09-17: the model observed "tasks 15, 16 and 18 are
+In a recorded run the model observed "tasks 15, 16 and 18 are
 duplicated" and then worked through each copy. Nothing deduplicated the
 checklist at either entry point - the gap analyser's output, or the model's
 own ``task_list(action='add')``. The same run narrated a plan before every

@@ -1,7 +1,7 @@
 """An attribute read off a model instance that nothing declares.
 
 The largest runtime-crash class in the recorded corpus. A census of every
-crash the runtime probe observed across ``verification/spec-iterations``
+crash the runtime probe observed across the recorded runs
 (390 workspaces) found 52 observed failures; the biggest single cause is a
 member name the receiver's class does not have -- 15 occurrences over 14
 runs, of which exactly one was already reported by a validator:
@@ -22,9 +22,8 @@ one is an ``AttributeError`` the first time the line runs.
 
 Calibration is the point of the "silent" tests below. Each is a shape that
 appears on probed-WORKING corpus apps, so they pin false positives the
-measured version of this check does not have:
-``verification/corpus_gate.py --validator contract_checks.undeclared_attribute``
-reports 0 findings on 93 working apps (recorded labels) and 0 on 139
+measured version of this check does not have: a corpus sweep of the
+validator reports 0 findings on 93 working apps (recorded labels) and 0 on 139
 (rescored), and 17 on 9 dead ones. That silence is not vacuous: over the
 same sweep it typed 25,288 attribute reads to a domain class and tested
 16,916 names against the declarations, plus 10,422 constructor keywords.
@@ -158,7 +157,7 @@ def create_order(order_data, database):
 def test_the_phase3_sweep_reports_it_instead_of_crashing(tmp_path):
     """The sweeps return finished ``data contract:`` strings, but Phase 3 read
     ``.blocker`` off each one. Any finding raised AttributeError, which ended
-    the whole Phase 3 with no runtime verdict (live hotel run, 2026-09-23)."""
+    the whole Phase 3 with no runtime verdict (observed on a live hotel run)."""
     import types
 
     from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator

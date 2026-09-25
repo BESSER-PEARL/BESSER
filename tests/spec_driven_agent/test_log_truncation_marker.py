@@ -1,12 +1,12 @@
 """A truncated log record must never be readable as code.
 
-Cost of the old marker, 2026-09-18. ``_sanitize_for_log`` cut every string
+Cost of the old marker: ``_sanitize_for_log`` cut every string
 over 500 chars to ``v[:500] + "..."`` and was applied to the trace, the
 checkpoint's ``tool_calls_log`` and the recipe — the only records of what the
 model actually sent. Two separate investigations then read that trailing
 ``...`` as the MODEL's text:
 
-  * run 57160293 — 16 identical failed edits were diagnosed as an elision;
+  * one recorded run — 16 identical failed edits were diagnosed as an elision;
     every one of them is exactly 503 chars, i.e. 500 + the marker.
   * the run behind ``test_elided_edit.py`` — "``...`` in 37/38 old_text" is
     the same artifact; each of those is 503 chars too, and no generated file
@@ -53,7 +53,7 @@ def test_the_marker_reports_how_much_was_cut():
 def test_the_marker_carries_a_fingerprint_so_repeats_are_comparable():
     """Two different 600-char inputs must not produce the same record.
 
-    Run 57160293 was read as 16 byte-identical resends. That happened to be
+    That run was read as 16 byte-identical resends. That happened to be
     true, but the record could not have shown otherwise: everything over the
     budget rendered as the same 503 chars.
     """

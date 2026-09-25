@@ -1,6 +1,6 @@
 """Output-token ceiling and truncation recovery.
 
-Regression tests for a live failure on 2026-09-10: a scaffolded run overran the
+Regression tests for a live failure: a scaffolded run overran the
 16_384 output ceiling on its FIRST customisation turn and Phase 2 exited with
 zero LLM writes. Two defects, both fixed here:
 

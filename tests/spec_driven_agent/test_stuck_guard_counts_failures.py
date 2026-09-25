@@ -1,7 +1,7 @@
 """The tool-name streak warning fires on N consecutive FAILURES of one call,
 never on successes.
 
-Run 0c537a4e (2026-09-18): ``_is_stuck`` counted tool names only, so it
+A recorded run: ``_is_stuck`` counted tool names only, so it
 wrapped "'modify_file' called 4 times in a row. Move on." onto the results
 of two SUCCESSFUL edits (t19, t20) and then onto every error result after,
 contradicting the ``advice`` field that told the model to read and retry.

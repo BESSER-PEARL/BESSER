@@ -1,6 +1,6 @@
 """Phase 3 must act on a blocker, and must not spin when it cannot.
 
-Run 15a8ac7d (2026-09-18) shipped an app that failed to import. Phase 3
+A recorded run shipped an app that failed to import. Phase 3
 detected the single blocker correctly and ran two fix attempts — each burning
 its full 5 turns with ZERO tool calls, no cost or runtime cap hit. Neither
 branch can produce that: ``end_turn`` returns after one turn and ``tool_use``

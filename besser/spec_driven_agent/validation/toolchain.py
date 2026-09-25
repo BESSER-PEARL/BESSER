@@ -109,8 +109,7 @@ def _build_toolchain_reminder(
     return (
         "<system-reminder>"
         "The generated project does not compile on its own toolchain. "
-        "The bench's per-project compile-pass score is currently 0 "
-        "for this run because of these errors:\n"
+        "The project is not deliverable until these errors are fixed:\n"
         f"{bulleted}{more}\n\n"
         "You MUST drive these to zero. After EACH edit, invoke "
         "run_command with the appropriate toolchain check (npx tsc "

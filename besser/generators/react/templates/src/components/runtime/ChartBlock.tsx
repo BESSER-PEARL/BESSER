@@ -30,6 +30,7 @@ export interface ChartBlockProps {
   series?: ChartSeries[];
   dataBinding?: Record<string, any>;
   styles?: CSSProperties;
+  className?: string;
 }
 
 const isNestedField = (field?: string): boolean => !!field && field.includes(".");
@@ -424,6 +425,7 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
   series,
   dataBinding,
   styles,
+  className,
 }) => {
   const [chartData, setChartData] = useState<any[]>([]);
   const [seriesData, setSeriesData] = useState<Record<string, any[]>>({});
@@ -554,8 +556,8 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
     : defaultDataField;
   const finalChartData = hasSeries ? (seriesChartData.length > 0 ? seriesChartData : chartData) : chartData;
 
-  if (loading) return <div id={id}>Loading data...</div>;
-  if (error) return <div id={id}>{error}</div>;
+  if (loading) return <div id={id} className={className}>Loading data...</div>;
+  if (error) return <div id={id} className={className}>{error}</div>;
 
   if (chartType === "bar-chart") {
     return (
@@ -569,6 +571,7 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
         dataField={resolvedDataField}
         options={chart || {}}
         styles={styles}
+        className={className}
       />
     );
   }
@@ -585,6 +588,7 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
         dataField={resolvedDataField}
         options={chart || {}}
         styles={styles}
+        className={className}
       />
     );
   }
@@ -600,6 +604,7 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
         dataField={resolvedDataField}
         options={chart || {}}
         styles={styles}
+        className={className}
       />
     );
   }
@@ -616,6 +621,7 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
         dataField={resolvedDataField}
         options={chart || {}}
         styles={styles}
+        className={className}
       />
     );
   }
@@ -632,6 +638,7 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
         dataField={resolvedDataField}
         options={chart || {}}
         styles={styles}
+        className={className}
       />
     );
   }

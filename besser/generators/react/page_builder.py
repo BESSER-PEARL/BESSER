@@ -400,7 +400,6 @@ class PageBuilderMixin:
                     "dataBinding": node.get("data_binding"),
                 },
                 style_prop_name="styles",
-                include_class_name=False,
             )
             return f"{indent_str}<ChartBlock{props} />"
 
@@ -417,7 +416,6 @@ class PageBuilderMixin:
                     "dataBinding": node.get("data_binding"),
                 },
                 style_prop_name="styles",
-                include_class_name=False,
             )
             return f"{indent_str}<TableBlock{props} />"
 
@@ -433,7 +431,6 @@ class PageBuilderMixin:
                     "dataBinding": node.get("data_binding"),
                 },
                 style_prop_name="styles",
-                include_class_name=False,
             )
             return f"{indent_str}<MetricCardBlock{props} />"
 

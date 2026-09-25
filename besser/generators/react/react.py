@@ -112,6 +112,10 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
         if os.path.basename(rel_path) == "MapBlock.tsx":
             return "Map" in used_component_types
 
+        # design.css (and its import in index.tsx) only ship with a stylesheet.
+        if os.path.basename(rel_path) == "design.css.j2":
+            return bool(getattr(self.gui_model, "stylesheet", ""))
+
         if "charts" + os.sep not in rel_path and "table" + os.sep not in rel_path:
             return True
 

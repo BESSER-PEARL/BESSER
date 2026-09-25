@@ -7,6 +7,7 @@ export interface MetricCardBlockProps {
   metric?: Record<string, any>;
   dataBinding?: Record<string, any>;
   styles?: CSSProperties;
+  className?: string;
 }
 
 const getLastValue = (data: any[], dataField?: string): number => {
@@ -29,6 +30,7 @@ export const MetricCardBlock: React.FC<MetricCardBlockProps> = ({
   metric,
   dataBinding,
   styles,
+  className,
 }) => {
   const [value, setValue] = useState<number>(metric?.value ?? 0);
   const [loading, setLoading] = useState(false);
@@ -78,6 +80,7 @@ export const MetricCardBlock: React.FC<MetricCardBlockProps> = ({
       trend={metric?.trend ?? 0}
       data_binding={dataBinding}
       styles={styles}
+      className={className}
     />
   );
 };

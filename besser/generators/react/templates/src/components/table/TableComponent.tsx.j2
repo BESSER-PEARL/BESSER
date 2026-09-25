@@ -54,6 +54,7 @@ interface Props {
   data?: any[];
   options?: TableOptions;
   styles?: CSSProperties;
+  className?: string;
   dataBinding?: Record<string, any>;
 }
 
@@ -123,6 +124,7 @@ export const TableComponent: React.FC<Props> = ({
   data,
   options,
   styles,
+  className,
   dataBinding,
 }) => {
   // Local state for table data
@@ -780,7 +782,7 @@ export const TableComponent: React.FC<Props> = ({
   };
 
   return (
-    <div id={id} style={containerStyle} className="table-wrapper">
+    <div id={id} style={containerStyle} className={className ? `table-wrapper ${className}` : "table-wrapper"}>
       {title && (
         <h3 style={{ margin: 0, color: "#1e293b", fontSize: "18px" }}>{title}</h3>
       )}

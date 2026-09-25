@@ -6,11 +6,10 @@ deploy-gate companion to the offline tests/workflows/test_generation_workflows.p
 Also covers code-gen robustness edge cases (empty model / malformed payload must
 degrade gracefully — a clean 4xx, never a 500 / crash / hang).
 
-Skipped by default (needs a running backend + the ``requests`` package). Enable::
+Skipped unless RUN_LIVE_BACKEND_TESTS and BACKEND_URL are set (also needs the
+``requests`` package)::
 
-    RUN_LIVE_BACKEND_TESTS=1 python -m pytest tests/live/test_generation_workflows_live.py
-
-Point at a different host with BACKEND_URL (default: the experimental deploy).
+    RUN_LIVE_BACKEND_TESTS=1 BACKEND_URL=http://localhost:9000/besser_api python -m pytest tests/live/test_generation_workflows_live.py
 """
 import io
 import os
@@ -18,13 +17,11 @@ import zipfile
 
 import pytest
 
-BACKEND_URL = os.environ.get(
-    "BACKEND_URL", "https://experimental.besser-pearl.org/besser_api"
-).rstrip("/")
+BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("RUN_LIVE_BACKEND_TESTS"),
-    reason="live backend test — set RUN_LIVE_BACKEND_TESTS=1 to run",
+    not (os.environ.get("RUN_LIVE_BACKEND_TESTS") and BACKEND_URL),
+    reason="live backend test — set RUN_LIVE_BACKEND_TESTS=1 and BACKEND_URL to run",
 )
 
 # Author 1..* --- 0..* Book (frontend JSON shape, per test_api_integration.py).

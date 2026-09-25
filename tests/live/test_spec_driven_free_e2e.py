@@ -1,25 +1,22 @@
-"""LIVE end-to-end tests for the keyless FREE tier of the Spec-Driven ("vibe")
-Agent, driven over the DEPLOYED backend SSE endpoint (POST /besser_api/smart-generate
-with ``provider="free"``).
+"""LIVE end-to-end tests for the keyless FREE tier of the Spec-Driven Agent,
+driven over a deployed backend's SSE endpoint
+(POST /besser_api/spec-driven/generate with ``provider="free"``).
 
-These prove the WHOLE generation pipeline runs against the real stack + real
-model (Cloudflare-tunnelled qwen3-coder) and PRODUCES an artifact. They do NOT
-assert the generated app boots/runs — that fidelity check (the Phase-3 boot
-check) is a separate, deliberately-deferred piece. So a green run here means
-"vibe generation completed and produced the expected kind of output", not
-"the produced app works".
+These prove the whole generation pipeline runs against a real stack and model
+and produces an artifact. They do NOT assert the generated app boots, so a
+green run means "generation completed and produced the expected kind of
+output", not "the produced app works".
 
 Two scenarios:
   1. full app   — a class model -> a generated backend app (FastAPI .py files);
   2. rust       — a class model -> generated Rust (a .rs file with structs).
 
-SLOW + non-deterministic (real LLM on a shared GPU; ~1-3 min each, first call
-adds ~60s of model VRAM reload). Skipped by default. Enable::
+SLOW + non-deterministic (real LLM; minutes per scenario). Skipped unless both
+RUN_LIVE_FREE_E2E and BACKEND_URL are set::
 
-    RUN_LIVE_FREE_E2E=1 python -m pytest tests/live/test_vibe_free_e2e.py -s
+    RUN_LIVE_FREE_E2E=1 BACKEND_URL=https://<host>/besser_api python -m pytest tests/live/test_spec_driven_free_e2e.py -s
 
-Point at another host with BACKEND_URL (default: the experimental deploy). The
-server must have the free tier configured (BESSER_FREE_LLM_* env).
+The server must have the free tier configured (BESSER_FREE_LLM_* env).
 """
 import io
 import json
@@ -33,24 +30,22 @@ import pytest
 # a human can WATCH the generation happen. Pytest leaves it off (quiet).
 _LIVE_LOG = False
 
-BACKEND_URL = os.environ.get(
-    "BACKEND_URL", "https://experimental.besser-pearl.org/besser_api"
-).rstrip("/")
+BACKEND_URL = os.environ.get("BACKEND_URL", "").rstrip("/")
 _HOST = BACKEND_URL.rsplit("/besser_api", 1)[0]
 
-# Cloudflare's bot filter 403s a bare requests/urllib UA on the hosted deploy.
+# CDN bot filters may 403 a bare requests/urllib user agent.
 _HEADERS = {
     "Content-Type": "application/json",
     "Accept": "text/event-stream",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126 Safari/537.36",
 }
 
-# Generous — first call reloads the model into VRAM (~60s) then generates.
+# Generous: a cold self-hosted model may need to load before generating.
 _RUN_TIMEOUT = int(os.environ.get("FREE_E2E_TIMEOUT", "600"))
 
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("RUN_LIVE_FREE_E2E"),
-    reason="live free-tier e2e — set RUN_LIVE_FREE_E2E=1 to run",
+    not (os.environ.get("RUN_LIVE_FREE_E2E") and BACKEND_URL),
+    reason="live free-tier e2e — set RUN_LIVE_FREE_E2E=1 and BACKEND_URL to run",
 )
 
 # A small but non-trivial domain: Author 1..* --- 0..* Book, each with an attr.
@@ -97,12 +92,12 @@ def _generate_free(instructions):
         if _LIVE_LOG:
             print(f"  [{int(time.monotonic() - t0):>4}s] {msg}", flush=True)
 
-    _log(f"POST /smart-generate  provider=free  - {instructions[:60]}...")
+    _log(f"POST /spec-driven/generate  provider=free  - {instructions[:60]}...")
     with requests.post(
-        f"{BACKEND_URL}/smart-generate", json=body, headers=_HEADERS,
+        f"{BACKEND_URL}/spec-driven/generate", json=body, headers=_HEADERS,
         stream=True, timeout=_RUN_TIMEOUT,
     ) as r:
-        assert r.status_code == 200, f"smart-generate -> {r.status_code}: {r.text[:300]}"
+        assert r.status_code == 200, f"spec-driven/generate -> {r.status_code}: {r.text[:300]}"
         for raw in r.iter_lines(decode_unicode=True):
             if not raw or not raw.startswith("data:"):
                 continue
@@ -141,7 +136,7 @@ def _download_zip(done):
 
 
 # ---------------------------------------------------------------------
-# Scenario 1 — full vibe app: model -> generated backend app
+# Scenario 1 — full app: model -> generated backend app
 # ---------------------------------------------------------------------
 
 def test_free_tier_generates_a_backend_app():
@@ -181,14 +176,14 @@ def test_free_tier_generates_rust_classes():
 
 
 if __name__ == "__main__":
-    # Standalone runner (demo-friendly: prints a summary, exits non-zero on
-    # failure) — mirrors modeling-agent/tests/live/test_nl_generation_scenarios.py.
+    # Standalone runner: prints a summary, exits non-zero on failure.
+    if not BACKEND_URL:
+        raise SystemExit("Set BACKEND_URL (e.g. https://<host>/besser_api).")
     os.environ.setdefault("RUN_LIVE_FREE_E2E", "1")
     _LIVE_LOG = True
     import traceback
 
-    print(f"\nFree-tier vibe E2E  ->  {BACKEND_URL}")
-    print("(real qwen3-coder on the shared GPU; first call adds ~60s of reload)\n")
+    print(f"\nFree-tier spec-driven E2E  ->  {BACKEND_URL}\n")
     results = []
     for label, fn in (("full-app", test_free_tier_generates_a_backend_app),
                        ("rust-classes", test_free_tier_generates_rust_classes)):

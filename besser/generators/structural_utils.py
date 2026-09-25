@@ -20,6 +20,31 @@ def is_server_owned_attribute(attribute) -> bool:
     )
 
 
+def create_schema_accepts_end(end, fkeys: Dict[str, List[str]], link_associations=frozenset()) -> bool:
+    """Whether the backend ``<Class>Create`` schema has a field for ``end``.
+
+    ``end`` is the far end of an association of the class (as listed by
+    ``Class.association_ends()``); ``fkeys`` is ``get_foreign_keys(model)``
+    and ``link_associations`` the names of associations that carry an
+    association class. Mirrors the pydantic template: a to-many end is a
+    list field; a to-one end (N:1 or 1:1) only on the side that holds the
+    foreign key, so the non-owning side of a 1:1 has no field and a value
+    sent for it is dropped.
+    """
+    association = end.owner
+    ends = list(association.ends)
+    if len(ends) != 2:
+        return False
+    near = ends[0] if ends[1] is end else ends[1]
+    if association.name in link_associations or near.type == end.type:
+        return True  # links via the association class; self associations get every end
+    if not end.is_navigable:
+        return False
+    if end.multiplicity.max > 1:
+        return True
+    return fkeys.get(association.name, [""])[0] == near.type.name
+
+
 def _sorted_association_ends(association) -> list:
     """Return association ends in a deterministic order."""
     return sorted(association.ends, key=lambda end: (end.type.name, end.name or ""))

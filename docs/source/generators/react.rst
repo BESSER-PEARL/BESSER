@@ -30,7 +30,10 @@ Dynamic data tables with:
 - Add/Edit modals with form validation
 - Backend validation error display (keeps modal open on error)
 - Support for all relationship types (1:1, 1:N, N:M)
-- Lookup fields for related entities
+- Lookup fields for related entities; the Add/Edit dialog offers only the
+  relationships the backend ``<Entity>Create`` schema accepts (the same rule
+  as the Pydantic generator), so the non-owning side of a 1:1 association
+  has no field whose value the backend would drop
 - Display-only form fields: a ``formColumns`` entry with ``"readOnly": true``
   is shown in the Add/Edit dialog but cannot be edited, is not validated as
   required, and is left out of the POST/PUT body (the server owns the value)

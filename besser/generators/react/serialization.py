@@ -41,7 +41,11 @@ from besser.BUML.metamodel.gui.events_actions import (
     Update,
 )
 from besser.BUML.metamodel.structural import AssociationClass, Class, Enumeration
-from besser.generators.structural_utils import is_server_owned_attribute
+from besser.generators.structural_utils import (
+    create_schema_accepts_end,
+    get_foreign_keys,
+    is_server_owned_attribute,
+)
 from besser.utilities import sort_by_timestamp
 
 
@@ -636,8 +640,15 @@ class GuiSerializationMixin:
                     else domain_concept.all_association_ends()
                 )
                 ends = sort_by_timestamp(ends) if ends else []
+                domain_model = getattr(self, "model", None)
+                fkeys = get_foreign_keys(domain_model) if domain_model is not None else {}
+                link_associations = set(self._association_class_index())
                 for end in ends:
                     if not is_association_row and hasattr(end, "is_navigable") and not end.is_navigable:
+                        continue
+                    # An end the backend's Create schema has no field for (the
+                    # non-owning side of a 1:1) would be sent and silently dropped.
+                    if not is_association_row and not create_schema_accepts_end(end, fkeys, link_associations):
                         continue
 
                     target = getattr(end, "type", None)

@@ -95,7 +95,7 @@ services:
       # reads must be in this allowlist or it reads as unset.
       - BESSER_FREE_LLM_ALT_MODELS=${BESSER_FREE_LLM_ALT_MODELS:-}
       # Keyless model pre-selected for an opt-in telemetry session.
-      - BESSER_FREE_LLM_PILOT_MODEL=${BESSER_FREE_LLM_PILOT_MODEL:-}
+      - BESSER_PILOT_LLM_MODEL=${BESSER_PILOT_LLM_MODEL:-}
       # Run telemetry is recorded where generation runs. The admin token is
       # not here: the report endpoint it guards stays on the backend.
       - BESSER_TELEMETRY_ENABLED=${BESSER_TELEMETRY_ENABLED:-}

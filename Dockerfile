@@ -4,8 +4,8 @@ FROM python:3.12-slim
 
 # Build behind a TLS-inspecting proxy: drop its root + signing certs into
 # ca-certs-extra/ (gitignored) and pass --build-arg TRUST_EXTRA_CAS=1.
-# Opt-in because deploy.sh builds from the working tree, so an unconditional
-# COPY would ship whatever .crt happens to sit there to a shared host.
+# Opt-in so that a stray .crt in a local checkout never reaches an image
+# built for deployment.
 ARG TRUST_EXTRA_CAS=0
 COPY ca-certs-extra/ /tmp/ca-certs-extra/
 RUN if [ "$TRUST_EXTRA_CAS" = "1" ]; then \
@@ -25,11 +25,9 @@ ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
 # JDK 21 because Debian Trixie no longer packages 17. Kept before the
 # requirements copy so this slow layer caches.
 #
-# bubblewrap: run_command executes model-authored shell, and without it that
-# shell could read a sibling run's workspace and /proc/1/environ. The worker
-# fails closed when bwrap is missing, so this package is load-bearing, not
-# optional -- and the worker needs seccomp=unconfined to use it (see
-# docker-compose.prod.yml).
+# bubblewrap confines run_command's model-authored shell to its own run
+# directory. The worker fails closed without it, and needs
+# seccomp=unconfined to use it (see docker-compose.prod.yml).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
@@ -58,29 +56,24 @@ COPY requirements.txt ./requirements.txt
 COPY besser/utilities/web_modeling_editor/backend/requirements.txt ./backend-requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt
 
-# The fix loop treats ruff's F821/F822/F823 as blockers, but ruff was only in
-# CI — so _collect_ruff_issues() returned [] here and two pilot runs shipped a
-# backend that NameError'd on import as "0 blockers". Pinned for reproducibility.
+# The fix loop treats ruff's F821/F822/F823 as blockers; without ruff in the
+# image those checks silently report nothing. Pinned for reproducibility.
 RUN pip install --no-cache-dir "ruff==0.16.6"
 
 COPY pyproject.toml README.md ./
 COPY besser/ ./besser/
 RUN pip install --no-cache-dir -e .
 
-# A build-time CA must not become runtime trust. Unconditional, and the grep
-# is an assertion: the build fails rather than ship an image trusting the proxy.
+# A build-time CA must not become runtime trust. Unconditional; the grep is an
+# assertion that fails the build if a known TLS-inspection CA is still trusted.
 RUN rm -f /usr/local/share/ca-certificates/*.crt \
     && update-ca-certificates --fresh >/dev/null 2>&1 \
     && ! grep -qi goskope /etc/ssl/certs/ca-certificates.crt
 
 ENV PYTHONPATH=/app
 
-# Stamp the commit so a deploy can be VERIFIED rather than assumed. The
-# registry has served a stale tag before, and `docker compose pull` exits 0
-# either way, so "the pull succeeded" is not evidence the running container
-# is the code that was just built. `.git` is not copied into the image (and
-# should not be), so reading it back at runtime returns nothing - this is
-# the value the deploy workflow compares against.
+# Commit stamp, compared by the deploy workflow against the commit it built
+# (`.git` is not in the image, and a pull succeeds on a stale tag too).
 ARG GIT_SHA=unknown
 ENV BESSER_BUILD_SHA=${GIT_SHA}
 

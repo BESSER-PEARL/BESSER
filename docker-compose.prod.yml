@@ -10,24 +10,18 @@ services:
       - ./.env
     environment:
       - PYTHONPATH=/app
-      # NOTE: the backend deliberately does NOT set
-      # BESSER_LLM_RUN_WORKSPACE_ROOT. It looked harmless -- the root is only
-      # scanned -- but runner.py mkdtemps INTO that root, so pointing it at the
-      # read-only mount made every backend path that opens a run workspace die
-      # EROFS. It also cannot usefully resolve worker runs: SMART_RUN_REGISTRY
-      # is in-memory and restored once at boot, so manifests the worker writes
-      # later are never seen. push-to-github for worker runs needs a registry
-      # rescan, not a mount.
+      # BESSER_LLM_RUN_WORKSPACE_ROOT is deliberately unset here: the runner
+      # creates run directories inside that root, which would fail on the
+      # read-only /workspace mount below.
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
       - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}
       - AGENT_SIMULATOR_URL=${AGENT_SIMULATOR_URL:-http://besser-wme-agent-simulator:8001}
     volumes:
       - feedback_data:/app/besser/feedback_data
-      # Read-only view of the worker's run workspaces. push-to-github and
-      # import-github-run stay on the backend because they need the OAuth
-      # session, which is process-local here; they read the generated files
-      # through this mount rather than the worker handing them over.
+      # Read-only view of the worker's run workspaces: push-to-github and
+      # import-github-run need the backend's OAuth session, so they run here
+      # and read the generated files through this mount.
       - smartgen_workspace:/workspace:ro
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     restart: unless-stopped
@@ -60,14 +54,12 @@ services:
     networks:
       - besser_network
 
-  # Spec-Driven Agent worker. Same image as the backend, different container:
-  # generation is the only path that runs LLM-authored code, so it is the only
-  # one that should sit next to the toolchains -- and it should NOT sit next to
-  # the backend's full secret set.
+  # Spec-Driven Agent worker. Same image as the backend, separate container:
+  # generation is the only path that runs LLM-authored code, so it gets the
+  # toolchains but not the backend's secrets.
   #
-  # Deliberately no `env_file`. The backend loads all of ./.env (SMTP_PASSWORD,
-  # GPG_KEY, GITHUB_CLIENT_SECRET, POSTHOG_KEY, BESSER_TELEMETRY_ADMIN_TOKEN,
-  # OPENAI_API_KEY...). This service gets an explicit allowlist instead, so a
+  # No `env_file`: the backend loads all of ./.env (SMTP, GitHub OAuth, GPG,
+  # telemetry admin token, ...). This service gets an explicit allowlist, so a
   # compromise during generation reaches the LLM credentials and nothing else.
   besser-wme-smartgen:
     image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
@@ -78,27 +70,17 @@ services:
     environment:
       - PYTHONPATH=/app
       - BESSER_LLM_MAX_CONCURRENT_RUNS=${BESSER_LLM_MAX_CONCURRENT_RUNS:-8}
-      # The image already carries tsc / cargo / kotlinc. In the backend that was
-      # ~2GB for a flag that is off; here it is the point -- real compile errors
-      # are what the static checks were missing on generated frontends.
+      # The image carries tsc / cargo / kotlinc / javac; compiling generated
+      # code catches errors the static checks miss.
       - BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION=true
-      # Shell tools ON here, and ONLY here. This is why the worker exists: the
-      # backend keeps all nine secrets and never runs model-authored commands,
-      # while this container holds three LLM tokens, is off besser_network, and
-      # is disposable.
-      # Correction (measured 2026-09-20): being off besser_network hides the
-      # other services' NAMES, not their ports. The backend publishes 9000 on
-      # 0.0.0.0, so 172.19.0.1:9000 -- this bridge's gateway -- still serves its
-      # real openapi.json from in here. Bind that publish to 127.0.0.1 (as this
-      # service already does for 9001) to actually close it.
-      # It is a narrowed blast radius, not a whole-container sandbox -- a
-      # compromise still reaches the LLM tokens and outbound internet. Each
-      # RUN's shell is confined (security_opt below); the worker process is not.
+      # Shell tools are enabled on this service only: it holds just the LLM
+      # tokens, is off besser_network and is disposable. Being off the network
+      # hides the other services' names, not ports they publish on 0.0.0.0.
+      # Each run's shell is confined (security_opt below); the worker process
+      # itself is not, so a compromise still reaches the LLM tokens.
       - BESSER_LLM_ENABLE_SHELL_TOOLS=true
       - BESSER_LLM_ALLOW_CUSTOM_BASE_URL=false
-      # Shared with the backend so push-to-github can still read a finished
-      # workspace: that endpoint needs the OAuth session, which is process-local
-      # to the backend, so it stays there and reads the files over this volume.
+      # Shared (read-only) with the backend, which serves push-to-github.
       - BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs
       - BESSER_LLM_RUN_STORE_PATH=/workspace/runs/run_store.sqlite3
       # Budgets
@@ -109,18 +91,13 @@ services:
       - BESSER_FREE_LLM_BASE_URL=${BESSER_FREE_LLM_BASE_URL:-}
       - BESSER_FREE_LLM_TOKEN=${BESSER_FREE_LLM_TOKEN:-}
       - BESSER_FREE_LLM_MODEL=${BESSER_FREE_LLM_MODEL:-}
-      # The extra keyless models the picker offers. Omitting this from the
-      # allowlist silently dropped a model from the UI once the config
-      # endpoint moved to this container.
+      # The config endpoint is served by this container, so every variable it
+      # reads must be in this allowlist or it reads as unset.
       - BESSER_FREE_LLM_ALT_MODELS=${BESSER_FREE_LLM_ALT_MODELS:-}
-      # The model a ?pilot= session pre-selects. Config is served by THIS
-      # container, so a var the allowlist omits reads as unset and the
-      # feature silently does nothing -- which is how ALT_MODELS and the
-      # telemetry vars were lost before it.
+      # Keyless model pre-selected for an opt-in telemetry session.
       - BESSER_FREE_LLM_PILOT_MODEL=${BESSER_FREE_LLM_PILOT_MODEL:-}
-      # Run telemetry is recorded by whoever runs the generation, which is
-      # this container. The ADMIN token is deliberately NOT here: the report
-      # endpoint it guards stays on the backend.
+      # Run telemetry is recorded where generation runs. The admin token is
+      # not here: the report endpoint it guards stays on the backend.
       - BESSER_TELEMETRY_ENABLED=${BESSER_TELEMETRY_ENABLED:-}
       - BESSER_TELEMETRY_DIR=${BESSER_TELEMETRY_DIR:-/app/telemetry}
       - BESSER_FREE_LLM_FALLBACK_BASE_URL=${BESSER_FREE_LLM_FALLBACK_BASE_URL:-}
@@ -130,8 +107,7 @@ services:
       - BESSER_SPONSORED_LLM_TOKEN=${BESSER_SPONSORED_LLM_TOKEN:-}
       - BESSER_SPONSORED_LLM_MODEL=${BESSER_SPONSORED_LLM_MODEL:-}
       # Secret authorising the sponsored tier (?demo= links). The gate runs
-      # where the run is started, which is THIS container -- and it fails
-      # closed, so omitting it here 403s every demo run.
+      # here and fails closed: without it every demo run is refused.
       - BESSER_DEMO_TOKEN=${BESSER_DEMO_TOKEN:-}
     volumes:
       - smartgen_workspace:/workspace
@@ -139,15 +115,11 @@ services:
     # run_command wraps every model-authored command in bubblewrap, which needs
     # an unprivileged user namespace. Docker's default seccomp profile gates
     # unshare/mount/pivot_root behind CAP_SYS_ADMIN and the docker-default
-    # AppArmor profile carries `deny mount`, so both have to step aside.
-    # Measured: default -> "No permissions to create a new namespace";
-    # seccomp=unconfined alone -> works; cap_add SYS_ADMIN alone -> still fails
-    # on pivot_root. So NO capability is added here -- the container keeps
-    # Docker's reduced cap set, and in exchange each run's shell gets its own
-    # PID namespace and sees only its own workspace, instead of every other
-    # user's run directory and this container's own /proc/1/environ.
+    # AppArmor profile carries `deny mount`, so both step aside (cap_add
+    # SYS_ADMIN alone still fails on pivot_root). No capability is added, and
+    # each run's shell sees only its own workspace and PID namespace.
     # Without these two lines the worker fails closed: every run_command is
-    # refused. Deploy the image and this compose change together.
+    # refused.
     security_opt:
       - seccomp=unconfined
       - apparmor=unconfined

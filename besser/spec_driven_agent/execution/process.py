@@ -1,6 +1,11 @@
 """Subprocess environment and artefact locations shared by tools and probes."""
 
+import io
+import locale
 import os
+import signal
+import subprocess
+import tempfile
 
 
 # Workspace subdirectory holding the untruncated output of shell commands.
@@ -66,3 +71,58 @@ def _safe_subprocess_env() -> dict[str, str]:
     # Suppress .pyc writes.
     safe["PYTHONDONTWRITEBYTECODE"] = "1"
     return safe
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill ``proc`` and every process it started."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=30)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _decode(handle) -> str:
+    handle.seek(0)
+    # What text=True would produce, minus its strict decode errors.
+    return io.TextIOWrapper(io.BytesIO(handle.read()),
+                            encoding=locale.getpreferredencoding(False),
+                            errors="replace").read()
+
+
+def run_bounded(args, *, timeout: float, cwd: str | None = None,
+                env: dict[str, str] | None = None,
+                shell: bool = False) -> subprocess.CompletedProcess:
+    """``subprocess.run(..., capture_output=True, text=True, timeout=...)``
+    whose timeout holds when the command leaves a child running.
+
+    ``subprocess.run`` kills only the direct child, and on Windows it then
+    reads the pipes until EOF - which a surviving grandchild (``npm.cmd`` ->
+    node) holds open, so a 180 s timeout became an 11-minute-plus hang. Here
+    the command gets its own process group, the whole tree is killed on
+    timeout, and output goes to temp files, which nothing can hold "open"
+    against the reader. Raises ``subprocess.TimeoutExpired`` after the kill.
+    """
+    group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+             else {"start_new_session": True})
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(args, cwd=cwd, env=env, shell=shell,
+                                stdout=out, stderr=err, **group)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+            raise subprocess.TimeoutExpired(args, timeout, output=_decode(out),
+                                            stderr=_decode(err)) from None
+        return subprocess.CompletedProcess(args, proc.returncode, _decode(out), _decode(err))

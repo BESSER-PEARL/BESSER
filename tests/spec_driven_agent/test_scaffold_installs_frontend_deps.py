@@ -15,6 +15,7 @@ import subprocess
 
 import pytest
 
+from besser.spec_driven_agent.pipeline import orchestrator as orchestrator_module
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 
@@ -48,7 +49,7 @@ def test_dependencies_are_installed_once_at_scaffold_time(tmp_path, monkeypatch)
     frontend = _scaffold(tmp_path)
     recorder = _Recorder()
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
-    monkeypatch.setattr(subprocess, "run", recorder)
+    monkeypatch.setattr(orchestrator_module, "run_bounded", recorder)
 
     orch = _orchestrator(tmp_path, allow_shell=True)
     orch._install_scaffold_frontend_dependencies()
@@ -65,7 +66,7 @@ def test_it_does_not_run_without_shell_permission(tmp_path, monkeypatch):
     _scaffold(tmp_path)
     recorder = _Recorder()
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
-    monkeypatch.setattr(subprocess, "run", recorder)
+    monkeypatch.setattr(orchestrator_module, "run_bounded", recorder)
 
     _orchestrator(tmp_path, allow_shell=False)._install_scaffold_frontend_dependencies()
 
@@ -77,7 +78,7 @@ def test_an_already_installed_frontend_is_left_alone(tmp_path, monkeypatch):
     (frontend / "node_modules").mkdir()
     recorder = _Recorder()
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
-    monkeypatch.setattr(subprocess, "run", recorder)
+    monkeypatch.setattr(orchestrator_module, "run_bounded", recorder)
 
     _orchestrator(tmp_path, allow_shell=True)._install_scaffold_frontend_dependencies()
 
@@ -90,7 +91,7 @@ def test_secrets_are_not_exposed_to_the_install(tmp_path, monkeypatch):
     _scaffold(tmp_path)
     recorder = _Recorder()
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
-    monkeypatch.setattr(subprocess, "run", recorder)
+    monkeypatch.setattr(orchestrator_module, "run_bounded", recorder)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "never-pass-this-to-npm")
     monkeypatch.setenv("OPENAI_API_KEY", "never-pass-this-to-npm")
 
@@ -114,7 +115,7 @@ def test_a_failed_install_never_aborts_the_run(tmp_path, monkeypatch, failure):
         raise failure
 
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
-    monkeypatch.setattr(subprocess, "run", boom)
+    monkeypatch.setattr(orchestrator_module, "run_bounded", boom)
 
     _orchestrator(tmp_path, allow_shell=True)._install_scaffold_frontend_dependencies()
 

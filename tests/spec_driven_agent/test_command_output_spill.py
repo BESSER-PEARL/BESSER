@@ -63,7 +63,7 @@ def _failing_build_log() -> str:
 
 def _run(ex: ToolExecutor, command: str, stdout: str = "", stderr: str = "") -> dict:
     completed = _completed(1 if stderr else 0, stdout=stdout, stderr=stderr)
-    with patch("besser.spec_driven_agent.agent.tool_executor.subprocess.run", return_value=completed):
+    with patch("besser.spec_driven_agent.agent.tool_executor.run_bounded", return_value=completed):
         return ex._run_command({"command": command})
 
 

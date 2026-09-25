@@ -130,6 +130,8 @@ def test_hosted_validation_never_invokes_pip(tmp_path, monkeypatch):
         raise AssertionError("hosted validation must not launch subprocesses")
 
     monkeypatch.setattr(subprocess, "run", _record_run)
+    # The pip dry-run launches through run_bounded, which uses Popen.
+    monkeypatch.setattr(subprocess, "Popen", _record_run)
     orch._collect_validation_issues()
 
     assert calls == []

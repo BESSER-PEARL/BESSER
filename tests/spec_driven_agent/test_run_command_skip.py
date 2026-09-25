@@ -127,7 +127,7 @@ class TestEnoentReachesTheLLM:
             "'data/seed.json'\n"
         )
         completed = _completed(returncode=1, stdout="", stderr=stderr)
-        with patch("besser.spec_driven_agent.agent.tool_executor.subprocess.run", return_value=completed):
+        with patch("besser.spec_driven_agent.agent.tool_executor.run_bounded", return_value=completed):
             result = ex._run_command({"command": "python seed.py"})
 
         assert result["success"] is False
@@ -173,7 +173,7 @@ class TestRunCommandSoftSkip:
             stdout="",
             stderr="/bin/sh: 1: ruby: command not found\n",
         )
-        with patch("besser.spec_driven_agent.agent.tool_executor.subprocess.run", return_value=completed):
+        with patch("besser.spec_driven_agent.agent.tool_executor.run_bounded", return_value=completed):
             result = ex._run_command({"command": "ruby -c file.rb", "working_dir": "."})
 
         # The LLM sees a clean success so it doesn't escalate this to a
@@ -197,7 +197,7 @@ class TestRunCommandSoftSkip:
                 "operable program or batch file."
             ),
         )
-        with patch("besser.spec_driven_agent.agent.tool_executor.subprocess.run", return_value=completed):
+        with patch("besser.spec_driven_agent.agent.tool_executor.run_bounded", return_value=completed):
             result = ex._run_command({"command": "cargo check"})
         assert result["success"] is True
         assert result.get("skipped") is True
@@ -215,7 +215,7 @@ class TestRunCommandSoftSkip:
                 "SyntaxError: unexpected EOF while parsing\n"
             ),
         )
-        with patch("besser.spec_driven_agent.agent.tool_executor.subprocess.run", return_value=completed):
+        with patch("besser.spec_driven_agent.agent.tool_executor.run_bounded", return_value=completed):
             result = ex._run_command({"command": "python -c 'def foo('"})
         assert result["success"] is False
         assert result["exit_code"] == 1
@@ -225,7 +225,7 @@ class TestRunCommandSoftSkip:
     def test_successful_run_passes_through(self, tmp_path):
         ex = _make_executor(tmp_path)
         completed = _completed(returncode=0, stdout="hello\n", stderr="")
-        with patch("besser.spec_driven_agent.agent.tool_executor.subprocess.run", return_value=completed):
+        with patch("besser.spec_driven_agent.agent.tool_executor.run_bounded", return_value=completed):
             result = ex._run_command({"command": "echo hello"})
         assert result["success"] is True
         assert result["exit_code"] == 0

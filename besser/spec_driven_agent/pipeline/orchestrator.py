@@ -96,7 +96,7 @@ from besser.spec_driven_agent.planning.stack_metadata import (
     stack_label,
 )
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
-from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env, run_bounded
 from besser.spec_driven_agent.validation.python_imports import (
     _declared_dependency_roots as _declared_dependency_roots,
     _import_smoke_issues,
@@ -2960,13 +2960,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         if rel.startswith(_SNAPSHOT_DIR):
                             continue
                         try:
-                            import subprocess
                             # Dry-run install to check for conflicts
                             req_dir = os.path.dirname(req_path)
-                            result = subprocess.run(
+                            result = run_bounded(
                                 [sys.executable, "-m", "pip", "install",
                                  "--dry-run", "-r", "requirements.txt", "--quiet"],
-                                capture_output=True, text=True, timeout=30,
+                                timeout=30,
                                 cwd=req_dir,
                                 # Never expose provider keys / OAuth secrets to a
                                 # (possibly untrusted) requirements.txt's build
@@ -3126,10 +3125,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     os.path.join(folder, "node_modules")):
                 continue
             try:
-                subprocess.run(
+                # Tree-killing: npm leaves node children holding its output,
+                # which made subprocess.run's timeout hang on Windows.
+                run_bounded(
                     [npm, "install", "--no-audit", "--no-fund"], cwd=folder,
-                    env=_safe_subprocess_env(), capture_output=True,
-                    text=True, timeout=_SCAFFOLD_INSTALL_TIMEOUT_SECONDS,
+                    env=_safe_subprocess_env(),
+                    timeout=_SCAFFOLD_INSTALL_TIMEOUT_SECONDS,
                 )
                 logger.info("Phase 1: installed frontend dependencies in %s",
                             os.path.relpath(folder, self.output_dir))

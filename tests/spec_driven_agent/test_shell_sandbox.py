@@ -343,7 +343,7 @@ def test_run_command_refuses_and_does_not_execute_when_the_sandbox_is_gone(tmp_p
 
     monkeypatch.setattr(te, "sandboxed_command", _no_sandbox)
     ran = []
-    monkeypatch.setattr(te.subprocess, "run", lambda *a, **k: ran.append(a))
+    monkeypatch.setattr(te, "run_bounded", lambda *a, **k: ran.append(a))
 
     ex = te.ToolExecutor(workspace=str(tmp_path), allow_shell=True)
     result = ex._run_command({"command": f"touch {marker}"})
@@ -381,7 +381,7 @@ def test_run_command_surfaces_a_startup_failure_instead_of_a_fake_compile_error(
         stdout = ""
         stderr = "bwrap: Creating new namespace failed: Operation not permitted"
 
-    monkeypatch.setattr(te.subprocess, "run", lambda *a, **k: _Result())
+    monkeypatch.setattr(te, "run_bounded", lambda *a, **k: _Result())
 
     ex = te.ToolExecutor(workspace=str(tmp_path), allow_shell=True)
     result = ex._run_command({"command": "python -c 'print(1)'"})

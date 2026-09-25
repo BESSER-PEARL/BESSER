@@ -39,6 +39,7 @@ from besser.spec_driven_agent.execution.process import (
     _safe_subprocess_env,
     _SAFE_ENV_ALLOWLIST as _SAFE_ENV_ALLOWLIST,
     _SECRET_SUBSTRINGS as _SECRET_SUBSTRINGS,
+    run_bounded,
 )
 from besser.spec_driven_agent.execution.sandbox import (
     SandboxUnavailable,
@@ -2902,12 +2903,12 @@ class ToolExecutor:
         )
 
         try:
-            result = subprocess.run(
+            # Tree-killing: `npm install` leaves node children holding the
+            # output, and subprocess.run's timeout then hangs on Windows.
+            result = run_bounded(
                 sandbox.argv,
                 shell=sandbox.use_shell,
                 cwd=working_dir,
-                capture_output=True,
-                text=True,
                 timeout=COMMAND_TIMEOUT,
                 env=_safe_subprocess_env(),
             )

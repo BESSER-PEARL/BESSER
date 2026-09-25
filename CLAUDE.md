@@ -218,6 +218,7 @@ documented path is always `/besser_api` + the decorator path:
 - **`deployment_router.py`** - `/deploy-app` (Docker Compose) and `/feedback`
 - **`spec_driven_router.py`** - the Spec-Driven Agent: generate / preview / resume / cancel / download / runs / runs-events / config / push-to-github / import-github-run
 - **`telemetry_router.py`** - opt-in run telemetry collection and reporting
+- **`agent_simulator_router.py`** - Live agent simulation (`/simulation`): generates the BAF agent and relays it to the agent simulator service
 - **`error_handler.py`** - Centralized `@handle_endpoint_errors` decorator; anything that is not a known BESSER exception becomes a generic HTTP 500
 
 GitHub OAuth and GitHub deployment routers are registered from `services/deployment/`
@@ -239,7 +240,7 @@ There is no per-client rate limiting; the only throughput control is
 
 - **Conversion Services** (`services/converters/json_to_buml/`, `services/converters/buml_to_json/`):
   - Bidirectional transformations between frontend JSON and B-UML metamodel
-  - Processors for class, object, state machine, agent, GUI, quantum, NN and BPMN diagrams, plus a project-level converter
+  - One processor per diagram type (class, state machine, agent, object, GUI, quantum, BPMN, NN) plus the project converter
   - Detailed parsers for attributes, methods, multiplicity, OCL constraints
 
 - **Validation Services** (`services/validators/ocl_checker.py`):
@@ -262,9 +263,13 @@ There is no per-client rate limiting; the only throughput control is
   - Prefixes: `besser_`, `besser_agent_`, `besser_csv_`, `besser_llm_`, `user_profile_`
 
 - **Exception Hierarchy** (`services/exceptions.py`):
-  - `BesserError` (base) → `ConversionError`, `ValidationError`, `GenerationError`, `ConfigurationError`
+  - `BesserError` (base) → `ConversionError`, `ValidationError`, `GenerationError`, `ConfigurationError`; `CodeValidationError` (invalid custom agent code) is a `ValidationError` → HTTP 400
 
 - **Feedback Service** (`services/feedback_service.py`): user feedback submissions over SMTP
+
+- **Agent Simulator** (`web_modeling_editor/agent_simulator/`, a separate service in its own container, not under `services/`):
+  - Runs generated BAF agents in a per-session bubblewrap sandbox; only `agent_simulator_router.py` talks to it
+  - Documented in `docs/source/utilities/agent_simulator.rst`
 
 **Key API Endpoints** (all prefixed `/besser_api`):
 - `POST /besser_api/generate-output` - Single diagram → code
@@ -276,6 +281,7 @@ There is no per-client rate limiting; the only throughput control is
 - `POST /besser_api/get-json-model-from-image` - Image → ClassDiagram JSON (via OpenAI)
 - `POST /besser_api/validate-diagram` - Unified validation
 - `POST /besser_api/deploy-app` - Docker Compose deployment
+- `POST /besser_api/simulation/sessions` - Start a live agent simulation (see `agent_simulator_router.py`)
 
 Two paths are declared on the app rather than a router: `GET /health` (no `/besser_api`
 prefix) and `GET /besser_api/`. The OpenAPI UI is at `/docs` — *not* `/besser_api/docs`.
@@ -292,9 +298,14 @@ prefix) and `GET /besser_api/`. The OpenAPI UI is at `/docs` — *not* `/besser_
 #### 6. BUML Code Builders (`besser/utilities/buml_code_builder/`)
 
 Generate executable Python code from B-UML metamodel instances:
-- `domain_model_builder.py`, `agent_model_builder.py`, `gui_model_builder.py`,
-  `state_machine_builder.py`, `bpmn_model_builder.py`, `nn_model_builder.py`,
-  `quantum_model_builder.py`, `project_builder.py`
+- `domain_model_builder.py` - DomainModel → Python code
+- `agent_model_builder.py` - AgentModel → Python code
+- `gui_model_builder.py` - GUIModel → Python code
+- `project_builder.py` - Project → Python code
+- `quantum_model_builder.py` - QuantumCircuit → Python code
+- `state_machine_builder.py` - StateMachine → Python code
+- `bpmn_model_builder.py` - BPMN model → Python code
+- `nn_model_builder.py` - NN model → Python code
 - `common.py` - Shared utilities: `safe_var_name()` (converts names to safe Python identifiers), `_escape_python_string()` (prevents code injection from user-controlled inputs)
 
 **Pattern**: Generated code can be `exec()`'d to recreate the metamodel instance.
@@ -433,7 +444,7 @@ Keep subjects short and imperative. Use topic branches (`feature/add-generator`)
 
 ## Related Files
 
-- **`.github/copilot-instructions.md`**: Comprehensive AI assistant guidelines (also in `.cursorrules`)
+- **`.github/copilot-instructions.md`**, **`.cursorrules`**: Pointers to this file for Copilot and Cursor; edit `CLAUDE.md`, not them
 - **`CONTRIBUTING.md`**: Contribution workflow and expectations
 - **`DEVELOPMENT_SETUP.md`**: Local environment setup
 - **`README.md`**: Project overview and quick start
@@ -511,7 +522,7 @@ split). The durable event store is SQLite, at `BESSER_LLM_RUN_STORE_PATH` or the
 temp directory.
 
 ### Validation Debugging
-Enable verbose OCL validation in `/besser_api/validate-diagram` endpoint responses.
+`/validate-diagram` returns every metamodel and OCL error in one response (errors are collected, not raised); start there before reading validator code.
 
 ### Frontend-Backend Integration
 Use browser DevTools Network tab to inspect API payloads. Backend returns detailed error messages — except for unhandled exceptions, which are deliberately flattened to "Internal server error"; the traceback is in the server log.

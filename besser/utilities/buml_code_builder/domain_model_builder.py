@@ -43,6 +43,7 @@ _IMPLEMENTATION_TYPE_VALUE_TO_NAME = {
     MethodImplementationType.BAL.value: MethodImplementationType.BAL.name,
     MethodImplementationType.STATE_MACHINE.value: MethodImplementationType.STATE_MACHINE.name,
     MethodImplementationType.QUANTUM_CIRCUIT.value: MethodImplementationType.QUANTUM_CIRCUIT.name,
+    MethodImplementationType.NEURAL_NETWORK.value: MethodImplementationType.NEURAL_NETWORK.name,
 }
 
 
@@ -279,6 +280,11 @@ def domain_model_to_code(
                     f.write(f"    {cls_var_name}_m_{method_var_name}.quantum_circuit = qc\n")
                     f.write("except NameError:\n")
                     f.write("    pass\n")
+                if impl_type == MethodImplementationType.NEURAL_NETWORK:
+                    f.write("try:\n")
+                    f.write(f"    {cls_var_name}_m_{method_var_name}.neural_network = nn_model\n")
+                    f.write("except NameError:\n")
+                    f.write("    pass\n")
 
             # Write assignments
             if sort(cls.attributes):
@@ -417,6 +423,11 @@ def domain_model_to_code(
                     if impl_type == MethodImplementationType.QUANTUM_CIRCUIT:
                         f.write("try:\n")
                         f.write(f"    {ac_var_name}_m_{method_var_name}.quantum_circuit = qc\n")
+                        f.write("except NameError:\n")
+                        f.write("    pass\n")
+                    if impl_type == MethodImplementationType.NEURAL_NETWORK:
+                        f.write("try:\n")
+                        f.write(f"    {ac_var_name}_m_{method_var_name}.neural_network = nn_model\n")
                         f.write("except NameError:\n")
                         f.write("    pass\n")
 

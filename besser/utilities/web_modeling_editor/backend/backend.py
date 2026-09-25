@@ -68,6 +68,7 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     deployment_router,
     spec_driven_router,
     telemetry_router,
+    agent_simulator_router,
 )
 
 # Smart-generation download registry — started/cancelled in the lifespan below
@@ -185,6 +186,7 @@ _REQUIRED_ENV_VARS = [
 _OPTIONAL_ENV_VARS = [
     "SMTP_PASSWORD",
     "OPENAI_API_KEY",
+    "AGENT_SIMULATOR_API_TOKEN",  # live agent simulation returns 503 without it
 ]
 
 
@@ -296,6 +298,7 @@ app.include_router(validation_router.router)
 app.include_router(deployment_router.router)
 app.include_router(spec_driven_router.router)
 app.include_router(telemetry_router.router)
+app.include_router(agent_simulator_router.router)
 
 
 # Exception handlers
@@ -362,6 +365,9 @@ def get_api_root():
 # Main application entry point
 if __name__ == "__main__":
     import uvicorn
+    # Single process on purpose: the agent simulator router keeps its rate
+    # limiter, per-actor session cap and session-ownership map in memory.
+    # Adding workers would give each worker its own copy of that state.
     uvicorn.run(
         app,
         host="0.0.0.0",

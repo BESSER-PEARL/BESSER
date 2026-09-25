@@ -253,6 +253,9 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write("    Event, EventType, Transition, Create, Read, Update, Delete, Parameter\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.binding import DataBinding\n")
+        f.write("from besser.utilities.buml_code_builder.common import (\n")
+        f.write("    bind_data_source, bind_domain_field, build_data_binding\n")
+        f.write(")\n")
         f.write("\n")
 
         # Track created variables to avoid duplicates
@@ -975,15 +978,25 @@ def _write_table(f, var_name, chart):
             col_var = f'{var_name}_col_{i}'
             if isinstance(col, FieldColumn):
                 field_ref = col.field.name if hasattr(col.field, 'name') else str(col.field)
-                # Reference the Property variable from the domain model
-                # The domain model builder names them: ClassName_attributeName
-                # We need to find which class owns this property
+                # Reference the Property variable from the domain model.
+                # The domain model builder names them ClassName_attributeName
+                # after the class that *declares* the property, so resolve the
+                # owner rather than the class the table is bound to. For an
+                # inherited attribute the two differ, and naming it after the
+                # binding emitted a reference to a variable that is never
+                # defined: a table bound to Guest showed Person.id as Guest_id.
+                owner = getattr(col.field, 'owner', None)
                 binding = getattr(chart, 'data_binding', None)
-                if binding and hasattr(binding, 'domain_concept') and binding.domain_concept:
-                    class_name = binding.domain_concept.name
+                if owner is not None and getattr(owner, 'name', None):
+                    class_name = safe_class_name(owner.name)
+                elif binding and hasattr(binding, 'domain_concept') and binding.domain_concept:
+                    class_name = safe_class_name(binding.domain_concept.name)
+                else:
+                    class_name = None
+                if class_name:
                     f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={class_name}_{field_ref})\n')
                 else:
-                    # Fallback: try to find the property variable by name
+                    # Fallback: reference the property variable by bare name
                     f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={field_ref})\n')
             elif isinstance(col, LookupColumn):
                 # path is an association end Property (defined inline in BinaryAssociation)
@@ -991,9 +1004,15 @@ def _write_table(f, var_name, chart):
                 path_name = col.path.name if hasattr(col.path, 'name') else str(col.path)
                 field_name = col.field.name if hasattr(col.field, 'name') else str(col.field)
                 # Resolve field: TargetClass_fieldName (e.g. Book_title)
+                # Same owner rule as FieldColumn above: the property variable
+                # is named after the class that declares the field, which is
+                # not necessarily the association's target class.
+                field_owner = getattr(col.field, 'owner', None)
                 path_type = getattr(col.path, 'type', None)
-                if path_type and hasattr(path_type, 'name'):
-                    field_ref = f'{path_type.name}_{field_name}'
+                if field_owner is not None and getattr(field_owner, 'name', None):
+                    field_ref = f'{safe_class_name(field_owner.name)}_{field_name}'
+                elif path_type and hasattr(path_type, 'name'):
+                    field_ref = f'{safe_class_name(path_type.name)}_{field_name}'
                 else:
                     field_ref = field_name
                 # Path property lives inside a BinaryAssociation's ends, not as a standalone variable.
@@ -1363,15 +1382,14 @@ def _write_data_binding(f, binding_var, binding):
         f.write(f"# DataBinding for {binding_var} skipped: no domain concept specified.\n")
         return None
 
-    escaped_domain = _escape_string(domain_name)
-    f.write("domain_model_ref = globals().get('domain_model')\n")
-    f.write(f"{binding_var}_domain = None\n")
-    f.write("if domain_model_ref is not None:\n")
-    f.write(f"    {binding_var}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
-    f.write(f"if {binding_var}_domain:\n")
-
-    # Build DataBinding constructor params
-    binding_params = [f"domain_concept={binding_var}_domain"]
+    # One guarded helper call - see bind_domain_field for why nothing is inlined.
+    # The binding stays None when the helper or domain_model is absent (a GUI
+    # model exported on its own) or the class is not in the domain model.
+    binding_params = [f'"{_escape_string(domain_name)}"']
+    if label_name:
+        binding_params.append(f'label_field="{_escape_string(label_name)}"')
+    if data_name:
+        binding_params.append(f'data_field="{_escape_string(data_name)}"')
     if binding_name:
         binding_params.append(f'name="{_escape_string(binding_name)}"')
     if label_path:
@@ -1380,17 +1398,11 @@ def _write_data_binding(f, binding_var, binding):
         binding_params.append(f'data_field_path="{_escape_string(data_path)}"')
     if filter_expr:
         binding_params.append(f'filter_expression="{_escape_string(filter_expr)}"')
-    f.write(f"    {binding_var} = DataBinding({', '.join(binding_params)})\n")
-
-    if label_name:
-        escaped_label = _escape_string(label_name)
-        f.write(f"    {binding_var}.label_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_label}\"), None)\n")
-    if data_name:
-        escaped_data = _escape_string(data_name)
-        f.write(f"    {binding_var}.data_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_data}\"), None)\n")
-    f.write("else:\n")
-    f.write(f"    # Domain class '{escaped_domain}' not resolved; data binding skipped.\n")
-    f.write(f"    {binding_var} = None\n")
+    f.write(f"{binding_var} = None\n")
+    f.write("try:\n")
+    f.write(f"    {binding_var} = build_data_binding(domain_model, {', '.join(binding_params)})\n")
+    f.write("except NameError:\n")
+    f.write("    pass\n")
     return binding_var
 
 
@@ -1399,8 +1411,7 @@ def _write_data_binding_assignment(f, var_name, binding):
     binding_var = f"{var_name}_binding"
     result = _write_data_binding(f, binding_var, binding)
     if result:
-        f.write(f"if {binding_var}:\n")
-        f.write(f"    {var_name}.data_binding = {binding_var}\n")
+        f.write(f"{var_name}.data_binding = {binding_var}\n")
 
 
 def _update_data_source_element(f, var_name, source):
@@ -1429,41 +1440,27 @@ def _update_data_source_element(f, var_name, source):
     if not any([domain_name, field_names, label_name, value_name]):
         return
 
-    f.write("domain_model_ref = globals().get('domain_model')\n")
-    f.write(f"{var_name}_domain = None\n")
+    # The unresolved names first, so a model loaded without its domain model
+    # keeps them; bind_data_source then adds the resolved class and properties.
+    if field_names:
+        f.write(f"{var_name}.field_names = {repr(field_names)}\n")
+    if label_name:
+        f.write(f"{var_name}.label_field_name = \"{_escape_string(label_name)}\"\n")
+    if value_name:
+        f.write(f"{var_name}.value_field_name = \"{_escape_string(value_name)}\"\n")
     if domain_name:
-        escaped_domain = _escape_string(domain_name)
-        f.write("if domain_model_ref is not None:\n")
-        f.write(f"    {var_name}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
-        f.write(f"if {var_name}_domain:\n")
-        f.write(f"    {var_name}.dataSourceClass = {var_name}_domain\n")
+        source_params = [var_name, "domain_model", f'"{_escape_string(domain_name)}"']
         if field_names:
-            fields_list = repr(field_names)
-            f.write(f"    {var_name}.field_names = {fields_list}\n")
-            f.write(f"    {var_name}.fields = set(attr for attr in {var_name}_domain.attributes if attr.name in {fields_list})\n")
+            source_params.append(f"field_names={repr(field_names)}")
         if label_name:
-            escaped_label = _escape_string(label_name)
-            f.write(f"    {var_name}.label_field = next((attr for attr in {var_name}_domain.attributes if attr.name == \"{escaped_label}\"), None)\n")
-            f.write(f"    {var_name}.label_field_name = \"{escaped_label}\"\n")
+            source_params.append(f'label_field="{_escape_string(label_name)}"')
         if value_name:
-            escaped_value = _escape_string(value_name)
-            f.write(f"    {var_name}.value_field = next((attr for attr in {var_name}_domain.attributes if attr.name == \"{escaped_value}\"), None)\n")
-            f.write(f"    {var_name}.value_field_name = \"{escaped_value}\"\n")
-        f.write("else:\n")
-        f.write(f"    # Domain class '{escaped_domain}' not resolved for data source '{_escape_string(getattr(source, 'name', var_name))}'.\n")
-        if field_names:
-            f.write(f"    {var_name}.field_names = {repr(field_names)}\n")
-        if label_name:
-            f.write(f"    {var_name}.label_field_name = \"{_escape_string(label_name)}\"\n")
-        if value_name:
-            f.write(f"    {var_name}.value_field_name = \"{_escape_string(value_name)}\"\n")
-    else:
-        if field_names:
-            f.write(f"{var_name}.field_names = {repr(field_names)}\n")
-        if label_name:
-            f.write(f"{var_name}.label_field_name = \"{_escape_string(label_name)}\"\n")
-        if value_name:
-            f.write(f"{var_name}.value_field_name = \"{_escape_string(value_name)}\"\n")
+            source_params.append(f'value_field="{_escape_string(value_name)}"')
+        f.write("try:\n")
+        f.write(f"    bind_data_source({', '.join(source_params)})\n")
+        f.write("except NameError:\n")
+        f.write("    pass\n")
+
 
 def _write_layout(f, layout, created_vars, layout_var):
     """Write code for Layout object."""

@@ -3,7 +3,7 @@ GUI Diagram converter module for BUML to JSON conversion.
 Reconstructs GrapesJS-compatible JSON structures from BUML GUI models.
 """
 from __future__ import annotations
-from besser.utilities.buml_code_builder.common import bind_domain_field
+import inspect
 import json
 import logging
 import re
@@ -13,12 +13,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 logger = logging.getLogger(__name__)
 from besser.BUML.metamodel.gui import (
     Alert,
-    AlertSeverity,
     Button,
-    ButtonActionType,
-    ButtonType,
     DataList,
-    DataSourceElement,
     EmbeddedContent,
     Form,
     GUIModel,
@@ -26,15 +22,22 @@ from besser.BUML.metamodel.gui import (
     InputField,
     Link,
     Menu,
-    MenuItem,
-    Module,
     Screen,
-    SelectOption,
     Text,
     ViewComponent,
     ViewContainer,
 )
-from besser.BUML.metamodel.gui.binding import DataBinding
+from besser.BUML.metamodel import gui as _gui_module
+from besser.BUML.metamodel.gui import binding as _binding_module
+from besser.BUML.metamodel.gui import dashboard as _dashboard_module
+from besser.BUML.metamodel.gui import events_actions as _events_module
+from besser.BUML.metamodel import structural as _structural_module
+from besser.utilities.buml_code_builder.common import (
+    bind_data_source,
+    bind_domain_field,
+    build_data_binding,
+    safe_class_name,
+)
 from besser.BUML.metamodel.gui.dashboard import (
     AgentComponent,
     BarChart,
@@ -43,10 +46,6 @@ from besser.BUML.metamodel.gui.dashboard import (
     ExpressionColumn,
     LineChart,
     Map,
-    MapLayer,
-    MapLayerType,
-    WorldMap,
-    LocationMap,
     MetricCard,
     PieChart,
     RadarChart,
@@ -56,21 +55,21 @@ from besser.BUML.metamodel.gui.dashboard import (
 from besser.BUML.metamodel.gui.events_actions import (
     Create,
     Delete,
-    Event,
-    Parameter,
     Read,
     Transition,
     Update,
 )
-from besser.BUML.metamodel.gui.graphical_ui import InputFieldType
-from besser.BUML.metamodel.gui.style import Alignment, Color, Layout, LayoutType, Position, PositionType, Size, Styling, UnitSize
+from besser.BUML.metamodel.gui.style import Layout, LayoutType, PositionType, Styling
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
 )
+
+# Namespace root used to decide which objects a GUI BUML section may name.
+_METAMODEL_PREFIX = "besser.BUML.metamodel"
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def gui_buml_to_json(buml_content: str) -> Dict[str, Any]:
+def gui_buml_to_json(buml_content: str, context_code: Optional[str] = None) -> Dict[str, Any]:
     """
     Convert BUML GUI model Python code to GrapesJS JSON format.
     Args:
@@ -80,7 +79,7 @@ def gui_buml_to_json(buml_content: str) -> Dict[str, Any]:
     """
     if not buml_content or not buml_content.strip():
         return _empty_gui_project()
-    gui_model = _parse_gui_model(buml_content)
+    gui_model = _parse_gui_model(buml_content, context_code)
     if not gui_model:
         return _empty_gui_project()
     try:
@@ -117,76 +116,62 @@ def parse_gui_buml_content(content: str) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Parsing helpers
 # ---------------------------------------------------------------------------
-def _parse_gui_model(content: str) -> Optional[GUIModel]:
-    """Execute BUML GUI python content and return the first GUIModel found."""
-    allowed_names: Dict[str, Any] = {
-        "GUIModel": GUIModel,
-        "Module": Module,
-        "Screen": Screen,
-        "ViewComponent": ViewComponent,
-        "ViewContainer": ViewContainer,
-        "Button": Button,
-        "ButtonType": ButtonType,
-        "ButtonActionType": ButtonActionType,
-        "Text": Text,
-        "Image": Image,
-        "Link": Link,
-        "InputField": InputField,
-        "SelectOption": SelectOption,
-        "Alert": Alert,
-        "AlertSeverity": AlertSeverity,
-        "Form": Form,
-        "Menu": Menu,
-        "MenuItem": MenuItem,
-        "DataList": DataList,
-        "DataSourceElement": DataSourceElement,
-        "EmbeddedContent": EmbeddedContent,
-        "LineChart": LineChart,
-        "BarChart": BarChart,
-        "PieChart": PieChart,
-        "RadarChart": RadarChart,
-        "RadialBarChart": RadialBarChart,
-        "Table": Table,
-        "MetricCard": MetricCard,
-        "Map": Map,
-        "MapLayer": MapLayer,
-        "MapLayerType": MapLayerType,
-        "WorldMap": WorldMap,
-        "LocationMap": LocationMap,
-        "AgentComponent": AgentComponent,
-        "Transition": Transition,
-        "Create": Create,
-        "Read": Read,
-        "Update": Update,
-        "Delete": Delete,
-        "Event": Event,
-        "Parameter": Parameter,
-        "DataBinding": DataBinding,
-        "Styling": Styling,
-        "Size": Size,
-        "Position": Position,
-        "Color": Color,
-        "UnitSize": UnitSize,
-        "Layout": Layout,
-        "LayoutType": LayoutType,
-        "Alignment": Alignment,
-        "PositionType": PositionType,
-        "InputFieldType": InputFieldType,
-        "domain_model": None,
-        "set": set,
-        "list": list,
-        "tuple": tuple,
-        "dict": dict,
-        # Emitted GUI code calls this to resolve a domain-bound DataBinding.
-        # It replaces an inline globals()/if/generator-expression block that the
-        # safe loader refused, which made such models un-importable.
-        "bind_domain_field": bind_domain_field,
-    }
-    # Strip import lines -- all required types are in allowed_names already.
-    # Handle multi-line imports (e.g. from ... import (\n    ...\n))
+def _metamodel_namespace() -> Dict[str, Any]:
+    """Return the B-UML names a GUI BUML section may reference, keyed by name.
+
+    Derived from the metamodel modules rather than hand-listed. The previous
+    hand-written mapping had drifted: the GUI code builder emitted
+    ``FieldColumn``, ``LookupColumn``, ``ExpressionColumn`` and ``Series``,
+    but this reader had never been told about them, so exporting a project
+    containing a table and importing it back failed with ``NameError``.
+
+    The structural metamodel is included because a GUI section legitimately
+    refers to the domain elements it binds to -- ``FieldColumn(field=Guest_id)``
+    names a ``Property`` defined in the structural section, which the project
+    converter prepends as context. Both classes (``Class``, ``Property``) and
+    module-level metamodel instances (``StringType`` and the other primitive
+    types) are collected, since the emitted code uses both.
+    """
+    return _namespace_of(
+        _gui_module, _dashboard_module, _events_module, _binding_module
+    )
+
+
+def _structural_namespace() -> Dict[str, Any]:
+    """Return the structural metamodel names, for the domain context only.
+
+    Kept separate from the GUI vocabulary because ``Parameter`` means two
+    different classes: ``gui.events_actions.Parameter`` in a GUI section and
+    ``structural.Parameter`` in a method signature. Executing the domain code
+    against the GUI namespace bound the wrong one and raised
+    ``Parameter.__init__() got an unexpected keyword argument 'type'``.
+    """
+    return _namespace_of(_structural_module)
+
+
+def _namespace_of(*modules) -> Dict[str, Any]:
+    """Collect the public metamodel classes and instances exported by modules."""
+    namespace: Dict[str, Any] = {}
+    for module in modules:
+        for attr_name, attr in vars(module).items():
+            if attr_name.startswith("_"):
+                continue
+            origin = attr.__module__ if inspect.isclass(attr) else type(attr).__module__
+            if origin.startswith(_METAMODEL_PREFIX):
+                namespace.setdefault(attr_name, attr)
+    return namespace
+
+
+def _strip_imports(code: str) -> str:
+    """Remove import statements from generated BUML code.
+
+    The sandbox provides the metamodel names directly and withholds
+    ``__import__``, so an import line would fail rather than resolve.
+    Multi-line parenthesised imports are handled as a block.
+    """
     cleaned_lines = []
     in_import_block = False
-    for line in content.splitlines():
+    for line in code.splitlines():
         stripped = line.lstrip()
         if in_import_block:
             if ")" in line:
@@ -197,8 +182,85 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
                 in_import_block = True
             continue
         cleaned_lines.append(line)
-    cleaned_content = "\n".join(cleaned_lines)
+    return "\n".join(cleaned_lines)
 
+
+def _bind_domain_aliases(namespace: Dict[str, Any]) -> None:
+    """Bind ``ClassName_attributeName`` for every attribute a class exposes.
+
+    A GUI section refers to domain properties by this convention, but the
+    domain model builder only emits a variable for the class that *declares*
+    an attribute. For an inherited attribute the GUI side historically wrote
+    the binding class instead, e.g. ``Guest_id`` for ``Person.id`` -- a name
+    nothing defined. Binding the convention against ``all_attributes()``
+    resolves both spellings exactly: ``Guest`` really does expose ``id``, so
+    ``Guest_id`` and ``Person_id`` denote the same Property. Existing exports
+    therefore load, and nothing is guessed.
+    """
+    domain_model = namespace.get("domain_model")
+    types = getattr(domain_model, "types", None) or []
+    for domain_class in types:
+        get_attrs = getattr(domain_class, "all_attributes", None)
+        if not callable(get_attrs):
+            continue
+        try:
+            attributes = get_attrs()
+        except Exception:  # pragma: no cover - defensive
+            continue
+        class_name = safe_class_name(domain_class.name)
+        for attribute in attributes:
+            namespace.setdefault(f"{class_name}_{attribute.name}", attribute)
+
+
+def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Optional[GUIModel]:
+    """Execute BUML GUI python content and return the first GUIModel found."""
+    # The GUI vocabulary is derived from the metamodel (see _metamodel_namespace),
+    # but execution still goes through the AST-allowlist loader, not exec().
+    allowed_names: Dict[str, Any] = {
+        **_metamodel_namespace(),
+        "domain_model": None,
+        "set": set,
+        "list": list,
+        "tuple": tuple,
+        "dict": dict,
+        # Emitted GUI code calls this to resolve a domain-bound DataBinding.
+        # It replaces an inline globals()/if/generator-expression block that the
+        # safe loader refused, which made such models un-importable.
+        "bind_domain_field": bind_domain_field,
+        "build_data_binding": build_data_binding,
+        "bind_data_source": bind_data_source,
+    }
+    cleaned_content = _strip_imports(content)
+
+    # Execute the domain context first so the GUI code can name the domain
+    # elements it binds to, then bind the ClassName_attributeName aliases
+    # the GUI section uses before running it.
+    if context_code:
+        # Run the domain code against the structural vocabulary, not the GUI
+        # one, so names that mean different things in the two metamodels
+        # (Parameter) resolve correctly on each side. It goes through the same
+        # safe loader as every other uploaded section.
+        context_names: Dict[str, Any] = {
+            **_structural_namespace(),
+            "UNLIMITED_MAX_MULTIPLICITY": _structural_module.UNLIMITED_MAX_MULTIPLICITY,
+            "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
+        }
+        try:
+            context_vars = safe_load_buml(_strip_imports(context_code), context_names)
+        except Exception as exc:
+            raise ValueError(f"Failed to execute domain context: {exc}") from exc
+        # Carry over what the domain code *built* -- the DomainModel and the
+        # Class/Property/Enumeration objects the GUI section binds to -- and
+        # not the structural vocabulary itself, which would shadow the GUI
+        # classes of the same name.
+        for context_name, context_value in context_vars.items():
+            if context_name.startswith("__") or inspect.isclass(context_value):
+                continue
+            allowed_names[context_name] = context_value
+        _bind_domain_aliases(allowed_names)
     try:
         local_vars = safe_load_buml(cleaned_content, allowed_names)
     except Exception as exc:

@@ -96,7 +96,7 @@ The full list of allowed values is defined in
 - ``deepseekModels``: ``deepseek-chat``, ``deepseek-reasoner``
 - ``googleModels``: ``gemini-2.5-pro``, ``gemini-2.5-flash``, ``gemini-2.0-flash``
 - ``metaModels``: ``Llama-3.3-70B-Instruct``, ``Llama-4-Scout-17B-16E-Instruct-FP8``
-- ``anthropicModels``: ``claude-opus-4-5``, ``claude-sonnet-4-5``, ``claude-haiku-4-5-20251001``
+- ``anthropicModels``: ``claude-opus-5``, ``claude-sonnet-5``, ``claude-haiku-4-5``
 - ``qwenModels``: ``qwen-max``, ``qwen-plus``, ``qwen-turbo``
 - ``xaiModels``: ``grok-3``, ``grok-3-mini``, ``grok-2-latest``
 - ``groqModels``: ``llama-3.3-70b-versatile``, ``gemma2-9b-it``, ``mixtral-8x7b-32768``

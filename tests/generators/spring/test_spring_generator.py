@@ -328,10 +328,54 @@ def test_invalid_package_names_are_rejected():
 
 
 # ---------------------------------------------------------------------------
-# Error reporting
+# Classes without an identifier
 # ---------------------------------------------------------------------------
 
-def test_missing_identifier_reports_the_class(player_team_domain_model, tmp_path):
-    """Neither Player nor Team has an ``is_id`` attribute."""
-    with pytest.raises(ValueError, match="Player|Team"):
-        SpringBackendGenerator(player_team_domain_model, output_dir=str(tmp_path)).generate()
+def test_class_without_identifier_gets_a_generated_id(player_team_domain_model, tmp_path):
+    """Neither Player nor Team has an ``is_id`` attribute: each gets a generated ``id``."""
+    SpringBackendGenerator(player_team_domain_model, output_dir=str(tmp_path)).generate()
+
+    for class_name in ("Player", "Team"):
+        entity = read(tmp_path, *PACKAGE_DIR.parts, "entity", f"{class_name}.java")
+        assert "@Id" in entity
+        assert "@GeneratedValue(strategy = GenerationType.IDENTITY)" in entity
+        assert " Integer id;" in entity
+        repository = read(tmp_path, *PACKAGE_DIR.parts, "repository", f"I{class_name}Repository.java")
+        assert f"JpaRepository<{class_name}, Integer>" in repository
+
+
+def test_surrogate_id_leaves_the_input_model_unchanged(player_team_domain_model, tmp_path):
+    before = {cls.name: sorted(a.name for a in cls.attributes) for cls in player_team_domain_model.get_classes()}
+    SpringBackendGenerator(player_team_domain_model, output_dir=str(tmp_path)).generate()
+    after = {cls.name: sorted(a.name for a in cls.attributes) for cls in player_team_domain_model.get_classes()}
+    assert after == before
+    assert not any(a.is_id for cls in player_team_domain_model.get_classes() for a in cls.attributes)
+
+
+def test_surrogate_id_goes_on_the_root_of_a_hierarchy(library_book_author_model, tmp_path):
+    """An abstract parent without identifier gets the id; its subclass inherits it."""
+    model = library_book_author_model
+    person = Class(name="Person", is_abstract=True)
+    model.add_type(person)
+    model.add_generalization(Generalization(general=person, specific=model.get_class_by_name("Author")))
+    model.get_class_by_name("Book").add_attribute(Property(name="isbn", type=StringType, is_id=True))
+
+    SpringBackendGenerator(model, output_dir=str(tmp_path)).generate()
+
+    assert " Integer id;" in read(tmp_path, *PACKAGE_DIR.parts, "entity", "Person.java")
+    assert " Integer id;" not in read(tmp_path, *PACKAGE_DIR.parts, "entity", "Author.java")
+    # A declared identifier is kept as is.
+    book = read(tmp_path, *PACKAGE_DIR.parts, "entity", "Book.java")
+    assert " String isbn;" in book
+    assert " Integer id;" not in book
+
+
+def test_existing_id_attribute_is_promoted_instead_of_duplicated(player_team_domain_model, tmp_path):
+    player = player_team_domain_model.get_class_by_name("Player")
+    player.add_attribute(Property(name="id", type=IntegerType))
+
+    SpringBackendGenerator(player_team_domain_model, output_dir=str(tmp_path)).generate()
+
+    entity = read(tmp_path, *PACKAGE_DIR.parts, "entity", "Player.java")
+    assert entity.count(" Integer id;") == 1
+    assert "@Id" in entity

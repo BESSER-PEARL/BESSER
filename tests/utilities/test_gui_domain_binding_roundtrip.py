@@ -124,18 +124,6 @@ def test_the_builder_emits_the_helper_for_the_field_binding():
     assert "bind_domain_field" in src, "the builder must emit the helper call"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "KNOWN GAP: two emit sites still write globals() into generated BUML -- "
-        "the DataBinding constructor block and the dataSourceClass block. Only "
-        "the per-field binding has been converted. Those two gate a multi-"
-        "statement body on `if <class>:` and one builds a set(...) generator "
-        "expression, so they need the surrounding logic moved into helpers, not "
-        "just the lookup swapped. Until then a GUI model using them still "
-        "cannot be re-imported."
-    ),
-    strict=True,
-)
 def test_no_emit_site_writes_globals_into_generated_buml():
     import inspect
 
@@ -160,3 +148,106 @@ def test_the_converter_injects_the_helper():
 
     src = inspect.getsource(gui_diagram_converter)
     assert '"bind_domain_field": bind_domain_field' in src
+
+
+# --------------------------------------------------------------------------- #
+# The DataBinding constructor and dataSourceClass blocks, end to end
+# --------------------------------------------------------------------------- #
+def _bound_gui_and_domain():
+    from besser.BUML.metamodel.gui import (
+        DataList, DataSourceElement, GUIModel, Module, Screen,
+    )
+    from besser.BUML.metamodel.gui.binding import DataBinding
+    from besser.BUML.metamodel.gui.dashboard import BarChart
+    from besser.BUML.metamodel.structural import Class, DomainModel, IntegerType, Property, StringType
+
+    book = Class(name="Book")
+    title = Property(name="title", type=StringType)
+    pages = Property(name="pages", type=IntegerType)
+    book.attributes = {title, pages}
+    domain_model = DomainModel(name="library", types={book})
+
+    chart = BarChart(name="pages_chart")
+    chart.data_binding = DataBinding(
+        domain_concept=book, name="pages_binding", label_field=title, data_field=pages,
+    )
+    source = DataSourceElement(
+        name="books", dataSourceClass=book, fields={title, pages}, label_field=title, value_field=pages,
+    )
+    books = DataList(name="book_list", description="", list_sources={source})
+    screen = Screen(
+        name="home", description="", view_elements={chart, books},
+        is_main_page=True, route_path="/", screen_size="Medium",
+    )
+    gui_model = GUIModel(
+        name="ui", package="p", versionCode="1", versionName="1", description="",
+        modules={Module(name="Main", screens={screen})},
+    )
+    return gui_model, domain_model
+
+
+def _gui_code(tmp_path, gui_model, domain_model=None):
+    from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
+
+    path = tmp_path / "gui.py"
+    gui_model_to_code(gui_model, str(path), domain_model=domain_model)
+    return path.read_text(encoding="utf-8")
+
+
+def _components(gui_model):
+    screen = next(iter(next(iter(gui_model.modules)).screens))
+    return {element.name: element for element in screen.view_elements}
+
+
+def test_domain_bound_chart_and_data_source_reimport_with_their_bindings(tmp_path):
+    """The loader refused both blocks outright (top-level ``if``); now they load bound."""
+    from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.gui_diagram_converter import (
+        _parse_gui_model,
+    )
+
+    gui_model, domain_model = _bound_gui_and_domain()
+    domain_path = tmp_path / "domain.py"
+    domain_model_to_code(domain_model, str(domain_path))
+
+    loaded = _parse_gui_model(
+        _gui_code(tmp_path, gui_model), context_code=domain_path.read_text(encoding="utf-8"),
+    )
+
+    components = _components(loaded)
+    binding = components["pages_chart"].data_binding
+    assert binding is not None and binding.domain_concept.name == "Book"
+    assert binding.name == "pages_binding"
+    assert binding.label_field.name == "title" and binding.data_field.name == "pages"
+    source = next(iter(components["book_list"].list_sources))
+    assert source.dataSourceClass.name == "Book"
+    assert {field.name for field in source.fields} == {"title", "pages"}
+    assert source.label_field.name == "title" and source.value_field.name == "pages"
+
+
+def test_domain_bound_gui_without_its_domain_model_keeps_the_names(tmp_path):
+    """Loaded on its own, the binding is unresolved but the field names survive."""
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.gui_diagram_converter import (
+        _parse_gui_model,
+    )
+
+    gui_model, _ = _bound_gui_and_domain()
+    loaded = _parse_gui_model(_gui_code(tmp_path, gui_model))
+
+    components = _components(loaded)
+    assert components["pages_chart"].data_binding is None
+    source = next(iter(components["book_list"].list_sources))
+    assert source.dataSourceClass is None
+    assert sorted(source.field_names) == ["pages", "title"]
+
+
+def test_the_emitted_file_still_runs_as_plain_python(tmp_path):
+    """Executed directly (not through the loader), the helpers come from its imports."""
+    gui_model, domain_model = _bound_gui_and_domain()
+    namespace = {}
+    exec(_gui_code(tmp_path, gui_model, domain_model=domain_model), namespace)  # noqa: S102
+
+    components = _components(namespace["gui_model"])
+    assert components["pages_chart"].data_binding.domain_concept.name == "Book"
+    source = next(iter(components["book_list"].list_sources))
+    assert {field.name for field in source.fields} == {"title", "pages"}

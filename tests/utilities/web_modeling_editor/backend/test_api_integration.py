@@ -1161,6 +1161,62 @@ class TestProjectGeneration:
         assert "Author" in body
         assert "Book" in body
 
+    def test_project_backend_generation_runs_nn_implemented_method(self):
+        """A method implemented by a project NNDiagram becomes an endpoint running that network."""
+        fixture = os.path.join(
+            os.path.dirname(__file__), os.pardir, "converters", "nn", "fixtures", "tutorial_example.json"
+        )
+        with open(fixture, encoding="utf-8") as f:
+            nn_model = json.load(f)
+
+        class_model = {
+            "type": "ClassDiagram",
+            "elements": {
+                "cls-classifier": {
+                    "id": "cls-classifier", "name": "Classifier", "type": "Class", "owner": None,
+                    "bounds": {"x": 0, "y": 0, "width": 160, "height": 100},
+                    "attributes": [], "methods": ["meth-predict"],
+                },
+                "meth-predict": {
+                    "id": "meth-predict", "name": "+ predict(pixels: any): any", "type": "ClassMethod",
+                    "owner": "cls-classifier", "bounds": {"x": 0, "y": 40, "width": 159, "height": 30},
+                    "implementationType": "neural_network", "neuralNetworkId": "nn-diagram-1",
+                },
+            },
+            "relationships": {},
+        }
+        payload = {
+            "id": "proj-nn",
+            "type": "Project",
+            "name": "NNProject",
+            "createdAt": "2025-01-01T00:00:00Z",
+            "currentDiagramType": "ClassDiagram",
+            "currentDiagramIndices": {"ClassDiagram": 0, "NNDiagram": 0},
+            "diagrams": {
+                "ClassDiagram": [{"id": "class-diagram-1", "title": "Domain", "model": class_model}],
+                "NNDiagram": [{"id": "nn-diagram-1", "title": "Tutorial", "model": nn_model}],
+            },
+            "settings": {"generator": "backend"},
+        }
+        response = client.post("/besser_api/generate-output-from-project", json=payload)
+        assert response.status_code == 200, response.text
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = set(archive.namelist())
+            router = archive.read("routers/classifier_methods.py").decode("utf-8")
+            requirements = archive.read("requirements.txt").decode("utf-8")
+
+        assert "nn_runtime.py" in names
+        assert "neural_networks/__init__.py" in names
+        assert "neural_networks/weights/README.md" in names
+        network_modules = [n for n in names if n.startswith("neural_networks/") and n.count("/") == 1
+                           and n.endswith(".py") and not n.endswith("__init__.py")]
+        assert len(network_modules) == 1
+        module_name = network_modules[0].split("/")[1][:-3]
+        assert f'run_network("{module_name}", [pixels])' in router
+        assert "has no implementation" not in router
+        assert "torch" in requirements
+
 
 # ---------------------------------------------------------------------------
 # Recommendation Endpoints

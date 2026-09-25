@@ -282,6 +282,22 @@ The metamodel provides fine-grained control over how components are arranged and
   ``absolute``, ``fixed``).
 - **Style**: A dedicated class for visual customization that allows setting properties such as
   colors, fonts, borders, padding, and margins on any view component.
+- **Stylesheet**: ``GUIModel.stylesheet`` (``str``, default ``""``) holds raw CSS shared by the
+  whole GUI: class and compound-selector rules, ``:root`` design tokens (CSS custom
+  properties), ``@media`` blocks and state rules such as ``:hover``. Components opt in
+  through their ``css_classes``. When a GUI diagram is imported from the web editor,
+  every rule not tied to a single element id is kept here in its original order, while
+  element-id rules still become that component's ``Styling``.
+
+  .. code-block:: python
+
+      gui_model = GUIModel(
+          name="Shop", package="", versionCode="1", versionName="1.0",
+          modules={module}, description="",
+          stylesheet=":root{--ds-primary:#15293d}\n"
+                     ".app-btn{background:var(--ds-primary)}\n"
+                     "@media (max-width:850px){.app-btn{width:100%}}\n",
+      )
 
 Python Code Example
 -------------------

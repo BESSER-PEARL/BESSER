@@ -25,6 +25,11 @@ export interface MethodButtonProps {
   methodName?: string;
   
   // Common props
+  // The page builder emits id="..." on every component it renders
+  // (_build_component_props in page_builder.py). Without it declared here
+  // React's excess-property check rejects the generated page with TS2322 on
+  // every entity screen.
+  id?: string;
   label?: string;
   parameters?: MethodParameter[];
   isClassMethod?: boolean;
@@ -73,6 +78,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
   entityType,
   entityId,
   methodName,
+  id,
   label,
   parameters = [],
   isClassMethod = false,
@@ -616,6 +622,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
   return (
     <>
       <button
+        id={id}
         onClick={handleClick}
         disabled={loading}
         className={className}
@@ -708,9 +715,17 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
             }}>
               {declined ? "Not applied" : "Method Result"}
             </h4>
+            {/* The backend states WHY it refused -- {"result": false, "message":
+                "Booking already has a Bill"} -- and this panel used to discard it
+                for a sentence that fits every refusal equally badly. A receptionist
+                refused a check-out could not tell whether the guest had not arrived,
+                the booking was cancelled, or the system was broken. Note the error
+                path below already surfaces data.message, so a 500 explained itself
+                while a correct business refusal did not. */}
             {declined && (
               <p style={{ margin: "0 0 12px", color: "#92400e", fontSize: "14px" }}>
-                {`${label || methodName} did not apply: the conditions it checks were not met, so nothing changed.`}
+                {(result && (result.message || result.detail || result.error))
+                  || `${label || methodName} did not apply: the conditions it checks were not met, so nothing changed.`}
               </p>
             )}
             <pre style={{

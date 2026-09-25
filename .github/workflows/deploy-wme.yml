@@ -10,31 +10,38 @@ on:
         type: choice
         options:
           - all
-          - backend
+          - backend          # restarts besser-wme-backend and besser-wme-smartgen
           - frontend
           - agent_simulator
 
 env:
   REGISTRY: artefacts.list.lu/besser/web_modeling_editor
   SSH_TARGET: ec2-user@ec2-16-16-223-38.eu-north-1.compute.amazonaws.com
+  EDITOR_URL: https://editor.besser-pearl.org
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           submodules: recursive
 
+      - name: Record the commit being deployed
+        id: src
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Login to Docker registry
         run: echo "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" | docker login artefacts.list.lu -u "${{ secrets.DOCKER_REGISTRY_USERNAME }}" --password-stdin
 
-      # ── Backend ──────────────────────────────────────────────
+      # ── Backend (also the besser-wme-smartgen worker's image) ─
       - name: Build backend image
         if: inputs.target == 'all' || inputs.target == 'backend'
-        run: docker build -t ${{ env.REGISTRY }}/backend:latest -f Dockerfile .
+        run: |
+          docker build --build-arg GIT_SHA=${{ steps.src.outputs.sha }} \
+            -t ${{ env.REGISTRY }}/backend:latest -f Dockerfile .
 
       - name: Push backend image
         if: inputs.target == 'all' || inputs.target == 'backend'
@@ -76,7 +83,9 @@ jobs:
         run: |
           SERVICES=""
           if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "backend" ]]; then
-            SERVICES="$SERVICES besser-wme-backend"
+            # The spec-driven worker runs the backend image, so it is recreated
+            # with it; otherwise it keeps running the previous code.
+            SERVICES="$SERVICES besser-wme-backend besser-wme-smartgen"
           fi
           if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "frontend" ]]; then
             SERVICES="$SERVICES besser-wme-frontend"
@@ -96,6 +105,35 @@ jobs:
             echo "Running containers:"
             docker compose ps
           EOF
+
+      # `docker compose pull` succeeds on a stale tag too, so compare the
+      # commit stamped into the image (BESSER_BUILD_SHA) with the one built.
+      - name: Verify the running containers are the code just built
+        if: inputs.target == 'all' || inputs.target == 'backend'
+        run: |
+          EXPECTED="${{ steps.src.outputs.sha }}"
+          FAILED=0
+          for C in besser-wme-backend besser-wme-smartgen; do
+            RUNNING=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+              ${{ env.SSH_TARGET }} \
+              "docker exec $C printenv BESSER_BUILD_SHA 2>/dev/null || echo missing")
+            echo "$C: running=$RUNNING expected=$EXPECTED"
+            if [[ "$RUNNING" != "$EXPECTED" ]]; then
+              echo "::error::$C is running '$RUNNING', not the commit just built (stale image?)."
+              FAILED=1
+            fi
+          done
+          exit $FAILED
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 12); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${{ env.EDITOR_URL }}/besser_api/" || true)
+            [[ "$CODE" == "200" ]] && echo "API healthy" && exit 0
+            echo "attempt $i: $CODE"; sleep 5
+          done
+          echo "::error::API did not return 200 after the deploy"
+          exit 1
 
       - name: Cleanup SSH key
         if: always()

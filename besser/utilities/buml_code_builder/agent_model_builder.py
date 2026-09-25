@@ -19,7 +19,7 @@ from besser.BUML.metamodel.state_machine.agent import (
     GUIReplyAction, GUIEvent, ReceiveMessageEvent,
 )
 from besser.BUML.metamodel.state_machine.state_machine import Action, Body, CustomCodeAction, Event
-from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, safe_var_name
 from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
 
 # Prefix of the module-level functions that build the agent GUIs in the generated code.
@@ -261,8 +261,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
     Parameters:
     model (Agent): The B-UML Agent model object containing states, intents, and transitions.
     file_path (str): The path where the generated code will be saved.
-    model_var_name (str, optional): Name of the Agent variable in the generated code.
-        Defaults to "agent".
+    model_var_name (str, optional): Name of the Agent variable in the generated code. Defaults to "agent".
 
     Outputs:
     - A Python file containing the code representation of the B-UML agent model.
@@ -533,7 +532,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         # Write bodies for states
         for state in model.states:
             state_var = state_var_names[state.name]
-            f.write(f"# {state.name} state\n")
+            f.write(f"# {_comment_safe(state.name)} state\n")
             if state.body and state.body.actions:
                 _write_body(f, state_var, state.name, state.body, fallback=False)
             if state.fallback_body and state.fallback_body.actions:

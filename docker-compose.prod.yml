@@ -10,12 +10,19 @@ services:
       - ./.env
     environment:
       - PYTHONPATH=/app
+      # BESSER_LLM_RUN_WORKSPACE_ROOT is deliberately unset here: the runner
+      # creates run directories inside that root, which would fail on the
+      # read-only /workspace mount below.
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
       - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}
       - AGENT_SIMULATOR_URL=${AGENT_SIMULATOR_URL:-http://besser-wme-agent-simulator:8001}
     volumes:
       - feedback_data:/app/besser/feedback_data
+      # Read-only view of the worker's run workspaces: push-to-github and
+      # import-github-run need the backend's OAuth session, so they run here
+      # and read the generated files through this mount.
+      - smartgen_workspace:/workspace:ro
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     restart: unless-stopped
     networks:
@@ -46,6 +53,83 @@ services:
     restart: unless-stopped
     networks:
       - besser_network
+
+  # Spec-Driven Agent worker. Same image as the backend, separate container:
+  # generation is the only path that runs LLM-authored code, so it gets the
+  # toolchains but not the backend's secrets.
+  #
+  # No `env_file`: the backend loads all of ./.env (SMTP, GitHub OAuth, GPG,
+  # telemetry admin token, ...). This service gets an explicit allowlist, so a
+  # compromise during generation reaches the LLM credentials and nothing else.
+  besser-wme-smartgen:
+    image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
+    container_name: besser-wme-smartgen
+    ports:
+      - "127.0.0.1:9001:9000"
+    working_dir: /app/besser
+    environment:
+      - PYTHONPATH=/app
+      - BESSER_LLM_MAX_CONCURRENT_RUNS=${BESSER_LLM_MAX_CONCURRENT_RUNS:-8}
+      # The image carries tsc / cargo / kotlinc / javac; compiling generated
+      # code catches errors the static checks miss.
+      - BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION=true
+      # Shell tools are enabled on this service only: it holds just the LLM
+      # tokens, is off besser_network and is disposable. Being off the network
+      # hides the other services' names, not ports they publish on 0.0.0.0.
+      # Each run's shell is confined (security_opt below); the worker process
+      # itself is not, so a compromise still reaches the LLM tokens.
+      - BESSER_LLM_ENABLE_SHELL_TOOLS=true
+      - BESSER_LLM_ALLOW_CUSTOM_BASE_URL=false
+      # Shared (read-only) with the backend, which serves push-to-github.
+      - BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs
+      - BESSER_LLM_RUN_STORE_PATH=/workspace/runs/run_store.sqlite3
+      # Budgets
+      - BESSER_LLM_DEFAULT_MAX_COST_USD=${BESSER_LLM_DEFAULT_MAX_COST_USD:-5.0}
+      - BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS=${BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS:-2400}
+      - BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP=${BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP:-2400}
+      # LLM credentials -- the only secrets this service is given.
+      - BESSER_FREE_LLM_BASE_URL=${BESSER_FREE_LLM_BASE_URL:-}
+      - BESSER_FREE_LLM_TOKEN=${BESSER_FREE_LLM_TOKEN:-}
+      - BESSER_FREE_LLM_MODEL=${BESSER_FREE_LLM_MODEL:-}
+      # The config endpoint is served by this container, so every variable it
+      # reads must be in this allowlist or it reads as unset.
+      - BESSER_FREE_LLM_ALT_MODELS=${BESSER_FREE_LLM_ALT_MODELS:-}
+      # Keyless model pre-selected for an opt-in telemetry session.
+      - BESSER_PILOT_LLM_MODEL=${BESSER_PILOT_LLM_MODEL:-}
+      # Run telemetry is recorded where generation runs. The admin token is
+      # not here: the report endpoint it guards stays on the backend.
+      - BESSER_TELEMETRY_ENABLED=${BESSER_TELEMETRY_ENABLED:-}
+      - BESSER_TELEMETRY_DIR=${BESSER_TELEMETRY_DIR:-/app/telemetry}
+      - BESSER_FREE_LLM_FALLBACK_BASE_URL=${BESSER_FREE_LLM_FALLBACK_BASE_URL:-}
+      - BESSER_FREE_LLM_FALLBACK_TOKEN=${BESSER_FREE_LLM_FALLBACK_TOKEN:-}
+      - BESSER_FREE_LLM_FALLBACK_MODEL=${BESSER_FREE_LLM_FALLBACK_MODEL:-}
+      - BESSER_SPONSORED_LLM_BASE_URL=${BESSER_SPONSORED_LLM_BASE_URL:-}
+      - BESSER_SPONSORED_LLM_TOKEN=${BESSER_SPONSORED_LLM_TOKEN:-}
+      - BESSER_SPONSORED_LLM_MODEL=${BESSER_SPONSORED_LLM_MODEL:-}
+      # Secret authorising the sponsored tier (?demo= links). The gate runs
+      # here and fails closed: without it every demo run is refused.
+      - BESSER_DEMO_TOKEN=${BESSER_DEMO_TOKEN:-}
+    volumes:
+      - smartgen_workspace:/workspace
+      - ./telemetry-logs:/app/telemetry
+    # run_command wraps every model-authored command in bubblewrap, which needs
+    # an unprivileged user namespace. Docker's default seccomp profile gates
+    # unshare/mount/pivot_root behind CAP_SYS_ADMIN and the docker-default
+    # AppArmor profile carries `deny mount`, so both step aside (cap_add
+    # SYS_ADMIN alone still fails on pivot_root). No capability is added, and
+    # each run's shell sees only its own workspace and PID namespace.
+    # Without these two lines the worker fails closed: every run_command is
+    # refused.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    command: python -m besser.utilities.web_modeling_editor.backend.backend
+    restart: unless-stopped
+    # NOT on besser_network: generation has no reason to reach the backend, the
+    # frontend or the modeling agent by name. It still has outbound internet for
+    # the LLM endpoints via its own bridge.
+    networks:
+      - smartgen_network
 
   # Agent simulator: runs user-designed agents (live testing in the editor).
   # It executes user-controlled code, so it gets the smartgen treatment:
@@ -136,8 +220,13 @@ services:
 volumes:
   feedback_data:
     driver: local
+  smartgen_workspace:
+    driver: local
 
 networks:
+  smartgen_network:
+    name: smartgen_network
+    driver: bridge
   besser_network:
     name: besser_network
     driver: bridge

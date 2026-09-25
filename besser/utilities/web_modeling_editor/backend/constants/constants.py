@@ -15,6 +15,182 @@ API_VERSION = "1.0.0"
 TEMP_DIR_PREFIX = "besser_"
 AGENT_TEMP_DIR_PREFIX = "besser_agent_"
 CSV_TEMP_DIR_PREFIX = "besser_csv_"
+LLM_TEMP_DIR_PREFIX = "besser_llm_"
+
+# ---------------------------------------------------------------------
+# LLM spec-driven generation caps & feature flags
+# ---------------------------------------------------------------------
+# All of these can be overridden at deploy time via environment
+# variables. Reading env once at import keeps the hot path free of
+# ``os.environ`` lookups and lets tests monkeypatch the module-level
+# constants if they need to. Sensible server-side hard defaults remain
+# here so a forgotten env var never exposes unbounded cost / runtime.
+
+
+def _env_float(name: str, default: float) -> float:
+    import os as _os
+    value = _os.environ.get(name)
+    if not value:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _env_int(name: str, default: int) -> int:
+    import os as _os
+    value = _os.environ.get(name)
+    if not value:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    import os as _os
+    value = _os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_path(name: str) -> str | None:
+    import os as _os
+    value = _os.environ.get(name, "").strip()
+    if not value:
+        return None
+    return _os.path.abspath(_os.path.expanduser(value))
+
+
+# Per-run spend / runtime caps. The HARD_CAP values are the absolute
+# ceiling a request's fields are clamped to; DEFAULT values are what
+# clients get when they don't send an explicit number.
+# Set to $5 to match the from-scratch ceiling below: the UI reads this hard
+# cap from /spec-driven/config, so it must equal what a run is actually
+# permitted. One ceiling everywhere.
+LLM_MAX_COST_USD_HARD_CAP = _env_float("BESSER_LLM_MAX_COST_USD_HARD_CAP", 5.0)
+# 40 minutes, matching what the UI advertises ("up to 40 min"). Same
+# reasoning as the cost cap above: one ceiling everywhere.
+LLM_MAX_RUNTIME_SECONDS_HARD_CAP = _env_int("BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP", 2400)
+# A turn is not a unit of work: a model that emits one tool call per turn needs
+# roughly 4x the turns of one that batches, so the ceiling has to fit the WORST
+# ratio, not the average, or non-batching models hit it while still mid-build.
+LLM_MAX_TURNS_HARD_CAP = _env_int("BESSER_LLM_MAX_TURNS_HARD_CAP", 150)
+# Defaults a client gets when it sends no explicit number, and what the BYOK
+# dialog pre-fills. $1/10min was too tight to finish a real application: a
+# run could spend its whole budget reading before its first productive turn.
+LLM_DEFAULT_MAX_COST_USD = min(
+    _env_float("BESSER_LLM_DEFAULT_MAX_COST_USD", 5.0),
+    LLM_MAX_COST_USD_HARD_CAP,
+)
+LLM_DEFAULT_MAX_RUNTIME_SECONDS = min(
+    _env_int("BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS", 2400),
+    LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
+)
+LLM_DEFAULT_MAX_TURNS = min(
+    _env_int("BESSER_LLM_DEFAULT_MAX_TURNS", 120),
+    LLM_MAX_TURNS_HARD_CAP,
+)
+
+# Generated-output TTL + SSE cadence.
+LLM_DOWNLOAD_TTL_SECONDS = _env_int("BESSER_LLM_DOWNLOAD_TTL_SECONDS", 1800)
+LLM_COST_EMITTER_INTERVAL_SECONDS = _env_float(
+    "BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS", 2.0,
+)
+# Temporary disconnects and refreshes can reattach to durable runs. A run with
+# no subscribers beyond this grace period is stopped through the ordinary
+# checkpoint-aware cancellation path instead of consuming its full budget.
+LLM_CANCEL_ABANDONED_RUNS = _env_bool("BESSER_LLM_CANCEL_ABANDONED_RUNS", True)
+LLM_DISCONNECTED_GRACE_SECONDS = max(
+    0,
+    _env_int("BESSER_LLM_DISCONNECTED_GRACE_SECONDS", 300),
+)
+# Optional persistent parent for generated workspaces/checkpoints. The normal
+# local-development default remains the operating-system temp directory.
+LLM_RUN_WORKSPACE_ROOT = _env_path("BESSER_LLM_RUN_WORKSPACE_ROOT")
+
+# Concurrency cap. Each in-flight spec-driven generation run holds a worker
+# thread, a temp dir, and an SSE connection. 10 is a sensible default
+# for a modest VM; bump for beefier hosts, lower for shared infra.
+LLM_MAX_CONCURRENT_RUNS = _env_int("BESSER_LLM_MAX_CONCURRENT_RUNS", 10)
+
+# Observability + crash-recovery toggles. Tracing is cheap; disabling
+# it is mostly useful for deployments with strict log-footprint caps.
+# Checkpointing adds a per-turn file write — also cheap, but the
+# toggle lets deployments opt out if disk volume is tight.
+LLM_ENABLE_TRACING = _env_bool("BESSER_LLM_ENABLE_TRACING", True)
+LLM_ENABLE_CHECKPOINTING = _env_bool("BESSER_LLM_ENABLE_CHECKPOINTING", True)
+LLM_PER_WRITE_DIAGNOSTICS = _env_bool("BESSER_LLM_PER_WRITE_DIAGNOSTICS", True)
+
+# Phase 3 toolchain validation (tsc / cargo / kotlinc) compiles real
+# projects server-side and can add minutes of wall-clock + real billing
+# to a run. Off by default in the web deployment — the cheap checks
+# (ast.parse, Dockerfile refs) always run; pip is shell-tools-gated. Enable
+# per deploy when the host has the toolchains installed and the extra
+# latency is acceptable.
+LLM_ENABLE_TOOLCHAIN_VALIDATION = _env_bool(
+    "BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION", False,
+)
+
+# Phase 3 auto-fix: when validation finds BLOCKER issues (Python syntax
+# errors, broken Dockerfile refs, dependency conflicts — the "app doesn't
+# even start" class), give the LLM a bounded fix loop (up to 3 rounds x
+# 5 turns, snapshot/rollback if fixes regress) instead of shipping the
+# broken artifact as a green success. ON by default for the web deploy:
+# without it Phase 3 is validate-and-report only. The fix loop enforces
+# the run's cancellation / cost-cap / runtime-cap per turn and uses the
+# same guarded tool executor as Phase 2 (no new capability surface).
+LLM_ENABLE_AUTO_FIX = _env_bool("BESSER_LLM_ENABLE_AUTO_FIX", True)
+
+# Whether the Phase-2 / Phase-3 agent may use the arbitrary-shell tools
+# (run_command / install_dependencies). OFF by default: they execute
+# LLM/user-authored commands with shell=True in the backend process, and the
+# cwd lock + denylist are UX, not a sandbox — on a shared, BYOK host that is
+# user-steerable remote code execution and server-secret exfiltration. The
+# agent keeps every static tool (read/write/modify/check_syntax). Trusted
+# local/CLI/bench runs can re-enable via the env var. Durable answer is per-run
+# container isolation.
+LLM_ENABLE_SHELL_TOOLS = _env_bool("BESSER_LLM_ENABLE_SHELL_TOOLS", False)
+
+# Phase 3 import smoke check: import the generated ORM module (sql_alchemy.py,
+# plus pydantic_classes.py beside it) in a subprocess and run SQLAlchemy's
+# configure_mappers(). It is the only check that sees a relationship() whose
+# string arguments resolve to nothing - a lazily-configured mapper that passes
+# ast.parse and ruff and then 500s every database request. Trade-off, stated
+# plainly: this executes LLM-authored Python on the host, which the
+# shell-tools gate above withholds. It is kept separate
+# from that gate because it imports a module the user is about to download and
+# run anyway, with the stripped subprocess environment, no network, database
+# or server, a 30s timeout and ~0.5s of wall-clock. ON by default.
+LLM_ENABLE_IMPORT_SMOKE_CHECK = _env_bool("BESSER_LLM_ENABLE_IMPORT_SMOKE_CHECK", True)
+
+# Phase 3 requirements ledger: two extra planning-model calls per run (one to
+# turn the user's verbatim request into atomic requirements, one per Phase 3
+# pass to judge each against the generated code, citations re-checked by the
+# harness). Missing requirements become blockers for the auto-fix loop and
+# every verdict lands in the recipe. ON by default: it is the only check that
+# reads the request the user actually wrote.
+LLM_ENABLE_REQUIREMENTS_LEDGER = _env_bool("BESSER_LLM_ENABLE_REQUIREMENTS_LEDGER", True)
+
+# Whether a spec-driven generation request may carry a custom LLM ``base_url`` (the
+# 'PIA (LIST)' and 'Local / self-hosted' BYOK providers route through an
+# OpenAI-compatible endpoint at a user-supplied URL). OFF by default: on a
+# shared hosted box, having the server open an arbitrary user-provided URL is an
+# SSRF vector. Local / on-prem / PIA deploys set this TRUE (their whole point is
+# reaching a private gateway or localhost). When FALSE the request is rejected
+# with a clear "run WME locally" message and the providers stay visible-but-inert
+# in the dropdown.
+LLM_ALLOW_CUSTOM_BASE_URL = _env_bool("BESSER_LLM_ALLOW_CUSTOM_BASE_URL", False)
+
+# Grace period added on top of the request's max_runtime_seconds before
+# the runner-level watchdog force-cancels a run (covers Phase 3 +
+# packaging time after the Phase 2 loop hits its own runtime check).
+LLM_WATCHDOG_GRACE_SECONDS = _env_int("BESSER_LLM_WATCHDOG_GRACE_SECONDS", 120)
 
 # Output defaults
 OUTPUT_DIR_NAME = "output"
@@ -22,7 +198,10 @@ AGENT_MODEL_FILENAME = "agent_model.py"
 AGENT_OUTPUT_FILENAME = "agent_output.zip"
 
 # Generator defaults
-DEFAULT_SQL_DIALECT = "standard"
+# Not "standard": SQLGenerator passes this straight through as
+# SQLAlchemyGenerator's `dbms`, so every /generate-output for `sql` without an
+# explicit config.dialect raised "Invalid DBMS".
+DEFAULT_SQL_DIALECT = "sqlite"
 DEFAULT_DBMS = "sqlite"
 DEFAULT_JSONSCHEMA_MODE = "regular"
 DEFAULT_QISKIT_BACKEND = "aer_simulator"
@@ -92,15 +271,17 @@ BPMN_RELATIONSHIP_TYPE = "BPMNFlow"
 # Agent simulator (live agent testing, /besser_api/simulation/*)
 # Every value below is read ONCE, at import time, from the environment.
 # ---------------------------------------------------------------------------
+# Own helpers, not the BESSER_LLM_* ones above: those treat 0 and "" differently
+# (non-positive -> default, "" -> False) and have no None default.
 _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
-def _env_bool(name: str, default: bool) -> bool:
+def _sim_env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name, "").strip().lower()
     return raw in _TRUTHY_ENV_VALUES if raw else default
 
 
-def _env_int(name: str, default: Optional[int]) -> Optional[int]:
+def _sim_env_int(name: str, default: Optional[int]) -> Optional[int]:
     raw = os.environ.get(name, "").strip()
     try:
         return int(raw) if raw else default
@@ -108,7 +289,7 @@ def _env_int(name: str, default: Optional[int]) -> Optional[int]:
         return default
 
 
-def _env_float(name: str, default: Optional[float]) -> Optional[float]:
+def _sim_env_float(name: str, default: Optional[float]) -> Optional[float]:
     raw = os.environ.get(name, "").strip()
     try:
         return float(raw) if raw else default
@@ -127,30 +308,30 @@ AGENT_SIMULATOR_TOKEN_ENV_VAR = "AGENT_SIMULATOR_API_TOKEN"
 AGENT_SIMULATOR_TOKEN_HEADER = "X-Agent-Simulator-Token"
 
 # GitHub sign-in gate for the simulation endpoints (on by default).
-AGENT_SIMULATOR_REQUIRE_AUTH = _env_bool("AGENT_SIMULATOR_REQUIRE_AUTH", True)
+AGENT_SIMULATOR_REQUIRE_AUTH = _sim_env_bool("AGENT_SIMULATOR_REQUIRE_AUTH", True)
 
 # Refuse to simulate agents that contain custom Python code bodies (on by
 # default; operators may opt out). Has no effect on code generation.
-AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE = _env_bool("AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE", True)
+AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE = _sim_env_bool("AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE", True)
 
 # Per-actor sliding-window rate limit on the simulation endpoints. The
 # limiter is in-process: the backend runs a single uvicorn process
 # (see backend.py __main__ and the Dockerfile CMD). Running several workers
 # would give each worker its own budget.
-AGENT_SIMULATOR_RATE_LIMIT_WINDOW_SECONDS = _env_int("AGENT_SIMULATOR_RATE_LIMIT_WINDOW_SECONDS", 60)
-AGENT_SIMULATOR_RATE_LIMIT_MAX_REQUESTS = _env_int("AGENT_SIMULATOR_RATE_LIMIT_MAX_REQUESTS", 12)
+AGENT_SIMULATOR_RATE_LIMIT_WINDOW_SECONDS = _sim_env_int("AGENT_SIMULATOR_RATE_LIMIT_WINDOW_SECONDS", 60)
+AGENT_SIMULATOR_RATE_LIMIT_MAX_REQUESTS = _sim_env_int("AGENT_SIMULATOR_RATE_LIMIT_MAX_REQUESTS", 12)
 # Upper bound on the number of actors the limiter tracks at once.
-AGENT_SIMULATOR_RATE_LIMIT_MAX_KEYS = _env_int("AGENT_SIMULATOR_RATE_LIMIT_MAX_KEYS", 10000)
+AGENT_SIMULATOR_RATE_LIMIT_MAX_KEYS = _sim_env_int("AGENT_SIMULATOR_RATE_LIMIT_MAX_KEYS", 10000)
 
 # How many simulation sessions one actor may hold at the same time.
-AGENT_SIMULATOR_MAX_SESSIONS_PER_ACTOR = _env_int("AGENT_SIMULATOR_MAX_SESSIONS_PER_ACTOR", 1)
+AGENT_SIMULATOR_MAX_SESSIONS_PER_ACTOR = _sim_env_int("AGENT_SIMULATOR_MAX_SESSIONS_PER_ACTOR", 1)
 
 # Resource limits advertised by GET /simulation/limits (None = not configured).
-AGENT_SIMULATOR_MEMORY_MB = _env_int("AGENT_SIMULATOR_MEMORY_MB", None)
-AGENT_SIMULATOR_CPU_CORES = _env_float("AGENT_SIMULATOR_CPU_CORES", None)
-AGENT_SIMULATOR_DISK_MB = _env_int("AGENT_SIMULATOR_DISK_MB", None)
-AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS = _env_int("AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS", None)
-AGENT_SIMULATOR_QUOTA_ENABLED = _env_bool("AGENT_SIMULATOR_QUOTA_ENABLED", False)
+AGENT_SIMULATOR_MEMORY_MB = _sim_env_int("AGENT_SIMULATOR_MEMORY_MB", None)
+AGENT_SIMULATOR_CPU_CORES = _sim_env_float("AGENT_SIMULATOR_CPU_CORES", None)
+AGENT_SIMULATOR_DISK_MB = _sim_env_int("AGENT_SIMULATOR_DISK_MB", None)
+AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS = _sim_env_int("AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS", None)
+AGENT_SIMULATOR_QUOTA_ENABLED = _sim_env_bool("AGENT_SIMULATOR_QUOTA_ENABLED", False)
 
 # The simulator kills sessions after this long by default; the backend's
 # session-ownership map forgets them after the same delay.

@@ -13,6 +13,13 @@ You can create the application in two ways:
    The :doc:`../web_editor` supports only the generation of Django apps with the Admin Panel. To generate a Django app with UI Components,
    you must use the Python API.
 
+.. seealso::
+   For a Django project that goes beyond the template — custom apps, auth,
+   containerisation, tests — the
+   :doc:`Spec-Driven Agent <../spec_driven_agent/index>` runs this generator
+   first and then lets an LLM customise the result to a natural-language
+   request.
+
 Check the guidelines below to learn how to generate a Django app depending on your needs:
 
 .. toctree::

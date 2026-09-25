@@ -3,8 +3,14 @@ import re
 import unicodedata
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
+from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
-from besser.generators.structural_utils import get_foreign_keys
+from besser.generators.pk_types import pk_python_types
+from besser.generators.structural_utils import (
+    get_deferred_fk_associations,
+    get_foreign_keys,
+    is_server_owned_attribute,
+)
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.utilities.utils import sort_by_timestamp
 
@@ -56,6 +62,8 @@ class PydanticGenerator(GeneratorInterface):
             extensions=['jinja2.ext.do']
         )
         env.filters["ascii_identifier"] = ascii_identifier
+        env.globals["is_server_owned_attribute"] = is_server_owned_attribute
+        register_default_literals(env)
         template = env.get_template('pydantic_classes_template.py.j2')
 
         # Use DomainModel's built-in method to sort classes by inheritance (parents before children)
@@ -76,13 +84,19 @@ class PydanticGenerator(GeneratorInterface):
         assoc_by_association = {}
         assoc_link_meta = []
         assoc_end_fields = {}
+        pk_types = pk_python_types(self.domain_model)
         for cls in sorted_classes:
             if not isinstance(cls, AssociationClass):
                 continue
             link_class = f"{cls.name}LinkCreate"
             assoc_by_association[cls.association.name] = link_class
+            target_types = sorted({
+                pk_types.get(end.type.name, "int") for end in cls.association.ends
+            })
             assoc_link_meta.append({
                 "link_class": link_class,
+                "target_type": (target_types[0] if len(target_types) == 1
+                                else "Union[" + ", ".join(target_types) + "]"),
                 "attributes": [
                     {
                         "name": attr.name,
@@ -90,6 +104,7 @@ class PydanticGenerator(GeneratorInterface):
                         "optional": attr.is_optional,
                     }
                     for attr in sort_by_timestamp(cls.attributes)
+                    if not is_server_owned_attribute(attr)
                 ],
             })
             assoc_end_fields[cls.name] = [
@@ -105,10 +120,12 @@ class PydanticGenerator(GeneratorInterface):
                 nested_creations=self.nested_creations,
                 constraints_map=constraints_map,
                 fkeys=get_foreign_keys(self.domain_model),
+                deferred_fks=get_deferred_fk_associations(self.domain_model),
                 class_names=class_names,
+                pk_types=pk_types,
                 assoc_by_association=assoc_by_association,
                 assoc_link_meta=assoc_link_meta,
-                assoc_end_fields=assoc_end_fields
+                assoc_end_fields=assoc_end_fields,
             )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

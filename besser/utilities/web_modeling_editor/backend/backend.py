@@ -17,7 +17,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import Response as StarletteResponse
 
 from besser.utilities.web_modeling_editor.backend.middleware import setup_middleware
@@ -67,7 +66,18 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     conversion_router,
     validation_router,
     deployment_router,
+    spec_driven_router,
+    telemetry_router,
     agent_simulator_router,
+)
+
+# Spec-driven download registry — started/cancelled in the lifespan below
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+    DURABLE_RUN_MANAGER,
+    SMART_RUN_REGISTRY,
+)
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    LLM_DOWNLOAD_TTL_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,22 +107,71 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject requests that exceed MAX_REQUEST_SIZE."""
+class RequestSizeLimitMiddleware:
+    """Reject requests that exceed MAX_REQUEST_SIZE.
 
-    async def dispatch(self, request: Request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > MAX_REQUEST_SIZE:
-            return StarletteResponse("Request too large", status_code=413)
+    Pure ASGI on purpose, and not ``BaseHTTPMiddleware``. The previous
+    version read the body to enforce the cap, which consumes the receive
+    channel, and then every attempt to put it back was wrong on one
+    Starlette or the other:
 
-        # For requests without content-length or to prevent spoofing,
-        # wrap the body stream to enforce the limit
-        if request.method in ("POST", "PUT", "PATCH"):
-            body = await request.body()
-            if len(body) > MAX_REQUEST_SIZE:
-                return StarletteResponse("Request too large", status_code=413)
+    * consuming and NOT replaying deadlocks every POST on 0.27.0 - the
+      endpoint waits forever for a body that is already gone;
+    * replaying a constant ``http.request`` fixes 0.27.0 and breaks 0.36.3,
+      where ``BaseHTTPMiddleware`` polls receive again to await the client
+      disconnect, sees a second ``http.request`` and raises "Unexpected
+      message received" - a 500 on every POST;
+    * replaying then returning ``http.disconnect`` still breaks 0.36.3,
+      because that version already caches and replays the body itself, so
+      any manual ``_receive`` collides with its own machinery.
 
-        return await call_next(request)
+    `fastapi` is unpinned in this package's requirements, so a fresh build
+    takes whichever Starlette pip resolves. The size check therefore must
+    not depend on that at all - so it never reads the body. It inspects
+    ``content-length`` and otherwise counts bytes as they stream past,
+    leaving the body untouched for the application to read normally.
+    """
+
+    def __init__(self, app, max_size: int = None):
+        self.app = app
+        self.max_size = MAX_REQUEST_SIZE if max_size is None else max_size
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+
+        headers = dict(scope.get("headers") or [])
+        declared = headers.get(b"content-length")
+        if declared:
+            try:
+                if int(declared) > self.max_size:
+                    return await StarletteResponse(
+                        "Request too large", status_code=413)(scope, receive, send)
+            except ValueError:
+                pass  # malformed header; the byte counter below still applies
+
+        seen = 0
+
+        async def counting_receive():
+            """Count what actually arrives, without holding on to it.
+
+            Covers an absent or understated ``content-length``. Once the cap
+            is passed the body is cut off with a disconnect rather than
+            streamed on: we are already past the point where a clean 413 can
+            be sent, and continuing would defeat the limit entirely.
+            """
+            nonlocal seen
+            message = await receive()
+            if message.get("type") == "http.request":
+                seen += len(message.get("body", b"") or b"")
+                if seen > self.max_size:
+                    logger.warning(
+                        "Request body exceeded %d bytes with content-length %r; "
+                        "cutting the stream", self.max_size, declared)
+                    return {"type": "http.disconnect"}
+            return message
+
+        return await self.app(scope, counting_receive, send)
 
 
 # ---------------------------------------------------------------------------
@@ -163,12 +222,36 @@ async def lifespan(_: FastAPI):
     cleanup_old_temp_files()
     cleanup_task = schedule_cleanup()
 
+    # Download metadata lives beside artifacts on the persistent run volume,
+    # so a backend/container restart does not invalidate a completed result.
+    await SMART_RUN_REGISTRY.restore_persisted()
+
+    # Sweep expired spec-driven generation download entries every minute.
+    smart_gen_sweeper = asyncio.create_task(
+        SMART_RUN_REGISTRY.periodic_sweep(),
+        name="spec-driven-registry-sweeper",
+    )
+    durable_run_sweeper = asyncio.create_task(
+        DURABLE_RUN_MANAGER.periodic_sweep(LLM_DOWNLOAD_TTL_SECONDS),
+        name="spec-driven-durable-run-sweeper",
+    )
+
     yield
 
-    # Cancel the periodic cleanup task on shutdown.
+    # Cancel background tasks on shutdown.
     cleanup_task.cancel()
+    smart_gen_sweeper.cancel()
+    durable_run_sweeper.cancel()
     try:
         await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await smart_gen_sweeper
+    except asyncio.CancelledError:
+        pass
+    try:
+        await durable_run_sweeper
     except asyncio.CancelledError:
         pass
 
@@ -193,8 +276,11 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition", "Authorization"],
-    expose_headers=["Content-Disposition"],
+    # Idempotency-Key lets the spec-driven client safely retry a run start
+    # that failed at the transport layer (see spec_driven_router).
+    allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition",
+                   "Authorization", "Idempotency-Key"],
+    expose_headers=["Content-Disposition", "X-BESSER-Run-Id"],
 )
 
 # Request logging middleware (outermost – added last so it wraps everything)
@@ -210,6 +296,8 @@ app.include_router(generation_router.router)
 app.include_router(conversion_router.router)
 app.include_router(validation_router.router)
 app.include_router(deployment_router.router)
+app.include_router(spec_driven_router.router)
+app.include_router(telemetry_router.router)
 app.include_router(agent_simulator_router.router)
 
 
@@ -253,6 +341,8 @@ def get_api_root():
         "endpoints": {
             "generate": "/besser_api/generate-output",
             "generate_from_project": "/besser_api/generate-output-from-project",
+            "smart_generate": "/besser_api/spec-driven/generate",
+            "download_smart": "/besser_api/spec-driven/download/{run_id}",
             "deploy": "/besser_api/deploy-app",
             "export_buml": "/besser_api/export-buml",
             "export_project": "/besser_api/export-project-as-buml",

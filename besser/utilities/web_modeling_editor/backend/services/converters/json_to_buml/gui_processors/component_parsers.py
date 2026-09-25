@@ -3,7 +3,8 @@ Basic component parsers for GUI elements (Button, Text, Image, InputField, etc.)
 """
 
 import logging
-from typing import Any, Dict
+import re
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ from besser.BUML.metamodel.gui import (
     ViewComponent,
     ViewContainer,
 )
+from besser.BUML.metamodel.gui.binding import DataBinding
 from besser.BUML.metamodel.gui.events_actions import (
     Create,
     Delete,
@@ -43,8 +45,10 @@ from .component_helpers import (
     extract_menu_items,
     extract_parameters_from_attributes,
 )
+from besser.generators.structural_utils import is_server_owned_attribute
+
 from .constants import ALERT_SEVERITY_MAP, INPUT_TYPE_MAP, BUTTON_ACTION_BY_HTML_TYPE
-from .utils import extract_text_content, clean_attribute_name
+from .utils import extract_text_content, clean_attribute_name, get_element_by_id
 
 
 def _attach_component_metadata(element, component: Dict[str, Any], meta: Dict[str, Any] = None) -> None:
@@ -609,9 +613,17 @@ def parse_alert(component: Dict[str, Any], styling, name: str, meta: Dict) -> Al
     return alert
 
 
-def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict, parse_component_list_func) -> Form:
+def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict, parse_component_list_func,
+               class_model=None, domain_model=None) -> Form:
     """
     Parse a form component with input fields and submit event.
+
+    Besides its inputs the form keeps what its markup says about them: a
+    ``<label>`` (by ``for`` or position) becomes the input's label, the first
+    submit button's text the form's ``submit_label``. A form bound to a class
+    - by its ``data-source`` (class id or name), else by input names that are
+    all attributes of exactly one class - gets a ``data_binding`` on that
+    class, and each input a binding to the attribute it edits.
 
     Args:
         component: GrapesJS component dict
@@ -619,24 +631,43 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict, parse_
         name: Component name
         meta: Frontend metadata
         parse_component_list_func: Function to parse child components
+        class_model: Class diagram JSON (resolves a ``data-source`` class id)
+        domain_model: Domain model the form may be bound to
 
     Returns:
         Form instance with input fields and events
     """
-    # Extract all InputField children from form
+    attributes = component.get("attributes") if isinstance(component.get("attributes"), dict) else {}
     components = component.get("components", []) or []
     parsed_children = parse_component_list_func(components)
+    ordered = _flatten_in_order(parsed_children)
+    inputs = [element for element in ordered if isinstance(element, InputField)]
     input_fields = collect_input_fields_recursive(parsed_children)
+    # Inputs keep their order in the form (display_order is otherwise per parent)
+    for position, input_field in enumerate(inputs):
+        input_field.display_order = position
+    _apply_form_labels(ordered, inputs)
+
+    buttons = [element for element in ordered if isinstance(element, Button)]
+    submit = next(
+        (b for b in buttons if str((b.custom_attributes or {}).get("type", "submit")).lower() == "submit"),
+        buttons[0] if buttons else None,
+    )
+    submit_label = attributes.get("data-submit-label") or (submit.label if submit else None) or "Submit"
 
     form = Form(
         name=name,
         description="Form component",
         inputFields=input_fields,
+        title=attributes.get("data-title") or None,
+        submit_label=submit_label,
         styling=styling,
     )
 
     if meta["tagName"] is None:
         meta["tagName"] = "form"
+
+    _bind_form(form, inputs, attributes.get("data-source"), class_model, domain_model)
 
     # Create OnSubmit event if form has submit button
     submit_button = None
@@ -659,6 +690,111 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict, parse_
 
     _attach_component_metadata(form, component, meta)
     return form
+
+
+def _flatten_in_order(elements) -> List[Any]:
+    """Elements and their descendants in document order."""
+    flat: List[Any] = []
+    for element in sorted(
+        elements or [],
+        key=lambda e: (e.display_order is None, e.display_order or 0),
+    ):
+        flat.append(element)
+        if isinstance(element, ViewContainer):
+            flat.extend(_flatten_in_order(element.view_elements))
+    return flat
+
+
+def _apply_form_labels(ordered, inputs) -> None:
+    """Give unlabelled inputs the text of their ``<label>``: the one whose
+    ``for`` names the input, else the label right before it."""
+    by_key = {}
+    for input_field in inputs:
+        for key in (input_field.component_id, (input_field.custom_attributes or {}).get("name"), input_field.name):
+            if key:
+                by_key.setdefault(str(key), input_field)
+    pending = None
+    for element in ordered:
+        if isinstance(element, Text) and (element.tag_name or "").lower() == "label":
+            text = (element.content or "").strip()
+            target = by_key.get(str((element.custom_attributes or {}).get("for") or ""))
+            if target is not None:
+                if not target.label and text:
+                    target.label = text
+                pending = None
+            else:
+                pending = text or None
+        elif isinstance(element, InputField):
+            if pending and not element.label:
+                element.label = pending
+            pending = None
+
+
+def _normalized(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def _input_keys(input_field) -> List[str]:
+    """The names an input may carry for the attribute it edits."""
+    attrs = input_field.custom_attributes or {}
+    keys = [attrs.get("data-field-name"), attrs.get("name"), input_field.name]
+    return [_normalized(key) for key in keys if key]
+
+
+def _attribute_for(input_field, domain_class):
+    by_name = {_normalized(attr.name): attr for attr in domain_class.all_attributes()}
+    return next((by_name[key] for key in _input_keys(input_field) if key in by_name), None)
+
+
+def _covers_required(domain_class, inputs) -> bool:
+    """Whether the inputs supply every attribute a new record needs (a lookup
+    form - booking id + email - names attributes but creates nothing)."""
+    keys = {key for input_field in inputs for key in _input_keys(input_field)}
+    return all(
+        _normalized(attr.name) in keys
+        for attr in domain_class.all_attributes()
+        if not (is_server_owned_attribute(attr) or attr.is_optional or attr.default_value is not None)
+    )
+
+
+def _infer_form_class(inputs, domain_model):
+    """The one class whose attributes name every input (own attributes first,
+    so a ``name``/``email`` form binds to Person, not to each subclass) and
+    that the inputs can create a record of."""
+    if not inputs or domain_model is None:
+        return None
+    classes = sorted(domain_model.get_classes(), key=lambda c: c.name)
+    for attributes_of in (lambda c: c.attributes, lambda c: c.all_attributes()):
+        matches = []
+        for domain_class in classes:
+            names = {_normalized(attr.name) for attr in attributes_of(domain_class)}
+            if all(any(key in names for key in _input_keys(i)) for i in inputs):
+                matches.append(domain_class)
+        if len(matches) == 1:
+            return matches[0] if _covers_required(matches[0], inputs) else None
+        if matches:
+            return None
+    return None
+
+
+def _bind_form(form: Form, inputs, class_ref: Optional[str], class_model, domain_model) -> None:
+    """Bind the form and its inputs to a domain class (see ``parse_form``)."""
+    if domain_model is None:
+        return
+    if class_ref:
+        class_el = get_element_by_id(class_model, class_ref)
+        domain_class = domain_model.get_class_by_name(class_el.get("name") if class_el else class_ref)
+    else:
+        domain_class = _infer_form_class(inputs, domain_model)
+    if domain_class is None:
+        return
+    form.data_binding = DataBinding(domain_concept=domain_class, name=f"{form.name}_binding")
+    for input_field in inputs:
+        attribute = _attribute_for(input_field, domain_class)
+        if attribute is not None:
+            input_field.data_binding = DataBinding(
+                domain_concept=domain_class, data_field=attribute, name=f"{input_field.name}_binding"
+            )
 
 
 def parse_link(component: Dict[str, Any], styling, name: str, meta: Dict) -> Link:

@@ -60,8 +60,12 @@ Repository Boundaries
 Quality Assurance
 -----------------
 
-* Run ``python -m pytest`` from the repository root to execute the automated
-  tests relevant to your change.
+* Run the automated tests relevant to your change from the repository root::
+
+     python -m pytest tests/
+
+  This is what CI runs (with ``--ignore=tests/generators/nn -x``).
+  See :doc:`contributor_guide` for the full testing guidance.
 * Build the documentation (``cd docs && make html``) when altering files under
   ``docs/`` or when the change impacts user-facing guidance.
 * Surface failing tests or build issues directly in the pull request summary,
@@ -70,6 +74,7 @@ Quality Assurance
 Pull Request Expectations
 -------------------------
 
+* Open all pull requests against ``development``, not ``master``.
 * Use clear, factual titles (e.g., ``docs: clarify generator setup``).
 * In the description, reference the motivating issue, summarize the change, and
   list the tests that were executed.

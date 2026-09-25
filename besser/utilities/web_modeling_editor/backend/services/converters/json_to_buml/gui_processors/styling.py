@@ -3,6 +3,7 @@ Styling and CSS processing for GUI components.
 """
 
 import copy
+import re
 from typing import Any, Dict
 
 from besser.BUML.metamodel.gui import (
@@ -377,38 +378,108 @@ def parse_color(value, default="#000000"):
     return default
 
 
+def _selector_name(selector) -> str:
+    """Return a GrapesJS selector entry as CSS text (``#id`` or ``.class``)."""
+    if isinstance(selector, dict):
+        name = str(selector.get("name") or "")
+        if selector.get("type") == 2 and not name.startswith("#"):
+            name = f"#{name}"
+    else:
+        name = str(selector or "")
+    if not name or name[0] in ".#":
+        return name
+    return "." + re.sub(r"([^\w-])", r"\\\1", name)
+
+
+def _is_element_rule(style_entry: Dict[str, Any]) -> bool:
+    """True for a plain rule on one element id: it becomes that element's Styling."""
+    selectors = style_entry.get("selectors") or []
+    return (
+        len(selectors) == 1
+        and _selector_name(selectors[0]).startswith("#")
+        and not style_entry.get("selectorsAdd")
+        and not style_entry.get("state")
+        and not style_entry.get("mediaText")
+        and not style_entry.get("atRuleType")
+    )
+
+
 def build_style_map(styles_list) -> Dict[str, Styling]:
     """
-    Build a style map keyed by selectors (id/class/type) from GrapesJS styles.
+    Build a style map keyed by element id selector (``#id``) from GrapesJS styles.
+
+    Every other rule (classes, compound selectors, ``:root``, ``@media``,
+    states) is kept verbatim in the GUIModel stylesheet instead, see
+    :func:`build_stylesheet`.
 
     Args:
         styles_list: List of style entries from GrapesJS
 
     Returns:
-        Dictionary mapping selectors to Styling objects
+        Dictionary mapping id selectors to Styling objects
     """
     style_map: Dict[str, Styling] = {}
 
     for style_entry in styles_list or []:
-        selectors = style_entry.get("selectors", [])
-        style = style_entry.get("style", {}) or {}
-        styling = styling_from_css(style)
-
-        for selector in selectors:
-            key = None
-            if isinstance(selector, dict):
-                key = selector.get("name")
-            elif isinstance(selector, str):
-                key = selector
-            if key:
-                style_map[key] = styling
+        if _is_element_rule(style_entry):
+            key = _selector_name(style_entry["selectors"][0])
+            style_map[key] = styling_from_css(style_entry.get("style", {}) or {})
 
     return style_map
 
 
+def build_stylesheet(styles_list) -> str:
+    """
+    Render every GrapesJS rule not tied to a single element id as CSS text.
+
+    Rules keep their order; consecutive rules under the same at-rule share one
+    block. One top-level block per line.
+
+    Args:
+        styles_list: List of style entries from GrapesJS
+
+    Returns:
+        The stylesheet, or an empty string when there is none
+    """
+    blocks = []  # (at_rule or None, [rule text])
+    for style_entry in styles_list or []:
+        if not isinstance(style_entry, dict) or _is_element_rule(style_entry):
+            continue
+        declarations = ";".join(
+            f"{prop}:{value}"
+            for prop, value in (style_entry.get("style") or {}).items()
+            if not str(prop).startswith("__") and value not in (None, "")
+        )
+        at_type = style_entry.get("atRuleType") or ("media" if style_entry.get("mediaText") else "")
+        if style_entry.get("singleAtRule") and at_type:
+            blocks.append((None, [f"@{at_type}{{{declarations}}}"]))
+            continue
+        compound = "".join(_selector_name(sel) for sel in style_entry.get("selectors") or [])
+        parts = []
+        if compound:
+            state = style_entry.get("state")
+            parts.append(f"{compound}:{state}" if state else compound)
+        if style_entry.get("selectorsAdd"):
+            parts.append(style_entry["selectorsAdd"])
+        if not parts or not declarations:
+            continue
+        rule = f"{', '.join(parts)}{{{declarations}}}"
+        at_rule = f"@{at_type} {style_entry.get('mediaText') or ''}".strip() if at_type else None
+        if at_rule and blocks and blocks[-1][0] == at_rule:
+            blocks[-1][1].append(rule)
+        else:
+            blocks.append((at_rule, [rule]))
+
+    lines = [
+        f"{at_rule}{{{''.join(rules)}}}" if at_rule else rules[0]
+        for at_rule, rules in blocks
+    ]
+    return "\n".join(lines) + "\n" if lines else ""
+
+
 def resolve_component_styling(component: Dict[str, Any], style_map: Dict[str, Styling]) -> Styling:
     """
-    Resolve styling for a component by merging class styles, type styles, and inline styles.
+    Resolve styling for a component by merging its element-id rule and inline styles.
 
     Args:
         component: GrapesJS component dict
@@ -428,30 +499,8 @@ def resolve_component_styling(component: Dict[str, Any], style_map: Dict[str, St
         if comp_id and f"#{comp_id}" in style_map:
             base = copy.deepcopy(style_map[f"#{comp_id}"])
 
-    # Try class selectors (.class)
-    if base is None:
-        classes = component.get("classes") or []
-        for cls_item in classes:
-            # Handle both string and dict class names
-            cls_name = None
-            if isinstance(cls_item, dict):
-                cls_name = cls_item.get("name")
-            elif isinstance(cls_item, str):
-                cls_name = cls_item
-
-            if cls_name:
-                for selector in (cls_name, f".{cls_name}"):
-                    if selector in style_map:
-                        base = copy.deepcopy(style_map[selector])
-                        break
-                if base:
-                    break
-
-    # Try type selector (button, div, etc.)
-    if base is None:
-        type_selector = component.get("type")
-        if type_selector and type_selector in style_map:
-            base = copy.deepcopy(style_map[type_selector])
+    # Class rules are not merged here: they live in the GUIModel stylesheet,
+    # where the browser cascades every class, state and media rule.
 
     # DON'T create default styling objects - they pollute the output
     # Only create styling if we have actual styles from GrapesJS

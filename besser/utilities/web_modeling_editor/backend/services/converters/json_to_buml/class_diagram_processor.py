@@ -2,8 +2,10 @@
 Class diagram processing for converting JSON to BUML format.
 """
 
+import hashlib
+import json
 import logging
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
@@ -14,11 +16,42 @@ from besser.BUML.metamodel.structural import (
     Generalization, PrimitiveDataType, EnumerationLiteral, AssociationClass,
     Metadata, Parameter, MethodImplementationType, Type
 )
+from besser.BUML.metamodel.structural.structural import (
+    _role_name_matches_class,
+    _stem_role_name,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import (
     parse_attribute, parse_method, parse_multiplicity,
     legacy_body_only_to_text, process_ocl_constraints,
 )
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
+
+# Common verb-derived role aliases that indicate an *intentional* role name
+# rather than an auto-generated class-derived one. When a role end's name
+# matches one of these, we suppress the stale-role warning even if other
+# heuristics fire, because the user clearly chose a domain-specific alias
+# (e.g. ``borrower`` on a ``Member`` end, ``assignee`` on a ``User`` end).
+_INTENTIONAL_ROLE_ALIASES = frozenset({
+    "assignee",
+    "assigner",
+    "author",
+    "borrower",
+    "creator",
+    "editor",
+    "owner",
+    "manager",
+    "leader",
+    "follower",
+    "reviewer",
+    "approver",
+    "requester",
+    "recipient",
+    "sender",
+    "parent",
+    "child",
+    "supervisor",
+    "subordinate",
+})
 
 
 def parse_method_signature_from_code(
@@ -275,6 +308,25 @@ def _process_classes(
                 if method:
                     visibility, name, parameters, return_type = parse_method(method.get("name", ""), domain_model, type_lookup=type_lookup)
 
+                    # The editor's newer format carries the return type in its own
+                    # `attributeType` property, the way attributes do above, and
+                    # leaves the name bare ("renew()"). Only the signature was
+                    # read, so every such method arrived with type None and the
+                    # agent never saw what an action returns.
+                    # Older saves can hold a signature fragment there ("int): any");
+                    # an unresolvable value is ignored, as it was before this read.
+                    if not return_type:
+                        declared = method.get("attributeType") or method.get("returnType") or None
+                        if declared:
+                            try:
+                                _resolve_type(declared, type_lookup)
+                                return_type = declared
+                            except ConversionError:
+                                logger.warning(
+                                    "Ignoring unresolvable return type %r on method %r",
+                                    declared, name,
+                                )
+
                     # Get the code attribute for the method
                     method_code = method.get("code", "")
 
@@ -370,6 +422,29 @@ def _process_classes(
 
     return class_id_to_class, method_id_to_method
 
+
+def _dedupe_end_name(name: str, owner_class, reserved: set[str] = frozenset()) -> str:
+    """Return *name* made unique among *owner_class*'s association-end names.
+
+    A class cannot have two association ends with the same name -- the metamodel
+    raises a hard ``ValueError`` otherwise. ``owner_class`` is the class that
+    navigates *via* the end being named, i.e. the class on the opposite side of
+    the end's own type (see :meth:`Class.association_ends`, which drops the end
+    whose ``type`` is the class itself). ``reserved`` lets a caller also avoid
+    names claimed by a sibling end in the same (self-)association that hasn't been
+    attached to the model yet.
+
+    Because ``owner_class.all_association_ends()`` reflects associations already
+    added earlier in the processing loop, calling this incrementally as each
+    association is built keeps every class's end names unique.
+    """
+    taken = {e.name for e in owner_class.all_association_ends()} | set(reserved)
+    if name not in taken:
+        return name
+    counter = 1
+    while f"{name}_{counter}" in taken:
+        counter += 1
+    return f"{name}_{counter}"
 
 def _read_end_navigable(
     end: dict[str, Any], legacy_default: bool, side: str, rel_id: str, all_warnings: list[str]
@@ -535,16 +610,23 @@ def _process_relationships(
             source_multiplicity = parse_multiplicity(source.get("multiplicity", "1"))
             target_multiplicity = parse_multiplicity(target.get("multiplicity", "1"))
 
-            source_role = source.get("role")
-            if not source_role:
-                source_role = source_class.name.lower()
-                existing_roles = {end.name for assoc in domain_model.associations for end in assoc.ends}
+            # Association-end names must be unique per *owning* class, else the
+            # metamodel raises a hard ValueError. The owner of an end is the class
+            # on the opposite side of the end's own type: the source end (typed by
+            # source_class) is owned by target_class, and vice versa. The frontend
+            # -- or an LLM assembling a spec-driven model -- can legitimately hand
+            # us two associations that give one class an end with the same role
+            # name (e.g. two Loan->Member links both rolled "member"). Suffix such
+            # collisions deterministically so generation never crashes. Covers both
+            # explicit roles and the auto-derived (class-name) fallbacks.
+            source_role = source.get("role") or source_class.name.lower()
+            target_role = target.get("role") or target_class.name.lower()
 
-                if source_role in existing_roles:
-                    counter = 1
-                    while f"{source_role}_{counter}" in existing_roles:
-                        counter += 1
-                    source_role = f"{source_role}_{counter}"
+            source_role = _dedupe_end_name(source_role, target_class)
+            # For a self-association both ends are owned by the same class, so the
+            # target end must also avoid the name we just assigned the source end.
+            reserved = {source_role} if source_class is target_class else set()
+            target_role = _dedupe_end_name(target_role, source_class, reserved)
 
             source_property = Property(
                 name=source_role,
@@ -552,17 +634,6 @@ def _process_relationships(
                 multiplicity=source_multiplicity,
                 is_navigable=source_navigable
             )
-
-            target_role = target.get("role")
-            if not target_role:
-                target_role = target_class.name.lower()
-                existing_roles = {end.name for assoc in domain_model.associations for end in assoc.ends}
-
-                if target_role in existing_roles:
-                    counter = 1
-                    while f"{target_role}_{counter}" in existing_roles:
-                        counter += 1
-                    target_role = f"{target_role}_{counter}"
 
             target_property = Property(
                 name=target_role,
@@ -694,6 +765,28 @@ def _process_association_classes(
         domain_model.types.discard(class_obj)
         domain_model.types.add(association_class)
 
+        # Re-point everything that still holds the DISCARDED class. Class
+        # compares by identity, so an end left bound to the old object makes
+        # validate() report "referencing type 'X' which is not in the domain
+        # model" for a class plainly on the canvas, and the editor's auto-fix
+        # cannot clear it because there is nothing wrong with the diagram.
+        for assoc in domain_model.associations:
+            for end in assoc.ends:
+                if end.type is class_obj:
+                    end.type = association_class
+                    # Without this association_ends() on the promoted class is
+                    # empty and generators omit its side of the association.
+                    association_class._add_association(assoc)
+        for generalization in domain_model.generalizations:
+            if generalization.general is class_obj:
+                generalization.general = association_class
+            if generalization.specific is class_obj:
+                generalization.specific = association_class
+        for some_type in domain_model.types:
+            for prop in getattr(some_type, "attributes", None) or ():
+                if prop.type is class_obj:
+                    prop.type = association_class
+
 
 def _ocl_box_to_full_text(
     element: dict[str, Any],
@@ -703,6 +796,7 @@ def _ocl_box_to_full_text(
     class_id_to_class: dict[str, Class],
     method_id_to_method: dict[str, Method],
     warnings: list[str],
+    on_rejection: Optional[Callable[[str, str], None]] = None,
 ) -> Optional[str]:
     """Coerce a ``ClassOCLConstraint`` element to its canonical full-text form.
 
@@ -720,6 +814,11 @@ def _ocl_box_to_full_text(
     if not raw:
         return None
 
+    def reject(code: str, reason: str) -> None:
+        warnings.append(reason)
+        if on_rejection is not None:
+            on_rejection(code, reason)
+
     # Already canonical full text — fast path.
     if raw.lstrip().lower().startswith("context"):
         return raw
@@ -729,13 +828,13 @@ def _ocl_box_to_full_text(
     legacy_kind = element.get("kind")
     if not legacy_kind:
         # No header and no legacy metadata: nothing we can do.
-        warnings.append(
+        reject("unsupported_shape",
             f"Warning: OCL constraint {element_id} has no recognisable header "
             f"and no legacy 'kind' field; skipping."
         )
         return None
     if legacy_kind not in ("invariant", "precondition", "postcondition"):
-        warnings.append(
+        reject("unsupported_shape",
             f"Warning: OCL constraint {element_id} has unknown kind {legacy_kind!r}; skipping."
         )
         return None
@@ -754,13 +853,13 @@ def _ocl_box_to_full_text(
             linked_class_id = source_id
             break
     if linked_class_id is None:
-        warnings.append(
+        reject("detached",
             f"Warning: legacy body-only OCL constraint {element_id} is not linked to a class; skipping."
         )
         return None
     linked_class = class_id_to_class.get(linked_class_id)
     if linked_class is None:
-        warnings.append(
+        reject("detached",
             f"Warning: legacy body-only OCL constraint {element_id} links to non-class element "
             f"{linked_class_id}; skipping."
         )
@@ -770,13 +869,13 @@ def _ocl_box_to_full_text(
     if legacy_kind in ("precondition", "postcondition"):
         target_method_id = element.get("targetMethodId")
         if not target_method_id:
-            warnings.append(
+            reject("unknown_method",
                 f"Warning: legacy {legacy_kind} constraint {element_id} has no targetMethodId; skipping."
             )
             return None
         method = method_id_to_method.get(target_method_id)
         if method is None:
-            warnings.append(
+            reject("unknown_method",
                 f"Warning: legacy {legacy_kind} constraint {element_id} targets missing method "
                 f"{target_method_id}; skipping."
             )
@@ -791,7 +890,7 @@ def _ocl_box_to_full_text(
             method=method,
         )
     except ValueError as e:
-        warnings.append(f"Warning: legacy {legacy_kind} constraint {element_id}: {e}")
+        reject("unsupported_shape", f"Warning: legacy {legacy_kind} constraint {element_id}: {e}")
         return None
 
 
@@ -802,6 +901,9 @@ def _process_constraints(
     all_warnings: list[str],
     class_id_to_class: dict[str, Class],
     method_id_to_method: dict[str, Method],
+    *,
+    diagram_id: Optional[str] = None,
+    diagram_title: str = "",
 ) -> None:
     """Parse every ``ClassOCLConstraint`` element and attach the results.
 
@@ -815,8 +917,48 @@ def _process_constraints(
     transparently lifted to full text via :func:`_ocl_box_to_full_text`.
 
     Malformed OCL, unresolved methods, and duplicate names are skipped
-    with a warning rather than aborting conversion.
+    with a warning rather than aborting conversion. Their original text is
+    retained as a structured conversion issue, never inserted into executable
+    constraints or silently treated as an implemented rule.
     """
+    conversion_issues: list[dict[str, Any]] = []
+    domain_model.conversion_issues = conversion_issues
+
+    def provenance(element_id: str, element: dict, details: Optional[dict] = None) -> dict:
+        details = details or {}
+        original_text = element.get("constraint") or ""
+        context = details.get("context")
+        if context is None:
+            for rel in relationships.values():
+                if rel.get("type") != "ClassOCLLink":
+                    continue
+                ends = [(rel.get(end) or {}).get("element") for end in ("source", "target")]
+                if element_id not in ends:
+                    continue
+                linked = next((class_id_to_class[e] for e in ends if e in class_id_to_class), None)
+                if linked is not None:
+                    context = linked.name
+                    break
+        target_method = method_id_to_method.get(element.get("targetMethodId"))
+        source = {
+            "diagram_id": diagram_id,
+            "diagram_title": diagram_title or domain_model.name,
+            "element_id": element_id,
+            "block_index": details.get("block_index", 1),
+        }
+        expression = details.get("expression", original_text)
+        identity = json.dumps([source, expression], sort_keys=True, ensure_ascii=False)
+        return {
+            "id": "ocl-conversion-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20],
+            "category": "ocl",
+            "source": source,
+            "context": context,
+            "method": details.get("method") or (target_method.name if target_method else None),
+            "name": details.get("name") or element.get("constraintName"),
+            "kind": details.get("kind") or element.get("kind"),
+            "expression": expression,
+            "original_text": original_text,
+        }
     # Build ``(class_name, method_name) -> Method`` index for pre/post
     # routing. Walks the inheritance chain so a constraint written as
     # ``context Sub::base_method() pre: ...`` can still resolve to a
@@ -865,7 +1007,7 @@ def _process_constraints(
     # the order constraints were encountered in ``elements.items()``. With
     # a set, "first wins" would silently become "any-wins" on Python
     # versions whose set ordering differs from the insertion order.
-    extra_invariants: list = []
+    extra_invariants: list[tuple[Any, dict]] = []
     counter = 0
     for element_id, element in elements.items():
         if element.get("type") != "ClassOCLConstraint":
@@ -874,6 +1016,9 @@ def _process_constraints(
         text = _ocl_box_to_full_text(
             element, element_id, elements, relationships,
             class_id_to_class, method_id_to_method, all_warnings,
+            on_rejection=lambda code, reason: conversion_issues.append({
+                **provenance(element_id, element), "code": code, "reason": reason,
+            }),
         )
         if not text:
             continue
@@ -885,9 +1030,12 @@ def _process_constraints(
         description = element.get("description")
 
         counter += 1
+        parser_issues: list[dict] = []
+        source_blocks: dict[int, dict] = {}
         try:
             routing, warnings = process_ocl_constraints(
                 text, domain_model, counter, default_description=description,
+                issues=parser_issues, source_blocks=source_blocks,
             )
         except (BOCLSyntaxError, ValueError) as e:
             # ``process_ocl_constraints`` already swallows most parse errors
@@ -895,28 +1043,40 @@ def _process_constraints(
             # narrow set (header-resolve errors, malformed BOCL the
             # inner parser re-raised). Programmer errors (KeyError,
             # AttributeError, etc.) deliberately propagate.
-            all_warnings.append(f"Warning: Error processing OCL element {element_id}: {e}")
+            reason = f"Warning: Error processing OCL element {element_id}: {e}"
+            all_warnings.append(reason)
+            conversion_issues.append({**provenance(element_id, element), "code": "parse_error", "reason": reason})
             continue
         all_warnings.extend(warnings)
+        for issue in parser_issues:
+            conversion_issues.append({
+                **provenance(element_id, element, issue),
+                "code": issue["code"], "reason": issue["reason"],
+            })
 
         for kind, constraint, class_name, method_name in routing:
+            origin = provenance(element_id, element, source_blocks.get(id(constraint)))
             try:
                 if kind == "invariant":
-                    extra_invariants.append(constraint)
+                    extra_invariants.append((constraint, origin))
                 else:
                     method = method_by_qualified_name.get((class_name, method_name)) if method_name else None
                     if method is None:
-                        all_warnings.append(
+                        reason = (
                             f"Warning: {kind} '{constraint.name}' targets unknown method "
                             f"{class_name}::{method_name}; skipping."
                         )
+                        all_warnings.append(reason)
+                        conversion_issues.append({**origin, "code": "unknown_method", "reason": reason})
                         continue
                     if kind == "precondition":
                         method.add_pre(constraint)
                     else:  # postcondition
                         method.add_post(constraint)
             except ValueError as e:
-                all_warnings.append(f"Warning: Could not attach {kind} '{constraint.name}': {e}")
+                reason = f"Warning: Could not attach {kind} '{constraint.name}': {e}"
+                all_warnings.append(reason)
+                conversion_issues.append({**origin, "code": "attachment_error", "reason": reason})
 
     # Combine with any existing constraints already on the domain model.
     # ``DomainModel.constraints`` rejects duplicate names with a ``ValueError``,
@@ -926,16 +1086,160 @@ def _process_constraints(
     # occurrence and emit a warning for each subsequent collision rather
     # than crashing the whole conversion.
     by_name: dict[str, Any] = {c.name: c for c in domain_model.constraints}
-    for c in extra_invariants:
+    for c, origin in extra_invariants:
         if c.name in by_name and by_name[c.name] is not c:
-            all_warnings.append(
+            reason = (
                 f"Warning: duplicate constraint name {c.name!r} across OCL boxes; "
                 f"keeping the first occurrence."
             )
+            all_warnings.append(reason)
+            conversion_issues.append({**origin, "code": "duplicate_name", "reason": reason})
             continue
         by_name[c.name] = c
     domain_model.ocl_warnings = all_warnings
     domain_model.constraints = set(by_name.values())
+
+
+def _looks_class_derived_role(
+    role_name: str,
+    suffix_tag: str,
+    target_class_name: str,
+    end_property: Property,
+    class_names: set[str],
+) -> bool:
+    """Heuristically decide whether ``role_name`` *looks like* an auto-generated
+    class-derived role name (so a mismatch with the target class is suspicious),
+    as opposed to an intentional domain alias (e.g. ``borrower`` on a ``Member``
+    end) which the user clearly chose on purpose.
+
+    The decision is intentionally conservative -- the goal is a useful
+    informational signal, not perfect classification. Heuristics:
+
+    1. Common verb-derived aliases (``assignee``, ``owner``, ``creator``, ...)
+       are treated as intentional and *never* trigger the warning.
+    2. If the singular stem of the role name is a substring of any class name
+       in the model (case-insensitive), the role is probably class-derived.
+       For example, ``members`` (stem ``member``) is class-derived if any
+       class name contains ``member``.
+    3. If the role name is plural (``suffix_tag != ""``) *and* the end's
+       multiplicity allows many (max > 1), the plural form mirrors the
+       auto-naming pattern produced by both the JSON converter
+       (``Class.name.lower()``) and a likely-pluralised refinement -- treat
+       it as class-derived.
+    """
+    # 1. Skip well-known intentional aliases.
+    if role_name.lower() in _INTENTIONAL_ROLE_ALIASES:
+        return False
+
+    stem, _ = _stem_role_name(role_name)
+    stem_lower = stem.lower()
+    if not stem_lower:
+        return False
+
+    # A role whose singular stem is contained in the TARGET class name
+    # (e.g. ``items`` -> ``OrderItem``, ``members`` -> ``TeamMember``) is a
+    # legitimate semantic collection role for a compound-named class, not a
+    # stale leftover from a rename — the stem being INSIDE the target is the
+    # opposite of "stale". Stay quiet. A genuine stale role (``members`` after
+    # renaming ``Member`` -> ``User``) has a stem NOT contained in the target
+    # (``member`` not in ``user``), so it still falls through and warns.
+    if stem_lower in target_class_name.lower():
+        return False
+
+    # 2. Stem is a substring of any class name in the model -> probably
+    # derived from a class name (possibly a renamed class that left behind
+    # this role, or a class whose name partly overlaps).
+    for cls_name in class_names:
+        if not cls_name:
+            continue
+        if stem_lower in cls_name.lower():
+            # Skip the trivial case where the stem matches the *target*
+            # class -- that's already handled by ``_role_name_matches_class``
+            # and would never reach this helper.
+            if cls_name.lower() == target_class_name.lower():
+                continue
+            return True
+
+    # 3. Plural role name on a ``*-many`` end mirrors auto-naming
+    # conventions like ``members`` for a ``0..*`` end pointing to ``Member``.
+    if suffix_tag:
+        try:
+            max_mult = getattr(end_property.multiplicity, "max", 1)
+        except Exception:
+            max_mult = 1
+        if isinstance(max_mult, int) and max_mult > 1:
+            return True
+
+    return False
+
+
+def _warn_potentially_stale_role_names(
+    domain_model: DomainModel,
+    all_warnings: list[str],
+) -> None:
+    """Walk every association and warn when an end's role name *looks* stale.
+
+    Background: when the visual editor renames a class, it sends a fresh
+    JSON model to this processor, which rebuilds the BUML model from scratch
+    via ``Class.__init__`` -- bypassing the role-name propagation that the
+    ``Class.name`` *setter* performs in the metamodel (see
+    ``_role_name_matches_class`` and its caller in ``structural.py``). If
+    the editor (or any other JSON producer) forgot to update role names in
+    the relationship JSON to track the rename, the BUML model ends up with
+    stale role names like ``members`` on an end pointing to ``User`` (after
+    a Member->User rename).
+
+    This pass is **informational only**: we *log a warning* but do **NOT**
+    auto-rename. Auto-renaming would clobber intentional aliases such as
+    ``borrower`` on a ``Member`` end -- the JSON-side rename (e.g.
+    ``probe_evolution.rename_class``) is the safer point to fix the
+    rename, and a human reviewer can act on the warning when it fires.
+
+    The role-vs-class matching rule mirrors the metamodel's
+    ``_role_name_matches_class`` heuristic exactly (case-insensitive stem
+    compare, conservative English plural stripping). The "looks
+    class-derived" judgment that filters out intentional aliases is in
+    ``_looks_class_derived_role``.
+    """
+    class_names = {
+        t.name for t in domain_model.types
+        if isinstance(t, Class)
+    }
+    for association in domain_model.associations:
+        for end in association.ends:
+            target = end.type
+            if not isinstance(target, Class):
+                continue
+            role_name = end.name
+            if not role_name:
+                continue
+
+            matches, _ = _role_name_matches_class(role_name, target.name)
+            if matches:
+                # Role name already aligns with the target class -- no
+                # rename has gone stale here.
+                continue
+
+            stem, suffix_tag = _stem_role_name(role_name)
+            if not _looks_class_derived_role(
+                role_name, suffix_tag, target.name, end, class_names,
+            ):
+                # Probably an intentional alias (e.g. ``borrower`` ->
+                # ``Member``). Stay quiet.
+                continue
+
+            msg = (
+                f"Association '{association.name}' end role '{role_name}' "
+                f"(stem '{stem}') points to class '{target.name}' but the "
+                f"role name does not match the target class name. This "
+                f"often indicates a stale role name left behind by a "
+                f"class rename in the visual editor (the editor rebuilds "
+                f"the model via Class.__init__, which bypasses the role "
+                f"propagation in Class.name). Review and update the role "
+                f"in the diagram JSON if appropriate."
+            )
+            logger.warning(msg)
+            all_warnings.append(msg)
 
 
 def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
@@ -989,11 +1293,20 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
         elements, domain_model, all_warnings,
     )
 
+    # Stale-role-name detection is DISABLED: the heuristic cannot tell a role
+    # left behind by an editor rename from a legitimate collection role
+    # (``tasks`` on ``TodoItem`` vs ``members`` on ``User``), so it flooded
+    # false positives. The real fix is propagating renames into the
+    # relationship JSON's ``role`` fields at the editor layer.
+    # ``_warn_potentially_stale_role_names`` / ``_looks_class_derived_role``
+    # are retained below (unused) in case that reliable path is built later.
+
     # Process OCL constraints (must run AFTER methods are attached so that
     # parse_ocl can resolve method-return-types and property navigation).
     _process_constraints(
         elements, relationships, domain_model, all_warnings,
         class_id_to_class, method_id_to_method,
+        diagram_id=json_data.get("id"), diagram_title=json_data.get("title", ""),
     )
 
     # Process comments and apply them to class or domain model metadata

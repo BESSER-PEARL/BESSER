@@ -5,13 +5,13 @@ These tests cover the translation rules implemented in
 ``besser/generators/pydantic_classes/ocl_utils.py`` and the corresponding
 template branches:
 
-* ``matches('<regex>')`` becomes a ``re.match`` call (OCL ``matches`` is not a
+* ``matches('<regex>')`` becomes a ``re.fullmatch`` call (OCL ``matches`` is not a
   Python string method, so emitting it verbatim produced non-working code);
 * error messages are emitted through ``repr()`` so a regex containing quotes or
   backslashes can never break the generated file's syntax;
 * constraints over two or more properties of the same class become a
   ``@model_validator(mode='after')`` instead of being dropped;
-* constraints over collections/relationships leave a NOTE comment behind
+* constraints over collections/relationships leave a TODO comment behind
   instead of being dropped silently or emitting broken code;
 * whatever happens, the generated ``pydantic_classes.py`` compiles.
 """
@@ -24,6 +24,7 @@ import sys
 import uuid
 
 import pytest
+from pydantic import ValidationError
 
 from besser.BUML.metamodel.structural import (
     Class, Constraint, DomainModel, Property,
@@ -123,7 +124,7 @@ def booking_model(booking_class, room_class):
 class TestMatchesTranslation:
     """``self.<prop>.matches('<regex>')`` must become a real Python expression."""
 
-    def test_matches_becomes_re_match(self, player_class, player_team_domain_model):
+    def test_matches_becomes_re_fullmatch(self, player_class, player_team_domain_model):
         result = parse_single(
             player_team_domain_model, player_class,
             "context Player inv ValidName: self.name.matches('^[A-Z][a-z]+$')",
@@ -133,7 +134,7 @@ class TestMatchesTranslation:
         assert result is not None
         assert not result.get('skipped')
         assert result['property'] == 'name'
-        assert result['python_expression'] == "re.match(r'^[A-Z][a-z]+$', v) is not None"
+        assert result['python_expression'] == "re.fullmatch(r'^[A-Z][a-z]+$', v) is not None"
         assert result['uses_re'] is True
         # The OCL operation must not leak into the generated Python.
         assert '.matches(' not in result['python_expression']
@@ -147,7 +148,7 @@ class TestMatchesTranslation:
         )
 
         assert result['python_expression'] == (
-            r"re.match(r'^[a-z]+@[a-z]+\.[a-z]{2,}$', v) is not None"
+            r"re.fullmatch(r'^[a-z]+@[a-z]+\.[a-z]{2,}$', v) is not None"
         )
 
     def test_matches_message_is_readable(self, player_class, player_team_domain_model):
@@ -161,11 +162,19 @@ class TestMatchesTranslation:
         # message_repr must evaluate back to the message, unchanged.
         assert eval(result['message_repr']) == result['message']  # noqa: S307
 
-    def test_generated_regex_validator_works(self, player_class, player_team_domain_model, tmpdir):
+    @pytest.mark.parametrize("regex,valid_name,invalid_names", [
+        (r"^[A-Z][a-z]+$", "Alice", ["alice1", "Alice\n", "Alice\r\n"]),
+        (r"[A-Z][a-z]+", "Alice", ["Alice123", "Alice\n", "!Alice"]),
+        (r"^\+?[0-9]{7,15}$", "+123456789", ["+123456789\n", "+123456789\r\n", "+123456789x"]),
+        (r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$", "a@b.com", ["a@b.com\n", "a@b.com\r\n", "a@b.com "]),
+    ])
+    def test_generated_regex_validator_works(
+        self, player_class, player_team_domain_model, tmpdir, regex, valid_name, invalid_names,
+    ):
         player_team_domain_model.constraints = {
             make_constraint(
                 player_class,
-                "context Player inv ValidName: self.name.matches('^[A-Z][a-z]+$')",
+                f"context Player inv ValidName: self.name.matches('{regex}')",
                 name="ValidName",
             )
         }
@@ -177,11 +186,12 @@ class TestMatchesTranslation:
         module = load_generated(path)
         player_create = module.PlayerCreate
 
-        valid = player_create(age=30, name="Alice", salary=1.0, active=True, jerseyNumber=7)
-        assert valid.name == "Alice"
+        valid = player_create(age=30, name=valid_name, salary=1.0, active=True, jerseyNumber=7)
+        assert valid.name == valid_name
 
-        with pytest.raises(Exception):
-            player_create(age=30, name="alice1", salary=1.0, active=True, jerseyNumber=7)
+        for invalid_name in invalid_names:
+            with pytest.raises(ValidationError):
+                player_create(age=30, name=invalid_name, salary=1.0, active=True, jerseyNumber=7)
 
     def test_no_re_import_when_unused(self, player_class, player_team_domain_model, tmpdir):
         player_team_domain_model.constraints = {
@@ -214,7 +224,7 @@ class TestMessageQuoting:
             player_team_domain_model, player_class, expression, name="NameWithApostrophe"
         )
 
-        assert result['python_expression'] == "re.match(r\"^[A-Za-z']+$\", v) is not None"
+        assert result['python_expression'] == "re.fullmatch(r\"^[A-Za-z']+$\", v) is not None"
         assert result['message'] == "name must match '^[A-Za-z']+$'"
         assert eval(result['message_repr']) == result['message']  # noqa: S307
 
@@ -400,12 +410,14 @@ class TestSkippedConstraints:
         path, source = generate(booking_model, tmpdir.mkdir("output"))
 
         py_compile.compile(path, doraise=True)
-        assert (
-            "# NOTE: OCL constraint 'NumberOfGuestsDoesNotExceedRoomCapacity' involves "
-            "collections/relationships and is not enforced by this Create model."
-        ) in source
-        # Nothing was emitted that could reference the collection at runtime.
-        assert "->" not in source
+        assert "# TODO: OCL constraint 'NumberOfGuestsDoesNotExceedRoomCapacity' is NOT enforced in this file." in source
+        assert "not transpilable" in source
+        assert "router handler" in source
+        # Nothing was emitted that could reference the collection at runtime;
+        # the only "->" left is the verbatim OCL inside the comment.
+        for line in source.splitlines():
+            if "->" in line:
+                assert line.lstrip().startswith("#"), line
         assert "field_validator('nights')" not in source
 
     def test_map_defaults_to_field_validators_only(self, booking_class, booking_model):
@@ -491,9 +503,9 @@ class TestGeneratedFileAlwaysCompiles:
 
         py_compile.compile(path, doraise=True)
         assert "@model_validator(mode='after')" in source
-        assert "re.match(r'^[0-9]{1,4}$', v) is not None" in source
+        assert "re.fullmatch(r'^[0-9]{1,4}$', v) is not None" in source
         assert "if not (v >= 1):" in source
-        assert "# NOTE: OCL constraint 'Capacity'" in source
+        assert "# TODO: OCL constraint 'Capacity' is NOT enforced in this file." in source
 
     @pytest.mark.parametrize("expression", [
         "context Player inv A: self.name.matches('it''s broken')",

@@ -1,4 +1,18 @@
-{% macro link_attr_names(assoc_class_name) %}({% for attribute in assoc_classes[assoc_class_name].attributes %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
+{%- macro _client_supplied(attr) -%}
+{#- True when the Create/Update schema actually carries this attribute.
+    Calls the SAME function the schema uses (structural_utils.
+    is_server_owned_attribute) rather than restating the rule: the surrogate
+    `id`, the audit timestamps and any derived attribute are produced by the
+    server and are absent from the schema, so reading one off the payload
+    raises AttributeError and every create returns 500. This macro used to
+    carry its own copy of the rule with a comment saying it must mirror the
+    schema's; the two drifted the moment derived attributes were added. -#}
+{{ not is_server_owned_attribute(attr) }}
+{%- endmacro -%}
+{#- Integer keys match digits only, so /<link>/{id}/<relationship>/ routes of the same
+    association class are not captured by the pair route (and answered 422). #}
+{%- macro int_segment(end) -%}{% if pk_types.get(end.type_name, 'int') == 'int' %}:int{% endif %}{%- endmacro -%}
+{% macro link_attr_names(assoc_class_name, include_ids=true) %}({% for attribute in assoc_classes[assoc_class_name].attributes if include_ids or not attribute.is_id %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
 {# Rendered once per class. Context: class (the owning class), classes (all classes in
    the model), http_methods, nested_creations, fkeys, model, pk_types, assoc_classes,
    assoc_by_association. Mirrors the per-class block that used to live inline in the
@@ -294,7 +308,7 @@ def search_{{ class.name | lower}}(
 {% set ac_ends = assoc_classes[class.name].ends %}
 {# An association class is keyed by the foreign keys of its two association ends, so it is
    addressed as /{{ class.name | lower }}/{<{{ ac_ends[0].name }} id>}/{<{{ ac_ends[1].name }} id>}/ #}
-@router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+@router.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{{ int_segment(ac_ends[0]) }}{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{{ int_segment(ac_ends[1]) }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def get_{{ class.name | lower}}({{ ac_ends[0].name }}_id: {{ pk_types.get(ac_ends[0].type_name, 'int') }}, {{ ac_ends[1].name }}_id: {{ pk_types.get(ac_ends[1].type_name, 'int') }}, database: Session = Depends(get_db)) -> {{ class.name }}:
     """Get the {{ class.name }} link between a {{ ac_ends[0].type_name }} and a {{ ac_ends[1].type_name }}"""
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter(
@@ -368,7 +382,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         {{ end.name }}_id={{ end.name }}_target,
         {% endfor %}
         {% for attribute in assoc_classes[class.name].attributes %}
-        {{ attribute.name }}={{ class.name | lower}}_data.{{ attribute.name }}{% if attribute.is_enum %}.value{% endif %}{% if not loop.last %},{% endif %}
+        {{ attribute.name }}={{ class.name | lower}}_data.{{ attribute.name }}{% if attribute.is_enum %}.name{% endif %}{% if not loop.last %},{% endif %}
         {% endfor %}
         )
 
@@ -388,7 +402,9 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         db_{{x[2]}} = database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{ class.name | lower}}_data.{{x[2]}}).first()
         if not db_{{x[2]}}:
             raise HTTPException(status_code=400, detail="{{x[0]}} not found")
-    {%if x[1] == 1 %}
+    {# A deferred FK is optional on the create schema so a table cycle can
+       be broken; demanding it here would reinstate the deadlock. #}
+    {%if x[1] == 1 and x[3] not in deferred_fks %}
     else:
         raise HTTPException(status_code=400, detail="{{x[0]}} ID is required")
     {% endif -%}
@@ -417,7 +433,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         db_{{plns.end2.name}} = database.query({{plns.end2.type.name}}).filter({{plns.end2.type.name}}.{{ plns.end2.type.name | pk }} == {{ class.name | lower}}_data.{{plns.end2.name}}).first()
         if not db_{{plns.end2.name}}:
             raise HTTPException(status_code=400, detail="{{plns.end2.type.name}} not found")
-    {%if plns.end2.multiplicity.min == 1 %}
+    {%if plns.end2.multiplicity.min == 1 and association.name not in deferred_fks %}
     else:
         raise HTTPException(status_code=400, detail="{{plns.end2.type.name}} ID is required")
     {% endif -%}
@@ -476,13 +492,18 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {# Collect all constructor arguments. A surrogate `id` is server-owned
        (autoincrement PK) and is absent from the Create schema, so it must never
        be read off the payload. A PK the user declared (is_id) — including one
-       named `id` — is client-supplied and is read like any other field. #}
+       named `id` — is client-supplied and is read like any other field.
+       Enum attributes append `.name`, not `.value`: SQLAlchemy's Enum(PyEnum)
+       binds/persists by the member's name unless values_callable is set (it
+       isn't here), and `.value` in a write context is what taught the LLM to
+       write `.value` in READ-direction comparisons too, where it is always
+       false/true (a loaded Enum column holds the member, never the string). #}
     {% set ns_args = namespace(args=[]) %}
     {% for parent in all_parents %}
     {% for attrparent in parent.attributes %}
-    {% if not (attrparent.name == 'id' and not attrparent.is_id) %}
+    {% if _client_supplied(attrparent) | trim == 'True' %}
     {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
-    {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name ~ '.value') %}
+    {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name ~ '.name') %}
     {% else %}
     {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name) %}
     {% endif %}
@@ -490,9 +511,9 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endfor %}
     {% endfor %}
     {% for attribute in class.attributes %}
-    {% if not (attribute.name == 'id' and not attribute.is_id) %}
+    {% if _client_supplied(attribute) | trim == 'True' %}
     {% if attribute.type.__class__.__name__ == 'Enumeration' %}
-    {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name ~ '.value') %}
+    {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name ~ '.name') %}
     {% else %}
     {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name) %}
     {% endif %}
@@ -542,7 +563,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         )
 
     database.add(db_{{ class.name | lower}})
-    database.commit()
+    database.flush()
     database.refresh(db_{{ class.name | lower}})
 
     {# Set one-to-many relationships if provided #}
@@ -560,7 +581,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }}.in_({{ class.name | lower }}_data.{{x[2]}})).update(
             {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.{{ pk }}{{"}"}}, synchronize_session=False
         )
-        database.commit()
+        database.flush()
     {% endfor %}
     {% endif %}
 
@@ -575,7 +596,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
                 {{x[3]}}_id=link_target(link),
                 **link_attrs(link, {{ link_attr_names(x[4]) }})
             ))
-        database.commit()
+        database.flush()
     {% else %}
     if {{x[3]}}_payload is not None:
         database.add({{x[4]}}(
@@ -583,7 +604,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             {{x[3]}}_id=link_target({{x[3]}}_payload),
             **link_attrs({{x[3]}}_payload, {{ link_attr_names(x[4]) }})
         ))
-        database.commit()
+        database.flush()
     {% endif %}
     {% endfor %}
     {% endif %}
@@ -596,7 +617,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             # Create the association
             association = {{x[4]}}.insert().values({{ x[2] }}=db_{{ class.name | lower }}.{{ pk }}, {{ x[3] }}=db_{{ x[1]|lower }}.{{ x[1] | pk }})
             database.execute(association)
-            database.commit()
+            database.flush()
     {% endfor -%}
     {% endif %}
 
@@ -613,15 +634,15 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             else:
                 db_{{x[1] | lower}} = {{x[1]}}(
                     {%for attr in lk_class.attributes%}
-                    {{attr.name}}=x.{{attr.name}}{% if attr.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
+                    {{attr.name}}=x.{{attr.name}}{% if attr.type.__class__.__name__ == 'Enumeration' %}.name{% endif %}{% if not loop.last %}, {% endif %}
                     {%endfor%}
                 )
             database.add(db_{{x[1] | lower}})
-            database.commit()
+            database.flush()
             # Create the association
             association = {{x[4]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.{{ pk }}, {{ x[1]|lower }}_id=db_{{ x[1]|lower }}.{{ x[1] | pk }})
             database.execute(association)
-            database.commit()
+            database.flush()
             {% endif %}
             {%endfor%}
     {% endfor %}
@@ -650,8 +671,13 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
         {% endfor %}
     }
+    {# One commit for the whole create: a raise above leaves nothing behind. #}
+    database.commit()
+    database.refresh(db_{{ class.name | lower}})
     return response_data
     {% else %}
+    database.commit()
+    database.refresh(db_{{ class.name | lower}})
     return db_{{ class.name | lower}}
     {% endif %}
 {% endif %}
@@ -662,6 +688,28 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
 @router.post("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
 async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create], database: Session = Depends(get_db)) -> dict:
     """Create multiple {{ class.name }} entities at once"""
+    {# Bulk construction below only persists scalar attributes and owned FKs.
+       Never silently discard required or supplied collections/link rows. Run
+       this preflight before adding any item so refusal cannot partially write. #}
+    {% set bulk_relations = namespace(required=false, fields=[]) %}
+    {% for x in ns.end_name_multiple %}
+        {% if x[5] > 0 %}{% set bulk_relations.required = true %}{% endif %}
+        {% do bulk_relations.fields.append(x[3]) %}
+    {% endfor %}
+    {% for x in ns.assoc_links %}
+        {% if x[6] > 1 and x[5] > 0 %}{% set bulk_relations.required = true %}{% endif %}
+        {% do bulk_relations.fields.append(x[3]) %}
+    {% endfor %}
+    {% for x in ns.one_to_many %}
+        {% do bulk_relations.fields.append(x[2]) %}
+    {% endfor %}
+    {% if bulk_relations.required %}
+    if items:
+        raise HTTPException(status_code=422, detail="Bulk creation of {{ class.name }} with required relationships is not supported; use POST /{{ class.name | lower }}/ to validate and persist its relationships")
+    {% elif bulk_relations.fields %}
+    if any(getattr(item, field, None) for item in items for field in {{ bulk_relations.fields | unique | list }}):
+        raise HTTPException(status_code=422, detail="Bulk creation of {{ class.name }} with relationships is not supported; use POST /{{ class.name | lower }}/ to validate and persist its relationships")
+    {% endif %}
     created_items = []
     errors = []
 
@@ -671,7 +719,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% if ns.end_name_one %}
             {% for x in ns.end_name_one %}
             {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
-            {% if has_fk and x[1] == 1 %}
+            {% if has_fk and x[1] == 1 and x[3] not in deferred_fks %}
             if not item_data.{{x[2]}}:
                 raise ValueError("{{x[0]}} ID is required")
             {% endif -%}
@@ -694,7 +742,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
                     {% endif %}
                     {%- if (plns.end1.multiplicity.max == 1 or plns.end1.multiplicity.max > 1) and plns.end2.multiplicity.max == 1 -%}
                         {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name and association.name not in assoc_by_association) -%}
-                        {% if parent_has_fk and plns.end2.multiplicity.min == 1 %}
+                        {% if parent_has_fk and plns.end2.multiplicity.min == 1 and association.name not in deferred_fks %}
             if not item_data.{{plns.end2.name}}:
                 raise ValueError("{{plns.end2.type.name}} ID is required")
                         {% endif -%}
@@ -707,9 +755,9 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% set ns_bulk_args = namespace(args=[]) %}
             {% for parent in all_parents %}
             {% for attrparent in parent.attributes %}
-            {% if not (attrparent.name == 'id' and not attrparent.is_id) %}
+            {% if _client_supplied(attrparent) | trim == 'True' %}
             {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
-            {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name ~ '.value') %}
+            {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name ~ '.name') %}
             {% else %}
             {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name) %}
             {% endif %}
@@ -717,9 +765,9 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% endfor %}
             {% endfor %}
             {% for attribute in class.attributes %}
-            {% if not (attribute.name == 'id' and not attribute.is_id) %}
+            {% if _client_supplied(attribute) | trim == 'True' %}
             {% if attribute.type.__class__.__name__ == 'Enumeration' %}
-            {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name ~ '.value') %}
+            {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name ~ '.name') %}
             {% else %}
             {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name) %}
             {% endif %}
@@ -788,6 +836,12 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
 @router.delete("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
 async def bulk_delete_{{ class.name | lower}}(ids: list[{{ pk_types.get(class.name, 'int') }}], database: Session = Depends(get_db)) -> dict:
     """Delete multiple {{ class.name }} entities at once"""
+    {% if ns.lower_bound_guards %}
+    # Aggregate deletion must account for every related lower bound. Until it
+    # shares that validation, use the guarded individual delete endpoint.
+    if ids:
+        raise HTTPException(status_code=409, detail="Bulk deletion of {{ class.name }} can violate required relationships and is not supported; use the individual DELETE /{{ class.name | lower }}/ endpoint")
+    {% endif %}
     deleted_count = 0
     not_found = []
 
@@ -812,7 +866,7 @@ async def bulk_delete_{{ class.name | lower}}(ids: list[{{ pk_types.get(class.na
 {% if "PUT" in http_methods %}
 {% if is_assoc_class %}
 {% set ac_ends = assoc_classes[class.name].ends %}
-@router.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+@router.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{{ int_segment(ac_ends[0]) }}{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{{ int_segment(ac_ends[1]) }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def update_{{ class.name | lower }}({{ ac_ends[0].name }}_id: {{ pk_types.get(ac_ends[0].type_name, 'int') }}, {{ ac_ends[1].name }}_id: {{ pk_types.get(ac_ends[1].type_name, 'int') }}, {{ class.name | lower }}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
     """Update the attributes of the {{ class.name }} link identified by both foreign keys"""
     db_{{ class.name | lower }} = database.query({{ class.name }}).filter(
@@ -822,8 +876,8 @@ async def update_{{ class.name | lower }}({{ ac_ends[0].name }}_id: {{ pk_types.
     if db_{{ class.name | lower }} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
-    {% for attribute in assoc_classes[class.name].attributes %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.is_enum %}.value{% endif %})
+    {% for attribute in assoc_classes[class.name].attributes if not attribute.is_id %}
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.is_enum %}.name{% endif %})
     {% endfor %}
     database.commit()
     database.refresh(db_{{ class.name | lower }})
@@ -840,17 +894,19 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
        it), and a surrogate `id` (named `id` but not declared is_id) is
        server-owned and absent from the Create schema. -#}
     {# Inherited attributes are part of the entity too (joined-table inheritance):
-       an Employee's last_name lives on Person and must be updatable here #}
+       an Employee's last_name lives on Person and must be updatable here.
+       Enum attributes append `.name` here too - see the create endpoint above
+       for why (not `.value`, even though every literal's value equals its name). #}
     {% for parent in all_parents %}
     {% for attribute in parent.attributes %}
-    {% if attribute.name != pk and not (attribute.name == 'id' and not attribute.is_id) %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
+    {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.name{% endif %})
     {% endif %}
     {% endfor %}
     {% endfor %}
     {% for attribute in class.attributes %}
-    {% if attribute.name != pk and not (attribute.name == 'id' and not attribute.is_id) %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
+    {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.name{% endif %})
     {% endif %}
     {% endfor %}
     {# Update foreign key relationships -#}
@@ -941,7 +997,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
                     **link_attrs(link, {{ link_attr_names(x[4]) }})
                 ))
             else:
-                for link_attr_name, link_attr_value in link_attrs(link, {{ link_attr_names(x[4]) }}).items():
+                for link_attr_name, link_attr_value in link_attrs(link, {{ link_attr_names(x[4], include_ids=false) }}).items():
                     setattr(link_row, link_attr_name, link_attr_value)
     {% endfor %}
     {% endif %}
@@ -1013,7 +1069,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
 {% if "DELETE" in http_methods %}
 {% if is_assoc_class %}
 {% set ac_ends = assoc_classes[class.name].ends %}
-@router.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
+@router.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ ac_ends[0].name }}_id{{ int_segment(ac_ends[0]) }}{% raw %}}{% endraw %}/{% raw %}{{% endraw %}{{ ac_ends[1].name }}_id{{ int_segment(ac_ends[1]) }}{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def delete_{{ class.name | lower}}({{ ac_ends[0].name }}_id: {{ pk_types.get(ac_ends[0].type_name, 'int') }}, {{ ac_ends[1].name }}_id: {{ pk_types.get(ac_ends[1].type_name, 'int') }}, database: Session = Depends(get_db)):
     """Delete the {{ class.name }} link identified by both foreign keys"""
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter(
@@ -1290,228 +1346,4 @@ async def get_{{x[2]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{
 {% endfor %}
 {% endif %}
 
-{% endif %}
-
-{# Generate endpoints for class methods #}
-{% if class.methods %}
-############################################
-#   {{ class.name }} Method Endpoints
-############################################
-{% for method in class.methods %}
-{% set clean_name = method.name | clean_method_name %}
-{% set method_params = [] %}
-{% for param in method.parameters %}
-{% set param_type = 'Any' %}
-{% set needs_fk_access = true %}
-{% if param.type.name == 'str' %}{% set param_type = 'str' %}{% set needs_fk_access = false %}
-{% elif param.type.name == 'int' %}{% set param_type = 'int' %}{% set needs_fk_access = false %}
-{% elif param.type.name == 'float' %}{% set param_type = 'float' %}{% set needs_fk_access = false %}
-{% elif param.type.name == 'bool' %}{% set param_type = 'bool' %}{% set needs_fk_access = false %}
-{% elif param.type.name == 'date' %}{% set param_type = 'date' %}{% set needs_fk_access = false %}
-{% elif param.type.name == 'datetime' %}{% set param_type = 'datetime' %}{% set needs_fk_access = false %}
-{% elif param.type.name == 'time' %}{% set param_type = 'time' %}{% set needs_fk_access = false %}
-{% elif param.type.name == 'any' %}{% set needs_fk_access = false %}
-{% else %}{% set param_type = param.type.name %}
-{% endif %}
-{% do method_params.append((param.name, param_type, param.default_value, needs_fk_access)) %}
-{% endfor %}
-
-{% set method_code = "" %}
-{% if method.implementation_type.name == "BAL" %}
-{% set method_code = bal_to_rest(parse_bal(model, class, method.code), class.name) %}
-{% elif method.implementation_type.name == "CODE" %}
-{% set method_code = method.code %}
-{% elif method.implementation_type.name == "NEURAL_NETWORK" %}
-{% set method_code = nn_method_code(method) %}
-{% endif %}
-
-{# Normalize (expand tabs, dedent, compile-gate) the body so a method authored
-   with mixed indentation or invalid Python cannot break the generated app. #}
-{% set method_code = normalize_code(method_code, method.name) %}
-
-{# Detect if method is class-level by checking if it does NOT have 'self' as first param #}
-{% set is_class_method = '(self' not in method_code and '(self,' not in method_code %}
-
-
-{% if "POST" in http_methods %}
-{% if is_class_method %}
-{# Class-level method - no entity ID required #}
-@router.post("/{{ class.name | lower }}/methods/{{ clean_name }}/", response_model=None, tags=["{{ class.name }} Methods"])
-async def {{ class.name | lower }}_{{ clean_name }}(
-    {% if method_params %}
-    params: dict = Body(default=None, embed=True),
-    {% endif %}
-    database: Session = Depends(get_db)
-):
-    """
-    Execute the {{ clean_name }} class method on {{ class.name }}.
-    This method operates on all {{ class.name }} entities or performs class-level operations.
-    {% if method_params %}
-
-    Parameters (pass as JSON body):
-    {% for param in method_params %}
-    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] }}){% endif %}
-    {% endfor %}
-    {% endif %}
-    """
-    try:
-        # Capture stdout to include print outputs in the response
-        import io
-        import sys
-        captured_output = io.StringIO()
-        sys.stdout = captured_output
-
-        {% for imp in cross_router_calls(method_code, class.name) %}
-        from routers.{{ imp[0] }} import {{ imp[1] }}
-        {% endfor %}
-
-        {% if method_params %}
-        # Extract parameters from request body
-        params = params or {}
-        {% for param in method_params %}
-        {% if param[3] %}
-        {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %}), database)
-        {% else %}
-        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {% if param[1] == 'str' %}'{{ param[2] }}'{% else %}{{ param[2] }}{% endif %}{% endif %})
-        {% endif %}
-        {% endfor %}
-        {% endif %}
-
-        {% if method_code %}
-        # Execute the class method body
-        {% set method_lines = method_code.split('\n') %}
-        {% set method_body = '\n'.join(method_lines[1:]) %}
-
-        def _{{ clean_name }}_impl(database{% for param in method_params %}, {{ param[0] }}{% endfor %}):
-{{ method_body | indent(4, first=True) | indent(4, first=True) }}
-
-        result = _{{ clean_name }}_impl(database{% for param in method_params %}, {{ param[0] }}{% endfor %})
-
-        # Restore stdout
-        sys.stdout = sys.__stdout__
-        output = captured_output.getvalue()
-
-        # Handle result serialization
-        if hasattr(result, '__iter__') and not isinstance(result, (str, dict)):
-            # It's a list of entities
-            result_data = []
-            for item in result:
-                if hasattr(item, '__dict__'):
-                    item_dict = {k: v for k, v in item.__dict__.items() if not k.startswith('_')}
-                    result_data.append(item_dict)
-                else:
-                    result_data.append(str(item))
-            result = result_data
-        elif hasattr(result, '__dict__'):
-            result = {k: v for k, v in result.__dict__.items() if not k.startswith('_')}
-
-        return {
-            "class": "{{ class.name }}",
-            "method": "{{ clean_name }}",
-            "status": "executed",
-            "result": result,
-            "output": output if output else None
-        }
-        {% else %}
-        # Method body not defined in the model - be honest: 501, never a
-        # fake "executed" success the client cannot distinguish from real.
-        sys.stdout = sys.__stdout__
-        raise HTTPException(
-            status_code=501,
-            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
-        )
-        {% endif %}
-    except HTTPException:
-        sys.stdout = sys.__stdout__
-        raise
-    except Exception as e:
-        sys.stdout = sys.__stdout__
-        raise HTTPException(status_code=500, detail=f"Method execution failed: {str(e)}")
-
-{% else %}
-{# Instance method - requires entity ID #}
-@router.post("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/methods/{{ clean_name }}/", response_model=None, tags=["{{ class.name }} Methods"])
-async def execute_{{ class.name | lower }}_{{ clean_name }}(
-    {{ class.name | lower }}_id: {{ pk_types.get(class.name, 'int') }},
-    params: dict = Body(default=None, embed=True),
-    database: Session = Depends(get_db)
-):
-    """
-    Execute the {{ clean_name }} method on a {{ class.name }} instance.
-    {% if method_params %}
-
-    Parameters:
-    {% for param in method_params %}
-    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] }}){% endif %}
-    {% endfor %}
-    {% endif %}
-    """
-    # Retrieve the entity from the database
-    _{{ class.name | lower }}_object = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower }}_id).first()
-    if _{{ class.name | lower }}_object is None:
-        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
-
-    # Prepare method parameters
-    {% for param in method_params %}
-    {% if param[3] %}
-    {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %}), database)
-    {% else %}
-    {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {% if param[1] == 'str' %}'{{ param[2] }}'{% else %}{{ param[2] }}{% endif %}{% endif %})
-    {% endif %}
-    {% endfor %}
-
-    # Execute the method
-    try:
-        # Capture stdout to include print outputs in the response
-        import io
-        import sys
-        captured_output = io.StringIO()
-        sys.stdout = captured_output
-
-        {% for imp in cross_router_calls(method_code, class.name) %}
-        from routers.{{ imp[0] }} import {{ imp[1] }}
-        {% endfor %}
-        {% if method_code %}
-        {% set method_lines = method_code.split('\n') %}
-        {% set method_body = '\n'.join(method_lines[1:]) %}
-        {% set method_body_replaced = method_body.replace('self', '_' + class.name|lower + '_object') %}
-
-        async def wrapper(_{{ class.name | lower }}_object):
-{{ method_body_replaced | indent(4, first=True) | indent(4, first=True) }}
-
-        result = await wrapper(_{{ class.name | lower }}_object)
-        # Commit DB
-        database.commit()
-        database.refresh(_{{ class.name | lower }}_object)
-
-        # Restore stdout
-        sys.stdout = sys.__stdout__
-        output = captured_output.getvalue()
-
-        return {
-            "{{ class.name | lower }}_id": {{ class.name | lower }}_id,
-            "method": "{{ clean_name }}",
-            "status": "executed",
-            "result": str(result) if result is not None else None,
-            "output": output if output else None
-        }
-        {% else %}
-        # Method body not defined in the model - be honest: 501, never a
-        # fake "executed" success the client cannot distinguish from real.
-        sys.stdout = sys.__stdout__
-        raise HTTPException(
-            status_code=501,
-            detail="Method '{{ clean_name }}' of {{ class.name }} is modeled but has no implementation",
-        )
-        {% endif %}
-    except HTTPException:
-        sys.stdout = sys.__stdout__
-        raise
-    except Exception as e:
-        sys.stdout = sys.__stdout__
-        raise HTTPException(status_code=500, detail=f"Method execution failed: {str(e)}")
-{% endif %}
-{% endif %}
-
-{% endfor %}
 {% endif %}

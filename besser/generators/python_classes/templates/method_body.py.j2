@@ -1,0 +1,122 @@
+{#-
+  Method body inference for Phase 1 deterministic generators.
+
+  Policy:
+    Emit a minimal, correct body when the method's semantics can be inferred
+    from the class shape (name + attributes + association ends). Otherwise
+    emit `raise NotImplementedError(...)` with a descriptive message rather
+    than a `pass` or `return True` placeholder that lies about behaviour.
+
+  The macros below take a `class` and a `method` from the BUML metamodel and
+  emit one or more lines of method body, already indented relative to the
+  caller (caller is responsible for the function `def` line; macros emit the
+  body lines at column 0 — caller should `indent(8, first=true)` the result).
+-#}
+
+{%- macro _attr_names(class) -%}
+{%- set names = [] -%}
+{%- for a in class.all_attributes() -%}{%- if names.append(a.name) -%}{%- endif -%}{%- endfor -%}
+{{ names }}
+{%- endmacro -%}
+
+{%- macro _find_attr(class, candidate) -%}
+{#- Returns the attribute name if any attribute matches `candidate` (case-insensitive), else empty string. -#}
+{%- set ns = namespace(match='') -%}
+{%- for a in class.all_attributes() -%}
+{%- if ns.match == '' and a.name|lower == candidate|lower -%}{%- set ns.match = a.name -%}{%- endif -%}
+{%- endfor -%}
+{{ ns.match }}
+{%- endmacro -%}
+
+{%- macro _has_attr_of_type(class, type_name) -%}
+{%- set ns = namespace(match='') -%}
+{%- for a in class.all_attributes() -%}
+{%- if ns.match == '' and a.type.name == type_name -%}{%- set ns.match = a.name -%}{%- endif -%}
+{%- endfor -%}
+{{ ns.match }}
+{%- endmacro -%}
+
+{%- macro _primitive_str_attrs(class) -%}
+{#- Returns a list literal of attribute names whose type is a primitive printable. -#}
+{%- set names = [] -%}
+{%- for a in class.all_attributes() -%}
+{%- if a.type.name in ['str', 'int', 'float', 'bool', 'date', 'time', 'datetime'] -%}
+{%- if names.append(a.name) -%}{%- endif -%}
+{%- endif -%}
+{%- endfor -%}
+{{ names }}
+{%- endmacro -%}
+
+{%- macro infer_body(class, method) -%}
+{#- Returns body lines (newline-separated), without leading indentation. The
+    caller should indent the result. The first line carries no indent so that
+    `{{ infer_body(...) | indent(N, first=false) }}` works after a heading
+    spaces prefix, or use `indent(N, first=true)` if the call site is at
+    column 0. -#}
+{%- set mname = method.name -%}
+{%- set lname = mname|lower -%}
+{%- set rtype = method.type.name if method.type else '' -%}
+{%- set nparams = method.parameters|length -%}
+
+{%- if lname == '__str__' or lname == '__repr__' or lname == 'to_string' or lname == 'tostring' -%}
+{%- set prims = [] -%}
+{%- for a in class.all_attributes() -%}
+{%- if a.type.name in ['str', 'int', 'float', 'bool', 'date', 'time', 'datetime'] -%}
+{%- if prims.append(a.name) -%}{%- endif -%}
+{%- endif -%}
+{%- endfor -%}
+{%- if prims -%}
+return f"{{ class.name }}({% for n in prims %}{{ n }}={{ '{' }}self.{{ n }}{{ '}' }}{% if not loop.last %}, {% endif %}{% endfor %})"
+{%- else -%}
+return f"{{ class.name }}(id={{ '{' }}id(self){{ '}' }})"
+{%- endif -%}
+
+{%- elif lname.startswith('get_') and nparams == 0 -%}
+{%- set target = lname[4:] -%}
+{%- set match = _find_attr(class, target)|trim -%}
+{%- if match -%}
+return self.{{ match }}
+{%- else -%}
+raise NotImplementedError("Implement {{ mname }} based on your business rules")
+{%- endif -%}
+
+{%- elif lname.startswith('set_') and nparams == 1 -%}
+{%- set target = lname[4:] -%}
+{%- set match = _find_attr(class, target)|trim -%}
+{%- if match -%}
+self.{{ match }} = {{ method.parameters[0].name }}
+{%- else -%}
+raise NotImplementedError("Implement {{ mname }} based on your business rules")
+{%- endif -%}
+
+{%- elif (lname.startswith('is_') or lname.startswith('has_') or lname.startswith('can_')) and nparams == 0 and (rtype == 'bool' or rtype == '') -%}
+{%- set suffix = lname.split('_', 1)[1] if '_' in lname else '' -%}
+{%- set match = _find_attr(class, suffix)|trim -%}
+{%- if match -%}
+{#- If the attribute is itself bool, return it. Otherwise return truthiness. -#}
+{%- set ns_t = namespace(attr_type='') -%}
+{%- for a in class.all_attributes() -%}
+{%- if a.name == match -%}{%- set ns_t.attr_type = a.type.name -%}{%- endif -%}
+{%- endfor -%}
+{%- if ns_t.attr_type == 'bool' -%}
+return self.{{ match }}
+{%- else -%}
+return bool(self.{{ match }})
+{%- endif -%}
+{%- else -%}
+raise NotImplementedError("Implement {{ mname }} based on your business rules")
+{%- endif -%}
+
+{%- elif lname.startswith('clear_') and nparams == 0 -%}
+{%- set target = lname[6:] -%}
+{%- set match = _find_attr(class, target)|trim -%}
+{%- if match -%}
+self.{{ match }} = None
+{%- else -%}
+raise NotImplementedError("Implement {{ mname }} based on your business rules")
+{%- endif -%}
+
+{%- else -%}
+raise NotImplementedError("Implement {{ mname }} based on your business rules")
+{%- endif -%}
+{%- endmacro -%}

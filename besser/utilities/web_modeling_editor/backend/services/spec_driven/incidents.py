@@ -1,0 +1,104 @@
+"""Persistent incident log for user-facing generation failures.
+
+"A user hit an issue → we have a record."  Every SSE ``error`` event a
+run emits, and every exception that would otherwise close the stream
+silently, is appended as one JSON line to a host-mounted file — so the
+evidence survives container redeploys, which destroy container logs.
+
+Best-effort by design: the incident log must never break a run.
+"""
+
+from __future__ import annotations
+
+import datetime
+import json
+import logging
+import os
+import re
+import shutil
+import threading
+
+logger = logging.getLogger(__name__)
+
+_LOCK = threading.Lock()
+
+
+def _incident_path() -> str:
+    directory = os.environ.get("BESSER_INCIDENT_LOG_DIR", "/app/incidents")
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except Exception:
+        return ""
+    return os.path.join(directory, "incidents.jsonl")
+
+
+def record_incident(
+    kind: str,
+    run_id: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    code: str | None = None,
+    message: str | None = None,
+    traceback_text: str | None = None,
+    instructions: str | None = None,
+) -> None:
+    """Append one incident record. Never raises."""
+    try:
+        path = _incident_path()
+        if not path:
+            return
+        entry = {
+            "at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+            "kind": kind,
+            "run_id": run_id,
+            "provider": provider,
+            "model": model,
+            "code": code,
+            "message": (message or "")[:2000],
+            "traceback": (traceback_text or "")[:8000] or None,
+            "instructions": (instructions or "")[:300] or None,
+        }
+        line = json.dumps({k: v for k, v in entry.items() if v is not None},
+                          ensure_ascii=False)
+        with _LOCK:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+    except Exception:  # pragma: no cover — must never break a run
+        logger.debug("Could not record incident", exc_info=True)
+
+
+def persist_run_trace(run_id: str | None, trace_path: str | None) -> None:
+    """Copy a run's structured trace into a host-mounted dir, keyed by run id.
+
+    The run trace (``.besser_trace.jsonl``) normally lives only in the run's
+    temp workspace, which is swept when the container is recreated — so the
+    per-turn detail of a run (what the fix loop actually did) is lost. When
+    incident or telemetry logging is configured (``BESSER_INCIDENT_LOG_DIR``
+    or ``BESSER_TELEMETRY_DIR``), also copy the trace to
+    ``<dir>/traces/<run_id>.besser_trace.jsonl`` so a later "what did that
+    run do" is answerable after the workspace is gone.
+
+    Best-effort by design: never raises into a caller.
+    """
+    try:
+        if not run_id or not trace_path or not os.path.isfile(trace_path):
+            return
+        base = (
+            os.environ.get("BESSER_INCIDENT_LOG_DIR")
+            or os.environ.get("BESSER_TELEMETRY_DIR")
+        )
+        if not base:
+            return
+        dest_dir = os.path.join(base, "traces")
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except Exception:
+            return
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", str(run_id))[:64]
+        if not safe_id:
+            return
+        dest = os.path.join(dest_dir, f"{safe_id}.besser_trace.jsonl")
+        with _LOCK:
+            shutil.copyfile(trace_path, dest)
+    except Exception:  # pragma: no cover — must never break a run
+        logger.debug("Could not persist run trace for %s", run_id, exc_info=True)

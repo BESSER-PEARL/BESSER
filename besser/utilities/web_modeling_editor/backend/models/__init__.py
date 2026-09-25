@@ -14,6 +14,7 @@ from .responses import (
     SimulationValidationResponse,
     ValidationResponse,
 )
+from .spec_driven import SmartGenerateRequest
 
 __all__ = [
     'DiagramInput',
@@ -31,4 +32,5 @@ __all__ = [
     'SimulationSessionStopResponse',
     'SimulationValidationResponse',
     'ValidationResponse',
+    'SmartGenerateRequest',
 ]

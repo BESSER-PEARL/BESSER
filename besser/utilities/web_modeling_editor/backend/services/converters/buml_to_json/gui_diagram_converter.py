@@ -32,7 +32,13 @@ from besser.BUML.metamodel.gui import binding as _binding_module
 from besser.BUML.metamodel.gui import dashboard as _dashboard_module
 from besser.BUML.metamodel.gui import events_actions as _events_module
 from besser.BUML.metamodel import structural as _structural_module
-from besser.utilities.buml_code_builder.common import safe_class_name
+from besser.utilities.buml_code_builder.common import (
+    bind_association_end,
+    bind_data_source,
+    bind_domain_field,
+    build_data_binding,
+    safe_class_name,
+)
 from besser.BUML.metamodel.gui.dashboard import (
     AgentComponent,
     BarChart,
@@ -55,6 +61,9 @@ from besser.BUML.metamodel.gui.events_actions import (
     Update,
 )
 from besser.BUML.metamodel.gui.style import Layout, LayoutType, PositionType, Styling
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
+)
 
 # Namespace root used to decide which objects a GUI BUML section may name.
 _METAMODEL_PREFIX = "besser.BUML.metamodel"
@@ -206,69 +215,56 @@ def _bind_domain_aliases(namespace: Dict[str, Any]) -> None:
 
 def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Optional[GUIModel]:
     """Execute BUML GUI python content and return the first GUIModel found."""
-    safe_globals: Dict[str, Any] = {
-        "__builtins__": {
-            "set": set,
-            "list": list,
-            "dict": dict,
-            "tuple": tuple,
-            "str": str,
-            "int": int,
-            "float": float,
-            "bool": bool,
-            "len": len,
-            "range": range,
-            "next": next,
-            "hasattr": hasattr,
-            "getattr": getattr,
-            "isinstance": isinstance,
-            # The GUI code builder emits globals().get("domain_model") to
-            # resolve the domain model at runtime (see gui_model_builder),
-            # so the sandbox has to expose it. It returns this same
-            # namespace, whose __builtins__ is already the restricted dict,
-            # so it grants nothing the executed code did not already have.
-            "globals": globals,
-            "True": True,
-            "False": False,
-            "None": None,
-            "print": lambda *a, **kw: None,  # no-op to prevent info leakage
-        },
+    # The GUI vocabulary is derived from the metamodel (see _metamodel_namespace),
+    # but execution still goes through the AST-allowlist loader, not exec().
+    allowed_names: Dict[str, Any] = {
         **_metamodel_namespace(),
         "domain_model": None,
         "set": set,
         "list": list,
         "tuple": tuple,
         "dict": dict,
+        # Emitted GUI code calls this to resolve a domain-bound DataBinding.
+        # It replaces an inline globals()/if/generator-expression block that the
+        # safe loader refused, which made such models un-importable.
+        "bind_domain_field": bind_domain_field,
+        "build_data_binding": build_data_binding,
+        "bind_data_source": bind_data_source,
+        "bind_association_end": bind_association_end,
     }
     cleaned_content = _strip_imports(content)
 
-    local_vars: Dict[str, Any] = {}
     # Execute the domain context first so the GUI code can name the domain
     # elements it binds to, then bind the ClassName_attributeName aliases
     # the GUI section uses before running it.
     if context_code:
         # Run the domain code against the structural vocabulary, not the GUI
         # one, so names that mean different things in the two metamodels
-        # (Parameter) resolve correctly on each side.
-        context_globals: Dict[str, Any] = {
-            "__builtins__": safe_globals["__builtins__"],
+        # (Parameter) resolve correctly on each side. It goes through the same
+        # safe loader as every other uploaded section.
+        context_names: Dict[str, Any] = {
             **_structural_namespace(),
+            "UNLIMITED_MAX_MULTIPLICITY": _structural_module.UNLIMITED_MAX_MULTIPLICITY,
+            "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
         }
         try:
-            exec(_strip_imports(context_code), context_globals, context_globals)
+            context_vars = safe_load_buml(_strip_imports(context_code), context_names)
         except Exception as exc:
             raise ValueError(f"Failed to execute domain context: {exc}") from exc
         # Carry over what the domain code *built* -- the DomainModel and the
         # Class/Property/Enumeration objects the GUI section binds to -- and
         # not the structural vocabulary itself, which would shadow the GUI
         # classes of the same name.
-        for context_name, context_value in context_globals.items():
+        for context_name, context_value in context_vars.items():
             if context_name.startswith("__") or inspect.isclass(context_value):
                 continue
-            safe_globals[context_name] = context_value
-        _bind_domain_aliases(safe_globals)
+            allowed_names[context_name] = context_value
+        _bind_domain_aliases(allowed_names)
     try:
-        exec(cleaned_content, safe_globals, local_vars)
+        local_vars = safe_load_buml(cleaned_content, allowed_names)
     except Exception as exc:
         raise ValueError(f"Failed to execute GUI BUML content: {exc}") from exc
     gui_candidates = [
@@ -276,7 +272,7 @@ def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Option
     ]
     if not gui_candidates:
         gui_candidates = [
-            value for value in safe_globals.values() if isinstance(value, GUIModel)
+            value for value in allowed_names.values() if isinstance(value, GUIModel)
         ]
     return gui_candidates[0] if gui_candidates else None
 # ---------------------------------------------------------------------------
@@ -298,6 +294,7 @@ def _serialize_gui_model(gui_model: GUIModel) -> Dict[str, Any]:
     if not pages:
         return _empty_gui_project()
     styles = _denormalize_styles(getattr(gui_model, "style_entries", None) or [])
+    styles.extend(_stylesheet_to_styles(getattr(gui_model, "stylesheet", "")))
     return {
         "pages": pages,
         "styles": styles,
@@ -381,6 +378,12 @@ def _serialize_component(element: ViewComponent) -> Dict[str, Any]:
             serialized_child = _serialize_component(child)
             if serialized_child:
                 children.append(serialized_child)
+    if isinstance(element, Form):
+        # The form's inputs are its children in the editor
+        for child in _sorted_elements(getattr(element, "inputFields", None) or []):
+            serialized_child = _serialize_component(child)
+            if serialized_child:
+                children.append(serialized_child)
     if isinstance(element, Text):
         content = element.content or element.description or element.name or ""
         children = [{"type": "textnode", "content": content}]
@@ -456,6 +459,9 @@ def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[s
         attrs.setdefault("label-field", label_name)
     if data_name:
         attrs.setdefault("data-field", data_name)
+    aggregation = getattr(binding, "aggregation", None)
+    if aggregation is not None:
+        attrs.setdefault("aggregation", aggregation.value)
 def _apply_button_attributes(button: Button, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("button-label", button.label or button.name or "Button")
     action_type = attrs.get("action-type")
@@ -715,6 +721,9 @@ def _apply_input_field_attributes(field: InputField, attrs: Dict[str, Any]) -> N
         attrs.setdefault("data-step", field.step)
     if getattr(field, "multiple", False):
         attrs.setdefault("data-multiple", "true")
+    bound_attribute = getattr(getattr(field, "data_binding", None), "data_field", None)
+    if bound_attribute is not None:
+        attrs.setdefault("data-field-name", bound_attribute.name)
 def _apply_form_attributes(form: Form, attrs: Dict[str, Any]) -> None:
     """Expose Form traits in the exported JSON.
 
@@ -736,6 +745,9 @@ def _apply_form_attributes(form: Form, attrs: Dict[str, Any]) -> None:
         attrs.setdefault("data-cancel-label", form.cancel_label)
     if getattr(form, "columns", None) is not None:
         attrs.setdefault("data-columns", form.columns)
+    domain = getattr(getattr(form, "data_binding", None), "domain_concept", None)
+    if domain is not None:
+        attrs.setdefault("data-source", domain.name)
 def _apply_image_attributes(image: Image, attrs: Dict[str, Any]) -> None:
     if getattr(image, "source", None):
         attrs.setdefault("src", image.source)
@@ -850,14 +862,106 @@ def _denormalize_styles(entries: Sequence[Dict[str, Any]]) -> List[Dict[str, Any
             normalized_entry["selectorsAdd"] = entry["selectorsAdd"]
         denormalized.append(normalized_entry)
     return denormalized
+_SIMPLE_SELECTOR = re.compile(r"^((?:\.[A-Za-z_][\w-]*)+|#[A-Za-z_][\w-]*)(?::([A-Za-z-]+))?$")
+
+
+def _scan_outside_quotes(text: str, start: int):
+    """Yield (index, char) of ``text`` from ``start``, skipping quoted strings."""
+    quote = None
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        else:
+            yield i, ch
+        i += 1
+
+
+def _split_declarations(body: str) -> Dict[str, Any]:
+    """Parse ``prop:value;...`` into a dict, ignoring ``;`` inside parentheses."""
+    parts, depth, last = [], 0, 0
+    for i, ch in _scan_outside_quotes(body, 0):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == ";" and depth == 0:
+            parts.append(body[last:i])
+            last = i + 1
+    parts.append(body[last:])
+    style: Dict[str, Any] = {}
+    for part in parts:
+        prop, sep, value = part.partition(":")
+        if sep and prop.strip() and value.strip():
+            style[prop.strip()] = value.strip()
+    return style
+
+
+def _stylesheet_to_styles(
+    css: str, at_rule_type: Optional[str] = None, media_text: str = ""
+) -> List[Dict[str, Any]]:
+    """Convert a GUIModel stylesheet back into GrapesJS rule objects.
+
+    Inverse of ``build_stylesheet`` in the json_to_buml GUI processor: a plain
+    class/id selector (optionally with one state) becomes ``selectors``, any
+    other selector ``selectorsAdd``; at-rule blocks set ``atRuleType`` and
+    ``mediaText``.
+    """
+    css = re.sub(r"/\*.*?\*/", "", css or "", flags=re.S)
+    rules: List[Dict[str, Any]] = []
+    start, depth, open_idx = 0, 0, -1
+    for i, ch in _scan_outside_quotes(css, 0):
+        if ch == "{":
+            if depth == 0:
+                open_idx = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth:
+                continue
+            prelude, body = css[start:open_idx].strip(), css[open_idx + 1:i]
+            start = i + 1
+            if prelude.startswith("@"):
+                name, _, condition = prelude[1:].partition(" ")
+                if "{" in body:
+                    rules.extend(_stylesheet_to_styles(body, name, condition.strip()))
+                else:
+                    rules.append({"selectors": [], "selectorsAdd": "", "atRuleType": name,
+                                  "singleAtRule": True, "style": _split_declarations(body)})
+                continue
+            rule: Dict[str, Any] = {"selectors": [], "style": _split_declarations(body)}
+            match = _SIMPLE_SELECTOR.match(prelude)
+            if match:
+                rule["selectors"] = [
+                    name if name.startswith("#") else name[1:]
+                    for name in re.findall(r"[.#][\w-]+", match.group(1))
+                ]
+                if match.group(2):
+                    rule["state"] = match.group(2)
+            else:
+                rule["selectorsAdd"] = prelude
+            if at_rule_type:
+                rule["atRuleType"] = at_rule_type
+                rule["mediaText"] = media_text
+            rules.append(rule)
+    return rules
+
+
 def _sorted_elements(elements: Iterable[ViewComponent]) -> List[ViewComponent]:
-    return sorted(
-        elements or [],
-        key=lambda elem: (
-            getattr(elem, "display_order", 0),
-            getattr(elem, "name", ""),
-        ),
-    )
+    # An element built without a display_order (None) sorts after the ordered
+    # ones; comparing None with a number raised and emptied the whole import.
+    def _key(elem):
+        order = getattr(elem, "display_order", None)
+        return (order is None, order if order is not None else 0, getattr(elem, "name", "") or "")
+
+    return sorted(elements or [], key=_key)
 def _sorted_screens(screens: Iterable[Screen]) -> List[Screen]:
     return sorted(
         screens or [],

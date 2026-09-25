@@ -244,10 +244,17 @@ def test_pydantic_multiplicity_constraints(relationship_model, tmpdir):
     assert "p_asset: int" in pydantic_code  # No Optional!
     assert "# 1:1 Relationship (mandatory)" in pydantic_code
 
-    # Test 2: PhysicalAssetCreate should have OPTIONAL dt (1:1 optional)
+    # Test 2: PhysicalAssetCreate must NOT carry the link at all.
+    # It does not own the foreign key, and create_physicalasset neither
+    # validates nor assigns `dt` - the value was accepted and silently
+    # discarded. Worse, when BOTH ends are required the same branch made
+    # both create schemas mandatory, so neither entity could be created
+    # first. The N:1 branch already emitted nothing on
+    # the non-owning side; the 1:1 branch now matches it.
     assert "class PhysicalAssetCreate(BaseModel):" in pydantic_code
-    assert "dt: Optional[int] = None" in pydantic_code
-    assert "# 1:1 Relationship (optional)" in pydantic_code
+    physical_asset_create = pydantic_code.split("class PhysicalAssetCreate(BaseModel):")[1]
+    physical_asset_create = physical_asset_create.split("class ")[0]
+    assert "dt" not in physical_asset_create, physical_asset_create
 
     # Test 3: SensorCreate should have REQUIRED dt (N:1 mandatory)
     assert "class SensorCreate(BaseModel):" in pydantic_code

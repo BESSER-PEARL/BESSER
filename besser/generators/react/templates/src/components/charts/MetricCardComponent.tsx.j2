@@ -18,6 +18,7 @@ interface Props {
     aggregation?: string;
   };
   styles?: CSSProperties;
+  className?: string;
 }
 
 // Format value based on format type
@@ -57,6 +58,7 @@ export const MetricCardComponent: React.FC<Props> = ({
   trend = 0,
   data_binding,
   styles,
+  className,
 }) => {
     // TODO: Uncomment when backend aggregation is ready
   // const displayValue = data_binding?.entity
@@ -84,7 +86,7 @@ export const MetricCardComponent: React.FC<Props> = ({
   };
 
   return (
-    <div id={id} style={containerStyle}>
+    <div id={id} className={className} style={containerStyle}>
       {/* Metric Title */}
       <div
         style={{

@@ -95,7 +95,8 @@ Getting Started
 Prerequisites
 ~~~~~~~~~~~~~
 
-* **Python 3.10, 3.11, or 3.12** (CI tests against all three).
+* **Python 3.11 or 3.12** (``setup.cfg`` declares ``python_requires = >=3.11``;
+  CI tests both).
 * **Git**, including submodule support.
 * **Node.js 20+** *(only if you plan to run the web modeling editor frontend
   locally)*.
@@ -139,8 +140,11 @@ Install dependencies
 
 .. code-block:: bash
 
-   pip install -r requirements.txt
    pip install -e .                   # editable install of the BESSER package
+   pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
+
+The second line is what CI installs, and it is **required** to run the backend:
+FastAPI and its dependencies are not in the root ``requirements.txt``.
 
 Optional but recommended:
 
@@ -148,10 +152,13 @@ Optional but recommended:
 
    pip install -r docs/requirements.txt   # Sphinx + theme for building the docs
 
-Some test modules require extra packages that are **not** in
-``requirements.txt``: ``torch``, ``tensorflow`` (for ``tests/generators/nn/``),
-and ``openpyxl`` (for the spreadsheet importer test). CI installs them;
-locally, install them only if you intend to touch those areas.
+One test module imports a package that is **not** in the root
+``requirements.txt``: ``tests/utilities/web_modeling_editor/backend/test_spreadsheet_import.py``
+needs ``openpyxl``, which ships in the backend requirements file installed
+above. Without it, pytest stops at *collection* — an error, not a test
+failure. ``torch`` and ``tensorflow`` are needed only to *run* the generated
+neural-network code, not to run ``tests/generators/nn/``, which passes without
+them.
 
 Verify the install
 ~~~~~~~~~~~~~~~~~~
@@ -159,7 +166,7 @@ Verify the install
 .. code-block:: bash
 
    python tests/BUML/metamodel/structural/library/library.py
-   python -m pytest -k library
+   python -m pytest tests/ -k library
 
 If both run cleanly, you are ready to go.
 
@@ -213,7 +220,12 @@ We use **Ruff** for linting (run automatically in CI):
 .. code-block:: bash
 
    pip install ruff
-   ruff check .
+   ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741 \
+     --ignore E501 --exclude "*/BESSERActionLanguageParser.py"
+
+That is exactly the invocation CI runs, so reproducing it locally gives the
+same verdict. A bare ``ruff check .`` uses Ruff's default rule set over the
+whole tree and will disagree in both directions.
 
 Fix lint warnings before opening a PR. CI will fail on lint errors.
 
@@ -235,6 +247,18 @@ Working in core packages
   FastAPI app uses a modular router architecture (routers, middleware,
   services, models). Prefer extending an existing module over creating
   bespoke helpers.
+* **Spec-Driven Agent** (``besser/spec_driven_agent/`` plus
+  ``.../backend/services/spec_driven/``) — the hybrid generation pipeline:
+  a deterministic generator, then an LLM customization loop, then validation
+  with a bounded auto-fix loop. ``orchestrator.py`` owns the three phases and
+  the severity classification; ``tools.py`` declares the LLM's tool surface
+  and ``tool_executor.py`` implements it; ``llm_client.py`` holds the provider
+  clients, pricing, and the keyless-tier fallback chain. On the service side,
+  ``runner.py`` drives a run and emits SSE, and ``run_manager.py`` gives runs
+  durable ownership and event replay. If you add a tool, add it to
+  ``tools.py`` *and* to ``_TOOL_MODEL_REQUIREMENTS`` in the same file, so it is
+  only offered when the models it needs are present. See
+  :doc:`spec_driven_agent/index`.
 * **Bidirectional converters** — if you support a feature in
   ``json_to_buml/``, add the symmetric path in ``buml_to_json/``. Round-trips
   must be lossless.
@@ -255,11 +279,13 @@ the full picture.
 Testing and Quality Checks
 --------------------------
 
-Run the full suite before pushing:
+Run the full suite before pushing, scoped to ``tests/``:
 
 .. code-block:: bash
 
-   python -m pytest
+   python -m pytest tests/
+
+CI runs ``python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn -x``.
 
 While iterating, target the area you are changing:
 
@@ -268,13 +294,12 @@ While iterating, target the area you are changing:
    python -m pytest tests/generators -k sqlalchemy
    python -m pytest tests/BUML/metamodel/structural -k library
 
-If you do **not** have ``torch``, ``tensorflow``, or ``openpyxl`` installed
-locally, skip the modules that import them so collection does not fail:
+If ``openpyxl`` is not installed, skip the module that imports it so collection
+does not fail:
 
 .. code-block:: bash
 
    python -m pytest tests/ \
-     --ignore=tests/generators/nn \
      --ignore=tests/utilities/web_modeling_editor/backend/test_spreadsheet_import.py
 
 Guidelines:
@@ -309,8 +334,15 @@ Open ``docs/build/html/index.html`` to preview.
 Common pages to update:
 
 * ``buml_language.rst`` — metamodel additions
-* ``generators.rst`` — new generators
-* ``web_editor.rst`` — backend API changes
+* ``generators.rst`` — new deterministic generators (the toctree **and** the
+  "Choosing a Generator" table)
+* ``spec_driven_agent/`` — the Spec-Driven Agent: its pipeline
+  (``how_it_works.rst``), tool surface (``tools.rst``), severities
+  (``validation.rst``), caps and durable runs (``runs.rst``), the REST + SSE
+  contract (``api.rst``), and the ``BESSER_LLM_*`` reference
+  (``configuration.rst``)
+* ``web_editor.rst`` — editor workflows
+* ``web_editor_backend.rst`` — backend endpoints and environment variables
 * ``utilities.rst`` — new utilities
 * ``contributor_guide.rst`` / ``ai_assistant_guide.rst`` — workflow changes
 
@@ -423,9 +455,9 @@ Step-by-step
 
    .. code-block:: bash
 
-      python -m pytest                # tests
-      ruff check .                    # lint
-      cd docs && make html && cd ..   # if you touched the docs
+      python -m pytest tests/         # tests
+      ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741         --ignore E501 --exclude "*/BESSERActionLanguageParser.py"   # lint, as CI runs it
+      bash docs/check-docs-warnings.sh                              # if you touched the docs
 
 4. **Push your branch:**
 
@@ -547,8 +579,10 @@ Example (good)
 Review and merging
 ~~~~~~~~~~~~~~~~~~
 
-* All PRs must pass automated checks (tests on Python 3.10/3.11/3.12, Ruff
-  lint, frontend lint+build, CodeQL).
+* All PRs must pass automated checks. The CI workflow runs three jobs — tests
+  on Python 3.11 and 3.12, the Ruff lint above, and a docs build gated on new
+  Sphinx warnings (``docs/check-docs-warnings.sh``) — plus CodeQL from the
+  security workflow.
 * At least one maintainer review is required, per the
   `governance rules <https://github.com/BESSER-PEARL/BESSER/blob/master/GOVERNANCE.md>`_.
 * Maintainers choose the merge strategy (squash, rebase, or merge commit)
@@ -568,9 +602,9 @@ example, adding a new DSL with graphical notation):
 
    .. code-block:: bash
 
-      cd besser/utilities/web_modeling_editor/frontend
-      git pull origin develop
-      cd ../../../..
+      # Fast-forward the submodule to the tip of the branch ``.gitmodules``
+      # tracks for it (currently ``main``).
+      git submodule update --remote besser/utilities/web_modeling_editor/frontend
       git add besser/utilities/web_modeling_editor/frontend
       git commit -m "chore: bump frontend submodule"
 

@@ -1,9 +1,16 @@
 import os
 from jinja2 import Environment, FileSystemLoader
+
+from besser.generators.default_literals import register_default_literals
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.utilities.utils import sort_by_timestamp
-from besser.generators.structural_utils import get_foreign_keys, normalize_method_code, get_pk_py_types
+from besser.generators.structural_utils import (
+    get_deferred_fk_associations,
+    get_foreign_keys,
+    normalize_method_code,
+    get_pk_py_types,
+)
 
 class SQLAlchemyGenerator(GeneratorInterface):
     """
@@ -122,6 +129,20 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
         return classes, asso_classes
 
+    def get_referenced_association_classes(self, asso_classes):
+        """Association classes another association points at.
+
+        Such a link needs a single-column key for the foreign key to target;
+        the endpoint pair alone cannot be referenced as ``<table>.id``.
+        """
+        names = {asso.name for asso in asso_classes}
+        return {
+            end.type.name
+            for association in self.model.associations
+            for end in association.ends
+            if end.type.name in names and end.type.association is not association
+        }
+
     def get_concrete_table_inheritance(self):
         """
         Determines if the model uses concrete table inheritance.
@@ -231,11 +252,16 @@ class SQLAlchemyGenerator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
         env.globals.update(normalize_code=normalize_method_code)
+        # default_value reaches the metamodel unvalidated from request JSON and
+        # used to be interpolated raw into the generated module — which
+        # SQLGenerator then EXECUTES. These emit literals, never expressions.
+        register_default_literals(env)
         template = env.get_template('sql_alchemy_template.py.j2')
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(
                 classes=classes,
                 asso_classes=asso_classes,
+                referenced_asso=self.get_referenced_association_classes(asso_classes),
                 types=self.TYPES,
                 associations=self.model.associations,
                 enumerations=self.model.get_enumerations(),
@@ -244,6 +270,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 ids=self.get_ids(),
                 pk_types=self.get_pk_py_types(),
                 fkeys=get_foreign_keys(self.model),
+                deferred_fks=get_deferred_fk_associations(self.model),
                 sort=sort_by_timestamp,
                 concrete_parents=concrete_parents
             )

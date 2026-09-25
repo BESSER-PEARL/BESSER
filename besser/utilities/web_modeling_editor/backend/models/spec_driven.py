@@ -1,0 +1,418 @@
+"""Pydantic request model for the spec-driven generation SSE endpoint.
+
+The ``api_key`` field is a ``SecretStr`` so Pydantic never renders it in
+its default ``repr`` / ``model_dump(mode='python')`` output — it shows
+as ``**********``. Even if a future developer adds a debug-level
+``logger.info("request: %s", request)`` somewhere in the endpoint, the
+key will not leak. The runner calls ``resolved_api_key()`` exactly once,
+when constructing the LLM client, and never stores the plaintext.
+
+The ``max_cost_usd`` and ``max_runtime_seconds`` fields are clamped by
+field validators to the server-side hard caps so clients cannot exceed
+them.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+
+from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    LLM_DEFAULT_MAX_COST_USD,
+    LLM_DEFAULT_MAX_RUNTIME_SECONDS,
+    LLM_DEFAULT_MAX_TURNS,
+    LLM_MAX_COST_USD_HARD_CAP,
+    LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
+    LLM_MAX_TURNS_HARD_CAP,
+)
+from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+
+# Model IDs are provider-specific but all follow a conservative
+# identifier grammar: letters, digits, dashes, dots, underscores,
+# forward slash (for Claude's vendor/model format). Reject anything
+# else to catch typos and prompt-injection attempts embedded in the
+# model name.
+_LLM_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:\-/]+$")
+
+
+class SmartGenerateRequest(BaseModel):
+    """Body of ``POST /besser_api/spec-driven/generate``.
+
+    Attributes
+    ----------
+    project
+        The full ``ProjectInput`` payload (same shape as the existing
+        ``/generate-output-from-project`` endpoint).
+    instructions
+        Natural-language description of what to build. Typically refined
+        by the modeling agent before being sent.
+    api_key
+        The user's Anthropic, OpenAI, Mistral, or Nebius Token Factory API
+        key. BYOK — sent only
+        in the POST body, never in the URL, never logged, never persisted.
+    provider
+        Which provider the key is for.
+    llm_model
+        Optional model override (e.g. ``claude-sonnet-4-5``, ``gpt-4o``).
+    max_cost_usd
+        Soft cap for LLM spend in USD. Clamped to the server hard cap.
+    max_runtime_seconds
+        Soft cap for total wall-clock runtime. Clamped to the server hard cap.
+    """
+
+    project: ProjectInput
+    instructions: str = Field(..., min_length=1, max_length=MAX_SPECIFICATION_CHARS)
+    # Optional: the ``"free"`` provider needs no key (the server injects a
+    # hosted open-weight model). Every other provider requires a non-empty key,
+    # enforced provider-aware in ``_validate_key_matches_provider`` below.
+    api_key: Optional[SecretStr] = None
+    provider: Literal[
+        "anthropic", "openai", "mistral", "nebius", "free", "sponsored"
+    ] = "anthropic"
+    llm_model: Optional[str] = Field(default=None, max_length=120)
+    # OpenAI-compatible base URL for the frontend's 'PIA (LIST)' and 'Local
+    # (self-hosted)' providers (both arrive as provider="openai" + this URL).
+    # Passed to the OpenAI SDK. SECURITY: having the server open a user-supplied
+    # URL is an SSRF surface, so a request carrying base_url is REJECTED unless
+    # the deploy opts in via BESSER_LLM_ALLOW_CUSTOM_BASE_URL (see the runner) —
+    # these providers are meant for local / single-tenant use.
+    base_url: Optional[str] = Field(default=None, max_length=500)
+    max_cost_usd: float = Field(default=LLM_DEFAULT_MAX_COST_USD, gt=0.0)
+    max_runtime_seconds: int = Field(default=LLM_DEFAULT_MAX_RUNTIME_SECONDS, gt=0)
+    max_turns: int = Field(default=LLM_DEFAULT_MAX_TURNS, gt=0)
+    # Optional plan override from the preview screen. When the user
+    # clicks "Adjust" and picks a different primary model or target
+    # generator, those overrides travel here. Unset values fall back to
+    # auto-detection — the backend never forces a primary.
+    primary_kind_override: Optional[
+        Literal[
+            "class", "gui", "agent", "state_machine", "object",
+            "bpmn", "nn", "quantum",
+        ]
+    ] = None
+    # Optional binding choice of the Phase-1 deterministic generator.
+    # When set (e.g. from an approved /spec-driven/preview plan), the
+    # orchestrator skips its own LLM/keyword selection entirely — the
+    # plan the user approved is the plan that runs, and one paid LLM
+    # call is saved. Validated against the registered generator tools.
+    target_generator_override: Optional[str] = Field(default=None, max_length=80)
+    # ``target_generator_override=None`` normally means auto-select. Preview
+    # also needs to bind an explicit "LLM from scratch" decision, so that
+    # distinct state travels as a boolean instead of being collapsed to null.
+    skip_deterministic_generator: bool = False
+    # Incremental modify. When ``mode == "modify"`` and ``base_run_id``
+    # points at a still-downloadable previous run, the new run is SEEDED
+    # from that run's generated files and edits them in place, instead of
+    # rebuilding from scratch. ``base_run_id`` is the hex run id returned
+    # in the earlier run's ``done`` event; the pattern keeps a malformed
+    # id out of the registry lookup. When the base has expired the runner
+    # warns and falls back to a normal from-scratch generation, so an
+    # invalid pairing degrades gracefully rather than failing the request.
+    base_run_id: Optional[str] = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    mode: Literal["generate", "modify"] = "generate"
+    # Opt-in study telemetry labels (services/spec_driven/telemetry.py).
+    # Optional and deliberately fail-open: a generation must NEVER fail
+    # because of telemetry, so values that don't match the collection
+    # patterns are silently nulled instead of rejected. Validated
+    # independently — a valid participant with an invalid session (or
+    # vice versa) keeps the valid half; the runner records a run summary
+    # only when BOTH survive sanitization.
+    telemetry_session: Optional[str] = None
+    telemetry_participant: Optional[str] = None
+    # Shared secret authorising the server-paid ``sponsored`` tier. Demo links
+    # carry it as ``?demo=<token>``; the router compares it against
+    # BESSER_DEMO_TOKEN. SecretStr for the same reason as api_key — it must
+    # never reach a log or an SSE frame.
+    demo_token: Optional[SecretStr] = Field(default=None, max_length=200)
+
+    @field_validator("instructions")
+    @classmethod
+    def _validate_instructions_not_whitespace(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("instructions cannot be empty or whitespace-only")
+        return value
+
+    @field_validator("telemetry_session", mode="before")
+    @classmethod
+    def _sanitize_telemetry_session(cls, value: object) -> Optional[str]:
+        # Lazy import to avoid a circular import at module load (the
+        # services.spec_driven package imports this module via its runner).
+        from besser.utilities.web_modeling_editor.backend.services.spec_driven.telemetry import (
+            sanitize_session,
+        )
+        return sanitize_session(value)
+
+    @field_validator("telemetry_participant", mode="before")
+    @classmethod
+    def _sanitize_telemetry_participant(cls, value: object) -> Optional[str]:
+        from besser.utilities.web_modeling_editor.backend.services.spec_driven.telemetry import (
+            sanitize_participant,
+        )
+        return sanitize_participant(value)
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if not re.match(r"^https?://", value, re.IGNORECASE):
+            raise ValueError("base_url must be an http:// or https:// URL")
+        return value
+
+    @field_validator("target_generator_override")
+    @classmethod
+    def _validate_target_generator(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        from besser.spec_driven_agent.agent.tools import GENERATOR_TOOLS
+
+        registered = {tool["name"] for tool in GENERATOR_TOOLS}
+        if value not in registered:
+            raise ValueError(
+                f"target_generator_override must be one of: "
+                f"{', '.join(sorted(registered))}"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _validate_generator_plan(self) -> "SmartGenerateRequest":
+        if self.skip_deterministic_generator and self.target_generator_override:
+            raise ValueError(
+                "skip_deterministic_generator cannot be combined with "
+                "target_generator_override"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_key_matches_provider(self) -> "SmartGenerateRequest":
+        # The keyless "free" tier must NOT carry a key (the server injects the
+        # hosted endpoint + token); every other provider requires a non-empty
+        # one. SecretStr accepts empty strings, so an empty/whitespace key would
+        # otherwise fall through to create_llm_client and produce a generic
+        # error — catch it here with a clear, provider-aware message.
+        has_key = bool(self.api_key and self.api_key.get_secret_value().strip())
+        if self.provider in ("free", "sponsored"):
+            # Ignore any accidentally-sent key rather than erroring — these
+            # server-configured tiers never use a client key. ``llm_model`` is
+            # deliberately KEPT: for "free" it may name the server's fallback
+            # model (the only id besides the primary the factory honors —
+            # anything else pins to the primary), and for "sponsored" it picks
+            # from the aggregator's catalog.
+            self.api_key = None
+        elif not has_key:
+            raise ValueError(
+                f"api_key is required for provider '{self.provider}'"
+            )
+        return self
+
+    @field_validator("llm_model")
+    @classmethod
+    def _validate_llm_model_format(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if not _LLM_MODEL_NAME_RE.match(value):
+            raise ValueError(
+                "llm_model must contain only letters, digits, dashes, dots, "
+                "underscores, or forward slashes"
+            )
+        return value
+
+    @field_validator("max_cost_usd")
+    @classmethod
+    def _validate_and_clamp_cost(cls, value: float) -> float:
+        if math.isnan(value) or math.isinf(value):
+            raise ValueError("max_cost_usd must be a finite positive number")
+        return min(value, LLM_MAX_COST_USD_HARD_CAP)
+
+    @field_validator("max_runtime_seconds")
+    @classmethod
+    def _validate_and_clamp_runtime(cls, value: int) -> int:
+        # Pydantic already rejects non-int values, so `gt=0` is enough.
+        return min(value, LLM_MAX_RUNTIME_SECONDS_HARD_CAP)
+
+    @field_validator("max_turns")
+    @classmethod
+    def _validate_and_clamp_turns(cls, value: int) -> int:
+        return min(value, LLM_MAX_TURNS_HARD_CAP)
+
+    def resolved_api_key(self) -> str:
+        """Return the plaintext API key, or ``""`` for the keyless free tier.
+
+        Callers must pass the returned string directly to the LLM client
+        and never log, store, or echo it elsewhere. For ``provider == "free"``
+        there is no user key — the factory ignores this value and injects the
+        server-side hosted endpoint instead.
+        """
+        if self.api_key is None:
+            return ""
+        return self.api_key.get_secret_value()
+
+    def resolved_demo_token(self) -> str:
+        """The plaintext demo token, or ``""`` when the request carries none."""
+        if self.demo_token is None:
+            return ""
+        return self.demo_token.get_secret_value()
+
+
+class SmartPushDeployConfig(BaseModel):
+    """Deployment target for ``POST /besser_api/spec-driven/push-to-github``.
+
+    Mirrors the ``deploy_config`` block the existing ``/deploy-webapp``
+    endpoint reads from its body, but as a typed model. ``is_private``
+    defaults to ``True`` — a spec-driven generation run is customized,
+    unreviewed LLM output and should not be world-readable by accident.
+    """
+
+    repo_name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=350)
+    is_private: bool = True
+    use_existing: bool = False
+    # Target branch. When omitted the endpoint resolves the repo default
+    # rather than blindly taking the first branch.
+    branch: Optional[str] = Field(default=None, max_length=250)
+    commit_message: Optional[str] = Field(default=None, max_length=500)
+
+
+class PushSmartToGitHubRequest(BaseModel):
+    """Body of ``POST /besser_api/spec-driven/push-to-github``.
+
+    Pushes the *stored* artifact of a finished spec-driven generation run
+    (identified by ``run_id``) plus the re-importable model source, rather
+    than re-generating deterministically (which would discard the LLM
+    customizations). The run's code is read from ``SMART_RUN_REGISTRY``;
+    only the model source travels in the request.
+
+    Attributes
+    ----------
+    run_id
+        The hex run id returned in the spec-driven generate ``done`` event.
+    projectExport
+        The frontend V2 project-export envelope (a re-importable
+        ``diagrams.json``). Also used to rebuild the B-UML model files
+        written under ``buml/``. Optional — absent just means the pushed
+        repo won't carry the model source.
+    deploy_config
+        Repository/branch/commit target.
+    """
+
+    run_id: str = Field(..., min_length=1, max_length=64)
+    projectExport: Optional[dict] = None
+    deploy_config: SmartPushDeployConfig
+
+
+class PushSmartToGitHubResponse(BaseModel):
+    """Response of ``POST /besser_api/spec-driven/push-to-github``."""
+
+    success: bool
+    repo_url: str
+    owner: str
+    repo_name: str
+    # True when this created a fresh repo (``use_existing=False``), False
+    # when it appended a commit to an existing one.
+    is_first_push: bool
+    files_uploaded: int
+
+
+class ImportGitHubRunRequest(BaseModel):
+    """Body of ``POST /besser_api/spec-driven/import-github-run``.
+
+    Points the editor at an existing repo that BESSER created (so it
+    carries ``buml/diagrams.json`` + the generated code). The endpoint
+    downloads the repo, registers its code tree as a run — so the returned
+    ``run_id`` can be used as a modify seed (``base_run_id``) — and returns
+    the repo's re-importable model.
+
+    Attributes
+    ----------
+    owner
+        Repository owner (login).
+    repo
+        Repository name.
+    branch
+        Optional branch/ref to import. When omitted the repo default is
+        resolved.
+    """
+
+    owner: str = Field(..., min_length=1, max_length=100)
+    repo: str = Field(..., min_length=1, max_length=100)
+    branch: Optional[str] = Field(default=None, max_length=250)
+
+
+class ImportGitHubRunResponse(BaseModel):
+    """Response of ``POST /besser_api/spec-driven/import-github-run``."""
+
+    # A fresh run id whose stored files are the repo's code tree; usable as
+    # the ``base_run_id`` of a subsequent spec-driven generate modify run.
+    run_id: str
+    # The repo's re-importable V2 project export (``buml/diagrams.json``),
+    # or ``None`` when the repo carries no BESSER model.
+    project: Optional[dict] = None
+    # True when the repo carried a re-importable model.
+    has_model: bool
+    owner: str
+    repo: str
+    branch: str
+    # Human-readable hint when there is no model (or it was unreadable).
+    message: Optional[str] = None
+
+
+class SmartPreviewRequest(BaseModel):
+    """Body of ``POST /besser_api/spec-driven/preview``.
+
+    Same shape as ``SmartGenerateRequest`` minus the ``api_key`` —
+    preview is a pure-local computation (no LLM call) so we don't want
+    users leaking their API key just to see the pre-flight plan.
+    """
+
+    project: ProjectInput
+    instructions: str = Field(..., min_length=1, max_length=MAX_SPECIFICATION_CHARS)
+    max_cost_usd: float = Field(default=LLM_DEFAULT_MAX_COST_USD, gt=0.0)
+    max_runtime_seconds: int = Field(default=LLM_DEFAULT_MAX_RUNTIME_SECONDS, gt=0)
+    mode: Literal["generate", "modify"] = "generate"
+    base_run_id: Optional[str] = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    primary_kind_override: Optional[
+        Literal[
+            "class", "gui", "agent", "state_machine", "object",
+            "bpmn", "nn", "quantum",
+        ]
+    ] = None
+
+    @field_validator("instructions")
+    @classmethod
+    def _validate_instructions_not_whitespace(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("instructions cannot be empty or whitespace-only")
+        return value
+
+    @field_validator("max_cost_usd")
+    @classmethod
+    def _validate_and_clamp_cost(cls, value: float) -> float:
+        if math.isnan(value) or math.isinf(value):
+            raise ValueError("max_cost_usd must be a finite positive number")
+        return min(value, LLM_MAX_COST_USD_HARD_CAP)
+
+    @field_validator("max_runtime_seconds")
+    @classmethod
+    def _validate_and_clamp_runtime(cls, value: int) -> int:
+        return min(value, LLM_MAX_RUNTIME_SECONDS_HARD_CAP)
+
+    @model_validator(mode="after")
+    def _validate_preview_mode(self) -> "SmartPreviewRequest":
+        if self.mode == "modify" and self.base_run_id is None:
+            raise ValueError("base_run_id is required when preview mode is modify")
+        if self.mode == "generate" and self.base_run_id is not None:
+            raise ValueError("base_run_id is only valid when preview mode is modify")
+        return self

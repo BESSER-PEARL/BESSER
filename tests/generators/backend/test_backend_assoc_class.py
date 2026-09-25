@@ -30,7 +30,7 @@ from besser.BUML.metamodel.structural import (
 from besser.generators.backend.backend_generator import BackendGenerator
 
 
-def _trip_seat_model() -> DomainModel:
+def _trip_seat_model(link_id_type=IntegerType, seat_key_type=IntegerType) -> DomainModel:
     """Trip -- Seat N:M carrying a Reservation association class, plus a plain N:M.
 
     ``Seat`` is keyed by ``code`` instead of ``id`` so the generated queries have
@@ -41,7 +41,7 @@ def _trip_seat_model() -> DomainModel:
         Property(name="reference", type=StringType),
     })
     seat = Class(name="Seat", attributes={
-        Property(name="code", type=IntegerType, is_id=True),
+        Property(name="code", type=seat_key_type, is_id=True),
         Property(name="label", type=StringType),
     })
     tag = Class(name="Tag", attributes={
@@ -54,7 +54,10 @@ def _trip_seat_model() -> DomainModel:
     })
     reservation = AssociationClass(
         name="Reservation",
-        attributes={Property(name="price", type=FloatType)},
+        attributes={
+            Property(name="id", type=link_id_type),
+            Property(name="price", type=FloatType),
+        },
         association=trip_seat,
     )
     trip_tag = BinaryAssociation(name="trip_tag", ends={
@@ -75,10 +78,13 @@ GENERATED_MODULES = (
 
 
 @pytest.fixture(scope="module")
-def generated_backend(tmp_path_factory):
+def generated_backend(tmp_path_factory, request):
     """Generate the per-file backend of the Trip/Seat model and return its output dir."""
     output_dir = tmp_path_factory.mktemp("backend_assoc_class")
-    BackendGenerator(model=_trip_seat_model(), output_dir=str(output_dir)).generate()
+    BackendGenerator(
+        model=_trip_seat_model(*getattr(request, "param", (IntegerType, IntegerType))),
+        output_dir=str(output_dir),
+    ).generate()
     return output_dir
 
 
@@ -275,15 +281,50 @@ def test_relationship_endpoints_of_association_class(app):
 
 
 def test_association_class_crud_uses_both_foreign_keys(app):
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+
+    orm = sys.modules["sql_alchemy"]
+    schemas = sys.modules["pydantic_classes"]
+    assert set(orm.Reservation.__table__.primary_key.columns.keys()) == {"id"}
+    assert "id" not in schemas.ReservationCreate.model_fields
+    assert "id" not in schemas.ReservationLinkCreate.model_fields
+    with sys.modules["database"].SessionLocal() as session:
+        assert session.execute(text("PRAGMA foreign_keys")).scalar() == 1
+        with pytest.raises(IntegrityError, match="FOREIGN KEY"):
+            session.execute(orm.Reservation.__table__.insert().values(
+                seats_id=987654, trips_id=987654, price=1.0,
+            ))
+        session.rollback()
+
     assert create_seat(app, 61).status_code == 200
     assert create_trip(app, 6).status_code == 200
     created = request(app, "POST", "/reservation/", json={"seats": 61, "trips": 6, "price": 8.0})
     assert created.status_code == 200, created.text
+    assert isinstance(created.json()["id"], int)
+    duplicate = request(app, "POST", "/reservation/", json={"seats": 61, "trips": 6, "price": 99.0})
+    assert duplicate.status_code == 409, duplicate.text
     updated = request(app, "PUT", "/reservation/61/6/", json={"seats": 61, "trips": 6, "price": 9.0})
     assert updated.status_code == 200, updated.text
     assert request(app, "GET", "/reservation/61/6/").json()["price"] == 9.0
     assert request(app, "DELETE", "/reservation/61/6/").status_code == 200
     assert request(app, "GET", "/reservation/61/6/").status_code == 404
+
+
+@pytest.mark.parametrize("generated_backend", [(StringType, StringType)], indirect=True)
+def test_association_class_string_surrogate_is_generated(app):
+    assert create_seat(app, "001").status_code == 200
+    created = create_trip(app, 501, seats=[{"target": "001", "price": 5.0}])
+    assert created.status_code == 200, created.text
+    link = request(app, "GET", "/reservation/001/501/")
+    assert link.status_code == 200, link.text
+    assert link.json()["seats_id"] == "001"
+    assert isinstance(link.json()["id"], str) and link.json()["id"]
+    updated = request(app, "PUT", "/reservation/001/501/",
+                      json={"seats": "001", "trips": 501, "price": 6.0})
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["id"] == link.json()["id"]
+    assert request(app, "DELETE", "/reservation/001/501/").status_code == 200
 
 
 def test_association_class_create_reports_missing_target(app):
@@ -345,7 +386,9 @@ def test_delete_association_class_row_returns_its_columns(app):
 
     response = request(app, "DELETE", "/reservation/93/21/")
     assert response.status_code == 200, response.text
-    assert response.json() == {"seats_id": 93, "trips_id": 21, "price": 7.5}
+    deleted = response.json()
+    assert isinstance(deleted.pop("id"), int)
+    assert deleted == {"seats_id": 93, "trips_id": 21, "price": 7.5}
     assert request(app, "GET", "/reservation/93/21/").status_code == 404
     # Both linked entities are untouched
     assert request(app, "GET", "/seat/93/").status_code == 200

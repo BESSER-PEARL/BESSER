@@ -41,6 +41,11 @@ from besser.BUML.metamodel.gui.events_actions import (
     Update,
 )
 from besser.BUML.metamodel.structural import AssociationClass, Class, Enumeration
+from besser.generators.structural_utils import (
+    create_schema_accepts_end,
+    get_foreign_keys,
+    is_server_owned_attribute,
+)
 from besser.utilities import sort_by_timestamp
 
 
@@ -114,6 +119,7 @@ class GuiSerializationMixin:
         screen_id = getattr(screen, 'page_id', None) or screen.component_id or screen.name
         screen_name = screen.name
 
+        self._current_screen = screen
         node: Dict[str, Any] = {
             "id": screen_id,
             "name": screen.description or self._humanize(screen_name),
@@ -272,6 +278,10 @@ class GuiSerializationMixin:
                         if input_params:
                             attributes['input-parameters'] = input_params
 
+            crud = self._crud_button_target(element)
+            if crud:
+                node["crud"] = crud
+
             # Output instance_source (table/component ID providing instance data)
             instance_source = getattr(element, "instance_source", None)
             if instance_source:
@@ -321,17 +331,26 @@ class GuiSerializationMixin:
 
         if isinstance(element, Form):
             inputs = []
+            # Document order (the processor numbers a form's inputs), then name
             for input_field in sorted(
-                getattr(element, "inputFields", []), key=lambda f: getattr(f, "name", "").lower()
+                getattr(element, "inputFields", []),
+                key=lambda f: (
+                    f.display_order is None, f.display_order or 0, getattr(f, "name", "").lower()
+                ),
             ):
                 field_options = getattr(input_field, "options", None)
+                # A plain <input placeholder="..."> keeps it as an attribute
+                placeholder = getattr(input_field, "placeholder", None) or (
+                    getattr(input_field, "custom_attributes", None) or {}
+                ).get("placeholder")
                 inputs.append(
                     self._clean_dict(
                         {
                             "id": getattr(input_field, "name", None),
-                            "label": getattr(input_field, "label", None) or self._humanize(getattr(input_field, "name", "")),
+                            **self._form_input_binding(element, input_field),
+                            "label": getattr(input_field, "label", None) or placeholder or self._humanize(getattr(input_field, "name", "")),
                             "type": self._enum_value(getattr(input_field, "field_type", None)),
-                            "placeholder": getattr(input_field, "placeholder", None),
+                            "placeholder": placeholder,
                             "required": getattr(input_field, "required", False) or None,
                             "default_value": getattr(input_field, "default_value", None),
                             "options": [{"value": o.value, "label": o.label} for o in field_options] if field_options else None,
@@ -345,6 +364,7 @@ class GuiSerializationMixin:
                 )
             if inputs:
                 node["inputs"] = inputs
+            node["submit_label"] = getattr(element, "submit_label", None) or "Submit"
 
         if isinstance(element, Menu):
             items = []
@@ -580,6 +600,8 @@ class GuiSerializationMixin:
                 attributes = list(domain_concept.all_attributes())
                 attributes = sort_by_timestamp(attributes) if attributes else []
                 for attr in attributes:
+                    if is_server_owned_attribute(attr):
+                        continue
                     field_type = getattr(attr, "type", None)
                     column_dict = {
                         "column_type": "field",
@@ -612,10 +634,21 @@ class GuiSerializationMixin:
                     if c.get("column_type") == "lookup" and c.get("path") and c.get("field")
                 }
 
-                ends = list(domain_concept.all_association_ends())
+                is_association_row = isinstance(domain_concept, AssociationClass)
+                ends = list(
+                    domain_concept.association.ends if is_association_row
+                    else domain_concept.all_association_ends()
+                )
                 ends = sort_by_timestamp(ends) if ends else []
+                domain_model = getattr(self, "model", None)
+                fkeys = get_foreign_keys(domain_model) if domain_model is not None else {}
+                link_associations = set(self._association_class_index())
                 for end in ends:
-                    if hasattr(end, "is_navigable") and not end.is_navigable:
+                    if not is_association_row and hasattr(end, "is_navigable") and not end.is_navigable:
+                        continue
+                    # An end the backend's Create schema has no field for (the
+                    # non-owning side of a 1:1) would be sent and silently dropped.
+                    if not is_association_row and not create_schema_accepts_end(end, fkeys, link_associations):
                         continue
 
                     target = getattr(end, "type", None)
@@ -632,9 +665,17 @@ class GuiSerializationMixin:
                     target_field = next(
                         (a.name for a in target_attrs if getattr(a, "is_id", False)), "id"
                     )
+                    target_attribute = next(
+                        (attr for attr in target_attrs if attr.name == target_field), None
+                    )
+                    target_type = getattr(getattr(target_attribute, "type", None), "name", "int")
 
                     max_mult = getattr(getattr(end, "multiplicity", None), "max", None)
-                    is_list = max_mult == "*" or (isinstance(max_mult, int) and max_mult > 1)
+                    # One association-class row always selects exactly one entity
+                    # at each end, irrespective of the relationship multiplicity.
+                    is_list = not is_association_row and (
+                        max_mult == "*" or (isinstance(max_mult, int) and max_mult > 1)
+                    )
 
                     column_dict = {
                         "column_type": "lookup",
@@ -642,13 +683,14 @@ class GuiSerializationMixin:
                         "field": end.name,
                         "lookup_field": lookup_field,
                         "target_field": target_field,
+                        "target_type": target_type,
                         "entity": getattr(target, "name", "") if target else "",
                         "type": "list" if is_list else "str",
                         "required": False,
                     }
 
                     multiplicity = getattr(end, "multiplicity", None)
-                    if multiplicity and getattr(multiplicity, "min", 0) > 0:
+                    if is_association_row or multiplicity and getattr(multiplicity, "min", 0) > 0:
                         column_dict["required"] = True
 
                     # List ends whose association is materialized by an association class
@@ -747,6 +789,91 @@ class GuiSerializationMixin:
 
         return self._clean_dict(node)
 
+    @staticmethod
+    def _form_input_binding(form: Form, input_field: InputField) -> Dict[str, Any]:
+        """The attribute a bound form's input posts (``field``) and its type."""
+        if getattr(form, "data_binding", None) is None:
+            return {}
+        attribute = getattr(getattr(input_field, "data_binding", None), "data_field", None)
+        if attribute is None or is_server_owned_attribute(attribute):
+            return {}
+        attr_type = getattr(attribute, "type", None)
+        field_type = "enum" if isinstance(attr_type, Enumeration) else getattr(attr_type, "name", "str")
+        return {"field": attribute.name, "field_type": field_type}
+
+    def _crud_button_target(self, button: Button) -> Optional[Dict[str, Any]]:
+        """The table a create/update/delete button acts through.
+
+        The button's ``instance_source`` names it; otherwise it is the table
+        bound to the button's entity on the same screen, else on another
+        screen (create only: the app navigates there and opens its dialog).
+        """
+        action = self._enum_value(getattr(button, "actionType", None))
+        if action not in ("create", "update", "delete"):
+            return None
+        entity = getattr(button, "entity_class", None) or next(
+            (
+                act.target_class
+                for event in (getattr(button, "events", None) or [])
+                for act in event.actions
+                if isinstance(act, (Create, Update, Delete)) and getattr(act, "target_class", None)
+            ),
+            None,
+        )
+        tables = self._tables_by_screen()
+        current = getattr(self, "_current_screen", None)
+        source = getattr(button, "instance_source", None)
+        table_id = source if isinstance(source, str) and source else None
+        table_screen = current
+        if isinstance(source, Table):
+            table_id = source.component_id or source.name
+            table_screen = next((scr for scr, table in tables if table is source), current)
+            if entity is None:
+                entity = getattr(getattr(source, "data_binding", None), "domain_concept", None)
+        if table_id is None and entity is not None:
+            bound = [
+                (scr, table) for scr, table in tables
+                if getattr(getattr(table, "data_binding", None), "domain_concept", None) is entity
+            ]
+            here = [(scr, table) for scr, table in bound if scr is current]
+            candidates = here or (bound if action == "create" else [])
+            if candidates:
+                table_screen, table = candidates[0]
+                table_id = table.component_id or table.name
+        if not table_id:
+            return None
+        target_path = None
+        if table_screen is not None and table_screen is not current:
+            target_path = table_screen.route_path or f"/{table_screen.name}".lower().replace(" ", "-")
+        return self._clean_dict(
+            {
+                "action": action,
+                "tableId": table_id,
+                "entity": getattr(entity, "name", None),
+                "targetPath": target_path,
+                "confirmMessage": (
+                    (button.confirmation_message or "Are you sure?")
+                    if getattr(button, "confirmation_required", False) else None
+                ),
+            }
+        )
+
+    def _tables_by_screen(self) -> List[Tuple[Any, Table]]:
+        """(screen, table) for every table of the GUI model, in page order."""
+
+        def walk(elements):
+            for element in sorted(elements or [], key=lambda e: (e.display_order is None, e.display_order or 0, e.name)):
+                if isinstance(element, Table):
+                    yield element
+                if isinstance(element, ViewContainer):
+                    yield from walk(element.view_elements)
+
+        index: List[Tuple[Any, Table]] = []
+        for module in self._sorted_by_name(self.gui_model.modules):
+            for screen in self._sorted_by_name(module.screens):
+                index.extend((screen, table) for table in walk(screen.view_elements))
+        return index
+
     def _serialize_events(self, element: Button) -> Optional[List[Dict[str, Any]]]:
         events = getattr(element, "events", None)
         if not events:
@@ -835,6 +962,7 @@ class GuiSerializationMixin:
                 "label_field": label_field_value,
                 "data_field": data_field_value,
                 "filter": str(data_filter) if data_filter else None,
+                "aggregation": self._enum_value(getattr(binding, "aggregation", None)),
             }
         )
 
@@ -917,6 +1045,10 @@ class GuiSerializationMixin:
 
                 if filter_expression:
                     series_data["filter"] = str(filter_expression)
+
+                aggregation = self._enum_value(getattr(binding, "aggregation", None))
+                if aggregation:
+                    series_data["aggregation"] = aggregation
 
             serialized.append(self._clean_dict(series_data))
 
@@ -1336,6 +1468,8 @@ class GuiSerializationMixin:
 
         fields: List[Dict[str, Any]] = []
         for attr in attributes:
+            if is_server_owned_attribute(attr):
+                continue
             attr_type = getattr(attr, "type", None)
             field_dict: Dict[str, Any] = {"name": attr.name, "type": "str"}
 

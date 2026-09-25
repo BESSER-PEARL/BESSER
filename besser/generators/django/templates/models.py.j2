@@ -1,5 +1,6 @@
 {#- Django model template generator #}
 {%- import "django_fields.py.j2" as django_fields -%}
+{%- import "method_body.py.j2" as method_body -%}
 {%- set ns_re = namespace(uses_re=false) %}
 {%- for cls_constraints in (constraints_map or {}).values() %}
 {%- for constraint in cls_constraints %}
@@ -20,9 +21,10 @@ from django.core.exceptions import ValidationError
 {# Enumeration definition -#}
 {%- for enum in model.get_enumerations() %}
 class {{ enum.name }}(models.TextChoices):
-    {%- for literal in enum.literals %}
+    {% for literal in enum.literals %}
     {{ literal.name }} = '{{ literal.name }}', '{{ literal.name }}'
-    {%- endfor %}
+    {% endfor %}
+
 {% endfor -%}
 
 {# Model definition #}
@@ -50,19 +52,19 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     {%- if class_obj.name == many_to_many.get(end.owner.name) %}
     {{ end.name.replace(' ', '_') }} = models.ManyToManyField(
         '{{ end.type.name }}', related_name='{{ ns.opposite_end.name }}'{%- if end.multiplicity.min == 0 %}, blank=True{%- endif %})
-    {%- endif -%}
+    {% endif -%}
     {# ForeignKey in Django #}
     {%- if class_obj.name == fkeys.get(end.owner.name) %}
     {{ end.name.replace(' ', '_') }} = models.ForeignKey(
         '{{ end.type.name }}', related_name='{{ ns.opposite_end.name }}', on_delete=models.{% if end.is_composite %}CASCADE
                 {%- elif end.multiplicity.min == 0%}SET_NULL, blank=True, null=True{% else %}PROTECT{% endif %})
-    {%- endif -%}
+    {% endif -%}
     {# OneToOneField in Django #}
     {%- if class_obj.name == one_to_one.get(end.owner.name) %}
     {{ end.name.replace(' ', '_') }} = models.OneToOneField(
         '{{ end.type.name }}', related_name='{{ ns.opposite_end.name }}', on_delete=models.{% if end.is_composite %}CASCADE
                 {%- elif end.multiplicity.min == 0%}SET_NULL, blank=True, null=True{% else %}PROTECT{% endif %})
-    {%- endif -%}
+    {% endif -%}
     {%- endfor %}
 
     class Meta:
@@ -150,7 +152,10 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
             {%- set param_str = param_str ~ ': ' ~ param.type.name %}
         {%- endif %}
         {%- if param.default_value is defined and param.default_value is not none %}
-            {%- set param_str = param_str ~ ' = ' ~ param.default_value %}
+            {#- Emitted through python_default so a modelled default is always a
+                literal: this string lands in executable source. #}
+            {%- set param_str = param_str ~ ' = ' ~ (param.default_value | python_default(
+                param.type.name if param.type else '', owner=method.name ~ '(' ~ param.name ~ ')')) %}
         {%- endif %}
         {%- set _ = param_list.append(param_str) %}
     {%- endfor %}
@@ -158,7 +163,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         """
         {{ method.name }} method for {{ class_obj.name }}.
         """
-        pass
+        {{ method_body.infer_body(class_obj, method) }}
     {%- endif %}
 
     {%- endfor %}

@@ -207,6 +207,32 @@ def test_deleting_the_last_guest_of_a_booking_is_refused(app):
 def test_deleting_the_last_room_or_its_link_is_refused(app):
     setup_booking(app, 16, guest_ids=[10], room_numbers=[107, 108], employee_id=8)
 
+    # Bulk routes must not bypass the ordinary relationship guards or
+    # silently discard a supplied relationship list.
+    for entity, ids in (("room", [107, 108]), ("guest", [10]), ("employee", [8])):
+        response = request(app, "DELETE", f"/{entity}/bulk/", json=ids)
+        assert response.status_code == 409, response.text
+        assert "required relationships" in response.json()["detail"]
+    for payload in (
+        {"id": 160, "reference": "bulk", "managed_by": 8, "guests": [], "rooms": []},
+        {"id": 161, "reference": "bulk", "managed_by": 8, "guests": [10],
+         "rooms": [{"target": 107, "price": 1.0}]},
+    ):
+        response = request(app, "POST", "/booking/bulk/", json=[payload])
+        assert response.status_code == 422, response.text
+        assert request(app, "GET", f"/booking/{payload['id']}/").status_code == 404
+    response = request(app, "POST", "/room/bulk/", json=[
+        {"number": 1107, "label": "would otherwise persist first"},
+        {"number": 1108, "label": "linked", "booking": [{"target": 16, "price": 1.0}]},
+    ])
+    assert response.status_code == 422, response.text
+    assert request(app, "GET", "/room/1107/").status_code == 404
+    primitive_bulk = request(app, "POST", "/room/bulk/", json=[
+        {"number": 1109, "label": "unlinked"},
+    ])
+    assert primitive_bulk.status_code == 200, primitive_bulk.text
+    assert request(app, "GET", "/room/1109/").status_code == 200
+
     ok(request(app, "DELETE", "/reservedroom/16/108/"))  # one room left
     response = request(app, "DELETE", "/reservedroom/16/107/")
     assert response.status_code == 409, response.text

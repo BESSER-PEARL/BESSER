@@ -1,0 +1,84 @@
+{#-
+  Method body inference for the Django generator (Phase 1).
+
+  Same policy as besser/generators/python_classes/templates/method_body.py.j2:
+  emit minimal correct bodies where the semantics are inferrable from the
+  class shape; otherwise emit `raise NotImplementedError(...)` rather than a
+  `pass` placeholder that lies about behaviour.
+-#}
+
+{%- macro _find_attr(class_obj, candidate) -%}
+{%- set ns = namespace(match='') -%}
+{%- for a in class_obj.attributes -%}
+{%- if ns.match == '' and a.name|lower == candidate|lower -%}{%- set ns.match = a.name -%}{%- endif -%}
+{%- endfor -%}
+{{ ns.match }}
+{%- endmacro -%}
+
+{%- macro infer_body(class_obj, method) -%}
+{%- set mname = method.name -%}
+{%- set lname = mname|lower -%}
+{%- set rtype = method.type.name if method.type else '' -%}
+{%- set nparams = method.parameters|length -%}
+
+{%- if lname == '__str__' or lname == '__repr__' or lname == 'to_string' or lname == 'tostring' -%}
+{%- set prims = [] -%}
+{%- for a in class_obj.attributes -%}
+{%- if a.type.name in ['str', 'int', 'float', 'bool', 'date', 'time', 'datetime'] -%}
+{%- if prims.append(a.name) -%}{%- endif -%}
+{%- endif -%}
+{%- endfor -%}
+{%- if prims -%}
+return f"{{ class_obj.name }}({% for n in prims %}{{ n }}={{ '{' }}self.{{ n }}{{ '}' }}{% if not loop.last %}, {% endif %}{% endfor %})"
+{%- else -%}
+return f"{{ class_obj.name }}(pk={{ '{' }}self.pk{{ '}' }})"
+{%- endif -%}
+
+{%- elif lname.startswith('get_') and nparams == 0 -%}
+{%- set target = lname[4:] -%}
+{%- set match = _find_attr(class_obj, target)|trim -%}
+{%- if match -%}
+return self.{{ match }}
+{%- else -%}
+raise NotImplementedError("Implement {{ mname }} based on your business rules")
+{%- endif -%}
+
+{%- elif lname.startswith('set_') and nparams == 1 -%}
+{%- set target = lname[4:] -%}
+{%- set match = _find_attr(class_obj, target)|trim -%}
+{%- if match -%}
+self.{{ match }} = {{ method.parameters[0].name }}
+{%- else -%}
+raise NotImplementedError("Implement {{ mname }} based on your business rules")
+{%- endif -%}
+
+{%- elif (lname.startswith('is_') or lname.startswith('has_') or lname.startswith('can_')) and nparams == 0 and (rtype == 'bool' or rtype == '') -%}
+{%- set suffix = lname.split('_', 1)[1] if '_' in lname else '' -%}
+{%- set match = _find_attr(class_obj, suffix)|trim -%}
+{%- if match -%}
+{%- set ns_t = namespace(attr_type='') -%}
+{%- for a in class_obj.attributes -%}
+{%- if a.name == match -%}{%- set ns_t.attr_type = a.type.name -%}{%- endif -%}
+{%- endfor -%}
+{%- if ns_t.attr_type == 'bool' -%}
+return self.{{ match }}
+{%- else -%}
+return bool(self.{{ match }})
+{%- endif -%}
+{%- else -%}
+raise NotImplementedError("Implement {{ mname }} based on your business rules")
+{%- endif -%}
+
+{%- elif lname.startswith('clear_') and nparams == 0 -%}
+{%- set target = lname[6:] -%}
+{%- set match = _find_attr(class_obj, target)|trim -%}
+{%- if match -%}
+self.{{ match }} = None
+{%- else -%}
+raise NotImplementedError("Implement {{ mname }} based on your business rules")
+{%- endif -%}
+
+{%- else -%}
+raise NotImplementedError("Implement {{ mname }} based on your business rules")
+{%- endif -%}
+{%- endmacro -%}

@@ -52,6 +52,49 @@ _HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches the "Property 'X' not found in context 'Y'" message raised by
+# besser.BUML.notations.ocl.wrapping_visitor when self.X doesn't resolve.
+_MISSING_PROPERTY_RE = re.compile(r"^Property '(?P<name>[^']+)' not found in context\b")
+
+
+def _suggest_property_fix(
+    domain_model: DomainModel, class_name: Optional[str], error_text: str,
+) -> Optional[str]:
+    """Point a failed ``self.X`` at the property it probably meant.
+
+    Covers the one UML gotcha behind most "not found" failures: an
+    association end's role name landed on the wrong end.
+
+    1. ``X`` is the role name on the *other* end of an association that
+       also touches this class (e.g. Guest<->Booking rolled "guests" onto
+       the Booking end, so ``Guest.guests`` exists but ``Booking.guests``
+       doesn't -- ``Booking.guest`` does).
+    2. ``X`` is the naive plural of a many-valued property whose role was
+       left blank and fell back to a singular class-name default (e.g.
+       ``Room.booking`` is 0..* but named singular, so ``self.bookings``
+       fails though ``self.booking`` is the collection).
+
+    Returns the real property name, or ``None`` when nothing matches --
+    most failures are genuinely wrong names and must stay rejected.
+    """
+    match = _MISSING_PROPERTY_RE.match(error_text)
+    if not match or not class_name:
+        return None
+    context_class = next(
+        (t for t in domain_model.types if isinstance(t, Class) and t.name == class_name),
+        None,
+    )
+    if context_class is None:
+        return None
+    missing_name = match.group("name")
+    for end in context_class.all_association_ends():
+        opposite = end.opposite_end()
+        if opposite is not None and opposite.name == missing_name:
+            return end.name
+        if end.multiplicity.max > 1 and missing_name == f"{end.name}s":
+            return end.name
+    return None
+
 
 def _typeref_name(t) -> str:
     """Best-effort BOCL type name for a Property/Parameter type."""
@@ -161,6 +204,9 @@ def process_ocl_constraints(
     domain_model: DomainModel,
     counter: int,
     default_description: Optional[str] = None,
+    *,
+    issues: Optional[list[dict]] = None,
+    source_blocks: Optional[dict[int, dict]] = None,
 ) -> tuple[list[tuple[str, OCLConstraint, Optional[str], Optional[str]]], list[str]]:
     """Split a textarea blob on ``context`` boundaries and parse each block.
 
@@ -177,6 +223,11 @@ def process_ocl_constraints(
     Returns:
         ``(routing_tuples, warnings)`` where each routing tuple has the
         same shape as :func:`parse_constraint_text`'s return value.
+
+    Optional collectors preserve rejected block text and successful block
+    provenance for the converter without changing the legacy return shape.
+    ``source_blocks`` is indexed by ``id(constraint)`` (not its possibly
+    colliding name), so a later attachment failure retains the right source.
     """
     if not ocl_text:
         return [], []
@@ -203,14 +254,32 @@ def process_ocl_constraints(
         line_for_parse = cleaned_block.replace("\n", " ").strip()
         line_canonical = block.replace("\n", " ").strip()
         block_idx += 1
+        header = _HEADER_RE.search(block)
+        details = {
+            "block_index": block_idx,
+            "expression": block,
+            "context": header.group("class") if header else None,
+            "method": header.group("method") if header else None,
+            "kind": _KIND_FROM_KW[header.group("kw").lower()] if header else None,
+            "name": header.group("name") if header else None,
+        }
 
         try:
             kind, constraint, class_name, method_name = parse_constraint_text(line_for_parse, domain_model)
         except BOCLSyntaxError as e:
-            warnings.append(f"Warning: Invalid OCL syntax in '{line_for_parse}': {e}")
+            reason = f"Warning: Invalid OCL syntax in '{line_for_parse}': {e}"
+            suggestion = _suggest_property_fix(domain_model, details.get("context"), str(e))
+            if suggestion:
+                reason += f" (did you mean 'self.{suggestion}'?)"
+            warnings.append(reason)
+            if issues is not None:
+                issues.append({**details, "code": "parse_error", "reason": reason})
             continue
         except ValueError as e:
-            warnings.append(f"Warning: Could not parse OCL constraint '{line_for_parse}': {e}")
+            reason = f"Warning: Could not parse OCL constraint '{line_for_parse}': {e}"
+            warnings.append(reason)
+            if issues is not None:
+                issues.append({**details, "code": "parse_error", "reason": reason})
             continue
 
         # Auto-generate a fallback name only when the user didn't supply one.
@@ -249,6 +318,8 @@ def process_ocl_constraints(
         if description:
             constraint.description = description
 
+        if source_blocks is not None:
+            source_blocks[id(constraint)] = {**details, "name": constraint.name}
         routing.append((kind, constraint, class_name, method_name))
 
     return routing, warnings

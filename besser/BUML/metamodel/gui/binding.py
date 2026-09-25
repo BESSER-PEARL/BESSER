@@ -14,6 +14,18 @@ class DataAggregation(Enum):
     FIRST = "first"
     LAST = "last"
 
+    @classmethod
+    def parse(cls, value):
+        """The aggregation named by ``value`` (a member, its name or value, or
+        ``avg``/``mean``/``min``/``max``), or ``None`` if it names none."""
+        if value is None or isinstance(value, cls):
+            return value
+        key = str(value).strip().lower()
+        aliases = {"avg": cls.AVG, "mean": cls.AVG, "min": cls.MIN, "max": cls.MAX}
+        if key in aliases:
+            return aliases[key]
+        return next((m for m in cls if key in (m.value, m.name.lower())), None)
+
 
 class DataBinding(Element):
     """
@@ -29,6 +41,9 @@ class DataBinding(Element):
         label_field_path (str, optional): Dot notation path for nested label field (e.g., "measure.name"). Defaults to None.
         data_field_path (str, optional): Dot notation path for nested data field (e.g., "measure.value"). Defaults to None.
         filter_expression (str, optional): Raw filter expression string. Defaults to None.
+        aggregation (DataAggregation | str, optional): How the bound records are
+            reduced to one value per label: a metric card's value, or a chart's
+            value per ``label_field`` group. Defaults to None (no aggregation).
 
     Attributes:
         name (str): Name of the data binding.
@@ -40,11 +55,12 @@ class DataBinding(Element):
         label_field_path (str): Dot notation path for nested label field.
         data_field_path (str): Dot notation path for nested data field.
         filter_expression (str): Raw filter expression string.
+        aggregation (DataAggregation | None): How the bound records are aggregated.
     """
     def __init__(self, domain_concept: Class, name: str = None, visualization_attrs: set[Property] = None,
                  label_field: Property = None, data_field: Property = None,
                  data_filter: Constraint = None, label_field_path: str = None, data_field_path: str = None,
-                 filter_expression: str = None):
+                 filter_expression: str = None, aggregation: DataAggregation = None):
         super().__init__()
         self.name = name or f"{domain_concept.name if domain_concept else 'Unknown'}DataBinding"
         self.domain_concept = domain_concept
@@ -55,6 +71,7 @@ class DataBinding(Element):
         self.label_field_path = label_field_path  # For nested fields like "measure.name"
         self.data_field_path = data_field_path    # For nested fields like "measure.value"
         self.filter_expression = filter_expression  # Raw filter string from UI
+        self.aggregation = aggregation
 
     @property
     def name(self) -> str:
@@ -125,6 +142,19 @@ class DataBinding(Element):
         if data_filter is not None and not isinstance(data_filter, Constraint):
             raise TypeError("data_filter must be an instance of Constraint or None")
         self._data_filter = data_filter
+
+    @property
+    def aggregation(self) -> DataAggregation | None:
+        """DataAggregation | None: How the bound records are aggregated."""
+        return self._aggregation
+
+    @aggregation.setter
+    def aggregation(self, aggregation):
+        """Set the aggregation from a DataAggregation or its name (e.g. "avg")."""
+        parsed = DataAggregation.parse(aggregation)
+        if aggregation is not None and parsed is None:
+            raise ValueError(f"Unknown aggregation: {aggregation!r}")
+        self._aggregation = parsed
 
     def __str__(self):
         return (

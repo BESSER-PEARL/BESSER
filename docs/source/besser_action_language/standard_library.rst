@@ -1,5 +1,5 @@
 BAL Standard Library
-===========
+====================
 
 In addition to the core language, BAL also provide a set of predefined method in the form of a standard library.
 The function part of this library are presented thereafter for each type of the language.
@@ -23,7 +23,7 @@ Return the number of elements present in the sequence.
 
 
 Method ``is_empty``
-^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^
 **Signature** (expressed in BAL)
 
 .. code-block::
@@ -62,7 +62,7 @@ Remove the first instance of ``elem`` in the sequence
 
 
 Method ``contains``
-^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^
 **Signature** (expressed in BAL)
 
 .. code-block::
@@ -140,7 +140,7 @@ Returns a new sequence containing the result of applying the ``mapping`` functio
 
 
 Method ``is_unique``
-^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^
 **Signature** (expressed in BAL)
 
 .. code-block::

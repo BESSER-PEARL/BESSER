@@ -2,7 +2,7 @@ import os
 import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sql_alchemy import Base
+from sql_alchemy import Base, _configure_sqlite_engine
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ def init_db():
         pool_pre_ping=True,
         echo=False
     )
+    _configure_sqlite_engine(engine)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
     return SessionLocal

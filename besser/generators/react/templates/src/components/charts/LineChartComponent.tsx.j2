@@ -36,6 +36,7 @@ interface Props {
   dataField?: string | string[];
   options?: Record<string, any>;
   styles?: CSSProperties;
+  className?: string;
 }
 
 const defaultColors = ["#4a90e2", "#10B981", "#F97316", "#F43F5E", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16"];
@@ -75,6 +76,7 @@ export const LineChartComponent: React.FC<Props> = ({
   dataField,
   options,
   styles,
+  className,
 }) => {
   // Track visible series for clickable legend
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
@@ -220,7 +222,7 @@ export const LineChartComponent: React.FC<Props> = ({
   };
 
   return (
-    <div id={id} style={containerStyle}>
+    <div id={id} className={className} style={containerStyle}>
       {title && <h3 style={{ textAlign: "center", marginBottom: "10px" }}>{title}</h3>}
       <ResponsiveContainer width="100%" height={360}>
         <LineChart data={mergedData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>

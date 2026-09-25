@@ -1,0 +1,1295 @@
+"""Spec-Driven Generation Router.
+
+Server-Sent Events endpoint that drives ``besser.spec_driven_agent.LLMOrchestrator``
+and streams phase markers, tool calls, text deltas, cost ticks, and a
+final download URL back to the browser.
+
+Security caveat
+---------------
+``LLMOrchestrator`` executes shell commands produced by the LLM inside a
+per-run temp directory (120s per-command timeout, no command denylist).
+It runs in the same process as the rest of the BESSER backend. This
+endpoint is BYOK — the user provides their own Anthropic or OpenAI API
+key and pays for their own run. Container-level isolation (e.g. Render)
+is the only sandbox between runs. Never deploy this endpoint on
+infrastructure shared with untrusted workloads.
+
+The user's API key is accepted only in the JSON POST body, never via
+URL, query string, or headers. It is never logged, never echoed in SSE
+events, and never stored on disk.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hmac
+import json
+import logging
+import mimetypes
+import os
+import re
+import shutil
+import tempfile
+import time
+import uuid
+from typing import AsyncIterator, Optional
+
+import httpx
+from fastapi import APIRouter, Header, HTTPException, Path, Query
+from fastapi.responses import StreamingResponse
+
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    LLM_CANCEL_ABANDONED_RUNS,
+    LLM_DISCONNECTED_GRACE_SECONDS,
+)
+from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
+    ImportGitHubRunRequest,
+    ImportGitHubRunResponse,
+    PushSmartToGitHubRequest,
+    PushSmartToGitHubResponse,
+    SmartGenerateRequest,
+    SmartPreviewRequest,
+)
+from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
+    handle_endpoint_errors,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+    DURABLE_RUN_MANAGER,
+    SMART_RUN_REGISTRY,
+    SmartGenerationRunner,
+    SmartRunEntry,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
+    assemble_models_from_project,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview import (
+    build_preview,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+    scrub_secret_files,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
+    _EXCLUDED_OUTPUT_DIRS,
+    _locate_run_temp_dir,
+    release_active_run,
+    release_run_slot,
+    request_cancellation,
+    reserve_active_run,
+    try_acquire_run_slot,
+)
+from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
+    create_github_service,
+)
+from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import (
+    get_user_token,
+)
+from besser.utilities.web_modeling_editor.backend.services.deployment.github_deploy_api import (
+    _extract_github_error_message,
+    _sanitize_repo_name,
+)
+from besser.utilities.buml_code_builder import (
+    agent_model_to_code,
+    domain_model_to_code,
+    gui_model_to_code,
+)
+from besser.generators.web_app.web_app_generator import agent_slug
+from besser.spec_driven_agent.providers.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
+from besser.spec_driven_agent.providers.llm_client import (
+    free_alt_models,
+    free_fallback_model,
+    free_pilot_model,
+    free_tier_available,
+    free_tier_model,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/besser_api", tags=["spec-driven"])
+_MAX_SQLITE_SEQUENCE = (1 << 63) - 1
+
+_DOWNLOAD_CHUNK_SIZE = 65536
+
+# Any character that could break a Content-Disposition header if naively
+# interpolated (CR, LF, double quote, backslash, control chars) is
+# replaced with a single underscore. Since file names come from
+# LLM-generated output directories, we cannot trust them.
+_UNSAFE_FILENAME_RE = re.compile(r"[^\w\-. ()\[\]]+")
+
+
+def _safe_attachment_filename(filename: str, fallback: str) -> str:
+    """Produce a Content-Disposition-safe ASCII filename.
+
+    Strips newlines, CR, double quotes, backslashes, and any other
+    character that could be used to split the HTTP header line or
+    inject another directive. If the sanitised filename ends up empty
+    (e.g. an LLM produced a filename consisting entirely of CJK
+    characters), falls back to ``fallback``.
+    """
+    candidate = (filename or "").strip()
+    candidate = _UNSAFE_FILENAME_RE.sub("_", candidate)
+    candidate = candidate.strip("._ ")
+    if not candidate:
+        return fallback
+    # Cap the length so a ludicrously long LLM filename can't bloat the
+    # header. 120 chars matches common filesystem limits.
+    return candidate[:120]
+
+
+async def _stream_with_slot_release(
+    inner: AsyncIterator[bytes],
+    run_reservation: Optional[tuple[str, asyncio.Event]] = None,
+) -> AsyncIterator[bytes]:
+    """Yield from an SSE generator and return its concurrency slot
+    when the stream ends, regardless of outcome.
+
+    Used for both /spec-driven/generate and /spec-driven resume. The slot is
+    always acquired by the caller before entering this wrapper; we
+    only care about release semantics (happy path, error, or client
+    disconnect — ``finally`` covers all three).
+    """
+    import traceback as _tb
+
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.incidents import (
+        record_incident,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
+        ErrorEvent,
+        format_sse,
+    )
+
+    # Run context comes from the start frame; error frames don't carry it.
+    run_ctx: dict = {}
+
+    def _frame_payload(frame: bytes) -> dict:
+        data_line = next(
+            (ln for ln in frame.split(b"\n") if ln.startswith(b"data:")), None,
+        )
+        return json.loads(data_line[5:].decode("utf-8")) if data_line else {}
+
+    def _sniff_frame(frame: bytes) -> None:
+        """Persist every user-facing SSE error event as an incident."""
+        try:
+            if b"event: start" in frame:
+                payload = _frame_payload(frame)
+                run_ctx.update(
+                    run_id=payload.get("runId"),
+                    provider=payload.get("provider"),
+                    model=payload.get("llmModel"),
+                )
+            elif b"event: error" in frame:
+                payload = _frame_payload(frame)
+                record_incident(
+                    kind="sse_error",
+                    code=payload.get("code"),
+                    message=payload.get("message"),
+                    **run_ctx,
+                )
+        except Exception:
+            pass
+
+    try:
+        async for frame in inner:
+            _sniff_frame(frame)
+            yield frame
+    except Exception as exc:
+        # An exception escaping the run generator used to close the SSE
+        # stream with NO final event — the client showed "stream closed
+        # before reporting a final result" and the traceback died with
+        # the container logs. Record it AND tell the client honestly.
+        tb = _tb.format_exc()
+        logger.exception("Run stream crashed without a final event")
+        record_incident(
+            kind="stream_crash",
+            message=str(exc),
+            traceback_text=tb,
+            **run_ctx,
+        )
+        try:
+            yield format_sse(
+                ErrorEvent(code="INTERNAL", message="Internal server error")
+            )
+        except Exception:
+            logger.exception("Could not deliver the terminal error frame")
+    finally:
+        if run_reservation is not None:
+            await release_active_run(*run_reservation)
+        release_run_slot()
+
+
+# ---------------------------------------------------------------------
+# POST /besser_api/spec-driven/generate  (SSE stream)
+# ---------------------------------------------------------------------
+
+#: ``Idempotency-Key`` -> ``(run_id, created_at)``. Starting a run is a
+#: non-idempotent POST, and behind a TLS-inspecting proxy that is exactly the
+#: request that fails ("Failed to fetch", no run to reconnect to). A
+#: client-generated key makes the retry attach to the run the first attempt
+#: started. In-process and best-effort on purpose: a missed hit costs one
+#: duplicate run, not corruption, and the durable store stays the source of truth.
+_IDEMPOTENCY_TTL_SECONDS = 900
+_idempotent_runs: dict[str, tuple[str, float]] = {}
+_idempotency_lock = asyncio.Lock()
+
+
+def _prune_idempotency_keys(now: float) -> None:
+    for key, (_, created_at) in list(_idempotent_runs.items()):
+        if now - created_at > _IDEMPOTENCY_TTL_SECONDS:
+            _idempotent_runs.pop(key, None)
+
+
+def _require_demo_token(request: SmartGenerateRequest) -> None:
+    """Reject a ``sponsored``-tier run that does not carry the demo secret.
+
+    The sponsored tier spends the ORG's credits (endpoint + token live in
+    server env), so without this check any caller could POST
+    ``provider: "sponsored"`` and use our key as an open API proxy. Demo links
+    carry the secret as ``?demo=<token>``.
+
+    Fails CLOSED: an unset ``BESSER_DEMO_TOKEN`` refuses every sponsored run,
+    so a half-finished env edit cannot leave the tier open. The message never
+    says which half was wrong.
+
+    Compared as bytes: ``compare_digest`` raises TypeError on a non-ASCII
+    ``str``, which would turn a junk token into a 500 instead of a 403.
+    """
+    if request.provider != "sponsored":
+        return
+    expected = os.environ.get("BESSER_DEMO_TOKEN", "").strip()
+    supplied = request.resolved_demo_token().strip()
+    if not expected or not hmac.compare_digest(
+        supplied.encode("utf-8"), expected.encode("utf-8"),
+    ):
+        logger.warning("Rejected a sponsored-tier run without a valid demo token")
+        raise HTTPException(
+            status_code=403,
+            detail="The sponsored tier is not available on this server.",
+        )
+
+
+def _run_stream_response(run_id: str, after_sequence: int = 0) -> StreamingResponse:
+    return StreamingResponse(
+        DURABLE_RUN_MANAGER.subscribe(run_id, after_sequence=after_sequence),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            # Disable response buffering in proxies (nginx, Render, etc.)
+            # so events reach the browser in near-real-time.
+            "X-Accel-Buffering": "no",
+            "X-BESSER-Run-Id": run_id,
+        },
+    )
+
+
+@router.post("/spec-driven/generate", response_class=StreamingResponse)
+async def smart_generate(
+    request: SmartGenerateRequest,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+):
+    """Stream an LLM-orchestrated code generation run as SSE events.
+
+    Emits events in order: ``start`` → zero or more of
+    ``phase`` / ``tool_call`` / ``text`` / ``cost`` / ``model_update``
+    (mid-run outage-fallback model switch) → optional
+    ``error(COST_CAP|TIMEOUT)`` warning → terminal ``done`` (carrying a
+    one-time ``downloadUrl``) or terminal ``error``.
+
+    The ``api_key`` field in the request body is a ``SecretStr`` and is
+    never logged, never echoed in events, and never stored. The download
+    URL returned in the ``done`` event is single-use — the first GET
+    against ``/spec-driven/download/{runId}`` serves the file; subsequent GETs
+    return 404.
+    """
+    # Authorisation before anything is allocated: a sponsored-tier run spends
+    # the org's own credits and needs the demo secret.
+    _require_demo_token(request)
+
+    # A retried start must attach to the original run, not spawn a second
+    # one. Checked before the slot is acquired so a retry cannot 429 against
+    # the very run it is trying to rejoin.
+    idem_key = (idempotency_key or "").strip()[:200]
+    if idem_key:
+        async with _idempotency_lock:
+            _prune_idempotency_keys(time.time())
+            known = _idempotent_runs.get(idem_key)
+            if known is not None:
+                existing_run_id = known[0]
+                if DURABLE_RUN_MANAGER.get_run(existing_run_id) is not None:
+                    logger.info(
+                        "Idempotent retry for run %s — replaying from sequence 0",
+                        existing_run_id,
+                    )
+                    return _run_stream_response(existing_run_id)
+                # The run aged out of the store; let this request start a
+                # fresh one under the same key.
+                _idempotent_runs.pop(idem_key, None)
+
+    # Reserve a concurrency slot BEFORE allocating any resources.
+    # ``try_acquire_run_slot`` is non-blocking: the client sees an
+    # immediate 429 when the server is saturated, never a hung SSE
+    # stream. The wrapper around the stream returns the slot on exit.
+    if not try_acquire_run_slot():
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Too many spec-driven generation runs are in flight right now. "
+                "Retry in a moment."
+            ),
+        )
+
+    # Incremental modify: when the request carries mode="modify" and a
+    # base_run_id, the runner seeds this run's workspace from that previous
+    # run's files and edits them in place (falling back to from-scratch if
+    # the base has expired). Both fields default to the from-scratch path.
+    run_id = uuid.uuid4().hex
+    if idem_key:
+        # Claim the key with this run id BEFORE the run starts, so a retry
+        # that arrives while startup is still in flight waits for this run
+        # rather than opening a second one.
+        async with _idempotency_lock:
+            _idempotent_runs[idem_key] = (run_id, time.time())
+    cancel_event = await reserve_active_run(run_id)
+    if cancel_event is None:  # UUID collision is fantastically unlikely.
+        release_run_slot()
+        if idem_key:
+            async with _idempotency_lock:
+                _idempotent_runs.pop(idem_key, None)
+        raise HTTPException(status_code=409, detail="Generated run ID is already active")
+
+    runner = SmartGenerationRunner(
+        request,
+        run_id=run_id,
+        reserved_cancel_event=cancel_event,
+        base_run_id=request.base_run_id,
+        mode=request.mode,
+    )
+    source = _stream_with_slot_release(
+        runner.generate_and_stream(),
+        run_reservation=(run_id, cancel_event),
+    )
+    try:
+        await DURABLE_RUN_MANAGER.start(
+            run_id,
+            source,
+            on_abandoned=(
+                cancel_event.set if LLM_CANCEL_ABANDONED_RUNS else None
+            ),
+            resume_available=lambda: _locate_run_temp_dir(run_id) is not None,
+            disconnect_grace_seconds=LLM_DISCONNECTED_GRACE_SECONDS,
+        )
+    except Exception:
+        await release_active_run(run_id, cancel_event)
+        release_run_slot()
+        if idem_key:
+            async with _idempotency_lock:
+                _idempotent_runs.pop(idem_key, None)
+        raise
+    return _run_stream_response(run_id)
+
+
+# ---------------------------------------------------------------------
+# Durable run status + event replay
+# ---------------------------------------------------------------------
+
+
+@router.get("/spec-driven/runs/{run_id}")
+async def get_smart_run_status(
+    run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
+):
+    """Return durable lifecycle metadata without exposing request secrets."""
+    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+    return record.to_api_dict()
+
+
+@router.get("/spec-driven/runs/{run_id}/events.json")
+async def poll_smart_run_events(
+    run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
+    after: int = Query(default=0, ge=0, le=_MAX_SQLITE_SEQUENCE),
+    limit: int = Query(default=250, ge=1, le=1000),
+):
+    """Polling transport for the durable event log — the proxy-safe fallback.
+
+    A TLS-intercepting corporate proxy buffers the
+    response body before releasing it, which an SSE stream never finishes
+    producing: either the headers are held so the fetch never settles, or the
+    connection is torn down ("Failed to fetch"). REST and the agent WebSocket
+    are unaffected because both terminate.
+
+    So this returns the same events as a *short, terminating* JSON response the
+    proxy can buffer normally. The durable store assigns sequence numbers before
+    any subscriber sees a frame, so polling and streaming share one cursor:
+    pass the last sequence you saw as ``after``.
+
+    ``events[].data`` is the decoded SSE payload, so a client can feed these to
+    the same reducer it feeds streamed events. ``hasMore`` says to come straight
+    back, ``status``/``terminalEvent`` say when to stop.
+    """
+    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+
+    stored = DURABLE_RUN_MANAGER.store.events_after(run_id, after, limit=limit)
+    events = [
+        {
+            "sequence": item.sequence,
+            "event": item.event_type,
+            "data": item.payload,
+        }
+        for item in stored
+    ]
+    cursor = events[-1]["sequence"] if events else after
+    return {
+        **record.to_api_dict(),
+        "events": events,
+        "cursor": cursor,
+        # A full page almost always means more is waiting; the poller should
+        # loop immediately instead of sleeping through its interval.
+        "hasMore": len(stored) >= limit,
+    }
+
+
+@router.get("/spec-driven/runs/{run_id}/events", response_class=StreamingResponse)
+async def stream_smart_run_events(
+    run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
+    after: int = Query(default=0, ge=0, le=_MAX_SQLITE_SEQUENCE),
+    last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
+):
+    """Replay events after a sequence, then follow the live producer.
+
+    ``after`` supports the fetch-based frontend. ``Last-Event-ID`` keeps the
+    endpoint compatible with native EventSource clients. The larger valid
+    cursor wins, preventing a stale query value from replaying duplicates.
+    """
+    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Spec-driven run not found")
+
+    cursor = after
+    if last_event_id:
+        try:
+            parsed_event_id = int(last_event_id)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid Last-Event-ID")
+        if not 0 <= parsed_event_id <= _MAX_SQLITE_SEQUENCE:
+            raise HTTPException(status_code=422, detail="Invalid Last-Event-ID")
+        cursor = max(cursor, parsed_event_id)
+
+    return StreamingResponse(
+        DURABLE_RUN_MANAGER.subscribe(run_id, after_sequence=cursor),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "X-BESSER-Run-Id": run_id,
+        },
+    )
+
+
+# ---------------------------------------------------------------------
+# GET /besser_api/spec-driven/config
+# ---------------------------------------------------------------------
+
+
+def _free_tier_model_choices() -> list[dict]:
+    """The free-tier models a request may explicitly pick between.
+
+    Exactly the server-configured allowlist, in preference order: the primary
+    (default), any extra models sharing the primary endpoint
+    (``BESSER_FREE_LLM_ALT_MODELS`` — e.g. ``poolside/laguna-s-2.1-free``,
+    which unlike the primary advertises no daily request quota), and, when a
+    distinct fallback endpoint is configured, the fallback's model. Empty when
+    the free tier itself is not configured.
+
+    The list is deliberately flat: the frontend renders it verbatim, so adding
+    a free model is a server-env change with no frontend deploy. What the ids
+    do NOT carry is which endpoint serves them — that pairing lives in
+    ``create_llm_client``, where an alt id resolves to the primary base
+    URL + token and the fallback id to its own.
+    """
+    if not free_tier_available():
+        return []
+    primary = free_tier_model()
+    choices = [{"id": primary, "default": True}]
+    choices.extend({"id": alt, "default": False} for alt in free_alt_models())
+    fallback = free_fallback_model()
+    if fallback and fallback != primary:
+        choices.append({"id": fallback, "default": False})
+    return choices
+
+
+@router.get("/spec-driven/config")
+async def smart_gen_config():
+    """Expose the server's current spec-driven generation configuration.
+
+    The frontend reads this once at app startup (or before rendering
+    the preview screen) so it can show the real hard caps in tooltips,
+    clamp its own input fields to the server's limits, and surface
+    whether tracing/checkpointing are on at this deploy.
+
+    Nothing here is a secret — everything exposed is either a public
+    cap or a feature flag. API keys and run IDs are never returned.
+    """
+    # Re-import the constants each call so tests that monkeypatch the
+    # module see fresh values. The indirection has zero measurable
+    # overhead vs. the LLM work these caps gate.
+    from besser.utilities.web_modeling_editor.backend.constants import constants as C
+
+    return {
+        "caps": {
+            "max_cost_usd_hard_cap": C.LLM_MAX_COST_USD_HARD_CAP,
+            "max_runtime_seconds_hard_cap": C.LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
+            "max_turns_hard_cap": C.LLM_MAX_TURNS_HARD_CAP,
+            "default_max_cost_usd": C.LLM_DEFAULT_MAX_COST_USD,
+            "default_max_runtime_seconds": C.LLM_DEFAULT_MAX_RUNTIME_SECONDS,
+            "default_max_turns": C.LLM_DEFAULT_MAX_TURNS,
+        },
+        "download_ttl_seconds": C.LLM_DOWNLOAD_TTL_SECONDS,
+        "cost_emitter_interval_seconds": C.LLM_COST_EMITTER_INTERVAL_SECONDS,
+        "concurrency": {
+            "max_concurrent_runs": C.LLM_MAX_CONCURRENT_RUNS,
+        },
+        "features": {
+            "tracing_enabled": C.LLM_ENABLE_TRACING,
+            "checkpointing_enabled": C.LLM_ENABLE_CHECKPOINTING,
+            "resume_enabled": C.LLM_ENABLE_CHECKPOINTING,
+            "toolchain_validation_enabled": C.LLM_ENABLE_TOOLCHAIN_VALIDATION,
+            # False on any deploy that has not opted in. Reported so a local/on-prem operator can confirm from outside
+            # the process that BESSER_LLM_ENABLE_SHELL_TOOLS actually took
+            # effect - it is a process-start env var, never a request field.
+            "shell_tools_enabled": C.LLM_ENABLE_SHELL_TOOLS,
+            "per_write_diagnostics_enabled": C.LLM_PER_WRITE_DIAGNOSTICS,
+            "durable_runs_enabled": True,
+            "event_replay_enabled": True,
+            "cancel_abandoned_runs": C.LLM_CANCEL_ABANDONED_RUNS,
+            "disconnected_grace_seconds": C.LLM_DISCONNECTED_GRACE_SECONDS,
+        },
+        "supported_providers": ["anthropic", "openai", "mistral", "nebius"],
+        # Per-provider default model names, sourced from the LLM client
+        # layer (single source of truth — the BYOK dialog should read
+        # these instead of hardcoding its own copies).
+        "default_models": dict(_LLM_DEFAULT_MODELS),
+        # Keyless free tier (server-hosted open-weight model). The frontend
+        # shows the "Free" option only when ``available`` is true, so a deploy
+        # without the endpoint configured never offers a button that 500s.
+        "free_tier": {
+            "available": free_tier_available(),
+            "model": free_tier_model() or None,
+            # The model ids a free-tier request may explicitly choose between.
+            # The server honors exactly these ids (anything else pins to the
+            # default): the primary (default), any alt models on the primary
+            # endpoint, and the fallback endpoint's model when configured.
+            "models": _free_tier_model_choices(),
+            # The model a facilitated study session (?pilot=<label>) pre-selects.
+            # Null when unset. Server-side so swapping it is an env edit, not a
+            # frontend release -- the client never hardcodes a model id.
+            "pilot_model": free_pilot_model() or None,
+        },
+    }
+
+
+# ---------------------------------------------------------------------
+# POST /besser_api/spec-driven/preview
+# ---------------------------------------------------------------------
+
+
+@router.post("/spec-driven/preview")
+async def smart_preview(request: SmartPreviewRequest):
+    """Return the plan spec-driven generate would run, without executing it.
+
+    The response lets the UI show a confirmation screen before the user
+    commits their API key and budget. Preview never calls an LLM — the
+    classifier is pure heuristics plus the project's model presence —
+    so no api_key is required and the response is instant.
+
+    Returns (simplified)::
+
+        {
+          "primary_kind": "class",
+          "auxiliary_kinds": ["gui", "agent"],
+          "target_generator": "generate_web_app",
+          "target_generator_confidence": 0.8,
+          "summary": "Generate full-stack web app from Class Diagram; "
+                     "also using GUI Model, Agent Model",
+          "estimated_turns": 18,
+          "estimated_cost_usd": 0.59,
+          "estimated_duration_seconds": 195,
+          "notes": [...],
+          "model_summary": {"primary": "class", "present": [...]}
+        }
+
+    Errors are handled inline (not via the ``handle_endpoint_errors``
+    decorator) because its ``functools.wraps`` wrapper confuses Pydantic
+    forward-ref resolution: the wrapped function's ``__globals__`` point
+    at the decorator module, so ``SmartPreviewRequest`` isn't visible
+    when the schema is built.
+    """
+    try:
+        assembled = assemble_models_from_project(
+            request.project, primary_kind_override=request.primary_kind_override,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Unexpected error building spec-driven preview")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+    plan = build_preview(
+        assembled,
+        instructions=request.instructions,
+        max_cost_usd=request.max_cost_usd,
+        max_runtime_seconds=request.max_runtime_seconds,
+        mode=request.mode,
+    )
+    payload = plan.to_dict()
+    payload["model_summary"] = assembled.summary()
+    return payload
+
+
+# ---------------------------------------------------------------------
+# POST /besser_api/spec-driven/resume/{run_id}
+# ---------------------------------------------------------------------
+
+
+@router.post("/spec-driven/resume/{run_id}", response_class=StreamingResponse)
+async def resume_smart_gen(
+    run_id: str,
+    request: SmartGenerateRequest,
+):
+    """Resume a spec-driven generate run that crashed before completion.
+
+    Takes the same ``SmartGenerateRequest`` shape as ``/spec-driven/generate``
+    — the user re-supplies their API key and the current project, which
+    we hash and compare against the checkpoint's fingerprint before
+    accepting the resume. The orchestrator picks up from the last saved
+    turn; earlier tool calls are not re-executed.
+
+    Returns 404 when the run_id has no recoverable workspace (either
+    never existed, was swept, or completed cleanly — in which case its
+    checkpoint was intentionally deleted on success).
+
+    The run_id path pattern matches hex[32] to keep malformed IDs out
+    of the filesystem scan performed by ``_locate_run_temp_dir``.
+    """
+    # Resume takes the same request shape as /generate and spends the same
+    # way — gate it identically or it becomes the way around the gate.
+    _require_demo_token(request)
+
+    if not re.fullmatch(r"[a-f0-9]{32}", run_id):
+        raise HTTPException(status_code=422, detail="Invalid run_id format")
+
+    temp_dir = _locate_run_temp_dir(run_id)
+    if temp_dir is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No recoverable workspace for this run_id. The crashed "
+                "run's temp directory has either been swept or the run "
+                "completed cleanly. Start a fresh run via /spec-driven/generate."
+            ),
+        )
+
+    # Atomically reserve the checkpoint/run ID before the global slot.
+    # This prevents the original run and a resume (or two resumes) from
+    # sharing one workspace and checkpoint.
+    cancel_event = await reserve_active_run(run_id)
+    if cancel_event is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This spec-driven generation run is already active or being resumed."
+            ),
+        )
+
+    # Same concurrency gate as /spec-driven/generate - a resumed run consumes
+    # the same resources as a fresh one.
+    if not try_acquire_run_slot():
+        await release_active_run(run_id, cancel_event)
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Too many spec-driven generation runs are in flight right now. "
+                "Retry in a moment."
+            ),
+        )
+
+    runner = SmartGenerationRunner(
+        request,
+        resume_run_id=run_id,
+        reserved_cancel_event=cancel_event,
+    )
+    source = _stream_with_slot_release(
+        runner.generate_and_stream(),
+        run_reservation=(run_id, cancel_event),
+    )
+    try:
+        await DURABLE_RUN_MANAGER.start(
+            run_id,
+            source,
+            resume=True,
+            on_abandoned=(
+                cancel_event.set if LLM_CANCEL_ABANDONED_RUNS else None
+            ),
+            resume_available=lambda: _locate_run_temp_dir(run_id) is not None,
+            disconnect_grace_seconds=LLM_DISCONNECTED_GRACE_SECONDS,
+        )
+    except Exception:
+        await release_active_run(run_id, cancel_event)
+        release_run_slot()
+        raise
+    return StreamingResponse(
+        DURABLE_RUN_MANAGER.subscribe(run_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "X-BESSER-Run-Id": run_id,
+        },
+    )
+
+
+# ---------------------------------------------------------------------
+# POST /besser_api/spec-driven/cancel/{run_id}
+# ---------------------------------------------------------------------
+
+
+@router.post("/spec-driven/cancel/{run_id}")
+@handle_endpoint_errors("cancel_smart_gen")
+async def cancel_smart_gen(
+    run_id: str = Path(
+        ...,
+        pattern=r"^[a-f0-9]{32}$",
+        description="Hex run ID returned in the `start` SSE event",
+    ),
+):
+    """Signal a live spec-driven generation run to stop at its next turn.
+
+    Returns ``{"status": "cancelled"}`` if the run was found and
+    signalled, ``{"status": "not_found"}`` if no live run exists for
+    that ID (already finished, never existed, or download already
+    happened).
+
+    The user's BYOK budget stops accruing once the orchestrator hits
+    the next turn boundary (typically within a few seconds). The SSE
+    stream emits a final ``error(code="CANCELLED")`` event before
+    closing so the frontend can show a definite "stopped by user"
+    state instead of waiting for ``done``.
+    """
+    cancelled = await request_cancellation(run_id)
+    return {"status": "cancelled" if cancelled else "not_found", "runId": run_id}
+
+
+# ---------------------------------------------------------------------
+# GET /besser_api/spec-driven/download/{run_id}
+# ---------------------------------------------------------------------
+
+
+@router.get("/spec-driven/download/{run_id}", response_class=StreamingResponse)
+@handle_endpoint_errors("download_smart")
+async def download_smart(
+    run_id: str = Path(
+        ...,
+        pattern=r"^[a-f0-9]{32}$",
+        description="Hex run ID returned in the `done` SSE event",
+    ),
+):
+    """Download the output produced by a completed run.
+
+    Re-downloadable until the TTL sweep expires the entry
+    (``LLM_DOWNLOAD_TTL_SECONDS``, default 30 min) — a transient network
+    failure during the blob fetch must not permanently lose an artifact
+    the user paid minutes and dollars to produce. Cleanup is owned
+    entirely by ``SmartRunRegistry.periodic_sweep``; this endpoint no
+    longer deletes anything.
+    """
+    entry = await SMART_RUN_REGISTRY.get(run_id)
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Unknown or expired run ID",
+        )
+
+    if not os.path.isfile(entry.file_path):
+        # Should not happen, but guard against disk-level races.
+        logger.error(
+            "SmartRunRegistry had an entry for %s but file %s is missing",
+            run_id,
+            entry.file_path,
+        )
+        raise HTTPException(
+            status_code=404,
+            detail="Generated output is no longer available",
+        )
+
+    media_type = (
+        "application/zip"
+        if entry.is_zip
+        else mimetypes.guess_type(entry.file_name)[0] or "application/octet-stream"
+    )
+
+    async def _iter_file() -> AsyncIterator[bytes]:
+        with open(entry.file_path, "rb") as fh:
+            while True:
+                chunk = fh.read(_DOWNLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                yield chunk
+
+    safe_filename = _safe_attachment_filename(
+        entry.file_name,
+        fallback="besser_smart_output.zip" if entry.is_zip else "besser_smart_output.bin",
+    )
+
+    return StreamingResponse(
+        _iter_file(),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+# ---------------------------------------------------------------------
+# POST /besser_api/spec-driven/push-to-github
+# ---------------------------------------------------------------------
+
+def _scrub_secret_env_files(workdir: str) -> list[str]:
+    """Compatibility wrapper for the GitHub-push security boundary."""
+    return list(scrub_secret_files(workdir).removed_files)
+
+
+def _write_smart_model_to_buml(workdir: str, project_export: Optional[dict]) -> None:
+    """Inject the model source into ``workdir/buml/`` (best-effort).
+
+    Reuses the same ``buml_code_builder`` helpers ``/deploy-webapp`` uses
+    and the spec-driven generation project→BUML assembly, so this works for
+    class / GUI / agent projects. Also writes ``buml/diagrams.json`` from
+    the re-importable V2 project-export envelope. Never raises — a failed
+    export logs a warning and the code push still succeeds.
+    """
+    buml_dir = os.path.join(workdir, "buml")
+    os.makedirs(buml_dir, exist_ok=True)
+
+    has_export = isinstance(project_export, dict) and bool(project_export)
+
+    # ---- B-UML model .py files (domain / gui / agent) ----
+    if has_export:
+        try:
+            assembled = assemble_models_from_project(
+                ProjectInput.model_validate(project_export)
+            )
+            if assembled.domain_model is not None:
+                domain_model_to_code(
+                    model=assembled.domain_model,
+                    file_path=os.path.join(buml_dir, "domain_model.py"),
+                )
+            if assembled.gui_model is not None:
+                gui_model_to_code(
+                    model=assembled.gui_model,
+                    file_path=os.path.join(buml_dir, "gui_model.py"),
+                    domain_model=assembled.domain_model,
+                )
+            if assembled.agent_model is not None:
+                slug = agent_slug(assembled.agent_model.name)
+                agent_model_to_code(
+                    assembled.agent_model,
+                    os.path.join(buml_dir, f"agent_model_{slug}.py"),
+                )
+        except Exception:
+            logger.warning(
+                "spec-driven push-to-github: failed to export B-UML model files; "
+                "continuing without them",
+                exc_info=True,
+            )
+
+    # ---- Re-importable diagrams.json ----
+    if has_export:
+        try:
+            with open(
+                os.path.join(buml_dir, "diagrams.json"), "w", encoding="utf-8"
+            ) as f:
+                json.dump(project_export, f, indent=2, default=str)
+        except Exception:
+            logger.warning(
+                "spec-driven push-to-github: failed to write buml/diagrams.json; "
+                "continuing without it",
+                exc_info=True,
+            )
+    else:
+        logger.warning(
+            "spec-driven push-to-github: request carried no 'projectExport'; the "
+            "pushed repo will not include a re-importable buml/diagrams.json"
+        )
+
+
+def _pick_default_branch(branches: list[str]) -> str:
+    """Best-effort repo default when only a branch list is available.
+
+    Prefers the conventional default names over an arbitrary first entry
+    so we never blindly take ``branches[0]``.
+    """
+    if not branches:
+        return "main"
+    for preferred in ("main", "master"):
+        if preferred in branches:
+            return preferred
+    return branches[0]
+
+
+def _resolve_target_branch(
+    requested: Optional[str],
+    available: Optional[list[str]],
+    default_branch: str,
+) -> str:
+    """Pick the push target branch.
+
+    Honours ``requested`` when it is present in ``available`` (``available
+    is None`` means the branch set is not materialised yet — e.g. a
+    freshly created repo — so the explicit request is honoured there).
+    Falls back to ``default_branch`` otherwise.
+    """
+    if requested:
+        requested = requested.strip()
+    if requested:
+        if available is None or requested in available:
+            return requested
+        logger.warning(
+            "spec-driven push-to-github: requested branch %r not present; using %r",
+            requested, default_branch,
+        )
+    return default_branch
+
+
+@router.post("/spec-driven/push-to-github", response_model=PushSmartToGitHubResponse)
+async def push_spec_driven_to_github(
+    req: PushSmartToGitHubRequest,
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
+    """Push a finished spec-driven generation run to a GitHub repository.
+
+    Unlike ``/deploy-webapp`` (which regenerates deterministically and
+    would discard the LLM's customizations), this pushes the *stored*
+    artifact for ``run_id`` — the exact code the user saw and paid for —
+    plus the re-importable model source under ``buml/``.
+
+    Flow:
+      1. Gate on the ``X-GitHub-Session`` header (same helper the other
+         GitHub endpoints use — the real token never reaches the client).
+      2. Resolve the stored run from ``SMART_RUN_REGISTRY`` (404 when it
+         has been swept past its TTL — the user must re-generate).
+      3. Copy the stored file tree into a fresh temp dir, skipping build/
+         dependency dirs, ``.besser_*`` internals, and any ``.env`` that
+         carries a real secret.
+      4. Inject ``buml/`` model files + ``buml/diagrams.json``.
+      5. Create (default private) or reuse the repo, resolve the branch.
+      6. Replace the repo tree with this push (each run is a full app).
+    """
+    # ---- 1. GitHub auth gate ----
+    if not github_session:
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub authentication required. Please sign in with GitHub first.",
+        )
+    access_token = get_user_token(github_session)
+    if not access_token:
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub session expired. Please sign in again.",
+        )
+
+    # ---- 2. Resolve the stored run (non-destructive; None if swept) ----
+    entry = await SMART_RUN_REGISTRY.get(req.run_id)
+    if entry is None or not entry.temp_dir or not os.path.isdir(entry.temp_dir):
+        # Machine-usable code the frontend can branch on, plus a human
+        # hint: "This generation has expired — re-generate to push."
+        raise HTTPException(status_code=404, detail="run_expired")
+
+    deploy_config = req.deploy_config
+    repo_name = _sanitize_repo_name(deploy_config.repo_name)
+
+    try:
+        github = create_github_service(access_token)
+
+        user_info = await github.get_authenticated_user()
+        owner = user_info.get("login")
+        if not owner:
+            raise HTTPException(
+                status_code=401,
+                detail="Could not resolve GitHub user from session.",
+            )
+
+        with tempfile.TemporaryDirectory(
+            prefix=f"besser_smart_push_{uuid.uuid4().hex}_"
+        ) as workdir:
+            # ---- 3. Copy the stored tree, dropping build/dep dirs and
+            # `.besser_*` internal files (checkpoint / snapshot). The
+            # recipe is the one internal file we KEEP: a repo imported
+            # back via continue-from-GitHub re-hydrates the seed's
+            # generator name and run history from it — without it the
+            # modify run loses the framework guard and gap analysis
+            # falls back to "build from scratch" framing.
+            shutil.copytree(
+                entry.temp_dir,
+                workdir,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns(*_EXCLUDED_OUTPUT_DIRS, ".besser_*"),
+            )
+            _recipe_src = os.path.join(entry.temp_dir, ".besser_recipe.json")
+            if os.path.isfile(_recipe_src):
+                shutil.copy2(_recipe_src, os.path.join(workdir, ".besser_recipe.json"))
+            scrubbed = _scrub_secret_env_files(workdir)
+            if scrubbed:
+                logger.info(
+                    "spec-driven push-to-github: scrubbed %d secret env file(s): %s",
+                    len(scrubbed), scrubbed,
+                )
+
+            # ---- 4. Inject the model source into buml/ ----
+            # Prefer the run's model-synced export (a MODIFY run whose
+            # instruction added domain entities stores it on the registry
+            # entry) so the pushed buml/ matches the code. Fall back to the
+            # request's projectExport for every other run.
+            effective_export = (
+                getattr(entry, "updated_project_export", None)
+                or req.projectExport
+            )
+            _write_smart_model_to_buml(workdir, effective_export)
+
+            # ---- 5. Resolve the repo + target branch ----
+            is_first_push = not deploy_config.use_existing
+            if deploy_config.use_existing:
+                try:
+                    branches = await github.get_branches(owner, repo_name)
+                except httpx.HTTPStatusError as exc:
+                    if exc.response is not None and exc.response.status_code == 404:
+                        # Requested an existing repo that isn't there — surface
+                        # a machine-usable code rather than silently creating.
+                        raise HTTPException(
+                            status_code=404, detail="repo_missing"
+                        ) from exc
+                    raise
+                repo_default = _pick_default_branch(branches)
+                target_branch = _resolve_target_branch(
+                    deploy_config.branch, branches, repo_default
+                )
+            else:
+                description = (
+                    deploy_config.description
+                    or "Spec-driven app + model — Generated by BESSER"
+                )
+                repo_info = await github.create_repository(
+                    repo_name=repo_name,
+                    description=description,
+                    is_private=deploy_config.is_private,
+                    auto_init=True,
+                )
+                repo_default = repo_info.get("default_branch", "main")
+                target_branch = _resolve_target_branch(
+                    deploy_config.branch, None, repo_default
+                )
+
+            # ---- 6. Push the whole tree (replace — full app per run) ----
+            push_results = await github.push_directory_to_repo(
+                owner=owner,
+                repo_name=repo_name,
+                directory_path=workdir,
+                commit_message=(
+                    deploy_config.commit_message
+                    or "Spec-driven app + model — BESSER"
+                ),
+                branch=target_branch,
+                preserve_existing_files=False,
+            )
+            if not push_results.get("commit_sha"):
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to create GitHub commit for pushed files.",
+                )
+
+            return PushSmartToGitHubResponse(
+                success=True,
+                repo_url=f"https://github.com/{owner}/{repo_name}",
+                owner=owner,
+                repo_name=repo_name,
+                is_first_push=is_first_push,
+                files_uploaded=push_results.get("total_files", 0),
+            )
+
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as exc:
+        # Mirror /deploy-webapp's GitHub error mapping.
+        logger.warning("GitHub API error in push_spec_driven_to_github", exc_info=True)
+        upstream_status = exc.response.status_code if exc.response is not None else 502
+        detail = _extract_github_error_message(exc)
+        if upstream_status == 401:
+            raise HTTPException(status_code=401, detail=detail) from exc
+        if upstream_status == 403:
+            raise HTTPException(status_code=403, detail=detail) from exc
+        if upstream_status == 422:
+            # 422 covers both "repository name already exists on this
+            # account" AND a non-fast-forward ref update (a concurrent
+            # change to the branch). Both map cleanly to 409 Conflict.
+            raise HTTPException(status_code=409, detail=detail) from exc
+        if 400 <= upstream_status < 500:
+            raise HTTPException(status_code=upstream_status, detail=detail) from exc
+        raise HTTPException(
+            status_code=502, detail=f"GitHub upstream error: {detail}"
+        ) from exc
+    except Exception:
+        logger.exception("Unexpected error in push_spec_driven_to_github")
+        raise HTTPException(
+            status_code=500,
+            detail="An internal error occurred during GitHub push.",
+        )
+
+
+# ---------------------------------------------------------------------
+# POST /besser_api/spec-driven/import-github-run
+# ---------------------------------------------------------------------
+
+
+@router.post("/spec-driven/import-github-run", response_model=ImportGitHubRunResponse)
+async def import_github_run(
+    req: ImportGitHubRunRequest,
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
+    """Import an existing BESSER-created GitHub repo as a modify seed.
+
+    The counterpart to ``/spec-driven/push-to-github``: instead of *writing* a
+    finished run to GitHub, this *reads* a repo we previously created (so
+    it carries the generated code plus a re-importable ``buml/diagrams.json``)
+    back into the editor so the user can continue from it.
+
+    Flow:
+      1. Gate on the ``X-GitHub-Session`` header (same helper the other
+         GitHub endpoints use — the real token never reaches the client).
+      2. Resolve the target branch (repo default when none is requested).
+      3. Download + extract the repo tarball into a fresh temp dir.
+      4. Register that code tree as a run in ``SMART_RUN_REGISTRY`` under a
+         fresh ``run_id``, with ``temp_dir`` pointing at the extracted root.
+         A later ``/spec-driven/generate`` with ``mode="modify"`` and
+         ``base_run_id=run_id`` seeds its workspace from exactly this tree.
+      5. Read ``buml/diagrams.json`` (the re-importable model) if present.
+
+    Returns ``{ run_id, project, has_model, owner, repo, branch, message }``.
+    ``project`` is the parsed ``diagrams.json`` (or ``null`` when the repo
+    has no BESSER model — the frontend must then tell the user to open the
+    repo in the editor first before it can be smart-modified).
+    """
+    # ---- 1. GitHub auth gate (identical to spec-driven push-to-github) ----
+    if not github_session:
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub authentication required. Please sign in with GitHub first.",
+        )
+    access_token = get_user_token(github_session)
+    if not access_token:
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub session expired. Please sign in again.",
+        )
+
+    owner = req.owner.strip()
+    repo = req.repo.strip()
+
+    try:
+        github = create_github_service(access_token)
+
+        # ---- 2. Resolve the target branch (repo default when unset) ----
+        try:
+            branches = await github.get_branches(owner, repo)
+        except httpx.HTTPStatusError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                # The repo (or the caller's access to it) doesn't exist —
+                # surface a machine-usable code the frontend can branch on.
+                raise HTTPException(status_code=404, detail="repo_missing") from exc
+            raise
+        branch = _resolve_target_branch(
+            req.branch, branches, _pick_default_branch(branches)
+        )
+
+        # ---- 3. Download + extract the repo tarball ----
+        extract_dir = await github.download_repo_tarball(owner, repo, branch)
+
+        # ---- 4. Register the extracted code tree as a run ----
+        # ``file_path`` / ``is_zip`` are minimal placeholders — the modify
+        # seed reads only ``temp_dir`` (via ``_seed_workspace_from_base``),
+        # and ``/download-smart`` is never called on an imported run.
+        run_id = uuid.uuid4().hex
+        entry = SmartRunEntry(
+            file_path=extract_dir,
+            file_name="github_import",
+            is_zip=False,
+            temp_dir=extract_dir,
+            created_at=time.time(),
+        )
+        await SMART_RUN_REGISTRY.put(run_id, entry)
+
+        # ---- 5. Read the re-importable model (buml/diagrams.json) ----
+        project: Optional[dict] = None
+        has_model = False
+        message: Optional[str] = None
+        diagrams_path = os.path.join(extract_dir, "buml", "diagrams.json")
+        if os.path.isfile(diagrams_path):
+            try:
+                with open(diagrams_path, "r", encoding="utf-8") as fh:
+                    project = json.load(fh)
+                has_model = True
+            except (OSError, ValueError):
+                logger.warning(
+                    "import-github-run: buml/diagrams.json present but "
+                    "unreadable for %s/%s@%s",
+                    owner, repo, branch, exc_info=True,
+                )
+                message = (
+                    "This repo's BESSER model (buml/diagrams.json) could not "
+                    "be parsed."
+                )
+        else:
+            message = (
+                "This repo has no BESSER model — open it in the editor first."
+            )
+
+        return ImportGitHubRunResponse(
+            run_id=run_id,
+            project=project,
+            has_model=has_model,
+            owner=owner,
+            repo=repo,
+            branch=branch,
+            message=message,
+        )
+
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as exc:
+        # Mirror spec-driven push-to-github's GitHub error mapping.
+        logger.warning("GitHub API error in import_github_run", exc_info=True)
+        upstream_status = exc.response.status_code if exc.response is not None else 502
+        detail = _extract_github_error_message(exc)
+        if upstream_status == 401:
+            raise HTTPException(status_code=401, detail=detail) from exc
+        if upstream_status == 403:
+            raise HTTPException(status_code=403, detail=detail) from exc
+        if upstream_status == 404:
+            # Repo missing / no access — machine-usable code.
+            raise HTTPException(status_code=404, detail="repo_missing") from exc
+        if upstream_status == 422:
+            raise HTTPException(status_code=409, detail=detail) from exc
+        if 400 <= upstream_status < 500:
+            raise HTTPException(status_code=upstream_status, detail=detail) from exc
+        raise HTTPException(
+            status_code=502, detail=f"GitHub upstream error: {detail}"
+        ) from exc
+    except Exception:
+        logger.exception("Unexpected error in import_github_run")
+        raise HTTPException(
+            status_code=500,
+            detail="An internal error occurred during GitHub import.",
+        )

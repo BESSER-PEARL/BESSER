@@ -49,7 +49,7 @@ class {{ enum.name }}(Enum):
 
 {% for link in assoc_link_meta %}
 class {{ link.link_class }}(BaseModel):
-    target: int  # primary key of the linked entity
+    target: {{ link.target_type }}  # primary key of the linked entity
 {% for attr in link.attributes %}
 {% set link_attr_type = 'Any' if attr.type_name == 'any' else attr.type_name %}
     {{ attr.name }}: {{ ('Optional[' ~ link_attr_type ~ '] = None') if attr.optional else link_attr_type }}
@@ -74,15 +74,29 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
         {%- if attribute.is_id or attribute.name == 'id' %}
             {%- set ns.id_found = true %}
         {%- endif %}
-        {%- if attribute.name not in inherited_attr_names %}
+        {#- Create schemas (backend mode) never carry server-owned fields:
+            - the surrogate `id` (the DB autoincrements it, so a client-sent
+              id is at best ignored and at worst a PK conflict),
+            - audit timestamps `createdAt`/`updatedAt` (the ORM stamps them via
+              server-side defaults / onupdate), and
+            - `is_derived` attributes (the server computes them; the client
+              must not be asked to supply them) --
+              leaving any of these in Create forces the client to supply
+              values the server owns and breaks the generated app.
+            A declared primary key -- whether named `id` or anything else
+            (e.g. isbn, code) -- is client-supplied and stays in the schema.
+            Delegates to is_server_owned_attribute() (structural_utils.py) so
+            this can't drift from the shared definition. #}
+        {%- set _is_server_owned = backend and is_server_owned_attribute(attribute) %}
+        {%- if attribute.name not in inherited_attr_names and not _is_server_owned %}
         {%- set is_opt = attribute.is_optional and not attribute.is_id %}
         {%- set attr_type_name = 'Any' if attribute.type.name == 'any' else attribute.type.name %}
         {%- if is_opt and attribute.default_value is not none %}
-    {{ attribute.name }}: Optional[{{ attr_type_name }}] = {% if attribute.type.name == 'str' %}"{{ attribute.default_value }}"{% elif attribute.type.__class__.__name__ == 'Enumeration' %}{{ attr_type_name }}.{{ attribute.default_value }}{% else %}{{ attribute.default_value }}{% endif %}
+    {{ attribute.name }}: Optional[{{ attr_type_name }}] = {% if attribute.type.__class__.__name__ == 'Enumeration' %}{{ enum_default(attribute.default_value, attr_type_name, members=attribute.type.literals, owner=class.name ~ '.' ~ attribute.name) }}{% else %}{{ attribute.default_value | python_default(attribute.type.name, owner=class.name ~ '.' ~ attribute.name) }}{% endif %}
         {%- elif is_opt %}
     {{ attribute.name }}: Optional[{{ attr_type_name }}] = None
         {%- elif attribute.default_value is not none %}
-    {{ attribute.name }}: {{ attr_type_name }} = {% if attribute.type.name == 'str' %}"{{ attribute.default_value }}"{% elif attribute.type.__class__.__name__ == 'Enumeration' %}{{ attr_type_name }}.{{ attribute.default_value }}{% else %}{{ attribute.default_value }}{% endif %}
+    {{ attribute.name }}: {{ attr_type_name }} = {% if attribute.type.__class__.__name__ == 'Enumeration' %}{{ enum_default(attribute.default_value, attr_type_name, members=attribute.type.literals, owner=class.name ~ '.' ~ attribute.name) }}{% else %}{{ attribute.default_value | python_default(attribute.type.name, owner=class.name ~ '.' ~ attribute.name) }}{% endif %}
         {%- else %}
     {{ attribute.name }}: {{ attr_type_name }}
         {%- endif %}{% if attribute.is_id %}  # the id{% endif %}
@@ -96,7 +110,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {% endif %}
     {%- if backend and assoc_end_fields and class.name in assoc_end_fields %}
     {%- for ef in assoc_end_fields[class.name] %}
-    {{ ef.name }}: int  # association end -> {{ ef.type_name }} primary key
+    {{ ef.name }}: {{ pk_types.get(ef.type_name, 'int') }}  # association end -> {{ ef.type_name }} primary key
     {% set ns.has_field = true %}
     {%- endfor %}
     {%- endif %}
@@ -110,14 +124,14 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                 {%- if end.type.name != class.name %}
                     {%- if end.multiplicity.max > 1 %}
                         {%- if end.multiplicity.min == 0 %}
-    {{ end.name }}: Optional[List[Union["{{ link_class }}", int]]] = None  # via association class (optional)
+    {{ end.name }}: Optional[List[Union["{{ link_class }}", {{ pk_types.get(end.type.name, 'int') }}]]] = None  # via association class (optional)
     {% set ns.has_field = true %}
                         {%- else %}
-    {{ end.name }}: List[Union["{{ link_class }}", int]]  # via association class
+    {{ end.name }}: List[Union["{{ link_class }}", {{ pk_types.get(end.type.name, 'int') }}]]  # via association class
     {% set ns.has_field = true %}
                         {%- endif %}
                     {%- else %}
-    {{ end.name }}: Optional[Union["{{ link_class }}", int]] = None  # via association class (link is created from the other side or via its own endpoint)
+    {{ end.name }}: Optional[Union["{{ link_class }}", {{ pk_types.get(end.type.name, 'int') }}]] = None  # via association class (link is created from the other side or via its own endpoint)
     {% set ns.has_field = true %}
                     {%- endif %}
                 {%- endif %}
@@ -132,7 +146,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                 {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
                     {%- if nested_creations %}
                         {%- if backend %}
-    {{ ns.end2.name }}: Optional[List[Union["{{ ns.end2.type.name }}Create", int]]] = None  # N:M Relationship
+    {{ ns.end2.name }}: Optional[List[Union["{{ ns.end2.type.name }}Create", {{ pk_types.get(ns.end2.type.name, 'int') }}]]] = None  # N:M Relationship
     {% set ns.has_field = true %}
                         {% endif %}
                         {%- if not backend %}
@@ -146,10 +160,10 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                         {%- endif %}
                     {%- else %}
                         {%- if ns.end2.multiplicity.min == 0 %}
-    {{ ns.end2.name }}: Optional[List[int]] = None  # N:M Relationship (optional)
+    {{ ns.end2.name }}: Optional[List[{{ pk_types.get(ns.end2.type.name, 'int') }}]] = None  # N:M Relationship (optional)
     {% set ns.has_field = true %}
                         {%- else %}
-    {{ ns.end2.name }}: List[int]  # N:M Relationship
+    {{ ns.end2.name }}: List[{{ pk_types.get(ns.end2.type.name, 'int') }}]  # N:M Relationship
     {% set ns.has_field = true %}
                         {%- endif %}
                     {% endif %}
@@ -158,10 +172,10 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                         {%- set has_fk = (fkeys.get(association.name, [''])[0] == class.name) -%}
                         {%- if has_fk %}
                             {%- if ns.end2.multiplicity.min > 0 %}
-    {{ ns.end2.name }}: int  # N:1 Relationship (mandatory)
+    {{ ns.end2.name }}: {{ pk_types.get(ns.end2.type.name, 'int') }}  # N:1 Relationship (mandatory)
     {% set ns.has_field = true %}
                             {% else %}
-    {{ ns.end2.name }}: Optional[int] = None  # N:1 Relationship (optional)
+    {{ ns.end2.name }}: Optional[{{ pk_types.get(ns.end2.type.name, 'int') }}] = None  # N:1 Relationship (optional)
     {% set ns.has_field = true %}
                             {% endif %}
                         {%- endif %}
@@ -176,7 +190,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                     {% endif %}
                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
                     {%- if backend %}
-    {{ ns.end2.name }}: Optional[List[int]] = None  # 1:N Relationship
+    {{ ns.end2.name }}: Optional[List[{{ pk_types.get(ns.end2.type.name, 'int') }}]] = None  # 1:N Relationship
     {% set ns.has_field = true %}
                     {% else %}
                         {%- if ns.end2.multiplicity.min == 0 %}
@@ -192,18 +206,18 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                         {%- set has_fk = (fkeys.get(association.name, [''])[0] == class.name) -%}
                         {%- if has_fk %}
                             {%- if ns.end2.multiplicity.min > 0 %}
-    {{ ns.end2.name }}: int  # 1:1 Relationship (mandatory)
+    {{ ns.end2.name }}: {{ pk_types.get(ns.end2.type.name, 'int') }}  # 1:1 Relationship (mandatory)
     {% set ns.has_field = true %}
                             {% else %}
-    {{ ns.end2.name }}: Optional[int] = None  # 1:1 Relationship (optional)
+    {{ ns.end2.name }}: Optional[{{ pk_types.get(ns.end2.type.name, 'int') }}] = None  # 1:1 Relationship (optional)
     {% set ns.has_field = true %}
                             {% endif %}
                         {%- else %}
                             {%- if ns.end2.multiplicity.min > 0 %}
-    {{ ns.end2.name }}: int  # 1:1 Relationship (mandatory)
+    {{ ns.end2.name }}: {{ pk_types.get(ns.end2.type.name, 'int') }}  # 1:1 Relationship (mandatory)
     {% set ns.has_field = true %}
                             {% else %}
-    {{ ns.end2.name }}: Optional[int] = None  # 1:1 Relationship (optional)
+    {{ ns.end2.name }}: Optional[{{ pk_types.get(ns.end2.type.name, 'int') }}] = None  # 1:1 Relationship (optional)
     {% set ns.has_field = true %}
                             {% endif %}
                         {%- endif %}
@@ -232,7 +246,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                 {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
                     {%- if nested_creations %}
                         {%- if backend %}
-    {{ ns.end2.name }}: Optional[List[Union["{{ ns.end2.type.name }}Create", int]]] = None  # N:M Relationship
+    {{ ns.end2.name }}: Optional[List[Union["{{ ns.end2.type.name }}Create", {{ pk_types.get(ns.end2.type.name, 'int') }}]]] = None  # N:M Relationship
     {% set ns.has_field = true %}
                         {% endif %}
                         {%- if not backend %}
@@ -246,10 +260,10 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                         {%- endif %}
                     {%- else %}
                         {%- if ns.end2.multiplicity.min == 0 %}
-    {{ ns.end2.name }}: Optional[List[int]] = None  # N:M Relationship (optional)
+    {{ ns.end2.name }}: Optional[List[{{ pk_types.get(ns.end2.type.name, 'int') }}]] = None  # N:M Relationship (optional)
     {% set ns.has_field = true %}
                         {%- else %}
-    {{ ns.end2.name }}: List[int]  # N:M Relationship
+    {{ ns.end2.name }}: List[{{ pk_types.get(ns.end2.type.name, 'int') }}]  # N:M Relationship
     {% set ns.has_field = true %}
                         {%- endif %}
                     {% endif %}
@@ -258,10 +272,10 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                         {%- set has_fk = (fkeys.get(association.name, [''])[0] == class.name) -%}
                         {%- if has_fk %}
                             {%- if ns.end2.multiplicity.min > 0 %}
-    {{ ns.end2.name }}: int  # N:1 Relationship (mandatory)
+    {{ ns.end2.name }}: {{ pk_types.get(ns.end2.type.name, 'int') }}  # N:1 Relationship (mandatory)
     {% set ns.has_field = true %}
                             {% else %}
-    {{ ns.end2.name }}: Optional[int] = None  # N:1 Relationship (optional)
+    {{ ns.end2.name }}: Optional[{{ pk_types.get(ns.end2.type.name, 'int') }}] = None  # N:1 Relationship (optional)
     {% set ns.has_field = true %}
                             {% endif %}
                         {%- endif %}
@@ -276,7 +290,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                     {% endif %}
                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
                     {%- if backend %}
-    {{ ns.end2.name }}: Optional[List[int]] = None  # 1:N Relationship
+    {{ ns.end2.name }}: Optional[List[{{ pk_types.get(ns.end2.type.name, 'int') }}]] = None  # 1:N Relationship
     {% set ns.has_field = true %}
                     {% else %}
                         {%- if ns.end2.multiplicity.min == 0 %}
@@ -290,20 +304,25 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
                     {%- if backend %}
                         {%- set has_fk = (fkeys.get(association.name, [''])[0] == class.name) -%}
+                        {#- Only the side that OWNS the foreign key gets a field.
+                            The other side used to get a byte-identical mandatory
+                            one, which made a 1:1 with both ends required
+                            unsatisfiable: BookingCreate demanded a guest and
+                            GuestCreate demanded a booking, so neither could be
+                            created first. The router never read that field either
+                            - it validates and assigns only the FK-owning end - so
+                            the client was forced to send an id that was then
+                            silently discarded. The N:1 branch above already emits
+                            nothing on the non-owning side; this now matches it. -#}
                         {%- if has_fk %}
-                            {%- if ns.end2.multiplicity.min > 0 %}
-    {{ ns.end2.name }}: int  # 1:1 Relationship (mandatory)
+                            {#- A deferred FK is nullable in the database so that a
+                                table cycle can be created at all; requiring it here
+                                would put the deadlock straight back. -#}
+                            {%- if ns.end2.multiplicity.min > 0 and association.name not in deferred_fks %}
+    {{ ns.end2.name }}: {{ pk_types.get(ns.end2.type.name, 'int') }}  # 1:1 Relationship (mandatory)
     {% set ns.has_field = true %}
                             {% else %}
-    {{ ns.end2.name }}: Optional[int] = None  # 1:1 Relationship (optional)
-    {% set ns.has_field = true %}
-                            {% endif %}
-                        {%- else %}
-                            {%- if ns.end2.multiplicity.min > 0 %}
-    {{ ns.end2.name }}: int  # 1:1 Relationship (mandatory)
-    {% set ns.has_field = true %}
-                            {% else %}
-    {{ ns.end2.name }}: Optional[int] = None  # 1:1 Relationship (optional)
+    {{ ns.end2.name }}: Optional[{{ pk_types.get(ns.end2.type.name, 'int') }}] = None  # 1:1 Relationship (optional)
     {% set ns.has_field = true %}
                             {% endif %}
                         {%- endif %}
@@ -328,9 +347,11 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {# OCL Constraint Validators #}
     {%- if constraints_map and class.name in constraints_map %}
     {%- for constraint in constraints_map[class.name] %}
-    {%- if constraint.skipped %}
+    {%- if constraint.skipped or constraint.rejected %}
 
-    # NOTE: OCL constraint '{{ constraint.constraint_name }}' involves collections/relationships and is not enforced by this Create model.
+    {% for comment_line in constraint.comment_lines %}
+    {{ comment_line }}
+    {% endfor -%}
     {%- elif constraint.model_expression is defined %}
 
     @model_validator(mode='after')

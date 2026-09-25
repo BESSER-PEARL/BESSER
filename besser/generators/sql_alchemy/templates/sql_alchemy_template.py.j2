@@ -1,18 +1,33 @@
 {% import "helpers.py.j2" as helper -%}
 import enum
 import os
-from typing import List as List_, Optional as Optional_
+# Both spellings are bound on purpose. Generated code uses the trailing-
+# underscore aliases so a modelled class named List, Optional or DateTime
+# cannot shadow them. The PLAIN names are imported too because this file is
+# routinely edited afterwards by an LLM, which writes ordinary Python and has
+# no reason to know about the aliasing convention; without the plain names
+# such edits fail to import:
+#
+#     Mapped_[Optional[int]]        undefined name 'Optional'
+#     mapped_column(DateTime())     undefined name 'DateTime'
+#
+# so every aliased name below is bound both ways.
+from typing import List, Optional, List as List_, Optional as Optional_
 from sqlalchemy import (
-    create_engine, Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
+    create_engine, Enum, UniqueConstraint as _UniqueConstraint, event as _sa_event,
+    Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Interval,
+    PickleType, String, Table, Text, Time,
+    Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
     Text as Text_, Boolean as Boolean_, String as String_, Date as Date_,
     Time as Time_, DateTime as DateTime_, Float as Float_, Integer as Integer_,
-    Interval as Interval_, PickleType as PickleType_, Enum
+    Interval as Interval_, PickleType as PickleType_,
 )
 {%- if classes | selectattr("is_abstract") | list | length > 0 %}
 from sqlalchemy.ext.declarative import AbstractConcreteBase
 {%- endif %}
 from sqlalchemy.orm import (
-    column_property, DeclarativeBase, Mapped as Mapped_, mapped_column, relationship
+    column_property, DeclarativeBase, Mapped, Mapped as Mapped_, mapped_column,
+    relationship
 )
 from datetime import datetime as dt_datetime, time as dt_time, date as dt_date, timedelta as dt_timedelta
 from uuid import uuid4 as _uuid4
@@ -26,6 +41,24 @@ def _new_str_id() -> str:
     exclude the server-owned ``id``, so the server must mint it).
     """
     return _uuid4().hex
+
+
+def _configure_sqlite_engine(engine):
+    """Enforce declared foreign keys on every SQLite connection."""
+    if engine.dialect.name == "sqlite":
+        @_sa_event.listens_for(engine, "connect")
+        def _enable_foreign_keys(connection, _record):
+            previous_autocommit = getattr(connection, "autocommit", None)
+            if previous_autocommit is not None:
+                connection.autocommit = True
+            cursor = connection.cursor()
+            try:
+                cursor.execute("PRAGMA foreign_keys=ON")
+            finally:
+                cursor.close()
+                if previous_autocommit is not None:
+                    connection.autocommit = previous_autocommit
+
 
 class Base(DeclarativeBase):
     pass
@@ -122,10 +155,18 @@ class {{ class.name }}(
             {%- for a_end in end.owner.ends if a_end != end %}
                 {%- set ns.end_own = a_end %}
             {%- endfor %}
-            {#- Foreign Key #}
+            {#- Foreign Key.
+                A deferred FK is one edge of a table cycle: two tables each
+                holding a NOT NULL FK to the other cannot be created at all
+                ("Can't sort tables; there are unresolvable cycles between
+                tables booking, guest") and neither row can be inserted
+                first. It is emitted nullable, with use_alter so the
+                constraint is added after both tables exist. See
+                get_deferred_fk_associations in structural_utils.py. #}
             {%- if [class.name, end.name] == fkeys.get(end.owner.name) %}
-    {{end.name}}_id: Mapped_[{{ pk_types.get(end.type.name, 'int') }}] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
-            {%- if end.multiplicity.min == 0 %}, nullable=True{%- endif %}
+            {%- set deferred = end.owner.name in deferred_fks %}
+    {{end.name}}_id: Mapped_[{% if deferred %}Optional_[{{ pk_types.get(end.type.name, 'int') }}]{% else %}{{ pk_types.get(end.type.name, 'int') }}{% endif %}] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}"{% if deferred %}, use_alter=True, name="fk_{{class.name.lower()}}_{{end.name.lower()}}"{% endif %})
+            {%- if deferred or end.multiplicity.min == 0 %}, nullable=True{%- endif %}
             {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
         {%- endif %}
     {%- endfor %}
@@ -165,24 +206,32 @@ class {{ class.name }}(
 {%- for asso_class in asso_classes %}
 class {{ asso_class.name }}(Base):
     __tablename__ = "{{asso_class.name.lower()}}"
+    {%- set own_key = ids.get(asso_class.name) or asso_class.name in referenced_asso %}
+    {%- if own_key %}
+    # A modeled identifier (or, when another association points here, a
+    # surrogate id) is the primary key; the endpoint pair remains unique
+    # because the generated relationship API addresses links by that pair.
+    __table_args__ = (_UniqueConstraint({% for end in asso_class.association.ends %}"{{ end.name }}_id"{{ ", " if not loop.last else "" }}{% endfor %}),)
+    {%- endif %}
+    {%- if not ids.get(asso_class.name) and asso_class.name in referenced_asso %}
+    id: Mapped_[int] = mapped_column(primary_key=True)
+    {%- endif %}
     {%- for end in asso_class.association.ends %}
     {%- set ns = namespace(other_end_max = 0) %}
     {%- for other_end in asso_class.association.ends if other_end != end %}
         {%- set ns.other_end_max = other_end.multiplicity.max %}
     {%- endfor %}
-    {{ end.name }}_id: Mapped_[{{ pk_types.get(end.type.name, 'int') }}] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True
-    {%- if end.multiplicity.max == 1 and ns.other_end_max == 1 %}, unique=True{% endif %})
+    {{ end.name }}_id: Mapped_[{{ pk_types.get(end.type.name, 'int') }}] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"){% if not own_key %}, primary_key=True{% endif %}
+    {%- if ns.other_end_max == 1 %}, unique=True{% endif %})
     {%- endfor %}
-    {%- for attribute in sort(asso_class.attributes) %}
-    {%- set is_pk = attribute.is_id or (attribute.name == ids.get(asso_class.name)) %}
-    {%- set nullable = attribute.is_optional and not is_pk %}
-    {%- set unique_needed = attribute.is_external_id and not is_pk %}
-    {{ attribute.name }}: Mapped_[{% if nullable %}Optional_[{{ helper.mapped_type(attribute.type.name) }}]{% else %}{{ helper.mapped_type(attribute.type.name) }}{% endif %}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
-    {%- if is_pk %}, primary_key=True{% endif %}
-    {%- if unique_needed %}, unique=True{% endif %}
-    {%- if nullable %}, nullable=True{% endif %}
-    {%- if attribute.default_value is not none %}, default={% if attribute.type.name == 'str' or attribute.type.name == 'string' %}"{{ attribute.default_value }}"{% elif attribute.type.name == 'bool' %}{{ attribute.default_value | capitalize }}{% elif attribute.type.__class__.__name__ == 'Enumeration' %}{{ attribute.type.name }}.{{ attribute.default_value }}{% else %}{{ attribute.default_value }}{% endif %}{% endif %})
+    {#- Foreign keys of the OTHER associations this link takes part in (e.g. each
+        OrderLine belongs to one MenuItem), by the same rule as regular classes. #}
+    {%- for end in asso_class.association_ends() if end.owner.ends|length == 2 and end.owner.name != asso_class.association.name %}
+        {%- if [asso_class.name, end.name] == fkeys.get(end.owner.name) %}
+    {{ end.name }}_id: Mapped_[{% if end.multiplicity.min == 0 %}Optional_[{{ pk_types.get(end.type.name, 'int') }}]{% else %}{{ pk_types.get(end.type.name, 'int') }}{% endif %}] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ ids.get(end.type.name, 'id') }}"){% if end.multiplicity.min == 0 %}, nullable=True{% endif %})
+        {%- endif %}
     {%- endfor %}
+    {{- helper.render_attributes(asso_class, enumerations, types, ids, sort)}}
 {% endfor %}
 
 {#- Relationships #}
@@ -210,7 +259,7 @@ class {{ asso_class.name }}(Base):
 
 #--- Relationships of the {{ class.name.lower() }} table
             {%- endif %}
-{{ helper.render_relationship(class, end, ns, ids, fkeys) }}
+{{ helper.render_relationship(class, end, ns, ids, fkeys, deferred_fks) }}
         {%- endif %}
     {%- endfor %}
 {%- endfor %}
@@ -218,12 +267,15 @@ class {{ asso_class.name }}(Base):
 {#- Association Class Relationships #}
 {%- for asso_class in asso_classes %}
 #--- Relationships for association class {{ asso_class.name }}
+    {#- A link that takes part in other associations can hold a second foreign
+        key to one of its ends, so its own relationships name their column. #}
+    {%- set pin = asso_class.name in referenced_asso %}
     {%- for end in asso_class.association.ends %}
-{{ asso_class.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", back_populates="{{ asso_class.name.lower() }}s")
+{{ asso_class.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", back_populates="{{ asso_class.name.lower() }}s"{% if pin %}, foreign_keys=[{{ asso_class.name }}.{{ end.name }}_id]{% endif %})
 {#- The link rows are owned by the linked entities: deleting one must delete its
     links (the FK is part of the link's composite primary key, so SQLAlchemy cannot
     null it out - without the cascade a delete fails with an AssertionError). #}
-{{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped_[List_["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}", cascade="all, delete-orphan")
+{{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped_[List_["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}", cascade="all, delete-orphan"{% if pin %}, foreign_keys=[{{ asso_class.name }}.{{ end.name }}_id]{% endif %})
     {%- endfor %}
 {#- The association ends are also reachable directly, under the names the model gives
     them, so that method bodies and OCL constraints written against the diagram (for
@@ -231,11 +283,18 @@ class {{ asso_class.name }}(Base):
     read-only views over the same table. #}
     {%- for end in asso_class.association.ends %}
         {%- set other_end = (asso_class.association.ends | reject('equalto', end) | list)[0] %}
+        {%- set joins %}{% if pin %}, primaryjoin={{ other_end.type.name }}.{{ ids.get(other_end.type.name, 'id') }} == {{ asso_class.name }}.{{ other_end.name }}_id, secondaryjoin={{ end.type.name }}.{{ ids.get(end.type.name, 'id') }} == {{ asso_class.name }}.{{ end.name }}_id{% endif %}{% endset %}
         {%- if end.multiplicity.max > 1 %}
-{{ other_end.type.name }}.{{ end.name }}: Mapped_[List_["{{ end.type.name }}"]] = relationship("{{ end.type.name }}", secondary={{ asso_class.name }}.__table__, viewonly=True)
+{{ other_end.type.name }}.{{ end.name }}: Mapped_[List_["{{ end.type.name }}"]] = relationship("{{ end.type.name }}", secondary={{ asso_class.name }}.__table__, viewonly=True{{ joins }})
         {%- else %}
-{{ other_end.type.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", secondary={{ asso_class.name }}.__table__, viewonly=True, uselist=False)
+{{ other_end.type.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", secondary={{ asso_class.name }}.__table__, viewonly=True, uselist=False{{ joins }})
         {%- endif %}
+    {%- endfor %}
+{#- The association class's side of any OTHER association it takes part in
+    (e.g. ExtraCharge recorded against a BookedRoom). #}
+    {%- set link_ns = namespace() %}
+    {%- for end in asso_class.association_ends() if end.owner.ends|length == 2 and end.owner.name != asso_class.association.name %}
+{{ helper.render_relationship(asso_class, end, link_ns, ids, fkeys, deferred_fks) }}
     {%- endfor %}
 {%- endfor %}
 
@@ -255,6 +314,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "oracle+oracledb://username:password@lo
     raise ValueError("Invalid DBMS. Valid options are sqlite, postgresql, and mysql.")
 {% endif %}
 engine = create_engine(DATABASE_URL)
+_configure_sqlite_engine(engine)
 
 if __name__ == "__main__":
     # Create tables in the database only when this module is executed directly,

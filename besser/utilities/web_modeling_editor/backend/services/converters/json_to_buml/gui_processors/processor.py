@@ -52,7 +52,7 @@ from .component_parsers import (
     parse_text,
 )
 from .constants import CONTAINER_TAGS, CONTAINER_TYPES, INPUT_COMPONENT_TYPES, TEXT_TAGS
-from .styling import build_style_map, resolve_component_styling
+from .styling import build_style_map, build_stylesheet, resolve_component_styling
 from .utils import sanitize_name, get_element_by_id, clean_method_name
 
 
@@ -501,6 +501,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         versionName="1.0",
         modules=set(),
         description=str(raw_title or "Generated GUI"),
+        stylesheet=build_stylesheet(gui_model_json.get("styles", [])),
     )
 
     # Parse pages/screens
@@ -689,7 +690,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
     # style_entries is only used for the editor round-trip (buml_to_json),
     # not by any code generator. All styling is already captured in per-component
-    # Styling objects via build_style_map/resolve_component_styling.
+    # Styling objects (element-id rules) and in gui_model.stylesheet (all other rules).
     # TODO: rebuild styles from per-component Styling in buml_to_json, then remove this field entirely.
     # normalized_styles = []
     # for style_entry in gui_model_json.get("styles", []):

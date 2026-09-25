@@ -1,6 +1,7 @@
 import React, { CSSProperties, useEffect, useState } from "react";
 import axios from "axios";
 import { MetricCardComponent } from "../charts/MetricCardComponent";
+import { aggregate, normalizeAggregation } from "./aggregate";
 
 export interface MetricCardBlockProps {
   id: string;
@@ -10,19 +11,11 @@ export interface MetricCardBlockProps {
   className?: string;
 }
 
-const getLastValue = (data: any[], dataField?: string): number => {
-  if (!data || data.length === 0) return 0;
-  const lastItem = data[data.length - 1];
-  if (dataField && lastItem[dataField] !== undefined) {
-    return Number(lastItem[dataField]) || 0;
-  }
-  const commonFields = ["value", "count", "amount", "total", "sum"];
-  for (const field of commonFields) {
-    if (lastItem[field] !== undefined) {
-      return Number(lastItem[field]) || 0;
-    }
-  }
-  return 0;
+// The card's value over all records: its aggregation over the bound field,
+// else the field's sum, else the number of records.
+const metricValue = (data: any[], dataField?: string, aggregation?: string): number => {
+  const resolved = normalizeAggregation(aggregation) ?? (dataField ? "sum" : "count");
+  return aggregate(data || [], resolved, dataField);
 };
 
 export const MetricCardBlock: React.FC<MetricCardBlockProps> = ({
@@ -58,13 +51,13 @@ export const MetricCardBlock: React.FC<MetricCardBlockProps> = ({
             data = (res.data as any)[foundKey];
           }
         }
-        setValue(getLastValue(data, dataBinding?.data_field));
+        setValue(metricValue(data, dataBinding?.data_field, dataBinding?.aggregation));
       })
       .catch(() => {
         setValue(metric?.value ?? 0);
       })
       .finally(() => setLoading(false));
-  }, [dataBinding?.endpoint, dataBinding?.data_field, metric?.value]);
+  }, [dataBinding?.endpoint, dataBinding?.data_field, dataBinding?.aggregation, metric?.value]);
 
   return (
     <MetricCardComponent

@@ -133,6 +133,15 @@ For data visualization and dashboard-style interfaces, the metamodel includes:
 - **AgentComponent**: A component that integrates a BESSER Agent Framework (BAF) agent
   into the user interface, enabling conversational or AI-driven interactions.
 
+A ``MetricCard``'s or a chart ``Series``' ``DataBinding`` may carry an optional
+``aggregation`` (a ``DataAggregation``: ``SUM``, ``AVG``, ``COUNT``, ``MIN``,
+``MAX``, ``MEDIAN``, ``FIRST``, ``LAST``; the names ``"sum"``, ``"avg"``,
+``"count"``, ``"min"``, ``"max"`` are accepted too). A metric card shows the
+aggregation of its ``data_field`` over all records; a chart series groups the
+records by its ``label_field`` and aggregates each group. In the editor JSON it
+is the ``aggregation`` attribute of the metric card, of a chart series, or of
+the chart (for all its series).
+
 Map Component
 -------------
 

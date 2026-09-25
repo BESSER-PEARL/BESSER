@@ -1395,6 +1395,7 @@ def _write_data_binding(f, binding_var, binding):
     label_path = getattr(binding, "label_field_path", None)
     data_path = getattr(binding, "data_field_path", None)
     filter_expr = getattr(binding, "filter_expression", None)
+    aggregation = getattr(binding, "aggregation", None)
 
     if not domain_name:
         f.write(f"# DataBinding for {binding_var} skipped: no domain concept specified.\n")
@@ -1416,6 +1417,8 @@ def _write_data_binding(f, binding_var, binding):
         binding_params.append(f'data_field_path="{_escape_string(data_path)}"')
     if filter_expr:
         binding_params.append(f'filter_expression="{_escape_string(filter_expr)}"')
+    if aggregation is not None:
+        binding_params.append(f'aggregation="{aggregation.value}"')
     f.write(f"{binding_var} = None\n")
     f.write("try:\n")
     f.write(f"    {binding_var} = build_data_binding(domain_model, {', '.join(binding_params)})\n")

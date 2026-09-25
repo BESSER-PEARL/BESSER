@@ -962,6 +962,7 @@ class GuiSerializationMixin:
                 "label_field": label_field_value,
                 "data_field": data_field_value,
                 "filter": str(data_filter) if data_filter else None,
+                "aggregation": self._enum_value(getattr(binding, "aggregation", None)),
             }
         )
 
@@ -1044,6 +1045,10 @@ class GuiSerializationMixin:
 
                 if filter_expression:
                     series_data["filter"] = str(filter_expression)
+
+                aggregation = self._enum_value(getattr(binding, "aggregation", None))
+                if aggregation:
+                    series_data["aggregation"] = aggregation
 
             serialized.append(self._clean_dict(series_data))
 

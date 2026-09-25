@@ -5,6 +5,7 @@ import { LineChartComponent } from "../charts/LineChartComponent";
 import { PieChartComponent } from "../charts/PieChartComponent";
 import { RadarChartComponent } from "../charts/RadarChartComponent";
 import { RadialBarChartComponent } from "../charts/RadialBarChartComponent";
+import { aggregate, normalizeAggregation } from "./aggregate";
 
 export interface ChartSeries {
   name?: string;
@@ -18,6 +19,8 @@ export interface ChartSeries {
   "data-field"?: string;
   "data-source"?: string;
   filter?: string;
+  // Groups the records by labelField and reduces each group (count, sum, avg...)
+  aggregation?: string;
   data?: any[];
 }
 
@@ -439,6 +442,12 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
       name: s?.name || s?.label || `Series ${index + 1}`,
       labelField: s?.labelField || s?.["label-field"] || dataBinding?.label_field || "name",
       dataField: s?.dataField || s?.["data-field"] || dataBinding?.data_field || "value",
+      // A bound series with no value field counts the records per label
+      aggregation: normalizeAggregation(s?.aggregation) ?? (
+        (s?.endpoint || s?.dataSource) && !(s?.dataField || s?.["data-field"] || dataBinding?.data_field)
+          ? "count"
+          : undefined
+      ),
       filter: s?.filter || (s as any)?.["filter"],
       fetchedData: (s as any).fetchedData,
     }));
@@ -535,6 +544,20 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
       if (!Array.isArray(sourceData)) return;
       const parsedFilter = parseFilterExpression(s.filter);
       const filteredData = applyFilter(sourceData, parsedFilter);
+      const aggregation = normalizeAggregation(s.aggregation);
+      if (aggregation) {
+        const groups: Record<string, any[]> = {};
+        filteredData.forEach((item: any) => {
+          const key = String(getNestedValue(item, s.labelField || "name") ?? "");
+          if (!groups[key]) groups[key] = [];
+          groups[key].push(item);
+        });
+        Object.entries(groups).forEach(([key, rows]) => {
+          if (!combined[key]) combined[key] = { name: key };
+          combined[key][s.name || "Series"] = aggregate(rows, aggregation, s.dataField);
+        });
+        return;
+      }
       filteredData.forEach((item: any) => {
         const label = getNestedValue(item, s.labelField || "name") ?? item?.[s.labelField || "name"] ?? "";
         const value = Number(getNestedValue(item, s.dataField || "value") ?? item?.[s.dataField || "value"] ?? 0);

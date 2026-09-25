@@ -459,6 +459,9 @@ def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[s
         attrs.setdefault("label-field", label_name)
     if data_name:
         attrs.setdefault("data-field", data_name)
+    aggregation = getattr(binding, "aggregation", None)
+    if aggregation is not None:
+        attrs.setdefault("aggregation", aggregation.value)
 def _apply_button_attributes(button: Button, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("button-label", button.label or button.name or "Button")
     action_type = attrs.get("action-type")

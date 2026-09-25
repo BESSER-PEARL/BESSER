@@ -45,6 +45,8 @@ from .component_helpers import (
     extract_menu_items,
     extract_parameters_from_attributes,
 )
+from besser.generators.structural_utils import is_server_owned_attribute
+
 from .constants import ALERT_SEVERITY_MAP, INPUT_TYPE_MAP, BUTTON_ACTION_BY_HTML_TYPE
 from .utils import extract_text_content, clean_attribute_name, get_element_by_id
 
@@ -744,9 +746,21 @@ def _attribute_for(input_field, domain_class):
     return next((by_name[key] for key in _input_keys(input_field) if key in by_name), None)
 
 
+def _covers_required(domain_class, inputs) -> bool:
+    """Whether the inputs supply every attribute a new record needs (a lookup
+    form - booking id + email - names attributes but creates nothing)."""
+    keys = {key for input_field in inputs for key in _input_keys(input_field)}
+    return all(
+        _normalized(attr.name) in keys
+        for attr in domain_class.all_attributes()
+        if not (is_server_owned_attribute(attr) or attr.is_optional or attr.default_value is not None)
+    )
+
+
 def _infer_form_class(inputs, domain_model):
     """The one class whose attributes name every input (own attributes first,
-    so a ``name``/``email`` form binds to Person, not to each subclass)."""
+    so a ``name``/``email`` form binds to Person, not to each subclass) and
+    that the inputs can create a record of."""
     if not inputs or domain_model is None:
         return None
     classes = sorted(domain_model.get_classes(), key=lambda c: c.name)
@@ -757,7 +771,7 @@ def _infer_form_class(inputs, domain_model):
             if all(any(key in names for key in _input_keys(i)) for i in inputs):
                 matches.append(domain_class)
         if len(matches) == 1:
-            return matches[0]
+            return matches[0] if _covers_required(matches[0], inputs) else None
         if matches:
             return None
     return None

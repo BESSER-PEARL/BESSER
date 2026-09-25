@@ -100,7 +100,8 @@ A form that creates records of a class carries a ``data_binding``
 ``DataBinding`` whose ``data_field`` is the attribute it edits. When the
 editor's form is processed, the class comes from the form's ``data-source``
 (class id or name) or, without one, from the input names when they are all
-attributes of exactly one class; a ``<label>`` becomes its input's ``label``
+attributes of exactly one class and supply every attribute a new record of it
+requires (so a lookup form is not bound); a ``<label>`` becomes its input's ``label``
 and the first submit button's text the ``submit_label``. The React generator
 renders a bound form as a ``FormBlock`` that POSTs to ``/<class>/`` (see
 :doc:`../../generators/react`).

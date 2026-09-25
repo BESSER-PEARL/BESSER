@@ -159,3 +159,16 @@ def test_the_binding_survives_export_and_reimport(build_app):
     assert labels["full_name"] == "Your name" and labels["age"] == "Age"
     assert rooms.data_binding.domain_concept.name == "Room"
     assert {i.data_binding.data_field.name for i in rooms.inputFields} == {"number", "floor"}
+
+
+def test_a_lookup_form_is_not_inferred_as_a_create_form(build_app):
+    """Measured on an AI hotel design: a "Find a booking" form (booking id +
+    email) named two Person attributes and would have POSTed a Person."""
+    form = {"tagName": "form", "components": [
+        _input("email", placeholder="Email address"),
+        {"tagName": "button", "components": [{"type": "textnode", "content": "Find booking"}]},
+    ]}
+    app = build_app(CLASSES, {"Lookup": [form]})
+
+    assert _form(app.gui_model).data_binding is None
+    assert "FormBlock" not in app.page("Lookup")

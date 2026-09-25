@@ -93,6 +93,30 @@ def _declared(name: str, classes: dict, seen: frozenset = frozenset()):
     return accepted
 
 
+_OPTIONAL_WRAPPERS = frozenset({"Optional"})
+_SEQUENCE_WRAPPERS = frozenset({"list", "List", "Sequence"})
+
+
+def _unwrap(annotation, wrappers) -> str | None:
+    """``X`` from ``wrapper[X]``, or None."""
+    if (isinstance(annotation, ast.Subscript)
+            and _base_name(annotation.value) in wrappers
+            and isinstance(annotation.slice, ast.Name)):
+        return annotation.slice.id
+    return None
+
+
+def _payload_type(annotation) -> str | None:
+    """``X`` from ``X``, ``Optional[X]`` or ``X | None``."""
+    if isinstance(annotation, ast.Name):
+        return annotation.id
+    if (isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr)
+            and isinstance(annotation.right, ast.Constant)
+            and annotation.right.value is None):
+        return _payload_type(annotation.left)
+    return _unwrap(annotation, _OPTIONAL_WRAPPERS)
+
+
 def _annotated_payloads(scope) -> dict:
     """``{parameter name: annotation}`` for this function's arguments.
 
@@ -106,17 +130,56 @@ def _annotated_payloads(scope) -> dict:
     args = scope.args
     annotated = {}
     for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
-        name = getattr(arg.annotation, "id", None)
+        name = _payload_type(arg.annotation)
         if name:
             annotated[arg.arg] = name
     return annotated
+
+
+def _loop_payload_reads(scope) -> dict:
+    """``{(line, col): element type}`` for reads on a loop over a list payload.
+
+    ``items: list[BillCreate]`` iterated as ``for item in items`` or
+    ``for i, item in enumerate(items)``: reads on ``item`` inside that loop
+    body are reads on a ``BillCreate``. Bound per loop, so the same name in
+    another loop is not affected.
+    """
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return {}
+    args = scope.args
+    elements = {}
+    for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
+        name = _unwrap(arg.annotation, _SEQUENCE_WRAPPERS)
+        if name:
+            elements[arg.arg] = name
+    if not elements:
+        return {}
+    bound = {}
+    for loop in ast.walk(scope):
+        if not isinstance(loop, (ast.For, ast.AsyncFor)):
+            continue
+        iterable, target = loop.iter, loop.target
+        if (isinstance(iterable, ast.Call) and isinstance(iterable.func, ast.Name)
+                and iterable.func.id == "enumerate" and len(iterable.args) == 1
+                and isinstance(target, ast.Tuple) and len(target.elts) == 2):
+            iterable, target = iterable.args[0], target.elts[1]
+        if not (isinstance(iterable, ast.Name) and iterable.id in elements
+                and isinstance(target, ast.Name)):
+            continue
+        for statement in loop.body:
+            for node in ast.walk(statement):
+                if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                        and node.value.id == target.id):
+                    bound[(node.lineno, node.col_offset)] = elements[iterable.id]
+    return bound
 
 
 def _unguarded_payload_reads(tree: ast.AST) -> list:
     """``(variable, annotation, field, line)`` for payload attribute reads.
 
     ``annotation`` is the declared type when the handler annotated the
-    parameter, and ``None`` when the receiver was recognised only by the
+    parameter (the element type for an item of a ``list[X]`` one), and
+    ``None`` when the receiver was recognised only by the
     ``_data`` suffix; the caller resolves the schema from whichever it has.
 
     A read the handler guards with ``hasattr``/``getattr`` on the same
@@ -131,6 +194,7 @@ def _unguarded_payload_reads(tree: ast.AST) -> list:
     scopes.append(tree)
     for scope in scopes:
         annotated = _annotated_payloads(scope)
+        loop_reads = _loop_payload_reads(scope)
         guarded = {
             (node.args[0].id, node.args[1].value)
             for node in ast.walk(scope)
@@ -145,10 +209,10 @@ def _unguarded_payload_reads(tree: ast.AST) -> list:
                     and isinstance(node.value, ast.Name)):
                 continue
             receiver = node.value.id
-            annotation = annotated.get(receiver)
+            position = (node.lineno, node.col_offset)
+            annotation = annotated.get(receiver) or loop_reads.get(position)
             if not (receiver.endswith(_PAYLOAD_SUFFIX) or annotation):
                 continue
-            position = (node.lineno, node.col_offset)
             if position in examined:
                 continue
             examined.add(position)

@@ -28,7 +28,7 @@ export interface MethodButtonProps {
   // The page builder emits id="..." on every component it renders
   // (_build_component_props in page_builder.py). Without it declared here
   // React's excess-property check rejects the generated page with TS2322 on
-  // every entity screen - 8 of them on the 2026-09-17 hotel run.
+  // every entity screen.
   id?: string;
   label?: string;
   parameters?: MethodParameter[];

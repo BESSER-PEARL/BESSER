@@ -156,5 +156,5 @@ Storage and lifecycle
 .. note::
    A run driven from Python rather than from the backend does not read most of
    these: ``LLMOrchestrator`` takes the flags as constructor arguments, and its
-   own defaults differ from the hosted deployment's. See
+   own defaults differ from the web backend's. See
    :doc:`usage`.

@@ -179,7 +179,7 @@ Backend-side notes that do not belong in the contract:
 Telemetry
 ^^^^^^^^^
 
-- ``POST /telemetry/event`` -- Accept one opt-in pilot telemetry event. Always
+- ``POST /telemetry/event`` -- Accept one opt-in study telemetry event. Always
   returns 204 for well-formed input whether or not it was stored, so the
   endpoint cannot be used to probe server configuration.
 - ``GET  /telemetry/report`` -- Aggregated report (Markdown by default, CSV via

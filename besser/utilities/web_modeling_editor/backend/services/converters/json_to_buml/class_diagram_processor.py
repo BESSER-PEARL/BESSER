@@ -768,10 +768,8 @@ def _process_association_classes(
         # Re-point everything that still holds the DISCARDED class. Class
         # compares by identity, so an end left bound to the old object makes
         # validate() report "referencing type 'X' which is not in the domain
-        # model" for a class plainly on the canvas. Live case: OrderLine as the
-        # association class of Order-MenuItem broke its own 'lines' and
-        # 'orderLines_1' associations, and the editor's auto-fix could not
-        # clear it because there was nothing wrong with the diagram.
+        # model" for a class plainly on the canvas, and the editor's auto-fix
+        # cannot clear it because there is nothing wrong with the diagram.
         for assoc in domain_model.associations:
             for end in assoc.ends:
                 if end.type is class_obj:
@@ -1295,21 +1293,11 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
         elements, domain_model, all_warnings,
     )
 
-    # Stale-role-name detection — DISABLED (2026-07-14).
-    #
-    # This pass warned when an association end's role name didn't match its
-    # target class and "looked" class-derived, on the theory it was a stale
-    # role left behind by a visual-editor rename (the editor rebuilds via
-    # ``Class.__init__``, bypassing the ``Class.name`` setter's role
-    # propagation). In practice the heuristic could NOT distinguish a stale
-    # rename from a perfectly legitimate collection role: ``tasks`` on a
-    # ``TodoItem`` end is structurally identical to ``members`` on a ``User``
-    # end (plural stem, not contained in the target, no matching class), so
-    # the warning fired on essentially every idiomatic collection role in
-    # freshly generated models — a false-positive flood with no reliable
-    # signal. It's been removed. The correct fix for the underlying editor
-    # rename bug is to propagate renames into the relationship JSON's
-    # ``role`` fields at the editor / JSON layer (not a post-hoc guess here).
+    # Stale-role-name detection is DISABLED: the heuristic cannot tell a role
+    # left behind by an editor rename from a legitimate collection role
+    # (``tasks`` on ``TodoItem`` vs ``members`` on ``User``), so it flooded
+    # false positives. The real fix is propagating renames into the
+    # relationship JSON's ``role`` fields at the editor layer.
     # ``_warn_potentially_stale_role_names`` / ``_looks_class_derived_role``
     # are retained below (unused) in case that reliable path is built later.
 

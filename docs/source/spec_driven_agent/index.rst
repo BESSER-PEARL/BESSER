@@ -5,8 +5,8 @@ Spec-Driven Agent
    **Experimental.** The Spec-Driven Agent is under active development.
    Its pipeline, request shape, and defaults may change between releases.
 
-The Spec-Driven Agent (also called the *smart generator* or *LLM-augmented
-generator*) is the agentic layer that sits on top of BESSER's
+The Spec-Driven Agent (also called the *LLM-augmented generator*) is the
+agentic layer that sits on top of BESSER's
 :doc:`deterministic code generators <../generators>`. It bridges the gap
 between template-based generation and free-form natural-language code
 generation.
@@ -74,11 +74,6 @@ Reach for a plain generator when the target is one of BESSER's supported
 technologies and the templated output is what you want. Reach for the agent
 when you need something on top of that output, or a stack BESSER does not
 template.
-
-.. note::
-   The Spec-Driven Agent was previously called the *Vibe-Driven Generator*.
-   The REST API, the SSE stream, and the editor all use the ``spec-driven``
-   name today; the old name survives only in historical release notes.
 
 Limitations
 -----------

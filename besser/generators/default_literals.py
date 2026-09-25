@@ -3,8 +3,8 @@
 ``default_value`` reaches the metamodel unvalidated from request JSON
 (``class_diagram_processor`` passes ``attr.get("defaultValue")`` straight to
 ``Property``), so a template that interpolates it writes whatever it carries
-into executable source. Observed 2026-09-14 on the SQLAlchemy template, which
-emitted non-``str``/``bool``/enum values UNQUOTED::
+into executable source. The SQLAlchemy template used to emit
+non-``str``/``bool``/enum values UNQUOTED::
 
     pages: Mapped_[int] = mapped_column(Integer_, default=__import__("os").getcwd())
 
@@ -114,8 +114,8 @@ def docstring_default(raw: Any, type_name: str, *, owner: str = "") -> str:
     ``python_default`` alone is not enough: the repr of a string containing a
     triple-double-quote still *contains* that sequence, which closes the
     surrounding docstring and drops what follows into the function body at
-    statement indentation. Observed on ``backend/templates/router.py.j2``, whose
-    generated routers are executed by ``/besser_api/deploy-app``.
+    statement indentation. This matters for ``backend/templates/router.py.j2``,
+    whose generated routers are executed by ``/besser_api/deploy-app``.
 
     So coerce through ``python_default`` first, then make the result
     docstring-safe: no double quote survives to form the closing sequence, and

@@ -3,8 +3,7 @@
 "A user hit an issue → we have a record."  Every SSE ``error`` event a
 run emits, and every exception that would otherwise close the stream
 silently, is appended as one JSON line to a host-mounted file — so the
-evidence survives container redeploys (the 94050aaa lesson: the only
-traceback lived in container logs that a recreate destroyed).
+evidence survives container redeploys, which destroy container logs.
 
 Best-effort by design: the incident log must never break a run.
 """

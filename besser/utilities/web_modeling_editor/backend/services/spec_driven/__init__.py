@@ -1,4 +1,4 @@
-"""Smart generation service package.
+"""Spec-driven generation service package.
 
 Glue between the LLM orchestrator (``besser.spec_driven_agent``) and the
 FastAPI SSE endpoint. Exposes:

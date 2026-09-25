@@ -1,15 +1,14 @@
-"""Pilot-experiment telemetry: append-only JSONL event store + report.
+"""Opt-in study telemetry: append-only JSONL event store + report.
 
-Captures hard usage data during facilitated pilot sessions of the
+Captures usage data during facilitated user-study sessions of the
 Spec-Driven editor — prompts, agent actions, generation-run summaries,
-delivery clicks, and friction signals — so the research report can be
-written from numbers instead of memory.
+delivery clicks, and friction signals.
 
 Collection is OFF by default and double-gated:
 
 * ``BESSER_TELEMETRY_ENABLED`` (server master switch) must be "1"/"true".
 * Every event must carry a non-empty participant label (P1, P2, ...).
-  Regular users never send one, so nothing is collected outside pilot
+  Regular users never send one, so nothing is collected outside study
   sessions even when the master switch is on.
 
 Storage mirrors the incident log (see ``incidents.py``): one append-only
@@ -411,7 +410,7 @@ def _split_line(split: dict) -> str:
 def _render_markdown(stats: dict[str, _ParticipantStats]) -> str:
     now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     lines: list[str] = [
-        "# BESSER Pilot Telemetry Report",
+        "# BESSER Telemetry Report",
         "",
         f"Generated: {now}",
         f"Participants on record: {len(stats)}",
@@ -509,7 +508,7 @@ def _render_csv(stats: dict[str, _ParticipantStats]) -> str:
 
 
 def build_report(participant: Optional[str] = None, fmt: str = "md") -> str:
-    """Aggregate the store into the pilot report (Markdown or CSV)."""
+    """Aggregate the store into the telemetry report (Markdown or CSV)."""
     stats = _aggregate(read_events(participant=participant))
     if fmt == "csv":
         return _render_csv(stats)

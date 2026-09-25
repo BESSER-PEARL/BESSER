@@ -1,4 +1,4 @@
-"""SSE event schema for the smart generation endpoint.
+"""SSE event schema for the spec-driven generation endpoint.
 
 Every event is a Pydantic model with an ``event`` discriminator. The
 ``format_sse`` helper serialises an event into the canonical SSE frame:
@@ -99,8 +99,8 @@ class ToolCallEvent(BaseSseEvent):
     summary: Optional[str] = None
     # What the call was about (path / action / ids) plus how many calls the model
     # batched into this turn. Without it a finished run cannot be diagnosed from
-    # the durable store - one run showed 71 task_list calls with no way to tell
-    # bookkeeping from a livelock (2026-09-11). Never contains file content.
+    # the durable store (e.g. many task_list calls: bookkeeping or a
+    # livelock?). Never contains file content.
     detail: Optional[str] = None
 
 

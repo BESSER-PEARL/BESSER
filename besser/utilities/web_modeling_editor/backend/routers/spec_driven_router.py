@@ -1,4 +1,4 @@
-"""Smart Generation Router.
+"""Spec-Driven Generation Router.
 
 Server-Sent Events endpoint that drives ``besser.spec_driven_agent.LLMOrchestrator``
 and streams phase markers, tool calls, text deltas, cost ticks, and a
@@ -338,7 +338,7 @@ async def smart_generate(
             ),
         )
 
-    # Incremental vibe-modify: when the request carries mode="modify" and a
+    # Incremental modify: when the request carries mode="modify" and a
     # base_run_id, the runner seeds this run's workspace from that previous
     # run's files and edits them in place (falling back to from-scratch if
     # the base has expired). Both fields default to the from-scratch path.
@@ -412,7 +412,7 @@ async def poll_smart_run_events(
 ):
     """Polling transport for the durable event log — the proxy-safe fallback.
 
-    A TLS-intercepting corporate proxy (Netskope on LIST laptops) buffers the
+    A TLS-intercepting corporate proxy buffers the
     response body before releasing it, which an SSE stream never finishes
     producing: either the headers are held so the fetch never settles, or the
     connection is torn down ("Failed to fetch"). REST and the agent WebSocket
@@ -557,8 +557,7 @@ async def smart_gen_config():
             "checkpointing_enabled": C.LLM_ENABLE_CHECKPOINTING,
             "resume_enabled": C.LLM_ENABLE_CHECKPOINTING,
             "toolchain_validation_enabled": C.LLM_ENABLE_TOOLCHAIN_VALIDATION,
-            # False on the hosted deploy and on any deploy that has not opted
-            # in. Reported so a local/on-prem operator can confirm from outside
+            # False on any deploy that has not opted in. Reported so a local/on-prem operator can confirm from outside
             # the process that BESSER_LLM_ENABLE_SHELL_TOOLS actually took
             # effect - it is a process-start env var, never a request field.
             "shell_tools_enabled": C.LLM_ENABLE_SHELL_TOOLS,
@@ -584,7 +583,7 @@ async def smart_gen_config():
             # default): the primary (default), any alt models on the primary
             # endpoint, and the fallback endpoint's model when configured.
             "models": _free_tier_model_choices(),
-            # The model a facilitated pilot session (?pilot=<label>) pre-selects.
+            # The model a facilitated study session (?pilot=<label>) pre-selects.
             # Null when unset. Server-side so swapping it is an env edit, not a
             # frontend release -- the client never hardcodes a model id.
             "pilot_model": free_pilot_model() or None,
@@ -971,7 +970,7 @@ async def push_spec_driven_to_github(
     req: PushSmartToGitHubRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
-    """Push a finished vibe/spec-driven generation run to a GitHub repository.
+    """Push a finished spec-driven generation run to a GitHub repository.
 
     Unlike ``/deploy-webapp`` (which regenerates deterministically and
     would discard the LLM's customizations), this pushes the *stored*
@@ -988,7 +987,7 @@ async def push_spec_driven_to_github(
          carries a real secret.
       4. Inject ``buml/`` model files + ``buml/diagrams.json``.
       5. Create (default private) or reuse the repo, resolve the branch.
-      6. Replace the repo tree with this push (each vibe run is a full app).
+      6. Replace the repo tree with this push (each run is a full app).
     """
     # ---- 1. GitHub auth gate ----
     if not github_session:
@@ -1051,7 +1050,7 @@ async def push_spec_driven_to_github(
                 )
 
             # ---- 4. Inject the model source into buml/ ----
-            # Prefer the run's model-synced export (a vibe-MODIFY run whose
+            # Prefer the run's model-synced export (a MODIFY run whose
             # instruction added domain entities stores it on the registry
             # entry) so the pushed buml/ matches the code. Fall back to the
             # request's projectExport for every other run.

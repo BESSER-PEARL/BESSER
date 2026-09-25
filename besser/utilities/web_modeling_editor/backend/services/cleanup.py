@@ -52,7 +52,7 @@ def cleanup_old_temp_files(max_age_hours: int = 24) -> None:
     if LLM_RUN_WORKSPACE_ROOT:
         configured = os.path.abspath(os.path.expanduser(LLM_RUN_WORKSPACE_ROOT))
         if os.path.normcase(configured) != os.path.normcase(tempfile.gettempdir()):
-            # The persistent volume is dedicated to smart-generation runs;
+            # The persistent volume is dedicated to spec-driven runs;
             # never apply the broader temp prefix set to that location.
             scan_roots.append((configured, ("besser_llm_",)))
 

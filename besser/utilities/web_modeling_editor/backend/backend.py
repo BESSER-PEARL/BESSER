@@ -71,7 +71,7 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     agent_simulator_router,
 )
 
-# Smart-generation download registry — started/cancelled in the lifespan below
+# Spec-driven download registry — started/cancelled in the lifespan below
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     DURABLE_RUN_MANAGER,
     SMART_RUN_REGISTRY,

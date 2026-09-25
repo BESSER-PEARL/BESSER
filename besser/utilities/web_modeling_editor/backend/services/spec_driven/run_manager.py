@@ -208,7 +208,7 @@ class SqliteRunEventStore:
                     ON spec_runs(updated_at);
                 """
             )
-            # Existing pilot databases predate subscriber lifecycle columns.
+            # Older run databases predate subscriber lifecycle columns.
             # SQLite has no ADD COLUMN IF NOT EXISTS, so inspect and migrate
             # each additive field explicitly.
             existing_columns = {

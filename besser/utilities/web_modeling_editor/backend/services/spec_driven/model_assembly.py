@@ -1,4 +1,4 @@
-"""Assemble BUML models from a ``ProjectInput`` for smart generation.
+"""Assemble BUML models from a ``ProjectInput`` for spec-driven generation.
 
 Picks the active ``ClassDiagram`` (preferring the one referenced by the
 active ``GUINoCodeDiagram`` when present) as the required domain model,
@@ -197,7 +197,7 @@ def assemble_models_from_project(
     records a structured assembly issue and continues with usable models.
     The assembler
     does NOT require any particular diagram — it accepts any combination
-    so users can drive smart generation from a state machine alone, a
+    so users can drive spec-driven generation from a state machine alone, a
     GUI alone, an agent alone, etc. It raises only when no usable model
     was found at all.
 

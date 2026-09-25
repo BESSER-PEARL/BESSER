@@ -80,7 +80,7 @@ _ALLOWED_NODE_TYPES: Set[type] = {
     # our own builders emit, around a method's ``state_machine`` /
     # ``quantum_circuit`` assignment (``sm`` / ``qc`` exists only in a project
     # export). Without these three types the loader rejected files BESSER itself
-    # had just written (2026-09-15). It adds branching, not reach: the body is
+    # had just written. It adds branching, not reach: the body is
     # validated like any other statement, and _validate_try_shape below pins the
     # handler to ``except NameError: pass``.
     ast.Try,

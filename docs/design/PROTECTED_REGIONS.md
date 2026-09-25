@@ -36,9 +36,9 @@ Concrete evidence:
   ~431, 529). Nothing survives across two independent `generate()`
   invocations.
 
-`vibe-bench`'s evolution probe quantifies the consequence: across a
-6-step chain, BESSER preserved 25–59% of step-1 files vs naive's
-75–100% (`PROBE_evolution.md` §2). A developer who customises one
+A model-evolution benchmark quantifies the consequence: across a
+6-step chain, BESSER preserved 25–59% of step-1 files vs a naive
+baseline's 75–100%. A developer who customises one
 method between regenerations loses the customisation on the next
 model edit.
 
@@ -229,7 +229,7 @@ Flutter, Terraform).
   the LLM tool surface a `region_info` query so Phase 2 doesn't
   overwrite user regions blindly.
 - **Week 3 — Evolution-probe validation.** Re-run the
-  `vibe-bench` evolution probe with a tiny artificial
+  evolution benchmark with a tiny artificial
   customisation (one method body edit) injected between steps.
   Measure the regression on the
   "files-in-step-1-preserved-at-step-N" metric. Target: bring

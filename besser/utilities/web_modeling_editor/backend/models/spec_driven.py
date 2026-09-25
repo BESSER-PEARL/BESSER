@@ -104,7 +104,7 @@ class SmartGenerateRequest(BaseModel):
     # also needs to bind an explicit "LLM from scratch" decision, so that
     # distinct state travels as a boolean instead of being collapsed to null.
     skip_deterministic_generator: bool = False
-    # Incremental vibe-modify. When ``mode == "modify"`` and ``base_run_id``
+    # Incremental modify. When ``mode == "modify"`` and ``base_run_id``
     # points at a still-downloadable previous run, the new run is SEEDED
     # from that run's generated files and edits them in place, instead of
     # rebuilding from scratch. ``base_run_id`` is the hex run id returned
@@ -114,7 +114,7 @@ class SmartGenerateRequest(BaseModel):
     # invalid pairing degrades gracefully rather than failing the request.
     base_run_id: Optional[str] = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     mode: Literal["generate", "modify"] = "generate"
-    # Pilot-experiment telemetry labels (services/spec_driven/telemetry.py).
+    # Opt-in study telemetry labels (services/spec_driven/telemetry.py).
     # Optional and deliberately fail-open: a generation must NEVER fail
     # because of telemetry, so values that don't match the collection
     # patterns are silently nulled instead of rejected. Validated
@@ -272,7 +272,7 @@ class SmartPushDeployConfig(BaseModel):
 
     Mirrors the ``deploy_config`` block the existing ``/deploy-webapp``
     endpoint reads from its body, but as a typed model. ``is_private``
-    defaults to ``True`` — a vibe/spec-driven generation run is customized,
+    defaults to ``True`` — a spec-driven generation run is customized,
     unreviewed LLM output and should not be world-readable by accident.
     """
 
@@ -289,7 +289,7 @@ class SmartPushDeployConfig(BaseModel):
 class PushSmartToGitHubRequest(BaseModel):
     """Body of ``POST /besser_api/spec-driven/push-to-github``.
 
-    Pushes the *stored* artifact of a finished vibe/spec-driven generation run
+    Pushes the *stored* artifact of a finished spec-driven generation run
     (identified by ``run_id``) plus the re-importable model source, rather
     than re-generating deterministically (which would discard the LLM
     customizations). The run's code is read from ``SMART_RUN_REGISTRY``;

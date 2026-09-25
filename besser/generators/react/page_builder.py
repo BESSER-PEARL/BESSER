@@ -1030,14 +1030,11 @@ class PageBuilderMixin:
 
         return "".join(props)
 
-    # A structured prop longer than this is written across lines. Generated
-    # Booking.tsx line 25 was 3,762 characters holding the whole table
-    # options dict, and the frontend-contract blocker the agent kept trying
-    # to fix lived on it: across four live runs every attempt on that line
-    # came back "old_text and new_text are identical", because nothing can
-    # retype 3.7k characters and change one field. One key per line is what
-    # makes it editable. The contract checker scans braces and uses
-    # json.raw_decode, both newline-tolerant, so it reads either form.
+    # A structured prop longer than this is written across lines. A single
+    # multi-thousand-character line (e.g. a whole table options dict) cannot
+    # be edited reliably by the agent; one key per line can. The contract
+    # checker scans braces and uses json.raw_decode, both newline-tolerant,
+    # so it reads either form.
     _MAX_INLINE_PROP_CHARS = 160
 
     def _format_prop(self, name: str, value: Any) -> str:

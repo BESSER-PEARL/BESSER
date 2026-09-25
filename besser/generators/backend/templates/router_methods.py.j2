@@ -60,7 +60,7 @@ router = APIRouter()
    method with no body is an unimplemented INSTANCE method - B-UML has no static
    methods - and the React generator addresses every method button as
    /<class>/{id}/methods/<name>/, so routing a body-less method class-level left
-   every method button 404ing (run 19h35, 2026-09-18: 12 of 18 scenarios). #}
+   every method button 404ing. #}
 {% set is_class_method = method_code | length > 0 and '(self' not in method_code and '(self,' not in method_code %}
 
 

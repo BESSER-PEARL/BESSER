@@ -1,4 +1,4 @@
-"""Pre-flight plan preview for smart generation.
+"""Pre-flight plan preview for spec-driven generation.
 
 Builds a ``PreviewPlan`` showing what spec-driven generate would do, before
 spending any LLM tokens:

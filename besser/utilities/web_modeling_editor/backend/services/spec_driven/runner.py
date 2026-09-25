@@ -176,17 +176,13 @@ def _dir_has_user_output(path: Optional[str]) -> bool:
 # the next run that reads it back. counts carries the true totals.
 _MAX_VERIFICATION_ITEMS = 25
 
-# Per-field limits measured over 365 run recipes, not rounded off. The client
-# renders these in full, so a cut here is the last one in the chain.
-#   why  — the irreplaceable half ("why this rule is not enforced"). A rejected
-#          OCL constraint renders 263-750 characters, every one of them over
-#          the 240 this used to cut at; 1200 leaves zero truncated in the
-#          corpus, including the longest with a recovery verdict appended.
-#   what — validator messages reach 2550 at the extreme; 1300 (just over the
-#          p99 of 1275) cuts 93 of 2831 instead of 1043.
+# Per-field limits sized from real run recipes. The client renders these in
+# full, so a cut here is the last one in the chain.
+#   why  — the irreplaceable half ("why this rule is not enforced"); a rejected
+#          OCL constraint renders up to ~750 characters, so 1200 cuts none.
+#   what — validator messages; 1300 sits just over the observed p99.
 #   how  — a request list or an evidence citation, which degrades gracefully,
-#          so it keeps the tighter p90 bound.
-# The three together cost a median 9.9 KB report, 22.7 KB at the corpus worst.
+#          so it keeps a tighter p90 bound.
 _MAX_WHAT = 1300
 _MAX_WHY = 1200
 _MAX_HOW = 320
@@ -462,7 +458,7 @@ class SmartRunEntry:
     is_zip: bool
     temp_dir: str
     created_at: float
-    # Set only by a vibe-MODIFY run whose instruction implied new domain
+    # Set only by a MODIFY run whose instruction implied new domain
     # entities: the run's project export with the active ClassDiagram's
     # model replaced by the re-serialised, model-synced diagram. The push
     # endpoint prefers this over the request's projectExport so the pushed
@@ -746,7 +742,7 @@ def _reset_concurrency_semaphore_for_tests() -> None:
 # ---------------------------------------------------------------------
 # Dedicated blocking-work thread pool
 # ---------------------------------------------------------------------
-# Smart-gen's blocking work — model assembly, LLM client construction, and
+# Spec-driven blocking work — model assembly, LLM client construction, and
 # above all the long-running orchestrator loop (up to LLM_MAX_RUNTIME seconds) —
 # runs OFF the default asyncio executor. On a small host the default pool is
 # only ``min(32, cpu_count + 4)`` threads (~6 on 2 vCPUs); a burst of concurrent
@@ -904,7 +900,7 @@ async def release_active_run(run_id: str, event: asyncio.Event) -> bool:
 
 
 # ---------------------------------------------------------------------
-# Incremental vibe-modify: seed a new workspace from a previous run
+# Incremental modify: seed a new workspace from a previous run
 # ---------------------------------------------------------------------
 
 
@@ -969,7 +965,7 @@ class SmartGenerationRunner:
         self.request = request
         # Resuming a prior run reuses its run_id so the client can keep
         # the same identifier across the crash. Fresh runs (including a
-        # vibe-modify run seeded from a previous run) get a new UUID.
+        # modify run seeded from a previous run) get a new UUID.
         # Either way the id is hex[32] so the path regex in the cancel /
         # download / resume routes accepts it.
         if run_id and resume_run_id and run_id != resume_run_id:
@@ -977,7 +973,7 @@ class SmartGenerationRunner:
         self.run_id = resume_run_id or run_id or uuid.uuid4().hex
         self._resume_run_id = resume_run_id
         self._reserved_cancel_event = reserved_cancel_event
-        # Incremental vibe-modify. When ``mode == "modify"`` and
+        # Incremental modify. When ``mode == "modify"`` and
         # ``base_run_id`` still resolves to a live registry entry, this
         # run is SEEDED from that entry's files and edits them in place.
         # ``_seeded`` is flipped True once the copy succeeds; if the base
@@ -989,7 +985,7 @@ class SmartGenerationRunner:
         self._seeded = False
         self.temp_dir: Optional[str] = None
         self._started_at: Optional[float] = None
-        # ---- Pilot telemetry (run_summary) state ----
+        # ---- Study telemetry (run_summary) state ----
         # The request model already sanitized these (invalid values are
         # nulled, never rejected); a summary is recorded only when both
         # labels survived AND the server master switch is on.
@@ -1012,7 +1008,7 @@ class SmartGenerationRunner:
         """Run the pipeline and yield SSE frames.
 
         Thin wrapper around ``_generate_and_stream_impl``. When the request
-        carries valid pilot-telemetry labels and telemetry is enabled, the
+        carries valid study-telemetry labels and telemetry is enabled, the
         terminal frames are observed as they stream by and exactly one
         ``run_summary`` telemetry event is recorded once the stream ends —
         for successful AND failed runs (failures are the friction data).
@@ -1043,22 +1039,18 @@ class SmartGenerationRunner:
             self._record_run_summary()
 
     def _requested_llm_model(self) -> Optional[str]:
-        """The model this run asks for, honouring a pilot session's default.
+        """The model this run asks for, honouring a study session's default.
 
-        A pilot arrives through ``?pilot=<label>`` and should start on
-        ``BESSER_PILOT_LLM_MODEL``. The client cannot be relied on to send
-        it: the free tier is the no-popup default, so a pilot who never opens
-        the model dialog stores nothing and the request carries no
-        ``llm_model``. Measured 2026-09-17: 17 of 17 pilot runs went out on the
-        public default, so the configured pilot model had never once taken
-        effect. Resolving it here makes it hold whatever the client sends.
+        A study session (``?pilot=<label>``) should start on
+        ``BESSER_PILOT_LLM_MODEL``. The client cannot be relied on to send it
+        (the free tier is the no-popup default, so the request often carries
+        no ``llm_model``), so it is resolved here, server-side.
 
-        An explicit ``llm_model`` always wins, so a pilot who deliberately
-        picks another free model keeps it.
+        An explicit ``llm_model`` always wins.
         """
         if self.request.llm_model or self.request.provider != "free":
             return self.request.llm_model
-        # A sanitized-non-null participant label IS the pilot signal: the
+        # A sanitized-non-null participant label IS the study signal: the
         # validator nulls anything not matching the collection pattern.
         if not self.request.telemetry_participant:
             return self.request.llm_model
@@ -1153,7 +1145,7 @@ class SmartGenerationRunner:
             self.temp_dir = existing
         else:
             # Every non-resume run allocates its OWN fresh workspace first.
-            # For a vibe-modify run that own workspace is then seeded from
+            # For a modify run that own workspace is then seeded from
             # the base run's files — the base itself is never touched, so it
             # stays downloadable.
             try:
@@ -1169,7 +1161,7 @@ class SmartGenerationRunner:
                 logger.exception("mkdtemp failed for spec-driven generate run %s: %s", self.run_id, exc)
                 return
 
-            # ---- Incremental vibe-modify: seed from the base run --------
+            # ---- Incremental modify: seed from the base run --------
             if self._mode == "modify" and self._base_run_id:
                 base_entry = await SMART_RUN_REGISTRY.get(self._base_run_id)
                 if (
@@ -1597,8 +1589,8 @@ class SmartGenerationRunner:
             # as a green success. Bounded 3x5 turns with snapshot/rollback;
             # honours the run's cancel/cost/runtime budget per fix turn.
             auto_fix_issues=LLM_ENABLE_AUTO_FIX,
-            # Disable the arbitrary-shell tools on the hosted deploy — they are
-            # user-steerable RCE / secret-exfil on a shared BYOK box. OFF by
+            # Disable the arbitrary-shell tools by default — they are
+            # user-steerable RCE / secret-exfil on a shared BYOK host. OFF by
             # default (BESSER_LLM_ENABLE_SHELL_TOOLS). The agent keeps every
             # static tool; only arbitrary `run_command`/`install_dependencies`
             # are withheld.
@@ -1650,7 +1642,7 @@ class SmartGenerationRunner:
                         orchestrator.resume, self.request.instructions
                     )
                 if self._mode == "modify" and self._seeded:
-                    # Seeded vibe-modify: edit the copied files in place.
+                    # Seeded modify: edit the copied files in place.
                     # (A base-expired / failed-seed fallback left _seeded
                     # False and drops through to the from-scratch run().)
                     return await _run_blocking(
@@ -1911,8 +1903,8 @@ class SmartGenerationRunner:
 
             # Persist the run trace to a host-mounted dir (best-effort) so
             # the per-turn detail survives the temp-workspace sweep on
-            # container recreate — this is what makes a later "what did this
-            # fix run actually do" answerable (the P2 lesson). No-op unless
+            # container recreate, so a later "what did this fix run actually
+            # do" stays answerable. No-op unless
             # BESSER_INCIDENT_LOG_DIR / BESSER_TELEMETRY_DIR is configured.
             try:
                 from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
@@ -1952,8 +1944,8 @@ class SmartGenerationRunner:
             # Measured on the runner's TOTAL elapsed/spend (Phase 1+2+3+
             # packaging), not Phase 2 alone, and it must feed the `incomplete`
             # verdict below: a run whose Phase 2 finished cleanly but whose wall
-            # clock blew the cap reported `incomplete: False` while this block
-            # told the user "Output may be incomplete" (live 2026-09-15, 932f1367).
+            # clock blew the cap must not report `incomplete: False` while this
+            # block tells the user "Output may be incomplete".
             _cap_breach: Optional[str] = None
             if final_cost > effective_cost_cap:
                 _cap_breach = (
@@ -2148,7 +2140,7 @@ class SmartGenerationRunner:
                     len(_unfixed_blockers) if exited_cleanly else 0
                 )
                 # Best-effort authorship split (generator vs. LLM) over the
-                # final tree — the pilot's headline metric. Never blocks the
+                # final tree — the headline telemetry metric. Never blocks the
                 # done event.
                 try:
                     done_event.fileSplit = self._compute_file_split(
@@ -2159,7 +2151,7 @@ class SmartGenerationRunner:
                         "File split computation failed for run %s",
                         self.run_id, exc_info=True,
                     )
-                # Carry any vibe-MODIFY model-sync delta so the GitHub push
+                # Carry any MODIFY model-sync delta so the GitHub push
                 # writes buml/ from the UPDATED model rather than the stale
                 # request export. None for generate/resume runs (and modify
                 # runs whose instruction implied no new domain entities).
@@ -2392,7 +2384,7 @@ class SmartGenerationRunner:
             return None
 
     # ------------------------------------------------------------------
-    # Pilot telemetry (run_summary)
+    # Study telemetry (run_summary)
     # ------------------------------------------------------------------
 
     def _compute_file_split(self, orchestrator: Any, result_path: str) -> dict:

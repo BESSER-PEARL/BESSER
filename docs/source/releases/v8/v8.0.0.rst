@@ -73,7 +73,7 @@ generated monolith need to be regenerated.
 **Spec-Driven REST paths**
 
 The agent's endpoints are ``/besser_api/spec-driven/*``. The earlier
-``smart-generate`` / ``vibe`` paths are gone.
+pre-release ``smart-generate`` paths are gone.
 
 **Default SQL dialect**
 
@@ -136,7 +136,7 @@ Closing the tab no longer kills the run.
 - A **keyless free tier** backed by a hosted open-weight model, with a cloud-first
   fallback chain and self-hosted last. Daily-quota 429s fail fast to the fallback and the
   reason is recorded.
-- A **sponsored tier** for demo and pilot use.
+- A **sponsored tier** for demos and user studies.
 - **BYOK** across Anthropic, OpenAI and Mistral, with a shared key dialog, an invalid
   key surfaced as ``INVALID_KEY``, and per-run cost and runtime budgets.
 

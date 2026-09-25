@@ -5,14 +5,13 @@ import os
 # underscore aliases so a modelled class named List, Optional or DateTime
 # cannot shadow them. The PLAIN names are imported too because this file is
 # routinely edited afterwards by an LLM, which writes ordinary Python and has
-# no reason to know about our aliasing convention. Observed in generated apps
-# on 2026-09-11, each one an app that would not import:
+# no reason to know about the aliasing convention; without the plain names
+# such edits fail to import:
 #
 #     Mapped_[Optional[int]]        undefined name 'Optional'
 #     mapped_column(DateTime())     undefined name 'DateTime'
 #
-# Binding only the names we had seen fail left the same trap set for every
-# other alias, so every aliased name below is bound both ways.
+# so every aliased name below is bound both ways.
 from typing import List, Optional, List as List_, Optional as Optional_
 from sqlalchemy import (
     create_engine, Enum, UniqueConstraint as _UniqueConstraint, event as _sa_event,

@@ -80,7 +80,7 @@ def redact_text(value: str, *, env_style: bool = True) -> tuple[str, int]:
     ``env_style`` controls the NAME-based assignment heuristic, which belongs to
     ``.env`` files only. In source code it matches on the variable NAME and
     swaps the whole value for a bare ``[REDACTED]`` - legal in a .env, an
-    undefined name in Python. Observed across a 10-app batch on 2026-09-11:
+    undefined name in Python, e.g.:
 
         SECRET_KEY = [REDACTED]                    # NameError at import
         ACCESS_TOKEN_EXPIRE_MINUTES = [REDACTED]   # an INTEGER, not a secret

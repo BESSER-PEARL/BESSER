@@ -2544,14 +2544,11 @@ class DomainModel(Model):
     def _validate_mandatory_cycles(self, warnings: list[str]):
         """Flag a set of classes that can never be instantiated.
 
-        Live run 2026-09-18: ``Booking`` required at least one
-        ``ReservedRoom`` (end ``reservedRooms`` 1..*) while ``ReservedRoom``
-        required exactly one ``Booking`` (end ``booking_1`` 1..1), through two
-        DIFFERENT associations — so no per-association check could see it. The
-        diagram validated clean, the generator faithfully made both fields
-        mandatory in the create schemas, and the shipped API could not create
-        either class. A self-association with a mandatory end is the same
-        defect with a cycle of length one.
+        Example: ``Booking`` requires at least one ``ReservedRoom`` (1..*)
+        while ``ReservedRoom`` requires exactly one ``Booking`` (1..1), through
+        two DIFFERENT associations — so no per-association check sees it, and
+        the generated API cannot create either class. A self-association with
+        a mandatory end is the same defect with a cycle of length one.
 
         A WARNING, not an error: an association with 1..1 on both ends is
         legal UML and BESSER's own ``user_reference_domain_model`` ships three
@@ -2593,10 +2590,10 @@ class DomainModel(Model):
         """Warn when one class pair is connected by more than one association.
 
         Legal UML — ``homeAddress`` / ``workAddress`` are genuinely different
-        relationships — so this is a warning, not an error. But on the live
-        model above, all three duplicated pairs were one concept drawn twice,
-        and each produced a redundant foreign key plus a ``_1``-suffixed role
-        name (the collision marker) in the generated schema.
+        relationships — so this is a warning, not an error. More often the
+        pair is one concept drawn twice, which produces a redundant foreign key
+        plus a ``_1``-suffixed role name (the collision marker) in the
+        generated schema.
         """
         by_pair: dict[frozenset, list[str]] = {}
         for association in self.__associations:

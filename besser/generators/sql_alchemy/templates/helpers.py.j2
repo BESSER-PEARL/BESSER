@@ -55,7 +55,7 @@
         could close, so `__import__("os").system(...)` in a defaultValue ran as
         the backend user. python_default/enum_default coerce to the declared
         type and repr() the result, raising at generation time on anything that
-        is not expressible as a literal (2026-09-14). #}
+        is not expressible as a literal. #}
     {%- if attribute.default_value is not none %}, default=
         {%- if attribute.type.__class__.__name__ == 'Enumeration' -%}
             {{ enum_default(attribute.default_value, attribute.type.name, members=attribute.type.literals, owner=class.name ~ '.' ~ attribute.name) }}

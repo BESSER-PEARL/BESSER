@@ -1,4 +1,4 @@
-"""Pilot-experiment telemetry router.
+"""Opt-in study telemetry router.
 
 Two endpoints:
 
@@ -8,7 +8,7 @@ Two endpoints:
   acceptance AND when telemetry is disabled — the response never reveals
   whether collection is active. 422 is reserved for malformed input.
 
-* ``GET /besser_api/telemetry/report`` — the aggregated pilot report,
+* ``GET /besser_api/telemetry/report`` — the aggregated telemetry report,
   gated by the ``X-Telemetry-Token`` header matching
   ``BESSER_TELEMETRY_ADMIN_TOKEN``. When no admin token is configured the
   endpoint answers 404 as if it did not exist.
@@ -55,7 +55,7 @@ class TelemetryEventRequest(BaseModel):
 
 @router.post("/telemetry/event", status_code=204)
 async def telemetry_event(event: TelemetryEventRequest) -> Response:
-    """Accept one pilot telemetry event.
+    """Accept one study telemetry event.
 
     Always 204 for well-formed input, whether or not the event was
     stored — a disabled deployment is indistinguishable from an enabled
@@ -87,11 +87,11 @@ async def telemetry_report(
     format: Literal["md", "csv"] = Query(default="md"),
     token: Optional[str] = Header(default=None, alias="X-Telemetry-Token"),
 ) -> PlainTextResponse:
-    """Aggregated pilot report (Markdown default, CSV alternative).
+    """Aggregated telemetry report (Markdown default, CSV alternative).
 
     Requires ``X-Telemetry-Token`` to match ``BESSER_TELEMETRY_ADMIN_TOKEN``.
     Answers 404 when no admin token is configured (the endpoint should be
-    indistinguishable from absent on non-pilot deployments) and 403 for a
+    indistinguishable from absent on deployments without telemetry) and 403 for a
     missing or wrong token.
     """
     admin_token = os.environ.get("BESSER_TELEMETRY_ADMIN_TOKEN", "").strip()

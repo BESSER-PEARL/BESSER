@@ -71,13 +71,11 @@ def _env_path(name: str) -> str | None:
 # ceiling a request's fields are clamped to; DEFAULT values are what
 # clients get when they don't send an explicit number.
 # Set to $5 to match the from-scratch ceiling below: the UI reads this hard
-# cap from /spec-driven/config, so a lower value here was DISHONEST — it showed
-# "$2" while a from-scratch run was already permitted up to $5. One honest
-# ceiling everywhere.
+# cap from /spec-driven/config, so it must equal what a run is actually
+# permitted. One ceiling everywhere.
 LLM_MAX_COST_USD_HARD_CAP = _env_float("BESSER_LLM_MAX_COST_USD_HARD_CAP", 5.0)
-# 40 minutes. The deployed stack already set this via env while the code said
-# 900s, so the source disagreed with what the UI advertised ("up to 40 min").
-# Same reasoning as the cost cap above: one honest ceiling everywhere.
+# 40 minutes, matching what the UI advertises ("up to 40 min"). Same
+# reasoning as the cost cap above: one ceiling everywhere.
 LLM_MAX_RUNTIME_SECONDS_HARD_CAP = _env_int("BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP", 2400)
 # A turn is not a unit of work: a model that emits one tool call per turn needs
 # roughly 4x the turns of one that batches, so the ceiling has to fit the WORST
@@ -85,8 +83,7 @@ LLM_MAX_RUNTIME_SECONDS_HARD_CAP = _env_int("BESSER_LLM_MAX_RUNTIME_SECONDS_HARD
 LLM_MAX_TURNS_HARD_CAP = _env_int("BESSER_LLM_MAX_TURNS_HARD_CAP", 150)
 # Defaults a client gets when it sends no explicit number, and what the BYOK
 # dialog pre-fills. $1/10min was too tight to finish a real application: a
-# 2026-09-14 run spent its whole budget reading and was cancelled two seconds
-# after its first productive turn.
+# run could spend its whole budget reading before its first productive turn.
 LLM_DEFAULT_MAX_COST_USD = min(
     _env_float("BESSER_LLM_DEFAULT_MAX_COST_USD", 5.0),
     LLM_MAX_COST_USD_HARD_CAP,
@@ -151,26 +148,25 @@ LLM_ENABLE_TOOLCHAIN_VALIDATION = _env_bool(
 LLM_ENABLE_AUTO_FIX = _env_bool("BESSER_LLM_ENABLE_AUTO_FIX", True)
 
 # Whether the Phase-2 / Phase-3 agent may use the arbitrary-shell tools
-# (run_command / install_dependencies). OFF by default for the hosted deploy:
-# they execute LLM/user-authored commands with shell=True in the backend
-# process, and the cwd lock + denylist are UX, not a sandbox — on a shared,
-# BYOK, ministry-facing box that is user-steerable remote code execution and
-# server-secret exfiltration. The agent keeps every static tool (read/write/
-# modify/check_syntax). Trusted local/CLI/bench runs can re-enable via the env
-# var. Durable answer is per-run container isolation.
+# (run_command / install_dependencies). OFF by default: they execute
+# LLM/user-authored commands with shell=True in the backend process, and the
+# cwd lock + denylist are UX, not a sandbox — on a shared, BYOK host that is
+# user-steerable remote code execution and server-secret exfiltration. The
+# agent keeps every static tool (read/write/modify/check_syntax). Trusted
+# local/CLI/bench runs can re-enable via the env var. Durable answer is per-run
+# container isolation.
 LLM_ENABLE_SHELL_TOOLS = _env_bool("BESSER_LLM_ENABLE_SHELL_TOOLS", False)
 
 # Phase 3 import smoke check: import the generated ORM module (sql_alchemy.py,
 # plus pydantic_classes.py beside it) in a subprocess and run SQLAlchemy's
 # configure_mappers(). It is the only check that sees a relationship() whose
 # string arguments resolve to nothing - a lazily-configured mapper that passes
-# ast.parse and ruff and then 500s every database request (live run 52befadf,
-# 2026-09-18). Trade-off, stated plainly: this executes LLM-authored Python on
-# the host, which the shell-tools gate above withholds. It is kept separate
+# ast.parse and ruff and then 500s every database request. Trade-off, stated
+# plainly: this executes LLM-authored Python on the host, which the
+# shell-tools gate above withholds. It is kept separate
 # from that gate because it imports a module the user is about to download and
 # run anyway, with the stripped subprocess environment, no network, database
-# or server, a 30s timeout and ~0.5s of wall-clock. ON by default: the hosted
-# deploy is exactly where it matters.
+# or server, a 30s timeout and ~0.5s of wall-clock. ON by default.
 LLM_ENABLE_IMPORT_SMOKE_CHECK = _env_bool("BESSER_LLM_ENABLE_IMPORT_SMOKE_CHECK", True)
 
 # Phase 3 requirements ledger: two extra planning-model calls per run (one to
@@ -178,7 +174,7 @@ LLM_ENABLE_IMPORT_SMOKE_CHECK = _env_bool("BESSER_LLM_ENABLE_IMPORT_SMOKE_CHECK"
 # pass to judge each against the generated code, citations re-checked by the
 # harness). Missing requirements become blockers for the auto-fix loop and
 # every verdict lands in the recipe. ON by default: it is the only check that
-# reads the request the user actually wrote (live run 19h35, 2026-09-18).
+# reads the request the user actually wrote.
 LLM_ENABLE_REQUIREMENTS_LEDGER = _env_bool("BESSER_LLM_ENABLE_REQUIREMENTS_LEDGER", True)
 
 # Whether a spec-driven generation request may carry a custom LLM ``base_url`` (the
@@ -204,7 +200,7 @@ AGENT_OUTPUT_FILENAME = "agent_output.zip"
 # Generator defaults
 # Not "standard": SQLGenerator passes this straight through as
 # SQLAlchemyGenerator's `dbms`, so every /generate-output for `sql` without an
-# explicit config.dialect raised "Invalid DBMS" (2026-09-14).
+# explicit config.dialect raised "Invalid DBMS".
 DEFAULT_SQL_DIALECT = "sqlite"
 DEFAULT_DBMS = "sqlite"
 DEFAULT_JSONSCHEMA_MODE = "regular"

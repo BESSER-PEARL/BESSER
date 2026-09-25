@@ -64,8 +64,8 @@ def get_deferred_fk_associations(model: DomainModel) -> set:
     created, and neither row can be inserted first. SQLAlchemy says so
     outright — ``Can't sort tables; there are unresolvable cycles between
     tables booking, guest`` — and ``create_all`` raises before the app ever
-    serves a request. Live 2026-09-17: a hotel model where Booking pointed
-    at its contact Guest and Guest pointed back at its Booking.
+    serves a request. Example: Booking points at its contact Guest and Guest
+    points back at its Booking.
 
     A cycle needs at least two associations, since a single association
     produces only one FK column (see ``get_foreign_keys``). So one edge of

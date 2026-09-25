@@ -204,7 +204,7 @@ broken artifact as a green success is worse than spending a few more turns.
 
 .. note::
    The heavy per-project compilers (``tsc`` / ``cargo`` / ``kotlinc``) are the
-   one part of Phase 3 that is **opt-in** for the hosted deployment
+   one part of Phase 3 that is **opt-in** for the web backend
    (``BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION``) — they were the main driver of
    a duration and cost regression on non-Python stacks. Every other check
    above runs on every run.

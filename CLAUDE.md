@@ -136,7 +136,7 @@ class GeneratorInterface(ABC):
 
 #### 4. Web Modeling Editor Backend (`besser/utilities/web_modeling_editor/backend/`)
 
-FastAPI service with a **modular router architecture**. The application factory lives in `backend.py` (~270 lines), which sets up middleware, registers routers, and starts a background cleanup task.
+FastAPI service with a **modular router architecture**. The application factory lives in `backend.py`, which sets up middleware, registers routers, and starts a background cleanup task.
 
 **Routers** (`backend/routers/`):
 Endpoints are split by concern into dedicated routers:
@@ -158,7 +158,7 @@ Endpoints are split by concern into dedicated routers:
 
 - **Conversion Services** (`services/converters/json_to_buml/`, `services/converters/buml_to_json/`):
   - Bidirectional transformations between frontend JSON and B-UML metamodel
-  - 7 processors: class diagrams, state machines, agents, objects, GUI, quantum circuits, projects
+  - One processor per diagram type (class, state machine, agent, object, GUI, quantum, BPMN, NN) plus the project converter
   - Detailed parsers for attributes, methods, multiplicity, OCL constraints
 
 - **Validation Services** (`services/validators/`):
@@ -211,6 +211,9 @@ Generate executable Python code from B-UML metamodel instances:
 - `gui_model_builder.py` - GUIModel → Python code
 - `project_builder.py` - Project → Python code
 - `quantum_model_builder.py` - QuantumCircuit → Python code
+- `state_machine_builder.py` - StateMachine → Python code
+- `bpmn_model_builder.py` - BPMN model → Python code
+- `nn_model_builder.py` - NN model → Python code
 - `common.py` - Shared utilities: `safe_var_name()` (converts names to safe Python identifiers), `_escape_python_string()` (prevents code injection from user-controlled inputs)
 
 **Pattern**: Generated code can be `exec()`'d to recreate the metamodel instance.
@@ -337,9 +340,8 @@ Keep subjects short and imperative. Use topic branches (`feature/add-generator`)
 
 ## Related Files
 
-- **`.github/copilot-instructions.md`**: Comprehensive AI assistant guidelines (also in `.cursorrules`)
+- **`.github/copilot-instructions.md`**, **`.cursorrules`**: Pointers to this file for Copilot and Cursor; edit `CLAUDE.md`, not them
 - **`CONTRIBUTING.md`**: Contribution workflow and expectations
-- **`AGENTS.md`**: Custom Claude Code agent configuration for this repository
 - **`README.md`**: Project overview and quick start
 - **`GOVERNANCE.md`**: Project governance and decision-making
 
@@ -403,7 +405,7 @@ python library.py
 Check `generated/` directory (git-ignored build output).
 
 ### Validation Debugging
-Enable verbose OCL validation in `/validate-diagram` endpoint responses.
+`/validate-diagram` returns every metamodel and OCL error in one response (errors are collected, not raised); start there before reading validator code.
 
 ### Frontend-Backend Integration
 Use browser DevTools Network tab to inspect API payloads. Backend returns detailed error messages.

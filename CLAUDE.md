@@ -69,6 +69,8 @@ docker compose up --build     # backend on :9000, frontend on :8080
 ### Running the backend alone
 ```bash
 python -m besser.utilities.web_modeling_editor.backend.backend   # serves on :9000
+# PIA / Local (Ollama) providers in the Spec-Driven Agent additionally need
+# BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true in the environment
 ```
 
 ## Architecture Overview
@@ -199,7 +201,8 @@ flags:
 - `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` — **off** by default (SSRF: the server would open a
   user-supplied URL). A request carrying `base_url` (the editor's PIA and Local /
   self-hosted providers, e.g. Ollama) is rejected unless it is set. Keep it off on shared
-  hosts; single-tenant or local installs that use those providers turn it on.
+  hosts and in `docker-compose.prod.yml`; the local `docker-compose.yml` turns it on (and
+  `BESSER_AGENT_ALLOW_CUSTOM_BASE_URL` for the modeling agent) so PIA and Ollama work.
 
 See `docs/source/spec_driven_agent/` for the user-facing documentation.
 
@@ -500,7 +503,7 @@ output = template.render(model=domain_model, config=config)
 5. **Keep converters symmetric**: If JSON→BUML supports a feature, BUML→JSON must too
 6. **Test round-trips**: Especially for converters (JSON→BUML→JSON should be identity)
 7. **Update docs**: Backend changes often require `docs/source/` updates
-8. **Keep the security defaults**: `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` and `BESSER_LLM_ENABLE_SHELL_TOOLS` both default off in code; deployments opt in per service (see the Spec-Driven Agent section). Don't flip the code defaults
+8. **Keep the security defaults**: `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` and `BESSER_LLM_ENABLE_SHELL_TOOLS` both default off in code and on hosted deployments; services opt in explicitly (see the Spec-Driven Agent section). The local `docker-compose.yml` enables custom base URLs so PIA and Ollama work. Don't flip the code defaults
 9. **A new agent tool needs two edits**: `agent/tools.py` *and* `_TOOL_MODEL_REQUIREMENTS`, or it will be offered on projects that cannot satisfy it
 
 ## Debugging Tips

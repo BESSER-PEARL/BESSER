@@ -489,6 +489,11 @@ Start the backend from the BESSER repository root:
 
 The backend listens on ``http://localhost:9000/besser_api`` by default.
 
+To use the Spec-Driven Agent's PIA or Local (e.g. Ollama) providers from this
+local backend, start it with ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` (off by
+default; the local ``docker-compose.yml`` sets it). See
+:doc:`spec_driven_agent/configuration`.
+
 For the full-stack experience with Docker:
 
 .. code-block:: bash

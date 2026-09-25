@@ -40,7 +40,10 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
 - ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL`` (**off**) -- Permit a request to carry
   its own OpenAI-compatible ``base_url``. Having the server open a
   user-supplied URL is an SSRF surface, so this is meant for local or
-  single-tenant deployments.
+  single-tenant deployments. The local ``docker-compose.yml`` turns it on so
+  the editor's PIA and Local (e.g. Ollama) providers work; it stays off in
+  code and in ``docker-compose.prod.yml``. For a backend started without
+  Docker, set ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` yourself.
 
 Caps and limits
 ---------------

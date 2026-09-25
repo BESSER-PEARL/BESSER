@@ -1,19 +1,14 @@
-"""``run_report`` formalizes ``verification/analyse_iteration.py`` into the
-package and fixes two things it got wrong: it raised on an unparseable JSONL
-line instead of skipping it, and it reported ``max(turn_start payload)`` as
-the turn count, which undercounts once Phase 3 has run - only Phase 2's loop
-emits ``turn_start``; Phase 3's fix-loop turns advance ``self.total_turns``
-(and appear in ``tool_call`` payloads' ``turn`` field) without ever emitting
-one. Verified on a real run (``gpt-5.6-terra-dp3trml9``): ``turn_start``
-topped out at 34 while the run's own bookkeeping reached 108, then 147
-across a resume - a ~4x undercount from the old approach.
+"""``run_report`` must skip an unparseable JSONL line instead of raising, and
+must not report ``max(turn_start payload)`` as the turn count: only Phase 2's
+loop emits ``turn_start``, while Phase 3's fix-loop turns advance
+``self.total_turns`` (and appear in ``tool_call`` payloads' ``turn`` field)
+without ever emitting one, so that approach undercounts badly once Phase 3
+has run.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-
-import pytest
 
 from besser.spec_driven_agent.run_report import (
     EDIT_TOOLS,
@@ -23,11 +18,6 @@ from besser.spec_driven_agent.run_report import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "run_report_fcdh0s9k"
-# Repo root via the package, then its parent workspace -- not a hop count,
-# which broke when these tests moved up a level.
-import besser as _besser
-_REPO = Path(_besser.__file__).resolve().parents[1]
-_ALL_RUNS = _REPO.parent / "verification" / "spec-iterations"
 
 
 def _event(event: str, **payload) -> dict:
@@ -60,9 +50,9 @@ def _checkpoint_json(**overrides) -> dict:
 
 
 def test_the_real_truncated_trace_is_handled(tmp_path):
-    """Run fcdh0s9k's ``.besser_trace.jsonl`` has two genuinely unparseable
-    lines mid-file (a torn write, not at eof). The old hand-written script
-    (``json.loads`` with no try/except) raised on this file."""
+    """The fixture's ``.besser_trace.jsonl`` (from a real run) has two
+    genuinely unparseable lines mid-file (a torn write, not at eof); a plain
+    ``json.loads`` per line raises on this file."""
     report = build_report(str(FIXTURE))
     art = report["artifacts"]
     assert art["trace"]["available"] is True
@@ -98,29 +88,6 @@ def _parse_trace_ignoring_bad_lines(path: Path) -> list[dict]:
         except ValueError:
             continue
     return events
-
-
-def test_validates_against_every_real_run_directory():
-    """About 20 real run directories, several incomplete/interrupted -
-    every one must produce a report without raising, and every report must
-    round-trip through json.dumps."""
-    if not _ALL_RUNS.is_dir():
-        pytest.skip(f"{_ALL_RUNS} not present on this machine")
-    checked = 0
-    for entry in sorted(_ALL_RUNS.iterdir()):
-        app = entry / "app"
-        if not app.is_dir():
-            continue
-        report = build_report(str(app))
-        json.dumps(report)
-        text = format_report(report)
-        assert "Run directory:" in text
-        turns = report["cost_and_turns"]["turns"]
-        cost = report["cost_and_turns"]["estimated_cost_usd"]
-        assert turns is None or (isinstance(turns, int) and turns >= 0)
-        assert cost is None or (isinstance(cost, (int, float)) and cost >= 0)
-        checked += 1
-    assert checked >= 15, f"expected ~20 run directories, only found {checked}"
 
 
 # ------------------------------------------------------------- CLI / import

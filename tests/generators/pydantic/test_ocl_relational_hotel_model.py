@@ -1,9 +1,9 @@
 """
 Investigation tests: can relational OCL be transpiled into Pydantic validators?
 
-Ground truth is the "hotel" model used across 20 live Spec-Driven Agent runs,
-which has exactly two OCL invariants that navigate a relationship and are
-never resolved by any model:
+Ground truth is a "hotel" model used in real Spec-Driven Agent runs, which has
+exactly two OCL invariants that navigate a relationship and are never resolved
+by any model:
 
     context Booking inv guestsWithinCapacity:
       self.guests->size() <= self.rooms->collect(maxOccupancy)->sum()
@@ -12,13 +12,13 @@ never resolved by any model:
       self.bookings->forAll(b1, b2 | b1 <> b2 implies
         b1.departureDate <= b2.arrivalDate or b2.departureDate <= b1.arrivalDate)
 
-These tests record two findings against the real model (see
-``REAL_MODEL_PATH``), and back both with an inline reconstruction so the
-suite still runs on a checkout that does not have that external file:
+These tests record two findings against that model (vendored as
+``fixtures/hotel_class_diagram.json``, layout data stripped) and an inline
+reconstruction of its relevant fragment:
 
 1. Neither constraint ever reaches ``ocl_utils.py`` for this model. The web
-   editor converter's OCL type-checker (out of scope here --
-   ``besser/utilities/web_modeling_editor/backend/services/converters/``)
+   editor converter's OCL type-checker
+   (``besser/utilities/web_modeling_editor/backend/services/converters/``)
    rejects both before conversion, because each references the WRONG
    association end -- Booking's real property is ``guest`` (singular, but
    multi-valued), Room's is ``booking`` -- and records them as
@@ -35,14 +35,10 @@ suite still runs on a checkout that does not have that external file:
    outside the current request. Both need a database session, i.e. the
    router handler, not a Pydantic validator.
 
-This file exists first to record the diagnosis that motivated NOT building a
-relational-OCL transpiler -- finding 2's assertions, and the "never reaches
-ocl_utils.py" half of finding 1, already held before the handoff-comment fix
-and still do. What changed: finding 1 used to end with these two constraints
-leaving no trace anywhere in the generated file (they existed only in
-``conversion_issues`` and the system prompt); the "still has the three
-working validators" test below now also confirms each gets a TODO comment,
-sourced from ``conversion_issues``, on the class its OCL ``context`` names.
+This records why there is no relational-OCL transpiler. The rejected
+constraints are not silently lost: the "still has the three working
+validators" test also confirms each gets a TODO comment, sourced from
+``conversion_issues``, on the class its OCL ``context`` names.
 """
 import json
 import os
@@ -56,11 +52,9 @@ from besser.BUML.metamodel.structural import (
 from besser.generators.pydantic_classes import PydanticGenerator
 from besser.generators.pydantic_classes.ocl_utils import parse_ocl_constraint
 
-REAL_MODEL_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(__file__), "..", "..", "..", "..",
-    "verification", "spec-iterations",
-    "Qwen-Qwen3-30B-A3B-Instruct-2507-fcdh0s9k", "input_project.json",
-))
+REAL_MODEL_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "hotel_class_diagram.json",
+)
 
 GUESTS_WITHIN_CAPACITY = (
     "context Booking inv guestsWithinCapacity: "
@@ -85,7 +79,7 @@ NO_OVERLAPPING_BOOKINGS_ROLE_FIXED = (
 @pytest.fixture
 def hotel_model():
     """Reconstructs the Booking/Guest/Room fragment with the SAME association
-    shape as the live model: Booking's own navigable property toward Guest is
+    shape as the real model: Booking's own navigable property toward Guest is
     ``guest`` (not ``guests`` -- that role sits on the Guest end instead), and
     Room's own navigable property toward Booking is ``booking`` (not
     ``bookings``). This mirrors what ``tests/utilities/.../test_ocl_property_
@@ -121,21 +115,15 @@ def _find(domain_model, class_name):
 
 class TestRealModelNeverReachesOclUtils:
     """The converter rejects both constraints before conversion; ocl_utils.py
-    (this task's only owned production file) never sees them for this model."""
+    never sees them for this model."""
 
     def test_real_model_omits_both_relational_constraints(self):
-        if not os.path.exists(REAL_MODEL_PATH):
-            pytest.skip(f"real model fixture not available at {REAL_MODEL_PATH}")
-
-        # Import kept local: this module belongs to the converters, which
-        # this task does not own and must not modify.
         from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
             process_class_diagram,
         )
 
         with open(REAL_MODEL_PATH, encoding="utf-8") as handle:
-            data = json.load(handle)
-        diagram = data["project"]["diagrams"]["ClassDiagram"][0]
+            diagram = json.load(handle)
         domain_model = process_class_diagram(diagram)
 
         constraint_names = {c.name for c in domain_model.constraints}
@@ -157,16 +145,12 @@ class TestRealModelNeverReachesOclUtils:
         The two relational constraints get a TODO comment instead -- on the
         class their OCL ``context`` names -- handing them to the LLM agent;
         neither gets a validator, since neither is transpilable."""
-        if not os.path.exists(REAL_MODEL_PATH):
-            pytest.skip(f"real model fixture not available at {REAL_MODEL_PATH}")
-
         from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
             process_class_diagram,
         )
 
         with open(REAL_MODEL_PATH, encoding="utf-8") as handle:
-            data = json.load(handle)
-        diagram = data["project"]["diagrams"]["ClassDiagram"][0]
+            diagram = json.load(handle)
         domain_model = process_class_diagram(diagram)
 
         import py_compile

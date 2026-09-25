@@ -378,8 +378,15 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write(f'    versionCode="{_escape_string(model.versionCode)}",\n')
         f.write(f'    versionName="{_escape_string(model.versionName)}",\n')
         f.write(f'    modules={{{", ".join(module_vars)}}},\n')
-        f.write(f'    description="{_escape_string(model.description)}"\n')
-        f.write(")\n")
+        f.write(f'    description="{_escape_string(model.description)}"')
+        stylesheet = getattr(model, 'stylesheet', '')
+        if stylesheet:
+            # One string literal per stylesheet line keeps the export readable.
+            f.write(",\n    stylesheet=(\n")
+            for line in stylesheet.splitlines(keepends=True):
+                f.write(f'        "{_escape_string(line)}"\n')
+            f.write("    )")
+        f.write("\n)\n")
 
     print(f"GUI model code saved to {file_path}")
 

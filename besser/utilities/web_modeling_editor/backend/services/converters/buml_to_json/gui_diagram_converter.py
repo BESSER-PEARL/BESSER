@@ -292,6 +292,7 @@ def _serialize_gui_model(gui_model: GUIModel) -> Dict[str, Any]:
     if not pages:
         return _empty_gui_project()
     styles = _denormalize_styles(getattr(gui_model, "style_entries", None) or [])
+    styles.extend(_stylesheet_to_styles(getattr(gui_model, "stylesheet", "")))
     return {
         "pages": pages,
         "styles": styles,
@@ -844,6 +845,98 @@ def _denormalize_styles(entries: Sequence[Dict[str, Any]]) -> List[Dict[str, Any
             normalized_entry["selectorsAdd"] = entry["selectorsAdd"]
         denormalized.append(normalized_entry)
     return denormalized
+_SIMPLE_SELECTOR = re.compile(r"^((?:\.[A-Za-z_][\w-]*)+|#[A-Za-z_][\w-]*)(?::([A-Za-z-]+))?$")
+
+
+def _scan_outside_quotes(text: str, start: int):
+    """Yield (index, char) of ``text`` from ``start``, skipping quoted strings."""
+    quote = None
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        else:
+            yield i, ch
+        i += 1
+
+
+def _split_declarations(body: str) -> Dict[str, Any]:
+    """Parse ``prop:value;...`` into a dict, ignoring ``;`` inside parentheses."""
+    parts, depth, last = [], 0, 0
+    for i, ch in _scan_outside_quotes(body, 0):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == ";" and depth == 0:
+            parts.append(body[last:i])
+            last = i + 1
+    parts.append(body[last:])
+    style: Dict[str, Any] = {}
+    for part in parts:
+        prop, sep, value = part.partition(":")
+        if sep and prop.strip() and value.strip():
+            style[prop.strip()] = value.strip()
+    return style
+
+
+def _stylesheet_to_styles(
+    css: str, at_rule_type: Optional[str] = None, media_text: str = ""
+) -> List[Dict[str, Any]]:
+    """Convert a GUIModel stylesheet back into GrapesJS rule objects.
+
+    Inverse of ``build_stylesheet`` in the json_to_buml GUI processor: a plain
+    class/id selector (optionally with one state) becomes ``selectors``, any
+    other selector ``selectorsAdd``; at-rule blocks set ``atRuleType`` and
+    ``mediaText``.
+    """
+    css = re.sub(r"/\*.*?\*/", "", css or "", flags=re.S)
+    rules: List[Dict[str, Any]] = []
+    start, depth, open_idx = 0, 0, -1
+    for i, ch in _scan_outside_quotes(css, 0):
+        if ch == "{":
+            if depth == 0:
+                open_idx = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth:
+                continue
+            prelude, body = css[start:open_idx].strip(), css[open_idx + 1:i]
+            start = i + 1
+            if prelude.startswith("@"):
+                name, _, condition = prelude[1:].partition(" ")
+                if "{" in body:
+                    rules.extend(_stylesheet_to_styles(body, name, condition.strip()))
+                else:
+                    rules.append({"selectors": [], "selectorsAdd": "", "atRuleType": name,
+                                  "singleAtRule": True, "style": _split_declarations(body)})
+                continue
+            rule: Dict[str, Any] = {"selectors": [], "style": _split_declarations(body)}
+            match = _SIMPLE_SELECTOR.match(prelude)
+            if match:
+                rule["selectors"] = [
+                    name if name.startswith("#") else name[1:]
+                    for name in re.findall(r"[.#][\w-]+", match.group(1))
+                ]
+                if match.group(2):
+                    rule["state"] = match.group(2)
+            else:
+                rule["selectorsAdd"] = prelude
+            if at_rule_type:
+                rule["atRuleType"] = at_rule_type
+                rule["mediaText"] = media_text
+            rules.append(rule)
+    return rules
+
+
 def _sorted_elements(elements: Iterable[ViewComponent]) -> List[ViewComponent]:
     return sorted(
         elements or [],

@@ -129,6 +129,8 @@ class PageBuilderMixin:
             imports.append("import { AgentComponent } from \"../components/AgentComponent\";")
         if "MethodButton" in context.imports:
             imports.append("import { MethodButton } from \"../components/MethodButton\";")
+        if "CrudButton" in context.imports:
+            imports.append("import { CrudButton } from \"../components/runtime/CrudButton\";")
 
         # Specialized input / alert components
         all_input_components: List[str] = sorted(context.input_components)
@@ -881,6 +883,25 @@ class PageBuilderMixin:
         indent_str: str,
     ) -> str:
         action_type = node.get("action_type")
+        crud = node.get("crud")
+        if crud:
+            # Create/update/delete: run through the bound table's dialog/endpoint
+            context.imports.add("CrudButton")
+            props = self._build_component_props(
+                component_id=component_id,
+                class_list=class_list,
+                style=style,
+                extra_props={
+                    "label": attributes.get("button-label") or node.get("label") or node.get("name"),
+                    "action": crud.get("action"),
+                    "tableId": crud.get("tableId"),
+                    "entity": crud.get("entity"),
+                    "targetPath": crud.get("targetPath"),
+                    "confirmMessage": crud.get("confirmMessage"),
+                },
+            )
+            return f"{indent_str}<CrudButton{props} />"
+
         if action_type == "run-method" or "endpoint" in attributes:
             context.imports.add("MethodButton")
             endpoint = attributes.get("endpoint")

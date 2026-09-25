@@ -46,6 +46,25 @@ Executes class and instance methods with:
 - Modal stays open on error for retry
 - Automatic table refresh after execution
 
+CrudButton
+^^^^^^^^^^
+
+A ``Button`` whose ``actionType`` is ``Create``, ``Update`` or ``Delete``
+acts through the table bound to its entity, reusing that table's dialog,
+endpoint and selected row:
+
+- **Create** opens the table's Add dialog (POST ``/<entity>/``).
+- **Update** opens the Edit dialog on the table's selected row (PUT).
+- **Delete** deletes the selected row (DELETE), after a confirmation prompt
+  when ``confirmation_required`` is set.
+
+The table is the button's ``instance_source`` or, failing that, the table
+bound to the button's ``entity_class`` on the same screen. A create button
+with no such table on its screen navigates to the first screen that has one
+and opens its dialog there. Update and delete report "Select a row in the
+table first" when nothing is selected. A CRUD button with no bound table is
+rendered as a plain button.
+
 Chart Components
 ^^^^^^^^^^^^^^^^
 
@@ -138,6 +157,7 @@ Generated Structure
    │   │   │   ├── ChartBlock.tsx
    │   │   │   ├── DataListBlock.tsx
    │   │   │   ├── MetricCardBlock.tsx
+   │   │   │   ├── CrudButton.tsx
    │   │   │   └── MapBlock.tsx
    │   │   ├── InputComponents.tsx
    │   │   └── MethodButton.tsx

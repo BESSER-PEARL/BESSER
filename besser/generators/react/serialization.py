@@ -115,6 +115,7 @@ class GuiSerializationMixin:
         screen_id = getattr(screen, 'page_id', None) or screen.component_id or screen.name
         screen_name = screen.name
 
+        self._current_screen = screen
         node: Dict[str, Any] = {
             "id": screen_id,
             "name": screen.description or self._humanize(screen_name),
@@ -272,6 +273,10 @@ class GuiSerializationMixin:
 
                         if input_params:
                             attributes['input-parameters'] = input_params
+
+            crud = self._crud_button_target(element)
+            if crud:
+                node["crud"] = crud
 
             # Output instance_source (table/component ID providing instance data)
             instance_source = getattr(element, "instance_source", None)
@@ -762,6 +767,79 @@ class GuiSerializationMixin:
             node["data_binding"] = binding_data
 
         return self._clean_dict(node)
+
+    def _crud_button_target(self, button: Button) -> Optional[Dict[str, Any]]:
+        """The table a create/update/delete button acts through.
+
+        The button's ``instance_source`` names it; otherwise it is the table
+        bound to the button's entity on the same screen, else on another
+        screen (create only: the app navigates there and opens its dialog).
+        """
+        action = self._enum_value(getattr(button, "actionType", None))
+        if action not in ("create", "update", "delete"):
+            return None
+        entity = getattr(button, "entity_class", None) or next(
+            (
+                act.target_class
+                for event in (getattr(button, "events", None) or [])
+                for act in event.actions
+                if isinstance(act, (Create, Update, Delete)) and getattr(act, "target_class", None)
+            ),
+            None,
+        )
+        tables = self._tables_by_screen()
+        current = getattr(self, "_current_screen", None)
+        source = getattr(button, "instance_source", None)
+        table_id = source if isinstance(source, str) and source else None
+        table_screen = current
+        if isinstance(source, Table):
+            table_id = source.component_id or source.name
+            table_screen = next((scr for scr, table in tables if table is source), current)
+            if entity is None:
+                entity = getattr(getattr(source, "data_binding", None), "domain_concept", None)
+        if table_id is None and entity is not None:
+            bound = [
+                (scr, table) for scr, table in tables
+                if getattr(getattr(table, "data_binding", None), "domain_concept", None) is entity
+            ]
+            here = [(scr, table) for scr, table in bound if scr is current]
+            candidates = here or (bound if action == "create" else [])
+            if candidates:
+                table_screen, table = candidates[0]
+                table_id = table.component_id or table.name
+        if not table_id:
+            return None
+        target_path = None
+        if table_screen is not None and table_screen is not current:
+            target_path = table_screen.route_path or f"/{table_screen.name}".lower().replace(" ", "-")
+        return self._clean_dict(
+            {
+                "action": action,
+                "tableId": table_id,
+                "entity": getattr(entity, "name", None),
+                "targetPath": target_path,
+                "confirmMessage": (
+                    (button.confirmation_message or "Are you sure?")
+                    if getattr(button, "confirmation_required", False) else None
+                ),
+            }
+        )
+
+    def _tables_by_screen(self) -> List[Tuple[Any, Table]]:
+        """(screen, table) for every table of the GUI model, in page order."""
+
+        def walk(elements):
+            for element in sorted(elements or [], key=lambda e: (e.display_order is None, e.display_order or 0, e.name)):
+                if isinstance(element, Table):
+                    yield element
+                if isinstance(element, ViewContainer):
+                    yield from walk(element.view_elements)
+
+        index: List[Tuple[Any, Table]] = []
+        for module in self._sorted_by_name(self.gui_model.modules):
+            for screen in self._sorted_by_name(module.screens):
+                index.extend((screen, table) for table in walk(screen.view_elements))
+        return index
 
     def _serialize_events(self, element: Button) -> Optional[List[Dict[str, Any]]]:
         events = getattr(element, "events", None)

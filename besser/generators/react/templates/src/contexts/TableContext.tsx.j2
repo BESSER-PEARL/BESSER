@@ -1,4 +1,14 @@
-import React, { createContext, useCallback, useContext, useState } from "react";
+import React, { createContext, useCallback, useContext, useRef, useState } from "react";
+
+// Record actions a table performs with its own dialog and endpoint; a
+// CrudButton on the page asks the bound table to run one.
+export type TableActionName = "create" | "update" | "delete";
+
+export interface TableActions {
+  create: () => void;
+  edit: (row: any) => void;
+  remove: (row: any) => void | Promise<void>;
+}
 
 interface TableContextValue {
   selectedRows: Record<string, any>;
@@ -6,6 +16,11 @@ interface TableContextValue {
   getSelectedRow: (tableId: string) => any;
   refreshTable: (tableId: string) => void;
   registerTableRefresh: (tableId: string, refreshFn: () => void) => void;
+  registerTableActions: (tableId: string, actions: TableActions) => () => void;
+  // Runs the action on the table (update/delete on its selected row) and
+  // returns why it could not, or null. With `whenMounted` a table that is not
+  // on screen yet runs it once it mounts (a create button on another page).
+  runTableAction: (tableId: string, action: TableActionName, whenMounted?: boolean) => string | null;
 }
 
 const TableContext = createContext<TableContextValue | undefined>(undefined);
@@ -13,6 +28,8 @@ const TableContext = createContext<TableContextValue | undefined>(undefined);
 export const TableProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [selectedRows, setSelectedRows] = useState<Record<string, any>>({});
   const [tableRefreshFunctions, setTableRefreshFunctions] = useState<Record<string, () => void>>({});
+  const tableActions = useRef<Record<string, TableActions>>({});
+  const pendingActions = useRef<Record<string, TableActionName>>({});
 
   const setSelectedRow = useCallback((tableId: string, row: any) => {
     setSelectedRows((prev) => prev[tableId] === row ? prev : ({
@@ -42,8 +59,46 @@ export const TableProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  const registerTableActions = useCallback((tableId: string, actions: TableActions) => {
+    tableActions.current[tableId] = actions;
+    if (pendingActions.current[tableId] === "create") {
+      delete pendingActions.current[tableId];
+      actions.create();
+    }
+    return () => {
+      if (tableActions.current[tableId] === actions) {
+        delete tableActions.current[tableId];
+      }
+    };
+  }, []);
+
+  const runTableAction = (tableId: string, action: TableActionName, whenMounted = false): string | null => {
+    const actions = tableActions.current[tableId];
+    if (!actions) {
+      if (whenMounted && action === "create") {
+        pendingActions.current[tableId] = action;
+        return null;
+      }
+      return "The table for this action is not on this page.";
+    }
+    if (action === "create") {
+      actions.create();
+      return null;
+    }
+    const row = selectedRows[tableId];
+    if (!row) {
+      return "Select a row in the table first.";
+    }
+    if (action === "update") {
+      actions.edit(row);
+    } else {
+      actions.remove(row);
+    }
+    return null;
+  };
+
   return (
-    <TableContext.Provider value={{ selectedRows, setSelectedRow, getSelectedRow, refreshTable, registerTableRefresh }}>
+    <TableContext.Provider value={{ selectedRows, setSelectedRow, getSelectedRow, refreshTable, registerTableRefresh, registerTableActions, runTableAction }}>
       {children}
     </TableContext.Provider>
   );

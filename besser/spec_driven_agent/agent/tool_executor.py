@@ -55,6 +55,7 @@ from besser.spec_driven_agent.agent.edit_apply import (
     locate_chunk,
     replace_most_similar_chunk,
     replacement_spans,
+    stray_gutter_line,
     _strip_line_numbers,
 )
 from besser.spec_driven_agent.validation import frontend_source
@@ -407,6 +408,26 @@ def _changed_region(old: str, new: str, context: int = 2, cap: int = 60) -> str:
     if len(rows) > cap:
         rows = rows[:cap] + [f"   ...| ({len(rows) - cap} more changed lines)"]
     return "\n".join(rows)
+
+
+def _gutter_refusal(field: str, stray: tuple[int, str]) -> dict:
+    """Refuse text carrying a line copied from read_file's numbered display.
+
+    Uniform numbering is stripped (see ``_strip_line_numbers``). A lone copied
+    line is usually context from past the selected range; stripped, it would
+    duplicate the line it names.
+    """
+    index, line = stray
+    return {
+        "error": (
+            f"Refused: {field} line {index} carries read_file's line-number gutter: "
+            f"{line.strip()[:120]!r}. The 'NNN| ' prefix is display only, not file "
+            f"content. No edit applied. Resend {field} with the code alone; a line "
+            "shown outside the range you are replacing is already in the file, so "
+            "leave it out rather than copying it."
+        ),
+        "rejection_kind": "line_number_prefix",
+    }
 
 
 class ToolExecutor:
@@ -2047,6 +2068,9 @@ class ToolExecutor:
         # explicit zero-width EOF anchor, not an unseen/out-of-range line.
         lines = [line + "\n" for line in parts[:-1]] + [parts[-1]]
         old = "".join(lines[start - 1:end])
+        stray = stray_gutter_line(replacement, before, old)
+        if stray:
+            return _gutter_refusal("new_text", stray)
         elision = find_elision(replacement)
         if elision and elision[1].strip() not in elided_lines(old):
             return {"error": "new_text abbreviates the code. Write every replacement line in full; no '...' placeholders.",
@@ -2224,6 +2248,9 @@ class ToolExecutor:
                     "current_source": "CURRENT ON-DISK CONTENT - unchanged by this refused rewrite:\n"
                     + _changed_region(args["content"], before),
                 }
+        stray = stray_gutter_line(args["content"], before or "", before or "")
+        if stray:
+            return _gutter_refusal("content", stray)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(args["content"])
@@ -2419,6 +2446,11 @@ class ToolExecutor:
                     "cannot expand \"...\". Write out every line in full."
                 ),
             }
+        stray = stray_gutter_line(new_text, content, old_text)
+        if stray:
+            self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+            self._note_rejection(rel_path, old_text, new_text)
+            return _gutter_refusal("new_text", stray)
 
         matched_by = "exact"
         if old_text not in content:

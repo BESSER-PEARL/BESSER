@@ -450,6 +450,34 @@ def _strip_line_numbers(lines: list[str]) -> list[str] | None:
             for i, ln in enumerate(lines)]
 
 
+# read_file's gutter on a line that _strip_line_numbers leaves alone because
+# it is a minority - typically one context line copied past the selected range.
+_GUTTER = re.compile(r"^\s*(\d+)\| ?(.*)$")
+
+
+def stray_gutter_line(text: str, file_text: str, existing: str = "") -> tuple[int, str] | None:
+    """``(1-based index, line)`` of the first line of ``text`` that is a
+    verbatim copy of read_file's display of ``file_text``'s line N
+    (``"NNN| <line N>"``), else ``None``.
+
+    Only a copy of the file's own line counts: a lone ``3| x`` that is not
+    one is left alone (see test_numbered_new_text.py). Lines already in
+    ``existing`` - the text being replaced - are content, not a copy.
+    """
+    lines = text.split("\n")
+    lines = _strip_line_numbers(lines) or lines
+    file_lines = file_text.split("\n")
+    kept = {line.strip() for line in existing.split("\n")}
+    for number, line in enumerate(lines, 1):
+        match = _GUTTER.match(line)
+        if not match or line.strip() in kept:
+            continue
+        shown = int(match.group(1))
+        if 1 <= shown <= len(file_lines) and file_lines[shown - 1].strip() == match.group(2).strip():
+            return number, line
+    return None
+
+
 def _protected_window(lines, start, end, protected_spans) -> bool:
     """Whether a line window is inside an already-completed replacement."""
     if not protected_spans:

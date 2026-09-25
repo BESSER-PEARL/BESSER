@@ -125,3 +125,18 @@ def test_form_columns_follow_the_backend_create_schema_for_every_shape(tmp_path)
         }
         attributes = {attr.name for attr in cls.all_attributes()}
         assert predicted == create[cls.name] - attributes, cls.name
+
+
+def test_an_id_is_a_form_field_only_when_it_is_the_declared_primary_key(tmp_path):
+    """A plain ``id`` is the server's surrogate key (not in ``<X>Create``); a
+    declared ``is_id`` key is client-supplied and stays editable."""
+    surrogate = Class(name="Ticket", attributes={
+        Property(name="id", type=IntegerType), Property(name="title", type=StringType)})
+    declared = Class(name="Room", attributes={
+        Property(name="id", type=IntegerType, is_id=True), Property(name="floor", type=IntegerType)})
+    domain = DomainModel(name="Desk", types={surrogate, declared})
+
+    create = _create_fields(domain, tmp_path / "pydantic")
+    assert "id" not in create["Ticket"] and "id" in create["Room"]
+    assert "id" not in _form_columns(domain, "Ticket", tmp_path)
+    assert "id" in _form_columns(domain, "Room", tmp_path)

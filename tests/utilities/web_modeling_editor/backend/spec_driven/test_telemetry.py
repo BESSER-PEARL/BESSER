@@ -293,7 +293,7 @@ def _seed_report_data():
 
 
 class TestReportEndpoint:
-    TOKEN = "pilot-admin-token-123"
+    TOKEN = "admin-token-123"
 
     @pytest.fixture
     def report_env(self, telemetry_env, monkeypatch):
@@ -431,7 +431,7 @@ def failing_orchestrator(monkeypatch):
 
 def _telemetry_request(**overrides):
     defaults = dict(
-        telemetry_session="pilot-sess-1",
+        telemetry_session="study-sess-1",
         telemetry_participant="P3",
     )
     defaults.update(overrides)
@@ -445,7 +445,7 @@ class TestRunSummaryEmission:
         runner = SmartGenerationRunner(_telemetry_request())
         frames = asyncio.run(_collect_frames(runner))
 
-        events = _read_events(telemetry_env, "pilot-sess-1")
+        events = _read_events(telemetry_env, "study-sess-1")
         summaries = [e for e in events if e["kind"] == "run_summary"]
         assert len(summaries) == 1
         summary = summaries[0]
@@ -483,7 +483,7 @@ class TestRunSummaryEmission:
         runner = SmartGenerationRunner(_telemetry_request())
         asyncio.run(_collect_frames(runner))
 
-        events = _read_events(telemetry_env, "pilot-sess-1")
+        events = _read_events(telemetry_env, "study-sess-1")
         summaries = [e for e in events if e["kind"] == "run_summary"]
         assert len(summaries) == 1
         payload = summaries[0]["payload"]
@@ -528,9 +528,9 @@ class TestRunSummaryEmission:
 class TestRequestFieldSanitization:
     def test_valid_fields_preserved(self):
         request = _build_request(
-            telemetry_session="pilot-sess_1", telemetry_participant="P12",
+            telemetry_session="study-sess_1", telemetry_participant="P12",
         )
-        assert request.telemetry_session == "pilot-sess_1"
+        assert request.telemetry_session == "study-sess_1"
         assert request.telemetry_participant == "P12"
 
     def test_invalid_session_nulled_not_rejected(self):

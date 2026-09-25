@@ -24,7 +24,7 @@ def test_python_syntax_error_is_reported_without_rejecting_write(tmp_path):
     assert (tmp_path / "app.py").is_file()
 
 
-def test_pilot_undefined_annotation_is_reported_same_turn(tmp_path):
+def test_undefined_annotation_is_reported_same_turn(tmp_path):
     pytest.importorskip("pyflakes")
     executor = ToolExecutor(workspace=str(tmp_path))
     result = _call(executor, "write_file", {

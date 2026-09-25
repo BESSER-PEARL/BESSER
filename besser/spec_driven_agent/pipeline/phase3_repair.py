@@ -237,6 +237,8 @@ class Phase3RepairMixin:
         prev_blocker_count = len(blockers_before)
         # Only a repair that actually wrote something can be rolled back.
         source_ever_changed = False
+        # Set when an interrupted attempt's unvalidated edits were discarded.
+        discarded_unverified = False
         last_issues = list(issues)
         # Best tree seen so far, and the snapshot that holds it. The snapshot
         # starts as the Phase 3 entry tree; every strictly better tree replaces
@@ -244,6 +246,7 @@ class Phase3RepairMixin:
         # than the last: a repair loop can oscillate and end worse than a state
         # it already reached.
         best_issues = list(blockers_before)
+        best_all_issues = list(issues)
         best_score = prev_score = self._phase3_tree_score(blockers_before)
         progress = self._repair_progress
         attempts_run = progress.get("attempts_run", 0)
@@ -299,7 +302,15 @@ class Phase3RepairMixin:
             obligations_before = self._repair_obligations_revision()
             checkpoint_progress()
             log_before = len(self.tool_calls_log)
-            edits = self._invoke_phase3_fix_loop(current_blockers, is_first_attempt)
+            try:
+                edits = self._invoke_phase3_fix_loop(current_blockers, is_first_attempt)
+            except Exception as exc:
+                # e.g. an auth failure, which must propagate - but not leave
+                # the attempt's unverified edits behind as the deliverable.
+                if revision_before != self._workspace_revision():
+                    self._discard_unverified_attempt(
+                        f"{type(exc).__name__}", best_all_issues, attempts_run)
+                raise
             # Writes the attempt REACHED FOR, successful or not. A rejected
             # edit is not nothing: the rejection is fed back into the next
             # attempt's prompt as a recent-failure, so that attempt is not the
@@ -325,6 +336,11 @@ class Phase3RepairMixin:
             mid_attempt_stop = self._phase3_stop_requested(check_turn_budget=False)
             if mid_attempt_stop:
                 exit_reason = mid_attempt_stop
+                # This attempt's edits were never validated. Ship the best
+                # tree that was, not an unverified one (run qwen1 shipped a
+                # non-compiling page while its best snapshot sat unused).
+                discarded_unverified = source_changed and self._discard_unverified_attempt(
+                    mid_attempt_stop, best_all_issues, attempts_run)
                 break
             # Re-validate: re-running the checks is the only evidence that
             # the repair actually compiles.
@@ -370,6 +386,7 @@ class Phase3RepairMixin:
                     attempt=attempts_run, score=list(score_after),
                 )
                 best_issues, best_score = list(blockers_after), score_after
+                best_all_issues = list(issues_after)
 
             # Fixing one import can expose several previously unreachable CRUD
             # errors. A larger count is not evidence of regression. Continue on
@@ -465,8 +482,10 @@ class Phase3RepairMixin:
         # or by exhausting the attempt cap. Record whatever the final
         # state is so the recipe surfaces it.
         self._phase3_exit_reason = exit_reason
-        if self._rollback_phase3_if_worse(best_issues, last_issues, source_ever_changed,
-                                          entry_score=best_score):
+        if discarded_unverified:
+            last_issues = list(self._validation_issues)
+        elif self._rollback_phase3_if_worse(best_issues, last_issues, source_ever_changed,
+                                            entry_score=best_score):
             last_issues = list(self._validation_issues)
         else:
             self._validation_issues = self._with_model_contract(last_issues)
@@ -604,6 +623,38 @@ class Phase3RepairMixin:
         self._trace.write(
             EVENT_VALIDATION_ISSUE, phase="phase3_runtime_gate", message=finding[:1000],
         )
+
+    def _discard_unverified_attempt(
+        self, reason: str, best_all_issues: list[ValidationIssue], attempt: int,
+    ) -> bool:
+        """Restore the best validated tree over an attempt that was never validated.
+
+        An interrupted repair (provider error, cost or runtime cap) leaves its
+        last edits on disk with no validation behind them. The snapshot holds
+        the best tree the loop DID validate, and ``best_all_issues`` are that
+        tree's findings, so nothing needs re-validating - which a stop must
+        not pay for anyway.
+        """
+        logger.warning(
+            "Phase 3: attempt %d was interrupted (%s) before its edits were "
+            "validated; restoring the best validated tree.", attempt, reason,
+        )
+        if not self._restore_snapshot():
+            logger.error("Phase 3: the best snapshot could not be restored; the "
+                         "interrupted attempt's unvalidated edits remain.")
+            return False
+        self._phase3_rolled_back = True
+        reopened = self.executor.reopen_unverifiable_tasks()
+        self._validation_issues = self._with_model_contract(best_all_issues) + [_classify_issue(
+            f"validation: Phase 3 repair attempt {attempt} was interrupted ({reason}) "
+            "before its edits were validated; they were discarded and the best "
+            "validated tree ships."
+            + (f" {len(reopened)} checklist item(s) verified during that attempt are "
+               "open again." if reopened else "")
+        )]
+        self._trace.write(EVENT_ROLLBACK, phase="phase3_interrupted",
+                          attempt=attempt, reason=reason)
+        return True
 
     def _rollback_phase3_if_worse(
         self, entry_blockers: list[ValidationIssue],

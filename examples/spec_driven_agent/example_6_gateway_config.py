@@ -6,12 +6,14 @@ for environments that proxy Anthropic through a gateway.
 
 Usage:
     # Option A: Environment variables (recommended)
-    $env:ANTHROPIC_BASE_URL = "https://gateway.pia.private.list.lu"
+    $env:ANTHROPIC_BASE_URL = $env:PIA_BASE_URL   # your gateway URL
     $env:ANTHROPIC_AUTH_TOKEN = "your-token"
     python example_6_gateway_config.py
 
-    # Option B: Direct parameters (see code below)
+    # Option B: Direct parameters (see code below; reads PIA_BASE_URL)
 """
+
+import os
 
 from besser.BUML.metamodel.structural import (
     Class, Property, DomainModel, PrimitiveDataType,
@@ -48,7 +50,7 @@ generator_b = LLMGenerator(
     model=model,
     instructions="Generate a simple Python dataclass for this model",
     api_key="your-gateway-token",
-    base_url="https://gateway.pia.private.list.lu",
+    base_url=os.environ.get("PIA_BASE_URL", "https://gateway.example.com"),
     output_dir="./output/demo_explicit",
 )
 

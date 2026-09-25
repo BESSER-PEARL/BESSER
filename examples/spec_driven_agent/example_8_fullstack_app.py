@@ -10,7 +10,9 @@ The LLM will:
 6. Test both backend and frontend builds
 
 Usage:
-    $env:ANTHROPIC_BASE_URL = "https://gateway.pia.private.list.lu"
+    $env:ANTHROPIC_API_KEY = "sk-ant-..."
+    # Or, through an Anthropic-compatible gateway (e.g. PIA):
+    $env:ANTHROPIC_BASE_URL = $env:PIA_BASE_URL
     $env:ANTHROPIC_AUTH_TOKEN = "your-token"
     python example_8_fullstack_app.py
 """

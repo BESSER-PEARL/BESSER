@@ -11,8 +11,8 @@ The LLM will:
 Usage:
     # Set your API key
     export ANTHROPIC_API_KEY="sk-ant-..."
-    # Or for gateway:
-    export ANTHROPIC_BASE_URL="https://gateway.pia.private.list.lu"
+    # Or, through an Anthropic-compatible gateway (e.g. PIA):
+    export ANTHROPIC_BASE_URL="$PIA_BASE_URL"
     export ANTHROPIC_AUTH_TOKEN="your-token"
 
     python example_1_simple_backend.py

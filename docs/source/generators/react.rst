@@ -31,6 +31,9 @@ Dynamic data tables with:
 - Backend validation error display (keeps modal open on error)
 - Support for all relationship types (1:1, 1:N, N:M)
 - Lookup fields for related entities
+- Display-only form fields: a ``formColumns`` entry with ``"readOnly": true``
+  is shown in the Add/Edit dialog but cannot be edited, is not validated as
+  required, and is left out of the POST/PUT body (the server owns the value)
 
 MethodButton
 ^^^^^^^^^^^^

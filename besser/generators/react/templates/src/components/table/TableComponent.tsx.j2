@@ -36,6 +36,8 @@ interface TableColumn {
   associationClass?: AssociationClassMeta;
   // The model's default for the attribute (e.g. an enumeration literal); preselected for new records
   defaultValue?: any;
+  // Shown in the create/edit form but never edited or sent (e.g. a server-computed total)
+  readOnly?: boolean;
 }
 
 interface TableOptions {
@@ -248,6 +250,7 @@ export const TableComponent: React.FC<Props> = ({
           targetType: col.column_type === "lookup" ? ((col as any).target_type ?? (col as any).targetType) : undefined,
           relationshipKey: relationshipKey,
           associationClass: col.column_type === "lookup" ? associationClass : undefined,
+          readOnly: Boolean((col as any).readOnly ?? (col as any).read_only),
         };
       });
   };
@@ -579,6 +582,19 @@ export const TableComponent: React.FC<Props> = ({
       return `ID: ${targetId}`;
     }
     return (col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`;
+  };
+
+  // Text of a display-only form field: the edited row's value (a related
+  // record's display field for a lookup); empty for a new record.
+  const readOnlyText = (col: TableColumn): string => {
+    if (col.columnType === 'lookup' && col.lookupField) {
+      const related = editRowData?.[col.relationshipKey || col.field];
+      if (Array.isArray(related)) {
+        return related.map((item: any) => item?.[col.lookupField!]).filter((v: any) => v !== null && v !== undefined).join(', ');
+      }
+      return formatCellValue(related && typeof related === 'object' ? related[col.lookupField] : related);
+    }
+    return formatCellValue(formValues[col.field]);
   };
 
   useEffect(() => {
@@ -917,6 +933,9 @@ export const TableComponent: React.FC<Props> = ({
                   // Validate required fields
                   const missingFields: string[] = [];
                   formColumns.forEach(col => {
+                    if (col.readOnly) {
+                      return;
+                    }
                     if (col.required) {
                       if (col.columnType === 'lookup') {
                         if (col.type === 'list') {
@@ -967,6 +986,10 @@ export const TableComponent: React.FC<Props> = ({
                   // Process form values based on column types
                   const processedValues: Record<string, any> = {};
                   formColumns.forEach(col => {
+                    if (col.readOnly) {
+                      // Display-only: the server owns this value
+                      return;
+                    }
                     // For lookup columns, use the path as the API field name
                     if (col.columnType === 'lookup' && col.path) {
                       const selection = formValues[col.field];
@@ -1130,6 +1153,32 @@ export const TableComponent: React.FC<Props> = ({
                     ? (isRelation ? 'Relationships' : 'Details')
                     : (isRelation && !prevIsRelation ? 'Relationships' : null);
                   const fieldNode = (() => {
+                  if (col.readOnly) {
+                    return (
+                      <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                        <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
+                          {col.label}
+                        </label>
+                        <input
+                          id={`modal-input-${col.field}`}
+                          type="text"
+                          value={readOnlyText(col) || "—"}
+                          readOnly
+                          aria-readonly="true"
+                          tabIndex={-1}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: "6px",
+                            border: "1px solid #e2e8f0",
+                            fontSize: "15px",
+                            color: "#64748b",
+                            background: "#f1f5f9",
+                            cursor: "default",
+                          }}
+                        />
+                      </div>
+                    );
+                  }
                   // For lookup columns, render a select dropdown
                   if (col.columnType === 'lookup' && col.entity) {
                     const endpoint = col.entity.toLowerCase();

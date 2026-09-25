@@ -1118,7 +1118,8 @@ class SmartGenerationRunner:
                 code="BAD_REQUEST",
                 message=(
                     "Custom LLM endpoints (PIA / local) are disabled on this "
-                    "deployment. Run the WME locally (on the LIST VPN for PIA) "
+                    "deployment. Run the WME locally with "
+                    "BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true "
                     "to use your own gateway or model server."
                 ),
             ))
@@ -1815,7 +1816,7 @@ class SmartGenerationRunner:
                 yield format_sse(ErrorEvent(code="UPSTREAM_LLM", message=str(exc)))
             except Exception as exc:
                 logger.exception(
-                    "Unexpected error in smart_generate worker %s", self.run_id
+                    "Unexpected error in spec-driven worker %s", self.run_id
                 )
                 # A late internal error must not discard output the run already
                 # produced — surface the (partial) app as an INCOMPLETE result
@@ -1883,7 +1884,7 @@ class SmartGenerationRunner:
                 else:
                     yield format_sse(ErrorEvent(
                         code="CANCELLED",
-                        message="Smart generation cancelled by user request",
+                        message="Spec-driven generation cancelled by user request",
                     ))
 
         # ---- 9. Surface cost / runtime cap warnings -------------------
@@ -2166,7 +2167,7 @@ class SmartGenerationRunner:
                 # its real message (previously swallowed by the generic
                 # packaging branch below).
                 logger.error(
-                    "Smart-gen worker %s produced no output files", self.run_id
+                    "Spec-driven worker %s produced no output files", self.run_id
                 )
                 yield format_sse(ErrorEvent(code="INTERNAL", message=str(exc)))
                 self._cleanup_temp_dir()

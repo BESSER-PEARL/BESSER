@@ -266,7 +266,7 @@ def assemble_models_from_project(
             f"{item['diagram_type']} [{item['diagram_id']}]: {item['diagnostic']}"
             for item in assembly_issues[:5])
         raise ValueError(
-            "Smart generation requires at least one modeling artifact "
+            "Spec-driven generation requires at least one modeling artifact "
             "(ClassDiagram, GUINoCodeDiagram, AgentDiagram, "
             "StateMachineDiagram, ObjectDiagram, BPMN, NNDiagram, "
             "or QuantumCircuitDiagram)" + (f". Model assembly failed: {loss_details}" if loss_details else "")

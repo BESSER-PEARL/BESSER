@@ -517,9 +517,10 @@ def _write_button(f, var_name, button, created_vars, pending_button_events):
         if isinstance(button.instance_source, str):
             params.append(f'instance_source="{_escape_string(button.instance_source)}"')
         elif hasattr(button.instance_source, 'name'):
-            # Reference the component variable
-            instance_var = safe_var_name(button.instance_source.name)
-            params.append(f'instance_source={instance_var}')
+            # By the component's id, as the editor stores it: the component's
+            # variable may be written after the button (or renamed on a clash).
+            source_id = getattr(button.instance_source, 'component_id', None) or button.instance_source.name
+            params.append(f'instance_source="{_escape_string(source_id)}"')
         else:
             # Fallback: convert to string
             params.append(f'instance_source="{_escape_string(str(button.instance_source))}"')

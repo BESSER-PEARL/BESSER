@@ -105,3 +105,28 @@ def test_a_table_with_a_lookup_column_reimports():
     assert len(tables) == 1
     lookup = [c for c in tables[0]["attributes"]["columns"] if c.get("columnType") == "lookup"]
     assert lookup and lookup[0]["lookupPath"] == "author"
+
+
+def test_a_button_whose_table_comes_after_it_reimports():
+    """The instance source resolves to the table element; exporting it as that
+    element's variable named it before it was defined (NameError)."""
+    title = Property(name="title", type=StringType)
+    book = Class(name="Book", attributes={title})
+    domain = DomainModel(name="Library", types={book})
+    class_json = {"elements": {"cls-book": {"id": "cls-book", "name": "Book", "type": "Class"}}}
+    gui_json = {"pages": [{"id": "books", "name": "Books", "frames": [{"component": {
+        "type": "wrapper",
+        "components": [
+            {"type": "action-button", "tagName": "button", "attributes": {
+                "id": "drop", "button-label": "Remove", "data-action-type": "delete",
+                "data-entity-class": "cls-book", "data-instance-source": "table-books"}},
+            {"type": "table", "attributes": {"id": "table-books", "chart-title": "Books", "data-source": "cls-book"}},
+        ],
+    }}]}]}
+    gui_model = process_gui_diagram(gui_json, class_json, domain)
+
+    model = _roundtrip(domain, gui_model)
+
+    components = _components(model["pages"][0])
+    assert [c.get("type") for c in components] == ["action-button", "table"]
+    assert components[0]["attributes"]["data-instance-source"] == "table-books"

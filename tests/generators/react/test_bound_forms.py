@@ -6,6 +6,9 @@ dropped) and never read the editor's ``data-source``; the generator rendered
 labels made from element ids. A bound form now posts to ``/<entity>/`` with
 its own labels and submit text and shows the outcome.
 """
+import json
+import re
+
 from besser.BUML.metamodel.gui import Form, InputField
 
 CLASSES = {
@@ -172,3 +175,19 @@ def test_a_lookup_form_is_not_inferred_as_a_create_form(build_app):
 
     assert _form(app.gui_model).data_binding is None
     assert "FormBlock" not in app.page("Lookup")
+
+
+def test_a_boolean_checkbox_in_a_bound_form_is_named_once(build_app, jsx):
+    """The checkbox renderer set name={id} and the bound form spread
+    {"name": id} too: a duplicate JSX attribute, TS2783 under tsc."""
+    form = _editor_form()
+    form["components"].insert(-1, _input("vip", "checkbox", id="vip"))
+    app = build_app(CLASSES, {"Register": [form]})
+    page = app.page("Register")
+
+    checkbox = jsx(page, "input", 'type="checkbox"')
+    assert len(re.findall(r'\bname=|"name":', checkbox)) == 1, checkbox
+    assert 'name="vip"' in checkbox
+    block = jsx(page, "FormBlock")
+    fields = json.JSONDecoder().raw_decode(block[block.index("fields={") + len("fields={"):])[0]
+    assert {"name": "vip", "field": "vip", "type": "bool"} in fields

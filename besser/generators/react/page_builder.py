@@ -766,9 +766,15 @@ class PageBuilderMixin:
                 req_sty = self._format_prop("style", {"color": "#ef4444", "marginLeft": 2})
                 req_span = f'<span {req_sty}>*</span>'
             lbl_text = f"{{{json.dumps(label)}}}{req_span}" if label else ""
+            # One `name` only: a second one from the attributes spread is TS2783
+            checkbox_attrs = {k: v for k, v in base_attrs.items() if k != "name"}
             inner_props = self._build_element_props(
-                component_id, class_list, {}, base_attrs, None,
-                extra_props=ep(name=component_id or None, required=required or None, defaultChecked=checked or None),
+                component_id, class_list, {}, checkbox_attrs, None,
+                extra_props=ep(
+                    name=base_attrs.get("name") or component_id or None,
+                    required=required or None,
+                    defaultChecked=checked or None,
+                ),
             )
             return (
                 f'{indent_str}<div>\n'

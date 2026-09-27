@@ -74,6 +74,7 @@ def build_system_prompt(
     requirements: str = "",
     allow_shell: bool = False,
     output_dir: str | None = None,
+    design_system: str = "",
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -116,6 +117,11 @@ def build_system_prompt(
             the LLM edits them in place. Prepends a directive that biases
             the model toward the smallest surgical change. MUST leave the
             from-scratch prompt byte-identical when False.
+        design_system: The rendered design-system section
+            (``design_system.design_system_section``), or ``""``. When set, it
+            joins the rules and replaces the guidance it conflicts with: the
+            GUI "loose hint" framing, Rule 2's write_file fallback for pages,
+            Rule 13's styling advice and Rule 15's "one shared stylesheet".
 
     Returns:
         The full system prompt string.
@@ -144,7 +150,17 @@ def build_system_prompt(
 
     gui_json = serialize_gui_model(gui_model)
     if gui_json:
-        if primary_kind == "gui":
+        if design_system:
+            # The screens carry a finished visual design (design.css): their
+            # look is not a sketch to restructure, whatever drives the run.
+            gui_framing = (
+                "Screens, components and data bindings declared in the editor, "
+                "with a finished visual design (see Design system). Keep their "
+                "look, layout and components; the specification and the domain "
+                "model decide behaviour and data. A screen you add follows the "
+                "same design."
+            )
+        elif primary_kind == "gui":
             # GUI-driven run: the screens ARE the spec — match them.
             gui_framing = (
                 "Screens, components and data bindings declared in the editor. "
@@ -423,6 +439,55 @@ def build_system_prompt(
             "   `tests/`, `Dockerfile`, or `.env.example` when the user request\n"
             "   mentions them."
         )
+    # With a GUI design the pages are styled by design.css: a rewrite loses the
+    # design, and a new stylesheet or theme competes with it.
+    if design_system:
+        write_back = (
+            "   file, then `write_file` it back with your change applied (a designed page:\n"
+            "   `replace_file_lines` on the block instead). Do not keep\n"
+        )
+        rewrite_scope = (
+            "   in full, except a designed page (see Design system): rewrite the whole\n"
+            "   file when you have just read it in full. This is\n"
+        )
+        styling_rule = (
+            "13. **Styling/theme requests must actually RENDER - through the design\n"
+            "    system.** Restyle by overriding `--ds-*` values (and adding rules if\n"
+            "    needed) in `src/design-overrides.css`, so every designed page picks the\n"
+            "    change up; never hard-code colours in pages. Map informal colour names\n"
+            "    to hex: rose → `#f43f5e`, pink → `#ec4899`, amber/yellow → `#f59e0b` /\n"
+            "    `#eab308`, teal → `#14b8a6`, indigo → `#6366f1`, emerald → `#10b981`.\n"
+            "    A theme that's only mentioned in a comment but not visibly applied is\n"
+            "    a failure."
+        )
+        stylesheet_bullet = (
+            "    - Every screen styled with the design system (see Design system) -\n"
+            "      no second stylesheet, no unstyled browser-default HTML."
+        )
+    else:
+        write_back = "   file, then `write_file` it back with your change applied. Do not keep\n"
+        rewrite_scope = (
+            "   in full: rewrite the whole file when you have just read it in full. This is\n"
+        )
+        styling_rule = (
+            "13. **Styling/theme requests must actually RENDER.** When the user names\n"
+            "    colours or a visual theme, define them as concrete CSS — real hex\n"
+            "    values or CSS variables — and apply them consistently across the UI\n"
+            "    (backgrounds, buttons, headers, links, accents), not just one element.\n"
+            "    Map informal colour names to hex: rose → `#f43f5e`, pink → `#ec4899`,\n"
+            "    amber/yellow → `#f59e0b` / `#eab308`, teal → `#14b8a6`, indigo →\n"
+            "    `#6366f1`, emerald → `#10b981`. `rose`, `amber`, `teal`, `indigo` and\n"
+            "    `emerald` are not CSS colour keywords, so `color: rose` renders nothing;\n"
+            "    use the hex. A theme that's only mentioned in a comment\n"
+            "    but not visibly applied is a failure. Aim for a clean, modern,\n"
+            "    cohesive look (consistent spacing, a primary + accent colour, readable\n"
+            "    contrast)."
+        )
+        stylesheet_bullet = (
+            "    - One shared stylesheet applied across the whole app (cards or clean tables,\n"
+            "      consistent spacing, a primary + accent colour, readable contrast) — a\n"
+            "      cohesive modern look, not unstyled browser-default HTML."
+        )
     stable_header = f"""\
 You are an expert full-stack developer extending a deterministic scaffold.
 Preserve working code and verify its actual behavior; generated code is a
@@ -465,12 +530,10 @@ Keep the plan short (a few lines), then proceed with surgical edits.
    most recent read of that file. Once an edit is refused, go back to one edit per
    turn until one lands: a batch built on a stale view fails as a batch.
    After two refused edits on one file, switch strategy: `read_file` the WHOLE
-   file, then `write_file` it back with your change applied. Do not keep
-   re-quoting old code; never repeat a rejected edit or treat a refused edit as
+{write_back}   re-quoting old code; never repeat a rejected edit or treat a refused edit as
    done.
    Use `write_file` for new files, and to replace any file you have just read
-   in full: rewrite the whole file when you have just read it in full. This is
-   preferred over a chain of refused targeted edits. Do not rewrite a file you
+{rewrite_scope}   preferred over a chain of refused targeted edits. Do not rewrite a file you
    have not read this run.
 3. **The user's original specification is the behavior authority.** The models
    define the existing structure, names and relationships; inspect them instead
@@ -529,18 +592,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     keeps you to what the user asked for; it does NOT excuse implementing
     it shallowly. Before finishing, re-check that every feature the user
     named actually works in the generated code.
-13. **Styling/theme requests must actually RENDER.** When the user names
-    colours or a visual theme, define them as concrete CSS — real hex
-    values or CSS variables — and apply them consistently across the UI
-    (backgrounds, buttons, headers, links, accents), not just one element.
-    Map informal colour names to hex: rose → `#f43f5e`, pink → `#ec4899`,
-    amber/yellow → `#f59e0b` / `#eab308`, teal → `#14b8a6`, indigo →
-    `#6366f1`, emerald → `#10b981`. `rose`, `amber`, `teal`, `indigo` and
-    `emerald` are not CSS colour keywords, so `color: rose` renders nothing;
-    use the hex. A theme that's only mentioned in a comment
-    but not visibly applied is a failure. Aim for a clean, modern,
-    cohesive look (consistent spacing, a primary + accent colour, readable
-    contrast).
+{styling_rule}
 14. **Authentication, when requested, is COMPLETE and wired.** Generate the
     full flow: a registration / sign-up form AND a login form, secure
     password hashing (bcrypt / passlib / argon2 — never plaintext), token
@@ -559,9 +611,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
       POST / PUT / DELETE endpoints, not just the GET list. A page that can only
       read is half-built (rule 12).
     - Loading, empty, and error states on every data fetch.
-    - One shared stylesheet applied across the whole app (cards or clean tables,
-      consistent spacing, a primary + accent colour, readable contrast) — a
-      cohesive modern look, not unstyled browser-default HTML.
+{stylesheet_bullet}
     - Internal consistency: `package.json` dependencies match the imports; the
       dev/build scripts actually run the app.
     - Request/form consistency: when a field becomes server-owned, remove its
@@ -577,7 +627,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
       every entity's list and its "new" page, present on every screen.
     - A list with no Delete control. Each row needs Edit + Delete wired to
       PUT / DELETE.
-
+{design_system}
 {idiom_section}{model_tools_section}"""
 
     variable_tail = f"""\

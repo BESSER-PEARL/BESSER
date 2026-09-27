@@ -54,6 +54,7 @@ from besser.spec_driven_agent.validation.design_fidelity import (
     collect_design_fidelity_issues,
     save_design_baseline,
 )
+from besser.spec_driven_agent.agent.design_system import design_system_section
 from besser.spec_driven_agent.planning import requirements_ledger as _requirements_ledger
 from besser.spec_driven_agent.repair.scaffold_repair import (
     _DEFAULT_BACKEND_REQUIREMENTS as _DEFAULT_BACKEND_REQUIREMENTS,
@@ -3901,6 +3902,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         except Exception:
             logger.debug("Endpoint manifest build failed", exc_info=True)
 
+        design_system = ""
+        try:
+            design_system = design_system_section(self.output_dir, self.gui_model)
+        except Exception:
+            logger.debug("Design system section build failed", exc_info=True)
+
         return build_system_prompt(
             domain_model=self.domain_model,
             gui_model=self.gui_model,
@@ -3923,6 +3930,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # from-scratch prompt stays byte-identical; only ``modify()``
             # flips it to prepend the "preserve what works" directive.
             modify_mode=self._modify_mode,
+            design_system=design_system,
         )
 
     def _maybe_compact(self, messages: list[dict]) -> list[dict]:

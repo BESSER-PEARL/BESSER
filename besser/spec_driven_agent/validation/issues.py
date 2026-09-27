@@ -202,6 +202,13 @@ def _classify_issue(message: str) -> ValidationIssue:
     # and fall through to the default warning below.
     if lower.startswith("data contract:"):
         return ValidationIssue("blocker", text)
+    # A designed page rebuilt without its design (design_fidelity.py): the
+    # nav, layout, design classes or generated components are gone. Off-design
+    # additions (``design drift:``) stay warnings.
+    if lower.startswith("design regression:"):
+        return ValidationIssue("blocker", text)
+    if lower.startswith("design drift:"):
+        return ValidationIssue("warning", text)
 
     # An import naming a module the app does not ship is fatal at startup, and
     # ruff is structurally blind to it (a star import excuses every name rather

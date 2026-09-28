@@ -99,6 +99,10 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
     "haiku":  {"input": 1.0,  "output": 5.0,  "cache_write": 1.25,  "cache_read": 0.1},
     "sonnet": {"input": 3.0,  "output": 15.0, "cache_write": 3.75,  "cache_read": 0.3},
     "opus":   {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.5},
+    # Exact Anthropic ids the vendored table does not carry yet; without a row
+    # they land on the coarse tier above (Opus 5.5 at $15/$75, ~4x over).
+    # Cache write is the standard 1.25x of input.
+    "claude-opus-5-5": {"input": 4.0, "output": 20.0, "cache_write": 5.0, "cache_read": 0.2},
     # OpenAI — early-2026 public rates
     "gpt-4o-mini": {"input": 0.15, "output": 0.6,  "cache_write": 0, "cache_read": 0.075},
     "gpt-4o":      {"input": 2.5,  "output": 10.0, "cache_write": 0, "cache_read": 1.25},
@@ -106,6 +110,9 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
     # Official model pages (standard requests <=272K input).
     "gpt-5.6-terra": {"input": 2.0, "output": 12.0, "cache_write": 0, "cache_read": 0.2},
     "gpt-5.6-luna":  {"input": 0.2, "output": 1.2,  "cache_write": 0, "cache_read": 0.02},
+    # Official pricing page (2026-09-28). Not yet in the vendored table.
+    "gpt-6-sol":   {"input": 2.0, "output": 10.0, "cache_write": 0, "cache_read": 0.2},
+    "gpt-6-luna":  {"input": 0.1, "output": 0.5,  "cache_write": 0, "cache_read": 0.01},
     "gpt-5.5":     {"input": 5.0,  "output": 30.0, "cache_write": 0, "cache_read": 0.5},
     "gpt-5":       {"input": 1.25, "output": 10.0, "cache_write": 0, "cache_read": 0.125},
     "o3-mini":     {"input": 1.1,  "output": 4.4,  "cache_write": 0, "cache_read": 0},
@@ -290,6 +297,10 @@ def _get_pricing(model_id: str) -> dict[str, float]:
     published = _published_pricing(model_id)
     if published is not None:
         return published
+    # Exact Anthropic ids first: each is also inside a coarse tier below.
+    for key in ("claude-opus-5-5",):
+        if key in model_lower:
+            return _MODEL_PRICING[key]
     # Anthropic tiers — unambiguous identifiers so order doesn't matter.
     for tier in ("haiku", "sonnet", "opus"):
         if tier in model_lower:
@@ -312,6 +323,7 @@ def _get_pricing(model_id: str) -> dict[str, float]:
     for key in (
         "gpt-4o-mini", "gpt-4o",
         "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+        "gpt-6-sol", "gpt-6-luna",
         "gpt-5.5", "gpt-5", "o3-mini", "o3",
     ):
         if key in model_lower:

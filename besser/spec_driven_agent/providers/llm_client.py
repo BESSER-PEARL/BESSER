@@ -17,6 +17,7 @@ Features:
 import json
 import logging
 import os
+import re
 import time
 from abc import ABC, abstractmethod
 from functools import lru_cache
@@ -753,9 +754,10 @@ def _is_tools_unsupported_error(error: Exception) -> bool:
 def _tools_unsupported_message(model: str) -> str:
     """Actionable guidance when a model can't use the code-generation tools.
 
-    (gpt-5.6 is auto-handled via reasoning_effort='none'; this fires only for
-    OTHER models that still reject function tools — e.g. an unrecognised
-    reasoning model typed into the Custom field.)
+    (gpt-5.6 and gpt-6 sol/luna are auto-handled via reasoning_effort='none';
+    this fires only for OTHER models that still reject function tools — e.g.
+    gpt-6-astra, or an unrecognised reasoning model typed into the Custom
+    field.)
     """
     return (
         f"The selected model '{model}' can't run the Spec-Driven Agent: it "
@@ -1011,10 +1013,15 @@ def _openai_max_tokens_key(model: str) -> str:
     """Return the correct parameter name for max tokens.
 
     GPT-5+, o3, o1 models require ``max_completion_tokens``.
-    Older models use ``max_tokens``.
+    Older models use ``max_tokens``. GPT-6 400s on ``max_tokens`` ("Use
+    'max_completion_tokens' instead", probed 2026-09-28), so the version
+    test is numeric rather than a list of prefixes.
     """
     m = model.lower()
-    if any(k in m for k in ("gpt-5", "o3", "o1", "o4")):
+    version = re.search(r"gpt-(\d+)", m)
+    if version and int(version.group(1)) >= 5:
+        return "max_completion_tokens"
+    if any(k in m for k in ("o3", "o1", "o4")):
         return "max_completion_tokens"
     return "max_tokens"
 
@@ -1027,6 +1034,8 @@ def _needs_reasoning_none_for_tools(model: str, base_url: str | None = None) -> 
     "Function tools with reasoning_effort are not supported for <model>... set
     reasoning_effort to 'none'." Verified empirically (probe_tools):
       - gpt-5.6-*        : REQUIRE reasoning_effort='none' to use tools
+      - gpt-6-sol / luna : same (2026-09-28); gpt-6-astra rejects 'none' and
+                           so cannot use tools on chat/completions at all
       - gpt-5.5 / 5.4    : accept-but-don't-need it (tools work either way)
       - gpt-5 / gpt-4o…  : REJECT the param entirely (400 if sent)
 

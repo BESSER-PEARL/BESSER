@@ -101,6 +101,20 @@ _GPT_5_6 = ModelSettings(
     reasoning_effort_for_tools="none",
 )
 
+_GPT_6_TOOLS_NEED_REASONING_OFF = ModelSettings(
+    # Probed on api.openai.com /v1/chat/completions (2026-09-28), sol and luna
+    # alike: function tools 400 with the default reasoning and with "low"
+    # ("Function tools with reasoning_effort are not supported ... set
+    # reasoning_effort to 'none'"), and work with "none". temperature != 1 is
+    # a 400 while reasoning is on, so no sampling is sent here either.
+    #
+    # gpt-6-astra has no row on purpose: it rejects "none" (only low / medium
+    # / high / xhigh) AND rejects tools with any reasoning, so it cannot run a
+    # tool loop on chat/completions at all. Without a row its tools-400 maps
+    # to the actionable "pick a tool-capable model" message.
+    reasoning_effort_for_tools="none",
+)
+
 
 # Ordered longest-marker-first at import so a specific id always beats a
 # shorter family prefix. Matched as a lowercased substring, the same way
@@ -118,6 +132,8 @@ _REGISTRY: tuple[tuple[str, ModelSettings], ...] = tuple(
             ("qwen3-coder", _QWEN3_CODER_30B_A3B),
             # sol / terra / luna.
             ("gpt-5.6", _GPT_5_6),
+            ("gpt-6-sol", _GPT_6_TOOLS_NEED_REASONING_OFF),
+            ("gpt-6-luna", _GPT_6_TOOLS_NEED_REASONING_OFF),
         ),
         key=lambda row: len(row[0]),
         reverse=True,

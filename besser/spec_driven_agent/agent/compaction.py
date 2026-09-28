@@ -127,6 +127,7 @@ _KNOWN_CONTEXT_WINDOWS: tuple = (
     ("claude-sonnet", 1_000_000),
     ("claude-opus", 1_000_000),
     ("claude-fable", 1_000_000),
+    ("gpt-6", 1_050_000),
     ("gpt-5.6", 1_050_000),
     ("gpt-5.5", 400_000),
     ("gpt-5.4", 400_000),

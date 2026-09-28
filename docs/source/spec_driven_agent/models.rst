@@ -102,6 +102,52 @@ not subject to the custom-endpoint gate that ``local`` / ``PIA`` runs are.
 Because the whole customization loop is tool-driven, any ``llm_model`` chosen
 here must support OpenAI-style function calling.
 
+Model-specific request handling
+-------------------------------
+
+Any tool-capable model id can be passed as ``llm_model``. The models below need
+a request shaped for them, which the client does automatically:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Model
+     - Handling
+   * - ``gpt-6-sol``, ``gpt-6-luna``
+     - ``max_completion_tokens`` (``max_tokens`` is rejected), and
+       ``reasoning_effort="none"`` whenever tools are sent: with reasoning on,
+       ``/v1/chat/completions`` rejects function tools. Sent only to
+       ``api.openai.com``; gateways get no ``reasoning_effort``.
+   * - ``gpt-5.6-sol``, ``gpt-5.6-terra``, ``gpt-5.6-luna``
+     - Same as GPT-6 sol / luna.
+   * - ``gpt-6-astra``
+     - **Not usable.** It accepts no ``reasoning_effort="none"`` and rejects
+       tools with reasoning on, so it cannot run the tool loop on
+       ``/v1/chat/completions``. A run on it fails with a message asking for a
+       tool-capable model.
+   * - ``claude-fable-5-1``, ``claude-opus-5-5``
+     - A forced tool call (planning, gap analysis, requirements ledger,
+       recovery steps) is sent as ``tool_choice: auto`` with an instruction
+       naming the tool, plus ``strict: true`` when it is the only tool, and is
+       asked again once if the reply skips the tool. ``thinking`` is never
+       sent.
+   * - ``claude-fable-5``
+     - Forced tool calls keep ``tool_choice``, but without
+       ``thinking: disabled``, which the model rejects.
+   * - ``claude-opus-5``, ``claude-sonnet-5``, ``claude-haiku-4-5``, and the
+       4.x models
+     - Forced tool calls use ``tool_choice`` with thinking disabled.
+
+No sampling parameters (``temperature``, ``top_p``, ``top_k``) are sent to any
+Anthropic or OpenAI model. A reply that stops with ``stop_reason: "refusal"``
+(a provider safety classifier) ends the run with that reason and its category
+rather than an opaque provider error.
+
+Every model above has a price in the client's rate table, so ``max_cost_usd``
+counts its real spend; an unpriced paid model is billed at a middle-tier
+fallback rate instead.
+
 The planning model
 ------------------
 

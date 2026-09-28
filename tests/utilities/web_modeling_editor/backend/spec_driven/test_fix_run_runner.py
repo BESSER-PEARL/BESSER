@@ -206,3 +206,58 @@ def test_trace_persistence_is_noop_without_configured_dir(tmp_path, monkeypatch)
     runner = SmartGenerationRunner(_build_request())
     parsed = _frames(runner)
     assert parsed[-1]["event"] == "done"
+
+
+# The telemetry dir holds research-study data. Production always sets
+# BESSER_TELEMETRY_DIR, so an ordinary run's trace (which carries the first
+# 500 characters of the user's instructions) must not land there.
+
+
+def _study_env(monkeypatch, tmp_path, *, enabled: bool):
+    telemetry_dir = tmp_path / "telemetry"
+    monkeypatch.delenv("BESSER_INCIDENT_LOG_DIR", raising=False)
+    monkeypatch.setenv("BESSER_TELEMETRY_DIR", str(telemetry_dir))
+    if enabled:
+        monkeypatch.setenv("BESSER_TELEMETRY_ENABLED", "1")
+    else:
+        monkeypatch.delenv("BESSER_TELEMETRY_ENABLED", raising=False)
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _TraceWritingOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    return telemetry_dir
+
+
+def _persisted_trace(telemetry_dir, runner):
+    return telemetry_dir / "traces" / f"{runner.run_id}.besser_trace.jsonl"
+
+
+def test_a_regular_run_trace_never_lands_in_the_study_dir(tmp_path, monkeypatch):
+    telemetry_dir = _study_env(monkeypatch, tmp_path, enabled=True)
+
+    runner = SmartGenerationRunner(_build_request())
+    assert _frames(runner)[-1]["event"] == "done"
+
+    assert not _persisted_trace(telemetry_dir, runner).exists(), (
+        "a run without a study label was stored with the research data"
+    )
+
+
+def test_a_study_run_trace_is_kept_with_the_study_data(tmp_path, monkeypatch):
+    telemetry_dir = _study_env(monkeypatch, tmp_path, enabled=True)
+
+    runner = SmartGenerationRunner(
+        _build_request(telemetry_session="session-abc", telemetry_participant="P3")
+    )
+    assert _frames(runner)[-1]["event"] == "done"
+
+    assert _persisted_trace(telemetry_dir, runner).is_file()
+
+
+def test_a_study_run_keeps_no_trace_while_collection_is_off(tmp_path, monkeypatch):
+    telemetry_dir = _study_env(monkeypatch, tmp_path, enabled=False)
+
+    runner = SmartGenerationRunner(
+        _build_request(telemetry_session="session-abc", telemetry_participant="P3")
+    )
+    assert _frames(runner)[-1]["event"] == "done"
+
+    assert not _persisted_trace(telemetry_dir, runner).exists()

@@ -1015,11 +1015,7 @@ class SmartGenerationRunner:
         Recording is best-effort and can never affect the stream itself.
         """
         inner = self._generate_and_stream_impl(http_request=http_request)
-        if not (
-            self._telemetry_session
-            and self._telemetry_participant
-            and telemetry.telemetry_enabled()
-        ):
+        if not self._is_study_run():
             async for frame in inner:
                 yield frame
             return
@@ -1038,10 +1034,19 @@ class SmartGenerationRunner:
         finally:
             self._record_run_summary()
 
+    def _is_study_run(self) -> bool:
+        """True when this run is recorded for a research study: it carries
+        both study labels AND the server's collection switch is on."""
+        return bool(
+            self._telemetry_session
+            and self._telemetry_participant
+            and telemetry.telemetry_enabled()
+        )
+
     def _requested_llm_model(self) -> Optional[str]:
         """The model this run asks for, honouring a study session's default.
 
-        A study session (``?pilot=<label>``) should start on
+        A study session (``?study=<label>``, or the older ``?pilot=``) should start on
         ``BESSER_PILOT_LLM_MODEL``. The client cannot be relied on to send it
         (the free tier is the no-popup default, so the request often carries
         no ``llm_model``), so it is resolved here, server-side.
@@ -1905,8 +1910,8 @@ class SmartGenerationRunner:
             # Persist the run trace to a host-mounted dir (best-effort) so
             # the per-turn detail survives the temp-workspace sweep on
             # container recreate, so a later "what did this fix run actually
-            # do" stays answerable. No-op unless
-            # BESSER_INCIDENT_LOG_DIR / BESSER_TELEMETRY_DIR is configured.
+            # do" stays answerable. No-op unless BESSER_INCIDENT_LOG_DIR is
+            # set, or this is a study run and BESSER_TELEMETRY_DIR is.
             try:
                 from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
                 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
@@ -1914,6 +1919,7 @@ class SmartGenerationRunner:
                 )
                 incidents.persist_run_trace(
                     self.run_id, os.path.join(result_path, TRACE_FILENAME),
+                    study_run=self._is_study_run(),
                 )
             except Exception:
                 logger.debug(

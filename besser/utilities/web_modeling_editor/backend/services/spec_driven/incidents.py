@@ -67,26 +67,30 @@ def record_incident(
         logger.debug("Could not record incident", exc_info=True)
 
 
-def persist_run_trace(run_id: str | None, trace_path: str | None) -> None:
+def persist_run_trace(
+    run_id: str | None, trace_path: str | None, *, study_run: bool = False
+) -> None:
     """Copy a run's structured trace into a host-mounted dir, keyed by run id.
 
     The run trace (``.besser_trace.jsonl``) normally lives only in the run's
     temp workspace, which is swept when the container is recreated — so the
-    per-turn detail of a run (what the fix loop actually did) is lost. When
-    incident or telemetry logging is configured (``BESSER_INCIDENT_LOG_DIR``
-    or ``BESSER_TELEMETRY_DIR``), also copy the trace to
-    ``<dir>/traces/<run_id>.besser_trace.jsonl`` so a later "what did that
-    run do" is answerable after the workspace is gone.
+    per-turn detail of a run (what the fix loop actually did) is lost. Copy
+    it to ``<dir>/traces/<run_id>.besser_trace.jsonl`` so a later "what did
+    that run do" is answerable after the workspace is gone.
+
+    ``<dir>`` is ``BESSER_INCIDENT_LOG_DIR`` when set (an explicit operator
+    choice, any run). Otherwise only a ``study_run`` (a run recorded for a
+    research study) falls back to ``BESSER_TELEMETRY_DIR``: the trace holds
+    the start of the user's instructions, and that directory is study data.
 
     Best-effort by design: never raises into a caller.
     """
     try:
         if not run_id or not trace_path or not os.path.isfile(trace_path):
             return
-        base = (
-            os.environ.get("BESSER_INCIDENT_LOG_DIR")
-            or os.environ.get("BESSER_TELEMETRY_DIR")
-        )
+        base = os.environ.get("BESSER_INCIDENT_LOG_DIR")
+        if not base and study_run:
+            base = os.environ.get("BESSER_TELEMETRY_DIR")
         if not base:
             return
         dest_dir = os.path.join(base, "traces")

@@ -2069,6 +2069,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "scope / fewer files per run."
                 )
                 break
+            elif response["stop_reason"] == "refusal":
+                # A provider safety classifier declined the turn (HTTP 200). Its
+                # content may hold a cut-off tool call, so nothing is executed.
+                category = response.get("refusal_category")
+                logger.warning("Model refused the turn (category: %s)", category)
+                self._phase2_stop_reason = "api_error"
+                self._phase2_api_error = (
+                    "the model declined this request"
+                    + (f" (safety category: {category})" if category else "")
+                    + "; rephrase it or choose another model"
+                )
+                break
             else:
                 logger.warning("Unexpected stop_reason: %s", response["stop_reason"])
                 self._phase2_stop_reason = "api_error"
@@ -4051,6 +4063,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _call_streaming(self, system: str, messages: list[dict]) -> dict:
         collected_content = []
         stop_reason = "end_turn"
+        refusal_category = None
         for event in self.client.chat_stream(
             system=system, messages=messages, tools=self.tools,
         ):
@@ -4058,9 +4071,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self.on_text(event["text"])
             elif event["type"] == "message_done":
                 stop_reason = event.get("stop_reason", "end_turn")
+                refusal_category = event.get("refusal_category")
                 if event.get("content"):
                     collected_content = event["content"]
-        return {"stop_reason": stop_reason, "content": collected_content}
+        return {"stop_reason": stop_reason, "content": collected_content,
+                "refusal_category": refusal_category}
 
     # ==================================================================
     # Loop detection

@@ -49,6 +49,12 @@ class ModelSettings:
     # ``reasoning_effort`` value required to make function tools work, or None.
     # Endpoint-gated by the caller -- see ``_needs_reasoning_none_for_tools``.
     reasoning_effort_for_tools: str | None = None
+    # Anthropic only. False where ``tool_choice`` {"type": "tool"/"any"} is a
+    # 400, so a forced call must fall back to "auto" plus an instruction.
+    forced_tool_choice: bool = True
+    # Anthropic only. False where thinking is always on and an explicit
+    # ``thinking: {"type": "disabled"}`` is a 400.
+    thinking_can_be_disabled: bool = True
 
 
 # Qwen3 "-2507" releases publish their tuned sampling values in the model repo's
@@ -115,13 +121,29 @@ _GPT_6_TOOLS_NEED_REASONING_OFF = ModelSettings(
     reasoning_effort_for_tools="none",
 )
 
+# Anthropic rows. Neither family takes sampling parameters (the Claude client
+# sends none to any model), so these only record the two request quirks.
+_CLAUDE_ALWAYS_THINKING = ModelSettings(
+    # Fable 5: thinking cannot be disabled; forced tool_choice still accepted.
+    thinking_can_be_disabled=False,
+)
+_CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL = ModelSettings(
+    # Fable 5.1 and Opus 5.5: thinking cannot be disabled, and
+    # tool_choice {"type": "tool"/"any"} is a 400 ("not supported for this
+    # model").
+    thinking_can_be_disabled=False,
+    forced_tool_choice=False,
+)
+
 
 # Ordered longest-marker-first at import so a specific id always beats a
 # shorter family prefix. Matched as a lowercased substring, the same way
 # _get_pricing and compaction's window tables match.
 #
 # Markers are chosen not to overlap: "qwen3-30b-a3b-instruct-2507" and
-# "qwen3-coder" cannot both match one id.
+# "qwen3-coder" cannot both match one id. The Claude markers do overlap
+# ("claude-fable-5" is inside "claude-fable-5-1"), which the longest-first
+# order resolves: the point release gets its own row.
 _REGISTRY: tuple[tuple[str, ModelSettings], ...] = tuple(
     sorted(
         (
@@ -134,6 +156,11 @@ _REGISTRY: tuple[tuple[str, ModelSettings], ...] = tuple(
             ("gpt-5.6", _GPT_5_6),
             ("gpt-6-sol", _GPT_6_TOOLS_NEED_REASONING_OFF),
             ("gpt-6-luna", _GPT_6_TOOLS_NEED_REASONING_OFF),
+            # Substring match, so Bedrock-style ids ("us.anthropic.claude-...")
+            # resolve to the same row.
+            ("claude-fable-5", _CLAUDE_ALWAYS_THINKING),
+            ("claude-fable-5-1", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
+            ("claude-opus-5-5", _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL),
         ),
         key=lambda row: len(row[0]),
         reverse=True,
@@ -186,3 +213,13 @@ def reasoning_effort_for_tools(model: str | None) -> str | None:
     the model.
     """
     return settings_for(model).reasoning_effort_for_tools
+
+
+def forced_tool_choice_supported(model: str | None) -> bool:
+    """Whether an Anthropic model accepts ``tool_choice`` of type tool / any."""
+    return settings_for(model).forced_tool_choice
+
+
+def thinking_can_be_disabled(model: str | None) -> bool:
+    """Whether an Anthropic model accepts ``thinking: {"type": "disabled"}``."""
+    return settings_for(model).thinking_can_be_disabled

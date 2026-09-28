@@ -28,9 +28,11 @@ from urllib.parse import urlparse
 from besser.spec_driven_agent.errors import InvalidApiKeyError, UpstreamLLMError
 from besser.spec_driven_agent.providers.model_settings import (
     DEFAULT_MAX_OUTPUT_TOKENS,
+    forced_tool_choice_supported,
     max_output_tokens,
     reasoning_effort_for_tools,
     sampling_kwargs,
+    thinking_can_be_disabled,
 )
 from besser.spec_driven_agent.providers.tool_input import normalize_tool_blocks
 
@@ -842,6 +844,83 @@ class ClaudeLLMClient(LLMProvider):
         model_override: str | None = None,
     ) -> dict[str, Any]:
         """Send a message with tools. Retries on transient errors."""
+        effective_model = model_override or self._model
+        if force_tool and not forced_tool_choice_supported(effective_model):
+            return self._chat_forced_via_auto(
+                system, messages, tools, force_tool, model_override)
+        extra: dict[str, Any] = {}
+        if force_tool:
+            extra["tool_choice"] = {"type": "tool", "name": force_tool}
+            # Bedrock (PIA) accepts a forced tool only with thinking off --
+            # where the model allows turning it off at all.
+            if thinking_can_be_disabled(effective_model):
+                extra["thinking"] = {"type": "disabled"}
+        return self._create(system, messages, tools, tools, model_override, extra)
+
+    def _chat_forced_via_auto(
+        self,
+        system: str,
+        messages: list[dict],
+        tools: list[dict],
+        force_tool: str,
+        model_override: str | None,
+    ) -> dict[str, Any]:
+        """A forced call on a model that 400s on tool_choice tool/any.
+
+        Sends ``tool_choice: auto`` with an instruction naming the tool and,
+        when it is the only tool offered, ``strict: true`` on it; re-asks once
+        if the reply skipped the tool. Strict is withheld from a full toolset
+        because the tools block heads the prompt-cache prefix: changing one
+        definition would re-bill the whole conversation.
+        """
+        request_tools = tools
+        if len(tools) == 1 and tools[0].get("name") == force_tool:
+            strict = _strict_tool(tools[0])
+            if strict is not None:
+                request_tools = [strict]
+        instruction = (f"Respond by calling the `{force_tool}` tool. "
+                       "Do not answer in plain text.")
+        extra = {"tool_choice": {"type": "auto"}}
+        result: dict[str, Any] = {}
+        for text in (instruction,
+                     instruction + " Your previous reply did not call it."):
+            request_messages = _with_trailing_instruction(messages, text)
+            try:
+                result = self._create(system, request_messages, request_tools,
+                                      tools, model_override, extra)
+            except UpstreamLLMError as exc:
+                # strict:true is unverified live for these models; a schema
+                # it rejects must not cost the call.
+                reason = str(exc).lower()
+                if request_tools is tools or not (
+                        "strict" in reason or "schema" in reason):
+                    raise
+                logger.warning("strict tool %s rejected; retrying without "
+                               "strict: %s", force_tool, exc)
+                request_tools = tools
+                result = self._create(system, request_messages, tools, tools,
+                                      model_override, extra)
+            if result["stop_reason"] == "refusal" or any(
+                getattr(b, "type", None) == "tool_use"
+                and getattr(b, "name", None) == force_tool
+                for b in result["content"]
+            ):
+                return result
+            logger.info("Model answered without calling %s under "
+                        "tool_choice=auto", force_tool)
+        return result
+
+    def _create(
+        self,
+        system: str,
+        messages: list[dict],
+        request_tools: list[dict],
+        tools: list[dict],
+        model_override: str | None,
+        extra: dict[str, Any],
+    ) -> dict[str, Any]:
+        """One ``messages.create`` with retries. ``tools`` (the caller's
+        definitions) drive input coercion; ``request_tools`` is what is sent."""
         last_error = None
         effective_model = model_override or self._model
 
@@ -852,19 +931,16 @@ class ClaudeLLMClient(LLMProvider):
                     "max_tokens": self._max_tokens,
                     "system": _with_cache_control(system),
                     "messages": _with_message_cache(messages),
-                    "tools": _with_tool_cache(tools),
+                    "tools": _with_tool_cache(request_tools),
+                    **extra,
                 }
-                if force_tool:
-                    request_kwargs["tool_choice"] = {"type": "tool", "name": force_tool}
-                    # Bedrock (PIA) accepts a forced tool only with thinking off.
-                    request_kwargs["thinking"] = {"type": "disabled"}
                 response = self._client.messages.create(**request_kwargs)
                 # Track usage (billed at the effective model's pricing)
                 self.usage.record(response.usage, model=model_override)
-                return {
+                return _with_refusal_detail({
                     "stop_reason": response.stop_reason,
                     "content": normalize_tool_blocks(response.content, tools),
-                }
+                }, response)
             except Exception as e:
                 last_error = e
                 if attempt < _MAX_RETRIES and _is_retryable(e):
@@ -904,11 +980,11 @@ class ClaudeLLMClient(LLMProvider):
 
                     response = stream.get_final_message()
                     self.usage.record(response.usage)
-                    yield {
+                    yield _with_refusal_detail({
                         "type": "message_done",
                         "stop_reason": response.stop_reason,
                         "content": normalize_tool_blocks(_clean_content_blocks(response.content), tools),
-                    }
+                    }, response)
                 return  # Success — exit retry loop
 
             except Exception as e:
@@ -947,6 +1023,79 @@ def _clean_content_blocks(content: list) -> list:
         else:
             cleaned.append(block)
     return cleaned
+
+
+def _with_refusal_detail(result: dict, response) -> dict:
+    """Attach the safety classifier's category to a ``refusal`` stop.
+
+    ``stop_details`` is populated only on a refusal; older SDKs lack it.
+    """
+    if result.get("stop_reason") == "refusal":
+        details = getattr(response, "stop_details", None)
+        result["refusal_category"] = getattr(details, "category", None)
+    return result
+
+
+def _with_trailing_instruction(messages: list[dict], text: str) -> list[dict]:
+    """``messages`` with ``text`` appended to the last user turn (a copy).
+
+    Appended rather than put in ``system``: the system prompt sits ahead of
+    the cached conversation, so editing it would re-bill the whole history.
+    """
+    last = messages[-1] if messages else None
+    if not isinstance(last, dict) or last.get("role") != "user":
+        return [*messages, {"role": "user", "content": text}]
+    content = last.get("content")
+    if isinstance(content, str):
+        blocks: list = [{"type": "text", "text": content}]
+    else:
+        blocks = list(content or [])
+    blocks.append({"type": "text", "text": text})
+    return [*messages[:-1], {**last, "content": blocks}]
+
+
+# JSON Schema keywords strict tool use does not accept.
+_STRICT_UNSUPPORTED_KEYWORDS = frozenset({
+    "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+    "minLength", "maxLength", "maxItems",
+})
+
+
+def _strict_tool(tool: dict) -> dict | None:
+    """A ``strict: true`` copy of ``tool``, or None if its schema cannot be.
+
+    Strict tool use needs ``additionalProperties: false`` on every object and
+    rejects numeric / string-length / complex array constraints; those are
+    dropped (input coercion still uses the caller's original schema). A
+    schema that allows extra keys is left non-strict rather than narrowed.
+    """
+    def convert(node):
+        if not isinstance(node, dict):
+            return node
+        out = {k: v for k, v in node.items() if k not in _STRICT_UNSUPPORTED_KEYWORDS}
+        if out.get("minItems", 0) > 1:
+            del out["minItems"]
+        if out.get("type") == "object" or "properties" in out:
+            if out.get("additionalProperties", False) is not False:
+                raise ValueError("open object")
+            out["additionalProperties"] = False
+            out["properties"] = {
+                name: convert(sub) for name, sub in out.get("properties", {}).items()}
+        if "items" in out:
+            out["items"] = convert(out["items"])
+        for key in ("anyOf", "allOf", "oneOf"):
+            if key in out:
+                out[key] = [convert(sub) for sub in out[key]]
+        for key in ("$defs", "definitions"):
+            if key in out:
+                out[key] = {name: convert(sub) for name, sub in out[key].items()}
+        return out
+
+    try:
+        schema = convert(tool.get("input_schema") or {"type": "object"})
+    except ValueError:
+        return None
+    return {**tool, "input_schema": schema, "strict": True}
 
 
 def _with_cache_control(system: str) -> list[dict]:

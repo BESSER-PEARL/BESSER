@@ -72,6 +72,26 @@ from besser.spec_driven_agent.validation.toolchain import (
 logger = logging.getLogger(__name__)
 
 
+def _no_edit_exit_reason(attempt: int, calls: list[dict]) -> str:
+    """Name the edit-less round that ended the loop by what it actually did.
+
+    Only a round with no tool call at all is a replay. A round of other tool
+    calls stops the loop too, but earlier rounds may well have edited, so the
+    label must not read as though the repair never touched the editor.
+    """
+    if not calls:
+        return f"replay (attempt {attempt} called no tool)"
+    counts: dict[str, int] = {}
+    for entry in calls:
+        counts[entry["tool"]] = counts.get(entry["tool"], 0) + 1
+    failed = sum(1 for entry in calls if not entry.get("success"))
+    plural = "s" if len(calls) != 1 else ""
+    failed_note = f", {failed} failed" if failed else ""
+    tools = ", ".join(f"{tool} x{n}" for tool, n in counts.items())
+    return (f"no edit attempted (attempt {attempt} made {len(calls)} tool call{plural}, "
+            f"none an edit{failed_note}: {tools})")
+
+
 class Phase3RepairMixin:
     """_run_phase3_validation and friends; see the module docstring."""
 
@@ -315,8 +335,9 @@ class Phase3RepairMixin:
             # edit is not nothing: the rejection is fed back into the next
             # attempt's prompt as a recent-failure, so that attempt is not the
             # same request again. See the replay test below.
+            round_calls = self.tool_calls_log[log_before:]
             attempted_writes = sum(
-                1 for entry in self.tool_calls_log[log_before:]
+                1 for entry in round_calls
                 if entry["tool"] in _WRITE_TOOLS_ON_RECORD
             )
             source_changed = revision_before != self._workspace_revision()
@@ -434,7 +455,7 @@ class Phase3RepairMixin:
                     )
                     exit_reason = (
                         "cost budget exhausted" if not budget_left
-                        else "replay (attempt never reached for the editor)" if replay
+                        else _no_edit_exit_reason(attempts_run, round_calls) if replay
                         else "no-progress streak")
                     break
                 logger.info(

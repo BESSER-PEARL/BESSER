@@ -76,7 +76,7 @@ class _MutableUsage:
 
 
 def _drive(orchestrator, rounds, entry_blockers=6, after_round=None,
-           rejected_edits=0):
+           rejected_edits=0, calls=None):
     """Run the real Phase 3 cycle over a scripted sequence of rounds.
 
     Each round is ``(edits, wrote_source, discharged_obligations,
@@ -85,7 +85,8 @@ def _drive(orchestrator, rounds, entry_blockers=6, after_round=None,
     though not one source byte did. ``rejected_edits`` makes every round log
     that many REFUSED ``modify_file`` calls, the way a real attempt whose
     edits the executor rejected does - a zero-write round that still reached
-    for the editor.
+    for the editor. ``calls`` optionally gives each round's non-edit tool
+    calls as ``(tool, success)`` pairs, logged the same way.
     """
     state = {"attempt": 0, "rev": 0, "obl": 0}
 
@@ -99,6 +100,11 @@ def _drive(orchestrator, rounds, entry_blockers=6, after_round=None,
             orchestrator.tool_calls_log.append(
                 {"turn": state["attempt"], "tool": "modify_file",
                  "input": {}, "success": False})
+        if calls is not None:
+            for tool, success in calls[min(state["attempt"], len(calls) - 1)]:
+                orchestrator.tool_calls_log.append(
+                    {"turn": state["attempt"], "tool": tool,
+                     "input": {}, "success": success})
         state["attempt"] += 1
         if after_round is not None:
             after_round(state["attempt"])
@@ -172,7 +178,44 @@ def test_a_round_that_never_reached_for_the_editor_ends_the_loop(orch):
     attempts = _drive(orch, [(0, False, False, _blockers(6))] * 8)
 
     assert attempts == 1
-    assert orch._phase3_exit_reason == "replay (attempt never reached for the editor)"
+    assert orch._phase3_exit_reason == "replay (attempt 1 called no tool)"
+
+
+def test_a_read_only_round_ends_the_loop_under_an_accurate_label(orch):
+    """Run A_gpt1 (gpt-5.6-terra, hotel), replayed: five rounds wrote 31 edits,
+    then attempt 6 called test_api twice and read_file once, wrote nothing and
+    left the tree byte-identical.
+
+    Stopping there is the calibrated rule - across 438 recorded traces the
+    round after such a read-only round wrote 20% of the time (n=232) against
+    58% after rejected edits (n=33) - and it is kept. What was wrong is the
+    label: it said "replay (attempt never reached for the editor)", which
+    reads as though the repair never edited at all, and "replay" is the name
+    CLAUDE.md gives a round that called no tool. All 11 recorded stops under
+    that label were read-only rounds; none was a prose round."""
+    attempts = _drive(
+        orch,
+        [(5, True, False, _blockers(5)), (3, True, False, _blockers(4)),
+         (0, False, False, _blockers(4))],
+        calls=[[], [], [("test_api", True), ("test_api", True), ("read_file", True)]],
+    )
+
+    assert attempts == 3, "the stop decision itself must not move"
+    assert orch._phase3_exit_reason == (
+        "no edit attempted (attempt 3 made 3 tool calls, none an edit: "
+        "test_api x2, read_file x1)")
+
+
+def test_the_label_reports_a_failed_call_in_the_read_only_round(orch):
+    """Run B_gpt1: the final round's only call was an install_dependencies
+    that failed. The label says so, instead of implying the model idled."""
+    attempts = _drive(orch, [(0, False, False, _blockers(6))],
+                      calls=[[("install_dependencies", False)]])
+
+    assert attempts == 1
+    assert orch._phase3_exit_reason == (
+        "no edit attempted (attempt 1 made 1 tool call, none an edit, 1 failed: "
+        "install_dependencies x1)")
 
 
 def test_an_attempt_whose_edits_were_all_rejected_gets_one_more_round(orch):

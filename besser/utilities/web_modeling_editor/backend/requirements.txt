@@ -23,4 +23,6 @@ bocl == 1.0.1
 cryptography
 openpyxl >= 3.1.0
 openai >= 1.40.0
+# The Spec-Driven Agent's Claude client; 1.x changes the SDK surface.
+anthropic >= 0.88.0, < 1
 websockets >= 15.0

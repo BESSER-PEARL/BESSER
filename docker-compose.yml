@@ -1,9 +1,13 @@
 services:
+  # One container serves the editor and the Spec-Driven Agent locally, so it
+  # is built from the worker target (backend + tsc/cargo/kotlinc/bubblewrap).
+  # Toolchain validation and shell tools stay off unless set in ./.env.
   besser-wme-backend:
-    image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
+    image: artefacts.list.lu/besser/web_modeling_editor/smartgen_worker:latest
     build:
       context: .
       dockerfile: Dockerfile
+      target: smartgen-worker
     ports:
       - "9000:9000"
     volumes:

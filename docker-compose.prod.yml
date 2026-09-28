@@ -1,6 +1,8 @@
 version: '3.8'
 
 services:
+  # Dockerfile target backend: no compilers or sandbox, Spec-Driven runs are
+  # served by besser-wme-smartgen.
   besser-wme-backend:
     image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
     ports:
@@ -54,15 +56,16 @@ services:
     networks:
       - besser_network
 
-  # Spec-Driven Agent worker. Same image as the backend, separate container:
-  # generation is the only path that runs LLM-authored code, so it gets the
-  # toolchains but not the backend's secrets.
+  # Spec-Driven Agent worker. Its image is the backend's plus the toolchains
+  # and bubblewrap (Dockerfile target smartgen-worker): generation is the only
+  # path that runs LLM-authored code, so it gets the toolchains but not the
+  # backend's secrets.
   #
   # No `env_file`: the backend loads all of ./.env (SMTP, GitHub OAuth, GPG,
   # telemetry admin token, ...). This service gets an explicit allowlist, so a
   # compromise during generation reaches the LLM credentials and nothing else.
   besser-wme-smartgen:
-    image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
+    image: artefacts.list.lu/besser/web_modeling_editor/smartgen_worker:latest
     container_name: besser-wme-smartgen
     ports:
       - "127.0.0.1:9001:9000"

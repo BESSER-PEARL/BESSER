@@ -169,9 +169,6 @@ class ModifyRunMixin:
                 self._trace.write(
                     EVENT_VALIDATION_ISSUE, phase="fix_target_seed", message=issue,
                 )
-        # The seeded app's design is this run's baseline: an edit must not
-        # lose what the previous run delivered.
-        self._capture_design_baseline()
         self._trace.write(EVENT_PHASE_ENTER, phase="phase2_modify")
         self._run_phase2(
             instructions,

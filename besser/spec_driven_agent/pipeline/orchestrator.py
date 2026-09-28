@@ -50,10 +50,6 @@ from besser.spec_driven_agent.validation.frontend_contract import (
     _method_button_source_issues as _method_button_source_issues,
     collect_frontend_contract_issues,
 )
-from besser.spec_driven_agent.validation.design_fidelity import (
-    collect_design_fidelity_issues,
-    save_design_baseline,
-)
 from besser.spec_driven_agent.agent.design_system import design_system_section
 from besser.spec_driven_agent.planning import requirements_ledger as _requirements_ledger
 from besser.spec_driven_agent.repair.scaffold_repair import (
@@ -682,7 +678,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             phase="phase1",
             generator_used=self._generator_used,
         )
-        self._capture_design_baseline()
 
         # -- Phase 0.5: Stack-metadata floor (only when no Phase 1 ran) ---
         # When Phase 1 picked a Python generator (Django / FastAPI /
@@ -2995,10 +2990,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # verification gap when opted out; optional lint remains advisory.
         raw_issues.extend(self._collect_frontend_contract_issues())
         raw_issues.extend(_method_button_source_issues(self.output_dir))
-        try:
-            raw_issues.extend(collect_design_fidelity_issues(self.output_dir))
-        except Exception:
-            logger.debug("Design fidelity validation failed", exc_info=True)
         raw_issues.extend(action_implementation_issues(
             self.output_dir, self._expected_action_endpoints(),
         ))
@@ -3568,23 +3559,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _collect_frontend_contract_issues(self) -> list[str]:
         return collect_frontend_contract_issues(self.output_dir)
-
-    def _capture_design_baseline(self) -> None:
-        """Record the frontend's GUI design before the agent edits it.
-
-        Phase 3 compares the final tree with it (``design regression:``).
-        A no-op, and silent later, when the app has no ``design.css``.
-        """
-        try:
-            baseline = save_design_baseline(self.output_dir)
-        except Exception:
-            logger.debug("Design baseline capture failed", exc_info=True)
-            return
-        if baseline:
-            logger.info(
-                "Design baseline: %s, %d designed page(s)",
-                baseline["design_css"], len(baseline["pages"]),
-            )
 
     def _requirement_cache_key(self, requirements: list[dict]) -> str:
         return hashlib.sha256((

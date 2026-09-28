@@ -4,7 +4,7 @@ Rendered only when the generated app ships ``src/design.css`` (the GUI model's
 stylesheet, emitted by the React generator) or, failing that, when the GUI model
 has a non-empty stylesheet. It names the real classes and variables of that
 stylesheet so new markup reuses them, and tells the agent to edit designed
-pages in place. ``validation/design_fidelity.py`` checks the same rules.
+pages in place.
 """
 
 from __future__ import annotations
@@ -12,10 +12,27 @@ from __future__ import annotations
 import os
 import re
 
-from besser.spec_driven_agent.validation.design_fidelity import (
-    design_variables,
-    find_design_css,
-)
+_DESIGN_CSS = "design.css"
+_SKIP_DIRS = {"node_modules", "dist", "build", ".next", ".git"}
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_CSS_VAR = re.compile(r"(--[\w-]+)\s*:")
+
+
+def design_variables(css: str) -> list[str]:
+    """Custom properties the stylesheet declares, in declaration order."""
+    seen: dict[str, None] = {}
+    for name in _CSS_VAR.findall(_CSS_COMMENT.sub("", css or "")):
+        seen.setdefault(name, None)
+    return list(seen)
+
+
+def find_design_css(output_dir: str) -> str | None:
+    """Relative path of the generated ``src/design.css``, or ``None``."""
+    for root, dirs, files in os.walk(output_dir):
+        dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".besser_"))
+        if _DESIGN_CSS in files and os.path.basename(root) == "src":
+            return os.path.relpath(os.path.join(root, _DESIGN_CSS), output_dir).replace("\\", "/")
+    return None
 
 # Role of a class, from the first of its hyphen-separated parts that names one:
 # ``ds-kpi-label`` is a card part, ``rail-link`` belongs to the navigation.

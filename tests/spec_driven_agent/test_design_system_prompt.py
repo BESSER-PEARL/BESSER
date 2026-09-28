@@ -9,20 +9,104 @@ section names the stylesheet's real classes and switches those rules off.
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 from besser.BUML.metamodel.structural import Class, DomainModel
 from besser.spec_driven_agent.agent.design_system import design_system_section
 from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
-from tests.spec_driven_agent.test_design_fidelity import (
-    APP,
-    DESIGN_CSS,
-    SRC,
-    _Client,
-    _designed_app,
-    _write,
-)
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+
+SRC = "web_app/frontend/src"
+
+DESIGN_CSS = """\
+/* Design stylesheet carried over from the GUI model (GUIModel.stylesheet). */
+:root{--ds-primary:#17324D;--ds-accent:#218B83;--ds-space-md:0.75rem}
+.ds-page{margin:0}
+.ds-card{background:#fff}
+.ds-field{display:flex}
+.ds-label{font-weight:600}
+.ds-input{width:100%}
+.ds-btn{padding:0.5rem}
+.ds-btn-primary{background:#17324D}
+.hotel-shell{min-height:100vh}
+.page-head{display:flex}
+.detail-grid{display:grid}
+.record-card{border:1px solid #eee}
+.hotel-btn{border:0}
+.hotel-btn.outline{background:#fff}
+.hotel-btn.danger{background:#B84A4A}
+.guest-nav a{margin-left:22px}
+"""
+
+INDEX = "import './index.css';\nimport App from './App';\nimport './design.css';\n"
+
+APP = """\
+import { Routes, Route, Navigate } from "react-router-dom";
+import BookingDetail from "./pages/BookingDetail";
+export default function App() {
+  return <Routes><Route path="/booking" element={<BookingDetail />} />
+    <Route path="/" element={<Navigate to="/booking" replace />} /></Routes>;
+}
+"""
+
+BUTTONS = """\
+          <MethodButton id="b1" className="hotel-btn" endpoint="/booking/{booking_id}/methods/check_in/" label="Check in" />
+          <MethodButton id="b2" className="hotel-btn outline" endpoint="/booking/{booking_id}/methods/check_out/" label="Check out" />
+          <MethodButton id="b3" className="hotel-btn danger" endpoint="/booking/{booking_id}/methods/cancel/" label="Cancel" />
+"""
+
+DETAIL = """\
+import React from "react";
+const BookingDetail: React.FC = () => (
+  <div id="page" className="ds-page">
+    <nav className="guest-nav"><a href="/booking">Bookings</a></nav>
+    <main className="hotel-shell">
+      <header className="page-head"><h1>Booking</h1></header>
+      <section className="detail-grid">
+        <article className="record-card ds-card">
+          <TableBlock id="table-booking" dataBinding={{"entity": "Booking"}} />
+        </article>
+        <div className="action-row">
+%s        </div>
+      </section>
+    </main>
+  </div>
+);
+export default BookingDetail;
+""" % BUTTONS
+
+
+class _Client:
+    model = "mock-model"
+    max_tokens = 4096
+
+    def __init__(self) -> None:
+        self.usage = UsageTracker("mock-model")
+
+    def chat(self, **kwargs):  # pragma: no cover - no test here calls the LLM
+        raise AssertionError("no LLM call expected")
+
+
+def _write(root, files):
+    for rel, text in files.items():
+        path = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+
+def _designed_app(tmp_path, **overrides):
+    files = {
+        f"{SRC}/design.css": DESIGN_CSS,
+        f"{SRC}/index.tsx": INDEX,
+        f"{SRC}/App.tsx": APP,
+        f"{SRC}/pages/BookingDetail.tsx": DETAIL,
+    }
+    files.update({f"{SRC}/{k}": v for k, v in overrides.items()})
+    _write(str(tmp_path), files)
+    return str(tmp_path)
 
 
 # ---------------------------------------------------------------- prompt section

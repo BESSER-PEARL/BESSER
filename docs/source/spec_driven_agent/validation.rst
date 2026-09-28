@@ -38,9 +38,6 @@ and no Docker. Missing runtime prerequisites do not count as verified execution:
   Absence of a known stub is structural evidence, not proof of business behavior.
 - Frontend/backend endpoint coherence — literal ``fetch`` and Axios URLs that
   match no generated backend route.
-- Design fidelity — for an app generated from a designed GUI (one that ships
-  ``src/design.css``), the final frontend is compared with the design it had
-  before the agent started. See :ref:`spec-driven-design-fidelity`.
 - ``ruff`` lint.
 - Optionally ``tsc --noEmit``, ``cargo check`` and ``kotlinc``, per project.
 
@@ -114,8 +111,7 @@ Findings are classified into three severities:
        behavior); unresolved checklist work and unimplemented action contracts;
        a method button that takes its row id from a table of another
        entity; frontend-contract and
-       data-contract violations; a designed page rebuilt without its design
-       (``design regression:``); ``ruff`` **F821** / **F822** / **F823**
+       data-contract violations; ``ruff`` **F821** / **F822** / **F823**
        (undefined name — the classic "ships green, boots dead" bug) and
        **F811** (redefinition, e.g. an ORM model shadowed by a Pydantic model
        of the same name); per-project toolchain errors from ``tsc`` /
@@ -125,8 +121,7 @@ Findings are classified into three severities:
        variable), ``E501``, whitespace, blank lines, import order.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now), off-design markup added to a designed page (``design drift:``) and
-       the model-derived acceptance matrix.
+       now) and the model-derived acceptance matrix.
 
 Only ``blocker`` findings spend LLM turns. The ``done`` event reports
 ``blockerCount`` — completion-blocking defects and required verification gaps
@@ -139,11 +134,8 @@ Design fidelity
 ---------------
 
 When the GUI model carries a stylesheet, the React generator writes it to
-``src/design.css`` and renders every designed screen from it. Two measures keep
-the agent from discarding that design.
-
-**The design-system prompt section.** Phase 2's system prompt gains a short
-section, built from the project's own ``design.css``: its ``--ds-*`` variables
+``src/design.css`` and renders every designed screen from it. To keep the agent from discarding that
+design, Phase 2's system prompt gains a short section, built from the project's own ``design.css``: its ``--ds-*`` variables
 and its classes grouped by role (layout, navigation, cards, forms, buttons,
 tables, status, text), then the rules — never edit ``design.css`` (new rules go
 in ``src/design-overrides.css``, imported after it); edit designed pages in
@@ -157,41 +149,6 @@ the "loose hint" framing of the GUI model, Rule 2's ``write_file`` fallback for
 pages, and the "define concrete CSS" / "one shared stylesheet" bullets. Without
 ``design.css`` the section falls back to the GUI model's stylesheet, embedded in
 the prompt; with neither, the prompt is unchanged.
-
-**The design-regression check.** At the end of Phase 1 (and, for a modify run,
-from the seeded workspace) the harness saves a fingerprint of every designed
-page — the design classes it uses, whether it has a ``<nav>`` / ``<header>``,
-how many generated components it renders, and its inline styles, hex colours
-and unstyled form controls — to ``.besser_design_baseline.json``, with verbatim
-copies of those pages and of ``design.css`` beside it (``.besser_design_*.txt``,
-which no source scanner reads). Phase 3 compares the final tree against it:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 16 84
-
-   * - Severity
-     - Finding
-   * - ``blocker``
-     - ``design regression:`` — ``design.css`` deleted or emptied (fewer than
-       half of its classes left) or no longer imported; a designed page deleted;
-       a designed page that lost its ``<nav>`` or ``<header>`` (unless a new
-       shared layout component now renders one), lost more than 40% of its
-       design classes, or renders fewer generated components while the tree as a
-       whole does too. Components moved into a child file, or ``MethodButton``\ s
-       folded into one rendered from a list of their endpoints, are not a loss.
-       The finding names the saved Phase-1 copy to restore from.
-   * - ``warning``
-     - ``design drift:`` — a designed page gained inline ``style={{...}}``
-       objects, hard-coded hex colours, or form controls with no design class.
-
-The check is silent for a run without a design: no ``design.css``, no baseline,
-no finding. The thresholds were calibrated on six live runs of an AI-designed
-hotel GUI: pages edited in place lost 0% of their design classes and kept their
-nav, header and components; the two pages one run rewrote with ``write_file``
-lost 71% and 84%, both landmarks, and five ``MethodButton``\ s and a
-``TableBlock``. Across 406 older recorded runs without a design it reported
-nothing.
 
 The bounded auto-fix loop
 -------------------------

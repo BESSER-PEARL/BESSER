@@ -66,6 +66,17 @@ but only two systemic categories are tolerated (`duplicate object description` a
 docker compose up --build     # backend on :9000, frontend on :8080
 ```
 
+### Docker images
+The root `Dockerfile` has two targets. `backend` is Python + the requirements +
+`besser`, with no compilers. `smartgen-worker` adds Node 20/`tsc`, JDK 21, Rust,
+`kotlinc`, build-essential and bubblewrap, for the Spec-Driven Agent's Phase 3 and
+`run_command`. In production the backend service runs `.../backend:latest` and
+`besser-wme-smartgen` runs `.../smartgen_worker:latest`; the local
+`docker-compose.yml` builds the worker target, since one container serves both there.
+Behind a TLS-inspecting proxy, put its certs in `ca-certs-extra/` (gitignored) and
+build with `--build-arg TRUST_EXTRA_CAS=1`; both targets strip them before shipping.
+Production host requirements: `docs/source/spec_driven_agent/production_deployment.rst`.
+
 ### Running the backend alone
 ```bash
 python -m besser.utilities.web_modeling_editor.backend.backend   # serves on :9000
@@ -416,7 +427,7 @@ at module level, so without it pytest stops at *collection* — an error, not a 
 
 - **`.github/workflows/ci.yml`**: Three jobs on PRs to `master`/`development` — tests on Python **3.11 and 3.12**, Ruff lint (the exact invocation above), and a docs build gated by `docs/check-docs-warnings.sh`. It does **not** build the frontend.
 - **`.github/workflows/security.yml`**: CodeQL security scanning.
-- **`.github/workflows/deploy-wme.yml`**: Manual (`workflow_dispatch`) build + push of the backend / frontend / agent-simulator images and deploy to EC2; a backend deploy also recreates the `besser-wme-smartgen` worker and verifies the running build stamp.
+- **`.github/workflows/deploy-wme.yml`**: Manual (`workflow_dispatch`) build + push of the backend, worker (`smartgen_worker`), frontend and agent-simulator images and deploy to EC2. A backend deploy builds both Dockerfile targets, recreates `besser-wme-backend` and `besser-wme-smartgen`, and verifies the running build stamp in both. Before building it checks the host's compose file and stops, with nothing pushed, if a service is missing or the worker is not on the `smartgen_worker` image.
 - **`.github/workflows/python-publish.yml`**: PyPI release.
 
 There is no `.github/dependabot.yml` in this repository.

@@ -289,6 +289,24 @@ def build_acceptance_matrix(
     helper_cache: dict[str, set[str]] = {}
     client_calls = {rel: _client_create_calls(rel, content, by_path, helper_cache)
                     for rel, content in frontend_files}
+    # Generic pages (``EntityList entity={key}``): the create names its resource
+    # through a variable and the component names no class of the model. A file
+    # that mentions an entity and imports one creates that entity through it.
+    # ``LoanList`` with a variable-argument create is not generic: crediting it
+    # to every entity App.jsx lists would hide their missing creates.
+    all_forms = [f for name in classes for f in _entity_forms(name)]
+    generic_creators = {
+        rel for rel, calls in client_calls.items()
+        if any(args is None for args in calls)
+        and not _mentions(rel.rsplit("/", 1)[-1], all_forms)
+        and not _mentions(by_path[rel], all_forms)
+    }
+    renders_generic_creator = {
+        rel: any(next((c for c in _resolve_import(rel, spec) if c in by_path), None)
+                 in generic_creators
+                 for _binding, spec in _import_bindings(content))
+        for rel, content in frontend_files
+    }
 
     matrix: dict[str, dict[str, bool | None]] = {}
     for cls in sorted(classes):
@@ -313,6 +331,7 @@ def build_acceptance_matrix(
             resolved = any(args is None or _mentions(" ".join(args), forms)
                            for args in client_calls.get(rel, ()))
             if (_POST_RE.search(content) or resolved
+                    or renders_generic_creator[rel]
                     or _table_block_create_wired(content, cls)):
                 create = True
                 break

@@ -101,6 +101,12 @@ _EXCEPTION_NAMES: Set[str] = {"NameError"}
 _ALLOWED_BINOPS: Set[type] = {ast.Add}
 
 
+# String formatting resolves attribute and index lookups from inside the
+# format string, which the AST walk cannot inspect; ``mro`` exposes the class
+# hierarchy. No BUML file needs either.
+_FORBIDDEN_ATTRIBUTES: Set[str] = {"format", "format_map", "mro"}
+
+
 def _is_dunder(name: str) -> bool:
     """Return True for names starting with ``_`` (includes dunders)."""
     return name.startswith("_")
@@ -192,6 +198,20 @@ def _validate_node(
         if _is_dunder(node.attr):
             raise SafeBumlLoaderError(
                 f"Access to dunder/underscore attribute is forbidden: {node.attr!r}"
+            )
+        if node.attr in _FORBIDDEN_ATTRIBUTES:
+            raise SafeBumlLoaderError(
+                f"Access to attribute {node.attr!r} is not allowed in BUML"
+            )
+        # A literal has no place at the root of an attribute chain: its methods
+        # (string formatting above all) reach object internals that the
+        # per-node checks never see.
+        base = node
+        while isinstance(base, ast.Attribute):
+            base = base.value
+        if isinstance(base, (ast.Constant, ast.JoinedStr)):
+            raise SafeBumlLoaderError(
+                "Attribute access on a literal is not allowed in BUML"
             )
         # The root of the attribute chain must resolve to an allowed name or
         # a previously declared variable. This blocks ``os.system`` style

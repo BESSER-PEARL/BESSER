@@ -238,3 +238,31 @@ class TestRejectedConstructs:
         content = "this is not valid python ===\n"
         with pytest.raises(SyntaxError):
             safe_load_buml(content, allowed_names)
+
+
+# ---------------------------------------------------------------------------
+# Literal receivers and string formatting
+# ---------------------------------------------------------------------------
+# A format string resolves attribute lookups at runtime, out of the AST walk's
+# sight, so a method call on a literal must never reach the interpreter.
+
+@pytest.mark.parametrize("source", [
+    'x = "{0}".format(Class)\n',
+    'x = "{a}".format_map(dict())\n',
+    "x = 'abc'.upper()\n",
+    "x = (1).bit_length()\n",
+    "x = Class.mro()\n",
+])
+def test_attribute_access_on_literals_and_formatting_is_refused(allowed_names, source):
+    with pytest.raises(SafeBumlLoaderError):
+        safe_load_buml(source, allowed_names)
+
+
+def test_attribute_calls_on_declared_objects_still_load(allowed_names):
+    source = (
+        "book = Class(name='Book')\n"
+        "model = DomainModel(name='Library', types={book})\n"
+        "names = model.types\n"
+    )
+    namespace = safe_load_buml(source, allowed_names)
+    assert namespace["model"].name == "Library"

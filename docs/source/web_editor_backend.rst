@@ -176,8 +176,8 @@ Backend-side notes that do not belong in the contract:
 - ``/spec-driven/push-to-github`` and ``/spec-driven/import-github-run`` require
   the ``X-GitHub-Session`` header, like the other GitHub endpoints below.
 
-Telemetry
-^^^^^^^^^
+Telemetry (research study mode)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 - ``POST /telemetry/event`` -- Accept one opt-in study telemetry event. Always
   returns 204 for well-formed input whether or not it was stored, so the
@@ -185,6 +185,38 @@ Telemetry
 - ``GET  /telemetry/report`` -- Aggregated report (Markdown by default, CSV via
   ``?format=csv``). Requires an ``X-Telemetry-Token`` header matching
   ``BESSER_TELEMETRY_ADMIN_TOKEN``.
+
+Study mode records how participants of a facilitated research study use the
+editor. It is off by default and needs two opt-ins at once:
+
+- **The participant's link.** The editor tab must be opened with
+  ``?study=<label>`` (``?pilot=<label>`` is an alias, kept so links already
+  handed out keep working). The label is a short token such as ``P3``,
+  matching ``^[A-Za-z0-9_-]{1,16}$``, never a name or email. It lives in the
+  tab's ``sessionStorage``, the editor shows a notice for as long as it is
+  set, and closing the tab ends it. Every event carries this label; one
+  without it is dropped.
+- **The server's switch.** ``BESSER_TELEMETRY_ENABLED=1`` (or ``true``).
+  Without it nothing is written, even for labelled events.
+
+What is recorded, per tab session id and participant label:
+
+- ``prompt`` (from the modeling agent) -- the message text (at most 2000
+  characters), what the assistant did with it, and the diagram type.
+- ``run_summary`` (recorded in-process by the Spec-Driven runner, never
+  accepted over HTTP) -- outcome, duration, turns, tokens, cost, model,
+  validation blockers, and how many output files the generator wrote versus
+  the LLM. For these runs the run trace (which includes the first 500
+  characters of the instructions) is also copied to
+  ``<BESSER_TELEMETRY_DIR>/traces/``.
+- ``delivery`` (from the editor) -- a download, a push to GitHub, or a
+  continue-from-repository import, with the run id.
+
+Each session is one append-only JSON-lines file,
+``<BESSER_TELEMETRY_DIR>/<session>.jsonl``; the collector caps each payload at
+8 KB. Nothing expires automatically: the operator deletes the files when the
+study's data is no longer needed. Runs of sessions without a study label are
+never written to this directory.
 
 Agent Personalization
 ^^^^^^^^^^^^^^^^^^^^^
@@ -395,14 +427,18 @@ tiers, the caps and their hard limits, the feature flags, the context budgets,
 and the durable-run storage paths -- are documented in one place, with the
 agent: :doc:`spec_driven_agent/configuration`.
 
-**Telemetry (all optional):**
+**Telemetry, research study mode (all optional):**
 
-- ``BESSER_TELEMETRY_ENABLED`` -- Master switch for telemetry collection.
+- ``BESSER_TELEMETRY_ENABLED`` -- Master switch for study telemetry; off
+  unless ``1`` or ``true``.
 - ``BESSER_TELEMETRY_ADMIN_TOKEN`` -- Required by ``GET /telemetry/report``;
   without it the endpoint answers ``404`` by design.
-- ``BESSER_TELEMETRY_DIR`` (``/app/telemetry``) -- Where telemetry records are
-  written. It is also the fallback location for provider-incident logs when
+- ``BESSER_TELEMETRY_DIR`` (``/app/telemetry``) -- Where study records are
+  written, and where the traces of study runs are copied when
   ``BESSER_INCIDENT_LOG_DIR`` is unset.
+- ``BESSER_PILOT_LLM_MODEL`` -- Keyless model a study session starts on (it
+  must be one of the free-tier models the server offers). Unset, study
+  sessions get the ordinary default.
 
 **Other optional variables:**
 

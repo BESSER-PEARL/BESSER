@@ -583,7 +583,7 @@ async def smart_gen_config():
             # default): the primary (default), any alt models on the primary
             # endpoint, and the fallback endpoint's model when configured.
             "models": _free_tier_model_choices(),
-            # The model a facilitated study session (?pilot=<label>) pre-selects.
+            # The model a study session (?study=<label> or ?pilot=<label>) pre-selects.
             # Null when unset. Server-side so swapping it is an env edit, not a
             # frontend release -- the client never hardcodes a model id.
             "pilot_model": free_pilot_model() or None,

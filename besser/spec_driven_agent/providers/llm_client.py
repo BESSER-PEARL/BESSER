@@ -2203,14 +2203,14 @@ def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
 
 
 def free_pilot_model() -> str:
-    """The keyless model a pilot session should default to, or ``""``.
+    """The keyless model a research-study session should default to, or ``""``.
 
-    Read from ``BESSER_PILOT_LLM_MODEL``. Sessions opened with
-    ``?pilot=<label>`` can start on a different model without changing what
-    everyone else gets. Server-side so that changing it is an env edit, not a
-    frontend release.
+    Read from ``BESSER_PILOT_LLM_MODEL``. Sessions opened with a study link
+    (``?study=<label>``, or the older ``?pilot=<label>``) can start on a
+    different model without changing what everyone else gets. Server-side so
+    that changing it is an env edit, not a frontend release.
 
-    Returns ``""`` when unset (pilot sessions then get the ordinary default), or when
+    Returns ``""`` when unset (study sessions then get the ordinary default), or when
     the configured id is not one the server actually offers -- advertising a
     default we would refuse to honour is worse than having none.
     """

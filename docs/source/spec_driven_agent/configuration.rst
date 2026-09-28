@@ -152,9 +152,10 @@ Storage and lifecycle
   ``cost`` SSE tick.
 - ``BESSER_INCIDENT_LOG_DIR`` (``/app/incidents``) -- Where provider-incident
   records (a failed endpoint, a fallback-chain switch) are written. When it is
-  unset the incident writer falls back to ``BESSER_TELEMETRY_DIR``; both are
-  described alongside the telemetry endpoints in
-  :doc:`../web_editor_backend`.
+  set explicitly, every run's trace is also copied to its ``traces/``
+  folder; when it is unset, only the traces of research-study runs are kept,
+  in ``BESSER_TELEMETRY_DIR``. Study mode is described alongside the
+  telemetry endpoints in :doc:`../web_editor_backend`.
 
 .. note::
    A run driven from Python rather than from the backend does not read most of

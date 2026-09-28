@@ -120,3 +120,37 @@ def test_the_parked_tree_is_never_packaged():
     )
     assert _ROLLBACK_DISCARD_DIR in _RECIPE_EXCLUDED_DIRS
     assert _ROLLBACK_DISCARD_DIR in _EXCLUDED_OUTPUT_DIRS
+
+
+def test_rollback_keeps_installed_dependencies(orch, tmp_path):
+    # The snapshot skips node_modules / .venv to stay small, so the restore
+    # must carry them over from the parked tree: a live run (A_gpt1) lost its
+    # node_modules this way and shipped two "requires installed project
+    # dependencies" blockers the rolled-back tree did not have.
+    root = str(tmp_path)
+    _write(root, "web/frontend/package.json", '{"name": "app"}')
+    _write(root, "web/frontend/node_modules/react/index.js", "react")
+    _write(root, "web/backend/.venv/lib/site.py", "venv")
+    _write(root, "web/frontend/src/App.tsx", "phase1")
+    orch._create_snapshot()
+    assert not os.path.exists(
+        os.path.join(root, _SNAPSHOT_DIR, "web/frontend/node_modules"))
+    _write(root, "web/frontend/src/App.tsx", "phase3-broken")
+
+    assert orch._restore_snapshot() is True
+    assert (tmp_path / "web/frontend/src/App.tsx").read_text() == "phase1"
+    assert (tmp_path / "web/frontend/node_modules/react/index.js").read_text() == "react"
+    assert (tmp_path / "web/backend/.venv/lib/site.py").read_text() == "venv"
+    assert not (tmp_path / _ROLLBACK_DISCARD_DIR).exists()
+
+
+def test_rollback_does_not_revive_dependencies_of_a_removed_directory(orch, tmp_path):
+    # node_modules under a directory Phase 3 created (absent from the snapshot)
+    # has nowhere to go back to and is discarded with the rest of that tree.
+    root = str(tmp_path)
+    _write(root, "app.py", "phase1")
+    orch._create_snapshot()
+    _write(root, "extra/node_modules/x/index.js", "x")
+
+    assert orch._restore_snapshot() is True
+    assert not (tmp_path / "extra").exists()

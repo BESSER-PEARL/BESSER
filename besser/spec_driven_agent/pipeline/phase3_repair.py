@@ -1237,9 +1237,30 @@ class Phase3RepairMixin:
                 )
             return False
 
+        self._carry_over_ignored_dirs(discard_path)
         shutil.rmtree(discard_path, ignore_errors=True)
         logger.info("Restored from snapshot")
         return True
+
+    def _carry_over_ignored_dirs(self, discard_path: str) -> None:
+        """Move installed dependencies (``_SNAPSHOT_IGNORED_DIRS``) from the
+        parked tree back into the restored one.
+
+        The snapshot skips them to stay small, so without this a rollback
+        leaves the app with no ``node_modules`` / ``.venv`` and the next
+        validation reports missing dependencies. Only restored into a
+        directory that still exists; failures are logged, never raised.
+        """
+        for root, dirs, _files in os.walk(discard_path):
+            for name in [d for d in dirs if d in _SNAPSHOT_IGNORED_DIRS]:
+                dirs.remove(name)
+                rel = os.path.relpath(os.path.join(root, name), discard_path)
+                target = os.path.join(self.output_dir, rel)
+                if os.path.isdir(os.path.dirname(target)) and not os.path.exists(target):
+                    try:
+                        os.replace(os.path.join(root, name), target)
+                    except OSError as exc:
+                        logger.warning("Could not keep %s across the rollback: %s", rel, exc)
 
     def _remove_snapshot(self) -> None:
         """Clean up the snapshot directory (and any staging left by a failure)."""

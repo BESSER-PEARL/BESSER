@@ -10,7 +10,7 @@ on:
         type: choice
         options:
           - all
-          - backend          # restarts besser-wme-backend and besser-wme-smartgen
+          - backend          # backend + worker images; restarts besser-wme-backend and besser-wme-smartgen
           - frontend
           - agent_simulator
 
@@ -33,19 +33,80 @@ jobs:
         id: src
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ec2-16-16-223-38.eu-north-1.compute.amazonaws.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Resolve the services to deploy
+        id: svc
+        run: |
+          SERVICES=""
+          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "backend" ]]; then
+            # The spec-driven worker is built from the same commit, so it is
+            # recreated with the backend; otherwise it keeps the previous code.
+            SERVICES="$SERVICES besser-wme-backend besser-wme-smartgen"
+          fi
+          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "frontend" ]]; then
+            SERVICES="$SERVICES besser-wme-frontend"
+          fi
+          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "agent_simulator" ]]; then
+            SERVICES="$SERVICES besser-wme-agent-simulator"
+          fi
+          echo "list=$SERVICES" >> "$GITHUB_OUTPUT"
+
+      # Before anything is built or pushed: a service missing from the host's
+      # compose file would fail `docker compose pull` halfway through, and a
+      # worker still on the backend image would lose its toolchains and
+      # bubblewrap without any error. Stop here instead, with nothing changed.
+      - name: Check the host compose file defines the services
+        run: |
+          SSH="ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ env.SSH_TARGET }}"
+          RUNBOOK="docs/source/spec_driven_agent/production_deployment.rst"
+          if ! DEFINED=$($SSH "docker compose config --services"); then
+            echo "::error::Could not read the host's compose file (docker compose config failed). Nothing was built, pushed or restarted."
+            exit 1
+          fi
+          MISSING=""
+          for S in ${{ steps.svc.outputs.list }}; do
+            grep -qx "$S" <<< "$DEFINED" || MISSING="$MISSING $S"
+          done
+          if [[ -n "$MISSING" ]]; then
+            echo "::error::The host's compose file does not define:$MISSING. Add them first (besser-wme-smartgen: copy it from docker-compose.prod.yml, see $RUNBOOK). Nothing was built, pushed or restarted."
+            exit 1
+          fi
+          if [[ " ${{ steps.svc.outputs.list }} " == *" besser-wme-smartgen "* ]]; then
+            WANT="${{ env.REGISTRY }}/smartgen_worker:latest"
+            IMAGE=$($SSH "docker compose config --images besser-wme-smartgen") \
+              || IMAGE="unknown (docker compose config --images failed)"
+            if [[ "$IMAGE" != "$WANT" ]]; then
+              echo "::error::besser-wme-smartgen uses '$IMAGE' on the host, not '$WANT'. The backend image no longer carries the worker's toolchains or bubblewrap; point the service at $WANT (see $RUNBOOK). Nothing was built, pushed or restarted."
+              exit 1
+            fi
+          fi
+          echo "The host defines:${{ steps.svc.outputs.list }}"
+
       - name: Login to Docker registry
         run: echo "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" | docker login artefacts.list.lu -u "${{ secrets.DOCKER_REGISTRY_USERNAME }}" --password-stdin
 
-      # ── Backend (also the besser-wme-smartgen worker's image) ─
-      - name: Build backend image
+      # ── Backend and the besser-wme-smartgen worker ──────────
+      # Two targets of one Dockerfile: the worker adds the toolchains and
+      # bubblewrap to the backend's dependency layers.
+      - name: Build backend and worker images
         if: inputs.target == 'all' || inputs.target == 'backend'
         run: |
-          docker build --build-arg GIT_SHA=${{ steps.src.outputs.sha }} \
+          docker build --target backend --build-arg GIT_SHA=${{ steps.src.outputs.sha }} \
             -t ${{ env.REGISTRY }}/backend:latest -f Dockerfile .
+          docker build --target smartgen-worker --build-arg GIT_SHA=${{ steps.src.outputs.sha }} \
+            -t ${{ env.REGISTRY }}/smartgen_worker:latest -f Dockerfile .
 
-      - name: Push backend image
+      - name: Push backend and worker images
         if: inputs.target == 'all' || inputs.target == 'backend'
-        run: docker push ${{ env.REGISTRY }}/backend:latest
+        run: |
+          docker push ${{ env.REGISTRY }}/backend:latest
+          docker push ${{ env.REGISTRY }}/smartgen_worker:latest
 
       # ── Frontend ─────────────────────────────────────────────
       - name: Build frontend image
@@ -72,27 +133,9 @@ jobs:
         run: docker push ${{ env.REGISTRY }}/agent_simulator:latest
 
       # ── Deploy to EC2 ───────────────────────────────────────
-      - name: Setup SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ec2-16-16-223-38.eu-north-1.compute.amazonaws.com >> ~/.ssh/known_hosts 2>/dev/null
-
       - name: Deploy on EC2
         run: |
-          SERVICES=""
-          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "backend" ]]; then
-            # The spec-driven worker runs the backend image, so it is recreated
-            # with it; otherwise it keeps running the previous code.
-            SERVICES="$SERVICES besser-wme-backend besser-wme-smartgen"
-          fi
-          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "frontend" ]]; then
-            SERVICES="$SERVICES besser-wme-frontend"
-          fi
-          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "agent_simulator" ]]; then
-            SERVICES="$SERVICES besser-wme-agent-simulator"
-          fi
+          SERVICES="${{ steps.svc.outputs.list }}"
 
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ env.SSH_TARGET }} << EOF
             set -e
@@ -113,10 +156,12 @@ jobs:
         run: |
           EXPECTED="${{ steps.src.outputs.sha }}"
           FAILED=0
+          # By service, not container name: docker-compose.prod.yml pins no
+          # container_name for the backend.
           for C in besser-wme-backend besser-wme-smartgen; do
             RUNNING=$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
               ${{ env.SSH_TARGET }} \
-              "docker exec $C printenv BESSER_BUILD_SHA 2>/dev/null || echo missing")
+              "docker compose exec -T $C printenv BESSER_BUILD_SHA 2>/dev/null || echo missing")
             echo "$C: running=$RUNNING expected=$EXPECTED"
             if [[ "$RUNNING" != "$EXPECTED" ]]; then
               echo "::error::$C is running '$RUNNING', not the commit just built (stale image?)."

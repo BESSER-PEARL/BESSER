@@ -3043,6 +3043,20 @@ class ToolExecutor:
         if not results:
             return {"error": "No requirements.txt or package.json found. Specify a custom install command."}
 
+        # The status classifier reads only the top level, so a failed install
+        # must surface here or the whole call is recorded as a success.
+        failed = [
+            r for r in results
+            if r["result"].get("error") is not None or r["result"].get("success") is False
+        ]
+        if failed:
+            details = []
+            for r in failed:
+                res = r["result"]
+                tail = "\n".join(str(res.get("stderr") or res.get("error") or "").strip().splitlines()[-6:])
+                details.append(f"{r['type']} install failed (exit code {res.get('exit_code')}):\n{tail}")
+            return {"installs": results, "success": False, "error": "\n\n".join(details)}
+
         return {"installs": results}
 
     # ------------------------------------------------------------------

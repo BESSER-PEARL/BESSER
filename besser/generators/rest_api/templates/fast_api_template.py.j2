@@ -23,9 +23,9 @@ app = FastAPI()
 ############################################
 
 {% set ns = namespace(end_name_one=[], end_name_multiple=[], manytomany_associations=[]) %}
-{% for association in class.associations %}
+{% for association in class.associations | sort(attribute='name') %}
     {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
-        {% set ends_list = association.ends | list %}
+        {% set ends_list = association.ends | sort(attribute='name') | list %}
         {% set is_self_assoc = (ends_list[0].type.name == ends_list[1].type.name) %}
         {% if is_self_assoc %}
             {% for i in range(2) %}

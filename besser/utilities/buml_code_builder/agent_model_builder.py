@@ -531,13 +531,17 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                         function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', condition_code)
                         callable_name = function_match.group(1) if function_match else None
 
-                    if not callable_name:
-                        callable_name = f"{condition_var(condition_name)}_callable"
-
-                    f.write(
-                        f"{condition_var(condition_name)} = "
-                        f"Condition('{callable_name}', callable={callable_name})\n\n"
-                    )
+                    if callable_name:
+                        f.write(
+                            f"{condition_var(condition_name)} = "
+                            f"Condition('{callable_name}', callable={callable_name})\n\n"
+                        )
+                    else:
+                        # No code: nothing to reference, so emit a code-less Condition.
+                        f.write(
+                            f"{condition_var(condition_name)} = "
+                            f"Condition('{_escape_python_string(condition_name)}')\n\n"
+                        )
                     written_custom_conditions.add(condition_name)
                     has_custom_conditions = True
 

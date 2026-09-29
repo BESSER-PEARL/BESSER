@@ -1233,6 +1233,36 @@ def test_class_rename_does_not_duplicate_end_names_on_opposite_class():
     assert len(names) == len(set(names))
 
 
+def test_class_rename_does_not_duplicate_end_names_on_a_subclass():
+    """Renaming ``Truck`` -> ``Vehicle`` would turn ``trucks`` into ``vehicles``,
+    which ``Driver`` (a ``Person`` subclass, so it inherits the end) already has."""
+    person, driver = Class(name="Person"), Class(name="Driver")
+    truck, car = Class(name="Truck"), Class(name="Car")
+    Generalization(general=person, specific=driver)
+    trucks_end = Property(name="trucks", type=truck, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="owns", ends={Property(name="owner", type=person), trucks_end})
+    BinaryAssociation(name="drives", ends={
+        Property(name="driver", type=driver),
+        Property(name="vehicles", type=car, multiplicity=Multiplicity(0, "*"))})
+
+    truck.name = "Vehicle"
+
+    assert trucks_end.name == "trucks"
+    names = [e.name for e in driver.all_association_ends()]
+    assert len(names) == len(set(names))
+
+
+def test_class_rename_matches_irregular_plural_roles():
+    owner, quiz = Class(name="Owner"), Class(name="Quiz")
+    end = Property(name="quizzes", type=quiz, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="owner_quiz", ends={
+        Property(name="owner", type=owner, multiplicity=Multiplicity(1, 1)), end})
+
+    quiz.name = "Test"
+
+    assert end.name == "tests"
+
+
 def test_validate_reports_duplicate_end_names_on_a_class():
     order = Class(name="Order")
     customer = Class(name="Customer")
@@ -1255,6 +1285,7 @@ def test_validate_reports_duplicate_end_names_on_a_class():
 @pytest.mark.parametrize("new_name, expected", [
     ("Box", "boxes"), ("Address", "addresses"), ("Status", "statuses"),
     ("Church", "churches"), ("City", "cities"), ("Key", "keys"), ("Settings", "settings"),
+    ("Quiz", "quizzes"), ("Analysis", "analyses"), ("Buzz", "buzzes"),
 ])
 def test_class_rename_uses_english_plurals(new_name, expected):
     owner = Class(name="Owner")

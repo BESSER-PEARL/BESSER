@@ -126,6 +126,7 @@ class PydanticGenerator(GeneratorInterface):
                 assoc_by_association=assoc_by_association,
                 assoc_link_meta=assoc_link_meta,
                 assoc_end_fields=assoc_end_fields,
+                sort_by_timestamp=sort_by_timestamp,
             )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

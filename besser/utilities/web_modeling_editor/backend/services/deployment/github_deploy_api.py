@@ -37,6 +37,7 @@ from besser.utilities.buml_code_builder import (
 )
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.utilities.buml_code_builder.common import safe_var_name
+from besser.utilities.provenance import write_generation_provenance
 from besser.utilities.web_modeling_editor.backend.routers.generation_router import (
     sanitize_config,
 )
@@ -324,6 +325,7 @@ async def deploy_webapp_to_github(
                 except Exception:
                     logger.warning("Failed to export diagram JSON — continuing without it", exc_info=True)
 
+                write_generation_provenance(temp_dir, "agent")
                 readme_path = os.path.join(temp_dir, "README.md")
                 with open(readme_path, "w", encoding="utf-8") as f:
                     f.write(github.generate_readme_content(
@@ -520,6 +522,7 @@ async def deploy_webapp_to_github(
                 logger.warning("Failed to export diagram JSON — continuing without it", exc_info=True)
 
             # Add README before push so everything lands in one commit
+            write_generation_provenance(temp_dir, "web_app")
             readme_path = os.path.join(temp_dir, "README.md")
             with open(readme_path, "w", encoding="utf-8") as f:
                 f.write(github.generate_readme_content(

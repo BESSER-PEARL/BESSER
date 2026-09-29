@@ -19,7 +19,7 @@ from besser.BUML.metamodel.state_machine.agent import (
     GUIReplyAction, GUIEvent, ReceiveMessageEvent,
 )
 from besser.BUML.metamodel.state_machine.state_machine import Action, Body, CustomCodeAction, Event
-from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, safe_var_name
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, buml_header, safe_var_name
 from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
 
 # Prefix of the module-level functions that build the agent GUIs in the generated code.
@@ -277,6 +277,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
     intent_var_names = {intent.name: safe_var_name(intent.name) for intent in model.intents}
 
     with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(buml_header())
         # Write imports
         f.write("###############\n")
         f.write("# AGENT MODEL #\n")

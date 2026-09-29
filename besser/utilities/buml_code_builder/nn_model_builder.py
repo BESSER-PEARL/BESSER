@@ -13,7 +13,7 @@ from besser.BUML.metamodel.nn import (
     DropoutLayer, LayerNormLayer, BatchNormLayer,
     Dataset,
 )
-from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, safe_var_name
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, buml_header, safe_var_name
 from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
 
 # Attributes the metamodel normalizes on assignment, so the value actually
@@ -214,6 +214,7 @@ def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None, titl
         else:
             header_line = "# NN MODEL #"
         border = "#" * len(header_line)
+        f.write(buml_header())
         f.write(f"{border}\n")
         f.write(f"{header_line}\n")
         f.write(f"{border}\n")

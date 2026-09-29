@@ -80,7 +80,7 @@ def test_scrub_skipped_files_never_reach_the_zip(tmp_path):
 
     with zipfile.ZipFile(entry.file_path) as archive:
         names = set(archive.namelist())
-        assert names == {"main.py", "README.md"}
+        assert names == {"main.py", "README.md", "BESSER_GENERATION.md"}
         assert all(TOKEN not in archive.read(n).decode() for n in names)
 
 

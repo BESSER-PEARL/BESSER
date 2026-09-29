@@ -54,6 +54,11 @@ from besser.spec_driven_agent.providers.llm_client import (
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
+from besser.utilities.provenance import (
+    PROVENANCE_FILENAME,
+    get_besser_version,
+    write_generation_provenance,
+)
 from besser.spec_driven_agent.validation.issues import (
     is_completion_issue,
     required_check_unverified,
@@ -213,6 +218,15 @@ _SKIPPED_CHECK_RE = re.compile(
 # was built and is defective, which is a different question.
 _UNENFORCED_PREFIXES = ("action contract:", "model contract:")
 _UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
+
+
+def _user_facing_cost(usage: Any, cost_usd: float) -> float:
+    """The cost shown to the user: 0 when the run is not billed to them.
+
+    The keyless tier's estimate is real spend on org credits and still drives
+    the cost cap, but the user pays nothing, so the card's "No cost" is right.
+    """
+    return round(cost_usd, 4) if getattr(usage, "billed_to_user", True) else 0.0
 
 
 def _clip(text: Any, limit: int) -> str:
@@ -952,6 +966,10 @@ def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
     except OSError:
         logger.debug("Failed to strip seed snapshot at %s", snapshot, exc_info=True)
 
+    # The old provenance file is not user code; packaging writes a fresh one.
+    with contextlib.suppress(OSError):
+        os.remove(os.path.join(dest_dir, PROVENANCE_FILENAME))
+
 
 # ---------------------------------------------------------------------
 # Runner
@@ -1646,7 +1664,7 @@ class SmartGenerationRunner:
                     cost_usd = 0.0
                 try:
                     queue.put_nowait(CostEvent(
-                        usd=round(cost_usd, 4),
+                        usd=_user_facing_cost(client.usage, cost_usd),
                         turns=getattr(orchestrator, "total_turns", 0),
                         elapsedSeconds=round(elapsed, 2),
                         servedModel=getattr(client.usage, "served_model", None),
@@ -1946,7 +1964,7 @@ class SmartGenerationRunner:
             # exact end-of-run usage, not the last periodic tick.
             yield self._sse(
                 CostEvent(
-                    usd=round(final_cost, 4),
+                    usd=_user_facing_cost(client.usage, final_cost),
                     turns=getattr(orchestrator, "total_turns", 0),
                     elapsedSeconds=round(elapsed, 2),
                     servedModel=getattr(client.usage, "served_model", None),
@@ -1971,18 +1989,26 @@ class SmartGenerationRunner:
             # block tells the user "Output may be incomplete".
             _cap_breach: Optional[str] = None
             if final_cost > effective_cost_cap:
-                _cap_breach = (
-                    f"The run reached its cost cap (${final_cost:.4f} > "
-                    f"${effective_cost_cap}) and was stopped before it finished."
-                )
-                yield self._sse(ErrorEvent(
-                    code="COST_CAP",
-                    message=(
+                if getattr(client.usage, "billed_to_user", True):
+                    _cap_breach = (
+                        f"The run reached its cost cap (${final_cost:.4f} > "
+                        f"${effective_cost_cap}) and was stopped before it finished."
+                    )
+                    cap_message = (
                         f"Cost cap reached (${final_cost:.4f} > "
                         f"${effective_cost_cap}). "
                         "Output may be incomplete."
-                    ),
-                ))
+                    )
+                else:
+                    _cap_breach = (
+                        "The run reached the free tier's per-run usage limit "
+                        "and was stopped before it finished."
+                    )
+                    cap_message = (
+                        "Free tier per-run usage limit reached. "
+                        "Output may be incomplete."
+                    )
+                yield self._sse(ErrorEvent(code="COST_CAP", message=cap_message))
             if elapsed > effective_runtime_cap:
                 _cap_breach = (
                     f"The run reached its {effective_runtime_cap}s time cap "
@@ -2245,6 +2271,7 @@ class SmartGenerationRunner:
                 why="the run's verification report could not be built",
             )])
         recipe["verification"] = verification.model_dump(mode="json")
+        recipe["besser_version"] = get_besser_version()
         recipe_path = os.path.join(result_path, ".besser_recipe.json")
         if os.path.isfile(recipe_path):
             try:
@@ -2252,6 +2279,13 @@ class SmartGenerationRunner:
                     json.dump(recipe, handle, indent=2)
             except OSError:
                 logger.debug("Could not persist secret finding count", exc_info=True)
+
+        # Rides in the zip and the GitHub push, but is not counted as a user
+        # file, so a single-file run still downloads as that one file.
+        provenance_path = write_generation_provenance(result_path, "spec_driven_agent", {
+            "base_generator": recipe.get("generator_used"),
+            "llm_model": recipe.get("llm_model"),
+        })
 
         # Collect every user file. Skips internal artefacts
         # (.besser_recipe.json etc.) AND build-output directories —
@@ -2267,7 +2301,7 @@ class SmartGenerationRunner:
                 if name.startswith(".besser_") or _is_excluded_output_file(name):
                     continue
                 path = os.path.join(root, name)
-                if is_plain_entry(path):
+                if path != provenance_path and is_plain_entry(path):
                     user_files.append(path)
 
         if not user_files:
@@ -2294,6 +2328,7 @@ class SmartGenerationRunner:
                 for path in user_files:
                     arcname = os.path.relpath(path, result_path)
                     zf.write(path, arcname)
+                zf.write(provenance_path, PROVENANCE_FILENAME)
             entry = SmartRunEntry(
                 file_path=zip_path,
                 file_name=zip_name,

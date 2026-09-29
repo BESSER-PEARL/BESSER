@@ -20,6 +20,7 @@ from besser.BUML.metamodel.bpmn import (
     SubProcess,
     Task,
 )
+from besser.utilities.buml_code_builder.common import buml_header
 from besser.utilities.buml_code_builder.bpmn_model_builder import (
     _NameDispenser,
     bpmn_model_to_code,
@@ -170,7 +171,8 @@ class TestLayoutPassthrough:
 class TestBannerAndImports:
     def test_banner_present_at_top(self):
         source = bpmn_model_to_code(_poolless_model())
-        assert source.startswith("####################\n#    BPMN MODEL    #\n####################\n")
+        # Below the one-line version header every B-UML file starts with.
+        assert source.startswith(buml_header() + "####################\n#    BPMN MODEL    #\n####################\n")
 
     def test_only_used_classes_imported(self):
         # Pool-less model uses no Gateway / Collaboration / DataStore; their import

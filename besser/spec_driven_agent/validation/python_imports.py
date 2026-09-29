@@ -4,8 +4,8 @@ Three checks that need no model and no LLM: an import of a local module that
 does not exist (``missing module:``), a name used behind ``import *`` that
 nothing provides (``undefined name:``), and an ORM module that fails to
 import or to configure its mappers when actually run (``mapper config:``).
-The last one is the only check here that executes anything, in a subprocess
-with an allowlisted environment.
+The last one is the only check here that executes anything, in a sandboxed
+subprocess with no network and an allowlisted environment.
 
 The allowlist tables decide which import roots count as satisfied: the stdlib
 half is taken from the interpreter rather than hand-maintained, and the
@@ -305,6 +305,8 @@ def _import_smoke_issues(output_dir: str) -> list[str]:
     configure; ``_check_did_not_run`` notes when the check itself could not."""
     import subprocess
 
+    from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
+
     issues: list[str] = []
     for path in _python_files(output_dir):
         if os.path.basename(path) != "sql_alchemy.py":
@@ -320,12 +322,15 @@ def _import_smoke_issues(output_dir: str) -> list[str]:
             "configure_mappers()\n"
         )
         try:
-            result = subprocess.run(
-                [sys.executable, "-c", code],
-                capture_output=True, text=True,
-                timeout=_IMPORT_SMOKE_TIMEOUT_SECONDS,
-                cwd=folder, env=_safe_subprocess_env(),
+            result = run_confined(
+                [sys.executable, "-c", code], workspace=output_dir, cwd=folder,
+                timeout=_IMPORT_SMOKE_TIMEOUT_SECONDS, env=_safe_subprocess_env(),
             )
+        except SandboxUnavailable as exc:
+            issues.append(_check_did_not_run(
+                "the import smoke check", f"the sandbox is unavailable: {exc}",
+            ))
+            continue
         except subprocess.TimeoutExpired:
             issues.append(_check_did_not_run(
                 "the import smoke check",

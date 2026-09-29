@@ -15,9 +15,9 @@ import os
 from pathlib import Path
 import re
 from besser.spec_driven_agent.parsed_source import parse_source
+from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
 
 
-_SKIP_DIRS = {"node_modules", "__pycache__", ".git", "venv", ".venv", "dist", "build"}
 _FRONTEND_SUFFIXES = {".js", ".jsx", ".ts", ".tsx"}
 _MAX_FILE_BYTES = 1_000_000
 # Only a template literal may span lines. Without the newline bound on the
@@ -47,7 +47,7 @@ def _sources(workspace, changed_path=None, content=None):
         if candidate.is_relative_to(root):
             overlay = candidate
     for parent, dirs, files in os.walk(root):
-        dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS
+        dirs[:] = sorted(d for d in dirs if d not in WORKSPACE_SKIP_DIRS
                          and not d.startswith(".besser")
                          and not (Path(parent) / d).is_symlink())
         for filename in sorted(files):

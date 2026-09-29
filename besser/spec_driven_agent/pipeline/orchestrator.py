@@ -97,7 +97,8 @@ from besser.spec_driven_agent.planning.stack_metadata import (
     stack_label,
 )
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
-from besser.spec_driven_agent.execution.process import _safe_subprocess_env, run_bounded
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 from besser.spec_driven_agent.validation.python_imports import (
     _declared_dependency_roots as _declared_dependency_roots,
     _import_smoke_issues,
@@ -159,6 +160,7 @@ logger = logging.getLogger(__name__)
 
 
 from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
+    FRONTEND_WALK_SKIP_DIRS,
     TOOL_INPUTS_FILENAME,
     _LOG_VALUE_BUDGET,
     _WRITE_TOOLS_ON_RECORD,
@@ -1592,7 +1594,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                     f"create it or fix the Dockerfile"
                                 )
                     except Exception:
-                        pass
+                        logger.warning("Phase 1 Dockerfile check failed for %s", rel, exc_info=True)
 
         if issues:
             logger.warning("Phase 1 validation found %d issues: %s", len(issues), issues)
@@ -2934,7 +2936,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                 else:
                                     raw_issues.append(f"{rel} references requirements.txt but it doesn't exist")
                     except Exception:
-                        pass
+                        logger.warning("Dockerfile check failed for %s", rel, exc_info=True)
 
         # Auto-fix known critical incompatibility: passlib + bcrypt>=4.1
         # This is a belt-and-suspenders fix — the pip dry-run below should
@@ -2959,12 +2961,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                     f.write(new_content)
                                 logger.info("Auto-fixed: %s: pinned bcrypt==4.0.1 (passlib compat)", rel)
                     except Exception:
-                        pass
+                        logger.warning("bcrypt pin check failed for %s", rel, exc_info=True)
 
         # Dependency resolution may execute untrusted build backends and
         # access the network. Keep it behind the same explicit shell-tools
-        # trust gate as run_command/install_dependencies; hosted mode has
-        # this disabled by default and therefore never invokes pip.
+        # trust gate as run_command/install_dependencies, and in the same
+        # sandbox: network on (pip must reach the index), everything else
+        # confined like run_command.
         if self.allow_shell_tools:
             for root, _, files in os.walk(self.output_dir):
                 for fname in files:
@@ -2976,9 +2979,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         try:
                             # Dry-run install to check for conflicts
                             req_dir = os.path.dirname(req_path)
-                            result = run_bounded(
+                            result = run_confined(
                                 [sys.executable, "-m", "pip", "install",
                                  "--dry-run", "-r", "requirements.txt", "--quiet"],
+                                workspace=self.output_dir, network=True,
                                 timeout=30,
                                 cwd=req_dir,
                                 # Never expose provider keys / OAuth secrets to a
@@ -2990,6 +2994,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                 issue = dependency_check_issue(rel, result.stderr)
                                 if issue:
                                     raw_issues.append(issue)
+                        except SandboxUnavailable as exc:
+                            raw_issues.append(_check_did_not_run(
+                                f"the dependency check for {rel}",
+                                f"the sandbox is unavailable: {exc}"))
                         except Exception:
                             pass  # pip not available or timeout — skip
 
@@ -3136,15 +3144,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     os.path.join(folder, "node_modules")):
                 continue
             try:
-                # Tree-killing: npm leaves node children holding its output,
-                # which made subprocess.run's timeout hang on Windows.
-                run_bounded(
+                # Sandboxed like run_command: npm runs the packages' install
+                # scripts, and a continued repo supplies its own package.json.
+                run_confined(
                     [npm, "install", "--no-audit", "--no-fund"], cwd=folder,
+                    workspace=self.output_dir, network=True,
                     env=_safe_subprocess_env(),
                     timeout=_SCAFFOLD_INSTALL_TIMEOUT_SECONDS,
                 )
                 logger.info("Phase 1: installed frontend dependencies in %s",
                             os.path.relpath(folder, self.output_dir))
+            except SandboxUnavailable as exc:
+                logger.warning("Phase 1: dependency install skipped for %s, "
+                               "sandbox unavailable: %s", folder, exc)
             except (subprocess.TimeoutExpired, OSError) as exc:
                 logger.info("Phase 1: dependency install skipped for %s (%s)",
                             folder, exc)
@@ -3163,7 +3175,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return []
         offenders: list[str] = []
         for root, dirs, files in os.walk(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in ("node_modules", "dist", "build")]
+            dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
             for fname in files:
                 if not fname.endswith(".py"):
                     continue
@@ -3202,7 +3214,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _has_frontend_files(self) -> bool:
         for root, dirs, files in os.walk(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in ("node_modules", "dist", "build")]
+            dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
             rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
             if rel_root.startswith(_SNAPSHOT_DIR):
                 continue
@@ -3342,7 +3354,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if not _re.search(r"\b(web ?app|frontend|front-end|website|\bui\b|user interface)\b", low):
             return []
         for root, dirs, files in os.walk(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in ("node_modules", "dist", "build")]
+            dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
             rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
             if rel_root.startswith(_SNAPSHOT_DIR):
                 continue
@@ -3389,7 +3401,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         issues: list[str] = []
         exts = (".py", ".js", ".jsx", ".ts", ".tsx")
         for root, dirs, files in os.walk(self.output_dir):
-            dirs[:] = [d for d in dirs if d not in ("node_modules", "dist", "build")]
+            dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
             for fname in files:
                 if not fname.endswith(exts):
                     continue

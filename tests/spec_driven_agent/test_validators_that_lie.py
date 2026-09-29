@@ -144,7 +144,6 @@ def test_collector_demotes_only_when_deps_are_absent(
     """End to end through ``_collect_tsc_issues``: the same tsc output is a
     blocker on an installed tree and advisory on an uninstalled one."""
     import shutil
-    import subprocess
     orch.enable_toolchain_validation = True
 
     project = tmp_path / "frontend"
@@ -162,7 +161,8 @@ def test_collector_demotes_only_when_deps_are_absent(
         stdout = "\n".join(UNINSTALLED_TREE_OUTPUT)
         stderr = ""
 
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _Result())
+    from besser.spec_driven_agent.execution import sandbox as sandbox_mod
+    monkeypatch.setattr(sandbox_mod, "run_confined", lambda *a, **k: _Result())
 
     issues = orch._collect_tsc_issues()
     severities = [_classify_issue(i).severity for i in issues]

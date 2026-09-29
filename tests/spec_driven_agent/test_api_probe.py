@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from besser.spec_driven_agent.execution import sandbox as sandbox_mod
 from besser.spec_driven_agent.validation import api_probe
 
 pytest.importorskip("fastapi")
@@ -84,7 +85,7 @@ def test_real_sequence_references_and_failed_business_assertion_are_not_false_su
 
 
 def test_invalid_requests_and_external_paths_never_launch_a_child(tmp_path, monkeypatch):
-    monkeypatch.setattr(api_probe.subprocess, "run", lambda *a, **k: pytest.fail("invalid input launched a child"))
+    monkeypatch.setattr(sandbox_mod, "run_confined", lambda *a, **k: pytest.fail("invalid input launched a child"))
     invalid = [[], [{"method": "GET", "path": "/"}] * 21,
                [{"method": "GET", "path": "https://example.com/"}],
                [{"method": "GET", "path": "//example.com/"}],
@@ -143,7 +144,7 @@ def test_backend_selection_and_timeout_are_explicit_errors(tmp_path, monkeypatch
         assert kwargs["env"].get("OPENAI_API_KEY") is None
         raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
 
-    monkeypatch.setattr(api_probe.subprocess, "run", timeout)
+    monkeypatch.setattr(sandbox_mod, "run_confined", timeout)
     report = api_probe.probe_api_scenario(str(tmp_path), scenario, backend="web_app/backend")
     assert report["status"] == "error" and report["boot"] == "timeout", report
     assert source_hashes(tmp_path) == before

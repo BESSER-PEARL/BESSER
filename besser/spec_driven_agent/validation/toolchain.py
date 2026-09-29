@@ -19,10 +19,9 @@ from __future__ import annotations
 import logging
 import os
 import re as _re
-import tempfile
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
-from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env, run_bounded
 from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,
     _check_did_not_run,
@@ -280,9 +279,12 @@ def _collect_tsc_issues(
     Looks for ``tsconfig.json`` files (skipping the snapshot dir) and
     runs ``tsc --noEmit`` against each project root. A disabled or missing
     compiler is unverified, not a source defect for automatic repair.
+    Sandboxed: a project-local tsc is package-authored code.
     """
     import shutil as _shutil
     import subprocess
+
+    from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 
     tsconfigs: list[str] = []
     workspace = os.path.realpath(output_dir)
@@ -346,12 +348,15 @@ def _collect_tsc_issues(
             issues.append(required_check_unverified(f"tsc [{rel}]", "dependencies are not installed; only partial source checks are possible"))
         project_arg, cleanup = _tsc_project_arg(project_dir, deps_installed)
         try:
-            result = subprocess.run(
+            result = run_confined(
                 [tsc_bin, "--noEmit", "-p", project_arg],
-                capture_output=True, text=True, timeout=60,
-                cwd=project_dir,
+                workspace=output_dir, cwd=project_dir, timeout=60,
                 env=_safe_subprocess_env(),
             )
+        except SandboxUnavailable as exc:
+            issues.append(required_check_unverified(
+                f"tsc [{rel}]", f"the sandbox is unavailable: {exc}"))
+            continue
         except subprocess.TimeoutExpired:
             issues.append(required_check_unverified(f"tsc [{rel}]", "timed out after 60s"))
             continue
@@ -550,6 +555,13 @@ def _demote_tsc_without_deps(
     return real
 
 
+# cargo's wording when a dependency cannot be downloaded or resolved offline.
+_CARGO_FETCH_FAILED_RE = _re.compile(
+    r"failed to (?:get `|download|load source for dependency|query replaced source)"
+    r"|[Cc]ould(?: not|n't) resolve host|--offline"
+)
+
+
 def _collect_cargo_issues(output_dir: str) -> list[str]:
     """Run ``cargo check`` for any Rust crate in the workspace.
 
@@ -564,9 +576,17 @@ def _collect_cargo_issues(output_dir: str) -> list[str]:
     runs the front-end and type-checker without producing artifacts,
     which is what the per-project compile-pass criterion actually
     cares about and is ~3-5× faster.
+
+    Sandboxed with no network: build.rs and proc-macros are generated code.
+    Dependencies therefore resolve only if this run already fetched them
+    (``run_command`` shares the run's sandbox ``$HOME``).
     """
     import shutil as _shutil
     import subprocess
+
+    from besser.spec_driven_agent.execution.sandbox import (
+        SandboxUnavailable, run_confined, sandbox_home,
+    )
 
     cargo_bin = _shutil.which("cargo") or _shutil.which("cargo.exe")
     if not cargo_bin:
@@ -590,32 +610,34 @@ def _collect_cargo_issues(output_dir: str) -> list[str]:
 
     # Redirect cargo's build cache OUT of the user workspace: without
     # this, ``target/`` (thousands of files for a typical axum crate)
-    # lands inside the output dir — bloating the download zip — and
-    # every check cold-compiles all dependency crates from scratch.
-    # A shared per-host cache dir makes repeat checks incremental.
+    # lands inside the output dir — bloating the download zip. Per run, not
+    # per host: a cache shared across runs lets one run's build outputs
+    # feed another's. Repeat checks within the run stay incremental.
     # Strip secrets from the env handed to cargo (it can execute build.rs /
-    # proc-macros from generated crates). Keeps PATH/HOME so cargo still
-    # resolves its toolchain + ~/.cargo.
+    # proc-macros from generated crates).
     cargo_env = {**_safe_subprocess_env()}
     cargo_env.setdefault(
         "CARGO_TARGET_DIR",
-        os.path.join(tempfile.gettempdir(), "besser_cargo_cache"),
+        os.path.join(sandbox_home(output_dir), "cargo-target"),
     )
 
     issues: list[str] = []
     for crate_dir in crates:
         rel = os.path.relpath(crate_dir, output_dir).replace("\\", "/") or "."
         try:
-            result = subprocess.run(
+            result = run_confined(
                 [
                     cargo_bin, "check",
                     "--message-format=short",
                     "--quiet",
                 ],
-                capture_output=True, text=True, timeout=180,
-                cwd=crate_dir,
+                workspace=output_dir, cwd=crate_dir, timeout=180,
                 env=cargo_env,
             )
+        except SandboxUnavailable as exc:
+            issues.append(_check_did_not_run(
+                f"cargo [{rel}]", f"the sandbox is unavailable: {exc}"))
+            continue
         except subprocess.TimeoutExpired:
             issues.append(_check_did_not_run(f"cargo [{rel}]", "timed out after 180s"))
             continue
@@ -635,6 +657,12 @@ def _collect_cargo_issues(output_dir: str) -> list[str]:
             if s.startswith("error") or ": error" in s:
                 err_lines.append(s)
         if not err_lines and result.returncode == 0:
+            continue
+        if result.returncode != 0 and _CARGO_FETCH_FAILED_RE.search(result.stderr or ""):
+            # No network in the sandbox: an unfetched dependency is not a
+            # compile error in the generated code.
+            issues.append(_check_did_not_run(
+                f"cargo [{rel}]", "its dependencies could not be fetched"))
             continue
         if not err_lines:
             # Non-zero exit with no parseable error lines (rare —
@@ -735,11 +763,9 @@ def _collect_kotlinc_issues(output_dir: str) -> list[str]:
             continue
 
         try:
-            result = subprocess.run(
+            result = run_bounded(
                 [kotlinc_bin, "-nowarn", "-d", os.devnull, *kt_files],
-                capture_output=True, text=True, timeout=180,
-                cwd=output_dir,
-                env=_safe_subprocess_env(),
+                timeout=180, cwd=output_dir, env=_safe_subprocess_env(),
             )
         except subprocess.TimeoutExpired:
             # A timed-out module must not read as "compiled clean".

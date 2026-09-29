@@ -43,6 +43,7 @@ from besser.spec_driven_agent.execution.process import (
 )
 from besser.spec_driven_agent.execution.sandbox import (
     SandboxUnavailable,
+    run_confined,
     sandboxed_command,
 )
 from besser.spec_driven_agent.agent.edit_apply import (
@@ -58,6 +59,7 @@ from besser.spec_driven_agent.agent.edit_apply import (
     stray_gutter_line,
     _strip_line_numbers,
 )
+from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
 from besser.spec_driven_agent.validation import frontend_source
 
 logger = logging.getLogger(__name__)
@@ -332,7 +334,8 @@ _STRUCTURAL_MODULES = ("sql_alchemy.py", "pydantic_classes.py")
 _IMPORT_SMOKE_TIMEOUT = 20
 
 
-def _breaks_module_import(path: str, before: str, after: str) -> str | None:
+def _breaks_module_import(path: str, before: str, after: str,
+                          workspace: str | None = None) -> str | None:
     """``reason`` when ``after`` makes a structural module unimportable.
 
     The same contract as ``_new_syntax_error``, one level up: an edit that
@@ -340,9 +343,9 @@ def _breaks_module_import(path: str, before: str, after: str) -> str | None:
     definition, a relationship naming a property that no longer exists) is
     refused rather than written. Only judged when the module imported BEFORE
     the edit, so a file that was already broken can still be repaired.
+    The probe runs sandboxed with no network; when it cannot be confined it
+    is skipped and the edit is allowed.
     """
-    import subprocess
-
     name = os.path.basename(path)
     if name not in _STRUCTURAL_MODULES:
         return None
@@ -360,12 +363,15 @@ def _breaks_module_import(path: str, before: str, after: str) -> str | None:
                 original = handle.read()
             with open(path, "w", encoding="utf-8", newline="\n") as handle:
                 handle.write(source)
-            result = subprocess.run(
-                [sys.executable, "-c", probe], cwd=folder, capture_output=True,
-                text=True, timeout=_IMPORT_SMOKE_TIMEOUT, env=_safe_subprocess_env(),
+            result = run_confined(
+                [sys.executable, "-c", probe], workspace=workspace or folder,
+                cwd=folder, timeout=_IMPORT_SMOKE_TIMEOUT, env=_safe_subprocess_env(),
             )
             return result.returncode == 0, (result.stderr or "").strip().splitlines()[-1:] and \
                 (result.stderr or "").strip().splitlines()[-1] or ""
+        except SandboxUnavailable as exc:
+            logger.warning("write-time import check skipped, sandbox unavailable: %s", exc)
+            return True, ""
         except Exception:
             # The probe itself failed; never turn that into a refusal.
             return True, ""
@@ -2093,7 +2099,7 @@ class ToolExecutor:
                     "rejection_kind": "syntax_error", "syntax_line": line,
                     "would_write": "PROPOSED ONLY - NOT APPLIED:\n" + _changed_region(before, after),
                     "current_source": "CURRENT ON-DISK CONTENT:\n" + _changed_region(after, before)}
-        unimportable = _breaks_module_import(path, before, after)
+        unimportable = _breaks_module_import(path, before, after, self.workspace)
         if unimportable:
             return {"error": f"Refused: this edit leaves {args['path']} parseable but no longer "
                              f"importable ({unimportable}). Every router star-imports it, so this "
@@ -2123,10 +2129,9 @@ class ToolExecutor:
             "advice": "Use list_files or read one of the existing paths below; no path was substituted.",
         }
         candidates: list[tuple[float, str]] = []
-        ignored = {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build"}
         inspected = 0
         for root, dirs, names in os.walk(self.workspace):
-            dirs[:] = sorted(d for d in dirs if d not in ignored and not d.startswith("."))
+            dirs[:] = sorted(d for d in dirs if d not in WORKSPACE_SKIP_DIRS and not d.startswith("."))
             for name in sorted(names):
                 if name.startswith("."):
                     continue
@@ -2684,7 +2689,7 @@ class ToolExecutor:
                 + _changed_region(new_content, content),
             }
 
-        unimportable = _breaks_module_import(path, content, new_content)
+        unimportable = _breaks_module_import(path, content, new_content, self.workspace)
         if unimportable:
             self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
             self._note_rejection(rel_path, old_text, new_text)

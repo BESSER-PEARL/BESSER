@@ -23,7 +23,9 @@ docker-default AppArmor profile carries ``deny mount``). Neither grants a
 capability. See ``docker-compose.prod.yml``.
 
 Fail closed: when the sandbox is mandatory and cannot start, ``run_command``
-refuses. It never falls back to an unconfined shell.
+refuses. It never falls back to an unconfined shell. Phase 3 validators that
+execute generated code go through :func:`run_confined` under the same policy,
+with the network unshared: a check that cannot be confined is skipped.
 """
 
 import logging
@@ -32,6 +34,8 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+
+from besser.spec_driven_agent.execution.process import run_bounded
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +56,10 @@ _TMPFS_PATHS = ("/tmp", "/run", "/var/tmp", "/dev/shm")
 # Top-level entries the mount plan never binds from the outside.
 _VIRTUAL_TOPLEVEL = frozenset({"/proc", "/dev", "/tmp", "/run"})
 
-# Bound read-write because the toolchain has to write there: pip installs into
-# /usr/local, and $HOME holds the npm / pip caches and the rustup toolchain
-# that PATH points at (/root/.cargo/bin). Everything else is read-only.
-_WRITABLE_PATHS = ("/usr/local", "/root")
+# Every user's run telemetry. It lives under /app, which is otherwise bound
+# read-only, so an empty tmpfs is mounted over it. Same default as telemetry.py.
+_TELEMETRY_DIR_ENV = "BESSER_TELEMETRY_DIR"
+_TELEMETRY_DIR_DEFAULT = "/app/telemetry"
 
 _SANDBOX_TIMEOUT = 30
 
@@ -131,19 +135,34 @@ def _top_level(path: str) -> str:
     return "/" + parts[0]
 
 
-def _mount_args(workspace: str) -> list[str]:
+def sandbox_home(workspace: str) -> str:
+    """The run's own writable ``$HOME``, beside its workspace.
+
+    /usr/local and /root stay read-only: shared between runs, a ``pip
+    install`` in one run would land in every later run and in the worker
+    itself. pip falls back to a user install under this ``$HOME``, and the
+    npm / cargo caches follow it. Outside the workspace so it is never
+    packaged, pushed or snapshotted; the ``besser_llm_`` prefix it inherits
+    puts it under the run-root cleanup.
+    """
+    return workspace.rstrip("/\\") + ".sandbox-home"
+
+
+def _mount_args(workspace: str, writable: "list[str] | None" = None) -> list[str]:
     """Bind the container filesystem minus this run's siblings.
 
-    Everything the toolchain needs stays visible — a compile check, ``pip
-    show`` and the app's own test suite must keep working — but the top-level
-    directory the run workspaces live under is left out entirely and replaced
-    by a bind of this one run's directory.
+    Everything the toolchain needs stays visible, read-only — a compile check,
+    ``pip show`` and the app's own test suite must keep working — but the
+    top-level directory the run workspaces live under is left out entirely.
+    ``writable`` (default: the workspace) is bound back read-write, plus the
+    run's :func:`sandbox_home`.
     """
-    hidden = _top_level(workspace)
+    writable = [workspace] if writable is None else list(writable)
+    hidden = {_top_level(path) for path in (workspace, *writable)}
     args: list[str] = []
     for entry in sorted(os.listdir("/")):
         path = "/" + entry
-        if path in _VIRTUAL_TOPLEVEL or path == hidden:
+        if path in _VIRTUAL_TOPLEVEL or path in hidden:
             continue
         if os.path.islink(path):
             # Debian's merged /usr: /bin, /lib, /lib64 are symlinks into /usr.
@@ -153,21 +172,28 @@ def _mount_args(workspace: str) -> list[str]:
     args += ["--proc", "/proc", "--dev", "/dev"]
     for path in _TMPFS_PATHS:
         args += ["--tmpfs", path]
-    # $HOME as well as /root: the image runs as root, but a library caller on
-    # Linux has its caches and often its venv somewhere else, and a read-only
-    # home turns `pip install` into a permission error.
-    home = os.environ.get("HOME") or ""
-    for path in dict.fromkeys([*_WRITABLE_PATHS, home]):
-        # A writable bind under the hidden top level would put the siblings
-        # back in view — that is the hole this exists to close.
-        if path and os.path.isdir(path) and not _within(path, hidden):
-            args += ["--bind", path, path]
-    args += ["--bind", workspace, workspace]
+    telemetry = os.path.realpath(
+        os.environ.get(_TELEMETRY_DIR_ENV) or _TELEMETRY_DIR_DEFAULT)
+    if os.path.isdir(telemetry) and not any(_within(telemetry, h) for h in hidden):
+        args += ["--tmpfs", telemetry]
+    home = sandbox_home(workspace)
+    args += ["--bind", home, home, "--setenv", "HOME", home]
+    # rustup finds its toolchains under $HOME/.rustup; keep the image's
+    # (read-only) now that $HOME moved.
+    rustup = os.environ.get("RUSTUP_HOME") or os.path.join(
+        os.path.expanduser("~"), ".rustup")
+    if os.path.isdir(rustup) and not any(_within(rustup, h) for h in hidden):
+        args += ["--setenv", "RUSTUP_HOME", rustup]
+    for path in writable:
+        args += ["--bind", path, path]
     return args
 
 
-def _isolation_args() -> list[str]:
+def _isolation_args(network: bool = True) -> list[str]:
     return [
+        # Validators get no network: generated code must not reach the
+        # worker's neighbours or the internet while it is being checked.
+        *([] if network else ["--unshare-net"]),
         # A user namespace is what buys the rest without any capability.
         "--unshare-user",
         # The point of the exercise: PID 1 becomes bwrap's own init, so
@@ -229,21 +255,27 @@ def sandbox_selftest_error() -> str | None:
 
 
 def sandboxed_command(
-    command: str, *, workspace: str, cwd: str,
+    command: "str | list[str]", *, workspace: str, cwd: str,
+    network: bool = True, writable: "list[str] | None" = None,
 ) -> SandboxedCommand:
     """Wrap one model-authored command for execution.
+
+    ``command`` is a shell string, or an argv run without a shell.
+    ``writable`` replaces the workspace as the read-write bind (a probe's
+    scratch copy); the workspace's top level stays hidden either way.
 
     Raises :class:`SandboxUnavailable` when a sandbox is mandatory here and
     cannot be started — the caller must refuse the command rather than run it
     unconfined.
     """
+    use_shell = isinstance(command, str)
     if not sandbox_supported_platform():
         _warn_unconfined(f"no namespace sandbox exists on {sys.platform}")
-        return SandboxedCommand(command, True, "unconfined-platform")
+        return SandboxedCommand(command, use_shell, "unconfined-platform")
 
     if _policy() == "off":
         _warn_unconfined(f"{SANDBOX_POLICY_ENV}=off was set explicitly")
-        return SandboxedCommand(command, True, "unconfined-override")
+        return SandboxedCommand(command, use_shell, "unconfined-override")
 
     bwrap = shutil.which("bwrap")
     if not bwrap:
@@ -261,11 +293,36 @@ def sandboxed_command(
             f"{SANDBOX_POLICY_ENV}=off"
         )
 
+    os.makedirs(sandbox_home(workspace), exist_ok=True)
     argv = [
         bwrap,
-        *_isolation_args(),
-        *_mount_args(workspace),
+        *_isolation_args(network),
+        *_mount_args(workspace, writable),
         "--chdir", cwd,
-        "--", "/bin/sh", "-c", command,
+        "--", *(["/bin/sh", "-c", command] if use_shell else command),
     ]
     return SandboxedCommand(argv, False, "bwrap")
+
+
+def run_confined(
+    argv: list[str], *, workspace: str, cwd: str, timeout: float,
+    env: "dict[str, str] | None" = None, input: "str | None" = None,
+    writable: "list[str] | None" = None, network: bool = False,
+) -> subprocess.CompletedProcess:
+    """Run a validator's command over generated code: sandboxed, no network
+    unless the check cannot work without it (``network=True``).
+
+    Same policy as ``run_command``: where the sandbox is mandatory (Linux,
+    unless :data:`SANDBOX_POLICY_ENV` is ``off``) and cannot start, this raises
+    :class:`SandboxUnavailable` and the caller skips the check - it never runs
+    unconfined. On a platform with no namespaces it runs with a warning.
+    Raises ``subprocess.TimeoutExpired`` like :func:`run_bounded`.
+    """
+    plan = sandboxed_command(argv, workspace=workspace, cwd=cwd,
+                             network=network, writable=writable)
+    result = run_bounded(plan.argv, timeout=timeout, cwd=cwd, env=env,
+                         shell=plan.use_shell, input=input)
+    startup_error = plan.startup_error(result.returncode, result.stderr)
+    if startup_error:
+        raise SandboxUnavailable(startup_error)
+    return result

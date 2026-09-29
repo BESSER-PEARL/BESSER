@@ -54,7 +54,7 @@ def test_a_compile_that_never_ran_is_reported(
     monkeypatch, kotlin_module, kotlinc_on_path, exc, fragment
 ):
     """The regression: both arms used to `continue` with an empty issue list."""
-    monkeypatch.setattr(subprocess, "run", _raise(exc))
+    monkeypatch.setattr(tc, "run_bounded", _raise(exc))
 
     issues = tc._collect_kotlinc_issues(kotlin_module)
 
@@ -75,7 +75,7 @@ def test_the_report_names_the_module_that_did_not_compile(
         (src / "App.kt").write_text("fun main() {}\n")
 
     monkeypatch.setattr(
-        subprocess, "run", _raise(subprocess.TimeoutExpired("kotlinc", 180)))
+        tc, "run_bounded", _raise(subprocess.TimeoutExpired("kotlinc", 180)))
 
     issues = tc._collect_kotlinc_issues(str(tmp_path))
 
@@ -91,7 +91,7 @@ def test_it_stays_a_warning_not_a_blocker(monkeypatch, kotlin_module, kotlinc_on
     from besser.spec_driven_agent.validation.issues import _classify_issue
 
     monkeypatch.setattr(
-        subprocess, "run", _raise(subprocess.TimeoutExpired("kotlinc", 180)))
+        tc, "run_bounded", _raise(subprocess.TimeoutExpired("kotlinc", 180)))
     issue = tc._collect_kotlinc_issues(kotlin_module)[0]
 
     assert _classify_issue(issue).severity == "warning"
@@ -118,7 +118,7 @@ def test_a_successful_compile_still_reports_its_errors(
         stdout = ""
         stderr = "App.kt:1:5: error: unresolved reference: foo\n"
 
-    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: _Result())
+    monkeypatch.setattr(tc, "run_bounded", lambda *_a, **_k: _Result())
 
     issues = tc._collect_kotlinc_issues(kotlin_module)
 

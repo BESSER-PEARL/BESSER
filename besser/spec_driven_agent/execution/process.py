@@ -113,7 +113,8 @@ def _decode(handle) -> str:
 
 def run_bounded(args, *, timeout: float, cwd: str | None = None,
                 env: dict[str, str] | None = None,
-                shell: bool = False) -> subprocess.CompletedProcess:
+                shell: bool = False,
+                input: str | None = None) -> subprocess.CompletedProcess:
     """``subprocess.run(..., capture_output=True, text=True, timeout=...)``
     whose timeout holds when the command leaves a child running.
 
@@ -123,11 +124,17 @@ def run_bounded(args, *, timeout: float, cwd: str | None = None,
     the command gets its own process group, the whole tree is killed on
     timeout, and output goes to temp files, which nothing can hold "open"
     against the reader. Raises ``subprocess.TimeoutExpired`` after the kill.
+    ``input`` is fed on stdin, from a temp file for the same reason.
     """
     group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
              else {"start_new_session": True})
-    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err, \
+            tempfile.TemporaryFile() as stdin:
+        if input is not None:
+            stdin.write(input.encode(locale.getpreferredencoding(False)))
+            stdin.seek(0)
         proc = subprocess.Popen(args, cwd=cwd, env=env, shell=shell,
+                                stdin=stdin if input is not None else None,
                                 stdout=out, stderr=err, **group)
         try:
             proc.wait(timeout=timeout)

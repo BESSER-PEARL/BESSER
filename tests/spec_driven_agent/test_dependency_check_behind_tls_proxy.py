@@ -122,6 +122,7 @@ def _dependency_findings(model, tmp_path, monkeypatch, stderr):
     # Whichever launcher the collector uses.
     monkeypatch.setattr(subprocess, "run", pip)
     monkeypatch.setattr(orchestrator_module, "run_bounded", pip, raising=False)
+    monkeypatch.setattr(orchestrator_module, "run_confined", pip, raising=False)
 
     return [i for i in orch._collect_validation_issues()
             if "requirements.txt" in i.message]

@@ -18,6 +18,7 @@ from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.execution import sandbox as sandbox_mod
 from besser.spec_driven_agent.pipeline.orchestrator import (
     LLMOrchestrator, _check_did_not_run, _classify_issue,
 )
@@ -327,7 +328,7 @@ def test_tsc_failing_with_no_parseable_errors_is_reported(orch, tmp_path, monkey
         stdout = ""
         stderr = "Cannot find module 'typescript'"
 
-    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _R())
+    monkeypatch.setattr(sandbox_mod, "run_confined", lambda *a, **kw: _R())
     issues = orch._collect_tsc_issues()
     assert any("typescript" in i for i in issues)
 
@@ -340,7 +341,7 @@ def test_tsc_timeout_is_reported(orch, tmp_path, monkeypatch):
     def _timeout(*a, **kw):
         raise subprocess.TimeoutExpired(cmd="tsc", timeout=60)
 
-    monkeypatch.setattr(subprocess, "run", _timeout)
+    monkeypatch.setattr(sandbox_mod, "run_confined", _timeout)
     assert _said_it_skipped(orch._collect_tsc_issues())
 
 
@@ -361,7 +362,7 @@ def test_a_clean_tsc_run_stays_clean(orch, tmp_path, monkeypatch):
         calls.append(command)
         return _R()
 
-    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(sandbox_mod, "run_confined", run)
     findings = orch._collect_tsc_issues()
     assert len(findings) == 1 and findings[0].startswith("verification setup:")
     assert _classify_issue(findings[0]).severity == "blocker" and calls == []
@@ -410,7 +411,7 @@ def test_required_frontend_build_respects_permissions_and_current_source(orch, t
         return subprocess.CompletedProcess(command, 1 if mode["outcome"] == "fail" else 0, "build result", "")
 
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
-    monkeypatch.setattr(subprocess, "run", build)
+    monkeypatch.setattr(sandbox_mod, "run_confined", build)
     monkeypatch.setenv("OPENAI_API_KEY", "never-pass-this-to-build")
     options = dict(source_revision=orch._workspace_revision, successful_builds=cache, can_run=lambda: True)
     for enabled, allowed in ((False, True), (True, False), (True, True)):

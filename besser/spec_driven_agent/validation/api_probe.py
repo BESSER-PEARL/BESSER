@@ -1,8 +1,9 @@
 """Bounded declarative API workflows on a disposable FastAPI/SQLite copy.
 
 The caller must enforce the existing opt-in runtime/import-smoke setting. This
-executes generated application code, just like the constructibility probe; it
-is not an OS security sandbox or proof of complete specification coverage.
+executes generated application code, just like the constructibility probe, in
+the run sandbox with no network; it is not proof of complete specification
+coverage.
 No commands, external URLs, credentials, or Python expressions are accepted.
 The child imports no BESSER package and runs this same file as a script.
 """
@@ -188,6 +189,7 @@ def probe_api_scenario(output_dir: str, requests: list[dict], *, backend: str | 
     """
     from besser.spec_driven_agent.validation.constructibility import _fastapi_backends, _SKIP_DIRS
     from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+    from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 
     try:
         _validate_requests(requests)
@@ -222,11 +224,14 @@ def probe_api_scenario(output_dir: str, requests: list[dict], *, backend: str | 
             env.update(DATABASE_URL="sqlite:///" + (scratch / "probe.db").as_posix(),
                        BESSER_API_PROBE_SCRATCH=str(scratch), TMP=str(scratch), TEMP=str(scratch), TMPDIR=str(scratch))
             try:
-                result = subprocess.run(
-                    [sys.executable, str(Path(__file__).resolve()), "--worker"], cwd=app_dir,
-                    env=env, input=json.dumps(requests), capture_output=True, text=True,
+                result = run_confined(
+                    [sys.executable, str(Path(__file__).resolve()), "--worker"],
+                    workspace=str(root), writable=[str(scratch)], cwd=str(app_dir),
+                    env=env, input=json.dumps(requests),
                     timeout=min(_PROBE_TIMEOUT_SECONDS, 60),
                 )
+            except SandboxUnavailable as exc:
+                return _error(f"the sandbox is unavailable: {exc}", "probe_error", backend=relative)
             except subprocess.TimeoutExpired:
                 return _error(f"API scenario timed out after {min(_PROBE_TIMEOUT_SECONDS, 60)}s", "timeout", backend=relative)
             for line in reversed((result.stdout or "").splitlines()):

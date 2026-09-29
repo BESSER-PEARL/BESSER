@@ -118,7 +118,8 @@ def collect_constructibility_report(output_dir: str, domain_model=None) -> dict:
     backends: list[dict] = []
     for folder in _fastapi_backends(output_dir):
         rel = os.path.relpath(folder, output_dir).replace("\\", "/")
-        report = _run_probe(folder, _safe_subprocess_env(), model_actions, abstract)
+        report = _run_probe(folder, _safe_subprocess_env(), model_actions, abstract,
+                            workspace=output_dir)
         issues.extend(_issues_from_report(report, rel))
         backends.append({"backend": rel, **report})
     return {"issues": issues, "backends": backends}
@@ -206,8 +207,12 @@ def _fastapi_backends(output_dir: str) -> list[str]:
 
 
 def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
-               abstract_entities: list[str] | None = None) -> dict:
-    """Execute the child on a scratch copy of ``folder``; never raises."""
+               abstract_entities: list[str] | None = None, *,
+               workspace: str | None = None) -> dict:
+    """Execute the child, sandboxed with no network, on a scratch copy of
+    ``folder`` (inside the run ``workspace``); never raises."""
+    from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
+
     work = tempfile.mkdtemp(prefix="besser_probe_")
     try:
         app_dir = os.path.join(work, "app")
@@ -228,11 +233,13 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
         if abstract_entities:
             env[_ABSTRACT_ENV] = ",".join(abstract_entities)
         try:
-            result = subprocess.run(
+            result = run_confined(
                 [sys.executable, os.path.abspath(__file__)],
-                capture_output=True, text=True, cwd=app_dir, env=env,
-                timeout=_PROBE_TIMEOUT_SECONDS,
+                workspace=workspace or folder, writable=[work], cwd=app_dir,
+                env=env, timeout=_PROBE_TIMEOUT_SECONDS,
             )
+        except SandboxUnavailable as exc:
+            return {"boot": "probe_error", "error": f"the sandbox is unavailable: {exc}"}
         except subprocess.TimeoutExpired:
             return {"boot": "probe_error",
                     "error": f"timed out after {_PROBE_TIMEOUT_SECONDS}s"}

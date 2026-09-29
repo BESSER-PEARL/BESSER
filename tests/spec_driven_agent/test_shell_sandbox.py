@@ -123,7 +123,7 @@ def _parse_mounts(args: list[str]) -> list[tuple[str, ...]]:
     """Walk the bwrap arg list by each flag's arity."""
     arity = {
         "--bind": 2, "--ro-bind": 2, "--symlink": 2, "--dev-bind": 2,
-        "--proc": 1, "--dev": 1, "--tmpfs": 1, "--chdir": 1,
+        "--proc": 1, "--dev": 1, "--tmpfs": 1, "--chdir": 1, "--setenv": 2,
     }
     parsed: list[tuple[str, ...]] = []
     index = 0
@@ -424,9 +424,11 @@ def test_the_mount_plan_hides_the_run_root_and_binds_only_this_run():
     binds = [m for m in mounts if m[0] in {"--bind", "--ro-bind"}]
     assert ("--bind", "/workspace/runs/besser_spec_aaaa_1",
             "/workspace/runs/besser_spec_aaaa_1") in binds
-    # Nothing else under the shared root is mounted, in either direction.
+    # Nothing else under the shared root is mounted, in either direction,
+    # except this run's own sandbox $HOME.
     for _flag, source, target in binds:
-        if source == "/workspace/runs/besser_spec_aaaa_1":
+        if source in {"/workspace/runs/besser_spec_aaaa_1",
+                      "/workspace/runs/besser_spec_aaaa_1.sandbox-home"}:
             continue
         assert not source.startswith("/workspace"), source
         assert not target.startswith("/workspace"), target
@@ -437,9 +439,8 @@ def test_the_mount_plan_hides_the_run_root_and_binds_only_this_run():
 
 
 @linux_only
-def test_a_writable_path_inside_the_hidden_root_is_not_bound_back_in(monkeypatch):
-    """/root is bound rw for the toolchain caches — unless the runs live there."""
-    monkeypatch.setattr(sandbox_mod, "_WRITABLE_PATHS", ("/root",))
+def test_the_hidden_root_is_not_bound_back_in(monkeypatch):
+    """Not even read-only when the runs live under /root."""
     monkeypatch.setattr(os.path, "isdir", lambda _p: True)
 
     mounts = _parse_mounts(sandbox_mod._mount_args("/root/runs/besser_spec_aaaa_1"))

@@ -25,8 +25,11 @@ def collect_frontend_build_issues(
 
     A generic successful shell command is not build evidence. Cache only this
     harness-owned check, for unchanged source and dependency-install markers.
-    Cache entries are in-memory only; a resumed run checks again.
+    Cache entries are in-memory only; a resumed run checks again. The build
+    script is model-authored, so it runs sandboxed with no network.
     """
+    from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
+
     workspace = os.path.realpath(output_dir)
     issues = []
 
@@ -102,10 +105,13 @@ def collect_frontend_build_issues(
         env = _safe_subprocess_env()
         env["CI"] = "true"
         try:
-            result = subprocess.run(
-                [npm, "run", "build"], cwd=folder, env=env,
-                capture_output=True, text=True, timeout=max(1, min(timeout, 120)),
+            result = run_confined(
+                [npm, "run", "build"], workspace=output_dir, cwd=folder, env=env,
+                timeout=max(1, min(timeout, 120)),
             )
+        except SandboxUnavailable as exc:
+            issues.append(required_check_unverified(label, f"the sandbox is unavailable: {exc}"))
+            continue
         except subprocess.TimeoutExpired:
             issues.append(required_check_unverified(label, "configured build timed out"))
             continue

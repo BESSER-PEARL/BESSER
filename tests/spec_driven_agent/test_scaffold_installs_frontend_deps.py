@@ -49,7 +49,7 @@ def test_dependencies_are_installed_once_at_scaffold_time(tmp_path, monkeypatch)
     frontend = _scaffold(tmp_path)
     recorder = _Recorder()
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
-    monkeypatch.setattr(orchestrator_module, "run_bounded", recorder)
+    monkeypatch.setattr(orchestrator_module, "run_confined", recorder)
 
     orch = _orchestrator(tmp_path, allow_shell=True)
     orch._install_scaffold_frontend_dependencies()
@@ -66,7 +66,7 @@ def test_it_does_not_run_without_shell_permission(tmp_path, monkeypatch):
     _scaffold(tmp_path)
     recorder = _Recorder()
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
-    monkeypatch.setattr(orchestrator_module, "run_bounded", recorder)
+    monkeypatch.setattr(orchestrator_module, "run_confined", recorder)
 
     _orchestrator(tmp_path, allow_shell=False)._install_scaffold_frontend_dependencies()
 
@@ -78,7 +78,7 @@ def test_an_already_installed_frontend_is_left_alone(tmp_path, monkeypatch):
     (frontend / "node_modules").mkdir()
     recorder = _Recorder()
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
-    monkeypatch.setattr(orchestrator_module, "run_bounded", recorder)
+    monkeypatch.setattr(orchestrator_module, "run_confined", recorder)
 
     _orchestrator(tmp_path, allow_shell=True)._install_scaffold_frontend_dependencies()
 
@@ -91,7 +91,7 @@ def test_secrets_are_not_exposed_to_the_install(tmp_path, monkeypatch):
     _scaffold(tmp_path)
     recorder = _Recorder()
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
-    monkeypatch.setattr(orchestrator_module, "run_bounded", recorder)
+    monkeypatch.setattr(orchestrator_module, "run_confined", recorder)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "never-pass-this-to-npm")
     monkeypatch.setenv("OPENAI_API_KEY", "never-pass-this-to-npm")
 
@@ -115,7 +115,7 @@ def test_a_failed_install_never_aborts_the_run(tmp_path, monkeypatch, failure):
         raise failure
 
     monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
-    monkeypatch.setattr(orchestrator_module, "run_bounded", boom)
+    monkeypatch.setattr(orchestrator_module, "run_confined", boom)
 
     _orchestrator(tmp_path, allow_shell=True)._install_scaffold_frontend_dependencies()
 
@@ -125,3 +125,38 @@ def test_no_npm_on_the_host_is_not_an_error(tmp_path, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: None)
 
     _orchestrator(tmp_path, allow_shell=True)._install_scaffold_frontend_dependencies()
+
+
+def test_the_install_runs_in_the_sandbox_with_network(tmp_path, monkeypatch):
+    """npm runs install scripts; it gets run_command's sandbox, not the host."""
+    _scaffold(tmp_path)
+    recorder = _Recorder()
+    monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
+    monkeypatch.setattr(orchestrator_module, "run_bounded",
+                        lambda *a, **k: pytest.fail("npm install ran unconfined"), raising=False)
+    monkeypatch.setattr(orchestrator_module, "run_confined", recorder, raising=False)
+
+    _orchestrator(tmp_path, allow_shell=True)._install_scaffold_frontend_dependencies()
+
+    kwargs = recorder.calls[0][1]
+    assert kwargs["network"] is True and kwargs["workspace"] == str(tmp_path)
+
+
+def test_no_sandbox_means_no_install_and_no_abort(tmp_path, monkeypatch, caplog):
+    from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable
+
+    frontend = _scaffold(tmp_path)
+
+    def unavailable(*_a, **_k):
+        raise SandboxUnavailable("bubblewrap (bwrap) is not installed")
+
+    monkeypatch.setattr("shutil.which", lambda name: "/tools/npm")
+    monkeypatch.setattr(orchestrator_module, "run_bounded",
+                        lambda *a, **k: pytest.fail("npm install ran unconfined"), raising=False)
+    monkeypatch.setattr(orchestrator_module, "run_confined", unavailable, raising=False)
+
+    with caplog.at_level("WARNING"):
+        _orchestrator(tmp_path, allow_shell=True)._install_scaffold_frontend_dependencies()
+
+    assert not (frontend / "node_modules").exists()
+    assert "sandbox unavailable" in caplog.text

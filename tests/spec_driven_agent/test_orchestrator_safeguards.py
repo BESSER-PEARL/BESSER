@@ -550,7 +550,7 @@ class TestRuffAndTscValidation:
         """A tsconfig.json under node_modules must be ignored — tsc
         would otherwise take minutes and report third-party issues."""
         import shutil as _shutil
-        import subprocess
+        from besser.spec_driven_agent.execution import sandbox as sandbox_mod
 
         # Create a node_modules tsconfig — should be skipped.
         nm_dir = tmp_path / "node_modules" / "some-pkg"
@@ -569,7 +569,7 @@ class TestRuffAndTscValidation:
             return FakeCompleted()
 
         monkeypatch.setattr(_shutil, "which", lambda name: "/fake/tsc")
-        monkeypatch.setattr(subprocess, "run", _record)
+        monkeypatch.setattr(sandbox_mod, "run_confined", _record)
 
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
@@ -583,7 +583,7 @@ class TestRuffAndTscValidation:
 
     def test_tsc_captures_errors(self, simple_model, tmp_path, monkeypatch):
         import shutil as _shutil
-        import subprocess
+        from besser.spec_driven_agent.execution import sandbox as sandbox_mod
 
         # Valid tsconfig at the workspace root. node_modules must exist:
         # without it the collector treats tsc output as advisory, because
@@ -603,7 +603,7 @@ class TestRuffAndTscValidation:
             returncode = 1
 
         monkeypatch.setattr(_shutil, "which", lambda name: "/fake/tsc")
-        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeCompleted())
+        monkeypatch.setattr(sandbox_mod, "run_confined", lambda *a, **kw: FakeCompleted())
 
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),

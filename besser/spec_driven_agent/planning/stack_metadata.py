@@ -47,6 +47,7 @@ import logging
 import os
 import re
 from typing import Iterable
+from besser.spec_driven_agent.execution.workspace_fs import open_plain_write
 
 logger = logging.getLogger(__name__)
 
@@ -352,7 +353,7 @@ def pre_generate_metadata(stack_id: str, output_dir: str) -> list[str]:
         parent = os.path.dirname(target)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        with open(target, "w", encoding="utf-8") as fh:
+        with open_plain_write(target, "w", root=output_dir, encoding="utf-8") as fh:
             fh.write(content)
         written.append(rel_path)
 

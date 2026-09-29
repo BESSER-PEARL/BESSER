@@ -9,10 +9,10 @@ placeholders only, not behavioral correctness (which still needs runtime tests).
 from __future__ import annotations
 
 import ast
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from besser.spec_driven_agent.parsed_source import parse_source
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 
 _SKIP_DIRS = {
@@ -161,7 +161,7 @@ def collect_action_endpoints(workspace: str | Path) -> list[ActionEndpoint]:
     """Inventory actual model-action routes without importing generated code."""
     workspace = Path(workspace)
     endpoints = []
-    for root, dirs, files in os.walk(workspace, followlinks=False):
+    for root, dirs, files in walk_plain(workspace):
         dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS and not d.startswith("."))
         for name in sorted(files):
             if name.endswith(".py") and not name.startswith("."):

@@ -106,6 +106,9 @@ class TestCostCap:
         assert orchestrator.total_turns < 50
         # Verify cost exceeded the cap
         assert orchestrator.client.usage.estimated_cost > 0.01
+        # The cap, not another guard (the stuck-loop guard also ends this
+        # repeated list_files loop), must be what stopped Phase 2.
+        assert orchestrator._phase2_stop_reason == "cost_cap"
 
     def test_cost_cap_default_is_5(self, simple_model, tmp_path):
         """Default max_cost_usd is 5.0."""
@@ -275,13 +278,10 @@ class TestPhase1Validation:
         assert len(issues) >= 1
         assert any("syntax error" in i.lower() or "Syntax error" in i for i in issues)
 
-    def test_repairs_missing_requirements_txt(self, simple_model, tmp_path):
-        """Phase 1 validation auto-restores a missing requirements.txt.
-
-        Since the dropped-requirements repair (614d29de) the validator
-        WRITES a sensible requirements.txt next to the Dockerfile instead
-        of reporting an issue — the repaired state is the contract now.
-        """
+    def test_reports_missing_requirements_txt_without_writing_it(self, simple_model, tmp_path):
+        """A check reports; it does not write. The validator used to write a
+        default FastAPI requirements.txt beside the Dockerfile, whatever the
+        backend and wherever the build context actually was."""
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
             domain_model=simple_model,
@@ -293,11 +293,8 @@ class TestPhase1Validation:
             f.write("FROM python:3.11\nCOPY requirements.txt .\nRUN pip install -r requirements.txt\n")
 
         issues = orchestrator._validate_phase1_output()
-        assert not any("requirements.txt" in i for i in issues)
-        restored = os.path.join(str(tmp_path), "requirements.txt")
-        assert os.path.isfile(restored)
-        with open(restored, "r", encoding="utf-8") as f:
-            assert "fastapi" in f.read()
+        assert any("requirements.txt but it doesn't exist" in i for i in issues)
+        assert not os.path.isfile(os.path.join(str(tmp_path), "requirements.txt"))
 
     def test_detects_missing_package_json(self, simple_model, tmp_path):
         """Phase 1 validation catches Dockerfile referencing missing package.json."""
@@ -424,6 +421,8 @@ class TestRuffAndTscValidation:
         assert len(issues) == 1
         note = issues[0]
         assert "ruff is not installed" in note
+        # The skipped-check wording the run report lists as "not verified".
+        assert note.startswith("validation: ruff did not run (")
         # Deliberately NOT a "ruff:" line, so _classify_issue can't read a
         # rule code out of it and promote it: it must stay a warning.
         assert not note.startswith("ruff:")

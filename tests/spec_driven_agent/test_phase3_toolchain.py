@@ -203,24 +203,29 @@ def test_collect_tsc_issues_soft_skips_when_binary_missing(tmp_path) -> None:
         assert "disabled" in orch._collect_tsc_issues()[0]
 
 
-def test_collect_cargo_issues_soft_skips_when_binary_missing(tmp_path) -> None:
+def test_collect_cargo_issues_reports_not_run_when_binary_missing(tmp_path) -> None:
+    """A crate nothing compiled returned [], which reads as a clean compile."""
     (tmp_path / "Cargo.toml").write_text(
         "[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
         encoding="utf-8",
     )
     orch = _build_orchestrator(tmp_path)
     with patch("besser.spec_driven_agent.pipeline.orchestrator.shutil.which", return_value=None):
-        assert orch._collect_cargo_issues() == []
+        findings = orch._collect_cargo_issues()
+    assert len(findings) == 1 and "cargo check did not run" in findings[0]
+    assert _classify_issue(findings[0]).severity == "warning"
 
 
-def test_collect_kotlinc_issues_soft_skips_when_binary_missing(tmp_path) -> None:
+def test_collect_kotlinc_issues_reports_not_run_when_binary_missing(tmp_path) -> None:
     module = tmp_path / "src" / "main" / "kotlin"
     module.mkdir(parents=True)
     (tmp_path / "build.gradle.kts").write_text("// nothing\n", encoding="utf-8")
     (module / "Main.kt").write_text("fun main() {}\n", encoding="utf-8")
     orch = _build_orchestrator(tmp_path)
     with patch("besser.spec_driven_agent.pipeline.orchestrator.shutil.which", return_value=None):
-        assert orch._collect_kotlinc_issues() == []
+        findings = orch._collect_kotlinc_issues()
+    assert len(findings) == 1 and "kotlinc did not run" in findings[0]
+    assert _classify_issue(findings[0]).severity == "warning"
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +280,7 @@ def test_fix_loop_prompt_contains_toolchain_error_and_rerun_command(tmp_path) ->
         output_dir=str(tmp_path),
         enable_tracing=False,
         enable_checkpointing=False,
+        allow_shell_tools=True,
     )
 
     blocker = ValidationIssue(
@@ -295,6 +301,30 @@ def test_fix_loop_prompt_contains_toolchain_error_and_rerun_command(tmp_path) ->
     assert "<system-reminder>" in text
     # System prompt makes the contract explicit too
     assert "run_command" in system
+
+
+def test_fix_loop_prompt_never_asks_for_run_command_with_shell_tools_off(tmp_path) -> None:
+    """Shell tools are off by default, where run_command is not offered at
+    all; the brief and the reminder still told the model to call it."""
+    client = _RecordingClient()
+    orch = LLMOrchestrator(
+        llm_client=client,
+        state_machines=[type("SM", (), {"name": "x"})()],
+        output_dir=str(tmp_path),
+        enable_tracing=False,
+        enable_checkpointing=False,
+    )
+    blocker = ValidationIssue(
+        "blocker",
+        "tsc [.]: app/page.tsx(5,3): error TS2322: Type 'string' is not assignable to type 'number'.",
+    )
+    orch._invoke_phase3_fix_loop([blocker], is_first_attempt=True)
+
+    text = _flatten_messages(client.calls[0][1])
+    assert "TS2322" in text
+    assert "invoke run_command" not in text
+    assert "using run_command" not in text
+    assert "do not call run_command" in text
 
 
 def test_fix_loop_prompt_cargo_command(tmp_path) -> None:

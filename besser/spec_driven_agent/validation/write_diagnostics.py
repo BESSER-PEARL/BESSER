@@ -22,6 +22,7 @@ from typing import Any
 
 from besser.spec_driven_agent.validation import frontend_source
 from besser.spec_driven_agent.parsed_source import parse_source
+from besser.spec_driven_agent.execution.workspace_fs import is_plain_file, open_plain, walk_plain
 
 
 logger = logging.getLogger(__name__)
@@ -36,13 +37,13 @@ def workspace_uses_sqlite(workspace: str | None) -> bool:
     """Detect the generated database dialect without importing application code."""
     if not workspace:
         return False
-    for root, dirs, files in os.walk(workspace):
+    for root, dirs, files in walk_plain(workspace):
         dirs[:] = [d for d in dirs if d not in {
             "node_modules", "__pycache__", ".git", "venv", ".venv", "dist", "build",
         } and not d.startswith(".besser_")]
         if "database.py" in files:
             try:
-                with open(os.path.join(root, "database.py"), encoding="utf-8-sig") as fh:
+                with open_plain(os.path.join(root, "database.py"), encoding="utf-8-sig") as fh:
                     if "sqlite:" in fh.read():
                         return True
             except OSError:
@@ -315,7 +316,7 @@ def _resolve_module(module: str, start_dir: str, root: str) -> str | None:
     while True:
         for candidate in (rel + ".py", os.path.join(rel, "__init__.py")):
             path = os.path.join(directory, candidate)
-            if os.path.isfile(path):
+            if is_plain_file(path, root):
                 return path
         if os.path.normpath(directory) == os.path.normpath(root):
             return None
@@ -337,7 +338,7 @@ def _star_exports(path: str, root: str, visited: set[str]) -> set[str] | None:
         return set()
     visited.add(path)
     try:
-        with open(path, encoding="utf-8") as handle:
+        with open_plain(path, encoding="utf-8") as handle:
             tree = parse_source(handle.read())
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
         return None
@@ -432,7 +433,7 @@ def _scan_orm_module(path: str) -> tuple[dict[str, str], set[str], set[str]] | N
     can be judged against it.
     """
     try:
-        with open(path, encoding="utf-8") as handle:
+        with open_plain(path, encoding="utf-8") as handle:
             tree = parse_source(handle.read(), filename=path)
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
         return None
@@ -636,7 +637,7 @@ def _scan_star_import_bindings(path: str, workspace: str) -> dict[str, object] |
     can be judged against it, mirroring ``_scan_orm_module``.
     """
     try:
-        with open(path, encoding="utf-8") as handle:
+        with open_plain(path, encoding="utf-8") as handle:
             tree = parse_source(handle.read(), filename=path)
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
         return None

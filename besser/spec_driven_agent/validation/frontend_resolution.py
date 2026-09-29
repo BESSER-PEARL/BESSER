@@ -57,15 +57,21 @@ def _strip_comments(text: str) -> str:
 
 
 def _walk(root: str):
-    for folder, dirs, files in os.walk(root):
+    # Imported here so the module stays runnable as a stdlib-only script.
+    from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+
+    for folder, dirs, files in walk_plain(root):
         dirs[:] = sorted(d for d in dirs
                          if d not in _EXCLUDED_DIRS and not d.startswith(".besser_"))
         yield folder, files
 
 
 def _read(path: str) -> str:
+    # Imported here so the module stays runnable as a stdlib-only script.
+    from besser.spec_driven_agent.execution.workspace_fs import open_plain
+
     try:
-        with open(path, encoding="utf-8", errors="replace") as handle:
+        with open_plain(path, encoding="utf-8", errors="replace") as handle:
             return handle.read()
     except OSError:
         return ""

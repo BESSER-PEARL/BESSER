@@ -25,6 +25,7 @@ import logging
 import os
 import re as _re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -83,6 +84,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     ClaudeLLMClient,
     FROM_SCRATCH_MAX_TOKENS,
     _is_free_local_model,
+    _is_quota_exhausted,
 )
 from besser.spec_driven_agent.agent.prompt_builder import (
     build_scaffold_snapshot,
@@ -99,6 +101,11 @@ from besser.spec_driven_agent.planning.stack_metadata import (
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
+from besser.spec_driven_agent.validation.docker_context import (
+    compose_build_contexts,
+    dockerfile_copy_issues,
+    missing_copy_manifests,
+)
 from besser.spec_driven_agent.validation.python_imports import (
     _declared_dependency_roots as _declared_dependency_roots,
     _import_smoke_issues,
@@ -119,6 +126,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _RUFF_MAX_REPORTED as _RUFF_MAX_REPORTED,
     _TSC_PROBE_NAME,
 )
+from besser.spec_driven_agent.execution.workspace_fs import open_plain, open_plain_write, walk_plain
 # Preserve established imports while lower-level consumers use these leaves.
 from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,
@@ -501,6 +509,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._resume_messages: list[dict] | None = None
         self._checkpoint_phase = "phase2"
         self._phase3_interrupted = False
+        # Phase 2 ended on an exhausted provider quota: every Phase 3 call
+        # would fail the same way.
+        self._phase2_quota_exhausted = False
         # Why the fix loop interrupted itself, when it did: a provider failure
         # or a stop_reason the loop cannot answer. Traced so an interrupted
         # repair records what interrupted it, not only that it stopped.
@@ -1552,8 +1563,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         Returns a list of issue strings to feed into gap analysis.
         """
         issues = []
+        build_contexts = compose_build_contexts(self.output_dir)
 
-        for root, _, files in os.walk(self.output_dir):
+        for root, _, files in walk_plain(self.output_dir):
             for fname in files:
                 fpath = os.path.join(root, fname)
                 rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
@@ -1573,26 +1585,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     try:
                         with open(fpath, "r", encoding="utf-8") as f:
                             content = f.read()
-                        docker_dir = os.path.dirname(fpath)
-                        if "requirements.txt" in content:
-                            req = os.path.join(docker_dir, "requirements.txt")
-                            if not os.path.isfile(req):
-                                if _ensure_requirements_txt(docker_dir):
-                                    logger.info(
-                                        "Auto-fixed: restored missing requirements.txt for %s", rel
-                                    )
-                                else:
-                                    issues.append(
-                                        f"{rel} references requirements.txt but it doesn't exist -- "
-                                        f"create it or fix the Dockerfile"
-                                    )
-                        if "package.json" in content or "package*.json" in content:
-                            pkg = os.path.join(docker_dir, "package.json")
-                            if not os.path.isfile(pkg):
-                                issues.append(
-                                    f"{rel} references package.json but it doesn't exist -- "
-                                    f"create it or fix the Dockerfile"
-                                )
+                        issues.extend(
+                            f"{issue} -- create it or fix the Dockerfile"
+                            for issue in dockerfile_copy_issues(
+                                self.output_dir, fpath, content, build_contexts)
+                        )
                     except Exception:
                         logger.warning("Phase 1 Dockerfile check failed for %s", rel, exc_info=True)
 
@@ -1645,7 +1642,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         try:
             path = os.path.join(self.output_dir, ".gitignore")
             if not os.path.exists(path):
-                with open(path, "w", encoding="utf-8") as fh:
+                with open_plain_write(path, "w", root=self.output_dir, encoding="utf-8") as fh:
                     fh.write(self._GITIGNORE)
         except OSError:
             logger.debug("could not write .gitignore", exc_info=True)
@@ -1860,6 +1857,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 logger.error("LLM API call failed on turn %d: %s", turn + 1, e)
                 self._phase2_stop_reason = "api_error"
                 self._phase2_api_error = str(e)
+                self._phase2_quota_exhausted = _is_quota_exhausted(e)
                 break
 
             # The call may have switched the client to its outage
@@ -2041,20 +2039,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # Feed the truncation back, bounded by _MAX_TRUNCATION_RETRIES.
                 if self._truncation_retries < self._MAX_TRUNCATION_RETRIES:
                     self._truncation_retries += 1
-                    messages.append({"role": "user", "content": [{
-                        "type": "text",
-                        "text": (
-                            "Your previous response was CUT OFF at the output "
-                            "token limit"
-                            + (f" ({current_max_tokens} tokens)"
-                               if current_max_tokens else "")
-                            + ", so it was discarded and NOTHING was written to "
-                            "disk. Do not repeat it as-is. Emit a SMALLER turn: "
-                            "one file per tool call, and at most one or two tool "
-                            "calls in this turn. Continue from where you left "
-                            "off — re-state only what you still need to write."
-                        ),
-                    }]})
+                    messages.append(self._truncation_retry_prompt())
                     logger.warning(
                         "Output truncation recovery %d/%d — asking for a smaller turn",
                         self._truncation_retries, self._MAX_TRUNCATION_RETRIES,
@@ -2088,6 +2073,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_stop_reason = "api_error"
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
+
+    def _truncation_retry_prompt(self) -> dict:
+        """The user turn asking a truncated model to emit less (Phase 2 and 3)."""
+        current_max_tokens = getattr(self.client, "max_tokens", None)
+        return {"role": "user", "content": [{
+            "type": "text",
+            "text": (
+                "Your previous response was CUT OFF at the output "
+                "token limit"
+                + (f" ({current_max_tokens} tokens)"
+                   if current_max_tokens else "")
+                + ", so it was discarded and NOTHING was written to "
+                "disk. Do not repeat it as-is. Emit a SMALLER turn: "
+                "one file per tool call, and at most one or two tool "
+                "calls in this turn. Continue from where you left "
+                "off — re-state only what you still need to write."
+            ),
+        }]}
 
     @staticmethod
     def _record_novel_inspections(tool_blocks, tool_results, seen) -> bool:
@@ -2858,6 +2861,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # deleted. Idempotent; it never overwrites what a project already has.
         for repair in ensure_frontend_scaffold(self.output_dir):
             logger.info("Auto-fixed: %s", repair)
+        build_contexts = compose_build_contexts(self.output_dir)
+        self._restore_scaffold_requirements(build_contexts)
         raw_issues: list[str] = [
             required_check_unverified(
                 "model assembly",
@@ -2866,7 +2871,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             ) for issue in self._assembly_issues
         ]
 
-        for root, _, files in os.walk(self.output_dir):
+        for root, _, files in walk_plain(self.output_dir):
             for fname in files:
                 fpath = os.path.join(root, fname)
                 rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
@@ -2890,18 +2895,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     try:
                         with open(fpath, "r", encoding="utf-8") as f:
                             content = f.read()
-                        docker_dir = os.path.dirname(fpath)
                         # npm ci without a lock file -> should be npm install.
                         # Searched across the WHOLE project, not just beside the
                         # Dockerfile: a root Dockerfile.frontend typically COPYs
-                        # from a frontend/ subdirectory, so docker_dir alone
+                        # from a frontend/ subdirectory, so its own directory alone
                         # would miss lockfiles that exist.
                         if "npm ci" in content:
                             if not _project_has_npm_lockfile(self.output_dir):
                                 # Auto-fix this common mistake
-                                fixed = content.replace("npm ci", "npm install")
-                                with open(fpath, "w", encoding="utf-8") as f:
-                                    f.write(fixed)
+                                # Later repairs must start from this content, or
+                                # they write ``npm ci`` back.
+                                content = content.replace("npm ci", "npm install")
+                                with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
+                                    f.write(content)
                                 logger.info("Auto-fixed: %s: npm ci -> npm install (no lock file)", rel)
                         # COPY of a package-lock.json that does not exist is a
                         # HARD build failure ("failed to compute cache key"), and
@@ -2914,34 +2920,23 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             stripped = _strip_missing_lockfile_copy(content)
                             if stripped != content:
                                 content = stripped
-                                with open(fpath, "w", encoding="utf-8") as f:
+                                with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
                                     f.write(content)
                                 logger.info(
                                     "Auto-fixed: %s: dropped COPY of a "
                                     "package-lock.json that does not exist", rel,
                                 )
 
-                        # Check COPY references
-                        if "package.json" in content or "package*.json" in content:
-                            pkg = os.path.join(docker_dir, "package.json")
-                            if not os.path.isfile(pkg):
-                                raw_issues.append(f"{rel} references package.json but it doesn't exist")
-                        if "requirements.txt" in content:
-                            req = os.path.join(docker_dir, "requirements.txt")
-                            if not os.path.isfile(req):
-                                if _ensure_requirements_txt(docker_dir):
-                                    logger.info(
-                                        "Auto-fixed: restored missing requirements.txt for %s", rel
-                                    )
-                                else:
-                                    raw_issues.append(f"{rel} references requirements.txt but it doesn't exist")
+                        # COPY sources resolve against the build context.
+                        raw_issues.extend(dockerfile_copy_issues(
+                            self.output_dir, fpath, content, build_contexts))
                     except Exception:
                         logger.warning("Dockerfile check failed for %s", rel, exc_info=True)
 
         # Auto-fix known critical incompatibility: passlib + bcrypt>=4.1
         # This is a belt-and-suspenders fix — the pip dry-run below should
         # also catch it, but this is instant and doesn't need network.
-        for root, _, files in os.walk(self.output_dir):
+        for root, _, files in walk_plain(self.output_dir):
             for fname in files:
                 if fname == "requirements.txt":
                     fpath = os.path.join(root, fname)
@@ -2957,7 +2952,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             if "bcrypt" not in new_content:
                                 new_content += "\nbcrypt==4.0.1\n"
                             if new_content != content:
-                                with open(fpath, "w") as f:
+                                with open_plain_write(fpath, "w", root=self.output_dir) as f:
                                     f.write(new_content)
                                 logger.info("Auto-fixed: %s: pinned bcrypt==4.0.1 (passlib compat)", rel)
                     except Exception:
@@ -2969,7 +2964,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # sandbox: network on (pip must reach the index), everything else
         # confined like run_command.
         if self.allow_shell_tools:
-            for root, _, files in os.walk(self.output_dir):
+            for root, _, files in walk_plain(self.output_dir):
                 for fname in files:
                     if fname == "requirements.txt":
                         req_path = os.path.join(root, fname)
@@ -2998,8 +2993,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             raw_issues.append(_check_did_not_run(
                                 f"the dependency check for {rel}",
                                 f"the sandbox is unavailable: {exc}"))
-                        except Exception:
-                            pass  # pip not available or timeout — skip
+                        except Exception as exc:
+                            # A timeout is "not checked", never "no conflict".
+                            reason = ("timed out after 30s"
+                                      if isinstance(exc, subprocess.TimeoutExpired)
+                                      else type(exc).__name__)
+                            raw_issues.append(_check_did_not_run(
+                                f"the dependency check for {rel}", reason))
 
         # Static checks catch per-project compile errors that would
         # otherwise only surface at deploy time. ruff is near-instant
@@ -3022,8 +3022,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # at the conservative warning default. Promote to blocker only after
             # a measured false-positive review.
             raw_issues.extend(collect_endpoint_coherence_issues(self.output_dir))
-        except Exception:
-            logger.debug("Endpoint coherence validation failed", exc_info=True)
+        except Exception as exc:
+            logger.warning("Endpoint coherence validation failed", exc_info=True)
+            raw_issues.append(_check_did_not_run(
+                "the endpoint coherence check", f"it crashed: {type(exc).__name__}"))
         raw_issues.extend(self._collect_framework_switch_issues())
         raw_issues.extend(self._collect_missing_frontend_issue())
         raw_issues.extend(self._collect_data_contract_issues())
@@ -3038,8 +3040,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self.output_dir, self.domain_model,
             )
             raw_issues.extend(matrix_issues(self._acceptance_matrix))
-        except Exception:
-            logger.debug("Acceptance matrix computation failed", exc_info=True)
+        except Exception as exc:
+            logger.warning("Acceptance matrix computation failed", exc_info=True)
+            raw_issues.append(_check_did_not_run(
+                "the acceptance matrix", f"it crashed: {type(exc).__name__}"))
 
         execution_issues = self._collect_execution_issues()
         # An enabled ledger that extracted nothing verified nothing. Saying so
@@ -3117,6 +3121,35 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _scaffold_family(self) -> str | None:
         return self._SCAFFOLD_FAMILIES.get(self._generator_used or "")
 
+    def _restore_scaffold_requirements(self, build_contexts: dict[str, str]) -> None:
+        """Put back a requirements.txt a Phase 2 edit deleted from a FastAPI scaffold.
+
+        A repair step, run before validation (which only reports). The default
+        it writes is the FastAPI stack, so only that scaffold family gets it,
+        and only where a Dockerfile's COPY resolves in the build context.
+        """
+        if self._scaffold_family() != "fastapi":
+            return
+        workspace = os.path.realpath(self.output_dir)
+        for root, dirs, files in walk_plain(self.output_dir):
+            dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", _SNAPSHOT_DIR)]
+            for fname in files:
+                if not _is_dockerfile(fname):
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except OSError:
+                    continue
+                for path in missing_copy_manifests(fpath, content, build_contexts):
+                    target = os.path.dirname(path)
+                    inside = os.path.realpath(target).startswith(workspace + os.sep)
+                    if (os.path.basename(path) == "requirements.txt" and inside
+                            and os.path.isdir(target) and _ensure_requirements_txt(target)):
+                        logger.info("Auto-fixed: restored missing %s",
+                                    os.path.relpath(path, self.output_dir))
+
     def _install_scaffold_frontend_dependencies(self) -> None:
         """Install the deterministic frontend's declared packages, once.
 
@@ -3138,7 +3171,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         npm = shutil.which("npm") or shutil.which("npm.cmd")
         if not npm:
             return
-        for folder, dirs, files in os.walk(self.output_dir):
+        for folder, dirs, files in walk_plain(self.output_dir):
             dirs[:] = [d for d in dirs if d not in ("node_modules", ".git")]
             if "package.json" not in files or os.path.isdir(
                     os.path.join(folder, "node_modules")):
@@ -3174,7 +3207,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if not rivals:
             return []
         offenders: list[str] = []
-        for root, dirs, files in os.walk(self.output_dir):
+        for root, dirs, files in walk_plain(self.output_dir):
             dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
             for fname in files:
                 if not fname.endswith(".py"):
@@ -3213,7 +3246,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         r"user interface|dashboard|portal)\b")
 
     def _has_frontend_files(self) -> bool:
-        for root, dirs, files in os.walk(self.output_dir):
+        for root, dirs, files in walk_plain(self.output_dir):
             dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
             rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
             if rel_root.startswith(_SNAPSHOT_DIR):
@@ -3353,7 +3386,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         low = (self._instructions or "").lower()
         if not _re.search(r"\b(web ?app|frontend|front-end|website|\bui\b|user interface)\b", low):
             return []
-        for root, dirs, files in os.walk(self.output_dir):
+        for root, dirs, files in walk_plain(self.output_dir):
             dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
             rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
             if rel_root.startswith(_SNAPSHOT_DIR):
@@ -3400,7 +3433,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         issues: list[str] = []
         exts = (".py", ".js", ".jsx", ".ts", ".tsx")
-        for root, dirs, files in os.walk(self.output_dir):
+        for root, dirs, files in walk_plain(self.output_dir):
             dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
             for fname in files:
                 if not fname.endswith(exts):
@@ -3929,6 +3962,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # flips it to prepend the "preserve what works" directive.
             modify_mode=self._modify_mode,
             design_system=design_system,
+            # Without both, the runtime-verification runbook never renders.
+            allow_shell=self.allow_shell_tools,
+            output_dir=self.output_dir,
         )
 
     def _maybe_compact(self, messages: list[dict]) -> list[dict]:
@@ -4141,7 +4177,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """
         files: list[str] = []
         try:
-            for root, dirs, fnames in os.walk(self.output_dir):
+            for root, dirs, fnames in walk_plain(self.output_dir):
                 dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS]
                 for f in fnames:
                     if f.startswith(".besser_"):
@@ -4184,8 +4220,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         try:
             row = {"turn": turn, "tool": tool_name, "success": success,
                    "status": status, "input": tool_input}
-            with open(os.path.join(self.output_dir, TOOL_INPUTS_FILENAME), "a",
-                      encoding="utf-8") as f:
+            with open_plain_write(os.path.join(self.output_dir, TOOL_INPUTS_FILENAME), "a",
+                                  root=self.output_dir, encoding="utf-8") as f:
                 f.write(json.dumps(row, default=str) + "\n")
         except Exception:
             logger.debug("tool-input sidecar write failed", exc_info=True)
@@ -4208,7 +4244,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if not os.path.isfile(recipe_path):
             return []
         try:
-            with open(recipe_path, "r", encoding="utf-8") as fh:
+            with open_plain(recipe_path, "r", encoding="utf-8") as fh:
                 prior = json.load(fh)
         except Exception:
             return []
@@ -4251,7 +4287,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # regeneration would overwrite, so record it separately.
         llm_edited = self._llm_edited_paths()
         try:
-            for root, dirs, fnames in os.walk(self.output_dir):
+            for root, dirs, fnames in walk_plain(self.output_dir):
                 dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS]
                 for f in fnames:
                     if f.startswith(".besser_"):
@@ -4404,7 +4440,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             }
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         try:
-            with open(recipe_path, "w", encoding="utf-8") as f:
+            with open_plain_write(recipe_path, "w", root=self.output_dir, encoding="utf-8") as f:
                 json.dump(recipe, f, indent=2, default=str)
         except Exception as e:
             logger.warning("Failed to save recipe: %s", e)

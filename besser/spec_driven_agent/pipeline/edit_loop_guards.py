@@ -63,9 +63,9 @@ class EditLoopGuardsMixin:
             if last_tool != "modify_file" or last_path != self._last_modify_warning_path:
                 # Streak broken; a fresh one on this path may warn again.
                 self._last_modify_warning_path = None
-        return self._escalate_repeat_rejection(messages)
+        return self._escalate_repeat_rejection(messages, where=where)
 
-    def _escalate_repeat_rejection(self, messages: list[dict]) -> bool:
+    def _escalate_repeat_rejection(self, messages: list[dict], *, where: str = "phase 2") -> bool:
         """Act on ``executor.last_repeat``. Returns True when the caller's
         loop must stop.
 
@@ -89,7 +89,10 @@ class EditLoopGuardsMixin:
                 "Stuck edit loop: %s on %s was refused %d times with no "
                 "successful edit in between; ending the phase", tool, path, seen,
             )
-            self._phase2_stop_reason = "stuck_edit_loop"
+            # Only Phase 2 owns this reason. Written from a Phase 3 repair it
+            # would outlive a later attempt that clears every blocker.
+            if where == "phase 2":
+                self._phase2_stop_reason = "stuck_edit_loop"
             return True
         if seen >= self._REPEAT_FORCE_AT:
             # Only steer toward the range editor when the failing strategy is

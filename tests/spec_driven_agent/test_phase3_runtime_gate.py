@@ -513,3 +513,17 @@ def test_six_refusals_at_one_target_do_not_end_the_phase(orch):
 
     assert orch._escalate_repeat_rejection(messages) is False
     assert messages, "the model still gets a strategy hint"
+
+
+def test_a_phase3_stuck_edit_loop_does_not_block_a_later_verified_repair(orch):
+    """The Phase 3 repair loop shares the refusal guard with Phase 2. Writing
+    ``stuck_edit_loop`` into the Phase 2 stop reason from there meant a later
+    attempt that cleared every blocker still reported the run incomplete."""
+    orch._phase2_stop_reason = "validation_required"
+    orch.executor.last_repeat = ("routers/booking.py", 7)
+
+    assert orch._apply_edit_loop_guards([], where="phase 3 repair") is True
+    orch._complete_repair_if_verified()
+
+    assert orch._phase2_stop_reason == "completed"
+    assert orch._phase2_exited_cleanly

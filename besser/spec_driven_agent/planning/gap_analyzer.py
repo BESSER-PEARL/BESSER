@@ -201,7 +201,7 @@ def analyze_gaps_via_llm(
     if tasks is None:
         return None
     cleaned = _dedupe([t.strip() for t in tasks if isinstance(t, str) and t.strip()])[:_MAX_TASKS]
-    cleaned = _sanitize_tasks(cleaned, generator_used, instructions)
+    cleaned = _sanitize_tasks(cleaned, generator_used)
     cleaned = _drop_present_enumerations(cleaned, domain_model)
     cleaned = _drop_present_attributes(cleaned, domain_model)
     cleaned = _note_present_regex_validations(cleaned, domain_model)
@@ -356,28 +356,23 @@ def _dedupe(tasks: list) -> list:
     return kept
 
 
-def _sanitize_tasks(
-    tasks: list, generator_used: str | None, instructions: str
-) -> list:
+def _sanitize_tasks(tasks: list, generator_used: str | None) -> list:
     """Drop checklist items that would demolish the scaffold.
 
     A planner can propose e.g. 'delete react frontend scaffold' and 'install
     Flask' — a checklist that would fight the Phase-2 HARD CONSTRAINTS and
     the framework-switch blocker for the whole run. The prompt forbids it;
-    this filter guarantees it. Rival-framework mentions are only dropped when
-    the USER didn't ask for that framework themselves.
+    this filter guarantees it. Phase 2 keeps the scaffold's stack even when
+    the user named another, so a rival-framework task is dropped either way.
     """
     rivals = _GAP_SCAFFOLD_RIVALS.get(generator_used or "", ())
-    low_instr = (instructions or "").lower()
     kept: list = []
     for task in tasks:
         low = task.lower()
         if _DELETE_SCAFFOLD_RE.search(task):
             logger.info("Gap sanitizer dropped scaffold-demolition task: %r", task[:100])
             continue
-        rival_hit = next(
-            (r for r in rivals if r in low and r not in low_instr), None
-        )
+        rival_hit = next((r for r in rivals if r in low), None)
         if rival_hit:
             logger.info(
                 "Gap sanitizer dropped rival-framework (%s) task: %r",
@@ -1344,9 +1339,9 @@ _SYSTEM_PROMPT = (
     "  * The scaffold's framework is FIXED — it is the stack named in the "
     "inventory. NEVER propose switching frameworks (e.g. FastAPI→Flask), "
     "deleting the scaffold, or removing the generated frontend. Every task "
-    "EXTENDS the existing stack. A 'delete X' task is allowed ONLY for a "
-    "leftover file that is unused within that SAME stack, and ONLY when the "
-    "user's own words asked for a different stack than the scaffold's.\n"
+    "EXTENDS the existing stack, even when the user named a different "
+    "framework or language: implement the requested behavior in the "
+    "scaffold's stack.\n"
     "  * Skip anything the generator already provided correctly.\n"
     "  * Use the ACTION IMPLEMENTATION INVENTORY to locate actual operation "
     "handlers. A modeled method may still be an HTTP 501 placeholder. Put "
@@ -1376,8 +1371,6 @@ _SYSTEM_PROMPT = (
     "both. Emit a task for each one, naming the exact words the user used.\n"
     "  * You may skip tests/Docker/CI unless the user explicitly asked for "
     "them.\n"
-    "  * If the user named a target framework or language, every task must "
-    "respect it — do not propose tasks for the generator's default stack.\n"
     "  * Return an EMPTY array ONLY when the scaffold genuinely and fully "
     "covers the request — i.e. a plain CRUD API/UI over exactly the model "
     "with no extra features requested. When in doubt, emit tasks.\n"

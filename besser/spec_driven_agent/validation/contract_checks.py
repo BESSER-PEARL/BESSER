@@ -30,6 +30,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from besser.spec_driven_agent.parsed_source import parse_source
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 # Model type names that serialize to a string on the wire.
 _STRING_TYPES = frozenset({"str", "string", "uuid"})
@@ -987,7 +988,7 @@ def _walk_python(app_dir: str, known: frozenset) -> tuple:
     """
     parsed: list = []
     declared: dict = {}
-    for root, dirs, names in os.walk(app_dir):
+    for root, dirs, names in walk_plain(app_dir):
         dirs[:] = [d for d in dirs
                    if d not in ("node_modules", "dist", "build", "__pycache__")]
         for name in sorted(names):

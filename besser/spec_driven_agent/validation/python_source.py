@@ -6,6 +6,7 @@ import re as _re
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.parsed_source import parse_source
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 
 # Kept only because ``orchestrator`` re-exports them for external callers.
@@ -290,7 +291,7 @@ def _python_files(output_dir: str) -> list[str]:
     try:
         return [
             os.path.join(root, name)
-            for root, dirs, files in os.walk(output_dir)
+            for root, dirs, files in walk_plain(output_dir)
             for name in files
             if name.endswith(".py")
             if not any(part in ("node_modules", _SNAPSHOT_DIR, "__pycache__")

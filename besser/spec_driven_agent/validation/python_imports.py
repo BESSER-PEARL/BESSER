@@ -26,6 +26,7 @@ from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.validation.issues import _check_did_not_run
 from besser.spec_driven_agent.validation.python_source import _python_files
 from besser.spec_driven_agent.parsed_source import parse_source
+from besser.spec_driven_agent.execution.workspace_fs import open_plain, walk_plain
 
 
 # The stdlib half of the allowlist, taken from the interpreter rather than
@@ -116,7 +117,7 @@ def _declared_dependency_roots(output_dir: str) -> set[str]:
             return
         roots.add(_DIST_TO_IMPORT_ROOT.get(dist, dist.replace("-", "_")))
 
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         dirs[:] = [
             d for d in dirs
             if d not in ("node_modules", _SNAPSHOT_DIR, "__pycache__", ".git")
@@ -171,7 +172,7 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
     try:
         py_files = [
             os.path.join(root, name)
-            for root, dirs, files in os.walk(output_dir)
+            for root, dirs, files in walk_plain(output_dir)
             for name in files
             if name.endswith(".py")
             if not any(part in ("node_modules", _SNAPSHOT_DIR, "__pycache__")
@@ -381,8 +382,8 @@ def _import_smoke_location(output_dir, folder, rel, stderr, error) -> str:
         ).replace("\\", "/")
         return f"{frame_rel} line {line_no}"
     try:
-        with open(os.path.join(folder, "sql_alchemy.py"), "r",
-                  encoding="utf-8", errors="ignore") as fh:
+        with open_plain(os.path.join(folder, "sql_alchemy.py"), "r", root=output_dir,
+                        encoding="utf-8", errors="ignore") as fh:
             module_lines = fh.read().splitlines()
     except OSError:
         return rel

@@ -19,6 +19,7 @@ import os
 import re as _re
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
+from besser.spec_driven_agent.execution.workspace_fs import open_plain, open_plain_write, walk_plain
 
 
 # The deterministic Phase-1 backend generator always writes a correct
@@ -97,7 +98,7 @@ def _project_has_npm_lockfile(output_dir: str) -> bool:
     ``npm ci`` refuses to run without one, whatever directory the Dockerfile
     builds from.
     """
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", _SNAPSHOT_DIR)]
         if "package-lock.json" in files or "npm-shrinkwrap.json" in files:
             return True
@@ -114,7 +115,7 @@ def _ensure_requirements_txt(docker_dir: str) -> bool:
     if os.path.isfile(req_path):
         return False
     extras: set = set()
-    for root, _, files in os.walk(docker_dir):
+    for root, _, files in walk_plain(docker_dir):
         for fn in files:
             if not fn.endswith(".py"):
                 continue
@@ -128,7 +129,7 @@ def _ensure_requirements_txt(docker_dir: str) -> bool:
                     extras.add(pkg)
     content = _DEFAULT_BACKEND_REQUIREMENTS + "".join(sorted(e + "\n" for e in extras))
     try:
-        with open(req_path, "w", encoding="utf-8") as f:
+        with open_plain_write(req_path, "w", root=docker_dir, encoding="utf-8") as f:
             f.write(content)
         return True
     except Exception:
@@ -333,7 +334,7 @@ build argument - `docker-compose.yml` already passes it that way.
 
 def _read_text(path: str) -> str:
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+        with open_plain(path, "r", encoding="utf-8", errors="ignore") as handle:
             return handle.read()
     except OSError:
         return ""
@@ -341,7 +342,7 @@ def _read_text(path: str) -> str:
 
 def _write_text(path: str, content: str) -> bool:
     try:
-        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        with open_plain_write(path, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(content)
         return True
     except OSError:
@@ -350,7 +351,7 @@ def _write_text(path: str, content: str) -> bool:
 
 def _iter_project_dirs(root: str):
     """Yield (dir, filenames) for the tree, skipping build/vendor folders."""
-    for folder, dirs, files in os.walk(root):
+    for folder, dirs, files in walk_plain(root):
         dirs[:] = [d for d in dirs
                    if d not in _FRONTEND_SKIP_DIRS and not d.startswith(".besser_")]
         yield folder, files

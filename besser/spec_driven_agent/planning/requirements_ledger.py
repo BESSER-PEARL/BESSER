@@ -17,7 +17,6 @@ from __future__ import annotations
 import ast
 import json
 import logging
-import os
 from pathlib import Path
 import re
 import time
@@ -28,6 +27,7 @@ from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
 from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
 )
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 logger = logging.getLogger(__name__)
 
@@ -444,7 +444,7 @@ def _source_files(output_dir: str) -> dict[str, str]:
     """Only application source, never run logs/recipes or an escaped symlink."""
     base = Path(output_dir).resolve()
     files: dict[str, str] = {}
-    for root, dirs, names in os.walk(base):
+    for root, dirs, names in walk_plain(base):
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _DIGEST_SKIP_DIRS
                    and not (Path(root) == base and d in _ARTIFACT_ROOT_DIRS)]
         for name in names:

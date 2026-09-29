@@ -329,6 +329,54 @@ def test_an_interrupted_fix_loop_says_what_interrupted_it(orch, monkeypatch):
     assert "unexpected stop_reason" in (orch._phase3_stop_requested() or "")
 
 
+def test_one_truncated_fix_turn_asks_for_less_instead_of_ending_phase3(orch, monkeypatch):
+    """A single max_tokens stop set the sticky interrupt flag, which ends every
+    remaining Phase 3 attempt. Phase 2 recovers from the same stop by asking
+    for a smaller turn; the fix loop now does too."""
+    responses = [{"stop_reason": "max_tokens", "content": []},
+                 {"stop_reason": "tool_use", "content": []}]
+    seen: list[list[dict]] = []
+
+    def chat(**kwargs):
+        seen.append(list(kwargs["messages"]))
+        return responses.pop(0)
+
+    def executed(blocks, turn):
+        orch.tool_calls_log.append(
+            {"turn": turn, "tool": "modify_file", "input": {}, "success": True})
+        return []
+
+    monkeypatch.setattr(orch.client, "chat", chat)
+    monkeypatch.setattr(orch, "_execute_tool_blocks", executed)
+    monkeypatch.setattr(orch, "_apply_edit_loop_guards", lambda messages, where: True)
+    monkeypatch.setattr(orch, "_save_phase3_checkpoint", lambda: None)
+
+    assert orch._invoke_phase3_fix_loop(_blockers(2), is_first_attempt=True) == 1
+    assert not orch._phase3_interrupted
+    assert "CUT OFF" in str(seen[1][-1]["content"])
+
+
+def test_the_fix_loop_compacts_its_history_like_phase2(orch, monkeypatch):
+    """Phase 3 never compacted, so a long repair attempt on a small-context
+    model could overflow where Phase 2 would have summarized."""
+    compacted = [{"role": "user", "content": [{"type": "text", "text": "COMPACTED"}]}]
+    seen: list[list[dict]] = []
+
+    def chat(**kwargs):
+        seen.append(kwargs["messages"])
+        return {"stop_reason": "tool_use", "content": []}
+
+    monkeypatch.setattr(orch, "_maybe_compact", lambda messages: compacted)
+    monkeypatch.setattr(orch.client, "chat", chat)
+    monkeypatch.setattr(orch, "_execute_tool_blocks", lambda blocks, turn: [])
+    monkeypatch.setattr(orch, "_apply_edit_loop_guards", lambda messages, where: True)
+    monkeypatch.setattr(orch, "_save_phase3_checkpoint", lambda: None)
+
+    orch._invoke_phase3_fix_loop(_blockers(2), is_first_attempt=True)
+
+    assert seen == [compacted]
+
+
 def test_an_invalid_api_key_in_the_fix_loop_propagates(orch, monkeypatch):
     """Phase 2 re-raises ``InvalidApiKeyError`` so the runner can report
     INVALID_KEY. The fix loop's blanket ``except Exception`` swallowed it and

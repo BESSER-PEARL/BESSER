@@ -188,3 +188,45 @@ class TestImportGitHubRun:
         r = _post(body, headers={"X-GitHub-Session": "sess"})
         assert r.status_code == 404
         assert r.json()["detail"] == "repo_missing"
+
+    def test_oversized_repo_returns_400_with_message(self, monkeypatch):
+        # download_repo_tarball signals every size/member cap as ValueError;
+        # the user must see why, not a generic 500.
+        fake = _FakeGitHubService()
+
+        async def _too_large(owner, repo, ref):
+            raise ValueError(
+                "Repository archive exceeds the 100 MB size cap; refusing to download."
+            )
+
+        fake.download_repo_tarball = _too_large
+        _install(monkeypatch, fake)
+
+        r = _post({"owner": "test-owner", "repo": "my-app"}, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 400
+        assert "100 MB size cap" in r.json()["detail"]
+
+    @pytest.mark.parametrize(
+        "owner, repo",
+        [
+            ("test-owner", ".."),
+            ("test-owner", "my-app/../../user"),
+            ("../orgs", "my-app"),
+            ("test owner", "my-app"),
+            ("test-owner", "my-app?ref=x"),
+        ],
+    )
+    def test_invalid_owner_or_repo_returns_400(self, monkeypatch, owner, repo):
+        fake = _FakeGitHubService()
+        _install(monkeypatch, fake)
+
+        r = _post({"owner": owner, "repo": repo}, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 400
+        assert fake.tarball_ref is None
+
+    def test_dotted_repo_name_is_accepted(self, monkeypatch):
+        fake = _FakeGitHubService()
+        _install(monkeypatch, fake)
+
+        r = _post({"owner": "test_owner-1", "repo": "my.app_v2"}, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200

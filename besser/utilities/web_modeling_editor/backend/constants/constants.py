@@ -28,8 +28,7 @@ LLM_TEMP_DIR_PREFIX = "besser_llm_"
 
 
 def _env_float(name: str, default: float) -> float:
-    import os as _os
-    value = _os.environ.get(name)
+    value = os.environ.get(name)
     if not value:
         return default
     try:
@@ -40,8 +39,7 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _env_int(name: str, default: int) -> int:
-    import os as _os
-    value = _os.environ.get(name)
+    value = os.environ.get(name)
     if not value:
         return default
     try:
@@ -52,19 +50,17 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    import os as _os
-    value = _os.environ.get(name)
+    value = os.environ.get(name)
     if value is None:
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _env_path(name: str) -> str | None:
-    import os as _os
-    value = _os.environ.get(name, "").strip()
+    value = os.environ.get(name, "").strip()
     if not value:
         return None
-    return _os.path.abspath(_os.path.expanduser(value))
+    return os.path.abspath(os.path.expanduser(value))
 
 
 # Per-run spend / runtime caps. The HARD_CAP values are the absolute

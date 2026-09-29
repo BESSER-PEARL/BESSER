@@ -11,6 +11,7 @@ The editor is available at: https://editor.besser-pearl.org
 import asyncio
 import logging
 import os
+from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -132,7 +133,7 @@ class RequestSizeLimitMiddleware:
     leaving the body untouched for the application to read normally.
     """
 
-    def __init__(self, app, max_size: int = None):
+    def __init__(self, app, max_size: Optional[int] = None):
         self.app = app
         self.max_size = MAX_REQUEST_SIZE if max_size is None else max_size
 

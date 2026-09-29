@@ -6,21 +6,21 @@ final download URL back to the browser.
 
 Security caveat
 ---------------
-``LLMOrchestrator`` executes shell commands produced by the LLM inside a
-per-run temp directory (120s per-command timeout, no command denylist).
-It runs in the same process as the rest of the BESSER backend. This
-endpoint is BYOK — the user provides their own Anthropic or OpenAI API
-key and pays for their own run. Container-level isolation (e.g. Render)
-is the only sandbox between runs. Never deploy this endpoint on
-infrastructure shared with untrusted workloads.
+The LLM's shell tool (``run_command``) is off unless the process starts
+with ``BESSER_LLM_ENABLE_SHELL_TOOLS``; when enabled, each command runs in a
+per-run bubblewrap sandbox (``spec_driven_agent/execution/sandbox.py``) and
+fails closed if the sandbox cannot start. Generated code is still
+model-authored: anything copied out of a run workspace (download, seed,
+GitHub push) drops symlinks rather than following them.
 
 The user's API key is accepted only in the JSON POST body, never via
 URL, query string, or headers. It is never logged, never echoed in SSE
 events, and never stored on disk.
 """
 
-from __future__ import annotations
-
+# No ``from __future__ import annotations`` here: FastAPI resolves string
+# annotations against a decorated endpoint's ``__globals__``, which
+# ``handle_endpoint_errors``' wrapper points at the decorator module.
 import asyncio
 import hmac
 import json
@@ -38,6 +38,7 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 
+from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_CANCEL_ABANDONED_RUNS,
     LLM_DISCONNECTED_GRACE_SECONDS,
@@ -69,6 +70,11 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview i
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
     scrub_secret_files,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
+    copytree_no_links,
+    is_plain_entry,
+)
+# Underscored names below are shared on purpose; tests patch them by name.
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     _EXCLUDED_OUTPUT_DIRS,
     _locate_run_temp_dir,
@@ -115,6 +121,9 @@ _DOWNLOAD_CHUNK_SIZE = 65536
 # replaced with a single underscore. Since file names come from
 # LLM-generated output directories, we cannot trust them.
 _UNSAFE_FILENAME_RE = re.compile(r"[^\w\-. ()\[\]]+")
+
+# GitHub login / repository name charset.
+_GITHUB_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+")
 
 
 def _safe_attachment_filename(filename: str, fallback: str) -> str:
@@ -286,7 +295,7 @@ def _run_stream_response(run_id: str, after_sequence: int = 0) -> StreamingRespo
 async def smart_generate(
     request: SmartGenerateRequest,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-):
+) -> StreamingResponse:
     """Stream an LLM-orchestrated code generation run as SSE events.
 
     Emits events in order: ``start`` → zero or more of
@@ -396,7 +405,7 @@ async def smart_generate(
 @router.get("/spec-driven/runs/{run_id}")
 async def get_smart_run_status(
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
-):
+) -> dict:
     """Return durable lifecycle metadata without exposing request secrets."""
     record = DURABLE_RUN_MANAGER.get_run(run_id)
     if record is None:
@@ -409,7 +418,7 @@ async def poll_smart_run_events(
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
     after: int = Query(default=0, ge=0, le=_MAX_SQLITE_SEQUENCE),
     limit: int = Query(default=250, ge=1, le=1000),
-):
+) -> dict:
     """Polling transport for the durable event log — the proxy-safe fallback.
 
     A TLS-intercepting corporate proxy buffers the
@@ -456,7 +465,7 @@ async def stream_smart_run_events(
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
     after: int = Query(default=0, ge=0, le=_MAX_SQLITE_SEQUENCE),
     last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
-):
+) -> StreamingResponse:
     """Replay events after a sequence, then follow the live producer.
 
     ``after`` supports the fetch-based frontend. ``Last-Event-ID`` keeps the
@@ -522,7 +531,7 @@ def _free_tier_model_choices() -> list[dict]:
 
 
 @router.get("/spec-driven/config")
-async def smart_gen_config():
+async def smart_gen_config() -> dict:
     """Expose the server's current spec-driven generation configuration.
 
     The frontend reads this once at app startup (or before rendering
@@ -533,39 +542,35 @@ async def smart_gen_config():
     Nothing here is a secret — everything exposed is either a public
     cap or a feature flag. API keys and run IDs are never returned.
     """
-    # Re-import the constants each call so tests that monkeypatch the
-    # module see fresh values. The indirection has zero measurable
-    # overhead vs. the LLM work these caps gate.
-    from besser.utilities.web_modeling_editor.backend.constants import constants as C
-
+    # Attribute lookups at call time, so monkeypatched constants show up.
     return {
         "caps": {
-            "max_cost_usd_hard_cap": C.LLM_MAX_COST_USD_HARD_CAP,
-            "max_runtime_seconds_hard_cap": C.LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
-            "max_turns_hard_cap": C.LLM_MAX_TURNS_HARD_CAP,
-            "default_max_cost_usd": C.LLM_DEFAULT_MAX_COST_USD,
-            "default_max_runtime_seconds": C.LLM_DEFAULT_MAX_RUNTIME_SECONDS,
-            "default_max_turns": C.LLM_DEFAULT_MAX_TURNS,
+            "max_cost_usd_hard_cap": backend_constants.LLM_MAX_COST_USD_HARD_CAP,
+            "max_runtime_seconds_hard_cap": backend_constants.LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
+            "max_turns_hard_cap": backend_constants.LLM_MAX_TURNS_HARD_CAP,
+            "default_max_cost_usd": backend_constants.LLM_DEFAULT_MAX_COST_USD,
+            "default_max_runtime_seconds": backend_constants.LLM_DEFAULT_MAX_RUNTIME_SECONDS,
+            "default_max_turns": backend_constants.LLM_DEFAULT_MAX_TURNS,
         },
-        "download_ttl_seconds": C.LLM_DOWNLOAD_TTL_SECONDS,
-        "cost_emitter_interval_seconds": C.LLM_COST_EMITTER_INTERVAL_SECONDS,
+        "download_ttl_seconds": backend_constants.LLM_DOWNLOAD_TTL_SECONDS,
+        "cost_emitter_interval_seconds": backend_constants.LLM_COST_EMITTER_INTERVAL_SECONDS,
         "concurrency": {
-            "max_concurrent_runs": C.LLM_MAX_CONCURRENT_RUNS,
+            "max_concurrent_runs": backend_constants.LLM_MAX_CONCURRENT_RUNS,
         },
         "features": {
-            "tracing_enabled": C.LLM_ENABLE_TRACING,
-            "checkpointing_enabled": C.LLM_ENABLE_CHECKPOINTING,
-            "resume_enabled": C.LLM_ENABLE_CHECKPOINTING,
-            "toolchain_validation_enabled": C.LLM_ENABLE_TOOLCHAIN_VALIDATION,
+            "tracing_enabled": backend_constants.LLM_ENABLE_TRACING,
+            "checkpointing_enabled": backend_constants.LLM_ENABLE_CHECKPOINTING,
+            "resume_enabled": backend_constants.LLM_ENABLE_CHECKPOINTING,
+            "toolchain_validation_enabled": backend_constants.LLM_ENABLE_TOOLCHAIN_VALIDATION,
             # False on any deploy that has not opted in. Reported so a local/on-prem operator can confirm from outside
             # the process that BESSER_LLM_ENABLE_SHELL_TOOLS actually took
             # effect - it is a process-start env var, never a request field.
-            "shell_tools_enabled": C.LLM_ENABLE_SHELL_TOOLS,
-            "per_write_diagnostics_enabled": C.LLM_PER_WRITE_DIAGNOSTICS,
+            "shell_tools_enabled": backend_constants.LLM_ENABLE_SHELL_TOOLS,
+            "per_write_diagnostics_enabled": backend_constants.LLM_PER_WRITE_DIAGNOSTICS,
             "durable_runs_enabled": True,
             "event_replay_enabled": True,
-            "cancel_abandoned_runs": C.LLM_CANCEL_ABANDONED_RUNS,
-            "disconnected_grace_seconds": C.LLM_DISCONNECTED_GRACE_SECONDS,
+            "cancel_abandoned_runs": backend_constants.LLM_CANCEL_ABANDONED_RUNS,
+            "disconnected_grace_seconds": backend_constants.LLM_DISCONNECTED_GRACE_SECONDS,
         },
         "supported_providers": ["anthropic", "openai", "mistral", "nebius"],
         # Per-provider default model names, sourced from the LLM client
@@ -597,7 +602,8 @@ async def smart_gen_config():
 
 
 @router.post("/spec-driven/preview")
-async def smart_preview(request: SmartPreviewRequest):
+@handle_endpoint_errors("smart_preview")
+async def smart_preview(request: SmartPreviewRequest) -> dict:
     """Return the plan spec-driven generate would run, without executing it.
 
     The response lets the UI show a confirmation screen before the user
@@ -621,22 +627,11 @@ async def smart_preview(request: SmartPreviewRequest):
           "model_summary": {"primary": "class", "present": [...]}
         }
 
-    Errors are handled inline (not via the ``handle_endpoint_errors``
-    decorator) because its ``functools.wraps`` wrapper confuses Pydantic
-    forward-ref resolution: the wrapped function's ``__globals__`` point
-    at the decorator module, so ``SmartPreviewRequest`` isn't visible
-    when the schema is built.
+    Errors are mapped by ``handle_endpoint_errors`` (``ValueError`` -> 400).
     """
-    try:
-        assembled = assemble_models_from_project(
-            request.project, primary_kind_override=request.primary_kind_override,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Unexpected error building spec-driven preview")
-        raise HTTPException(status_code=500, detail="Internal server error") from exc
-
+    assembled = assemble_models_from_project(
+        request.project, primary_kind_override=request.primary_kind_override,
+    )
     plan = build_preview(
         assembled,
         instructions=request.instructions,
@@ -658,7 +653,7 @@ async def smart_preview(request: SmartPreviewRequest):
 async def resume_smart_gen(
     run_id: str,
     request: SmartGenerateRequest,
-):
+) -> StreamingResponse:
     """Resume a spec-driven generate run that crashed before completion.
 
     Takes the same ``SmartGenerateRequest`` shape as ``/spec-driven/generate``
@@ -765,7 +760,7 @@ async def cancel_smart_gen(
         pattern=r"^[a-f0-9]{32}$",
         description="Hex run ID returned in the `start` SSE event",
     ),
-):
+) -> dict:
     """Signal a live spec-driven generation run to stop at its next turn.
 
     Returns ``{"status": "cancelled"}`` if the run was found and
@@ -796,7 +791,7 @@ async def download_smart(
         pattern=r"^[a-f0-9]{32}$",
         description="Hex run ID returned in the `done` SSE event",
     ),
-):
+) -> StreamingResponse:
     """Download the output produced by a completed run.
 
     Re-downloadable until the TTL sweep expires the entry
@@ -969,7 +964,7 @@ def _resolve_target_branch(
 async def push_spec_driven_to_github(
     req: PushSmartToGitHubRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
-):
+) -> PushSmartToGitHubResponse:
     """Push a finished spec-driven generation run to a GitHub repository.
 
     Unlike ``/deploy-webapp`` (which regenerates deterministically and
@@ -1033,14 +1028,12 @@ async def push_spec_driven_to_github(
             # generator name and run history from it — without it the
             # modify run loses the framework guard and gap analysis
             # falls back to "build from scratch" framing.
-            shutil.copytree(
-                entry.temp_dir,
-                workdir,
-                dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns(*_EXCLUDED_OUTPUT_DIRS, ".besser_*"),
+            # Symlinks are dropped, never read through.
+            copytree_no_links(
+                entry.temp_dir, workdir, [*_EXCLUDED_OUTPUT_DIRS, ".besser_*"],
             )
             _recipe_src = os.path.join(entry.temp_dir, ".besser_recipe.json")
-            if os.path.isfile(_recipe_src):
+            if os.path.isfile(_recipe_src) and is_plain_entry(_recipe_src):
                 shutil.copy2(_recipe_src, os.path.join(workdir, ".besser_recipe.json"))
             scrubbed = _scrub_secret_env_files(workdir)
             if scrubbed:
@@ -1158,7 +1151,7 @@ async def push_spec_driven_to_github(
 async def import_github_run(
     req: ImportGitHubRunRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
-):
+) -> ImportGitHubRunResponse:
     """Import an existing BESSER-created GitHub repo as a modify seed.
 
     The counterpart to ``/spec-driven/push-to-github``: instead of *writing* a
@@ -1197,6 +1190,12 @@ async def import_github_run(
 
     owner = req.owner.strip()
     repo = req.repo.strip()
+    # Both are interpolated into GitHub API URL paths.
+    for value in (owner, repo):
+        if not _GITHUB_NAME_RE.fullmatch(value) or not value.strip("."):
+            raise HTTPException(
+                status_code=400, detail="Invalid GitHub owner or repository name."
+            )
 
     try:
         github = create_github_service(access_token)
@@ -1287,6 +1286,9 @@ async def import_github_run(
         raise HTTPException(
             status_code=502, detail=f"GitHub upstream error: {detail}"
         ) from exc
+    except ValueError as exc:
+        # download_repo_tarball's size / member-count / unsafe-path refusals.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception:
         logger.exception("Unexpected error in import_github_run")
         raise HTTPException(

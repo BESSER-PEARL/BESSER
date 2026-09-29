@@ -84,6 +84,7 @@ class RunRecord:
     resume_available: bool = False
 
     def to_api_dict(self) -> dict:
+        """Camel-cased status payload for the runs API; carries no request secrets."""
         return {
             "runId": self.run_id,
             "status": self.status,
@@ -108,6 +109,7 @@ class _AbandonmentPolicy:
 
 
 def _default_store_path() -> str:
+    """``BESSER_LLM_RUN_STORE_PATH`` if set, else a DB file in the system temp dir."""
     configured = os.environ.get("BESSER_LLM_RUN_STORE_PATH", "").strip()
     if configured:
         return os.path.abspath(os.path.expanduser(configured))
@@ -161,6 +163,7 @@ class SqliteRunEventStore:
     """
 
     def __init__(self, path: Optional[str] = None) -> None:
+        """Open (creating if needed) the SQLite store at ``path`` or the default path."""
         self.path = path or _default_store_path()
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -244,10 +247,12 @@ class SqliteRunEventStore:
             )
 
     def close(self) -> None:
+        """Close the SQLite connection."""
         with self._lock:
             self._conn.close()
 
     def begin_run(self, run_id: str, *, resume: bool = False) -> RunRecord:
+        """Create a queued run, or with ``resume`` reset an existing one and its events."""
         now = time.time()
         with self._lock, self._conn:
             existing = self._conn.execute(
@@ -289,6 +294,7 @@ class SqliteRunEventStore:
         return record
 
     def append(self, run_id: str, frame: bytes) -> StoredRunEvent:
+        """Store one SSE frame under the run's next sequence number and return it."""
         created_at = time.time()
         with self._lock, self._conn:
             row = self._conn.execute(
@@ -338,6 +344,7 @@ class SqliteRunEventStore:
         terminal_event: Optional[str] = None,
         error: Optional[str] = None,
     ) -> None:
+        """Record the run's lifecycle status and optional terminal event / error."""
         with self._lock, self._conn:
             self._conn.execute(
                 """
@@ -349,6 +356,7 @@ class SqliteRunEventStore:
             )
 
     def get_run(self, run_id: str) -> Optional[RunRecord]:
+        """Return the stored run record, or None when unknown."""
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM spec_runs WHERE run_id = ?", (run_id,)
@@ -409,6 +417,7 @@ class SqliteRunEventStore:
                 )
 
     def mark_abandonment_requested(self, run_id: str) -> None:
+        """Stamp the time a disconnected run was asked to cancel."""
         now = time.time()
         with self._lock, self._conn:
             self._conn.execute(
@@ -421,6 +430,7 @@ class SqliteRunEventStore:
             )
 
     def set_resume_available(self, run_id: str, available: bool) -> None:
+        """Record whether the run's workspace can still be resumed."""
         with self._lock, self._conn:
             self._conn.execute(
                 """
@@ -438,6 +448,7 @@ class SqliteRunEventStore:
         *,
         limit: int = 250,
     ) -> list[StoredRunEvent]:
+        """Return up to ``limit`` stored events with a sequence above ``sequence``."""
         with self._lock:
             rows = self._conn.execute(
                 """
@@ -468,6 +479,7 @@ class SqliteRunEventStore:
         return events
 
     def sweep_expired(self, ttl_seconds: int) -> int:
+        """Delete finished runs idle longer than ``ttl_seconds``; return the count."""
         cutoff = time.time() - max(1, ttl_seconds)
         with self._lock, self._conn:
             cursor = self._conn.execute(
@@ -491,6 +503,7 @@ class DurableRunManager:
     """Own producer tasks and expose replayable event subscriptions."""
 
     def __init__(self, store: Optional[SqliteRunEventStore] = None) -> None:
+        """Wrap ``store`` (a fresh SQLite store by default) with in-process run state."""
         self.store = store or SqliteRunEventStore()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._conditions: dict[str, asyncio.Condition] = {}
@@ -511,6 +524,7 @@ class DurableRunManager:
         resume_available: Optional[Callable[[], bool]] = None,
         disconnect_grace_seconds: float = 300.0,
     ) -> RunRecord:
+        """Register the run and start draining ``source`` into the store in the background."""
         async with self._lock:
             existing_task = self._tasks.get(run_id)
             if existing_task is not None and not existing_task.done():
@@ -774,6 +788,7 @@ class DurableRunManager:
                         self._subscriber_counts.pop(run_id, None)
 
     def get_run(self, run_id: str) -> Optional[RunRecord]:
+        """Return the stored run record, or None when unknown."""
         return self.store.get_run(run_id)
 
     async def subscribe(
@@ -863,6 +878,7 @@ class DurableRunManager:
         ttl_seconds: int,
         interval_seconds: int = 60,
     ) -> None:
+        """Run ``sweep_expired`` every ``interval_seconds`` until cancelled."""
         while True:
             try:
                 await asyncio.sleep(interval_seconds)

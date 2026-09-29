@@ -15,6 +15,7 @@ import time
 
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_RUN_WORKSPACE_ROOT,
+    LLM_TEMP_DIR_PREFIX,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ def cleanup_old_temp_files(max_age_hours: int = 24) -> None:
         if os.path.normcase(configured) != os.path.normcase(tempfile.gettempdir()):
             # The persistent volume is dedicated to spec-driven runs;
             # never apply the broader temp prefix set to that location.
-            scan_roots.append((configured, ("besser_llm_",)))
+            scan_roots.append((configured, (LLM_TEMP_DIR_PREFIX,)))
 
     for tmp_root, prefixes in scan_roots:
         try:

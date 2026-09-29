@@ -106,6 +106,10 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
     scrub_secret_files,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
+    copytree_no_links,
+    is_plain_entry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -920,12 +924,7 @@ def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
     """
     from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 
-    shutil.copytree(
-        base_dir,
-        dest_dir,
-        dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns(*_EXCLUDED_OUTPUT_DIRS),
-    )
+    copytree_no_links(base_dir, dest_dir, _EXCLUDED_OUTPUT_DIRS)
 
     # Drop the copied checkpoint (old run's mid-flight state).
     checkpoint = os.path.join(dest_dir, CHECKPOINT_FILENAME)
@@ -1987,50 +1986,32 @@ class SmartGenerationRunner:
             # cancellation). Without this the run would be reported as an
             # unqualified success even though requested changes never ran.
             stop_reason = getattr(orchestrator, "_phase2_stop_reason", "completed")
-            # ``validation_required`` is the NORMAL handoff into Phase 3, not a
-            # failure: Phase 2 stops because validation is due, Phase 3 runs,
-            # and the pipeline itself treats it as a clean exit in all three
-            # places it branches on this (orchestrator 723 and 884,
-            # modify_run 191). Only this runner read ``_phase2_exited_cleanly``
-            # alone, so the healthy path reported "Generated — incomplete" and
-            # "The customization loop did not finish cleanly" over a run whose
-            # validation had found nothing missing.
+            # ``validation_required`` is the normal handoff into Phase 3 and
+            # counts as a clean exit, as it does in the orchestrator.
             exited_cleanly = (
                 bool(getattr(orchestrator, "_phase2_exited_cleanly", True))
                 or stop_reason == "validation_required"
             )
 
-            # Blockers include unresolved implementation and verification
-            # issues, not only compile/startup failures. An app may run while
-            # still missing requirements or sufficient evidence of completion.
-            # Those findings must keep the result incomplete too.
+            # Blockers include unresolved requirement and verification issues,
+            # not only compile/startup failures.
             _unfixed_blockers = [
                 getattr(i, "message", str(i))
                 for i in (getattr(orchestrator, "_validation_issues", None) or [])
                 if is_completion_issue(i)
             ]
-            # Preserve input-loss honesty even if a late validator failure or
-            # an alternative orchestrator failed to retain its warning list.
+            # Assembly warnings count even if the orchestrator dropped them.
             _unfixed_blockers = list(dict.fromkeys(_unfixed_blockers + assembly_warnings))
 
             _late_err = getattr(self, "_late_internal_error", None)
-            # A fix/modify run whose reported failure the orchestrator could
-            # not confirm fixed. When set, this is a promoted blocker in
-            # ``_validation_issues`` above (so ``incomplete`` is already
-            # True) — we surface its honest, target-specific message instead
-            # of the generic incomplete wording. None on every other run.
+            # Set only on a fix/modify run whose reported failure could not be
+            # confirmed fixed (already a promoted blocker above); replaces the
+            # generic incomplete wording.
             _fix_msg = getattr(orchestrator, "_fix_target_message", None)
-            # "Incomplete" means the delivered output does not work -- not that
-            # we could not check something. The unverified family classifies as
-            # blocker severity, so a run reporting "Nothing we checked was found
-            # missing", 3 verified and 4 could-not-verify was still headlined
-            # "Generated - incomplete" with nothing wrong with it. The unknowns
-            # keep their place in the ledger and in blockerCount, which the card
-            # already renders as its own bucket; they no longer set the verdict.
-            # Assembly failures are built with required_check_unverified(), so
-            # they wear the "validation unverified:" prefix -- but a diagram that
-            # failed to convert is a KNOWN loss, not an unknown: part of the
-            # user's project never reached the generator. Add them back.
+            # "Incomplete" means a known defect, not an unverified check:
+            # unverified findings stay in blockerCount but do not set the
+            # verdict. Assembly warnings carry the unverified prefix yet are a
+            # known loss (a diagram never reached the generator), so add them.
             _real_defects = unresolved_defects(_unfixed_blockers) + assembly_warnings
             incomplete = (
                 (not exited_cleanly)
@@ -2069,7 +2050,7 @@ class SmartGenerationRunner:
                     ))
             if not exited_cleanly:
                 api_err = (getattr(orchestrator, "_phase2_api_error", "") or "")[:160]
-                _REASON_TEXT = {
+                reason_text = {
                     "api_error": (
                         "The customization loop was cut short by a provider error"
                         + (f" ({api_err})" if api_err else "")
@@ -2079,9 +2060,6 @@ class SmartGenerationRunner:
                         "The customization loop reached its step limit before "
                         "finishing every requested change."
                     ),
-                    # Neither of these had text, so both fell through to the
-                    # generic "did not finish cleanly" -- which tells the user
-                    # nothing and reads as if something broke.
                     "stuck_edit_loop": (
                         "The customization loop stopped because repeated edits "
                         "to the same file were not landing, so it could not "
@@ -2101,7 +2079,7 @@ class SmartGenerationRunner:
                         "The run hit its runtime cap before finishing every requested change."
                     ),
                 }
-                incomplete_reason_msg = _REASON_TEXT.get(
+                incomplete_reason_msg = reason_text.get(
                     stop_reason, "The customization loop did not finish cleanly."
                 )
                 # cost_cap / timeout already emit their own dedicated warning
@@ -2261,14 +2239,17 @@ class SmartGenerationRunner:
         # (.besser_recipe.json etc.) AND build-output directories —
         # cargo/npm runs during the customise or validate phases would
         # otherwise put thousands of dependency files (target/,
-        # node_modules/) into the download zip.
+        # node_modules/) into the download zip. Symlinks are dropped, never
+        # read through (os.walk does not descend into linked dirs).
         user_files: list[str] = []
         for root, dirs, files in os.walk(result_path):
             dirs[:] = [d for d in dirs if d not in _EXCLUDED_OUTPUT_DIRS]
             for name in files:
                 if name.startswith(".besser_"):
                     continue
-                user_files.append(os.path.join(root, name))
+                path = os.path.join(root, name)
+                if is_plain_entry(path):
+                    user_files.append(path)
 
         if not user_files:
             # Distinct from an LLM upstream failure — the orchestrator

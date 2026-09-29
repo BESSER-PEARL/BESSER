@@ -32,6 +32,8 @@ from pydantic import BaseModel, Field
 
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.telemetry import (
     MAX_PAYLOAD_BYTES,
+    PARTICIPANT_PATTERN,
+    SESSION_PATTERN,
     build_report,
     record_event,
 )
@@ -40,8 +42,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/besser_api", tags=["telemetry"])
 
-_SESSION_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
-_PARTICIPANT_PATTERN = r"^[A-Za-z0-9_-]{1,16}$"
+_SESSION_PATTERN = SESSION_PATTERN.pattern
+_PARTICIPANT_PATTERN = PARTICIPANT_PATTERN.pattern
 
 
 class TelemetryEventRequest(BaseModel):
@@ -97,7 +99,10 @@ async def telemetry_report(
     admin_token = os.environ.get("BESSER_TELEMETRY_ADMIN_TOKEN", "").strip()
     if not admin_token:
         raise HTTPException(status_code=404, detail="Not Found")
-    if not token or not secrets.compare_digest(token, admin_token):
+    # Bytes: compare_digest raises TypeError on a non-ASCII str (a 500).
+    if not token or not secrets.compare_digest(
+        token.encode("utf-8"), admin_token.encode("utf-8"),
+    ):
         raise HTTPException(
             status_code=403, detail="Invalid or missing telemetry token"
         )

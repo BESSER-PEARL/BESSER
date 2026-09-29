@@ -14,8 +14,9 @@ import tempfile
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class GitHubService:

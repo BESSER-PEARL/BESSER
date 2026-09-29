@@ -231,7 +231,7 @@ def probe_api_scenario(output_dir: str, requests: list[dict], *, backend: str | 
                     timeout=min(_PROBE_TIMEOUT_SECONDS, 60),
                 )
             except SandboxUnavailable as exc:
-                return _error(f"the sandbox is unavailable: {exc}", "probe_error", backend=relative)
+                return _error(str(exc), "probe_error", backend=relative)
             except subprocess.TimeoutExpired:
                 return _error(f"API scenario timed out after {min(_PROBE_TIMEOUT_SECONDS, 60)}s", "timeout", backend=relative)
             for line in reversed((result.stdout or "").splitlines()):

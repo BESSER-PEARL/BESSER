@@ -359,7 +359,7 @@ def _collect_tsc_issues(
             )
         except SandboxUnavailable as exc:
             issues.append(required_check_unverified(
-                f"tsc [{rel}]", f"the sandbox is unavailable: {exc}"))
+                f"tsc [{rel}]", str(exc)))
             continue
         except subprocess.TimeoutExpired:
             issues.append(required_check_unverified(f"tsc [{rel}]", "timed out after 60s"))
@@ -640,7 +640,7 @@ def _collect_cargo_issues(output_dir: str) -> list[str]:
             )
         except SandboxUnavailable as exc:
             issues.append(_check_did_not_run(
-                f"cargo [{rel}]", f"the sandbox is unavailable: {exc}"))
+                f"cargo [{rel}]", str(exc)))
             continue
         except subprocess.TimeoutExpired:
             issues.append(_check_did_not_run(f"cargo [{rel}]", "timed out after 180s"))

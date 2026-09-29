@@ -126,6 +126,13 @@ class ToolExecutionResult:
 # Maximum time a shell command can run (seconds)
 COMMAND_TIMEOUT = 120
 
+# What the model sees when run_command cannot be confined. The cause and the
+# operator override go to the server log only: named here, the model tried to
+# set the override itself.
+_SANDBOX_REFUSAL = (
+    "Refused: the shell sandbox is unavailable on this server, so this command was not run."
+)
+
 # 1:1 typographic → ASCII map used by modify_file's fallback matching.
 # Models routinely type an ASCII apostrophe/quote/dash where the file has
 # the typographic variant (’ etc.); the exact match then fails on
@@ -3011,10 +3018,7 @@ class ToolExecutor:
         except SandboxUnavailable as exc:
             logger.error("run_command refused, sandbox unavailable: %s", exc)
             return {
-                "error": (
-                    "Refused: the shell sandbox could not be started, so this "
-                    f"command was not run. {exc}."
-                ),
+                "error": _SANDBOX_REFUSAL,
                 "command": command,
                 "exit_code": None,
                 "success": False,
@@ -3040,10 +3044,7 @@ class ToolExecutor:
             if startup_error:
                 logger.error("run_command sandbox failed to start: %s", startup_error)
                 return {
-                    "error": (
-                        "Refused: the shell sandbox failed to start, so this "
-                        f"command was not run. {startup_error}."
-                    ),
+                    "error": _SANDBOX_REFUSAL,
                     "command": command,
                     "exit_code": None,
                     "success": False,

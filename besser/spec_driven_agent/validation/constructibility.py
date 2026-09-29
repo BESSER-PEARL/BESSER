@@ -240,7 +240,7 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
                 env=env, timeout=_PROBE_TIMEOUT_SECONDS,
             )
         except SandboxUnavailable as exc:
-            return {"boot": "probe_error", "error": f"the sandbox is unavailable: {exc}"}
+            return {"boot": "probe_error", "error": str(exc)}
         except subprocess.TimeoutExpired:
             return {"boot": "probe_error",
                     "error": f"timed out after {_PROBE_TIMEOUT_SECONDS}s"}

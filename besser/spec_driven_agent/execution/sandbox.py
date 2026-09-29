@@ -68,7 +68,17 @@ _unconfined_warned = False
 
 
 class SandboxUnavailable(RuntimeError):
-    """The sandbox could not be prepared. The command must NOT be run."""
+    """The sandbox could not be prepared. The command must NOT be run.
+
+    ``str()`` is model-safe: it reaches findings and tool results the model
+    reads. The cause, including the operator override, is ``detail`` and is
+    logged here once; the model tried to set the override when it saw it.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__("the shell sandbox is unavailable on this server")
+        self.detail = detail
+        logger.error("Shell sandbox unavailable: %s", detail)
 
 
 @dataclass(frozen=True)

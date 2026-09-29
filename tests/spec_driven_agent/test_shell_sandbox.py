@@ -315,7 +315,7 @@ def test_a_missing_bwrap_refuses_rather_than_running_unconfined(monkeypatch):
 
     with pytest.raises(SandboxUnavailable) as exc:
         sandboxed_command("echo X", workspace="/w/run", cwd="/w/run")
-    assert "bubblewrap" in str(exc.value)
+    assert "bubblewrap" in exc.value.detail
 
 
 def test_a_sandbox_that_cannot_start_refuses(monkeypatch):
@@ -329,7 +329,7 @@ def test_a_sandbox_that_cannot_start_refuses(monkeypatch):
 
     with pytest.raises(SandboxUnavailable) as exc:
         sandboxed_command("echo X", workspace="/w/run", cwd="/w/run")
-    assert "seccomp=unconfined" in str(exc.value)
+    assert "seccomp=unconfined" in exc.value.detail
 
 
 def test_run_command_refuses_and_does_not_execute_when_the_sandbox_is_gone(tmp_path, monkeypatch):
@@ -387,7 +387,28 @@ def test_run_command_surfaces_a_startup_failure_instead_of_a_fake_compile_error(
     result = ex._run_command({"command": "python -c 'print(1)'"})
 
     assert result["success"] is False
-    assert "sandbox failed to start" in result["error"]
+    assert result["error"] == te._SANDBOX_REFUSAL
+    assert "bwrap:" not in result["error"]
+
+
+def test_the_refusal_the_model_sees_does_not_name_the_operator_override(tmp_path, monkeypatch):
+    """Run d3a33f95: the refusal quoted the sandbox's operator hint ("set
+    BESSER_LLM_SHELL_SANDBOX=off on a single-tenant host"), and the model's
+    next call was ``BESSER_LLM_SHELL_SANDBOX=off python -m pip ...``."""
+    from besser.spec_driven_agent.agent import tool_executor as te
+
+    monkeypatch.setenv(SANDBOX_POLICY_ENV, "auto")
+    monkeypatch.setattr(sandbox_mod, "sandbox_supported_platform", lambda: True)
+    monkeypatch.setattr(sandbox_mod.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(te, "run_bounded", lambda *a, **k: pytest.fail("must not run"))
+
+    result = te.ToolExecutor(workspace=str(tmp_path), allow_shell=True)._run_command(
+        {"command": "python -m pip install fastapi"})
+
+    assert result["success"] is False
+    assert result["error"] == (
+        "Refused: the shell sandbox is unavailable on this server, so this command was not run.")
+    assert SANDBOX_POLICY_ENV not in result["error"]
 
 
 def test_the_explicit_operator_opt_out_is_the_only_way_to_run_unconfined(monkeypatch):

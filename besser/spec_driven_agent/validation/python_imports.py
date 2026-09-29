@@ -329,7 +329,7 @@ def _import_smoke_issues(output_dir: str) -> list[str]:
             )
         except SandboxUnavailable as exc:
             issues.append(_check_did_not_run(
-                "the import smoke check", f"the sandbox is unavailable: {exc}",
+                "the import smoke check", str(exc),
             ))
             continue
         except subprocess.TimeoutExpired:

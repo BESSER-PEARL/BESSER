@@ -111,7 +111,7 @@ def collect_frontend_build_issues(
                 timeout=max(1, min(timeout, 120)),
             )
         except SandboxUnavailable as exc:
-            issues.append(required_check_unverified(label, f"the sandbox is unavailable: {exc}"))
+            issues.append(required_check_unverified(label, str(exc)))
             continue
         except subprocess.TimeoutExpired:
             issues.append(required_check_unverified(label, "configured build timed out"))

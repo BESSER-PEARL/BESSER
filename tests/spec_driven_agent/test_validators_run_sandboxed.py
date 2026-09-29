@@ -570,3 +570,21 @@ def test_a_sandbox_refusal_never_shows_the_model_the_override(
     assert any("sandbox is unavailable" in t for t in texts), texts
     assert not any(SANDBOX_POLICY_ENV in t for t in texts), texts
     assert SANDBOX_POLICY_ENV in caplog.text
+
+
+def test_run_confined_never_inherits_worker_secrets(monkeypatch, tmp_path):
+    # A caller that forgets env= must not hand the worker's keys to generated code.
+    from besser.spec_driven_agent.execution import sandbox as sandbox_mod
+
+    monkeypatch.setenv("BESSER_FREE_LLM_TOKEN", "sk-canary-should-not-leak-0123456789")
+    seen = {}
+
+    def fake_run_bounded(argv, *, timeout, cwd, env, shell, input):
+        seen["env"] = env
+        import subprocess
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(sandbox_mod, "run_bounded", fake_run_bounded)
+    sandbox_mod.run_confined(["true"], workspace=str(tmp_path), cwd=str(tmp_path), timeout=5)
+    assert seen["env"] is not None
+    assert "BESSER_FREE_LLM_TOKEN" not in seen["env"]

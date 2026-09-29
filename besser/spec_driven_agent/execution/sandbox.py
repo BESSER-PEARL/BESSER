@@ -35,7 +35,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
-from besser.spec_driven_agent.execution.process import run_bounded
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env, run_bounded
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +330,9 @@ def run_confined(
     """
     plan = sandboxed_command(argv, workspace=workspace, cwd=cwd,
                              network=network, writable=writable)
+    # Never inherit the worker's environment (provider keys, tokens).
+    if env is None:
+        env = _safe_subprocess_env()
     result = run_bounded(plan.argv, timeout=timeout, cwd=cwd, env=env,
                          shell=plan.use_shell, input=input)
     startup_error = plan.startup_error(result.returncode, result.stderr)

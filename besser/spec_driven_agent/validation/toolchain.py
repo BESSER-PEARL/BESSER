@@ -178,7 +178,10 @@ def _collect_ruff_issues(
                 "--output-format=concise",
                 "--no-cache",
                 "--exit-zero",
-                "--exclude", _SNAPSHOT_DIR,
+                # The snapshot and the harness's own files (e.g. the runbook's
+                # .besser_probe.py) are not the app. One list: with an absolute
+                # target, a separate --extend-exclude replaces --exclude.
+                "--exclude", f"{_SNAPSHOT_DIR},.besser_*",
                 output_dir,
             ],
             capture_output=True, text=True, timeout=30,

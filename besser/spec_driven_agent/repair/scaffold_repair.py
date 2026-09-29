@@ -340,6 +340,22 @@ def _read_text(path: str) -> str:
         return ""
 
 
+# Run workspaces are temp folders named after the run, never the app.
+_RUN_DIR_PREFIX = "besser_llm_"
+
+
+def _app_title(output_dir: str, backend_entry: str) -> str:
+    """The app's name for the README: the model name the backend generator put
+    in ``FastAPI(title="<Name> API")``, else a user-chosen folder name."""
+    found = _re.search(r'FastAPI\(\s*title\s*=\s*"([^"]+?)(?: API)?"', _read_text(backend_entry))
+    if found and found.group(1).strip():
+        return found.group(1).strip()
+    folder = os.path.basename(os.path.abspath(output_dir))
+    if folder and not folder.startswith(_RUN_DIR_PREFIX):
+        return folder.replace("_", " ").strip() or "Generated app"
+    return "Generated app"
+
+
 def _write_text(path: str, content: str) -> bool:
     try:
         with open_plain_write(path, "w", encoding="utf-8", newline="\n") as handle:
@@ -571,11 +587,11 @@ def _ensure_deployment_files(output_dir: str, frontend_dir: str) -> list:
     readme = os.path.join(output_dir, "README.md")
     if not os.path.isfile(readme):
         entry = _re.search(r'"(\w+\.py)"', cmd)
-        title = os.path.basename(os.path.abspath(output_dir)).replace("_", " ").strip()
+        entry_file = entry.group(1) if entry else "main_api.py"
         if _write_text(readme, _README_TEMPLATE.format(
-                title=title or "Generated app",
+                title=_app_title(output_dir, os.path.join(backend_dir, entry_file)),
                 backend=backend_name, frontend=frontend_name,
-                entry=entry.group(1) if entry else "main_api.py")):
+                entry=entry_file)):
             repairs.append("README.md")
     return repairs
 

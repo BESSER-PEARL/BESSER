@@ -191,3 +191,34 @@ def test_leaves_a_non_react_project_alone(tmp_path):
         json.dumps({"dependencies": {"express": "^4"}}), encoding="utf-8")
     assert ensure_frontend_scaffold(str(tmp_path)) == []
     assert not os.path.exists(tmp_path / "vite.config.mjs")
+
+
+def test_readme_is_titled_after_the_model_not_the_run_folder(tmp_path):
+    """Run workspaces are temp folders (besser_llm_<run id>_...); the title
+    comes from the backend's FastAPI(title="<Name> API")."""
+    run_dir = tmp_path / "besser_llm_7d188d2987bd42abb98014f6b3407cd5_2ojm5tlf"
+    run_dir.mkdir()
+    _flat_app(run_dir)
+    (run_dir / "backend" / "main_api.py").write_text(
+        _MAIN_API_PY.replace("FastAPI()", 'FastAPI(\n    title="Todo API",\n)'), encoding="utf-8")
+    ensure_frontend_scaffold(str(run_dir))
+    first = (run_dir / "README.md").read_text(encoding="utf-8").splitlines()[0]
+    assert first == "# Todo"
+
+
+def test_readme_never_uses_a_run_folder_name(tmp_path):
+    run_dir = tmp_path / "besser_llm_7d188d2987bd42abb98014f6b3407cd5_2ojm5tlf"
+    run_dir.mkdir()
+    _flat_app(run_dir)
+    ensure_frontend_scaffold(str(run_dir))
+    first = (run_dir / "README.md").read_text(encoding="utf-8").splitlines()[0]
+    assert first == "# Generated app"
+
+
+def test_readme_keeps_a_user_chosen_folder_name(tmp_path):
+    app_dir = tmp_path / "library_site"
+    app_dir.mkdir()
+    _flat_app(app_dir)
+    ensure_frontend_scaffold(str(app_dir))
+    first = (app_dir / "README.md").read_text(encoding="utf-8").splitlines()[0]
+    assert first == "# library site"

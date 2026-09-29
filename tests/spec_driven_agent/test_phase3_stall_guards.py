@@ -76,7 +76,7 @@ class _MutableUsage:
 
 
 def _drive(orchestrator, rounds, entry_blockers=6, after_round=None,
-           rejected_edits=0, calls=None):
+           rejected_edits=0, calls=None, entry=None):
     """Run the real Phase 3 cycle over a scripted sequence of rounds.
 
     Each round is ``(edits, wrote_source, discharged_obligations,
@@ -112,7 +112,7 @@ def _drive(orchestrator, rounds, entry_blockers=6, after_round=None,
 
     def collect():
         if state["attempt"] == 0:
-            return _blockers(entry_blockers)
+            return entry if entry is not None else _blockers(entry_blockers)
         return rounds[min(state["attempt"] - 1, len(rounds) - 1)][3]
 
     with patch.object(orchestrator, "_collect_validation_issues", side_effect=collect), \
@@ -520,3 +520,17 @@ def test_reminting_a_scenario_under_a_new_id_is_not_new_evidence(orch):
     assert orch._repair_obligations_revision() != before, (
         "a genuinely new workflow must still count"
     )
+
+
+def test_an_obligation_that_discharges_no_blocker_is_not_progress(orch):
+    """Run d3a33f95 (Kimi-K2.7-Code, "I want a todo app"): the only blockers
+    were two unverified UI requirements on a backend-only tree. Attempt 1
+    wrote nothing and left both standing, but its test_api/task_list calls
+    moved the obligations hash, which read as progress, so attempt 2 ran the
+    same round again (15 calls, zero edits, ~$0.42 across both)."""
+    unverified = [ValidationIssue("blocker", f"requirement unverified: R{i} — ui")
+                  for i in (7, 8)]
+    attempts = _drive(orch, [(0, False, True, unverified)] * 4,
+                      entry=unverified, calls=[[("test_api", True), ("read_file", True)]])
+
+    assert attempts == 1

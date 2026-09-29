@@ -106,6 +106,20 @@ def test_requirements_are_numbered_in_order():
     assert len(client.calls) == 1, "oversize requests must not make a provider call"
 
 
+def test_a_vague_request_may_extract_nothing():
+    """Run d3a33f95: "I want a todo app" came back as 8 invented requirements
+    (empty-title refusal, complete/activate endpoints, visual distinction).
+    A prompt test can only show the rule is stated; the harness half is that
+    an empty answer is a successful extraction, not a failed one."""
+    prompt = ledger._EXTRACT_SYSTEM_PROMPT
+    assert "List only behaviour the request itself states" in prompt
+    assert "'I want a todo app' states no testable requirement: return []" in prompt
+    assert prompt.index("List only behaviour") < prompt.index("Where stated, include:")
+
+    client = _ToolClient([{"requirements": []}])
+    assert ledger.extract_requirements("I want a todo app", client) == []
+
+
 def test_a_mock_client_is_never_called():
     assert ledger.extract_requirements(INSTRUCTIONS, _MockClient()) is None
 
@@ -572,6 +586,41 @@ def test_phase3_feeds_missing_requirements_to_the_fix_loop(simple_model, tmp_pat
     blockers = [i.message for i in issues if i.severity == "blocker"]
     assert any(m.startswith("requirement: R2 — Room numbers are unique") for m in blockers), blockers
     assert [v["status"] for v in orch._requirement_verdicts] == ["implemented", "missing"]
+
+
+@pytest.mark.parametrize("frontend", [False, True])
+def test_ui_requirements_on_a_backend_only_output_are_out_of_scope(
+        frontend, simple_model, tmp_path, monkeypatch):
+    """Run d3a33f95 (generate_fastapi_backend, no GUI model): the judge left
+    two UI requirements unverified because "only backend source was
+    provided", and they became blockers the fix loop had no frontend to
+    resolve. On a headless request with no frontend they are a warning; with
+    a frontend they still block."""
+    _write(tmp_path, "backend/routers/task.py", "def create_task():\n    return True\n")
+    if frontend:
+        _write(tmp_path, "frontend/src/App.jsx", "export default () => null;\n")
+    ui = "The task list displays every task with its completion state"
+    monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client: [
+        {"id": 1, "text": ui, "kind": "ui"},
+    ])
+    monkeypatch.setattr(ledger, "judge_coverage", lambda reqs, digest, client, **kwargs: [
+        {"id": 1, "text": ui, "kind": "ui", "status": "unverified", "evidence": "",
+         "note": "only backend source was provided"},
+    ])
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(), domain_model=simple_model, output_dir=str(tmp_path),
+    )
+    orch._instructions = "build a REST API for todos"
+    issues = [i for i in orch._collect_validation_issues() if "R1" in i.message]
+
+    assert len(issues) == 1
+    if frontend:
+        assert issues[0].severity == "blocker"
+        assert issues[0].message.startswith("requirement unverified: R1")
+    else:
+        assert issues[0].severity == "warning"
+        assert issues[0].message.startswith("requirement out of scope: R1")
+        assert orch._requirement_verdicts[0]["status"] == "out_of_scope"
 
 
 def test_the_ledger_can_be_switched_off(simple_model, tmp_path, monkeypatch):

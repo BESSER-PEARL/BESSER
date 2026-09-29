@@ -437,8 +437,13 @@ class Phase3RepairMixin:
             # round often writes source and cuts blockers. Those get a second
             # round; granting it to every barren round would cost far more.
             replay = edits == 0 and not source_changed and attempted_writes == 0
+            # A moved obligation is progress only if it discharged a blocker: a
+            # new test_api scenario or checklist edit that leaves every blocker
+            # standing otherwise buys a second identical round.
+            discharged = obligations_changed and (
+                {i.message for i in blockers_after} != {i.message for i in current_blockers})
             if not improved and (
-                (not source_changed and not obligations_changed)
+                (not source_changed and not discharged)
                 or state in seen_states
             ):
                 no_progress_streak += 1

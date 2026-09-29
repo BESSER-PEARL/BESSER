@@ -33,12 +33,35 @@ logger = logging.getLogger(__name__)
 
 
 # A run needs a frontend when the scaffold has one or the user asks for one.
-# Same vocabulary as the orchestrator's web-app ask (``_WEBAPP_ASK_RE``).
+# ``requests_frontend`` is also the orchestrator's frontend gate.
 _FRONTEND_FILE_RE = re.compile(r"\.(?:jsx?|tsx?|html|vue|svelte)\b|package\.json")
 _FRONTEND_ASK_RE = re.compile(
     r"\b(web[ -]?app(?:lication)?s?|front[ -]?end|web ?site|"
     r"web ?interface|single[ -]page app(?:lication)?s?|ui|"
     r"user interface|dashboard|portal)\b")
+# A bare "app" is a UI ask too ("I want a todo app") unless the request
+# is headless or names a backend kind of app.
+_APP_ASK_RE = re.compile(r"\bapp(?:lication)?s?\b")
+_BACKEND_APP_RE = re.compile(
+    r"\brest(?:ful)? api\b|\b(?:api|fastapi|backend|back[ -]end|server|cli|"
+    r"command[ -]line|console|terminal)[ -]app(?:lication)?s?\b")
+_NO_FRONTEND_RE = re.compile(
+    r"\b(?:api|backend|back[ -]end|server)[ -]only\b|"
+    r"\b(?:only|just) (?:an? |the )?(?:rest(?:ful)? )?(?:api|backend)\b|\bheadless\b|"
+    r"\b(?:no|without(?: an?| the)?) (?:frontend|front[ -]end|ui|gui|user interface)\b")
+
+
+def requests_frontend(instructions: str | None, *, bare_app: bool = True) -> bool:
+    """True when the request asks for something users interact with.
+
+    ``bare_app=False`` for modify runs, where "the app" names the existing project.
+    """
+    low = (instructions or "").lower()
+    if _NO_FRONTEND_RE.search(low):
+        return False
+    if _FRONTEND_ASK_RE.search(low):
+        return True
+    return bare_app and bool(_APP_ASK_RE.search(low)) and not _BACKEND_APP_RE.search(low)
 
 # The model-query tools exist only with a domain model (tools._TOOL_MODEL_REQUIREMENTS).
 _MODEL_TOOLS_SECTION = """\
@@ -502,7 +525,7 @@ def build_system_prompt(
     needs_frontend = (
         gui_model is not None or bool(design_system)
         or bool(_FRONTEND_FILE_RE.search(f"{inventory}\n{scaffold_snapshot}"))
-        or bool(_FRONTEND_ASK_RE.search((instructions or "").lower()))
+        or requests_frontend(instructions, bare_app=not modify_mode)
     )
     crud_rule = f"""\
 15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless

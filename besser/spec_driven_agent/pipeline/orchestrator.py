@@ -91,6 +91,8 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     build_system_prompt,
     build_inventory,
     build_endpoint_manifest,
+    requests_frontend,
+    _FRONTEND_ASK_RE,
 )
 from besser.spec_driven_agent.planning.stack_metadata import (
     effective_rivals,
@@ -1006,6 +1008,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 )
                 logger.info("Phase 1: Generated %d files", len(result.get("files", [])))
                 self._install_scaffold_frontend_dependencies()
+                if self._asks_for_frontend() and not self._has_frontend_files():
+                    note = (f"{generator_name} has no UI; the React frontend "
+                            "will be authored in the customization phase")
+                    logger.info("Phase 1: %s", note)
+                    if self.on_phase_details:
+                        self.on_phase_details("generate", note)
             else:
                 error_text = str(result.get("error") or "unknown error")
                 self._phase1_failure_reason = f"{generator_name}: {error_text}"
@@ -1182,6 +1190,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "- Even if the user asks for more than one thing (backend + frontend), pick the generator for the biggest part\n"
                 "- generate_fastapi_backend includes SQLAlchemy + Pydantic — don't pick those separately\n"
                 "- generate_web_app includes React + FastAPI + Docker — most complete if GUI available\n"
+                "- An app / UI / website request with no GUI model (and no named framework) → "
+                "generate_fastapi_backend; its React frontend is written in the customization phase\n"
                 "- If a Quantum circuit is present and the user asks for quantum/Qiskit code → generate_qiskit\n"
                 "- If state machines are present, pick the generator that fits the rest of the request — "
                 "the LLM in Phase 2 will wire state transitions on top of the generator output\n"
@@ -2992,7 +3002,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         except SandboxUnavailable as exc:
                             raw_issues.append(_check_did_not_run(
                                 f"the dependency check for {rel}",
-                                f"the sandbox is unavailable: {exc}"))
+                                str(exc)))
                         except Exception as exc:
                             # A timeout is "not checked", never "no conflict".
                             reason = ("timed out after 30s"
@@ -3240,10 +3250,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # phrasing of the request. Every alternative here has to tolerate the
     # word being spelled out.
     # Deliberately NOT included: "spa" — a hotel spec has one.
-    _WEBAPP_ASK_RE = _re.compile(
-        r"\b(web[ -]?app(?:lication)?s?|front[ -]?end|web ?site|"
-        r"web ?interface|single[ -]page app(?:lication)?s?|ui|"
-        r"user interface|dashboard|portal)\b")
+    _WEBAPP_ASK_RE = _FRONTEND_ASK_RE
+
+    def _asks_for_frontend(self) -> bool:
+        """The request wants a UI: web-app vocabulary, or a bare "app" on create."""
+        return requests_frontend(self._instructions, bare_app=not self._modify_mode)
 
     def _has_frontend_files(self) -> bool:
         for root, dirs, files in walk_plain(self.output_dir):
@@ -3276,9 +3287,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         skips. Making it a checklist item puts it behind the end_turn
         gate, which is enforcement, not prose.
         """
-        low = (self._instructions or "").lower()
         tasks: list = []
-        if self._WEBAPP_ASK_RE.search(low) and not self._has_frontend_files():
+        if self._asks_for_frontend() and not self._has_frontend_files():
             tasks.append({
                 "text": self._FRONTEND_CHECKLIST_TASK,
                 # Cheat-proof: done is refused until frontend files exist.
@@ -3379,12 +3389,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         Otherwise 'build a hotel reservation web app' can ship an API-only
         tree — presence of a backend reads as success.
-        High-precision: fires only when the instructions explicitly name a
-        web app / frontend / UI AND the workspace holds not a single
-        frontend artifact (js/ts/tsx/jsx/html or a package.json).
+        Fires only when the request asks for a UI (``_asks_for_frontend``)
+        AND the workspace holds not a single frontend artifact
+        (js/ts/tsx/jsx/html or a package.json).
         """
-        low = (self._instructions or "").lower()
-        if not _re.search(r"\b(web ?app|frontend|front-end|website|\bui\b|user interface)\b", low):
+        if not self._asks_for_frontend():
             return []
         for root, dirs, files in walk_plain(self.output_dir):
             dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
@@ -3612,6 +3621,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 verdicts = [replacements.get(item["id"], item) for item in verdicts]
                 self._requirement_judgments[cache_key] = verdicts
                 self._requirement_verdicts = _requirements_ledger.verify_evidence(verdicts, self.output_dir)
+        # A frontend the user asked for but the tree lacks keeps UI items in scope.
+        has_frontend = bool(self._has_frontend_files() or self._asks_for_frontend())
+        self._requirement_verdicts = _requirements_ledger.scope_to_output(
+            self._requirement_verdicts, has_frontend)
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
 
     def _collect_frontend_contract_issues(self) -> list[str]:

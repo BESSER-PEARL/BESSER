@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
+
 from besser.spec_driven_agent.providers.llm_client import (
     LLMProvider,
     OpenAIProvider,
@@ -180,7 +182,8 @@ class TestOpenAIResponseToCommon:
         )
         resp = self._make_response(content=None, tool_calls=[tc], finish_reason=finish_reason)
         result = _openai_response_to_common(resp)
-        assert result["stop_reason"] == (finish_reason if finish_reason in {"length", "content_filter"} else "tool_use")
+        assert result["stop_reason"] == {"length": "length", "content_filter": "refusal"}.get(
+            finish_reason, "tool_use")
         assert len(result["content"]) == 1
         block = result["content"][0]
         assert block.type == "tool_use"
@@ -208,7 +211,7 @@ class TestOpenAIResponseToCommon:
         )
         resp = self._make_response(tool_calls=[tc], finish_reason=finish_reason)
         result = _openai_response_to_common(resp)
-        assert result["content"][0].input == {}
+        assert set(result["content"][0].input) == {INVALID_ARGUMENTS_KEY}
         assert result["stop_reason"] == ("tool_use" if finish_reason == "tool_calls" else "end_turn")
 
     def test_empty_response(self):
@@ -641,7 +644,8 @@ class TestOpenAIProviderStream:
                     function=SimpleNamespace(name=None, arguments='"app.py"}'))]), finish_reason=finish_reason)])]
         provider._client.chat.completions.create.return_value = iter(chunks)
         result = list(provider.chat_stream(system="sys", messages=[], tools=[]))[-1]
-        assert result["stop_reason"] == (finish_reason if finish_reason in {"length", "content_filter"} else "tool_use")
+        assert result["stop_reason"] == {"length": "length", "content_filter": "refusal"}.get(
+            finish_reason, "tool_use")
         assert result["content"][0].input == {"path": "app.py"}
         assert result["provider_finish_reason"] == finish_reason
 

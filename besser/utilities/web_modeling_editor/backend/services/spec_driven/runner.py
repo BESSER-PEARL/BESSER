@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fnmatch
 import functools
 import json
 import logging
@@ -156,6 +157,11 @@ _EXCLUDED_OUTPUT_DIRS = {
 }
 
 
+def _is_excluded_output_file(name: str) -> bool:
+    """True for a file the push's ``ignore_patterns`` would drop too."""
+    return any(fnmatch.fnmatch(name, pattern) for pattern in _EXCLUDED_OUTPUT_DIRS)
+
+
 def _dir_has_user_output(path: Optional[str]) -> bool:
     """True when *path* holds at least one generated USER file.
 
@@ -168,7 +174,7 @@ def _dir_has_user_output(path: Optional[str]) -> bool:
     for root, dirs, files in os.walk(path):
         dirs[:] = [d for d in dirs if d not in _EXCLUDED_OUTPUT_DIRS]
         for fn in files:
-            if not fn.startswith(".besser_"):
+            if not fn.startswith(".besser_") and not _is_excluded_output_file(fn):
                 return True
     return False
 
@@ -729,7 +735,7 @@ def _get_concurrency_semaphore() -> asyncio.Semaphore:
         from besser.utilities.web_modeling_editor.backend.constants.constants import (
             LLM_MAX_CONCURRENT_RUNS,
         )
-        _CONCURRENCY_SEMAPHORE = asyncio.Semaphore(LLM_MAX_CONCURRENT_RUNS)
+        _CONCURRENCY_SEMAPHORE = asyncio.BoundedSemaphore(LLM_MAX_CONCURRENT_RUNS)
     return _CONCURRENCY_SEMAPHORE
 
 
@@ -806,7 +812,11 @@ def release_run_slot() -> None:
     at its max, this is a no-op rather than a crash.
     """
     sem = _get_concurrency_semaphore()
-    sem.release()
+    try:
+        sem.release()
+    except ValueError:
+        # A plain Semaphore would silently grow past the cap here.
+        logger.warning("release_run_slot called with no slot held; ignored")
 
 
 # ---------------------------------------------------------------------
@@ -1062,6 +1072,10 @@ class SmartGenerationRunner:
 
         return free_pilot_model() or self.request.llm_model
 
+    def _sse(self, event) -> bytes:
+        """``format_sse`` that also redacts this run's own key, whatever its shape."""
+        return format_sse(event, secrets=(self.request.resolved_api_key(),))
+
     async def _generate_and_stream_impl(
         self,
         http_request: Any | None = None,
@@ -1104,7 +1118,7 @@ class SmartGenerationRunner:
             )
 
         # ---- 1. Emit start (no api_key anywhere in the payload) --------
-        yield format_sse(StartEvent(
+        yield self._sse(StartEvent(
             runId=self.run_id,
             provider=self.request.provider,
             llmModel=llm_model,
@@ -1118,7 +1132,7 @@ class SmartGenerationRunner:
         # is opt-in per deploy (local / on-prem / PIA set the flag). Fail fast
         # with a clear, actionable message.
         if self.request.base_url and not LLM_ALLOW_CUSTOM_BASE_URL:
-            yield format_sse(ErrorEvent(
+            yield self._sse(ErrorEvent(
                 code="BAD_REQUEST",
                 message=(
                     "Custom LLM endpoints (PIA / local) are disabled on this "
@@ -1138,7 +1152,7 @@ class SmartGenerationRunner:
         if self._resume_run_id:
             existing = _locate_run_temp_dir(self._resume_run_id)
             if existing is None:
-                yield format_sse(ErrorEvent(
+                yield self._sse(ErrorEvent(
                     code="BAD_REQUEST",
                     message=(
                         "No recoverable workspace for this run_id — the "
@@ -1159,7 +1173,7 @@ class SmartGenerationRunner:
                     dir=_run_workspace_root(),
                 )
             except OSError as exc:
-                yield format_sse(ErrorEvent(
+                yield self._sse(ErrorEvent(
                     code="INTERNAL",
                     message="Failed to allocate a workspace for this run",
                 ))
@@ -1178,7 +1192,7 @@ class SmartGenerationRunner:
                     # its TTL (or never existed). Warn — non-terminally —
                     # and fall through to a normal from-scratch run() so the
                     # user still gets output instead of a hard failure.
-                    yield format_sse(ErrorEvent(
+                    yield self._sse(ErrorEvent(
                         code="INCOMPLETE",
                         message=(
                             "The previous generation has expired, so there is "
@@ -1215,7 +1229,7 @@ class SmartGenerationRunner:
                             self.run_id, self._base_run_id,
                         )
                         self._reset_temp_dir_after_failed_seed()
-                        yield format_sse(ErrorEvent(
+                        yield self._sse(ErrorEvent(
                             code="INCOMPLETE",
                             message=(
                                 "Could not copy the previous generation — "
@@ -1223,7 +1237,7 @@ class SmartGenerationRunner:
                             ),
                         ))
                         if self.temp_dir is None:
-                            yield format_sse(ErrorEvent(
+                            yield self._sse(ErrorEvent(
                                 code="INTERNAL",
                                 message="Failed to allocate a workspace for this run",
                             ))
@@ -1246,7 +1260,7 @@ class SmartGenerationRunner:
             # should surface as a 400-equivalent BAD_REQUEST event. We
             # explicitly include pydantic.ValidationError so a malformed
             # ProjectInput doesn't fall through to the INTERNAL branch.
-            yield format_sse(ErrorEvent(code="BAD_REQUEST", message=str(exc)))
+            yield self._sse(ErrorEvent(code="BAD_REQUEST", message=str(exc)))
             self._cleanup_temp_dir()
             return
         except Exception:
@@ -1254,7 +1268,7 @@ class SmartGenerationRunner:
                 "Unexpected error while assembling models for spec-driven generate run %s",
                 self.run_id,
             )
-            yield format_sse(ErrorEvent(
+            yield self._sse(ErrorEvent(
                 code="INTERNAL",
                 message="Internal server error",
             ))
@@ -1286,7 +1300,7 @@ class SmartGenerationRunner:
                 details = "; ".join(
                     f"{item['diagram_type']} [{item['diagram_id']}]: {item['diagnostic']}"
                     for item in assembly_issues[:5])
-                yield format_sse(ErrorEvent(
+                yield self._sse(ErrorEvent(
                     code="BAD_REQUEST",
                     message=(f"The selected generator {bound_target} requires a model that "
                              "is missing or could not be converted. Correct the project input "
@@ -1303,14 +1317,14 @@ class SmartGenerationRunner:
         # base-expired fallback (_seeded is False → run() from scratch) keep
         # "Selecting generator".
         if self._mode == "modify" and self._seeded:
-            yield format_sse(PhaseEvent(phase="select", message="Loading your app"))
+            yield self._sse(PhaseEvent(phase="select", message="Loading your app"))
         else:
-            yield format_sse(PhaseEvent(phase="select", message="Selecting generator"))
+            yield self._sse(PhaseEvent(phase="select", message="Selecting generator"))
         if assembly_issues:
-            yield format_sse(PhaseUpdateEvent(
+            yield self._sse(PhaseUpdateEvent(
                 phase="select", details=json.dumps(assembled.summary(), ensure_ascii=True),
             ))
-            yield format_sse(ErrorEvent(
+            yield self._sse(ErrorEvent(
                 code="INCOMPLETE",
                 message=(f"{len(assembly_issues)} project diagram(s) could not be converted. "
                          "Generation will preserve the usable models, but the result cannot "
@@ -1328,12 +1342,12 @@ class SmartGenerationRunner:
                 base_url=self.request.base_url,
             )
         except ValueError as exc:
-            yield format_sse(ErrorEvent(code="INVALID_KEY", message=str(exc)))
+            yield self._sse(ErrorEvent(code="INVALID_KEY", message=str(exc)))
             self._cleanup_temp_dir()
             return
         except Exception as exc:
             logger.exception("Failed to build LLM client: %s", exc)
-            yield format_sse(ErrorEvent(
+            yield self._sse(ErrorEvent(
                 code="INTERNAL",
                 message="Internal server error",
             ))
@@ -1526,7 +1540,7 @@ class SmartGenerationRunner:
         if cancel_event is None:
             cancel_event = await reserve_active_run(self.run_id)
         if cancel_event is None:
-            yield format_sse(ErrorEvent(
+            yield self._sse(ErrorEvent(
                 code="BAD_REQUEST",
                 message=(
                     "This spec-driven generation run is already active or being resumed."
@@ -1783,7 +1797,7 @@ class SmartGenerationRunner:
                     if event is None:
                         # Sentinel: worker put it after finishing.
                         break
-                    yield format_sse(event)
+                    yield self._sse(event)
                 else:
                     # Worker finished (or crashed) without a sentinel.
                     # Cancel the pending get_task; suppress only the
@@ -1801,23 +1815,26 @@ class SmartGenerationRunner:
                 result_path = await worker_task
             except (CheckpointMismatchError, EmptyInstructionsError) as exc:
                 worker_exception = exc
-                yield format_sse(ErrorEvent(code="BAD_REQUEST", message=str(exc)))
+                yield self._sse(ErrorEvent(code="BAD_REQUEST", message=str(exc)))
             except FileNotFoundError as exc:
                 # resume() with no checkpoint on disk.
                 worker_exception = exc
-                yield format_sse(ErrorEvent(code="BAD_REQUEST", message=str(exc)))
+                yield self._sse(ErrorEvent(code="BAD_REQUEST", message=str(exc)))
             except InvalidApiKeyError as exc:
                 worker_exception = exc
-                yield format_sse(ErrorEvent(code="INVALID_KEY", message=str(exc)))
-            except UpstreamLLMError as exc:
-                worker_exception = exc
-                yield format_sse(ErrorEvent(code="UPSTREAM_LLM", message=str(exc)))
-            except ValueError as exc:
-                worker_exception = exc
-                yield format_sse(ErrorEvent(code="INVALID_KEY", message=str(exc)))
-            except RuntimeError as exc:
-                worker_exception = exc
-                yield format_sse(ErrorEvent(code="UPSTREAM_LLM", message=str(exc)))
+                yield self._sse(ErrorEvent(code="INVALID_KEY", message=str(exc)))
+            except (UpstreamLLMError, RuntimeError) as exc:  # incl. legacy raises
+                # A provider failure after files were written must not delete
+                # the paid-for workspace: package it as INCOMPLETE instead.
+                if _dir_has_user_output(self.temp_dir):
+                    result_path = self.temp_dir
+                    self._late_internal_error = (
+                        f"The model provider failed after generating files "
+                        f"({str(exc)[:300]}), so the output may be incomplete."
+                    )
+                else:
+                    worker_exception = exc
+                    yield self._sse(ErrorEvent(code="UPSTREAM_LLM", message=str(exc)))
             except Exception as exc:
                 logger.exception(
                     "Unexpected error in spec-driven worker %s", self.run_id
@@ -1834,7 +1851,7 @@ class SmartGenerationRunner:
                     )
                 else:
                     worker_exception = exc
-                    yield format_sse(ErrorEvent(
+                    yield self._sse(ErrorEvent(
                         code="INTERNAL",
                         message="Internal server error",
                     ))
@@ -1860,7 +1877,7 @@ class SmartGenerationRunner:
                     break
                 if leftover is None:
                     continue
-                yield format_sse(leftover)
+                yield self._sse(leftover)
 
             # A caller-supplied reservation is owned by the durable stream
             # adapter, which releases it only after packaging and the terminal
@@ -1878,7 +1895,7 @@ class SmartGenerationRunner:
             # terminal) and confused clients.
             if cancel_event.is_set() and (worker_exception is not None or not result_path):
                 if watchdog_fired["value"]:
-                    yield format_sse(ErrorEvent(
+                    yield self._sse(ErrorEvent(
                         code="TIMEOUT",
                         message=(
                             "Runtime cap exceeded — the run was stopped by "
@@ -1886,7 +1903,7 @@ class SmartGenerationRunner:
                         ),
                     ))
                 else:
-                    yield format_sse(ErrorEvent(
+                    yield self._sse(ErrorEvent(
                         code="CANCELLED",
                         message="Spec-driven generation cancelled by user request",
                     ))
@@ -1927,7 +1944,7 @@ class SmartGenerationRunner:
 
             # Emit a final cost snapshot so the client always sees the
             # exact end-of-run usage, not the last periodic tick.
-            yield format_sse(
+            yield self._sse(
                 CostEvent(
                     usd=round(final_cost, 4),
                     turns=getattr(orchestrator, "total_turns", 0),
@@ -1958,7 +1975,7 @@ class SmartGenerationRunner:
                     f"The run reached its cost cap (${final_cost:.4f} > "
                     f"${effective_cost_cap}) and was stopped before it finished."
                 )
-                yield format_sse(ErrorEvent(
+                yield self._sse(ErrorEvent(
                     code="COST_CAP",
                     message=(
                         f"Cost cap reached (${final_cost:.4f} > "
@@ -1971,7 +1988,7 @@ class SmartGenerationRunner:
                     f"The run reached its {effective_runtime_cap}s time cap "
                     f"(took {elapsed:.0f}s) and was stopped before it finished."
                 )
-                yield format_sse(ErrorEvent(
+                yield self._sse(ErrorEvent(
                     code="TIMEOUT",
                     message=(
                         f"Runtime cap reached ({elapsed:.1f}s > "
@@ -2026,7 +2043,7 @@ class SmartGenerationRunner:
                     # finding may be structural (e.g. a create form still
                     # not wired). Preserve the target-specific explanation.
                     incomplete_reason_msg = _fix_msg
-                    yield format_sse(ErrorEvent(
+                    yield self._sse(ErrorEvent(
                         code="INCOMPLETE",
                         message=(
                             incomplete_reason_msg
@@ -2041,7 +2058,7 @@ class SmartGenerationRunner:
                         "The generated app is not verified complete. First: "
                         + _unfixed_blockers[0][:160]
                     )
-                    yield format_sse(ErrorEvent(
+                    yield self._sse(ErrorEvent(
                         code="INCOMPLETE",
                         message=(
                             incomplete_reason_msg
@@ -2085,7 +2102,7 @@ class SmartGenerationRunner:
                 # cost_cap / timeout already emit their own dedicated warning
                 # above — avoid a duplicate. Warn here for the other reasons.
                 if stop_reason not in ("cost_cap", "timeout"):
-                    yield format_sse(ErrorEvent(
+                    yield self._sse(ErrorEvent(
                         code="INCOMPLETE",
                         message=(
                             incomplete_reason_msg
@@ -2104,7 +2121,7 @@ class SmartGenerationRunner:
 
             if _late_err and incomplete_reason_msg is None:
                 incomplete_reason_msg = _late_err
-                yield format_sse(ErrorEvent(
+                yield self._sse(ErrorEvent(
                     code="INCOMPLETE",
                     message=_late_err + " You can run the generation again to continue.",
                 ))
@@ -2144,7 +2161,7 @@ class SmartGenerationRunner:
                     orchestrator, "_updated_project_export", None
                 )
                 await SMART_RUN_REGISTRY.put(self.run_id, entry)
-                yield format_sse(done_event)
+                yield self._sse(done_event)
             except _EmptyGenerationError as exc:
                 # Raised inside _package_result when the orchestrator
                 # returned but produced zero user files. Surfaced with
@@ -2153,13 +2170,13 @@ class SmartGenerationRunner:
                 logger.error(
                     "Spec-driven worker %s produced no output files", self.run_id
                 )
-                yield format_sse(ErrorEvent(code="INTERNAL", message=str(exc)))
+                yield self._sse(ErrorEvent(code="INTERNAL", message=str(exc)))
                 self._cleanup_temp_dir()
             except Exception:
                 logger.exception(
                     "Failed to package spec-driven generate output for run %s", self.run_id
                 )
-                yield format_sse(ErrorEvent(
+                yield self._sse(ErrorEvent(
                     code="INTERNAL",
                     message="Failed to package generated output",
                 ))
@@ -2204,6 +2221,7 @@ class SmartGenerationRunner:
         scrub = scrub_secret_files(
             result_path,
             excluded_names=_EXCLUDED_OUTPUT_DIRS,
+            secrets=(self.request.resolved_api_key(),),
         )
         if scrub.findings:
             logger.warning(
@@ -2245,7 +2263,8 @@ class SmartGenerationRunner:
         for root, dirs, files in os.walk(result_path):
             dirs[:] = [d for d in dirs if d not in _EXCLUDED_OUTPUT_DIRS]
             for name in files:
-                if name.startswith(".besser_"):
+                # The secret scrub skips these globs, so they must not ship.
+                if name.startswith(".besser_") or _is_excluded_output_file(name):
                     continue
                 path = os.path.join(root, name)
                 if is_plain_entry(path):

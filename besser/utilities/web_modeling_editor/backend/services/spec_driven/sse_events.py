@@ -19,7 +19,7 @@ The endpoint never includes user API keys in any event — there is no
 from __future__ import annotations
 
 import json
-from typing import Any, Literal, Optional
+from typing import Any, Iterable, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -274,18 +274,19 @@ class ErrorEvent(BaseSseEvent):
     resumeAvailable: Optional[bool] = None
 
 
-def format_sse(event: BaseSseEvent) -> bytes:
+def format_sse(event: BaseSseEvent, secrets: Iterable[str] = ()) -> bytes:
     """Serialize an event to an SSE frame.
 
     The ``event:`` header line enables ``EventSource.addEventListener``
     dispatch in the browser; the JSON body (which also contains the
     ``event`` field) supports plain ``onmessage`` / fetch-reader style
     consumers. Frame is always terminated with the mandatory blank line.
+    ``secrets`` are literal values (the run's own key) redacted as well.
     """
     # This is the last serialization boundary before data reaches the browser.
     # Redact recursively so exception text, model prose, phase details, and the
     # embedded recipe cannot echo credential-shaped values.
-    safe_body, _findings = redact_data(event.model_dump(mode="json"))
+    safe_body, _findings = redact_data(event.model_dump(mode="json"), secrets)
     body = json.dumps(safe_body, ensure_ascii=False, separators=(",", ":"))
     frame = f"event: {event.event}\ndata: {body}\n\n"
     return frame.encode("utf-8")

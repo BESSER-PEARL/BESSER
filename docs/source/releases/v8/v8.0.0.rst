@@ -282,12 +282,19 @@ Other improvements and fixes
   nullable, defers one foreign key of a mandatory table cycle so the tables
   can be created, and gives an association class that another association
   targets its own key.
-- Generated output is the same from one run to the next. Where the metamodel
-  holds unordered sets, generators iterate attributes, association ends,
-  enumeration literals and methods sorted by name; ``sort_by_timestamp``
-  keeps declaration order and breaks timestamp ties by name, and
+- Generated output is the same from one run to the next, including the Java
+  generator. Default element timestamps now strictly follow creation order, so
+  constructor parameters, columns and enumeration literals keep their
+  declaration order in every generator; association ends and methods, which
+  the metamodel holds as unordered sets, are emitted sorted by name, and
   ``DomainModel.classes_sorted_by_inheritance`` breaks ties between classes by
   name.
+- A Django one-to-many self-association (for example manager/subordinates) now
+  produces a single foreign key and passes Django's system check. Renaming a
+  class no longer gives a subclass of the opposite class two association ends
+  with the same name, and role names pluralise irregular forms (quizzes,
+  analyses). An agent condition without code now exports to a B-UML file that
+  loads.
 - The Django template emits valid Python for enumerations and relationship
   fields, and for a class with several modelled methods. Inferred method
   bodies (``__str__``, getters, predicates) take inherited attributes into

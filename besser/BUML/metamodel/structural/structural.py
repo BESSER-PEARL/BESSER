@@ -1139,59 +1139,54 @@ class BehaviorDeclaration(NamedElement):
         return f'BehaviorDeclaration({self.name}, {self.implementations})'
 
 
+def _stem_candidates(role_name: str) -> list[tuple[str, str]]:
+    """All plausible ``(stem, suffix_tag)`` readings of ``role_name``, best guess first.
+
+    ``suffix_tag`` is ``"ies"``, ``"es"`` or ``"s"`` for a plural reading and
+    ``""`` for the name taken as-is (always the last candidate), so that
+    ``houses`` can still match ``House`` and ``status`` can match ``Status``.
+    """
+    if not role_name:
+        return [(role_name, "")]
+    lower = role_name.lower()
+    candidates = []
+    if lower.endswith("ies") and len(lower) > 3:
+        # categories -> category
+        candidates.append((role_name[:-3] + ("Y" if role_name[-3].isupper() else "y"), "ies"))
+    if lower.endswith("es") and len(lower) > 2 and lower[:-2].endswith(("s", "sh", "ch", "x", "z")):
+        candidates.append((role_name[:-2], "es"))
+    if lower.endswith("s") and not lower.endswith("ss") and len(lower) > 1:
+        candidates.append((role_name[:-1], "s"))
+    candidates.append((role_name, ""))
+    return candidates
+
+
 def _stem_role_name(role_name: str) -> tuple[str, str]:
     """Strip a common English plural suffix from ``role_name``.
 
-    Returns ``(stem, suffix_tag)`` where ``suffix_tag`` is one of:
-
-    - ``"ies"`` -- name ended in ``-ies`` (stem reconstructs the singular as ``stem + "y"``).
-    - ``"es"``  -- name ended in ``-ses``, ``-shes``, ``-ches``, ``-xes`` (plural via ``-es``).
-    - ``"s"``   -- name ended in a lone ``-s`` (simple plural).
-    - ``""``    -- not pluralised (stem is the original name).
-
+    Returns the best-guess ``(stem, suffix_tag)`` from :func:`_stem_candidates`.
     Only conservative English pluralisation rules are applied so that
     intentional role names like ``"borrower"`` are not mistaken for plurals.
     """
-    if not role_name:
-        return role_name, ""
-    lower = role_name.lower()
-    if lower.endswith("ies") and len(lower) > 3:
-        # categories -> categor (singular is categor + y -> category)
-        return role_name[:-3] + ("Y" if role_name[-3].isupper() else "y"), "ies"
-    if lower.endswith("es") and len(lower) > 2:
-        # Treat ``-es`` as a plural suffix only when the preceding letters
-        # form one of the canonical English ``-es`` triggers.
-        preceding = lower[:-2]
-        if (preceding.endswith("s") or preceding.endswith("sh") or
-                preceding.endswith("ch") or preceding.endswith("x") or
-                preceding.endswith("z")):
-            return role_name[:-2], "es"
-    if lower.endswith("s") and not lower.endswith("ss") and len(lower) > 1:
-        return role_name[:-1], "s"
-    return role_name, ""
+    return _stem_candidates(role_name)[0]
+
+
+def _pluralize(word: str) -> str:
+    """Regular English plural of ``word`` (``box`` -> ``boxes``, ``city`` -> ``cities``)."""
+    lower = word.lower()
+    if lower.endswith(("ss", "us", "is", "as", "os", "sh", "ch", "x", "z")):
+        return word + "es"
+    if lower.endswith("s"):
+        # Already plural (``Settings``).
+        return word
+    if lower.endswith("y") and len(word) > 1 and lower[-2] not in "aeiou":
+        return word[:-1] + "ies"
+    return word + "s"
 
 
 def _pluralize_for_role(base: str, suffix_tag: str) -> str:
-    """Apply the same plural style identified by :func:`_stem_role_name`.
-
-    The returned string is the standard English plural of ``base`` for the
-    given ``suffix_tag``. ``suffix_tag == ""`` returns ``base`` unchanged.
-    """
-    if not suffix_tag:
-        return base
-    if suffix_tag == "ies":
-        # User-supplied stem already ends in something; apply ``y -> ies``.
-        if base.lower().endswith("y") and len(base) > 1 and base[-2].lower() not in "aeiou":
-            return base[:-1] + "ies"
-        # If the base does not end in a consonant + 'y' we fall back to '+s'
-        # so the result remains pronounceable (e.g. ``Tag`` -> ``Tags``).
-        return base + "s"
-    if suffix_tag == "es":
-        if (base.lower().endswith(("s", "sh", "ch", "x", "z"))):
-            return base + "es"
-        return base + "s"
-    # default ``"s"``
-    return base + "s"
+    """Plural of ``base`` when ``suffix_tag`` marks a plural role, else ``base`` unchanged."""
+    return _pluralize(base) if suffix_tag else base
 
 
 def _match_role_case(template: str, candidate: str) -> str:
@@ -1225,9 +1220,9 @@ def _role_name_matches_class(role_name: str, class_name: str) -> tuple[bool, str
     case-folding -- intentionally non-fuzzy so that role names like
     ``"borrower"`` (pointing to a ``Member`` class) are left alone.
     """
-    stem, suffix_tag = _stem_role_name(role_name)
-    if stem.lower() == class_name.lower():
-        return True, suffix_tag
+    for stem, suffix_tag in _stem_candidates(role_name):
+        if stem.lower() == class_name.lower():
+            return True, suffix_tag
     return False, ""
 
 
@@ -1291,18 +1286,13 @@ class Class(Type):
         that would collide with an existing end name on the same class are
         skipped to preserve metamodel invariants.
         """
-        # Capture the previous name *before* we delegate to the base setter,
-        # but only if the object has already been initialised. During
-        # ``__init__`` ``_NamedElement__name`` is not yet set, so this branch
-        # is skipped and we simply install the initial name.
-        old_name = getattr(self, "_NamedElement__name", None)
+        # During ``__init__`` neither the name nor the associations exist yet,
+        # so both getters raise AttributeError and getattr yields None.
+        old_name = getattr(self, "name", None)
         super(Class, Class).name.fset(self, name)
         if old_name is None or old_name == name:
             return
-        # ``__associations`` is populated *after* ``super().__init__`` runs
-        # (see ``Class.__init__``). When the setter fires during
-        # construction the attribute does not exist yet -- bail out safely.
-        associations = getattr(self, "_Class__associations", None)
+        associations = getattr(self, "associations", None)
         if not associations:
             return
         for association in associations:
@@ -1316,12 +1306,14 @@ class Class(Type):
                 new_role = _match_role_case(end.name, new_role)
                 if new_role == end.name:
                     continue
-                # Avoid creating duplicate role names on the same class.
-                # ``association.ends`` are validated for uniqueness on every
-                # ``ends`` assignment; renaming in place skips that check, so
-                # we replicate the relevant subset here.
-                sibling_names = {e.name for e in association.ends if e is not end}
-                if new_role in sibling_names:
+                # Renaming in place skips the uniqueness check done on ``ends``
+                # assignment: the end belongs to the classes at the other ends,
+                # so it must not collide with any end name they already reach.
+                taken = {e.name for e in association.ends if e is not end}
+                for other in association.ends:
+                    if other is not end and isinstance(other.type, Class):
+                        taken |= {e.name for e in other.type.all_association_ends() if e is not end}
+                if new_role in taken:
                     continue
                 end.name = new_role
 
@@ -1770,7 +1762,8 @@ class AssociationClass(Class):
 
     def __init__(self, name: str, attributes: set[Property], association: Association, timestamp: datetime = None,
                  metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, attributes, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+        super().__init__(name, attributes, timestamp=timestamp, metadata=metadata, is_derived=is_derived,
+                         uncertainty=uncertainty)
         self.association: Association = association
 
     @property
@@ -2419,9 +2412,12 @@ class DomainModel(Model):
             )
 
     def classes_sorted_by_inheritance(self) -> list[Class]:
-        """list[Class]: Get the list of classes ordered by inheritance."""
-        from besser.utilities import sort_by_timestamp
-        classes = sort_by_timestamp(self.get_classes())
+        """list[Class]: Get the list of classes ordered by inheritance (parents first), ties by name.
+
+        Sorted by name, not timestamp: timestamps tie at clock resolution, so
+        ties fell back to set order and the result changed between runs.
+        """
+        classes = sorted(self.get_classes(), key=lambda c: c.name)
         # Set up a dependency graph
         child_map = {cl: set() for cl in classes}
         # Populating the child_map based on generalizations (edges in top-sort graph)
@@ -2431,7 +2427,7 @@ class DomainModel(Model):
         # Helper function for DFS
         def dfs(cl, visited, sorted_list):
             visited.add(cl)
-            for child in child_map[cl]:
+            for child in sorted(child_map[cl], key=lambda c: c.name):
                 if child not in visited:
                     dfs(child, visited, sorted_list)
             sorted_list.append(cl)
@@ -2464,6 +2460,7 @@ class DomainModel(Model):
         self._validate_circular_inheritance(errors)
         self._validate_attribute_shadowing(errors)
         self._validate_member_name_collisions(errors)
+        self._validate_unique_end_names(errors)
         self._validate_mandatory_cycles(warnings)
         self._validate_duplicate_associations(warnings)
 
@@ -2692,6 +2689,19 @@ class DomainModel(Model):
                         f"of one of its attributes or association ends. A generated object "
                         f"can only carry one of them under that name."
                     )
+
+    def _validate_unique_end_names(self, errors: list[str]):
+        """Validate that no class reaches two association ends with the same name.
+
+        Construction checks this, but renaming an end (or a class, which
+        propagates to role names) afterwards does not.
+        """
+        for cls in self.get_classes():
+            names = [end.name for end in cls.all_association_ends()]
+            for name in sorted({n for n in names if names.count(n) > 1}):
+                errors.append(
+                    f"Class '{cls.name}' has more than one association end named '{name}'."
+                )
 
     def __repr__(self):
         return (

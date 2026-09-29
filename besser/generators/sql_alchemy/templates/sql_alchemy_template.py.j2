@@ -67,16 +67,16 @@ class Base(DeclarativeBase):
 {%- endfor %}
 
 {% if enumerations %}# Definitions of Enumerations{% endif %}
-{%- for enum in enumerations %}
+{%- for enum in enumerations|sort(attribute='name') %}
 class {{ enum.name }}(enum.Enum):
-    {%- for literal in enum.literals %}
+    {%- for literal in enum.literals|sort(attribute='name') %}
     {{ literal.name }} = "{{ literal.name }}"
     {%- endfor %}
 {% endfor %}
 
 # Tables definition for many-to-many relationships
 
-{%- for association in associations if association.ends|length == 2 %}
+{%- for association in associations|sort(attribute='name') if association.ends|length == 2 %}
 {%- set ns = namespace(many_to_many = True, has_association_class = False) %}
 {%- for end in association.ends %}
 {%- if end.multiplicity.max < 2 %} 
@@ -92,7 +92,7 @@ class {{ enum.name }}(enum.Enum):
 {{ association.name.lower() }} = Table_(
     "{{ association.name.lower() }}",
     Base.metadata,
-    {%- for end in association.ends %}
+    {%- for end in association.ends|sort(attribute='name') %}
     Column_("{{ end.name }}", ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True),
     {%- endfor %}
 )
@@ -104,7 +104,7 @@ class {{ enum.name }}(enum.Enum):
 {%- for class in classes %}
 class {{ class.name }}(
     {%- if class.parents() -%}
-    {% for parent in class.parents() -%}
+    {% for parent in class.parents()|sort(attribute='name') -%}
             {{parent.name}}{{ ", " if not loop.last else "):" }}
     {% endfor -%}
     {% else -%}
@@ -142,7 +142,7 @@ class {{ class.name }}(
         {%- endfor %}
     {%- endfor %}
     
-    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+    {%- for end in class.association_ends()|sort(attribute='name') if end.owner.ends|length == 2 %}
         {%- set ns.assoc_has_class = false %}
         {%- for asso_class in asso_classes %}
             {%- if asso_class.association.name == end.owner.name %}
@@ -196,7 +196,7 @@ class {{ class.name }}(
     subtract two methods instead of two dates. #}
     {%- set column_names = class.all_attributes() | map(attribute='name') | list
                          + class.association_ends() | map(attribute='name') | list %}
-    {%- for method in class.methods if method.code and method.name not in column_names %}
+    {%- for method in class.methods|sort(attribute='name') if method.code and method.name not in column_names %}
 
 {{ normalize_code(method.code, method.name) | indent(4, first=true) }}
     {%- endfor %}
@@ -211,12 +211,12 @@ class {{ asso_class.name }}(Base):
     # A modeled identifier (or, when another association points here, a
     # surrogate id) is the primary key; the endpoint pair remains unique
     # because the generated relationship API addresses links by that pair.
-    __table_args__ = (_UniqueConstraint({% for end in asso_class.association.ends %}"{{ end.name }}_id"{{ ", " if not loop.last else "" }}{% endfor %}),)
+    __table_args__ = (_UniqueConstraint({% for end in asso_class.association.ends|sort(attribute='name') %}"{{ end.name }}_id"{{ ", " if not loop.last else "" }}{% endfor %}),)
     {%- endif %}
     {%- if not ids.get(asso_class.name) and asso_class.name in referenced_asso %}
     id: Mapped_[int] = mapped_column(primary_key=True)
     {%- endif %}
-    {%- for end in asso_class.association.ends %}
+    {%- for end in asso_class.association.ends|sort(attribute='name') %}
     {%- set ns = namespace(other_end_max = 0) %}
     {%- for other_end in asso_class.association.ends if other_end != end %}
         {%- set ns.other_end_max = other_end.multiplicity.max %}
@@ -226,7 +226,7 @@ class {{ asso_class.name }}(Base):
     {%- endfor %}
     {#- Foreign keys of the OTHER associations this link takes part in (e.g. each
         OrderLine belongs to one MenuItem), by the same rule as regular classes. #}
-    {%- for end in asso_class.association_ends() if end.owner.ends|length == 2 and end.owner.name != asso_class.association.name %}
+    {%- for end in asso_class.association_ends()|sort(attribute='name') if end.owner.ends|length == 2 and end.owner.name != asso_class.association.name %}
         {%- if [asso_class.name, end.name] == fkeys.get(end.owner.name) %}
     {{ end.name }}_id: Mapped_[{% if end.multiplicity.min == 0 %}Optional_[{{ pk_types.get(end.type.name, 'int') }}]{% else %}{{ pk_types.get(end.type.name, 'int') }}{% endif %}] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ ids.get(end.type.name, 'id') }}"){% if end.multiplicity.min == 0 %}, nullable=True{% endif %})
         {%- endif %}
@@ -246,7 +246,7 @@ class {{ asso_class.name }}(Base):
         {%- endfor %}
     {%- endfor %}
     
-    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+    {%- for end in class.association_ends()|sort(attribute='name') if end.owner.ends|length == 2 %}
         {%- set ns.assoc_has_class = false %}
         {%- for asso_class in asso_classes %}
             {%- if asso_class.association.name == end.owner.name %}
@@ -270,7 +270,7 @@ class {{ asso_class.name }}(Base):
     {#- A link that takes part in other associations can hold a second foreign
         key to one of its ends, so its own relationships name their column. #}
     {%- set pin = asso_class.name in referenced_asso %}
-    {%- for end in asso_class.association.ends %}
+    {%- for end in asso_class.association.ends|sort(attribute='name') %}
 {{ asso_class.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", back_populates="{{ asso_class.name.lower() }}s"{% if pin %}, foreign_keys=[{{ asso_class.name }}.{{ end.name }}_id]{% endif %})
 {#- The link rows are owned by the linked entities: deleting one must delete its
     links (the FK is part of the link's composite primary key, so SQLAlchemy cannot
@@ -281,7 +281,7 @@ class {{ asso_class.name }}(Base):
     them, so that method bodies and OCL constraints written against the diagram (for
     example self.rooms) resolve. Writes go through the link rows above, so these are
     read-only views over the same table. #}
-    {%- for end in asso_class.association.ends %}
+    {%- for end in asso_class.association.ends|sort(attribute='name') %}
         {%- set other_end = (asso_class.association.ends | reject('equalto', end) | list)[0] %}
         {%- set joins %}{% if pin %}, primaryjoin={{ other_end.type.name }}.{{ ids.get(other_end.type.name, 'id') }} == {{ asso_class.name }}.{{ other_end.name }}_id, secondaryjoin={{ end.type.name }}.{{ ids.get(end.type.name, 'id') }} == {{ asso_class.name }}.{{ end.name }}_id{% endif %}{% endset %}
         {%- if end.multiplicity.max > 1 %}
@@ -293,7 +293,7 @@ class {{ asso_class.name }}(Base):
 {#- The association class's side of any OTHER association it takes part in
     (e.g. ExtraCharge recorded against a BookedRoom). #}
     {%- set link_ns = namespace() %}
-    {%- for end in asso_class.association_ends() if end.owner.ends|length == 2 and end.owner.name != asso_class.association.name %}
+    {%- for end in asso_class.association_ends()|sort(attribute='name') if end.owner.ends|length == 2 and end.owner.name != asso_class.association.name %}
 {{ helper.render_relationship(asso_class, end, link_ns, ids, fkeys, deferred_fks) }}
     {%- endfor %}
 {%- endfor %}

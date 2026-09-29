@@ -152,7 +152,7 @@ class DjangoGenerator(GeneratorInterface):
             None, but stores the generated code as a file named models.py.
         """
         for association in self.model.associations:
-            ends = list(association.ends)  # Convert set to list
+            ends = sorted(association.ends, key=lambda e: e.name)  # stable side choice
 
             # One-to-one
             if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
@@ -603,69 +603,64 @@ JAZZMIN_SETTINGS = {{
     ],
 }}
 """
-        try:
-            with open(settings_file_path, 'r', encoding='utf-8') as file:
-                content = file.readlines()
+        # I/O errors propagate: generate() reports and re-raises them.
+        with open(settings_file_path, 'r', encoding='utf-8') as file:
+            content = file.readlines()
 
-            # Ensure 'import os' is present
-            if not any(line.startswith('import os') for line in content):
-                for index, line in enumerate(content):
-                    if line.strip() and not line.strip().startswith('#'):
-                        content.insert(index, 'import os\n')
-                        break
-
-            if self.containerization is True:
-                # Replace the DATABASES section
-                start_index, end_index = None, None
-                for index, line in enumerate(content):
-                    if 'DATABASES' in line and '=' in line:
-                        start_index = index
-                    if start_index is not None and line.strip() == '}':
-                        end_index = index
-                        break
-
-                if start_index is not None and end_index is not None:
-                    content = (
-                           content[:start_index]
-                           + [new_database_config]
-                           + content[end_index + 2:]
-                        )
-
-            # Add the app to INSTALLED_APPS
+        # Ensure 'import os' is present
+        if not any(line.startswith('import os') for line in content):
             for index, line in enumerate(content):
-                if line.strip().startswith('INSTALLED_APPS') and '=' in line:
-                    # Find the start of the list
-                    open_bracket_index = index
-                    while '[' not in content[open_bracket_index]:
-                        open_bracket_index += 1
-
-                    # Find the end of the list
-                    close_bracket_index = open_bracket_index
-                    while ']' not in content[close_bracket_index]:
-                        close_bracket_index += 1
-
-                    # Add the app if not already in the list
-                    apps_section = content[open_bracket_index:close_bracket_index + 1]
-                    if f"'{self.app_name}'," not in ''.join(apps_section):
-                        # Insert the app just before the closing bracket
-                        content.insert(close_bracket_index, f"    '{self.app_name}',\n")
-                    if f"'{'jazzmin'}'," not in ''.join(apps_section):
-                        # Insert the jazzmin app just before the closing bracket
-                        content.insert(open_bracket_index + 1, "    'jazzmin',\n")
+                if line.strip() and not line.strip().startswith('#'):
+                    content.insert(index, 'import os\n')
                     break
 
-            # Add the JAZZMIN_SETTINGS block at the end of the file
-            if jazzmin_settings.strip() not in ''.join(content):
-                content.append(f"\n{jazzmin_settings}\n")
+        if self.containerization is True:
+            # Replace the DATABASES section
+            start_index, end_index = None, None
+            for index, line in enumerate(content):
+                if 'DATABASES' in line and '=' in line:
+                    start_index = index
+                if start_index is not None and line.strip() == '}':
+                    end_index = index
+                    break
 
-            # Write the updated settings back to the file
-            with open(settings_file_path, 'w', encoding='utf-8') as file:
-                file.writelines(content)
+            if start_index is not None and end_index is not None:
+                content = (
+                       content[:start_index]
+                       + [new_database_config]
+                       + content[end_index + 2:]
+                    )
 
-        except (IOError, OSError) as e:
-            print(f"An I/O error occurred: {e}")
-        except ValueError as e:
-            print(f"A value error occurred: {e}")
+        # Add the app to INSTALLED_APPS
+        for index, line in enumerate(content):
+            if line.strip().startswith('INSTALLED_APPS') and '=' in line:
+                # Find the start of the list
+                open_bracket_index = index
+                while '[' not in content[open_bracket_index]:
+                    open_bracket_index += 1
+
+                # Find the end of the list
+                close_bracket_index = open_bracket_index
+                while ']' not in content[close_bracket_index]:
+                    close_bracket_index += 1
+
+                # Add the app if not already in the list
+                apps_section = content[open_bracket_index:close_bracket_index + 1]
+                if f"'{self.app_name}'," not in ''.join(apps_section):
+                    # Insert the app just before the closing bracket
+                    content.insert(close_bracket_index, f"    '{self.app_name}',\n")
+                if f"'{'jazzmin'}'," not in ''.join(apps_section):
+                    # Insert the jazzmin app just before the closing bracket
+                    content.insert(open_bracket_index + 1, "    'jazzmin',\n")
+                break
+
+        # Add the JAZZMIN_SETTINGS block at the end of the file
+        if jazzmin_settings.strip() not in ''.join(content):
+            content.append(f"\n{jazzmin_settings}\n")
+
+        # Write the updated settings back to the file
+        with open(settings_file_path, 'w', encoding='utf-8') as file:
+            file.writelines(content)
 
 
 
@@ -673,11 +668,8 @@ JAZZMIN_SETTINGS = {{
         """Generates the Django project, app, and necessary configurations."""
 
         try:
-            # Step 1: Initialize Django project and app.
-            # All filesystem effects are anchored on the generator's own output
-            # directory — the subprocesses get an explicit cwd and every
-            # template write uses absolute paths — so the caller's current
-            # working directory is never touched.
+            # Step 1: Initialize Django project and app. Everything is anchored
+            # on the output directory; the caller's cwd is never touched.
             base_dir = self._base_dir()
             project_dir = os.path.abspath(self._project_dir())
 
@@ -685,16 +677,9 @@ JAZZMIN_SETTINGS = {{
             if project_dir == base_dir or os.path.commonpath([base_dir, project_dir]) != base_dir:
                 raise ValueError(f"Invalid Django project name: {self.project_name!r}")
 
-            # A leftover project from a previous (possibly crashed) run would
-            # make `django-admin startproject` fail with "already exists":
-            # remove it so regeneration into the same output_dir is idempotent.
-            #
-            # But only if it is OURS. `project_dir` is just
-            # ``<output_dir>/<project_name>``, so pointing the generator at a
-            # directory that already holds hand-written code under that name
-            # used to delete it without warning or confirmation. A generated
-            # project always has ``manage.py`` at its root; anything else is
-            # the user's, and we refuse rather than destroy it.
+            # Remove a leftover generated project (startproject refuses to
+            # overwrite), but only if it has manage.py: anything else is the
+            # user's and is never deleted.
             if os.path.exists(project_dir):
                 if not os.path.isdir(project_dir):
                     raise ValueError(
@@ -712,11 +697,8 @@ JAZZMIN_SETTINGS = {{
                     )
                 shutil.rmtree(project_dir)
 
-            # `manage.py startapp` imports the settings module it has just
-            # created, so CPython writes `<project>/<project>/__pycache__/*.pyc`
-            # inside the generated tree. Those files were packaged into the
-            # user's download; the generator's own subprocesses must not leave
-            # bytecode behind.
+            # startapp imports the new settings module; keep its .pyc files
+            # out of the generated tree.
             subprocess_env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
             subprocess.run(['django-admin', 'startproject', self.project_name],
                            cwd=base_dir, check=True, env=subprocess_env)
@@ -762,10 +744,7 @@ JAZZMIN_SETTINGS = {{
             print("✅ Django project generation completed successfully!")
 
         except subprocess.CalledProcessError as e:
-            # Re-raised, not just printed: swallowing this returned normally
-            # from a generation that produced nothing, so callers — including
-            # the web editor's /generate-output — packaged an empty or
-            # half-written project and reported success.
+            # Re-raised so callers never package a half-written project as success.
             print(f"❌ Error during project generation: {e}")
             raise
         except Exception as e:

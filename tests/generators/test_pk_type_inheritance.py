@@ -55,6 +55,12 @@ def test_both_entry_points_agree(inherited_str_pk_model):
     assert pk_python_types(inherited_str_pk_model) == get_pk_py_types(inherited_str_pk_model)
 
 
+def test_pk_python_types_does_not_swallow_errors():
+    """An empty map on failure silently typed every reference as ``int``."""
+    with pytest.raises(AttributeError):
+        pk_python_types(object())
+
+
 def test_generated_foreign_key_matches_the_referenced_pk(tmp_path, inherited_str_pk_model):
     SQLAlchemyGenerator(model=inherited_str_pk_model, output_dir=str(tmp_path)).generate()
     src = (tmp_path / "sql_alchemy.py").read_text(encoding="utf-8")

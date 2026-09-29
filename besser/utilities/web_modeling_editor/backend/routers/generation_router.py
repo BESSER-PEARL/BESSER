@@ -156,7 +156,7 @@ def _key_is_sensitive(key: str) -> bool:
     return any(token in lowered for token in SENSITIVE_KEYS)
 
 
-def sanitize_config(config):
+def sanitize_config(config: Any) -> Any:
     """Return a deep-copied structure with sensitive values masked.
 
     Walks nested dicts, lists, and tuples so a credential nested under

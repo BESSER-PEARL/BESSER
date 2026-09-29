@@ -71,3 +71,14 @@ def test_django_still_replaces_its_own_output(tmp_path, monkeypatch):
         gen.generate()
 
     assert not stale.exists(), "a generated project should still be replaced"
+
+
+def test_update_settings_raises_when_settings_file_is_missing(tmp_path):
+    """update_settings() printed I/O errors and returned, so generate() went on
+    to report success for a project whose settings.py was never configured."""
+    from besser.generators.django import DjangoGenerator
+
+    gen = DjangoGenerator(model=_model(), project_name="myproject",
+                          app_name="app", output_dir=str(tmp_path))
+    with pytest.raises(OSError):
+        gen.update_settings()

@@ -9,27 +9,17 @@ build this map once and thread it into their templates.
 
 from __future__ import annotations
 
-_PK_PY_TYPES = {
-    "str": "str",
-    "string": "str",
-    "int": "int",
-    "integer": "int",
-    "float": "float",
-}
+from typing import Dict
+
+from besser.BUML.metamodel.structural import DomainModel
+from besser.generators.structural_utils import get_pk_py_types
 
 
-def pk_python_types(model) -> dict:
+def pk_python_types(model: DomainModel) -> Dict[str, str]:
     """Class name -> python type of its primary key (default ``int``).
 
     Delegates to ``structural_utils.get_pk_py_types`` so there is ONE
-    implementation: this file previously carried its own copy that looked only
-    at a class's own attributes, so a subclass in joined-table inheritance --
-    whose PK *is* the parent's, emitted as a ForeignKey to it -- was absent
-    from the map and every reference to it fell back to ``int`` against a
-    String PK.
+    implementation. Errors propagate: an empty map would silently type every
+    reference as ``int``.
     """
-    try:
-        from besser.generators.structural_utils import get_pk_py_types
-        return get_pk_py_types(model)
-    except Exception:
-        return {}
+    return get_pk_py_types(model)

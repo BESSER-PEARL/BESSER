@@ -15,7 +15,7 @@ class DataAggregation(Enum):
     LAST = "last"
 
     @classmethod
-    def parse(cls, value):
+    def parse(cls, value: "DataAggregation | str | None") -> "DataAggregation | None":
         """The aggregation named by ``value`` (a member, its name or value, or
         ``avg``/``mean``/``min``/``max``), or ``None`` if it names none."""
         if value is None or isinstance(value, cls):
@@ -149,7 +149,7 @@ class DataBinding(Element):
         return self._aggregation
 
     @aggregation.setter
-    def aggregation(self, aggregation):
+    def aggregation(self, aggregation: DataAggregation | str | None) -> None:
         """Set the aggregation from a DataAggregation or its name (e.g. "avg")."""
         parsed = DataAggregation.parse(aggregation)
         if aggregation is not None and parsed is None:

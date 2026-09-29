@@ -4,12 +4,14 @@
   Same policy as besser/generators/python_classes/templates/method_body.py.j2:
   emit minimal correct bodies where the semantics are inferrable from the
   class shape; otherwise emit `raise NotImplementedError(...)` rather than a
-  `pass` placeholder that lies about behaviour.
+  `pass` placeholder that lies about behaviour. Inherited attributes count, and
+  attributes are visited sorted by name so the output is stable across runs.
+  Only the no-attribute fallback differs: it prints ``pk``.
 -#}
 
 {%- macro _find_attr(class_obj, candidate) -%}
 {%- set ns = namespace(match='') -%}
-{%- for a in class_obj.attributes -%}
+{%- for a in class_obj.all_attributes()|sort(attribute='name') -%}
 {%- if ns.match == '' and a.name|lower == candidate|lower -%}{%- set ns.match = a.name -%}{%- endif -%}
 {%- endfor -%}
 {{ ns.match }}
@@ -23,7 +25,7 @@
 
 {%- if lname == '__str__' or lname == '__repr__' or lname == 'to_string' or lname == 'tostring' -%}
 {%- set prims = [] -%}
-{%- for a in class_obj.attributes -%}
+{%- for a in class_obj.all_attributes()|sort(attribute='name') -%}
 {%- if a.type.name in ['str', 'int', 'float', 'bool', 'date', 'time', 'datetime'] -%}
 {%- if prims.append(a.name) -%}{%- endif -%}
 {%- endif -%}
@@ -57,7 +59,7 @@ raise NotImplementedError("Implement {{ mname }} based on your business rules")
 {%- set match = _find_attr(class_obj, suffix)|trim -%}
 {%- if match -%}
 {%- set ns_t = namespace(attr_type='') -%}
-{%- for a in class_obj.attributes -%}
+{%- for a in class_obj.all_attributes()|sort(attribute='name') -%}
 {%- if a.name == match -%}{%- set ns_t.attr_type = a.type.name -%}{%- endif -%}
 {%- endfor -%}
 {%- if ns_t.attr_type == 'bool' -%}

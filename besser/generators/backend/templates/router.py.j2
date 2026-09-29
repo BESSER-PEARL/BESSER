@@ -12,7 +12,7 @@
 {#- Integer keys match digits only, so /<link>/{id}/<relationship>/ routes of the same
     association class are not captured by the pair route (and answered 422). #}
 {%- macro int_segment(end) -%}{% if pk_types.get(end.type_name, 'int') == 'int' %}:int{% endif %}{%- endmacro -%}
-{% macro link_attr_names(assoc_class_name, include_ids=true) %}({% for attribute in assoc_classes[assoc_class_name].attributes if include_ids or not attribute.is_id %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
+{% macro link_attr_names(assoc_class_name, include_ids=true) %}({% for attribute in assoc_classes[assoc_class_name].attributes|sort(attribute='name') if include_ids or not attribute.is_id %}'{{ attribute.name }}', {% endfor %}){% endmacro %}
 {# Rendered once per class. Context: class (the owning class), classes (all classes in
    the model), http_methods, nested_creations, fkeys, model, pk_types, assoc_classes,
    assoc_by_association. Mirrors the per-class block that used to live inline in the
@@ -35,15 +35,15 @@ router = APIRouter()
 {% set is_assoc_class = class.name in assoc_classes %}
 {% set ns = namespace(end_name_one=[], end_name_multiple=[], one_to_many=[], assoc_links=[], lower_bound_guards=[]) %}
 {% set all_parents = class.all_parents() | sort(attribute='name') %}
-{% for association in class.associations %}
+{% for association in class.associations|sort(attribute='name') %}
     {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
         {% set lns = namespace(end1=None, end2=None) %}
-        {% set ends_list = association.ends | list %}
+        {% set ends_list = association.ends | sort(attribute='name') | list %}
         {% if ends_list[0].type.name == ends_list[1].type.name %}
             {% set lns.end1 = ends_list[1] %}
             {% set lns.end2 = ends_list[0] %}
         {% else %}
-            {% for end in association.ends %}
+            {% for end in association.ends|sort(attribute='name') %}
                 {% set lns.end1 = end if end.type.name == class.name else lns.end1 %}
                 {% set lns.end2 = end if end.type.name != class.name else lns.end2 %}
             {% endfor %}
@@ -76,15 +76,15 @@ router = APIRouter()
 {% endfor %}
 {# Include inherited associations from parent classes #}
 {% for parent in all_parents %}
-{% for association in parent.associations %}
+{% for association in parent.associations|sort(attribute='name') %}
     {% if association.ends|length == 2 %}
         {% set plns = namespace(end1=None, end2=None) %}
-        {% set ends_list = association.ends | list %}
+        {% set ends_list = association.ends | sort(attribute='name') | list %}
         {% if ends_list[0].type.name == ends_list[1].type.name %}
             {% set plns.end1 = ends_list[1] %}
             {% set plns.end2 = ends_list[0] %}
         {% else %}
-            {% for end in association.ends %}
+            {% for end in association.ends|sort(attribute='name') %}
                 {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
                 {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
             {% endfor %}
@@ -381,7 +381,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         {% for end in ac_ends %}
         {{ end.name }}_id={{ end.name }}_target,
         {% endfor %}
-        {% for attribute in assoc_classes[class.name].attributes %}
+        {% for attribute in assoc_classes[class.name].attributes|sort(attribute='name') %}
         {{ attribute.name }}={{ class.name | lower}}_data.{{ attribute.name }}{% if attribute.is_enum %}.name{% endif %}{% if not loop.last %},{% endif %}
         {% endfor %}
         )
@@ -413,15 +413,15 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {%- endif %}
     {# Validate inherited mandatory relationships #}
     {% for parent in all_parents %}
-    {% for association in parent.associations %}
+    {% for association in parent.associations|sort(attribute='name') %}
         {% if association.ends|length == 2 %}
             {% set plns = namespace(end1=None, end2=None) %}
-            {% set ends_list = association.ends | list %}
+            {% set ends_list = association.ends | sort(attribute='name') | list %}
             {% if ends_list[0].type.name == ends_list[1].type.name %}
                 {% set plns.end1 = ends_list[1] %}
                 {% set plns.end2 = ends_list[0] %}
             {% else %}
-                {% for end in association.ends %}
+                {% for end in association.ends|sort(attribute='name') %}
                     {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
                     {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
                 {% endfor %}
@@ -500,7 +500,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
        false/true (a loaded Enum column holds the member, never the string). #}
     {% set ns_args = namespace(args=[]) %}
     {% for parent in all_parents %}
-    {% for attrparent in parent.attributes %}
+    {% for attrparent in parent.attributes|sort(attribute='name') %}
     {% if _client_supplied(attrparent) | trim == 'True' %}
     {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
     {% do ns_args.args.append(attrparent.name ~ '=' ~ class.name|lower ~ '_data.' ~ attrparent.name ~ '.name') %}
@@ -510,7 +510,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endif %}
     {% endfor %}
     {% endfor %}
-    {% for attribute in class.attributes %}
+    {% for attribute in class.attributes|sort(attribute='name') %}
     {% if _client_supplied(attribute) | trim == 'True' %}
     {% if attribute.type.__class__.__name__ == 'Enumeration' %}
     {% do ns_args.args.append(attribute.name ~ '=' ~ class.name|lower ~ '_data.' ~ attribute.name ~ '.name') %}
@@ -529,15 +529,15 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endif %}
     {# Include parent FKs for inherited classes #}
     {% for parent in all_parents %}
-    {% for association in parent.associations %}
+    {% for association in parent.associations|sort(attribute='name') %}
         {% if association.ends|length == 2 %}
             {% set plns = namespace(end1=None, end2=None) %}
-            {% set ends_list = association.ends | list %}
+            {% set ends_list = association.ends | sort(attribute='name') | list %}
             {% if ends_list[0].type.name == ends_list[1].type.name %}
                 {% set plns.end1 = ends_list[1] %}
                 {% set plns.end2 = ends_list[0] %}
             {% else %}
-                {% for end in association.ends %}
+                {% for end in association.ends|sort(attribute='name') %}
                     {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
                     {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
                 {% endfor %}
@@ -633,7 +633,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
                     raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {x} not found")
             else:
                 db_{{x[1] | lower}} = {{x[1]}}(
-                    {%for attr in lk_class.attributes%}
+                    {%for attr in lk_class.attributes|sort(attribute='name')%}
                     {{attr.name}}=x.{{attr.name}}{% if attr.type.__class__.__name__ == 'Enumeration' %}.name{% endif %}{% if not loop.last %}, {% endif %}
                     {%endfor%}
                 )
@@ -727,15 +727,15 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {%- endif %}
             {# Validate inherited mandatory relationships #}
             {% for parent in all_parents %}
-            {% for association in parent.associations %}
+            {% for association in parent.associations|sort(attribute='name') %}
                 {% if association.ends|length == 2 %}
                     {% set plns = namespace(end1=None, end2=None) %}
-                    {% set ends_list = association.ends | list %}
+                    {% set ends_list = association.ends | sort(attribute='name') | list %}
                     {% if ends_list[0].type.name == ends_list[1].type.name %}
                         {% set plns.end1 = ends_list[1] %}
                         {% set plns.end2 = ends_list[0] %}
                     {% else %}
-                        {% for end in association.ends %}
+                        {% for end in association.ends|sort(attribute='name') %}
                             {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
                             {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
                         {% endfor %}
@@ -754,7 +754,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {# Collect all constructor arguments for bulk create #}
             {% set ns_bulk_args = namespace(args=[]) %}
             {% for parent in all_parents %}
-            {% for attrparent in parent.attributes %}
+            {% for attrparent in parent.attributes|sort(attribute='name') %}
             {% if _client_supplied(attrparent) | trim == 'True' %}
             {% if attrparent.type.__class__.__name__ == 'Enumeration' %}
             {% do ns_bulk_args.args.append(attrparent.name ~ '=item_data.' ~ attrparent.name ~ '.name') %}
@@ -764,7 +764,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% endif %}
             {% endfor %}
             {% endfor %}
-            {% for attribute in class.attributes %}
+            {% for attribute in class.attributes|sort(attribute='name') %}
             {% if _client_supplied(attribute) | trim == 'True' %}
             {% if attribute.type.__class__.__name__ == 'Enumeration' %}
             {% do ns_bulk_args.args.append(attribute.name ~ '=item_data.' ~ attribute.name ~ '.name') %}
@@ -783,15 +783,15 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% endif %}
             {# Include parent FKs for inherited classes #}
             {% for parent in all_parents %}
-            {% for association in parent.associations %}
+            {% for association in parent.associations|sort(attribute='name') %}
                 {% if association.ends|length == 2 %}
                     {% set plns = namespace(end1=None, end2=None) %}
-                    {% set ends_list = association.ends | list %}
+                    {% set ends_list = association.ends | sort(attribute='name') | list %}
                     {% if ends_list[0].type.name == ends_list[1].type.name %}
                         {% set plns.end1 = ends_list[1] %}
                         {% set plns.end2 = ends_list[0] %}
                     {% else %}
-                        {% for end in association.ends %}
+                        {% for end in association.ends|sort(attribute='name') %}
                             {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
                             {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
                         {% endfor %}
@@ -876,7 +876,7 @@ async def update_{{ class.name | lower }}({{ ac_ends[0].name }}_id: {{ pk_types.
     if db_{{ class.name | lower }} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
-    {% for attribute in assoc_classes[class.name].attributes if not attribute.is_id %}
+    {% for attribute in assoc_classes[class.name].attributes|sort(attribute='name') if not attribute.is_id %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.is_enum %}.name{% endif %})
     {% endfor %}
     database.commit()
@@ -898,13 +898,13 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
        Enum attributes append `.name` here too - see the create endpoint above
        for why (not `.value`, even though every literal's value equals its name). #}
     {% for parent in all_parents %}
-    {% for attribute in parent.attributes %}
+    {% for attribute in parent.attributes|sort(attribute='name') %}
     {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.name{% endif %})
     {% endif %}
     {% endfor %}
     {% endfor %}
-    {% for attribute in class.attributes %}
+    {% for attribute in class.attributes|sort(attribute='name') %}
     {% if attribute.name != pk and _client_supplied(attribute) | trim == 'True' %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.name{% endif %})
     {% endif %}
@@ -1079,8 +1079,8 @@ async def delete_{{ class.name | lower}}({{ ac_ends[0].name }}_id: {{ pk_types.g
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
     {# Lower-bound guards: each linked entity must keep the minimum number of links the other end requires #}
-    {% for end in class.association.ends %}
-    {% for other in class.association.ends if other != end %}
+    {% for end in class.association.ends|sort(attribute='name') %}
+    {% for other in class.association.ends|sort(attribute='name') if other != end %}
     {% if other.multiplicity.min > 0 %}
     linked_{{ end.name }} = db_{{ class.name | lower}}.{{ end.name }}
     if linked_{{ end.name }} is not None and len(linked_{{ end.name }}.{{ class.name | lower }}s) - 1 < {{ other.multiplicity.min }}:
@@ -1240,7 +1240,7 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: {{
 async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: {{ pk_types.get(class.name, 'int') }}, {{ related_param_name }}: {{ pk_types.get(x[1], 'int') }}, link: dict = Body(default=None), database: Session = Depends(get_db)):
     """Add a {{x[1]}} to this {{ class.name }}'s {{x[3]}} relationship.
 
-    The request body carries the {{x[4]}} attributes ({% for attribute in assoc_classes[x[4]].attributes %}{{ attribute.name }}{% if not loop.last %}, {% endif %}{% endfor %}).
+    The request body carries the {{x[4]}} attributes ({% for attribute in assoc_classes[x[4]].attributes|sort(attribute='name') %}{{ attribute.name }}{% if not loop.last %}, {% endif %}{% endfor %}).
     A `target` field in the body is ignored: the target is taken from the path.
     """
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.{{ pk }} == {{ class.name | lower}}_id).first()

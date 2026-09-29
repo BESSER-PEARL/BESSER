@@ -23,7 +23,7 @@ router = APIRouter()
 ############################################
 #   {{ class.name }} Method Endpoints
 ############################################
-{% for method in class.methods %}
+{% for method in class.methods|sort(attribute='name') %}
 {% set clean_name = method.name | clean_method_name %}
 {% set method_params = [] %}
 {% for param in method.parameters %}

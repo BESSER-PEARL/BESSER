@@ -19,9 +19,9 @@ from django.core.exceptions import ValidationError
 {% endif %}
 
 {# Enumeration definition -#}
-{%- for enum in model.get_enumerations() %}
+{%- for enum in model.get_enumerations()|sort(attribute='name') %}
 class {{ enum.name }}(models.TextChoices):
-    {% for literal in enum.literals %}
+    {% for literal in enum.literals|sort(attribute='name') %}
     {{ literal.name }} = '{{ literal.name }}', '{{ literal.name }}'
     {% endfor %}
 
@@ -30,7 +30,7 @@ class {{ enum.name }}(models.TextChoices):
 {# Model definition #}
 {%- for class_obj in model.classes_sorted_by_inheritance() %}
     {%- set generals = namespace(names=[]) %}
-    {%- for parent in class_obj.parents() %}
+    {%- for parent in class_obj.parents()|sort(attribute='name') %}
         {%- set _ = generals.names.append(parent.name) %}
     {%- endfor %}
     {%- set inheritance = generals.names | join(', ') %}
@@ -41,7 +41,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
 {% for attr in sort_by_timestamp(class_obj.attributes) %}
     {{ attr.name }} = {{ django_fields.get_field(attr.type, model.get_enumerations(), attr.is_id, attr.is_external_id) }}
 {% endfor %}
-    {%- for end in class_obj.association_ends() -%}
+    {%- for end in class_obj.association_ends()|sort(attribute='name') -%}
         {%- set ns = namespace(opposite_end=end) %}
         {%- for end_assoc in end.owner.ends %}
             {%- if end_assoc != end %}
@@ -143,7 +143,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     {%- if method.code %}
     {#- If method has code, use it directly (it should contain the full function definition) #}
 {{ normalize_code(method.code, method.name) | indent(4, first=true) }}
-    {%- else %}
+    {% else %}
     {#- Otherwise generate method signature from metadata #}
     {%- set param_list = [] %}
     {%- for param in method.parameters %}
@@ -164,7 +164,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         {{ method.name }} method for {{ class_obj.name }}.
         """
         {{ method_body.infer_body(class_obj, method) }}
-    {%- endif %}
+    {% endif %}
 
     {%- endfor %}
 {% endfor %}

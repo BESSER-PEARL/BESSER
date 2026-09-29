@@ -21,6 +21,8 @@ from __future__ import annotations
 import keyword
 from typing import Any
 
+from jinja2 import Environment
+
 
 class InvalidDefaultValueError(ValueError):
     """A modelled default cannot be expressed as a literal of its type."""
@@ -126,7 +128,7 @@ def docstring_default(raw: Any, type_name: str, *, owner: str = "") -> str:
     return flattened.replace('"', "'")
 
 
-def register_default_literals(env) -> None:
+def register_default_literals(env: Environment) -> None:
     """Expose ``python_default`` / ``enum_default`` to a Jinja environment.
 
     Every template that renders a modelled default must go through these.

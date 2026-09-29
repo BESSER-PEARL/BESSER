@@ -129,7 +129,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
         return classes, asso_classes
 
-    def get_referenced_association_classes(self, asso_classes):
+    def get_referenced_association_classes(self, asso_classes: list[AssociationClass]) -> set[str]:
         """Association classes another association points at.
 
         Such a link needs a single-column key for the foreign key to target;

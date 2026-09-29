@@ -34,9 +34,9 @@ from abc import ABC, abstractmethod
 ############################################
 
 {# Handle enums first #}
-{% for enum in domain.get_enumerations() -%}
+{% for enum in domain.get_enumerations()|sort(attribute='name') -%}
 class {{ enum.name }}(Enum):
-{% for literal in enum.literals %}
+{% for literal in enum.literals|sort(attribute='name') %}
     {{ literal.name }} = "{{ literal.name }}"
 {% endfor %}
 
@@ -61,7 +61,7 @@ class {{ link.link_class }}(BaseModel):
 # Classes are defined here
 ############################################
 {% for class in sorted_classes %}
-class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{% if backend %}Create{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC, BaseModel){% else %}(BaseModel){% endif %}:
+class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}({% for parent in class.parents()|sort(attribute='name') %}{{parent.name}}{% if backend %}Create{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC, BaseModel){% else %}(BaseModel){% endif %}:
     {% set ns.id_found = false -%}
     {% set ns.has_field = false %}
     {%- set inherited_attr_names = [] -%}
@@ -70,7 +70,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
             {%- do inherited_attr_names.append(attr.name) -%}
         {%- endfor -%}
     {%- endif %}
-    {% for attribute in class.attributes %}
+    {% for attribute in class.attributes|sort(attribute='name') %}
         {%- if attribute.is_id or attribute.name == 'id' %}
             {%- set ns.id_found = true %}
         {%- endif %}
@@ -114,13 +114,13 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {% set ns.has_field = true %}
     {%- endfor %}
     {%- endif %}
-    {%- for association in class.associations %}
+    {%- for association in class.associations|sort(attribute='name') %}
         {%- if association.ends|length == 2 %}
             {%- set link_class = assoc_by_association.get(association.name) if backend and assoc_by_association else none %}
             {%- if link_class %}
             {# The association carries an association class: links travel as
                <AssocClass>LinkCreate payloads (target id + association attributes). #}
-            {%- for end in association.ends %}
+            {%- for end in association.ends|sort(attribute='name') %}
                 {%- if end.type.name != class.name %}
                     {%- if end.multiplicity.max > 1 %}
                         {%- if end.multiplicity.min == 0 %}
@@ -235,7 +235,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
             {%- else %}
             {%- set ns.end1 = none %}
             {%- set ns.end2 = none %}
-            {%- for end in association.ends %}
+            {%- for end in association.ends|sort(attribute='name') %}
                 {%- if end.type.name == class.name %}
                     {%- set ns.end1 = end %}
                 {%- else %}

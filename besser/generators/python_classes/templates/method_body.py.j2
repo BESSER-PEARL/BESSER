@@ -11,40 +11,16 @@
   emit one or more lines of method body, already indented relative to the
   caller (caller is responsible for the function `def` line; macros emit the
   body lines at column 0 — caller should `indent(8, first=true)` the result).
+  Attributes are visited sorted by name so the output is stable across runs.
 -#}
-
-{%- macro _attr_names(class) -%}
-{%- set names = [] -%}
-{%- for a in class.all_attributes() -%}{%- if names.append(a.name) -%}{%- endif -%}{%- endfor -%}
-{{ names }}
-{%- endmacro -%}
 
 {%- macro _find_attr(class, candidate) -%}
 {#- Returns the attribute name if any attribute matches `candidate` (case-insensitive), else empty string. -#}
 {%- set ns = namespace(match='') -%}
-{%- for a in class.all_attributes() -%}
+{%- for a in class.all_attributes()|sort(attribute='name') -%}
 {%- if ns.match == '' and a.name|lower == candidate|lower -%}{%- set ns.match = a.name -%}{%- endif -%}
 {%- endfor -%}
 {{ ns.match }}
-{%- endmacro -%}
-
-{%- macro _has_attr_of_type(class, type_name) -%}
-{%- set ns = namespace(match='') -%}
-{%- for a in class.all_attributes() -%}
-{%- if ns.match == '' and a.type.name == type_name -%}{%- set ns.match = a.name -%}{%- endif -%}
-{%- endfor -%}
-{{ ns.match }}
-{%- endmacro -%}
-
-{%- macro _primitive_str_attrs(class) -%}
-{#- Returns a list literal of attribute names whose type is a primitive printable. -#}
-{%- set names = [] -%}
-{%- for a in class.all_attributes() -%}
-{%- if a.type.name in ['str', 'int', 'float', 'bool', 'date', 'time', 'datetime'] -%}
-{%- if names.append(a.name) -%}{%- endif -%}
-{%- endif -%}
-{%- endfor -%}
-{{ names }}
 {%- endmacro -%}
 
 {%- macro infer_body(class, method) -%}
@@ -60,7 +36,7 @@
 
 {%- if lname == '__str__' or lname == '__repr__' or lname == 'to_string' or lname == 'tostring' -%}
 {%- set prims = [] -%}
-{%- for a in class.all_attributes() -%}
+{%- for a in class.all_attributes()|sort(attribute='name') -%}
 {%- if a.type.name in ['str', 'int', 'float', 'bool', 'date', 'time', 'datetime'] -%}
 {%- if prims.append(a.name) -%}{%- endif -%}
 {%- endif -%}
@@ -95,7 +71,7 @@ raise NotImplementedError("Implement {{ mname }} based on your business rules")
 {%- if match -%}
 {#- If the attribute is itself bool, return it. Otherwise return truthiness. -#}
 {%- set ns_t = namespace(attr_type='') -%}
-{%- for a in class.all_attributes() -%}
+{%- for a in class.all_attributes()|sort(attribute='name') -%}
 {%- if a.name == match -%}{%- set ns_t.attr_type = a.type.name -%}{%- endif -%}
 {%- endfor -%}
 {%- if ns_t.attr_type == 'bool' -%}

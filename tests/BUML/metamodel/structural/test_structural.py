@@ -1211,3 +1211,91 @@ def test_a_single_association_per_pair_does_not_warn():
         },
     )
     assert model.validate(raise_exception=False)["warnings"] == []
+
+
+def test_class_rename_does_not_duplicate_end_names_on_opposite_class():
+    """Renaming ``Customer`` -> ``Client`` would turn role ``customer`` into
+    ``client``, which ``Order`` already reaches through another association."""
+    order = Class(name="Order")
+    customer = Class(name="Customer")
+    person = Class(name="Person")
+    customer_end = Property(name="customer", type=customer, multiplicity=Multiplicity(1, 1))
+    BinaryAssociation(name="order_customer", ends={
+        Property(name="orders", type=order, multiplicity=Multiplicity(0, "*")), customer_end})
+    BinaryAssociation(name="order_client", ends={
+        Property(name="purchases", type=order, multiplicity=Multiplicity(0, "*")),
+        Property(name="client", type=person, multiplicity=Multiplicity(1, 1))})
+
+    customer.name = "Client"
+
+    assert customer_end.name == "customer"
+    names = [e.name for e in order.all_association_ends()]
+    assert len(names) == len(set(names))
+
+
+def test_validate_reports_duplicate_end_names_on_a_class():
+    order = Class(name="Order")
+    customer = Class(name="Customer")
+    person = Class(name="Person")
+    customer_end = Property(name="customer", type=customer, multiplicity=Multiplicity(1, 1))
+    a1 = BinaryAssociation(name="order_customer", ends={
+        Property(name="orders", type=order, multiplicity=Multiplicity(0, "*")), customer_end})
+    a2 = BinaryAssociation(name="order_client", ends={
+        Property(name="purchases", type=order, multiplicity=Multiplicity(0, "*")),
+        Property(name="client", type=person, multiplicity=Multiplicity(1, 1))})
+    customer_end.name = "client"  # bypasses the construction-time check
+    model = DomainModel(name="M", types={order, customer, person}, associations={a1, a2})
+
+    result = model.validate(raise_exception=False)
+
+    assert not result["success"]
+    assert any("'Order'" in e and "'client'" in e for e in result["errors"])
+
+
+@pytest.mark.parametrize("new_name, expected", [
+    ("Box", "boxes"), ("Address", "addresses"), ("Status", "statuses"),
+    ("Church", "churches"), ("City", "cities"), ("Key", "keys"), ("Settings", "settings"),
+])
+def test_class_rename_uses_english_plurals(new_name, expected):
+    owner = Class(name="Owner")
+    item = Class(name="Item")
+    items_end = Property(name="items", type=item, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="owner_item", ends={
+        Property(name="owner", type=owner, multiplicity=Multiplicity(1, 1)), items_end})
+
+    item.name = new_name
+
+    assert items_end.name == expected
+
+
+@pytest.mark.parametrize("old_name, role, new_name, expected", [
+    ("House", "houses", "Home", "homes"),    # -es guess ("hous") is wrong, -s is right
+    ("Movie", "movies", "Film", "films"),    # -ies guess ("movy") is wrong
+    ("Status", "status", "State", "state"),  # singular that ends in -s
+])
+def test_class_rename_tries_every_stem_guess(old_name, role, new_name, expected):
+    owner = Class(name="Owner")
+    target = Class(name=old_name)
+    end = Property(name=role, type=target, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="owner_target", ends={
+        Property(name="owner", type=owner, multiplicity=Multiplicity(1, 1)), end})
+
+    target.name = new_name
+
+    assert end.name == expected
+
+
+def test_association_class_accepts_timestamp_and_metadata():
+    """Both used to be passed positionally into Class's ``methods``/``is_abstract`` slots."""
+    from datetime import datetime
+    a, b = Class(name="A"), Class(name="B")
+    assoc = BinaryAssociation(name="ab", ends={
+        Property(name="a", type=a, multiplicity=Multiplicity(0, "*")),
+        Property(name="b", type=b, multiplicity=Multiplicity(0, "*"))})
+    stamp = datetime(2026, 1, 1)
+    metadata = Metadata(description="link")
+    link = AssociationClass(name="AB", attributes=set(), association=assoc, timestamp=stamp, metadata=metadata)
+    assert link.timestamp == stamp
+    assert link.metadata is metadata
+    assert link.methods == set()
+    assert link.is_abstract is False

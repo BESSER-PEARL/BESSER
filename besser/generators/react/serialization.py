@@ -348,7 +348,8 @@ class GuiSerializationMixin:
                         {
                             "id": getattr(input_field, "name", None),
                             **self._form_input_binding(element, input_field),
-                            "label": getattr(input_field, "label", None) or placeholder or self._humanize(getattr(input_field, "name", "")),
+                            "label": (getattr(input_field, "label", None) or placeholder
+                                      or self._humanize(getattr(input_field, "name", ""))),
                             "type": self._enum_value(getattr(input_field, "field_type", None)),
                             "placeholder": placeholder,
                             "required": getattr(input_field, "required", False) or None,
@@ -862,7 +863,8 @@ class GuiSerializationMixin:
         """(screen, table) for every table of the GUI model, in page order."""
 
         def walk(elements):
-            for element in sorted(elements or [], key=lambda e: (e.display_order is None, e.display_order or 0, e.name)):
+            by_order = sorted(elements or [], key=lambda e: (e.display_order is None, e.display_order or 0, e.name))
+            for element in by_order:
                 if isinstance(element, Table):
                     yield element
                 if isinstance(element, ViewContainer):

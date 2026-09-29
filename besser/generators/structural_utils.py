@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel, Property
 
 
-def is_server_owned_attribute(attribute) -> bool:
+def is_server_owned_attribute(attribute: Property) -> bool:
     """Whether backend create/update payloads omit this generated attribute.
 
     Covers the surrogate `id`, audit timestamps (createdAt/updatedAt), and any
@@ -20,7 +20,8 @@ def is_server_owned_attribute(attribute) -> bool:
     )
 
 
-def create_schema_accepts_end(end, fkeys: Dict[str, List[str]], link_associations=frozenset()) -> bool:
+def create_schema_accepts_end(end: Property, fkeys: Dict[str, List[str]],
+                              link_associations: frozenset = frozenset()) -> bool:
     """Whether the backend ``<Class>Create`` schema has a field for ``end``.
 
     ``end`` is the far end of an association of the class (as listed by

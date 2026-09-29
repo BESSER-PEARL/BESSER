@@ -145,6 +145,7 @@ def test_file_operations_are_serialized_across_executors_and_path_aliases(tmp_pa
     with ThreadPoolExecutor(max_workers=4) as pool:
         futures = [pool.submit(executors[i % 2].execute_typed,
                               "modify_file" if i % 2 else "write_file",
-                              {"path": "./app.py" if i % 2 else "app.py"}) for i in range(8)]
+                              {"path": "./app.py" if i % 2 else "app.py", "content": "",
+                               "old_text": "", "new_text": ""}) for i in range(8)]
         assert all(f.result().status == "ok" for f in futures)
     assert state["peak"] == 1

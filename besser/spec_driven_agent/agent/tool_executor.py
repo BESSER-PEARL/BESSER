@@ -34,6 +34,17 @@ from besser.BUML.metamodel.structural import DomainModel
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
+from besser.spec_driven_agent.agent.tools import (
+    INVALID_ARGUMENTS_KEY,
+    get_all_tools_including_generators,
+)
+
+# Checked before dispatch, so an omitted field is a clear tool error rather
+# than a raw ``KeyError: 'content'`` from inside the handler.
+_REQUIRED_ARGS = {
+    tool["name"]: tuple(tool["input_schema"].get("required", ()))
+    for tool in get_all_tools_including_generators()
+}
 from besser.spec_driven_agent.execution.process import (
     COMMAND_OUTPUT_DIR,
     _safe_subprocess_env,
@@ -225,6 +236,8 @@ _RUNTIME_NOT_INSTALLED_PATTERNS: tuple[str, ...] = (
 _EXEC_ENOENT_RE = re.compile(
     r"^\s*exec(?:ve)?:.*no such file or directory", re.IGNORECASE | re.MULTILINE,
 )
+# dash (the worker image's /bin/sh) says "/bin/sh: 1: ruby: not found".
+_DASH_NOT_FOUND_RE = re.compile(r"^(?:/bin/)?sh: \d+: [^:\n]+: not found\s*$", re.MULTILINE)
 
 
 def _looks_like_command_not_found(stderr: str) -> bool:
@@ -234,7 +247,7 @@ def _looks_like_command_not_found(stderr: str) -> bool:
     lowered = stderr.lower()
     if any(pat in lowered for pat in _RUNTIME_NOT_INSTALLED_PATTERNS):
         return True
-    return bool(_EXEC_ENOENT_RE.search(stderr))
+    return bool(_EXEC_ENOENT_RE.search(stderr) or _DASH_NOT_FOUND_RE.search(stderr))
 
 
 
@@ -510,6 +523,11 @@ class ToolExecutor:
         # or inlined in the scaffold snapshot. A miss on any other path is a
         # quote from memory, and the reply says so first.
         self._known_paths: set[str] = set()
+        # The stricter bar write_file needs to rewrite an existing file: every
+        # line displayed (possibly over several windows), inlined or written in
+        # full. A partial read or a one-line modify is not enough.
+        self._fully_seen: set[str] = set()
+        self._read_coverage: dict[str, tuple[str, set[int]]] = {}
         # Finding replacement text in a file is not proof that an edit happened.
         # Receipts bind the exact request to the entire successful post-write
         # state. They are intentionally not inferred from resumed file contents.
@@ -1339,6 +1357,23 @@ class ToolExecutor:
         if not handler:
             payload = {"error": f"Unknown tool: {tool_name}"}
             return ToolExecutionResult("error", payload)
+        if isinstance(arguments, dict) and INVALID_ARGUMENTS_KEY in arguments:
+            return ToolExecutionResult("error", {"error": (
+                f"{tool_name} was not run: its arguments were not valid JSON "
+                f"({arguments[INVALID_ARGUMENTS_KEY]}). Resend the call with the "
+                "arguments as one well-formed JSON object."
+            )})
+        if not isinstance(arguments, dict):
+            return ToolExecutionResult("error", {"error": (
+                f"{tool_name} was not run: its arguments must be a JSON object, "
+                f"not {type(arguments).__name__}. Resend the call."
+            )})
+        missing = [name for name in _REQUIRED_ARGS.get(tool_name, ()) if name not in arguments]
+        if missing:
+            return ToolExecutionResult("error", {"error": (
+                f"{tool_name} is missing required argument(s): {', '.join(missing)}. "
+                "Nothing was done; resend the call with every required field."
+            )})
         try:
             file_tool = tool_name in {"read_file", "modify_file", "replace_file_lines", "write_file", "delete_file"}
             lock = _file_lock(self._safe_path(arguments["path"])) if file_tool else nullcontext()
@@ -1420,6 +1455,14 @@ class ToolExecutor:
         # sandbox's --chdir.
         return cwd_cmp
 
+    def _resolves_inside(self, abs_path: str) -> bool:
+        """False for a link (planted via run_command) that escapes the workspace."""
+        try:
+            self._safe_path(os.path.relpath(abs_path, self.workspace))
+            return True
+        except ValueError:
+            return False
+
     def _list_dir(self, directory: str) -> list[dict]:
         """List files recursively, relative to workspace.
 
@@ -1434,8 +1477,13 @@ class ToolExecutor:
             dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
             for f in filenames:
                 abs_path = os.path.join(root, f)
+                if not self._resolves_inside(abs_path):
+                    continue
                 rel = os.path.relpath(abs_path, self.workspace)
-                size = os.path.getsize(abs_path)
+                try:
+                    size = os.path.getsize(abs_path)
+                except OSError:  # dangling link
+                    continue
                 files.append({"path": rel.replace("\\", "/"), "size": size})
         return sorted(files, key=lambda x: x["path"])
 
@@ -1889,7 +1937,16 @@ class ToolExecutor:
             result["truncated"] = True
             result["content"] += "\n... [truncated; read the next range to continue]"
             result["hint"] = f"Read continues at offset={end}; unseen lines cannot be edited with this read_id."
-        self._known_paths.add(args["path"].replace("\\", "/").strip())
+        known = args["path"].replace("\\", "/").strip()
+        self._known_paths.add(known)
+        digest = self._content_digest(content)
+        seen_digest, seen = self._read_coverage.get(known, (digest, set()))
+        if seen_digest != digest:
+            seen = set()
+        seen.update(range(start, end))
+        self._read_coverage[known] = (digest, seen)
+        if len(seen) >= total_lines:
+            self._fully_seen.add(known)
 
         # Include metadata so the LLM knows about pagination
         if offset > 0 or limit is not None:
@@ -2175,13 +2232,19 @@ class ToolExecutor:
             if unnumbered is not None:
                 args = {**args, "content": "\n".join(unnumbered)}
 
-        # Rewriting a file the model has never seen this run is a rewrite
-        # from memory, which loses scaffold code.
+        # Rewriting a file the model has not seen in full this run is a
+        # rewrite from memory, which loses scaffold code.
         if os.path.isfile(path) and rel_path.strip() not in self._known_paths:
             return {"error": (
                 f"{args['path']} exists and you have not read it this run. Call "
                 "read_file first, then modify_file for targeted changes (write_file "
                 "only if a full rewrite is really needed)."
+            )}
+        if os.path.isfile(path) and rel_path.strip() not in self._fully_seen:
+            return {"error": (
+                f"{args['path']} exists and you have read only part of it this run; "
+                "a full rewrite would drop the lines you have not seen. Read the "
+                "rest with read_file, or edit the part you read with modify_file."
             )}
 
         # Edit-first guardrail (MODIFY runs only): every existing
@@ -2253,6 +2316,15 @@ class ToolExecutor:
                     "current_source": "CURRENT ON-DISK CONTENT - unchanged by this refused rewrite:\n"
                     + _changed_region(args["content"], before),
                 }
+            unimportable = _breaks_module_import(path, before, args["content"], self.workspace)
+            if unimportable:
+                return {"error": f"Refused: this rewrite leaves {args['path']} parseable but no longer "
+                                 f"importable ({unimportable}). Every router star-imports it, so this "
+                                 "would take the whole application down. The file was left unchanged. "
+                                 + _IMPORT_BREAK_ADVICE,
+                        "rejection_kind": "breaks_import",
+                        "would_write": "PROPOSED ONLY - NOT APPLIED:\n"
+                        + _changed_region(before, args["content"])}
         stray = stray_gutter_line(args["content"], before or "", before or "")
         if stray:
             return _gutter_refusal("content", stray)
@@ -2263,6 +2335,7 @@ class ToolExecutor:
             self._successful_writes[os.path.normcase(path)] = self._content_digest(args["content"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
         self._known_paths.add(args["path"].replace("\\", "/").strip())
+        self._fully_seen.add(args["path"].replace("\\", "/").strip())
         self._append_write_feedback(result, rel_path, args["content"])
         return result
 
@@ -2270,14 +2343,22 @@ class ToolExecutor:
         """Record files whose contents the model was shown (scaffold snapshot)."""
         for p in paths:
             self._known_paths.add(str(p).replace("\\", "/").strip())
+            self._fully_seen.add(str(p).replace("\\", "/").strip())
 
     # Three is the figure Cline (consecutiveMistakeCount) and Roo
     # (DEFAULT_CONSECUTIVE_MISTAKE_LIMIT) both settled on.
     _MAX_MODIFY_MISSES = 3
 
+    def _rel_key(self, path: str) -> str:
+        """``path`` as execute_typed rewrites it, so ``./app.py`` finds ``app.py``."""
+        try:
+            return os.path.relpath(self._safe_path(path.strip()), self.workspace).replace("\\", "/")
+        except ValueError:
+            return path.replace("\\", "/").strip()
+
     def consecutive_modify_misses(self, path: str) -> int:
         """Failed modify_file attempts on ``path`` since its last successful edit."""
-        key = path.replace("\\", "/").strip()
+        key = self._rel_key(path)
         for rel_path, misses in self._failed_modifies.items():
             if rel_path.strip() == key:
                 return misses
@@ -2285,11 +2366,11 @@ class ToolExecutor:
 
     def repeat_rejections(self, path: str) -> int:
         """Highest number of times one already-rejected edit was sent to ``path``."""
-        return self._repeat_hits.get(path.replace("\\", "/").strip(), 0)
+        return self._repeat_hits.get(self._rel_key(path), 0)
 
     def freeze_path(self, path: str, reason: str) -> None:
         """Close ``path`` to modify_file / write_file for the rest of the run."""
-        self._frozen_paths[path.replace("\\", "/").strip()] = reason
+        self._frozen_paths[self._rel_key(path)] = reason
 
     def _frozen(self, rel_path: str) -> dict | None:
         reason = self._frozen_paths.get(rel_path.strip())
@@ -2717,6 +2798,9 @@ class ToolExecutor:
         self._last_missed_old_text.pop(rel_path, None)
         self._clear_rejections(rel_path)
         self._known_paths.add(rel_path.strip())
+        # Keeps the modify guard's "write_file unlocks after two modify_file
+        # attempts" escalation reachable.
+        self._fully_seen.add(rel_path.strip())
         result = {
             "status": "modified",
             "path": args["path"],
@@ -2826,6 +2910,8 @@ class ToolExecutor:
                 if rel_path.startswith(".besser_") and not rel_path.startswith(
                     COMMAND_OUTPUT_DIR + "/"
                 ):
+                    continue
+                if not self._resolves_inside(abs_path):
                     continue
                 try:
                     with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -3009,10 +3095,13 @@ class ToolExecutor:
                 )
             return payload
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            # What it printed before the kill is often the reason it hung.
             return {
                 "error": f"Command timed out after {COMMAND_TIMEOUT} seconds",
                 "command": command,
+                "stdout": self._truncate(exc.output or "", MAX_OUTPUT_SIZE // 2),
+                "stderr": self._truncate(exc.stderr or "", MAX_OUTPUT_SIZE // 2, keep_tail=True),
             }
         except Exception as e:
             return {"error": f"Failed to run command: {e}"}

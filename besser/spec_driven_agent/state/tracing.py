@@ -33,6 +33,7 @@ import os
 import threading
 import time
 from typing import Any
+from besser.spec_driven_agent.execution.workspace_fs import open_plain, open_plain_write
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ class TraceWriter:
             os.makedirs(self.output_dir, exist_ok=True)
             line = (json.dumps(record, default=str) + "\n").encode("utf-8")
             # One complete line, one write, under one lock.
-            with _WRITE_LOCK, open(self._path, "ab") as fh:
+            with _WRITE_LOCK, open_plain_write(self._path, "ab", root=self.output_dir) as fh:
                 fh.write(line)
         except Exception as exc:
             # Instrumentation must not break the run.
@@ -131,7 +132,7 @@ class TraceWriter:
         if not os.path.isfile(self._path):
             return []
         try:
-            with open(self._path, "r", encoding="utf-8") as fh:
+            with open_plain(self._path, "r", root=self.output_dir, encoding="utf-8") as fh:
                 lines = fh.readlines()
         except Exception:
             return []

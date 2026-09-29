@@ -26,10 +26,19 @@ from besser.spec_driven_agent.model_serializer import (
 )
 from besser.spec_driven_agent.agent.runbook import runbook_section
 from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 logger = logging.getLogger(__name__)
 
 
+
+# A run needs a frontend when the scaffold has one or the user asks for one.
+# Same vocabulary as the orchestrator's web-app ask (``_WEBAPP_ASK_RE``).
+_FRONTEND_FILE_RE = re.compile(r"\.(?:jsx?|tsx?|html|vue|svelte)\b|package\.json")
+_FRONTEND_ASK_RE = re.compile(
+    r"\b(web[ -]?app(?:lication)?s?|front[ -]?end|web ?site|"
+    r"web ?interface|single[ -]page app(?:lication)?s?|ui|"
+    r"user interface|dashboard|portal)\b")
 
 # The model-query tools exist only with a domain model (tools._TOOL_MODEL_REQUIREMENTS).
 _MODEL_TOOLS_SECTION = """\
@@ -488,6 +497,42 @@ def build_system_prompt(
             "      consistent spacing, a primary + accent colour, readable contrast) — a\n"
             "      cohesive modern look, not unstyled browser-default HTML."
         )
+    # Rule 15 orders a React CRUD frontend; a backend-only run (no GUI, no
+    # frontend in the scaffold, none asked for) must not be told to build one.
+    needs_frontend = (
+        gui_model is not None or bool(design_system)
+        or bool(_FRONTEND_FILE_RE.search(f"{inventory}\n{scaffold_snapshot}"))
+        or bool(_FRONTEND_ASK_RE.search((instructions or "").lower()))
+    )
+    crud_rule = f"""\
+15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
+    the UI is already specified by GUI screens. Read-only lists are NOT
+    enough. For the React frontend, build:
+    - A home route (`"/"`) AND a persistent navigation bar/header linking every
+      entity's page. The app must NEVER render blank on load — if you use a
+      router, give it a landing page and wire the nav links to the routes.
+    - Per entity: a list/table view PLUS working **Create** (a real form),
+      **Edit** (a pre-filled form), and **Delete** — each wired to the backend's
+      POST / PUT / DELETE endpoints, not just the GET list. A page that can only
+      read is half-built (rule 12).
+    - Loading, empty, and error states on every data fetch.
+{stylesheet_bullet}
+    - Internal consistency: `package.json` dependencies match the imports; the
+      dev/build scripts actually run the app.
+    - Request/form consistency: when a field becomes server-owned, remove its
+      writable controls and client validation too, while keeping its read-only
+      display. Update shared entity/form metadata, not only a page's payload.
+    AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
+    - An empty or no-op form submit handler (an onSubmit that does nothing).
+      A form's submit MUST call the backend (create -> POST, edit -> PUT)
+      through the API layer, then refresh the list or navigate back. A form
+      that collects input but submits nowhere is worse than no form.
+    - A Router/Routes with no root "/" route -> the app renders BLANK on load.
+      Always add a "/" landing page and a nav/header (links or a menu) to
+      every entity's list and its "new" page, present on every screen.
+    - A list with no Delete control. Each row needs Edit + Delete wired to
+      PUT / DELETE.
+""" if needs_frontend else ""
     stable_header = f"""\
 You are an expert full-stack developer extending a deterministic scaffold.
 Preserve working code and verify its actual behavior; generated code is a
@@ -600,34 +645,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     frontend forms wired to working backend auth endpoints. "Login" implies
     the user can also CREATE AN ACCOUNT unless they say otherwise. No auth
     stubs — a user must be able to register, then log in, end to end.
-15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
-    the UI is already specified by GUI screens. Read-only lists are NOT
-    enough. For the React frontend, build:
-    - A home route (`"/"`) AND a persistent navigation bar/header linking every
-      entity's page. The app must NEVER render blank on load — if you use a
-      router, give it a landing page and wire the nav links to the routes.
-    - Per entity: a list/table view PLUS working **Create** (a real form),
-      **Edit** (a pre-filled form), and **Delete** — each wired to the backend's
-      POST / PUT / DELETE endpoints, not just the GET list. A page that can only
-      read is half-built (rule 12).
-    - Loading, empty, and error states on every data fetch.
-{stylesheet_bullet}
-    - Internal consistency: `package.json` dependencies match the imports; the
-      dev/build scripts actually run the app.
-    - Request/form consistency: when a field becomes server-owned, remove its
-      writable controls and client validation too, while keeping its read-only
-      display. Update shared entity/form metadata, not only a page's payload.
-    AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
-    - An empty or no-op form submit handler (an onSubmit that does nothing).
-      A form's submit MUST call the backend (create -> POST, edit -> PUT)
-      through the API layer, then refresh the list or navigate back. A form
-      that collects input but submits nowhere is worse than no form.
-    - A Router/Routes with no root "/" route -> the app renders BLANK on load.
-      Always add a "/" landing page and a nav/header (links or a menu) to
-      every entity's list and its "new" page, present on every screen.
-    - A list with no Delete control. Each row needs Edit + Delete wired to
-      PUT / DELETE.
-{design_system}
+{crud_rule}{design_system}
 {idiom_section}{model_tools_section}"""
 
     variable_tail = f"""\
@@ -901,7 +919,7 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250) -> str:
     app_prefix_by_module: dict[str, str] = {}
     router_files: list[tuple[str, str]] = []  # (module_basename, content)
 
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
         for fname in files:
             if not fname.endswith(".py"):
@@ -1004,7 +1022,7 @@ def build_scaffold_snapshot(
     dependency dirs are skipped. Returns "" when nothing qualifies.
     """
     candidates: list[tuple[int, str, str]] = []  # (size, rel_path, content)
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
         for fname in files:
             if fname.startswith(".besser_") or fname in _SNAPSHOT_SKIP_NAMES:
@@ -1111,7 +1129,7 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
     # top-level names: a few hundred tokens). Code files first, so a cap
     # can only ever drop assets and notes.
     files: list[tuple[int, str, str]] = []
-    for root, dirs, filenames in os.walk(output_dir):
+    for root, dirs, filenames in walk_plain(output_dir):
         dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
         for f in filenames:
             ext = os.path.splitext(f)[1].lower()
@@ -1156,7 +1174,7 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
         lines.append("Docker: docker-compose.yml + Dockerfiles")
         # List frontend pages
         pages = []
-        for root, dirs, filenames in os.walk(output_dir):
+        for root, dirs, filenames in walk_plain(output_dir):
             dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
             for f in filenames:
                 if "/pages/" in os.path.join(root, f).replace("\\", "/") and f.endswith((".tsx", ".jsx")):

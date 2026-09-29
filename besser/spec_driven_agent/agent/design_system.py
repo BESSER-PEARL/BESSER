@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 _DESIGN_CSS = "design.css"
 _SKIP_DIRS = {"node_modules", "dist", "build", ".next", ".git"}
@@ -28,7 +29,7 @@ def design_variables(css: str) -> list[str]:
 
 def find_design_css(output_dir: str) -> str | None:
     """Relative path of the generated ``src/design.css``, or ``None``."""
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".besser_"))
         if _DESIGN_CSS in files and os.path.basename(root) == "src":
             return os.path.relpath(os.path.join(root, _DESIGN_CSS), output_dir).replace("\\", "/")
@@ -126,7 +127,16 @@ def design_system_section(output_dir: str | None, gui_model=None) -> str:
             "The GUI model carries the design stylesheet below and the scaffold has no "
             "copy: add it unchanged as `src/design.css`, imported by the frontend entry file."
         )
-        embedded = f"\n```css\n{css[:_MAX_INLINE_CSS]}\n```\n"
+        shown = css
+        if len(css) > _MAX_INLINE_CSS:
+            # Cut at a rule boundary, and say so: the model is told to copy it unchanged.
+            shown = css[:css.rfind("}", 0, _MAX_INLINE_CSS) + 1 or _MAX_INLINE_CSS]
+        embedded = f"\n```css\n{shown}\n```\n"
+        if shown != css:
+            embedded += (
+                f"(Stylesheet truncated: {len(shown)} of {len(css)} characters shown. "
+                "Write what is shown; do not invent the missing rules.)\n"
+            )
     field = (
         "a field is `ds-field` > `ds-label` + `ds-input`"
         if {"ds-field", "ds-label", "ds-input"} <= has else "fields use the Forms classes"

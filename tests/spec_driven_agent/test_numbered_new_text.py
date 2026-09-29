@@ -163,3 +163,30 @@ def test_one_numbered_line_among_unnumbered_ones_is_left_alone(executor):
 
     on_disk = open(os.path.join(executor.workspace, "Page.tsx"), encoding="utf-8").read()
     assert "3| const z = 9;" in on_disk, on_disk
+
+
+@pytest.mark.parametrize("new_text", [
+    '    200: "OK",\n    404: "Not Found",',
+    '1: "a",\n2: "b",\n3: "c",',
+])
+def test_a_block_of_numeric_dict_keys_is_written_verbatim(executor, new_text):
+    """Every line matched the old ``N:`` prefix pattern, so the all-numbered
+    branch stripped the keys and ``200: "OK",`` landed on disk as ``"OK",``.
+    read_file only ever emits ``NNN| ``; nothing else is its numbering."""
+    read = call(executor, "read_file", path="Page.tsx")
+
+    result = call(executor, "replace_file_lines", path="Page.tsx",
+                  read_id=read["read_id"], start_line=2, end_line=2,
+                  new_text=new_text)
+
+    assert result["status"] == "modified", result
+    on_disk = open(os.path.join(executor.workspace, "Page.tsx"), encoding="utf-8").read()
+    assert new_text in on_disk, on_disk
+    assert "note" not in result
+
+
+def test_a_write_of_numeric_keys_is_not_stripped(executor):
+    content = '200: "OK",\n404: "Not Found",\n'
+    call(executor, "write_file", path="status.txt", content=content)
+
+    assert open(os.path.join(executor.workspace, "status.txt"), encoding="utf-8").read() == content

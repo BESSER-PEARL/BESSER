@@ -35,6 +35,7 @@ import logging
 import os
 
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
+from besser.spec_driven_agent.execution.workspace_fs import open_plain_write, walk_plain
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def _find_backend(output_dir: str) -> str | None:
     than handing the model commands that cannot work.
     """
     try:
-        for root, dirs, files in os.walk(output_dir):
+        for root, dirs, files in walk_plain(output_dir):
             dirs[:] = sorted(d for d in dirs if d not in WORKSPACE_SKIP_DIRS and not d.startswith(".besser_"))
             if "main_api.py" in files and "sql_alchemy.py" in files:
                 rel = os.path.relpath(root, output_dir).replace("\\", "/")
@@ -78,8 +79,10 @@ def install_probe(output_dir: str) -> bool:
     reaches this one only through the literal path the runbook prints.
     """
     try:
-        with open(os.path.join(output_dir, PROBE_FILENAME), "w",
-                  encoding="utf-8", newline="\n") as handle:
+        path = os.path.join(output_dir, PROBE_FILENAME)
+        # The worker writes this unsandboxed: never through a planted link.
+        with open_plain_write(path, "w", root=output_dir,
+                              encoding="utf-8", newline="\n") as handle:
             handle.write(PROBE_SCRIPT)
         return True
     except OSError:
@@ -266,6 +269,9 @@ def is_up(port):
 def cmd_down(quiet=False):
     state = read_state()
     pid = state.get("pid")
+    # A pid from a torn-down sandbox namespace can be this very process now.
+    if pid in (os.getpid(), os.getppid()):
+        pid = None
     if not pid:
         if not quiet:
             print("NOT_RUNNING")
@@ -281,6 +287,8 @@ def cmd_down(quiet=False):
                 os.kill(pid, 9)
             except OSError:
                 pass
+    except ProcessLookupError:
+        pass                            # already gone, e.g. with its sandbox
     except Exception as exc:
         print("STOP_FAILED %s: %s" % (type(exc).__name__, exc))
     try:
@@ -292,7 +300,7 @@ def cmd_down(quiet=False):
     return 0
 
 
-def cmd_up():
+def cmd_up(quiet=False):
     backend = find_backend()
     if backend is None:
         print("NO_BACKEND: no directory holds both main_api.py and sql_alchemy.py.")
@@ -341,8 +349,9 @@ def cmd_up():
                       "then rerun `up`. Nothing else can be checked until it boots.")
             return 1
         if is_up(port):
-            print("BOOT_OK  port=%d  backend=%s  pid=%d" % (port, rel, child.pid))
-            print("NEXT: `routes` to see the paths and schemas the app really has.")
+            if not quiet:
+                print("BOOT_OK  port=%d  backend=%s  pid=%d" % (port, rel, child.pid))
+                print("NEXT: `routes` to see the paths and schemas the app really has.")
             return 0
         time.sleep(0.4)
     print("BOOT_TIMEOUT after %ds  backend=%s" % (BOOT_WAIT, rel))
@@ -352,12 +361,25 @@ def cmd_up():
     return 1
 
 
+def ensure_up():
+    """Port of a live server, booting one if none answers; None on failure.
+
+    Under the shell sandbox every command gets its own PID namespace, so the
+    server `up` started is gone by the next command. Each command that needs
+    it therefore boots its own; the SQLite file keeps records between them.
+    """
+    port = read_state().get("port")
+    if port and is_up(port):
+        return port
+    if cmd_up(quiet=True) != 0:
+        return None
+    return read_state().get("port")
+
+
 def cmd_routes(argv):
-    state = read_state()
-    port = state.get("port")
-    if not port or not is_up(port):
-        print("NOT_RUNNING\nNEXT: `up` first.")
-        return 2
+    port = ensure_up()
+    if not port:
+        return 1
     status, body = request("GET", "/openapi.json", None, port)
     if status != 200:
         print("OPENAPI_FAILED %s\n%s" % (status, body[:400]))
@@ -419,11 +441,9 @@ def cmd_req(argv):
             return 2
     elif method.upper() in ("POST", "PUT", "PATCH"):
         body = {}                       # the literal {} a generated button sends
-    state = read_state()
-    port = state.get("port")
+    port = ensure_up()
     if not port:
-        print("NOT_RUNNING\nNEXT: `up` first.")
-        return 2
+        return 1
     status, text = request(method, path, body, port)
     print("%s %s %s" % (status or "CONNECTION_FAILED", method.upper(), path))
     print(text[:BODY_CHARS] + (" ...[truncated]" if len(text) > BODY_CHARS else ""))

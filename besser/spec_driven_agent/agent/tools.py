@@ -886,6 +886,11 @@ def get_available_generator_names(
 
 _SHELL_TOOLS = frozenset({"run_command", "install_dependencies"})
 
+# A provider whose tool-call arguments fail to parse passes
+# ``{INVALID_ARGUMENTS_KEY: "<parse error>"}`` instead of ``{}``, so the
+# executor refuses the call rather than running it with no arguments.
+INVALID_ARGUMENTS_KEY = "__invalid_arguments__"
+
 
 def get_tools_for(
     has_domain_model: bool = True,

@@ -406,9 +406,8 @@ def _replace_with_collapsed_blank_runs(
     return result
 
 
-_NUMBERED = re.compile(r"^\s*(\d+)(?:\||:|\t) ?")
-# read_file's own ``NNN| `` form. Only this one is trusted on a MIXED block:
-# ``1: "one"`` in a dict literal matches the general pattern.
+# read_file's own ``NNN| `` form, the only numbering trusted: ``N:`` / ``N\t``
+# is also how numeric dict keys and TSV rows start (``200: "OK",``).
 _PIPE_NUMBERED = re.compile(r"^\s*(\d+)\| ?")
 
 
@@ -418,8 +417,7 @@ def _strip_line_numbers(lines: list[str]) -> list[str] | None:
 
     Every non-blank line numbered is the safe case. Mixed numbering is real
     too (prefixes on all but one line), and left in place it gets written
-    into the file. On a mixed block only read_file's ``NNN| `` form counts,
-    only as a majority of at least two lines, and only with rising numbers.
+    into the file. On a mixed block the ``NNN| `` form counts only as a majority of at least two lines, and only with rising numbers.
     Calibrated over 2.27M line windows of besser/ and generated apps: zero
     matches in text that was not already numbered output.
 
@@ -432,8 +430,8 @@ def _strip_line_numbers(lines: list[str]) -> list[str] | None:
     content = [ln for ln in lines if ln.strip()]
     if not content:
         return None
-    if all(_NUMBERED.match(ln) for ln in content):
-        return [_NUMBERED.sub("", ln, count=1) if ln.strip() else ln for ln in lines]
+    if all(_PIPE_NUMBERED.match(ln) for ln in content):
+        return [_PIPE_NUMBERED.sub("", ln, count=1) if ln.strip() else ln for ln in lines]
     marked = [(i, m) for i, ln in enumerate(lines) if (m := _PIPE_NUMBERED.match(ln))]
     if len(marked) < 2 or len(marked) * 2 < len(content):
         return None

@@ -47,6 +47,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
+from besser.spec_driven_agent.execution.workspace_fs import open_plain, write_atomic_plain
 
 logger = logging.getLogger(__name__)
 
@@ -291,22 +292,16 @@ def save_checkpoint(
     write failing shouldn't take down an otherwise-healthy run.
     """
     final_path = os.path.join(output_dir, CHECKPOINT_FILENAME)
-    tmp_path = final_path + ".tmp"
     try:
         os.makedirs(output_dir, exist_ok=True)
-        with open(tmp_path, "w", encoding="utf-8") as fh:
-            # default=str is only a last resort, so a write never raises.
-            json.dump(_to_wire(checkpoint.to_dict()), fh, default=str, indent=2)
-        os.replace(tmp_path, final_path)
+        # A fresh O_EXCL temp file, renamed over the target: a planted
+        # link at either name is replaced, never written through.
+        # default=str is only a last resort, so a write never raises.
+        write_atomic_plain(final_path, json.dumps(
+            _to_wire(checkpoint.to_dict()), default=str, indent=2), root=output_dir)
         return final_path
     except Exception as exc:
         logger.debug("Failed to save checkpoint to %s: %s", final_path, exc)
-        # Best-effort cleanup of the half-written sidecar.
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except Exception:
-            pass
         return None
 
 
@@ -318,7 +313,7 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
     if not os.path.isfile(path):
         return None
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open_plain(path, "r", root=output_dir, encoding="utf-8") as fh:
             data = json.load(fh)
     except Exception as exc:
         logger.warning("Failed to read checkpoint at %s: %s", path, exc)

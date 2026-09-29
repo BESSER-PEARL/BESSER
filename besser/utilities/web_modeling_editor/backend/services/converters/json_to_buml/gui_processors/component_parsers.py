@@ -4,7 +4,7 @@ Basic component parsers for GUI elements (Button, Text, Image, InputField, etc.)
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ from besser.BUML.metamodel.gui.events_actions import (
     Transition,
     Update,
 )
+from besser.BUML.metamodel.structural import DomainModel
 
 from .component_helpers import (
     collect_input_fields_recursive,
@@ -613,8 +614,10 @@ def parse_alert(component: Dict[str, Any], styling, name: str, meta: Dict) -> Al
     return alert
 
 
-def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict, parse_component_list_func,
-               class_model=None, domain_model=None) -> Form:
+def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
+               parse_component_list_func: Callable[[List[Dict[str, Any]]], List[ViewComponent]],
+               class_model: Optional[Dict[str, Any]] = None,
+               domain_model: Optional[DomainModel] = None) -> Form:
     """
     Parse a form component with input fields and submit event.
 

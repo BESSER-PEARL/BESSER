@@ -499,6 +499,17 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
             "Auto",
         }
         written_custom_conditions = set()
+        # Condition name -> Python identifier; the name may be ``is.ready`` or ``if``.
+        condition_vars = {}
+
+        def condition_var(name):
+            if name not in condition_vars:
+                var = safe_var_name(name, lowercase=False)
+                while var in condition_vars.values():
+                    var = f"{var}_"
+                condition_vars[name] = var
+            return condition_vars[name]
+
         has_custom_conditions = False
         for state in model.states:
             for transition in state.transitions:
@@ -520,9 +531,12 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                         callable_name = function_match.group(1) if function_match else None
 
                     if not callable_name:
-                        callable_name = f"{condition_name}_callable"
+                        callable_name = f"{condition_var(condition_name)}_callable"
 
-                    f.write(f"{condition_name} = Condition('{callable_name}', callable={callable_name})\n\n")
+                    f.write(
+                        f"{condition_var(condition_name)} = "
+                        f"Condition('{callable_name}', callable={callable_name})\n\n"
+                    )
                     written_custom_conditions.add(condition_name)
                     has_custom_conditions = True
 
@@ -600,15 +614,15 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                         # Custom transition with a single condition.
                         if event:
                             transition_chain = f"{state_var}.when_event({_event_expr(event)})"
-                            transition_chain += f".with_condition({condition.name})"
+                            transition_chain += f".with_condition({condition_var(condition.name)})"
                         else:
-                            transition_chain = f"{state_var}.when_condition({condition.name})"
+                            transition_chain = f"{state_var}.when_condition({condition_var(condition.name)})"
                         transition_chain += f".go_to({dest_var})"
                         f.write(f"{transition_chain}\n")
 
                 elif len(conditions) > 1:
                     # Custom transition with multiple conditions.
-                    condition_names = [c.name for c in conditions]
+                    condition_names = [condition_var(c.name) for c in conditions]
                     if event:
                         transition_chain = f"{state_var}.when_event({_event_expr(event)})"
                         for condition_name in condition_names:

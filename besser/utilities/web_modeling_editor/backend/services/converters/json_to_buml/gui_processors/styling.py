@@ -4,7 +4,7 @@ Styling and CSS processing for GUI components.
 
 import copy
 import re
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from besser.BUML.metamodel.gui import (
     Alignment,
@@ -428,7 +428,7 @@ def build_style_map(styles_list) -> Dict[str, Styling]:
     return style_map
 
 
-def build_stylesheet(styles_list) -> str:
+def build_stylesheet(styles_list: Optional[List[Dict[str, Any]]]) -> str:
     """
     Render every GrapesJS rule not tied to a single element id as CSS text.
 

@@ -274,7 +274,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
                     screen_var = f"{screen_var}_{screen_idx}"
                 created_vars.add(screen_var)
 
-                f.write(f"\n# Screen: {screen.name}\n")
+                f.write(f"\n# Screen: {_comment_safe(screen.name)}\n")
 
                 # Create screen (view_elements is required, will be set after processing children)
                 screen_params = [f'name="{_escape_string(screen.name)}"']
@@ -480,7 +480,10 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
             # Simple ViewComponent with no children; keeps its tag, attributes and
             # display order like every other component (an <br> or empty slot
             # otherwise re-imports as an unordered, tagless element).
-            params = [f'name="{_escape_string(component.name)}"', f'description="{_escape_string(component.description or "")}"']
+            params = [
+                f'name="{_escape_string(component.name)}"',
+                f'description="{_escape_string(component.description or "")}"',
+            ]
             _write_constructor(f, comp_var, 'ViewComponent', params, component)
 
     # Styling and metadata are now written by type-specific writers via _write_constructor
@@ -1279,7 +1282,8 @@ def _write_map_layer(f, layer_var, layer_comp, created_vars):
                 # Keep it to ONE call - see bind_domain_field.
                 f.write("try:\n")
                 f.write(
-                    f"    {layer_var}.{attr_name} = bind_domain_field(domain_model, \"{escaped_domain}\", \"{escaped_field}\")\n"
+                    f"    {layer_var}.{attr_name} = "
+                    f"bind_domain_field(domain_model, \"{escaped_domain}\", \"{escaped_field}\")\n"
                 )
                 f.write("except NameError:\n")
                 f.write("    pass\n")

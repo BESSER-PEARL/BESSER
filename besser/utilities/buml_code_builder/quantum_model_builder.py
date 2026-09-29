@@ -2,7 +2,7 @@
 Quantum Model Builder: Generates Python code for BESSER QuantumCircuit models.
 """
 
-from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, safe_var_name
 from besser.BUML.metamodel.quantum.quantum import (
     QuantumCircuit, HadamardGate, PauliXGate, PauliYGate, PauliZGate,
     SGate, TGate, SwapGate, RXGate, RYGate, RZGate, PhaseGate,
@@ -89,11 +89,11 @@ def _write_operation(f, op, qc_var="qc", target_list=None):
 
     # === Parametric Gates (specific subclasses first) ===
     elif isinstance(op, RXGate):
-        f.write(f"{gate_var} = RXGate(target_qubit={op.target_qubits[0]}, angle={op.parameter})\n")
+        f.write(f"{gate_var} = RXGate(target_qubit={op.target_qubits[0]}, theta={op.theta})\n")
     elif isinstance(op, RYGate):
-        f.write(f"{gate_var} = RYGate(target_qubit={op.target_qubits[0]}, angle={op.parameter})\n")
+        f.write(f"{gate_var} = RYGate(target_qubit={op.target_qubits[0]}, theta={op.theta})\n")
     elif isinstance(op, RZGate):
-        f.write(f"{gate_var} = RZGate(target_qubit={op.target_qubits[0]}, angle={op.parameter})\n")
+        f.write(f"{gate_var} = RZGate(target_qubit={op.target_qubits[0]}, theta={op.theta})\n")
     elif isinstance(op, PhaseGate):
         f.write(f"{gate_var} = PhaseGate(target_qubit={op.target_qubits[0]}, angle={op.parameter})\n")
     elif isinstance(op, ParametricGate):
@@ -151,7 +151,7 @@ def _write_operation(f, op, qc_var="qc", target_list=None):
 
     # === Input Gates ===
     elif isinstance(op, InputGate):
-        value_str = f", value={op.value}" if op.value is not None else ""
+        value_str = f", value='{_escape_python_string(str(op.value))}'" if op.value is not None else ""
         f.write(f"{gate_var} = InputGate(input_type='{_escape_python_string(op.input_type)}', target_qubits={op.target_qubits}{value_str})\n")
 
     # === Custom/User-Defined Gates ===
@@ -160,20 +160,22 @@ def _write_operation(f, op, qc_var="qc", target_list=None):
 
     elif isinstance(op, FunctionGate):
         # Handle nested circuit definition
+        # Gate names may hold ``^`` or ``(`` (the editor allows them).
+        name_part = safe_var_name(op.name)
         if op.definition and op.definition.circuit:
             # Generate nested circuit code
-            nested_qc_var = f"qc_{op.name}_{id(op)}"
+            nested_qc_var = f"qc_{name_part}_{id(op)}"
             _write_circuit(f, op.definition.circuit, nested_qc_var)
 
             # Create GateDefinition
-            def_var = f"def_{op.name}_{id(op)}"
+            def_var = f"def_{name_part}_{id(op)}"
             f.write(f"{def_var} = GateDefinition(name='{_escape_python_string(op.name)}', circuit={nested_qc_var})\n")
 
             f.write(f"{gate_var} = FunctionGate(name='{_escape_python_string(op.name)}', target_qubits={op.target_qubits}, definition={def_var})\n")
 
         elif op.gates:
             # Handle explicit gates list
-            gates_list_var = f"gates_{op.name}_{id(op)}"
+            gates_list_var = f"gates_{name_part}_{id(op)}"
             f.write(f"{gates_list_var} = []\n")
 
             # Recursively write each gate in the list

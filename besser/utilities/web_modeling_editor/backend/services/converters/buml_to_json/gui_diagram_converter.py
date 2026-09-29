@@ -379,11 +379,7 @@ def _serialize_component(element: ViewComponent) -> Dict[str, Any]:
             if serialized_child:
                 children.append(serialized_child)
     if isinstance(element, Form):
-        # The form's inputs are its children in the editor
-        for child in _sorted_elements(getattr(element, "inputFields", None) or []):
-            serialized_child = _serialize_component(child)
-            if serialized_child:
-                children.append(serialized_child)
+        children.extend(_serialize_form_children(element))
     if isinstance(element, Text):
         content = element.content or element.description or element.name or ""
         children = [{"type": "textnode", "content": content}]
@@ -401,6 +397,37 @@ def _serialize_component(element: ViewComponent) -> Dict[str, Any]:
     if children:
         node["components"] = children
     return _clean_dict(node)
+def _serialize_form_children(form: Form) -> List[Dict[str, Any]]:
+    """A form's inputs, each after its ``<label>``, then its submit button.
+
+    ``parse_form`` folds the labels into ``InputField.label`` and the button
+    into ``Form.submit_label``; rebuilding them keeps the form visible as
+    authored. Editor ``gui-input-*`` inputs render their own label.
+    """
+    children: List[Dict[str, Any]] = []
+    for field in _sorted_elements(getattr(form, "inputFields", None) or []):
+        serialized = _serialize_component(field)
+        if not serialized:
+            continue
+        label = getattr(field, "label", None)
+        attrs = serialized.get("attributes") or {}
+        self_labelled = any(
+            str(kind or "").startswith("gui-input-")
+            for kind in (serialized.get("type"), attrs.get("data-gui-component"))
+        )
+        if label and not self_labelled:
+            label_node: Dict[str, Any] = {"tagName": "label", "components": [{"type": "textnode", "content": label}]}
+            field_id = attrs.get("id")
+            if field_id:
+                label_node["attributes"] = {"for": field_id}
+            children.append(label_node)
+        children.append(serialized)
+    children.append({
+        "tagName": "button",
+        "attributes": {"type": "submit"},
+        "components": [{"type": "textnode", "content": getattr(form, "submit_label", None) or "Submit"}],
+    })
+    return children
 # ---------------------------------------------------------------------------
 # Attribute builders
 # ---------------------------------------------------------------------------

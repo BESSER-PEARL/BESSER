@@ -13,7 +13,7 @@ from besser.BUML.metamodel.nn import (
     DropoutLayer, LayerNormLayer, BatchNormLayer,
     Dataset,
 )
-from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, safe_var_name
 from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
 
 # Attributes the metamodel normalizes on assignment, so the value actually
@@ -119,7 +119,7 @@ def _safe_comment(value) -> str:
     """
     if value is None:
         return ''
-    return str(value).replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+    return _comment_safe(str(value))
 
 
 def _fmt_metrics(metrics) -> str:

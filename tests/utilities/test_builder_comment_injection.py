@@ -12,6 +12,9 @@ theirs raw, and ``project_builder`` sanitised two of its eight labels — the
 familiar shape where one call site is fixed and its siblings are not.
 """
 import inspect
+import os
+import re
+import tempfile
 
 import pytest
 
@@ -62,7 +65,8 @@ def test_no_builder_writes_an_unsanitised_name_into_a_comment(module_name):
     offenders = []
     for lineno, line in enumerate(source.splitlines(), start=1):
         stripped = line.strip()
-        if 'f"#' not in stripped and "f'#" not in stripped:
+        # Also match comments that open after leading newlines: f"\n# Screen: ..."
+        if not re.search(r"""f["'](\\n)*#""", stripped):
             continue
         if "_comment_safe" in stripped or "_safe_comment" in stripped:
             continue
@@ -75,3 +79,19 @@ def test_no_builder_writes_an_unsanitised_name_into_a_comment(module_name):
         + "\n  ".join(offenders)
         + "\nRoute them through common._comment_safe."
     )
+
+
+def test_a_screen_name_cannot_escape_its_comment_in_the_gui_export():
+    """The ``# Screen: <name>`` header was written raw (review finding B5)."""
+    from besser.BUML.metamodel.gui import GUIModel, Module, Screen
+    from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
+
+    screen = Screen(name=PAYLOAD, description="", view_elements=set())
+    gui = GUIModel(name="ui", package="", versionCode="1", versionName="1", description="",
+                   modules={Module(name="M", screens={screen})})
+    path = os.path.join(tempfile.mkdtemp(), "gui.py")
+    gui_model_to_code(gui, path)
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+
+    assert not [line for line in lines if line.startswith("__import__")]

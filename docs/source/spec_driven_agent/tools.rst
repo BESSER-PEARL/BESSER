@@ -255,7 +255,10 @@ What it does:
   outside the workspace, so it is never packaged or pushed, and the 24-hour
   temp cleanup removes it. If the sandbox cannot start, every command is
   refused; ``BESSER_LLM_SHELL_SANDBOX=off`` lifts that on a single-tenant
-  Linux host whose kernel forbids unprivileged user namespaces.
+  Linux host whose kernel forbids unprivileged user namespaces. The model,
+  and any validation finding, sees only "the shell sandbox is unavailable on
+  this server"; the cause and the override are written to the server log
+  only.
 
 What it does not:
 

@@ -121,7 +121,9 @@ Findings are classified into three severities:
        nothing); a requirement the user stated that the code does not
        implement (``requirement:`` — the verbatim request is turned into
        atomic requirements once and each is judged against the generated
-       code, with every "implemented" citation re-checked by the harness);
+       code, with every "implemented" citation re-checked by the harness;
+       only behaviour the request states is listed, so a vague request
+       yields few requirements or none);
        partial requirements and unverified evidence (distinct from proven missing
        behavior); unresolved checklist work and unimplemented action contracts;
        a method button that takes its row id from a table of another
@@ -136,7 +138,9 @@ Findings are classified into three severities:
        variable), ``E501``, whitespace, blank lines, import order.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now) and the model-derived acceptance matrix.
+       now), the model-derived acceptance matrix, and ``requirement out of
+       scope:`` — a UI requirement on a run that neither has nor asked for a
+       frontend, which a backend-only output has no files to satisfy.
 
 Only ``blocker`` findings spend LLM turns. The ``done`` event reports
 ``blockerCount`` — completion-blocking defects and required verification gaps
@@ -173,6 +177,7 @@ cost and runtime budgets. The loop stops when blockers reach zero, after two
 consecutive unchanged/repeated source states, or after three consecutive rounds
 that change the tree without improving it. A round is progress when the tree
 scores better, the source changed, or a verification obligation was discharged
+(a checklist or scenario change counts only if it changed the set of blockers)
 — writing no source is not by itself a stop, because a round spent closing
 checklist items or correcting a scenario can resolve blockers without touching
 a file, and a round whose edits were all rejected feeds those rejections into

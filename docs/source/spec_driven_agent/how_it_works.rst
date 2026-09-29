@@ -29,7 +29,16 @@ The three phases
    ``task_list`` checklist — making surgical, scoped changes on top of the
    scaffold. Before the loop starts, a cheap *planning* call analyses the gap
    between the scaffold and the request and produces the task list; when it
-   judges the scaffold already sufficient, Phase 2 is skipped entirely. The
+   judges the scaffold already sufficient, Phase 2 is skipped entirely.
+
+   A request for something users interact with (an app, web app, UI,
+   website, dashboard or portal) gets a frontend even without a GUI model:
+   the FastAPI scaffold, plus a React frontend the LLM writes in Phase 2. An
+   explicitly headless request (API or backend only, a REST API, no UI) stays
+   backend-only, and in a modify run a bare "app" names the existing project
+   rather than asking for a UI. Such a request also puts "build the frontend"
+   on the checklist, and Phase 3 reports a blocker if the output ends with no
+   frontend files. The
    system prompt adapts to the run: the rule that asks for a complete CRUD
    frontend applies only when the run has or needs a frontend, and when shell
    tools are on and a FastAPI backend is present it gains a runtime

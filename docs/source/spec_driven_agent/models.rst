@@ -16,6 +16,13 @@ model on the request's behalf. The free tier is gated by
 ``BESSER_FREE_LLM_TOKEN`` environment variables (see :doc:`configuration`); the
 backend config endpoint reports it as ``free_tier: {available, model, models}``.
 
+The user pays nothing for a free-tier run, and the run card says "No cost".
+Internally, a free-tier model that draws on the deployment's provider credits
+(for example ``moonshotai/Kimi-K3``) is still priced at its list rate, so the
+per-run cost cap bounds it; a run that reaches the cap reports "Free tier
+per-run usage limit reached". Models with an explicit free marker
+(``:free`` / ``-free``) and a self-hosted fallback are priced at $0.
+
 **Bring Your Own Key (BYOK, optional).** To target a commercial provider —
 ``anthropic``, ``openai``, ``mistral``, or ``nebius`` — for higher-fidelity
 results, the
@@ -65,7 +72,7 @@ provider default is used:
      - Planning model
      - Override field
    * - ``anthropic``
-     - ``claude-sonnet-4-6``
+     - ``claude-sonnet-5``
      - ``claude-haiku-4-5``
      - ``llm_model``
    * - ``openai``
@@ -168,8 +175,8 @@ not work: when the main model is already on the cheap tier (a ``haiku`` model
 on Anthropic, a ``mini`` / ``nano`` model on OpenAI), and — on the
 OpenAI-compatible providers — when the model reads as self-hosted or
 open-weight, whose endpoint has no such sibling. That last test is name-based
-(a ``name:size`` tag, or a known open-weight family), which is what makes the
-``free`` tier route planning to its own model. ``nebius`` opts out explicitly:
+(a ``name:size`` tag, or a known open-weight family). The ``free`` tier always
+runs its planning calls on its own model. ``nebius`` opts out explicitly:
 its default is already a small-activation MoE, and the OpenAI cheap sibling
 does not exist on that endpoint.
 

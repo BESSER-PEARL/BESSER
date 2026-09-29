@@ -125,7 +125,9 @@ Sandbox and network
   the network cut: the import check after each file write, the import smoke
   check, the startup, create and API probes, and the ``tsc``, ``cargo check``
   and ``npm run build`` checks. When the worker cannot start the sandbox they
-  are skipped and reported as unverified, never run unconfined.
+  are skipped and reported as unverified, never run unconfined. Tool results
+  and findings then say only that the shell sandbox is unavailable; look in
+  the worker's log for the cause.
 - Two steps need the network and get it, but are sandboxed all the same, so
   package install scripts see read-only ``/usr/local``, no other runs and a
   stripped environment: the Phase 1 ``npm install`` of a scaffolded frontend

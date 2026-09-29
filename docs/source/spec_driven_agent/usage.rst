@@ -102,7 +102,9 @@ Troubleshooting a run
    * - ``COST_CAP`` warning
      - The run reached ``max_cost_usd`` and stopped early. Whatever it
        produced so far is still returned (a ``done`` event follows). Raise the
-       cap — up to the server hard cap — for a fuller result.
+       cap — up to the server hard cap — for a fuller result. On the free
+       tier the message reads "Free tier per-run usage limit reached"; the
+       limit is set by the deployment.
    * - ``TIMEOUT`` warning
      - The same, for ``max_runtime_seconds``: partial output is still
        delivered.
@@ -134,7 +136,10 @@ Troubleshooting a run
        sticky for the rest of the run.
    * - "It finished, but the app is broken"
      - Check ``blockerCount`` on the ``done`` event: a non-zero value means the
-       run completed but Phase 3 could not repair everything it found.
+       run completed but Phase 3 could not repair everything it found. The
+       editor follows the event's ``incomplete`` flag: a run with
+       ``incomplete: false`` is shown as complete even when some checks could
+       not be verified, so read the recipe's findings for those.
    * - "What counts against my budget?"
      - Only the paid LLM calls (the planning pass, the customize loop, and any
        Phase 3 fix turns). The deterministic scaffold, the validators, and the

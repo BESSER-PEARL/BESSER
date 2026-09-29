@@ -117,7 +117,8 @@ Feature flags
   a generated FastAPI backend is then reported as ``runtime unverified``
   rather than as passing. See :doc:`validation`.
 - ``BESSER_LLM_ENABLE_REQUIREMENTS_LEDGER`` (on) -- Turn the user's verbatim
-  request into a numbered list of atomic requirements once per run, show that
+  request into a numbered list of atomic requirements once per run (only
+  behaviour the request states; a vague request yields few or none), show that
   list to Phase 2, and have every Phase 3 pass judge each requirement against
   the generated code. A requirement the code does not implement becomes a
   ``requirement:`` blocker for the auto-fix loop, and every verdict is written

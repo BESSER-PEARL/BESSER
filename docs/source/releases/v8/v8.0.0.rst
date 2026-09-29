@@ -226,6 +226,25 @@ Other improvements and fixes
     Dockerfile ``COPY`` sources against the actual build context (ignoring
     ``COPY --from``), and restores a ``requirements.txt`` deleted from a
     FastAPI scaffold.
+  - A request for an app, web app, UI, website or dashboard with no GUI model
+    gets the FastAPI scaffold plus an LLM-written React frontend, a "build the
+    frontend" checklist item and a Phase 3 blocker if no frontend ships;
+    explicitly headless requests stay backend-only, and a modify run does not
+    read a bare "app" as a UI request.
+  - The requirements ledger lists only behaviour the request states. A UI
+    requirement on a run with no frontend is a ``requirement out of scope:``
+    warning, and a checklist or scenario change counts as repair progress
+    only if it changed the blockers.
+  - When the shell sandbox cannot start, the model and the findings see only
+    a generic "shell sandbox is unavailable" message; the cause and the
+    ``BESSER_LLM_SHELL_SANDBOX=off`` override go to the server log.
+  - The Anthropic default model is ``claude-sonnet-5``. Free-tier models that
+    draw on provider credits are priced at list rate internally so the cost
+    cap applies, while the user sees "No cost" and, at the cap, "Free tier
+    per-run usage limit reached"; ``:free`` / ``-free`` ids and the
+    self-hosted fallback are $0, and the free tier plans on its own model.
+  - The editor shows a run as complete when its ``done`` event says
+    ``incomplete: false``, even if some checks could not be verified.
 
 - Generated output records the BESSER version that produced it. Every ZIP the
   web editor generates, pushes to GitHub or downloads from a Spec-Driven run

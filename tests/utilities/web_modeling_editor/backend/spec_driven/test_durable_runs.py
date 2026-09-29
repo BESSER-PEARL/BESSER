@@ -45,7 +45,7 @@ def _start(run_id: str) -> bytes:
     )
 
 
-def _done(run_id: str, *, incomplete: bool = False) -> bytes:
+def _done(run_id: str, *, incomplete: bool = False, blocker_count: int = 0) -> bytes:
     return format_sse(
         DoneEvent(
             runId=run_id,
@@ -53,6 +53,7 @@ def _done(run_id: str, *, incomplete: bool = False) -> bytes:
             fileName="result.zip",
             isZip=True,
             incomplete=incomplete,
+            blockerCount=blocker_count,
         )
     )
 
@@ -152,6 +153,26 @@ def test_incomplete_done_maps_to_partial_status():
         await manager.start(run_id, source())
         await manager.wait(run_id)
         assert manager.get_run(run_id).status == "partial"
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_unverified_checks_alone_do_not_make_a_run_partial():
+    # blockerCount also counts checks that could not run; the runner's
+    # incomplete=False is authoritative.
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "e" * 32
+
+        async def source():
+            yield _start(run_id)
+            yield _done(run_id, incomplete=False, blocker_count=2)
+
+        await manager.start(run_id, source())
+        await manager.wait(run_id)
+        assert manager.get_run(run_id).status == "succeeded"
         store.close()
 
     asyncio.run(exercise())

@@ -342,9 +342,12 @@ def _get_pricing(model_id: str, billed: bool = False) -> dict[str, float]:
 class UsageTracker:
     """Tracks token usage and estimated cost across all API calls."""
 
-    def __init__(self, model: str, billed: bool = False):
+    def __init__(self, model: str, billed: bool = False, billed_to_user: bool = True):
         self.model = model
         self.billed = billed
+        # False on the server-owned keyless route: the estimate still drives
+        # the cost cap (it spends org credits) but is not the user's cost.
+        self.billed_to_user = billed_to_user
         self.pricing = _get_pricing(model, billed)
         self.input_tokens = 0
         self.output_tokens = 0
@@ -468,6 +471,7 @@ class UsageTracker:
             "cache_read_tokens": self.cache_read_tokens,
             "total_tokens": self.total_tokens,
             "estimated_cost_usd": round(self.estimated_cost, 4),
+            "billed_to_user": self.billed_to_user,
             "model": self.model,
         }
 
@@ -845,7 +849,7 @@ def _tools_unsupported_message(model: str) -> str:
         f"The selected model '{model}' can't run the Spec-Driven Agent: it "
         f"rejected the code-generation tools on the chat/completions endpoint. "
         f"Pick a tool-capable model instead — e.g. gpt-5.5 or gpt-4o for "
-        f"OpenAI, or an Anthropic Claude model (claude-sonnet-4-6) for the "
+        f"OpenAI, or an Anthropic Claude model (claude-sonnet-5) for the "
         f"strongest code fidelity."
     )
 
@@ -859,7 +863,7 @@ class ClaudeLLMClient(LLMProvider):
     Anthropic Claude client with retry, cost tracking, and prompt caching.
     """
 
-    DEFAULT_MODEL = "claude-sonnet-4-6"
+    DEFAULT_MODEL = "claude-sonnet-5"
     DEFAULT_MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
 
     PLANNING_MODEL = "claude-haiku-4-5"
@@ -1573,6 +1577,7 @@ class OpenAIProvider(LLMProvider):
         timeout: float | None = None,
         default_headers: dict[str, str] | None = None,
         fallback: tuple[str, str, str] | None = None,
+        free_route: bool = False,
     ):
         try:
             from openai import OpenAI
@@ -1600,7 +1605,14 @@ class OpenAIProvider(LLMProvider):
         self._base_url = resolved_base
         self._model = model or self.DEFAULT_MODEL
         self._max_tokens = max_tokens or max_output_tokens(self._model)
-        self._usage = UsageTracker(self._model, billed=self._is_billed_route(resolved_base))
+        # The keyless tier (server env endpoint + token). Its paid ids (e.g.
+        # ``moonshotai/Kimi-K3``) draw org credits, so they stay priced and
+        # capped; only the user is not billed.
+        self._free_route = free_route
+        self._usage = UsageTracker(
+            self._model, billed=self._is_billed_route(resolved_base),
+            billed_to_user=not free_route,
+        )
         # Ordered fallback chain, used when the primary endpoint stays
         # unavailable past the retry budget. The switch is sticky for the run so
         # later calls don't re-pay the retry tax. Accepts a single
@@ -1685,11 +1697,11 @@ class OpenAIProvider(LLMProvider):
             return None if env.lower() == "primary" else env
         if any(tier in self._model.lower() for tier in ("mini", "nano")):
             return None  # already on a cheap tier
-        # Self-hosted / free-local models (ollama gateways): the OpenAI
-        # cheap sibling doesn't exist there — a gpt-4o-mini override just
-        # burns two failing round-trips per gap analysis before the
-        # primary-model retry kicks in.
-        if _is_free_local_model(self._model.lower()):
+        # Self-hosted / free-local models (ollama gateways) and the keyless
+        # route (not in its catalog): the OpenAI cheap sibling doesn't exist
+        # there — a gpt-4o-mini override just burns two failing round-trips
+        # per gap analysis before the primary-model retry kicks in.
+        if self._free_route or _is_free_local_model(self._model.lower()):
             return None
         return self.PLANNING_MODEL
 
@@ -2465,6 +2477,7 @@ def create_llm_client(
                 base_url=fb_base_url,
                 default_headers=fb_headers,
                 fallback=None,
+                free_route=True,
                 **kwargs,
             )
         free_base_url, token, free_model = _resolve_free_tier_config()
@@ -2483,6 +2496,7 @@ def create_llm_client(
             # self-hosted fallback last. An alt sits on the same shared cloud endpoint
             # and sheds requests the same way, so it needs the chain too.
             fallback=_resolve_free_fallback_chain(chosen),
+            free_route=True,
             **kwargs,
         )
     elif provider == "anthropic":

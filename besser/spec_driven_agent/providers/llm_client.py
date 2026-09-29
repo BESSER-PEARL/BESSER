@@ -797,7 +797,7 @@ class ClaudeLLMClient(LLMProvider):
         except ImportError:
             raise ImportError(
                 "The 'anthropic' package is required for LLM generation. "
-                "Install it with: pip install anthropic"
+                "Install it with: pip install besser[agents]"
             ) from None
 
         client_kwargs: dict[str, Any] = {
@@ -2093,14 +2093,6 @@ SPONSORED_PROVIDER = "sponsored"
 def sponsored_tier_model() -> str:
     """Default model for the sponsored tier (from server env), or ``""``."""
     return os.environ.get("BESSER_SPONSORED_LLM_MODEL", "").strip()
-
-
-def sponsored_tier_available() -> bool:
-    """True when the server is configured with a sponsored endpoint."""
-    return bool(
-        os.environ.get("BESSER_SPONSORED_LLM_BASE_URL", "").strip()
-        and os.environ.get("BESSER_SPONSORED_LLM_TOKEN", "").strip()
-    )
 
 
 def _resolve_sponsored_tier_config() -> tuple[str, str, str]:

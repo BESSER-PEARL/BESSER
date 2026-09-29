@@ -34,6 +34,8 @@ from __future__ import annotations
 import logging
 import os
 
+from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
+
 logger = logging.getLogger(__name__)
 
 PROBE_FILENAME = ".besser_probe.py"
@@ -56,10 +58,9 @@ def _find_backend(output_dir: str) -> str | None:
     scaffold family, so on any other stack the runbook renders nothing rather
     than handing the model commands that cannot work.
     """
-    skip = {"node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build"}
     try:
         for root, dirs, files in os.walk(output_dir):
-            dirs[:] = sorted(d for d in dirs if d not in skip and not d.startswith(".besser_"))
+            dirs[:] = sorted(d for d in dirs if d not in WORKSPACE_SKIP_DIRS and not d.startswith(".besser_"))
             if "main_api.py" in files and "sql_alchemy.py" in files:
                 rel = os.path.relpath(root, output_dir).replace("\\", "/")
                 return "." if rel == "." else rel

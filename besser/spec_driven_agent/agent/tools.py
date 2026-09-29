@@ -794,16 +794,6 @@ MODEL_QUERY_TOOLS: list[dict[str, Any]] = [
 ]
 
 
-def get_all_tools() -> list[dict[str, Any]]:
-    """Return tools available to the LLM in Phase 2.
-
-    Generator tools are NOT included — the orchestrator calls them
-    directly in Phase 1.  The LLM only gets file, execution, model-query,
-    and validation tools for customizing the generated output.
-    """
-    return FILE_TOOLS + EXECUTION_TOOLS + MODEL_QUERY_TOOLS + VALIDATION_TOOLS
-
-
 def get_all_tools_including_generators() -> list[dict[str, Any]]:
     """Return ALL tools (including generators) — for no-generator mode."""
     return (

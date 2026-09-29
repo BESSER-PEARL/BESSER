@@ -150,7 +150,7 @@ def _method_entry(method) -> dict[str, Any]:
         entry["implementation"] = str(impl_type.name).lower()
     # Where available, include the raw body — lets the LLM preserve or
     # translate behaviour instead of re-inventing it.
-    code = getattr(method, "code", None) or getattr(method, "body", None)
+    code = getattr(method, "code", None)
     if isinstance(code, str) and code.strip():
         entry["body"] = code
     for kind in ("pre", "post"):
@@ -361,7 +361,7 @@ def serialize_gui_model(gui_model) -> dict[str, Any] | None:
         screens = []
         for screen in module.screens:
             # Screen uses view_elements (from ViewContainer parent class)
-            elements = getattr(screen, "view_elements", None) or getattr(screen, "view_components", None) or set()
+            elements = getattr(screen, "view_elements", None) or set()
             screen_data: dict[str, Any] = {
                 "name": screen.name,
                 "components": _serialize_components(elements),
@@ -390,13 +390,11 @@ def _serialize_components(components) -> list[dict]:
             comp_data["label"] = comp.label
         if hasattr(comp, "placeholder") and comp.placeholder:
             comp_data["placeholder"] = comp.placeholder
-        if hasattr(comp, "data_source") and comp.data_source:
-            ds = comp.data_source
-            comp_data["data_source"] = {
-                "class": _type_name(ds.source_class) if hasattr(ds, "source_class") and ds.source_class else None,
-            }
+        binding = getattr(comp, "data_binding", None)
+        if binding is not None and binding.domain_concept is not None:
+            comp_data["data_source"] = {"class": _type_name(binding.domain_concept)}
         # Nested components (containers use view_elements)
-        children = getattr(comp, "view_elements", None) or getattr(comp, "view_components", None)
+        children = getattr(comp, "view_elements", None)
         if children:
             comp_data["children"] = _serialize_components(children)
         result.append(comp_data)

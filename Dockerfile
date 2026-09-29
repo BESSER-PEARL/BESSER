@@ -14,12 +14,12 @@ FROM python:3.12-slim AS python-deps
 # Opt-in so that a stray .crt in a local checkout never reaches an image
 # built for deployment. Each final stage strips it again before it ships.
 ARG TRUST_EXTRA_CAS=0
-COPY ca-certs-extra/ /tmp/ca-certs-extra/
-RUN if [ "$TRUST_EXTRA_CAS" = "1" ]; then \
+# A BuildKit bind mount, not COPY, so the cert files get no layer of their own.
+RUN --mount=type=bind,source=ca-certs-extra,target=/tmp/ca-certs-extra \
+    if [ "$TRUST_EXTRA_CAS" = "1" ]; then \
         cp /tmp/ca-certs-extra/*.crt /usr/local/share/ca-certificates/ \
         && update-ca-certificates; \
-    fi; \
-    rm -rf /tmp/ca-certs-extra
+    fi
 # pip, npm and rustup each ship their own trust store and must be pointed at
 # the system bundle explicitly. No-op when no extra CA was injected.
 ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
@@ -42,11 +42,14 @@ COPY pyproject.toml README.md ./
 COPY besser/ ./besser/
 RUN pip install --no-cache-dir -e .
 
-# A build-time CA must not become runtime trust. Unconditional; the grep is an
-# assertion that fails the build if a known TLS-inspection CA is still trusted.
+# A build-time CA must not become runtime trust. Unconditional; the last lines
+# fail the build if a known TLS-inspection CA is still trusted. They read the
+# decoded subjects: the PEM bundle is base64, so grepping it never matches.
 RUN rm -f /usr/local/share/ca-certificates/*.crt \
     && update-ca-certificates --fresh >/dev/null 2>&1 \
-    && ! grep -qi goskope /etc/ssl/certs/ca-certificates.crt
+    && subjects="$(openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca-certificates.crt \
+        | openssl pkcs7 -print_certs -noout)" && [ -n "$subjects" ] \
+    && ! printf '%s\n' "$subjects" | grep -qiE 'netskope|goskope'
 
 ENV PYTHONPATH=/app
 
@@ -96,9 +99,16 @@ COPY pyproject.toml README.md ./
 COPY besser/ ./besser/
 RUN pip install --no-cache-dir -e .
 
-RUN rm -f /usr/local/share/ca-certificates/*.crt \
+# The JDK keystore was built while the proxy CA was trusted, and --fresh never
+# removes a cert from it: delete it so the jks-keystore hook rebuilds it from
+# the clean store, then check it the same way.
+RUN rm -f /usr/local/share/ca-certificates/*.crt /etc/ssl/certs/java/cacerts \
     && update-ca-certificates --fresh >/dev/null 2>&1 \
-    && ! grep -qi goskope /etc/ssl/certs/ca-certificates.crt
+    && subjects="$(openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca-certificates.crt \
+        | openssl pkcs7 -print_certs -noout)" && [ -n "$subjects" ] \
+    && ! printf '%s\n' "$subjects" | grep -qiE 'netskope|goskope' \
+    && jks="$(keytool -list -v -cacerts -storepass changeit)" && [ -n "$jks" ] \
+    && ! printf '%s\n' "$jks" | grep -qiE 'netskope|goskope'
 
 ENV PYTHONPATH=/app
 

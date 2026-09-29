@@ -21,8 +21,6 @@ That pair is already gone at HEAD; this locks it shut.
 
 import re
 
-import pytest
-
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
@@ -77,8 +75,7 @@ class TestImportBreakNamesARecovery:
             "new_text": "    id: Mapped[int] = mapped_column(primary_key=True)\n"
                         "    guest: Mapped[Guest] = mapped_column()\n",
         })
-        if "error" not in res:
-            pytest.skip("this tree does not refuse the edit as import-breaking")
+        assert "error" in res, "the import-breaking edit must be refused"
         assert res.get("rejection_kind") == "breaks_import"
         assert _actionable(res["error"]), res["error"]
         assert "Do not resend it unchanged" in res["error"]
@@ -92,8 +89,7 @@ class TestNoRefusalPointsAtARefusedAction:
         ex = _executor(tmp_path, **{"sql_alchemy.py": ORM * 80})
         ex._generator_files.add("sql_alchemy.py")
         res = ex._write_file({"path": "sql_alchemy.py", "content": "x = 1\n"})
-        if "error" not in res:
-            pytest.skip("write_file is not gated for generator files in this tree")
+        assert "error" in res, "write_file must be gated for generator files"
         assert "delete_file" not in res["error"], res["error"]
         assert _actionable(res["error"]), res["error"]
 

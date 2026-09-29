@@ -9,11 +9,8 @@ The LLM will:
 5. Generate a README with setup instructions
 
 Usage:
-    # Set your API key
-    export ANTHROPIC_API_KEY="sk-ant-..."
-    # Or, through an Anthropic-compatible gateway (e.g. PIA):
-    export ANTHROPIC_BASE_URL="$PIA_BASE_URL"
-    export ANTHROPIC_AUTH_TOKEN="your-token"
+    # This example uses the OpenAI provider; set your API key
+    export OPENAI_API_KEY="sk-..."
 
     python example_1_simple_backend.py
 """

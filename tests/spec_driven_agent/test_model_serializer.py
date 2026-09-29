@@ -511,3 +511,39 @@ class TestSerializeQuantumCircuit:
         assert op["targets"] == [0]
         assert "controls" not in op  # empty list suppressed
     serialize_nn_model,
+
+
+class TestSerializerReadsRealMetamodelAttributes:
+    """The serializer once read ``Method.body``, ``view_components`` and
+    ``comp.data_source``, none of which the metamodel has; a component's
+    bound entity never reached the prompt."""
+
+    def test_component_data_binding_reaches_the_prompt(self):
+        from besser.BUML.metamodel.gui import (
+            DataBinding, GUIModel, Module, Screen, Text,
+        )
+        from besser.spec_driven_agent.model_serializer import serialize_gui_model
+
+        book = Class(name="Book")
+        text = Text(name="title", content="Title",
+                    data_binding=DataBinding(domain_concept=book))
+        container = Screen(name="Inner", description="", view_elements={text})
+        screen = Screen(name="Home", description="", view_elements={container},
+                        is_main_page=True)
+        gui = GUIModel(name="App", package="app", versionCode="1", versionName="1",
+                       modules={Module(name="Main", screens={screen})}, description="")
+
+        result = serialize_gui_model(gui)
+
+        home = result["modules"][0]["screens"][0]
+        assert home["is_main_page"] is True
+        child = home["components"][0]["children"][0]
+        assert child["name"] == "title"
+        assert child["data_source"] == {"class": "Book"}
+
+    def test_method_code_is_serialized_as_body(self):
+        cls = Class(name="Order")
+        cls.methods = {Method(name="total", code="def total(self):\n    return 0\n")}
+        result = serialize_domain_model(DomainModel(name="Shop", types={cls}))
+        (method,) = result["classes"][0]["methods"]
+        assert method["body"].startswith("def total")

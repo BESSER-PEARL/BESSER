@@ -36,6 +36,14 @@ _SNAPSHOT_STAGING_DIR = ".besser_snapshot_staging"
 # node_modules several times per run is gigabytes of pointless IO and disk.
 _SNAPSHOT_IGNORED_DIRS = ("node_modules", "__pycache__", ".venv", "venv")
 
+# Directories a workspace walk skips: dependency caches, VCS and build output.
+WORKSPACE_SKIP_DIRS = frozenset(
+    {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build"}
+)
+
+# The narrower set the frontend-source walks skip (build output only).
+FRONTEND_WALK_SKIP_DIRS = frozenset({"node_modules", "dist", "build"})
+
 # Run bookkeeping that a rollback must NOT revert. The snapshot predates them,
 # so restoring it would rewind the append-only trace and resurrect a stale
 # checkpoint, making a later resume replay work already on disk.

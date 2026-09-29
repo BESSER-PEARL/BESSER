@@ -690,7 +690,9 @@ def _is_retryable(error: Exception) -> bool:
         return True
     status = _status_code(error)
     if status is not None:
-        return status in _RETRYABLE_STATUS_CODES
+        # Every 5xx, as the SDKs' own retry did: 529 (overloaded) and the 52x
+        # a Cloudflare tunnel returns are transient too.
+        return status in _RETRYABLE_STATUS_CODES or status >= 500
     error_str = str(error).lower()
     return any(marker in error_str for marker in (
         "rate limit", "rate_limit", "rate-limited", "ratelimited",

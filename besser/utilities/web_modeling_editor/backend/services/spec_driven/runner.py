@@ -44,6 +44,7 @@ from besser.spec_driven_agent.errors import (
     UpstreamLLMError,
 )
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
+from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,
@@ -160,6 +161,13 @@ _EXCLUDED_OUTPUT_DIRS = {
     # runtime / build artifact files (never belong in source or a push)
     "*.zip", "*.db", "*.sqlite", "*.sqlite3", "*.db-journal", "*.pyc", "*.log",
 }
+
+
+def _remove_run_dir(path: str) -> None:
+    """Delete a run's workspace and the sandbox ``$HOME`` beside it."""
+    shutil.rmtree(path, ignore_errors=True)
+    shutil.rmtree(sandbox_home(path), ignore_errors=True)
+
 
 
 def _is_excluded_output_file(name: str) -> bool:
@@ -608,7 +616,7 @@ class SmartRunRegistry:
                 return None
             created_at = float(data["createdAt"])
             if max(0.0, now - created_at) > max(1, ttl_seconds):
-                shutil.rmtree(temp_dir, ignore_errors=True)
+                _remove_run_dir(temp_dir)
                 return None
             relative_path = str(data["relativePath"])
             file_path = os.path.realpath(os.path.join(temp_dir, relative_path))
@@ -708,7 +716,7 @@ class SmartRunRegistry:
 
             for run_id, entry in expired:
                 try:
-                    shutil.rmtree(entry.temp_dir, ignore_errors=True)
+                    _remove_run_dir(entry.temp_dir)
                 except Exception:
                     logger.exception(
                         "Failed to remove temp dir for expired run %s", run_id
@@ -2395,7 +2403,7 @@ class SmartGenerationRunner:
         """
         old = self.temp_dir
         if old and os.path.isdir(old):
-            shutil.rmtree(old, ignore_errors=True)
+            _remove_run_dir(old)
         try:
             self.temp_dir = tempfile.mkdtemp(
                 prefix=f"{LLM_TEMP_DIR_PREFIX}{self.run_id}_",
@@ -2635,7 +2643,7 @@ class SmartGenerationRunner:
     def _cleanup_temp_dir(self) -> None:
         if self.temp_dir and os.path.isdir(self.temp_dir):
             try:
-                shutil.rmtree(self.temp_dir, ignore_errors=True)
+                _remove_run_dir(self.temp_dir)
             except Exception:
                 logger.exception(
                     "Failed to clean up temp dir for run %s", self.run_id

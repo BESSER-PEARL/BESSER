@@ -588,3 +588,13 @@ def test_run_confined_never_inherits_worker_secrets(monkeypatch, tmp_path):
     sandbox_mod.run_confined(["true"], workspace=str(tmp_path), cwd=str(tmp_path), timeout=5)
     assert seen["env"] is not None
     assert "BESSER_FREE_LLM_TOKEN" not in seen["env"]
+
+
+def test_incident_log_is_masked_from_runs(fake_root, monkeypatch):
+    # The incident log names other runs, and a run id is enough to fetch
+    # that run's output.
+    monkeypatch.delenv("BESSER_INCIDENT_LOG_DIR", raising=False)
+    args = sandbox_mod._mount_args("/workspace/runs/besser_llm_a_1")
+    tmpfs = [args[i + 1] for i, a in enumerate(args) if a == "--tmpfs"]
+    assert "/app/incidents" in tmpfs
+    assert args.index("/app/incidents") > args.index("/app")

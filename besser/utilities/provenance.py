@@ -88,8 +88,11 @@ def write_generation_provenance(
     options: Optional[Mapping[str, object]] = None,
 ) -> str:
     """Write ``BESSER_GENERATION.md`` at the root of ``directory``; returns its path."""
+    from besser.spec_driven_agent.execution.workspace_fs import open_plain_write
+
     path = os.path.join(directory, PROVENANCE_FILENAME)
-    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+    # A run workspace can hold a link at this name; never write through it.
+    with open_plain_write(path, "w", root=directory, encoding="utf-8", newline="\n") as handle:
         handle.write(generation_provenance_markdown(generator, options))
     return path
 

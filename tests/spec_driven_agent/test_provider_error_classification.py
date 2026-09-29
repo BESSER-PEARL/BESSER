@@ -240,3 +240,24 @@ class TestOpenAITranslation:
             {"type": "text", "text": "Now fix the tests."},
         ]}])
         assert api[-1] == {"role": "user", "content": "Now fix the tests."}
+
+
+@pytest.mark.parametrize("status", [529, 520, 522, 524])
+def test_every_5xx_is_retryable(status):
+    # With the SDKs' own retry off (max_retries=0), Anthropic's 529 overload and
+    # a Cloudflare tunnel's 52x must still be retried and reach the fallback.
+    from besser.spec_driven_agent.providers.llm_client import _is_retryable
+
+    class _Err(Exception):
+        status_code = status
+
+    assert _is_retryable(_Err(f"Error code: {status}"))
+
+
+def test_client_errors_stay_non_retryable():
+    from besser.spec_driven_agent.providers.llm_client import _is_retryable
+
+    class _Err(Exception):
+        status_code = 400
+
+    assert not _is_retryable(_Err("Error code: 400 - prompt is too long: 205000 tokens"))

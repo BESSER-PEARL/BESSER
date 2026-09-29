@@ -57,6 +57,7 @@ from besser.spec_driven_agent.execution.sandbox import (
     run_confined,
     sandboxed_command,
 )
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,
     describe_escape_mismatch,
@@ -1480,7 +1481,7 @@ class ToolExecutor:
         from besser.spec_driven_agent.agent.prompt_builder import _SNAPSHOT_SKIP_DIRS
 
         files = []
-        for root, dirs, filenames in os.walk(directory):
+        for root, dirs, filenames in walk_plain(directory):
             dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
             for f in filenames:
                 abs_path = os.path.join(root, f)
@@ -2194,7 +2195,7 @@ class ToolExecutor:
         }
         candidates: list[tuple[float, str]] = []
         inspected = 0
-        for root, dirs, names in os.walk(self.workspace):
+        for root, dirs, names in walk_plain(self.workspace):
             dirs[:] = sorted(d for d in dirs if d not in WORKSPACE_SKIP_DIRS and not d.startswith("."))
             for name in sorted(names):
                 if name.startswith("."):
@@ -2895,7 +2896,7 @@ class ToolExecutor:
             regex = re.compile(re.escape(pattern), re.IGNORECASE)
 
         matches = []
-        for root, dirs, filenames in os.walk(self.workspace):
+        for root, dirs, filenames in walk_plain(self.workspace):
             # Vendored and generated trees are not the model's code, and the
             # 50-match cap below is global: once the frontend's dependencies
             # are installed, a search that walks node_modules fills its whole

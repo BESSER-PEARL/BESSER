@@ -60,6 +60,9 @@ _VIRTUAL_TOPLEVEL = frozenset({"/proc", "/dev", "/tmp", "/run"})
 # read-only, so an empty tmpfs is mounted over it. Same default as telemetry.py.
 _TELEMETRY_DIR_ENV = "BESSER_TELEMETRY_DIR"
 _TELEMETRY_DIR_DEFAULT = "/app/telemetry"
+# Same for the incident log: it names other runs, and a run id fetches output.
+_INCIDENT_DIR_ENV = "BESSER_INCIDENT_LOG_DIR"
+_INCIDENT_DIR_DEFAULT = "/app/incidents"
 
 _SANDBOX_TIMEOUT = 30
 
@@ -182,10 +185,11 @@ def _mount_args(workspace: str, writable: "list[str] | None" = None) -> list[str
     args += ["--proc", "/proc", "--dev", "/dev"]
     for path in _TMPFS_PATHS:
         args += ["--tmpfs", path]
-    telemetry = os.path.realpath(
-        os.environ.get(_TELEMETRY_DIR_ENV) or _TELEMETRY_DIR_DEFAULT)
-    if os.path.isdir(telemetry) and not any(_within(telemetry, h) for h in hidden):
-        args += ["--tmpfs", telemetry]
+    for env_name, default in ((_TELEMETRY_DIR_ENV, _TELEMETRY_DIR_DEFAULT),
+                              (_INCIDENT_DIR_ENV, _INCIDENT_DIR_DEFAULT)):
+        masked = os.path.realpath(os.environ.get(env_name) or default)
+        if os.path.isdir(masked) and not any(_within(masked, h) for h in hidden):
+            args += ["--tmpfs", masked]
     home = sandbox_home(workspace)
     args += ["--bind", home, home, "--setenv", "HOME", home]
     # rustup finds its toolchains under $HOME/.rustup; keep the image's

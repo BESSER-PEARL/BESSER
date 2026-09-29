@@ -66,7 +66,9 @@ On Linux / macOS:
 
    Optional extras are also available: ``pip install besser[nn]`` for the
    neural-network generators and ``pip install besser[agents]`` for the agent
-   personalization features.
+   personalization features. The ``agents`` extra also provides the OpenAI
+   and Anthropic SDKs that the :doc:`Spec-Driven Agent <spec_driven_agent/index>`
+   uses for its OpenAI-compatible and Claude providers.
 
 .. note::
   

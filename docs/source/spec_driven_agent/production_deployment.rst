@@ -33,9 +33,18 @@ stamped with the commit they were built from (``BESSER_BUILD_SHA``).
      - Everything in the backend image, plus Node.js 20 with ``tsc``, JDK 21,
        Rust (``cargo``), ``kotlinc``, ``build-essential`` and bubblewrap.
 
-Both targets trust a build-time proxy CA only while building (``--build-arg
-TRUST_EXTRA_CAS=1``) and fail the build if a known TLS-inspection CA is still
-in the shipped trust store.
+The ``Dockerfile`` requires BuildKit (the default builder in current Docker
+releases; set ``DOCKER_BUILDKIT=1`` on older ones): the proxy certificates are
+read through a ``RUN --mount=type=bind`` of ``ca-certs-extra/``, so they never
+get an image layer of their own. The directory ships with a ``.gitkeep`` and
+must stay in the build context.
+
+Both targets trust a build-time proxy CA only while building: put its
+certificates (``*.crt``) in ``ca-certs-extra/`` and pass ``--build-arg
+TRUST_EXTRA_CAS=1``. Before the image is finished the CA is removed again, and
+the build fails if a known TLS-inspection CA is still in the system trust
+store or, on the worker, in the JDK keystore, which is rebuilt from the
+cleaned store for that reason.
 
 .. warning::
 
@@ -112,6 +121,25 @@ Sandbox and network
   (``seccomp=unconfined``, ``apparmor=unconfined``); no capability is added.
   Without them, or on a kernel that forbids unprivileged user namespaces, the
   worker fails closed and refuses every command.
+- The validators that execute generated code run in the same sandbox, with
+  the network cut: the import check after each file write, the import smoke
+  check, the startup, create and API probes, and the ``tsc``, ``cargo check``
+  and ``npm run build`` checks. When the worker cannot start the sandbox they
+  are skipped and reported as unverified, never run unconfined.
+- Two steps need the network and get it, but are sandboxed all the same, so
+  package install scripts see read-only ``/usr/local``, no other runs and a
+  stripped environment: the Phase 1 ``npm install`` of a scaffolded frontend
+  and the ``pip install --dry-run`` dependency check. When the sandbox cannot
+  start, the install is skipped with a logged reason, and the frontend build
+  check then reports the frontend's dependencies as not installed.
+- Each run gets its own writable ``$HOME`` beside its workspace
+  (``<run dir>.sandbox-home``), where installs and the npm / cargo caches go;
+  ``/usr/local`` and ``/root`` are read-only. The telemetry folder is masked
+  from every run.
+- ``cargo check`` has no network, so only crates that the run already fetched
+  through ``run_command`` resolve. Otherwise the check is reported as
+  "dependencies could not be fetched", a skipped check rather than a compile
+  failure.
 - The worker is only on ``smartgen_network``, not ``besser_network``: it
   cannot reach the backend, the frontend or the modeling agent by name, and
   still has outbound internet for the LLM endpoints.

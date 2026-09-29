@@ -153,13 +153,13 @@ Code Generation
 Spec-Driven Agent
 ^^^^^^^^^^^^^^^^^
 
-Ten endpoints under ``/spec-driven/*`` back the
+Eleven endpoints under ``/spec-driven/*`` back the
 :doc:`Spec-Driven Agent <spec_driven_agent/index>` -- the hybrid pipeline that
 runs a deterministic generator, lets an LLM customise its output, then validates
 and repairs the result: ``generate``, ``preview``, ``config``,
-``runs/{run_id}``, ``runs/{run_id}/events``, ``resume/{run_id}``,
-``cancel/{run_id}``, ``download/{run_id}``, ``push-to-github`` and
-``import-github-run``.
+``runs/{run_id}``, ``runs/{run_id}/events``, ``runs/{run_id}/events.json``,
+``resume/{run_id}``, ``cancel/{run_id}``, ``download/{run_id}``,
+``push-to-github`` and ``import-github-run``.
 
 They are documented once, with the agent, rather than twice: see
 :doc:`spec_driven_agent/api` for the endpoint table, the request contract, the
@@ -175,6 +175,11 @@ Backend-side notes that do not belong in the contract:
   deterministic regeneration, which would discard the LLM's customizations.
 - ``/spec-driven/push-to-github`` and ``/spec-driven/import-github-run`` require
   the ``X-GitHub-Session`` header, like the other GitHub endpoints below.
+- ``/spec-driven/import-github-run`` answers ``400`` for an owner or repository
+  name that does not match ``^[A-Za-z0-9_.-]+$`` or consists only of dots
+  (both are interpolated into GitHub API paths), and for a repository over the
+  import limits: a 100 MB archive, 500 MB unpacked, or 50,000 files. The
+  response detail says which limit was hit.
 
 Telemetry (research study mode)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -184,15 +189,15 @@ Telemetry (research study mode)
   endpoint cannot be used to probe server configuration.
 - ``GET  /telemetry/report`` -- Aggregated report (Markdown by default, CSV via
   ``?format=csv``). Requires an ``X-Telemetry-Token`` header matching
-  ``BESSER_TELEMETRY_ADMIN_TOKEN``.
+  ``BESSER_TELEMETRY_ADMIN_TOKEN``; a missing or wrong token, including one
+  with non-ASCII characters, answers ``403``.
 
 Study mode records how participants of a facilitated research study use the
 editor. It is off by default and needs two opt-ins at once:
 
 - **The participant's link.** The editor tab must be opened with
-  ``?study=<label>`` (``?pilot=<label>`` is an alias, kept so links already
-  handed out keep working). The label is a short token such as ``P3``,
-  matching ``^[A-Za-z0-9_-]{1,16}$``, never a name or email. It lives in the
+  ``?study=<label>`` (``?pilot=<label>`` is accepted as an alias). The label
+  is a short token such as ``P3``, matching ``^[A-Za-z0-9_-]{1,16}$``, never a name or email. It lives in the
   tab's ``sessionStorage``, the editor shows a notice for as long as it is
   set, and closing the tab ends it. Every event carries this label; one
   without it is dropped.
@@ -525,8 +530,10 @@ Start the backend from the BESSER repository root:
 
 The backend listens on ``http://localhost:9000/besser_api`` by default.
 
-To use the Spec-Driven Agent's PIA or Local (e.g. Ollama) providers from this
-local backend, start it with ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` (off by
+The Spec-Driven Agent's PIA provider is LIST's private AI gateway, an
+OpenAI-compatible endpoint backed by AWS Bedrock and reachable only from the
+LIST network. To use it, or the Local (e.g. Ollama) provider, from this local
+backend, start it with ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` (off by
 default; the local ``docker-compose.yml`` sets it). See
 :doc:`spec_driven_agent/configuration`.
 

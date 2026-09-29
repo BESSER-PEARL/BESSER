@@ -149,6 +149,21 @@ CRUD Operations
      - ``/{entity}/bulk/``
      - Bulk delete by IDs
 
+.. versionchanged:: 8.0.0
+   The request bodies of ``POST`` and ``PUT`` (the Pydantic ``<Class>Create``
+   schemas) no longer accept fields the server owns: an attribute named ``id``
+   that is not a declared primary key, the ``createdAt`` / ``updatedAt``
+   timestamps, and attributes marked ``is_derived``. A declared primary key
+   (``is_id=True``) is client-supplied and stays in the schema, so a model
+   whose ``id`` must come from the client should mark it ``is_id``. On the
+   non-owning side of a one-to-one association the schema has no field for the
+   link; set it from the side that holds the foreign key. Relationship fields
+   are typed after the referenced primary key rather than always ``int``.
+
+   A ``default_value`` must be expressible as a literal of the attribute's
+   type; otherwise generation raises ``InvalidDefaultValueError``. See the
+   :doc:`release notes </releases/v8/v8.0.0>`.
+
 Relationship Management (N:M)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

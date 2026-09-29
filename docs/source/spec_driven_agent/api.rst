@@ -36,6 +36,15 @@ Endpoints
      - GET
      - Replay this run's events after ``?after=N``, then follow the live
        stream. Also honours the ``Last-Event-ID`` header.
+   * - ``/spec-driven/runs/{run_id}/events.json``
+     - GET
+     - Polling alternative to the stream: the run's lifecycle metadata plus
+       up to ``limit`` events (default 250, max 1000) after ``?after=N``, as
+       a plain JSON response. Each event carries its ``sequence``, ``event``
+       and decoded ``data``; ``cursor`` is the last sequence returned and
+       ``hasMore`` says to poll again immediately. Polling and streaming
+       share one sequence, so a client can switch between them. Use it where
+       a proxy buffers responses and holds back an SSE stream.
    * - ``/spec-driven/resume/{run_id}``
      - POST
      - Resume an interrupted run from its checkpoint (streams SSE).

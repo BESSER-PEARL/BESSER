@@ -88,9 +88,9 @@ remains authoritative: a generated assertion can be wrong and must not force
 correct application behavior to regress.
 
 Both runtime probes honor ``enable_import_smoke_check``. The API tool accepts no
-shell commands or external URLs. It runs generated Python code with ordinary
-side-effect guards, **not an OS security sandbox**; hosted untrusted execution
-still requires deployment-level isolation.
+shell commands or external URLs. The generated app runs in the same bubblewrap
+sandbox as ``run_command``, with no network; see
+:ref:`spec-driven-shell-tools` for when the sandbox applies.
 
 Generator tools
 ---------------
@@ -163,19 +163,30 @@ deployment decision, never a per-request one.
 The policy
 ~~~~~~~~~~
 
-**Off on a shared host, including the hosted editor.** There, users bring their
-own API key and share one backend process; an agent that can be steered into
-running commands is remote code execution against other tenants' runs and
-against server-side configuration. Every static tool (``read_file``,
-``write_file``, ``modify_file``, ``check_syntax``, the generators, the runtime
-probes) stays available, so the agent still produces and validates a full
-application — it just cannot shell out. The ``pip install --dry-run``
-dependency check in :doc:`Phase 3 <validation>` is behind the same flag, since
-resolving an sdist can execute its build backend.
+**Off by default.** The code default is off, and so is every configuration
+that does not set it: the local ``docker-compose.yml``, the backend service in
+``docker-compose.prod.yml``, and a backend started by hand. With the tools off,
+every static tool (``read_file``, ``write_file``, ``modify_file``,
+``check_syntax``, the generators, the runtime probes) stays available, so the
+agent still produces and validates a full application; it just cannot shell
+out. The ``pip install --dry-run`` dependency check in
+:doc:`Phase 3 <validation>` is behind the same flag, since resolving an sdist
+can execute its build backend.
+
+**On for the hosted editor's isolated worker only.** In production, generation
+runs in its own container, ``besser-wme-smartgen``, and that service alone sets
+``BESSER_LLM_ENABLE_SHELL_TOOLS=true`` in its own ``environment:`` block. The
+worker has no ``env_file`` and receives only the LLM credentials, sits on its
+own network, and confines every command in the bubblewrap sandbox described
+below. The backend, which holds the SMTP, GitHub OAuth and telemetry secrets,
+keeps the tools off; never enable them through the shared ``.env``, which the
+backend loads. See :doc:`production_deployment`.
 
 **On, deliberately, for a local or on-prem install.** One machine, one tenant,
-the operator's own data — the hosted objection does not apply, and withholding
-the tools is pure loss.
+the operator's own data: the multi-tenant objection does not apply, and
+withholding the tools is pure loss. The local ``docker-compose.yml`` already
+carries the sandbox's ``security_opt`` entries, so setting the variable in
+``./.env`` is enough there.
 
 The decision is read from the process environment at start-up:
 
@@ -219,23 +230,36 @@ What it does:
 - **A bounded amount of output** in the model's context, with the full log
   still reachable (below).
 
+- **A bubblewrap sandbox on Linux.** Each command runs in its own user, PID
+  and mount namespaces. The container filesystem is visible read-only, other
+  runs' workspaces and the telemetry folder are hidden, and only the run
+  workspace and a per-run ``$HOME`` (``<run dir>.sandbox-home``) are writable.
+  ``/usr/local`` and ``/root`` stay read-only, so ``install_dependencies``
+  (``pip install``, ``npm install``) installs into that per-run ``$HOME``
+  rather than into the worker or into later runs. The per-run ``$HOME`` sits
+  outside the workspace, so it is never packaged or pushed, and the 24-hour
+  temp cleanup removes it. If the sandbox cannot start, every command is
+  refused; ``BESSER_LLM_SHELL_SANDBOX=off`` lifts that on a single-tenant
+  Linux host whose kernel forbids unprivileged user namespaces.
+
 What it does not:
 
-- **It is not an OS sandbox.** The command runs as the backend user, with that
-  user's filesystem and network access. The working-directory lock sets where a
-  command *starts*; a command is free to ``cd`` elsewhere. The denylist stops
-  mistakes, not a determined prompt-injection payload. Real isolation means a
-  container or VM per run, which the agent does not create for you.
-- **It does not confine dependency installs.** ``install_dependencies`` runs
-  ``pip install`` with the interpreter that is running BESSER and ``npm
-  install`` in the workspace. Run an on-prem install in its own virtualenv or
-  container image.
-- **It does not make generated code safe to execute.** That caveat applies to
-  the runtime probes as well, and is unchanged by this flag.
+- **No sandbox on Windows or macOS.** There is no namespace sandbox on those
+  platforms, so commands run unconfined, as the backend user, and a warning
+  is logged. The same applies on Linux with ``BESSER_LLM_SHELL_SANDBOX=off``.
+- **It does not cut the network for commands.** ``run_command`` keeps
+  outbound network access so that installs work, as do the Phase 1
+  ``npm install`` and the ``pip install --dry-run`` check, which are
+  sandboxed the same way. Only the validators that execute generated code run
+  without it.
+- **The denylist stops mistakes**, not a determined prompt-injection payload.
+  The sandbox is what contains a command, not the denylist.
+- **It does not make generated code safe to execute.** Download and run the
+  output with the care you would give any unreviewed code.
 
-Treat "enable shell tools" as "I am willing to run model-authored commands on
-this machine, as this user". That is true and acceptable on a developer laptop
-or a single-tenant on-prem box, and it is not true on a shared one.
+Where no sandbox applies, treat "enable shell tools" as "I am willing to run
+model-authored commands on this machine, as this user". That is acceptable on
+a developer laptop or a single-tenant on-prem box, and not on a shared one.
 
 Command output that overruns the cap
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

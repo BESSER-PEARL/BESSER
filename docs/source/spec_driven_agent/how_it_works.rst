@@ -177,6 +177,12 @@ reading a trace and wondering why a run did what it did.
        the workspace is swept before the artifact is packaged — a populated
        ``.env`` is deleted outright, a template ``.env.example`` is kept. The
        count of findings is recorded in the run's recipe.
+   * - Link-free packaging
+     - The workspace is written by model-authored code, so a symbolic link in
+       it could point at a file outside the run. The download ZIP, the seed
+       copied for a ``modify`` run and the tree pushed to GitHub keep only
+       regular files and real directories; symbolic links, devices, sockets
+       and FIFOs are dropped, never read through.
 
 Every ``BESSER_LLM_*`` switch named above is collected in
 :doc:`configuration`.

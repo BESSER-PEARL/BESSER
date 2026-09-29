@@ -24,8 +24,12 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
 - ``BESSER_FREE_LLM_FALLBACK_BASE_URL`` / ``_MODEL`` / ``_TOKEN`` -- A second,
   independently credentialed endpoint used as the last resort in the fallback
   chain.
-- ``BESSER_SPONSORED_LLM_BASE_URL`` / ``_MODEL`` / ``_TOKEN`` -- An additional
-  server-funded keyless tier.
+- ``BESSER_SPONSORED_LLM_BASE_URL`` / ``BESSER_SPONSORED_LLM_TOKEN`` /
+  ``BESSER_SPONSORED_LLM_MODEL`` -- An additional server-funded keyless tier,
+  served through an OpenAI-compatible endpoint. The URL and token are
+  required; the model is the default, and a request may name another model
+  from that endpoint's catalog in ``llm_model``. With neither a default nor a
+  request model the run is refused.
 - ``BESSER_DEMO_TOKEN`` -- Shared secret authorising the ``sponsored`` tier.
   A request for that tier must carry the same value in ``demo_token`` or the
   server answers 403; the web editor sends it for tabs opened through a
@@ -34,6 +38,12 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
   half-finished configuration. Because the tier spends the deployment's own
   credits, pair it with a hard spend cap on the provider account — that limit
   holds even if the link is shared further than intended.
+- ``BESSER_PILOT_LLM_MODEL`` -- Keyless model that sessions opened with a
+  research-study link start on. It must be one of the free-tier models the
+  server offers, or it is ignored; unset, those sessions get the ordinary
+  default. The study-mode variables (``BESSER_TELEMETRY_ENABLED``,
+  ``BESSER_TELEMETRY_DIR``, ``BESSER_TELEMETRY_ADMIN_TOKEN``) are listed in
+  :doc:`../web_editor_backend`.
 - ``BESSER_LLM_PLANNING_MODEL`` -- Override the small model used for the gap
   analysis call. Set it to ``primary`` to plan on the main model instead —
   necessary behind a gateway that does not serve the cheap sibling.
@@ -41,7 +51,8 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
   its own OpenAI-compatible ``base_url``. Having the server open a
   user-supplied URL is an SSRF surface, so this is meant for local or
   single-tenant deployments. The local ``docker-compose.yml`` turns it on so
-  the editor's PIA and Local (e.g. Ollama) providers work; it stays off in
+  the editor's PIA (LIST's private AI gateway, an OpenAI-compatible endpoint
+  backed by AWS Bedrock) and Local (e.g. Ollama) providers work; it stays off in
   code and in ``docker-compose.prod.yml``. For a backend started without
   Docker, set ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` yourself.
 
@@ -70,8 +81,11 @@ Feature flags
 -------------
 
 - ``BESSER_LLM_ENABLE_SHELL_TOOLS`` (**off**) -- Give the LLM
-  ``run_command`` / ``install_dependencies``. Arbitrary shell on a shared BYOK
-  host is an RCE and secret-exfiltration surface, so this stays off there; a
+  ``run_command`` / ``install_dependencies``. Arbitrary shell next to server
+  secrets is an RCE and secret-exfiltration surface, so this stays off on any
+  service that holds them. In production only the isolated
+  ``besser-wme-smartgen`` worker sets it, in its own ``environment:`` block,
+  never through the shared ``.env`` (see :doc:`production_deployment`); a
   local or on-prem install -- one machine, one tenant -- is exactly where to
   turn it on, and it is what lets the agent run its own tests and builds. It
   also gates Phase 3's ``pip install --dry-run`` dependency check. There is no
@@ -88,6 +102,29 @@ Feature flags
   ``BESSER_LLM_ENABLE_SHELL_TOOLS`` instead. See :doc:`validation`.
 - ``BESSER_LLM_ENABLE_AUTO_FIX`` (on) -- Let Phase 3 spend LLM turns repairing
   blocker-severity findings.
+- ``BESSER_LLM_ENABLE_IMPORT_SMOKE_CHECK`` (on) -- Let Phase 3 execute the
+  generated backend: import the ORM module in a subprocess and run
+  SQLAlchemy's ``configure_mappers()``, boot the app in isolation for the
+  create-request probes, and replay ``test_api`` workflows. This is the only
+  check that catches a ``relationship()`` pointing at nothing, which passes
+  every static check and then fails every database request. The generated
+  code runs in the bubblewrap sandbox with no network, a stripped environment
+  and a timeout. On Linux, when the sandbox cannot start, the check is skipped
+  and reported as unverified, unless ``BESSER_LLM_SHELL_SANDBOX=off``; on
+  Windows and macOS, which have no such sandbox, it runs unsandboxed and a
+  warning is logged. It is kept separate from
+  ``BESSER_LLM_ENABLE_SHELL_TOOLS`` so hosted deployments keep it. Set it to ``0`` (or ``false``) to turn it off;
+  a generated FastAPI backend is then reported as ``runtime unverified``
+  rather than as passing. See :doc:`validation`.
+- ``BESSER_LLM_ENABLE_REQUIREMENTS_LEDGER`` (on) -- Turn the user's verbatim
+  request into a numbered list of atomic requirements once per run, show that
+  list to Phase 2, and have every Phase 3 pass judge each requirement against
+  the generated code. A requirement the code does not implement becomes a
+  ``requirement:`` blocker for the auto-fix loop, and every verdict is written
+  to the recipe. It costs extra calls to the planning model: one to extract
+  the list, and one for each Phase 3 pass. Set it to ``0`` (or ``false``) to
+  turn it off; coverage of the request is then reported as
+  ``validation unverified`` instead of being checked.
 - ``BESSER_LLM_ENABLE_TRACING`` (on) -- Append the run's phases, turns, tool
   calls and findings to ``.besser_trace.jsonl`` in the workspace.
 - ``BESSER_LLM_ENABLE_CHECKPOINTING`` (on, required for resume) -- Write

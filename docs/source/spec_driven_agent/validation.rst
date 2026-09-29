@@ -57,6 +57,15 @@ that are disabled, unavailable, timed out, or only partially run are recorded as
 and retain its repair checkpoint, but do not spend LLM turns repairing an
 environment restriction. Optional lint checks remain advisory.
 
+Checks that execute generated code (the import and runtime probes and the
+compiler and build checks) run in the bubblewrap sandbox described in
+:ref:`spec-driven-shell-tools`, with no network. Two skip reasons come from
+that. *The sandbox is unavailable* means the host could not start it; the check
+is skipped rather than run unconfined. *Its dependencies could not be
+fetched* means ``cargo check`` needed a crate the run had not already
+downloaded through ``run_command``. Both are reported as checks that did not
+run, not as defects in the generated code.
+
 When both toolchain validation and shell tools are explicitly enabled, npm is
 available, and project dependencies are missing, ``verification setup:`` is
 instead actionable. The agent may use its existing authorized dependency tool,
@@ -228,8 +237,14 @@ broken artifact as a green success is worse than spending a few more turns.
    The heavy per-project compilers (``tsc`` / ``cargo`` / ``kotlinc``) are the
    one part of Phase 3 that is **opt-in** for the web backend
    (``BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION``) — they were the main driver of
-   a duration and cost regression on non-Python stacks. Every other check
-   above runs on every run.
+   a duration and cost regression on non-Python stacks. Two further checks
+   are on by default and can be switched off per deployment: executing the
+   generated backend (the ORM import check, the isolated startup and create
+   probes, and ``test_api`` replay) is gated by
+   ``BESSER_LLM_ENABLE_IMPORT_SMOKE_CHECK``, and the requirement judgment by
+   ``BESSER_LLM_ENABLE_REQUIREMENTS_LEDGER``. Turning either off makes the run
+   report that check as ``unverified``, never as passed. Every other check
+   above runs on every run. See :doc:`configuration`.
 
 .. note::
    A check that could not run reports that it did not, rather than returning

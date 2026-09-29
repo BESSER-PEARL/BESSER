@@ -52,10 +52,11 @@ Highlights
   applies to it. See :doc:`/spec_driven_agent/models`.
 
 - **Local and gateway endpoints**: a request may carry its own
-  OpenAI-compatible ``base_url``, which is what the editor's PIA and Local
-  (for example Ollama) providers send. The server opens a user-supplied URL
-  only when ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL`` is set: it is off in code and
-  in ``docker-compose.prod.yml``, and on in the local ``docker-compose.yml``.
+  OpenAI-compatible ``base_url``, which is what the editor's PIA (LIST's
+  private AI gateway, backed by AWS Bedrock) and Local (for example Ollama)
+  providers send. The server opens a user-supplied URL only when
+  ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL`` is set: it is off in code and in
+  ``docker-compose.prod.yml``, and on in the local ``docker-compose.yml``.
 
 - **GUI designs keep their styling**: ``GUIModel.stylesheet`` holds the CSS a
   design shares across elements (class and compound selectors, ``:root``
@@ -73,8 +74,8 @@ Highlights
   server's answer; a form with no explicit data source is bound to a class
   only when its inputs can create a record of it. Metric cards and chart
   series take an aggregation (``DataBinding.aggregation``: count, sum, average,
-  minimum, maximum), and table forms leave out ``readOnly`` columns and any
-  relationship the backend's Create schema does not accept.
+  minimum, maximum, median, first or last), and table forms leave out
+  ``readOnly`` columns and any relationship the backend's Create schema does not accept.
 
 - **A generated backend that honours its data contract**: Create schemas no
   longer ask the client for values the server owns, primary-key types are used
@@ -145,7 +146,7 @@ its literals.
 **DjangoGenerator reports failures**
 
 ``DjangoGenerator.generate()`` raises instead of printing the error and
-returning. It generates under ``output_dir`` without changing the process's
+returning, including for an error while updating ``settings.py``. It generates under ``output_dir`` without changing the process's
 working directory, and refuses to replace an existing, non-empty directory
 that is not a generated Django project (no ``manage.py``).
 
@@ -160,10 +161,17 @@ setters, boolean predicates, ``__str__``). Any other such method raises
 
 - Renaming a ``Class`` renames the association ends that were named after it
   (``book`` / ``books`` follow ``Book`` → ``Volume``); intentionally different
-  role names are left alone.
+  role names are left alone. Plural role names follow English rules
+  (``Box`` → ``boxes``, ``City`` → ``cities``), and a rename that would give a
+  class two association ends with the same name is skipped.
 - ``DomainModel.validate()`` warns about a cycle of mandatory associations
   (no class in it can be created first) and about a pair of classes connected
-  by more than one association.
+  by more than one association. It reports an error when a class reaches two
+  association ends with the same name, which construction checks but a later
+  rename does not.
+- ``AssociationClass`` passes its ``timestamp`` and ``metadata`` on to
+  ``Class``; they used to land in the ``methods`` and ``is_abstract``
+  parameters.
 - ``GUIModel`` takes an optional ``stylesheet`` (default ``""``), and
   ``DataBinding`` an optional ``aggregation`` (a ``DataAggregation`` or its
   name; an unknown name raises ``ValueError``). Existing constructors are
@@ -201,8 +209,20 @@ Other improvements and fixes
   nullable, defers one foreign key of a mandatory table cycle so the tables
   can be created, and gives an association class that another association
   targets its own key.
+- Generated output is the same from one run to the next. Where the metamodel
+  holds unordered sets, generators iterate attributes, association ends,
+  enumeration literals and methods sorted by name; ``sort_by_timestamp``
+  keeps declaration order and breaks timestamp ties by name, and
+  ``DomainModel.classes_sorted_by_inheritance`` breaks ties between classes by
+  name.
 - The Django template emits valid Python for enumerations and relationship
-  fields.
+  fields, and for a class with several modelled methods. Inferred method
+  bodies (``__str__``, getters, predicates) take inherited attributes into
+  account.
+- Quantum circuits with ``Rx`` / ``Ry`` / ``Rz`` gates, and function gates
+  whose names contain symbols such as ``^`` or ``(``, export to B-UML code.
+- A GUI form keeps its field labels and submit button when a B-UML GUI model
+  is opened in the editor.
 - Pydantic models carry a ``TODO`` naming each OCL constraint they do not
   enforce, instead of dropping it silently.
 - Exported GUI projects re-import instead of producing an empty diagram.
@@ -222,6 +242,11 @@ Deployment
   ``artefacts.list.lu/besser/web_modeling_editor/smartgen_worker:latest``. The
   local ``docker-compose.yml`` builds the worker target, since one container
   serves both there.
+- Building the ``Dockerfile`` requires BuildKit: proxy certificates are read
+  from ``ca-certs-extra/`` through a bind mount and trusted only while
+  building (``--build-arg TRUST_EXTRA_CAS=1``). The build fails if a known
+  TLS-inspection CA is still in the system trust store, or in the worker's
+  JDK keystore, when the image is finished.
 - The worker gets only the LLM credentials (no ``env_file``), is the only
   service with shell tools enabled, and needs ``seccomp=unconfined`` and
   ``apparmor=unconfined`` for its sandbox. Add it to the production host's

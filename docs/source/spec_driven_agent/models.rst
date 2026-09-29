@@ -140,13 +140,23 @@ a request shaped for them, which the client does automatically:
      - Forced tool calls use ``tool_choice`` with thinking disabled.
 
 No sampling parameters (``temperature``, ``top_p``, ``top_k``) are sent to any
-Anthropic or OpenAI model. A reply that stops with ``stop_reason: "refusal"``
-(a provider safety classifier) ends the run with that reason and its category
-rather than an opaque provider error.
+Anthropic or OpenAI model. A reply that a provider safety classifier stops (Anthropic's
+``stop_reason: "refusal"``, OpenAI's ``finish_reason: "content_filter"``) ends
+the run with that reason and its category rather than an opaque provider
+error.
 
-Every model above has a price in the client's rate table, so ``max_cost_usd``
-counts its real spend; an unpriced paid model is billed at a middle-tier
-fallback rate instead.
+Every model above has a price, so ``max_cost_usd`` counts its real spend.
+Prices come first from a vendored copy of litellm's published price table.
+A route to a paid vendor API (Anthropic, the official OpenAI endpoint,
+Mistral, Nebius) is always billed: the name-based open-weight test that prices
+self-hosted models at zero is skipped there. A paid model id found in no table
+is billed at the ``gpt-4o`` rate, a deliberately middle-tier fallback. After a
+fallback-chain switch, tokens from then on are billed at the fallback model's
+rate; spend so far is kept.
+
+A provider timeout is not retried at length: when the tier has a fallback
+chain the run switches to the next model at once, and without one it is
+retried twice before the run fails.
 
 The planning model
 ------------------

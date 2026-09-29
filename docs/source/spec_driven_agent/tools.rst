@@ -38,6 +38,18 @@ content may instead produce ``possible_replay``: no write is made, but no succes
 is claimed. Missing-file responses suggest existing paths without substituting
 them for the requested path.
 
+``write_file`` over an existing file requires the whole file to have been read
+this run; a rewrite from memory would drop scaffold code. Like the other
+editors, it refuses an edit that would make the ORM or Pydantic module
+(``sql_alchemy.py``, ``pydantic_classes.py``) fail to import. Only the
+``NNN| `` line numbering that ``read_file`` displays is stripped from edit
+text, and only when it is uniform; a single copied numbered line is refused
+rather than guessed at. ``list_files`` and ``search_in_files`` skip links that
+resolve outside the workspace, and the harness never reads or writes a
+workspace file through a symbolic link or special file. A call with a missing required argument, or
+arguments that are not valid JSON, returns a tool error naming the problem
+instead of running.
+
 After two rejected text edits on a file, the executor provides an explicit
 recovery sequence: ``read_file`` followed by ``replace_file_lines``. This applies
 in customization and validation repair. Repeated quotation failures do not
@@ -219,8 +231,9 @@ What it does:
 - **Working directory inside the run workspace.** ``working_dir`` is resolved
   against the workspace and a path that escapes it is rejected.
 - **A 120-second timeout** per command; the spawned shell is killed when it
-  expires. Be aware of both edges: a cold ``npm install`` can exceed it, and a
-  process the command detached can outlive it.
+  expires. A cold ``npm install`` can exceed it. Under the sandbox a process
+  the command detached does not outlive the command: the sandbox's PID
+  namespace goes with it.
 - **A stripped environment.** The child process gets an allowlist (``PATH``,
   ``HOME``, locale, temp dirs, a few Python/Node variables) with anything
   name-matching a secret removed, so provider API keys, OAuth secrets and SMTP
@@ -228,7 +241,9 @@ What it does:
 - **A denylist** for the obvious catastrophes: ``sudo``, ``rm -rf /``,
   curl-pipe-shell, fork bombs, reads of ``~/.ssh`` and ``~/.aws``.
 - **A bounded amount of output** in the model's context, with the full log
-  still reachable (below).
+  still reachable (below). Each stream is also capped at 8 MB while it is
+  captured: past that the command's process tree is killed, and the head and
+  tail are kept with a marker for the dropped middle.
 
 - **A bubblewrap sandbox on Linux.** Each command runs in its own user, PID
   and mount namespaces. The container filesystem is visible read-only, other
@@ -256,6 +271,16 @@ What it does not:
   The sandbox is what contains a command, not the denylist.
 - **It does not make generated code safe to execute.** Download and run the
   output with the care you would give any unreviewed code.
+
+When shell tools are on and the workspace holds a generated FastAPI backend,
+Phase 2's system prompt gains a *runtime verification* runbook, and a probe
+script, ``.besser_probe.py``, is written to the workspace root. Its
+subcommands (``up``, ``routes``, ``req``, ``log``, ``down``) boot the server
+detached, list its routes and send requests, so the agent can run the app
+rather than only read it. Because each sandboxed command has its own PID
+namespace, ``routes`` and ``req`` start their own server when none is
+answering; the SQLite file keeps records between commands.
+``BESSER_LLM_SHELL_RUNBOOK=0`` leaves the runbook out.
 
 Where no sandbox applies, treat "enable shell tools" as "I am willing to run
 model-authored commands on this machine, as this user". That is acceptable on

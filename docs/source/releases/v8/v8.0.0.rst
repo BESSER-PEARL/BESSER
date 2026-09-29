@@ -198,6 +198,35 @@ setters, boolean predicates, ``__str__``). Any other such method raises
 Other improvements and fixes
 ----------------------------
 
+- Spec-Driven Agent runs:
+
+  - A provider failure after files were written delivers them as an
+    ``INCOMPLETE`` result instead of discarding them. OpenAI's
+    ``content_filter`` stop is reported as a refusal, like Anthropic's.
+  - A provider timeout switches straight to the fallback model when the tier
+    has one, and otherwise fails after two retries.
+  - Paid vendor routes (Anthropic, official OpenAI, Mistral, Nebius) are
+    priced from the vendored litellm table and never treated as free because
+    of a model id's shape; after a fallback switch, later tokens are billed at
+    the fallback model's rate.
+  - The download ZIP drops the same artifact files as the GitHub push
+    (``*.log``, ``*.db``, ``*.sqlite*``, ``*.zip``, ``*.pyc``), and the run's
+    own API key is redacted from every event and the packaged workspace
+    whatever its format. The harness's reads and copies of the workspace skip
+    symbolic links and special files.
+  - Shell commands' output is capped at 8 MB per stream, past which the
+    process tree is killed; a detached process no longer outlives its
+    sandboxed command. With shell tools on and a FastAPI backend present, the
+    prompt carries a runtime-verification runbook and a probe script.
+  - ``write_file`` requires the whole file to have been read and runs the
+    import check; malformed or incomplete tool arguments return a clear tool
+    error; the CRUD-frontend rule applies only when the run has or needs a
+    frontend.
+  - Phase 3 retries a truncated fix reply up to four times per attempt, checks
+    Dockerfile ``COPY`` sources against the actual build context (ignoring
+    ``COPY --from``), and restores a ``requirements.txt`` deleted from a
+    FastAPI scaffold.
+
 - The PlantUML object-diagram parser works again: every object parse used to
   fail on the first attribute value.
 - Promoting a class to an association class in the editor no longer orphans

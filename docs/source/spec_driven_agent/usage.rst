@@ -107,12 +107,20 @@ Troubleshooting a run
      - The same, for ``max_runtime_seconds``: partial output is still
        delivered.
    * - ``INCOMPLETE`` warning
-     - The customization loop was cut short (a provider rate-limit, or the
-       turn cap). Output is still returned; the ``done`` event sets
-       ``incomplete`` so the client can say so.
+     - The customization loop was cut short (a provider rate-limit, the turn
+       cap, or a provider failure after files were already written). Output is
+       still returned; the ``done`` event sets ``incomplete`` so the client
+       can say so.
    * - ``UPSTREAM_LLM`` error
-     - The provider returned an error (rate limit, overload, content filter).
-       Usually transient — retry.
+     - The provider failed before the run wrote any file (rate limit,
+       overload, timeout). Usually transient — retry. A timeout switches
+       straight to the fallback model when the tier has a fallback chain;
+       otherwise it is retried twice before the run fails.
+   * - The model declined the request
+     - A provider safety stop (Anthropic ``refusal``, OpenAI
+       ``content_filter``) ends the customization loop with the reason and
+       category instead of an opaque error. Rephrase the request or choose
+       another model.
    * - The run seems stuck
      - Watch the ``cost`` ticks: while turns / elapsed keep advancing, the LLM
        is working. A genuinely hung run is cancelled after the runtime cap.

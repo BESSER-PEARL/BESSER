@@ -29,16 +29,24 @@ The three phases
    ``task_list`` checklist — making surgical, scoped changes on top of the
    scaffold. Before the loop starts, a cheap *planning* call analyses the gap
    between the scaffold and the request and produces the task list; when it
-   judges the scaffold already sufficient, Phase 2 is skipped entirely.
+   judges the scaffold already sufficient, Phase 2 is skipped entirely. The
+   system prompt adapts to the run: the rule that asks for a complete CRUD
+   frontend applies only when the run has or needs a frontend, and when shell
+   tools are on and a FastAPI backend is present it gains a runtime
+   verification runbook (see :ref:`spec-driven-shell-tools`).
 
 **Phase 3 — validation and bounded auto-fix.**
    The workspace is snapshotted, then swept by a set of static validators.
    Findings are classified by severity, and **blocker**-level issues drive a
-   bounded repair loop: up to five rounds of (LLM fix turns → re-validate). The
-   loop stops early when blockers reach zero, gives up after two consecutive
-   rounds without progress, and rolls back to the pre-Phase-3 snapshot if the
-   fixes made blockers *worse* — so a failed repair can never cost you the
-   Phase 2 work. Non-blocker findings are recorded but never burn fix turns.
+   bounded repair loop of (LLM fix turns → re-validate) rounds: at least five,
+   and as many as the turns Phase 2 left over. The loop stops when blockers
+   reach zero, after two consecutive rounds without progress, or after three
+   rounds that change the tree without improving it. Every strictly better
+   tree is re-snapshotted, ranked by whether the app boots, then entities it
+   cannot create, then actions it cannot run, then the blocker count. A
+   repair that ends worse is rolled back to the best snapshot, not merely to
+   the last round; the pre-Phase-3 tree is the first snapshot, so a failed
+   repair can never cost you the Phase 2 work. Non-blocker findings are recorded but never burn fix turns.
    See :doc:`validation` for the full list of checks, the severity model, and
    how to turn the repair half on or off.
 
@@ -176,13 +184,24 @@ reading a trace and wondering why a run did what it did.
        leaves the process: every SSE frame is redacted before it is sent, and
        the workspace is swept before the artifact is packaged — a populated
        ``.env`` is deleted outright, a template ``.env.example`` is kept. The
+       run's own API key is also matched literally, so it is redacted from
+       every frame and from the packaged workspace whatever its format. The
        count of findings is recorded in the run's recipe.
-   * - Link-free packaging
+   * - Artifact exclusion
+     - The download ZIP leaves out the same runtime and build artifacts as the
+       GitHub push: ``*.log``, ``*.db``, ``*.sqlite`` / ``*.sqlite3``,
+       ``*.zip`` and ``*.pyc`` files, plus dependency and build directories
+       such as ``node_modules`` and ``target``.
+   * - Link-free workspace access
      - The workspace is written by model-authored code, so a symbolic link in
        it could point at a file outside the run. The download ZIP, the seed
        copied for a ``modify`` run and the tree pushed to GitHub keep only
        regular files and real directories; symbolic links, devices, sockets
-       and FIFOs are dropped, never read through.
+       and FIFOs are dropped, never read through. The harness itself never
+       follows a link or special file in the workspace either: not when it
+       walks or copies the tree (prompt sections, the Phase 3 snapshot, the
+       probes' scratch copies), and not when it opens or writes a named file
+       (the recipe, checkpoint and trace, or a generated source file).
 
 Every ``BESSER_LLM_*`` switch named above is collected in
 :doc:`configuration`.

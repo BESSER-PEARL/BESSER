@@ -18,7 +18,13 @@ and no Docker. Missing runtime prerequisites do not count as verified execution:
 - Retained ``test_api`` workflows replayed after source changes.
 
 - Dockerfile coherence — referenced ``requirements.txt`` / ``package.json``
-  must exist. Several common mistakes are repaired outright without spending
+  must exist. A ``COPY`` source is resolved against the build context, as
+  Docker does: the compose ``build.context`` when a compose file names the
+  Dockerfile, else the Dockerfile's own folder. ``COPY --from=<stage>`` copies
+  from a build stage and is not checked. This check only reports; it never
+  writes a file. A separate repair step before validation restores a
+  ``requirements.txt`` that a Phase 2 edit deleted from a FastAPI scaffold.
+  Several other common mistakes are repaired outright without spending
   an LLM turn (``npm ci`` with no lockfile anywhere in the project becomes
   ``npm install``; a ``COPY`` of a non-existent ``package-lock.json`` is
   dropped; ``passlib`` pins ``bcrypt==4.0.1``).
@@ -176,6 +182,10 @@ ends the loop immediately rather than paying for the same attempt twice. A large
 import may expose several previously unreachable CRUD failures. Unresolved
 output remains explicitly incomplete. Startup and data-entry failures are
 repaired before spending tokens on business requirement judgment.
+
+A fix turn whose reply is cut off at the output-token limit is retried with
+an instruction to emit less, up to four times per attempt, rather than
+applying a half-written edit.
 
 For concrete code defects, an attempt without a successful edit — the model explained
 the fix instead of making it, or read files until its turn budget ran out — is

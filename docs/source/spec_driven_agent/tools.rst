@@ -197,8 +197,10 @@ backend loads. See :doc:`production_deployment`.
 **On, deliberately, for a local or on-prem install.** One machine, one tenant,
 the operator's own data: the multi-tenant objection does not apply, and
 withholding the tools is pure loss. The local ``docker-compose.yml`` already
-carries the sandbox's ``security_opt`` entries, so setting the variable in
-``./.env`` is enough there.
+carries the sandbox's ``seccomp`` and ``apparmor`` entries, so setting the
+variable in ``./.env`` is enough there on Docker Desktop; a Linux host such as
+Amazon Linux also needs ``systempaths=unconfined`` (see
+:doc:`production_deployment`).
 
 The decision is read from the process environment at start-up:
 
@@ -247,13 +249,14 @@ What it does:
 
 - **A bubblewrap sandbox on Linux.** Each command runs in its own user, PID
   and mount namespaces. The container filesystem is visible read-only, other
-  runs' workspaces and the telemetry folder are hidden, and only the run
+  runs' workspaces, the telemetry folder and the incident log folder
+  (``BESSER_INCIDENT_LOG_DIR``) are hidden, and only the run
   workspace and a per-run ``$HOME`` (``<run dir>.sandbox-home``) are writable.
   ``/usr/local`` and ``/root`` stay read-only, so ``install_dependencies``
   (``pip install``, ``npm install``) installs into that per-run ``$HOME``
   rather than into the worker or into later runs. The per-run ``$HOME`` sits
-  outside the workspace, so it is never packaged or pushed, and the 24-hour
-  temp cleanup removes it. If the sandbox cannot start, every command is
+  outside the workspace, so it is never packaged or pushed; it is removed
+  with the run, and by the 24-hour temp cleanup. If the sandbox cannot start, every command is
   refused; ``BESSER_LLM_SHELL_SANDBOX=off`` lifts that on a single-tenant
   Linux host whose kernel forbids unprivileged user namespaces. The model,
   and any validation finding, sees only "the shell sandbox is unavailable on

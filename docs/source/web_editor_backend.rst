@@ -145,7 +145,9 @@ so the paths below are complete as written:
   (``besser_version``) and, when the Docker image was built with ``GIT_SHA``,
   its commit (``besser_build``), the list of supported generator keys, and a
   map of the main endpoint paths. The editor reads ``besser_version`` to stamp
-  its JSON exports.
+  its JSON exports: ``besserVersion`` is that value, omitted when the backend
+  is unreachable, and ``editorVersion`` is the web editor's own package
+  version, built into the frontend.
 
 Code Generation
 ^^^^^^^^^^^^^^^

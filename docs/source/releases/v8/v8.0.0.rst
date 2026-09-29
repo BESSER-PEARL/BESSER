@@ -257,6 +257,20 @@ Other improvements and fixes
   ``besserVersion`` (as reported by ``GET /besser_api/``, omitted when the
   backend is unreachable) and ``editorVersion``. Older files without these
   fields import as before.
+- The assistant applies each reply exactly once across WebSocket reconnects
+  (replies carry turn ids), tells the user when a modification applied only
+  in part or removed a class nobody asked to remove, and shares its voice and
+  auto-fix state between the chat widget and the drawer. In the editor, a
+  second tab can no longer take over and cancel another tab's run,
+  Spec-Driven polling and reattach requests time out, the push dialog ignores
+  a stale branch list after a quick repository switch, stopping a simulation
+  while it starts really stops it, adding a SQL database keeps an older
+  project's hand-written YAML, *File > From GitHub* offers sign-in instead of
+  a dead end, and onboarding appears only when no project was ever saved.
+- The Spec-Driven lint check skips the harness's own ``.besser_*`` files, the
+  scaffold README is titled after the model rather than the run folder, and
+  ``import-github-run`` answers ``400`` for an invalid owner or repository
+  name and for a repository over the import limits.
 - The PlantUML object-diagram parser works again: every object parse used to
   fail on the first attribute value.
 - Promoting a class to an association class in the editor no longer orphans
@@ -308,8 +322,11 @@ Deployment
   TLS-inspection CA is still in the system trust store, or in the worker's
   JDK keystore, when the image is finished.
 - The worker gets only the LLM credentials (no ``env_file``), is the only
-  service with shell tools enabled, and needs ``seccomp=unconfined`` and
-  ``apparmor=unconfined`` for its sandbox. Add it to the production host's
+  service with shell tools enabled, and needs ``seccomp=unconfined``,
+  ``apparmor=unconfined`` and ``systempaths=unconfined`` for its sandbox, plus
+  ``no-new-privileges:true``. ``systempaths=unconfined`` unmasks ``/proc`` for
+  the worker's own root process; generated code runs inside bubblewrap's user
+  namespace. Add it to the production host's
   compose file before deploying: the deploy workflow checks for it and stops
   without pushing anything if it is missing or on the wrong image. Everything
   the host needs is listed in :doc:`/spec_driven_agent/production_deployment`.

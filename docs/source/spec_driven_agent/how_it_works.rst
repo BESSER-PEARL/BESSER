@@ -210,7 +210,8 @@ reading a trace and wondering why a run did what it did.
        follows a link or special file in the workspace either: not when it
        walks or copies the tree (prompt sections, the Phase 3 snapshot, the
        probes' scratch copies), and not when it opens or writes a named file
-       (the recipe, checkpoint and trace, or a generated source file).
+       (the recipe, checkpoint and trace, the ``BESSER_GENERATION.md``
+       provenance file, or a generated source file).
 
 Every ``BESSER_LLM_*`` switch named above is collected in
 :doc:`configuration`.

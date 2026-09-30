@@ -7,7 +7,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import (
     column_property, DeclarativeBase, Mapped, mapped_column, relationship
 )
-from datetime import datetime, time, date
+from datetime import datetime as dt_datetime, time as dt_time, date as dt_date
 
 class Base(DeclarativeBase):
     pass
@@ -18,8 +18,8 @@ class Base(DeclarativeBase):
 book_author_assoc = Table(
     "book_author_assoc",
     Base.metadata,
-    Column("writtenBy", ForeignKey("author.id"), primary_key=True),
     Column("publishes", ForeignKey("book.id"), primary_key=True),
+    Column("writtenBy", ForeignKey("author.id"), primary_key=True),
 )
 
 # Tables definition
@@ -34,8 +34,8 @@ class Book(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(100))
     pages: Mapped[int] = mapped_column(Integer)
-    release: Mapped[date] = mapped_column(Date)
-    locatedIn_id: Mapped[int] = mapped_column(ForeignKey("library.id"), nullable=False)
+    release: Mapped[dt_date] = mapped_column(Date)
+    locatedIn_id: Mapped[int] = mapped_column(ForeignKey("library.id"))
 
 class Library(Base):
     __tablename__ = "library"
@@ -48,8 +48,8 @@ class Library(Base):
 Author.publishes: Mapped[List["Book"]] = relationship("Book", secondary=book_author_assoc, back_populates="writtenBy")
 
 #--- Relationships of the book table
-Book.writtenBy: Mapped[List["Author"]] = relationship("Author", secondary=book_author_assoc, back_populates="publishes")
 Book.locatedIn: Mapped["Library"] = relationship("Library", back_populates="has", foreign_keys=[Book.locatedIn_id])
+Book.writtenBy: Mapped[List["Author"]] = relationship("Author", secondary=book_author_assoc, back_populates="publishes")
 
 #--- Relationships of the library table
 Library.has: Mapped[List["Book"]] = relationship("Book", back_populates="locatedIn", foreign_keys=[Book.locatedIn_id])

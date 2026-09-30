@@ -33,11 +33,11 @@ CREATE TABLE book (
 
 
 CREATE TABLE book_author_assoc (
-	"writtenBy" INTEGER NOT NULL, 
 	publishes INTEGER NOT NULL, 
-	PRIMARY KEY ("writtenBy", publishes), 
-	FOREIGN KEY("writtenBy") REFERENCES author (id), 
-	FOREIGN KEY(publishes) REFERENCES book (id)
+	"writtenBy" INTEGER NOT NULL, 
+	PRIMARY KEY (publishes, "writtenBy"), 
+	FOREIGN KEY(publishes) REFERENCES book (id), 
+	FOREIGN KEY("writtenBy") REFERENCES author (id)
 )
 
 ;

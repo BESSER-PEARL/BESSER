@@ -1,25 +1,36 @@
-from datetime import datetime, date
-from typing import List, Optional, Union,Set
-from pydantic import BaseModel
+from datetime import datetime, date, time
+from typing import Any, List, Optional, Union, Set
+from enum import Enum
+from pydantic import BaseModel, field_validator
+
 
 ############################################
-#
-# The classes are defined here
-#
+# Enumerations are defined here
 ############################################
 
-class BookCreate(BaseModel):
-    pages: int
-    release: datetime
-    title: str
-    authors_id: List[int]
-    library_id: int
-
-class AuthorCreate(BaseModel):
-    name: str
+############################################
+# Classes are defined here
+############################################
+class Author(BaseModel):
     email: str
-    books_id: List[int]
-
-class LibraryCreate(BaseModel):
-    address: str
     name: str
+    id: int  # id created
+    publishes: List[int]  # N:M Relationship
+
+
+class Book(BaseModel):
+    release: date
+    pages: int
+    title: str
+    id: int  # id created
+    writtenBy: List[int]  # N:M Relationship
+    locatedIn: "Library"  # N:1 Relationship
+
+
+class Library(BaseModel):
+    name: str
+    address: str
+    id: int  # id created
+    has: List["Book"]  # 1:N Relationship
+
+

@@ -7,6 +7,7 @@ Handles all diagram validation endpoints for the BESSER web modeling editor back
 import logging
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -262,3 +263,30 @@ async def check_ocl(input_data: DiagramInput):
     """
     logger.warning("/check-ocl is deprecated. Use /validate-diagram instead.")
     return await validate_diagram(input_data)
+
+
+# Pydantic model for constraint suggestion request
+class ConstraintSuggestionRequest(BaseModel):
+    constraint: str
+
+
+@router.post("/suggest-constraint-fix")
+@handle_endpoint_errors("suggest_constraint_fix")
+async def suggest_constraint_fix(request: ConstraintSuggestionRequest):
+    """
+    Generate AI-powered suggestions for fixing invalid OCL constraints.
+
+    Uses LLM (OpenAI or Anthropic) if API key is configured,
+    otherwise falls back to rule-based suggestions.
+    """
+    from besser.utilities.web_modeling_editor.backend.services.constraint_suggestion_service import (
+        generate_constraint_suggestion
+    )
+
+    suggestion = generate_constraint_suggestion(request.constraint)
+
+    return {
+        "issue": suggestion.get("issue", "Constraint violation detected"),
+        "suggestion": suggestion.get("suggestion", "Review and fix the constraint"),
+        "steps": suggestion.get("steps", [])
+    }

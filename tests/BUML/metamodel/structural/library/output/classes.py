@@ -68,12 +68,12 @@ class Book:
         self.writtenBy = writtenBy if writtenBy is not None else set()
         
     @property
-    def title(self) -> str:
-        return self.__title
+    def release(self) -> date:
+        return self.__release
 
-    @title.setter
-    def title(self, title: str):
-        self.__title = title
+    @release.setter
+    def release(self, release: date):
+        self.__release = release
 
     @property
     def pages(self) -> int:
@@ -84,12 +84,38 @@ class Book:
         self.__pages = pages
 
     @property
-    def release(self) -> date:
-        return self.__release
+    def title(self) -> str:
+        return self.__title
 
-    @release.setter
-    def release(self, release: date):
-        self.__release = release
+    @title.setter
+    def title(self, title: str):
+        self.__title = title
+
+    @property
+    def locatedIn(self):
+        return self.__locatedIn
+
+    @locatedIn.setter
+    def locatedIn(self, value):
+        # Bidirectional consistency
+        old_value = getattr(self, f"_Book__locatedIn", None)
+        self.__locatedIn = value
+        
+        # Remove self from old opposite end
+        if old_value is not None:
+            if hasattr(old_value, "has"):
+                opp_val = getattr(old_value, "has", None)
+                if isinstance(opp_val, set):
+                    opp_val.discard(self)
+                
+        # Add self to new opposite end
+        if value is not None:
+            if hasattr(value, "has"):
+                opp_val = getattr(value, "has", None)
+                if opp_val is None:
+                    setattr(value, "has", set([self]))
+                elif isinstance(opp_val, set):
+                    opp_val.add(self)
 
     @property
     def writtenBy(self):
@@ -122,32 +148,6 @@ class Book:
                         opp_val.add(self)
                     
 
-    @property
-    def locatedIn(self):
-        return self.__locatedIn
-
-    @locatedIn.setter
-    def locatedIn(self, value):
-        # Bidirectional consistency
-        old_value = getattr(self, f"_Book__locatedIn", None)
-        self.__locatedIn = value
-        
-        # Remove self from old opposite end
-        if old_value is not None:
-            if hasattr(old_value, "has"):
-                opp_val = getattr(old_value, "has", None)
-                if isinstance(opp_val, set):
-                    opp_val.discard(self)
-                
-        # Add self to new opposite end
-        if value is not None:
-            if hasattr(value, "has"):
-                opp_val = getattr(value, "has", None)
-                if opp_val is None:
-                    setattr(value, "has", set([self]))
-                elif isinstance(opp_val, set):
-                    opp_val.add(self)
-
 class Library:
 
     def __init__(self, name: str, address: str, has: set["Book"] = None):
@@ -156,20 +156,20 @@ class Library:
         self.has = has if has is not None else set()
         
     @property
-    def address(self) -> str:
-        return self.__address
-
-    @address.setter
-    def address(self, address: str):
-        self.__address = address
-
-    @property
     def name(self) -> str:
         return self.__name
 
     @name.setter
     def name(self, name: str):
         self.__name = name
+
+    @property
+    def address(self) -> str:
+        return self.__address
+
+    @address.setter
+    def address(self, address: str):
+        self.__address = address
 
     @property
     def has(self):

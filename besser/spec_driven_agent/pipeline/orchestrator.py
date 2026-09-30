@@ -53,6 +53,7 @@ from besser.spec_driven_agent.validation.frontend_contract import (
 )
 from besser.spec_driven_agent.agent.design_system import design_system_section
 from besser.spec_driven_agent.planning import requirements_ledger as _requirements_ledger
+from besser.spec_driven_agent.repair.dependency_pins import pin_requirements_file
 from besser.spec_driven_agent.repair.scaffold_repair import (
     _DEFAULT_BACKEND_REQUIREMENTS as _DEFAULT_BACKEND_REQUIREMENTS,
     _IMPORT_TO_REQUIREMENT as _IMPORT_TO_REQUIREMENT,
@@ -2200,6 +2201,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         in order), everything else gets a unique key (so it stays parallel)."""
         name = getattr(block, "name", "")
         args = getattr(block, "input", None)
+        # Shell calls share the workspace, its venv and the probe's state file;
+        # run in parallel they killed each other's processes and crossed ports.
+        if name in ("run_command", "install_dependencies"):
+            return "shell"
         if name in self._WRITE_TOOLS and isinstance(args, dict):
             path = args.get("path")
             if isinstance(path, str) and path.strip():
@@ -2419,9 +2424,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             })
             self._recent_tool_failures = self._recent_tool_failures[-8:]
 
+        logged_input = _trace_safe_input(tool_name, block.input)
         self.tool_calls_log.append({
             "turn": turn + 1, "tool": tool_name,
-            "input": _sanitize_for_log(block.input),
+            "input": logged_input,
             "success": success,
             "status": execution.status,
         })
@@ -2433,12 +2439,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             tool=tool_name,
             success=success,
             status=execution.status,
-            input=_sanitize_for_log(block.input),
+            input=logged_input,
             # How many calls the model batched into this turn (1 = no batching).
             blocks_in_turn=getattr(self, "_blocks_in_turn", 1),
+            # What the model was told, redacted and bounded.
+            result=_trace_result_excerpt(result),
             # WHY it failed, and which edit tier matched when it succeeded —
             # see _trace_diagnostics for why this is not optional.
-            **self._trace_diagnostics(result),
+            **_redact_for_trace(self._trace_diagnostics(result)),
         )
 
         return {
@@ -2781,8 +2789,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 return {"error": "Unknown scenario_id; use action=list to find retained workflows."}
             # Return a detached snapshot; inspecting a test must not mutate it or
             # turn a stale report into fresh verification.
+            from besser.spec_driven_agent.validation.api_probe import redact_scenario_headers
+
             return json.loads(json.dumps({
                 "scenario_id": scenario_id, **previous["scenario"],
+                "requests": redact_scenario_headers(previous["scenario"]["requests"]),
                 "last_report": previous["report"],
                 "current_revision": previous["revision"] == self._workspace_revision(),
                 "correction_history": previous.get("correction_history", []),
@@ -2943,9 +2954,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     except Exception:
                         logger.warning("Dockerfile check failed for %s", rel, exc_info=True)
 
-        # Auto-fix known critical incompatibility: passlib + bcrypt>=4.1
-        # This is a belt-and-suspenders fix — the pip dry-run below should
-        # also catch it, but this is instant and doesn't need network.
+        # Known runtime-incompatible pairs (dependency_pins.py). pip resolves
+        # them without complaint, so the dry-run below cannot catch them.
         for root, _, files in walk_plain(self.output_dir):
             for fname in files:
                 if fname == "requirements.txt":
@@ -2954,19 +2964,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     if _SNAPSHOT_DIR in rel:
                         continue
                     try:
-                        with open(fpath, "r") as f:
-                            content = f.read()
-                        if "passlib" in content:
-                            import re as _re
-                            new_content = _re.sub(r'bcrypt[><=!]+[^\n]*', 'bcrypt==4.0.1', content)
-                            if "bcrypt" not in new_content:
-                                new_content += "\nbcrypt==4.0.1\n"
-                            if new_content != content:
-                                with open_plain_write(fpath, "w", root=self.output_dir) as f:
-                                    f.write(new_content)
-                                logger.info("Auto-fixed: %s: pinned bcrypt==4.0.1 (passlib compat)", rel)
+                        for note in pin_requirements_file(fpath, self.output_dir):
+                            logger.info("Auto-fixed: %s: %s", rel, note)
                     except Exception:
-                        logger.warning("bcrypt pin check failed for %s", rel, exc_info=True)
+                        logger.warning("dependency pin check failed for %s", rel, exc_info=True)
 
         # Dependency resolution may execute untrusted build backends and
         # access the network. Keep it behind the same explicit shell-tools
@@ -4463,6 +4464,64 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 # Helpers
 # ======================================================================
 
+
+
+# Credentials a tool call can carry that the provider-token patterns miss: a
+# bearer token in a probe command or request log, a login response's token
+# field (also inside JSON-escaped output), a bare JWT.
+_TRACE_CREDENTIAL_PATTERNS = (
+    (_re.compile(r"(?i)(authorization\\?[\"']?\s*[:=]\s*\\?[\"']?\s*(?:(?:bearer|basic|token)\s+)?)[^\s\"'\\,}]+"),
+     r"\1[REDACTED]"),
+    (_re.compile(r'(?i)(\\?"(?:access_|refresh_|id_)?token\\?"\s*:\s*\\?")[^"\\]+'), r"\1[REDACTED]"),
+    (_re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"), "[REDACTED]"),
+)
+
+
+_secret_redactor: Any = None
+
+
+def _redact_text_for_trace(text: str) -> str:
+    global _secret_redactor
+    if _secret_redactor is None:
+        # The artifact/SSE redaction. Loaded lazily: it lives in the web backend
+        # package, which the engine must not require.
+        try:
+            from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_text
+            _secret_redactor = redact_text
+        except Exception:
+            logger.debug("secret redaction unavailable for the trace", exc_info=True)
+            _secret_redactor = False
+    if _secret_redactor:
+        text = _secret_redactor(text, env_style=False)[0]
+    for pattern, replacement in _TRACE_CREDENTIAL_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _redact_for_trace(value: Any) -> Any:
+    """``value`` with credential-shaped strings replaced, recursively."""
+    if isinstance(value, str):
+        return _redact_text_for_trace(value)
+    if isinstance(value, list):
+        return [_redact_for_trace(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_for_trace(item) for key, item in value.items()}
+    return value
+
+
+def _trace_safe_input(tool_name: str, data: Any) -> Any:
+    """A tool input as the trace and checkpoint record it: redacted, bounded."""
+    if tool_name == "test_api" and isinstance(data, dict) and "requests" in data:
+        from besser.spec_driven_agent.validation.api_probe import redact_scenario_headers
+
+        data = {**data, "requests": redact_scenario_headers(data["requests"])}
+    return _sanitize_for_log(_redact_for_trace(data))
+
+
+def _trace_result_excerpt(result: Any) -> dict:
+    """The start of a tool result for the trace, redacted before it is cut."""
+    text = result if isinstance(result, str) else json.dumps(result, default=str)
+    return {"chars": len(text), **_sanitize_for_log({"excerpt": _redact_text_for_trace(text)})}
 
 
 def _sanitize_for_log(data: Any) -> Any:

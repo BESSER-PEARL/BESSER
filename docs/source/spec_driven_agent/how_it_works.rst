@@ -185,7 +185,10 @@ reading a trace and wondering why a run did what it did.
    * - Tracing
      - Every phase transition, turn, tool call, cost update, compaction,
        snapshot, rollback and validation finding is appended to
-       ``.besser_trace.jsonl`` in the workspace. It is best-effort — a failed
+       ``.besser_trace.jsonl`` in the workspace. A ``tool_call`` record holds
+       the input and a ``result`` excerpt (its length and the first 500
+       characters), with credential-shaped values redacted before the cut. It
+       is best-effort — a failed
        trace write never fails a run. Toggle with
        ``BESSER_LLM_ENABLE_TRACING`` (default on).
    * - Secret redaction

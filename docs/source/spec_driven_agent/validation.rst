@@ -27,7 +27,15 @@ and no Docker. Missing runtime prerequisites do not count as verified execution:
   Several other common mistakes are repaired outright without spending
   an LLM turn (``npm ci`` with no lockfile anywhere in the project becomes
   ``npm install``; a ``COPY`` of a non-existent ``package-lock.json`` is
-  dropped; ``passlib`` pins ``bcrypt==4.0.1``).
+  dropped).
+- Known-incompatible dependencies — a table of pairs that pip resolves
+  without complaint but that break at runtime (``passlib`` needs
+  ``bcrypt<4.1``: bcrypt 5 rejects the >72-byte secret passlib's self-test
+  hashes, so every password hash fails). Each ``requirements.txt`` that
+  declares the first package gets the second pinned, unless its declared range
+  is already compatible. The same table is applied when scaffold repair writes
+  a ``requirements.txt`` and by ``install_dependencies`` before it installs,
+  so the delivered file is pinned even when Phase 3 is skipped.
 - Local-import resolution — an import naming a module the app does not ship
   where it is used. ``ruff`` is structurally blind to this (a star import
   excuses every name), and it is fatal at startup.

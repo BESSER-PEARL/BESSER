@@ -87,6 +87,18 @@ after a coherent edit. Validation runs after writes in the same tool batch.
 one generated FastAPI backend and a fresh SQLite database. Requests share state
 within a scenario; later requests may reference response JSON using
 ``{{0.room.id}}``. Assertions specify expected statuses and dotted JSON fields.
+
+A request may carry ``headers``, whose values accept the same references, so a
+scenario can register, log in and send the returned token on later requests:
+``{"Authorization": "Bearer {{1.access_token}}"}``. Allowed names are
+``Authorization``, ``Accept``, ``Content-Type``, ``Accept-Language``,
+``If-Match``, ``If-None-Match``, ``Idempotency-Key`` and ``X-*`` API headers;
+``Host``, ``Cookie``, framing and hop-by-hop headers, ``X-Forwarded-*`` and
+method-override headers are refused. Cookies a response sets are kept for the
+rest of the scenario. The values of credential-bearing headers (``Authorization``
+and names containing words such as *key*, *token*, *secret* or *auth*) are
+redacted from the report, from ``action="get"`` and from the trace, as is the
+value wherever the app echoes it.
 Named scenarios are retained during the run and replayed after source changes;
 failures block completion. Correcting a mistaken test requires an explicit
 ``correction_reason``. Model-authored scenarios are supplemental checks, not an
@@ -171,6 +183,10 @@ read the failures and fix them — and they are the single largest capability
 difference between a run with them and a run without. They are also arbitrary
 code execution in the backend process, so who is allowed to switch them on is a
 deployment decision, never a per-request one.
+
+Before it installs, ``install_dependencies`` pins the known-incompatible
+dependency pairs described in :doc:`validation` into the working directory's
+``requirements.txt`` and lists each change under ``pinned`` in its result.
 
 The policy
 ~~~~~~~~~~
@@ -285,7 +301,12 @@ subcommands (``up``, ``routes``, ``req``, ``log``, ``down``) boot the server
 detached, list its routes and send requests, so the agent can run the app
 rather than only read it. Because each sandboxed command has its own PID
 namespace, ``routes`` and ``req`` start their own server when none is
-answering; the SQLite file keeps records between commands.
+answering; the SQLite file keeps records between commands. ``req`` sends
+extra headers with ``-H "Name: value"`` (e.g. a bearer token from a login) and
+prints only their names. ``down`` stops a process only when its command line
+identifies it as the probe's own server, since a recorded PID from another
+namespace can name an unrelated process. Several ``run_command`` (and
+``install_dependencies``) calls in one turn run one after another, in order.
 ``BESSER_LLM_SHELL_RUNBOOK=0`` leaves the runbook out.
 
 Where no sandbox applies, treat "enable shell tools" as "I am willing to run

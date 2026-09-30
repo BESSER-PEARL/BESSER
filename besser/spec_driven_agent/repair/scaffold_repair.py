@@ -20,6 +20,7 @@ import re as _re
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.execution.workspace_fs import open_plain, open_plain_write, walk_plain
+from besser.spec_driven_agent.repair.dependency_pins import pin_known_incompatible
 
 
 # The deterministic Phase-1 backend generator always writes a correct
@@ -128,6 +129,7 @@ def _ensure_requirements_txt(docker_dir: str) -> bool:
                 if _re.search(rf"^\s*(?:import|from)\s+{token}\b", src, _re.MULTILINE):
                     extras.add(pkg)
     content = _DEFAULT_BACKEND_REQUIREMENTS + "".join(sorted(e + "\n" for e in extras))
+    content, _ = pin_known_incompatible(content)
     try:
         with open_plain_write(req_path, "w", root=docker_dir, encoding="utf-8") as f:
             f.write(content)

@@ -58,6 +58,7 @@ from besser.spec_driven_agent.execution.sandbox import (
     sandboxed_command,
 )
 from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.spec_driven_agent.repair.dependency_pins import pin_requirements_file
 from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,
     describe_escape_mismatch,
@@ -3117,12 +3118,27 @@ class ToolExecutor:
         """
         working_dir = self._safe_cwd(args.get("working_dir", "."))
         custom_command = args.get("command")
+        requirements_txt = os.path.join(working_dir, "requirements.txt")
 
+        # Pin known-incompatible pairs before pip resolves them: the rewritten
+        # file is also what ships.
+        pinned: list[str] = []
+        if os.path.isfile(requirements_txt) and self._resolves_inside(requirements_txt):
+            try:
+                pinned = pin_requirements_file(requirements_txt, self.workspace)
+            except OSError:
+                logger.warning("dependency pin failed for %s", requirements_txt, exc_info=True)
+
+        result = self._install_detected(args, working_dir, custom_command, requirements_txt)
+        if pinned:
+            result["pinned"] = pinned
+        return result
+
+    def _install_detected(self, args: dict, working_dir: str, custom_command, requirements_txt: str) -> dict:
         if custom_command:
             return self._run_command({"command": custom_command, "working_dir": args.get("working_dir", ".")})
 
         # Auto-detect
-        requirements_txt = os.path.join(working_dir, "requirements.txt")
         package_json = os.path.join(working_dir, "package.json")
 
         results = []

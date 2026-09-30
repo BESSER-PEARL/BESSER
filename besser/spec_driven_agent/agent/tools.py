@@ -465,7 +465,9 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "are refused with an error. stdout/stderr are truncated (~15k chars total); "
             "when cut, full_output_path names a file holding the complete log. A command "
             "whose runtime is not installed returns success=true, skipped=true: treat it "
-            "as not checked, not as passing."
+            "as not checked, not as passing. Several run_command calls in one turn run "
+            "one after another in the order given. Do not rely on a server started by an "
+            "earlier command: it does not outlive the command that started it."
         ),
         "input_schema": {
             "type": "object",
@@ -520,7 +522,14 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
         "description": (
             "Exercise a real generated FastAPI workflow in an isolated copy with a fresh SQLite "
             "database. Submit up to 20 requests; state is shared within this call only. "
-            "Use prior response JSON via {{0.room.id}} in later JSON values or paths. "
+            "Use prior response JSON via {{0.room.id}} in later JSON values, paths or header values. "
+            "To test a protected API, register and log in within the same scenario and pass the "
+            "token as a header on each later request, e.g. headers={\"Authorization\": "
+            "\"Bearer {{1.access_token}}\"} when request 1 was the login (use the token field the "
+            "login response really has). Allowed headers: Authorization, Accept, Content-Type, "
+            "Accept-Language, If-Match, If-None-Match, Idempotency-Key and X-* API headers such as "
+            "X-API-Key; cookies set by a response are kept for the rest of the scenario. "
+            "Credential header values are redacted from results. "
             "Omitted expected_status means 2xx. Assert business results with expected_fields "
             "(dotted JSON path -> literal). Test happy paths AND invalid input/state transitions "
             "from the original specification. Valid scenarios are retained and rerun after code "
@@ -531,7 +540,7 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "scenarios; action='get' with scenario_id reads its exact requests, expectations and "
             "last report without executing it. action='run' (default) with just scenario_id replays "
             "the saved definition. Inspect failed tests before changing either code or expectations. "
-            "No shell, credentials, or external URLs. "
+            "No shell or external URLs. "
             "Passing proves only the submitted scenario, not every requirement."
         ),
         "input_schema": {
@@ -549,6 +558,10 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                             "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
                             "path": {"type": "string", "description": "Local API path beginning with /"},
                             "json": {},
+                            "headers": {
+                                "type": "object", "additionalProperties": {"type": "string"},
+                                "description": "Optional request headers; values may embed {{n.path}} references, e.g. {\"Authorization\": \"Bearer {{1.access_token}}\"}",
+                            },
                             "expected_status": {"anyOf": [{"type": "integer"}, {"type": "array", "items": {"type": "integer"}}]},
                             "expected_fields": {"type": "object", "additionalProperties": True},
                         },

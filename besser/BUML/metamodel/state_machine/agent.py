@@ -1223,7 +1223,7 @@ class LLMAnthropic(LLMWrapper):
 
     Args:
         agent (Agent): the agent the LLM belongs to
-        name (str): the LLM name / model identifier (e.g. ``"claude-opus-4-5"``)
+        name (str): the LLM name / model identifier (e.g. ``"claude-opus-5"``)
         parameters (dict): the LLM parameters
         num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
             to add to the prompt context (must be > 0)

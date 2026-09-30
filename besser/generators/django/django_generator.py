@@ -2,11 +2,13 @@
 This module generates Django code using Jinja2 templates based on BUML models.
 """
 import os
+import shutil
 import subprocess
 import sys
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSourceElement
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
+from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.generators.structural_utils import normalize_method_code
@@ -51,6 +53,7 @@ class DjangoGenerator(GeneratorInterface):
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
                                lstrip_blocks=True, extensions=['jinja2.ext.do'])
         self.env.globals.update(normalize_code=normalize_method_code)
+        register_default_literals(self.env)
         # Register custom Jinja2 tests once for all methods
         self.env.tests['is_Button'] = self.is_button
         self.env.tests['is_List'] = self.is_list
@@ -79,6 +82,36 @@ class DjangoGenerator(GeneratorInterface):
         """Module: Set the instance of the Module class representing the
                module of the Django application."""
         self.__module = module
+
+    def _base_dir(self) -> str:
+        """Absolute directory anchoring every filesystem effect of this generator.
+
+        The whole generated project tree is placed under this directory,
+        regardless of the caller's current working directory. When no
+        output_dir was provided, it falls back to the caller's working
+        directory, preserving the historical default layout
+        (<cwd>/<project_name>).
+        """
+        if self.output_dir is not None:
+            base = os.path.abspath(self.output_dir)
+        else:
+            base = os.getcwd()
+        os.makedirs(base, exist_ok=True)
+        return base
+
+    def _project_dir(self) -> str:
+        """Absolute path of the generated Django project directory."""
+        return os.path.join(self._base_dir(), self.project_name)
+
+    def _app_dir(self) -> str:
+        """Absolute path of the generated Django app directory."""
+        return os.path.join(self._project_dir(), self.app_name)
+
+    def _templates_dir(self) -> str:
+        """Absolute path of the app templates directory (created on demand)."""
+        path = os.path.join(self._app_dir(), "templates")
+        os.makedirs(path, exist_ok=True)
+        return path
 
     @staticmethod
     def is_button(value):
@@ -119,7 +152,7 @@ class DjangoGenerator(GeneratorInterface):
             None, but stores the generated code as a file named models.py.
         """
         for association in self.model.associations:
-            ends = list(association.ends)  # Convert set to list
+            ends = sorted(association.ends, key=lambda e: e.name)  # stable side choice
 
             # One-to-one
             if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
@@ -150,7 +183,7 @@ class DjangoGenerator(GeneratorInterface):
                 else:
                     self.many_to_many[association.name] = ends[0].type.name
 
-        file_path = os.path.join(self.project_name, self.app_name, "models.py")
+        file_path = os.path.join(self._app_dir(), "models.py")
         template = self.env.get_template('models.py.j2')
 
         # Build constraints map for OCL validation (reuses the same OCL parser
@@ -180,7 +213,7 @@ class DjangoGenerator(GeneratorInterface):
             None, but stores the generated code as a file named urls.py.
         """
 
-        file_path = os.path.join(self.project_name, self.app_name, "urls.py")
+        file_path = os.path.join(self._app_dir(), "urls.py")
         template = self.env.get_template('urls.py.j2')
 
         if self.module is None:
@@ -225,7 +258,7 @@ class DjangoGenerator(GeneratorInterface):
             None, but stores the generated code as a file named forms.py.
         """
 
-        file_path = os.path.join(self.project_name, self.app_name, "forms.py")
+        file_path = os.path.join(self._app_dir(), "forms.py")
         template = self.env.get_template('forms.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
@@ -275,7 +308,7 @@ class DjangoGenerator(GeneratorInterface):
         Returns:
             None, but stores the generated code as a file named views.py.
         """
-        file_path = os.path.join(self.project_name, self.app_name, "views.py")
+        file_path = os.path.join(self._app_dir(), "views.py")
         template = self.env.get_template('views.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
@@ -321,9 +354,7 @@ class DjangoGenerator(GeneratorInterface):
         Returns:
             None, but stores the generated code as a file named main.dart.
         """
-        # Customize the output directory here
-        self.output_dir = os.path.join(os.getcwd(), self.project_name, self.app_name, "templates")
-        file_path = self.build_generation_path(file_name="home.html")
+        file_path = os.path.join(self._templates_dir(), "home.html")
         template = self.env.get_template('home_page.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
@@ -359,8 +390,7 @@ class DjangoGenerator(GeneratorInterface):
         Each HTML file is saved in the output directory, named based on the screen's name.
         """
 
-        # Customize the output directory here
-        self.output_dir = os.path.join(os.getcwd(), self.project_name, self.app_name, "templates")
+        templates_dir = self._templates_dir()
 
         # Load the Jinja template
         template = self.env.get_template('basePageFile.py.j2')
@@ -382,7 +412,7 @@ class DjangoGenerator(GeneratorInterface):
                                 # Format the file name based on `source.dataSourceClass.name`
                                 source_name = source.dataSourceClass.name
                                 file_name = f"{source_name[0].lower() + source_name[1:]}.html"
-                                file_path = os.path.join(self.output_dir, file_name)
+                                file_path = os.path.join(templates_dir, file_name)
                                 # Render the HTML with specific screen data
                                 rendered_html = template.render(
                                     app=self.gui_model,
@@ -403,9 +433,7 @@ class DjangoGenerator(GeneratorInterface):
         Generate List HTML files for each screen in the module, using a Jinja template.
         Each HTML file is saved in the output directory, named based on the screen's name_list.
         """
-        os.makedirs(self.output_dir, exist_ok=True)
-        # Customize the output directory here
-        self.output_dir = os.path.join(os.getcwd(), self.project_name, self.app_name, "templates")
+        templates_dir = self._templates_dir()
 
         # Load the Jinja template
         template = self.env.get_template('list_page.py.j2')
@@ -427,7 +455,7 @@ class DjangoGenerator(GeneratorInterface):
                                 # Format the file name based on `source.dataSourceClass.name`
                                 source_name = source.dataSourceClass.name
                                 file_name = f"{source_name[0].lower() + source_name[1:]}_list.html"
-                                file_path = os.path.join(self.output_dir, file_name)
+                                file_path = os.path.join(templates_dir, file_name)
 
                                 # Render the HTML with specific screen data
                                 rendered_html = template.render(
@@ -455,9 +483,7 @@ class DjangoGenerator(GeneratorInterface):
         Generate HTML files for each screen in the module, using a Jinja template.
         Each HTML file is saved in the output directory, named based on the screen's name_form.
         """
-        os.makedirs(self.output_dir, exist_ok=True)
-        # Customize the output directory here
-        self.output_dir = os.path.join(os.getcwd(), self.project_name, self.app_name, "templates")
+        templates_dir = self._templates_dir()
 
         # Load the Jinja template
         template = self.env.get_template('form_page.py.j2')
@@ -479,7 +505,7 @@ class DjangoGenerator(GeneratorInterface):
                                 # Format the file name based on `source.dataSourceClass.name`
                                 source_name = source.dataSourceClass.name
                                 file_name = f"{source_name[0].lower() + source_name[1:]}_form.html"
-                                file_path = os.path.join(self.output_dir, file_name)
+                                file_path = os.path.join(templates_dir, file_name)
 
                                 # Render the HTML with specific screen data
                                 rendered_html = template.render(
@@ -512,9 +538,9 @@ class DjangoGenerator(GeneratorInterface):
             None, but stores the generated code as a file named project_urls.py.
         """
 
-        self.output_dir = os.path.join(os.getcwd(), self.project_name, self.project_name)
-
-        file_path = self.build_generation_path(file_name="urls.py")
+        project_pkg_dir = os.path.join(self._project_dir(), self.project_name)
+        os.makedirs(project_pkg_dir, exist_ok=True)
+        file_path = os.path.join(project_pkg_dir, "urls.py")
         template = self.env.get_template('project_urls.py.j2')
 
         with open(file_path, mode="w", encoding="utf-8") as f:
@@ -524,7 +550,7 @@ class DjangoGenerator(GeneratorInterface):
     def create_file_from_template(self, template_name, output_name):
         """Create a file from a Jinja2 template."""
         template = self.env.get_template(template_name)
-        file_path = os.path.join(self.project_name, output_name)
+        file_path = os.path.join(self._project_dir(), output_name)
         with open(file_path, mode="w", newline='\n', encoding='utf-8') as f:
             f.write(template.render(app_name=self.app_name,
                                     project_name=self.project_name,
@@ -533,7 +559,7 @@ class DjangoGenerator(GeneratorInterface):
 
     def update_settings(self):
         """Update the configuration in settings.py."""
-        settings_file_path = os.path.join(self.project_name, self.project_name, 'settings.py')
+        settings_file_path = os.path.join(self._project_dir(), self.project_name, 'settings.py')
         new_database_config = ""
         if self.containerization is True:
             new_database_config = """
@@ -577,69 +603,64 @@ JAZZMIN_SETTINGS = {{
     ],
 }}
 """
-        try:
-            with open(settings_file_path, 'r', encoding='utf-8') as file:
-                content = file.readlines()
+        # I/O errors propagate: generate() reports and re-raises them.
+        with open(settings_file_path, 'r', encoding='utf-8') as file:
+            content = file.readlines()
 
-            # Ensure 'import os' is present
-            if not any(line.startswith('import os') for line in content):
-                for index, line in enumerate(content):
-                    if line.strip() and not line.strip().startswith('#'):
-                        content.insert(index, 'import os\n')
-                        break
-
-            if self.containerization is True:
-                # Replace the DATABASES section
-                start_index, end_index = None, None
-                for index, line in enumerate(content):
-                    if 'DATABASES' in line and '=' in line:
-                        start_index = index
-                    if start_index is not None and line.strip() == '}':
-                        end_index = index
-                        break
-
-                if start_index is not None and end_index is not None:
-                    content = (
-                           content[:start_index]
-                           + [new_database_config]
-                           + content[end_index + 2:]
-                        )
-
-            # Add the app to INSTALLED_APPS
+        # Ensure 'import os' is present
+        if not any(line.startswith('import os') for line in content):
             for index, line in enumerate(content):
-                if line.strip().startswith('INSTALLED_APPS') and '=' in line:
-                    # Find the start of the list
-                    open_bracket_index = index
-                    while '[' not in content[open_bracket_index]:
-                        open_bracket_index += 1
-
-                    # Find the end of the list
-                    close_bracket_index = open_bracket_index
-                    while ']' not in content[close_bracket_index]:
-                        close_bracket_index += 1
-
-                    # Add the app if not already in the list
-                    apps_section = content[open_bracket_index:close_bracket_index + 1]
-                    if f"'{self.app_name}'," not in ''.join(apps_section):
-                        # Insert the app just before the closing bracket
-                        content.insert(close_bracket_index, f"    '{self.app_name}',\n")
-                    if f"'{'jazzmin'}'," not in ''.join(apps_section):
-                        # Insert the jazzmin app just before the closing bracket
-                        content.insert(open_bracket_index + 1, "    'jazzmin',\n")
+                if line.strip() and not line.strip().startswith('#'):
+                    content.insert(index, 'import os\n')
                     break
 
-            # Add the JAZZMIN_SETTINGS block at the end of the file
-            if jazzmin_settings.strip() not in ''.join(content):
-                content.append(f"\n{jazzmin_settings}\n")
+        if self.containerization is True:
+            # Replace the DATABASES section
+            start_index, end_index = None, None
+            for index, line in enumerate(content):
+                if 'DATABASES' in line and '=' in line:
+                    start_index = index
+                if start_index is not None and line.strip() == '}':
+                    end_index = index
+                    break
 
-            # Write the updated settings back to the file
-            with open(settings_file_path, 'w', encoding='utf-8') as file:
-                file.writelines(content)
+            if start_index is not None and end_index is not None:
+                content = (
+                       content[:start_index]
+                       + [new_database_config]
+                       + content[end_index + 2:]
+                    )
 
-        except (IOError, OSError) as e:
-            print(f"An I/O error occurred: {e}")
-        except ValueError as e:
-            print(f"A value error occurred: {e}")
+        # Add the app to INSTALLED_APPS
+        for index, line in enumerate(content):
+            if line.strip().startswith('INSTALLED_APPS') and '=' in line:
+                # Find the start of the list
+                open_bracket_index = index
+                while '[' not in content[open_bracket_index]:
+                    open_bracket_index += 1
+
+                # Find the end of the list
+                close_bracket_index = open_bracket_index
+                while ']' not in content[close_bracket_index]:
+                    close_bracket_index += 1
+
+                # Add the app if not already in the list
+                apps_section = content[open_bracket_index:close_bracket_index + 1]
+                if f"'{self.app_name}'," not in ''.join(apps_section):
+                    # Insert the app just before the closing bracket
+                    content.insert(close_bracket_index, f"    '{self.app_name}',\n")
+                if f"'{'jazzmin'}'," not in ''.join(apps_section):
+                    # Insert the jazzmin app just before the closing bracket
+                    content.insert(open_bracket_index + 1, "    'jazzmin',\n")
+                break
+
+        # Add the JAZZMIN_SETTINGS block at the end of the file
+        if jazzmin_settings.strip() not in ''.join(content):
+            content.append(f"\n{jazzmin_settings}\n")
+
+        # Write the updated settings back to the file
+        with open(settings_file_path, 'w', encoding='utf-8') as file:
+            file.writelines(content)
 
 
 
@@ -647,10 +668,43 @@ JAZZMIN_SETTINGS = {{
         """Generates the Django project, app, and necessary configurations."""
 
         try:
-            # Step 1: Initialize Django project and app
-            subprocess.run(['django-admin', 'startproject', self.project_name], check=True)
+            # Step 1: Initialize Django project and app. Everything is anchored
+            # on the output directory; the caller's cwd is never touched.
+            base_dir = self._base_dir()
+            project_dir = os.path.abspath(self._project_dir())
+
+            # Never create or delete anything outside the output directory.
+            if project_dir == base_dir or os.path.commonpath([base_dir, project_dir]) != base_dir:
+                raise ValueError(f"Invalid Django project name: {self.project_name!r}")
+
+            # Remove a leftover generated project (startproject refuses to
+            # overwrite), but only if it has manage.py: anything else is the
+            # user's and is never deleted.
+            if os.path.exists(project_dir):
+                if not os.path.isdir(project_dir):
+                    raise ValueError(
+                        f"Cannot generate the Django project: {project_dir!r} "
+                        f"already exists and is not a directory."
+                    )
+                looks_generated = os.path.isfile(os.path.join(project_dir, "manage.py"))
+                if not looks_generated and os.listdir(project_dir):
+                    raise ValueError(
+                        f"Refusing to overwrite {project_dir!r}: it already "
+                        f"exists, is not empty, and does not look like a "
+                        f"generated Django project (no manage.py). Move it "
+                        f"aside, choose a different output directory, or pick "
+                        f"a different project name."
+                    )
+                shutil.rmtree(project_dir)
+
+            # startapp imports the new settings module; keep its .pyc files
+            # out of the generated tree.
+            subprocess_env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
+            subprocess.run(['django-admin', 'startproject', self.project_name],
+                           cwd=base_dir, check=True, env=subprocess_env)
             subprocess.run([sys.executable, 'manage.py', 'startapp',
-                                self.app_name], cwd=self.project_name, check=True)
+                                self.app_name], cwd=project_dir, check=True,
+                           env=subprocess_env)
 
             # Step 2: Update settings.py
             self.update_settings()
@@ -690,6 +744,9 @@ JAZZMIN_SETTINGS = {{
             print("✅ Django project generation completed successfully!")
 
         except subprocess.CalledProcessError as e:
+            # Re-raised so callers never package a half-written project as success.
             print(f"❌ Error during project generation: {e}")
+            raise
         except Exception as e:
             print(f"❌ Unexpected error: {e}")
+            raise

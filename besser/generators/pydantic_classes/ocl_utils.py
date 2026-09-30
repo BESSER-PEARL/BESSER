@@ -20,6 +20,14 @@ Three result shapes are produced:
 Every generated expression is compiled with :func:`compile` and screened with
 an AST white-list before being handed to the template, so the generator can
 never emit Python code that does not parse.
+
+A related, separate function -- :func:`get_rejected_constraints_for_class` --
+covers constraints that never make it as far as :func:`parse_ocl_constraint`
+at all: ones the web editor's OCL converter rejected outright, which it
+records on ``domain_model.conversion_issues`` instead of attaching to
+``domain_model.constraints``. Both that function and the ``skipped`` path
+above leave the same kind of trace comment in the generated file (see
+``SKIP_COMMENT_TEMPLATE``) rather than silently dropping the rule.
 """
 
 import ast
@@ -89,11 +97,38 @@ _ALLOWED_NODES = (
 #: inside a regex it means "word boundary", not "backspace".
 _OCL_ESCAPES = {'\\': '\\', "'": "'", '"': '"', 'n': '\n', 't': '\t', 'r': '\r'}
 
-#: Emitted for constraints the generator refuses to translate.
+#: Emitted for a constraint this generator cannot enforce here: either it
+#: reached this module but isn't expressible as a Pydantic validator
+#: (``skipped``, see :func:`get_constraints_for_class`), or the web editor's
+#: OCL type-checker rejected it before it ever got here (``rejected``, see
+#: :func:`get_rejected_constraints_for_class`). Both paths render through
+#: this one template via :func:`_format_unenforced_comment`, so the comment
+#: text -- the handoff contract for the LLM agent that must implement the
+#: rule elsewhere -- has a single source of truth.
 SKIP_COMMENT_TEMPLATE = (
-    "# NOTE: OCL constraint '{name}' involves collections/relationships "
-    "and is not enforced by this Create model."
+    "TODO: OCL constraint '{name}' is NOT enforced in this file.\n"
+    "OCL: {expression}\n"
+    "Reason: {reason}\n"
+    "Fix: implement in the router handler for this operation, after loading\n"
+    "related rows via the database session. Do not add this check here."
 )
+
+#: Reason text for a constraint that reached this module but could not be
+#: translated (as opposed to one rejected upstream by the OCL converter,
+#: which carries its own reason -- see ``get_rejected_constraints_for_class``).
+_NOT_TRANSPILABLE_REASON = "not transpilable into a Pydantic validator on a single Create payload"
+
+
+def _format_unenforced_comment(name: Optional[str], expression: str, reason: str) -> List[str]:
+    """
+    Render :data:`SKIP_COMMENT_TEMPLATE` into ready-to-emit ``#``-prefixed lines.
+
+    Every output line -- including any newline embedded in ``expression`` or
+    ``reason`` -- is prefixed individually, so nothing can slip out of comment
+    context into executable code.
+    """
+    text = SKIP_COMMENT_TEMPLATE.format(name=name or "unnamed", expression=expression, reason=reason)
+    return [f"# {line}".rstrip() for line in text.splitlines()]
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +213,10 @@ def get_constraints_for_class(
         if 'model_expression' in result and not include_model_level:
             continue
         result['constraint_name'] = constraint.name
+        if result.get('skipped'):
+            result['comment_lines'] = _format_unenforced_comment(
+                constraint.name, constraint.expression, _NOT_TRANSPILABLE_REASON
+            )
         if 'validator_name' in result:
             result['validator_name'] = _unique_name(
                 result['validator_name'], used_validator_names
@@ -185,6 +224,54 @@ def get_constraints_for_class(
         parsed.append(result)
 
     return parsed
+
+
+def get_rejected_constraints_for_class(
+    conversion_issues: Optional[List[Dict[str, Any]]],
+    class_name: str,
+) -> List[Dict[str, Any]]:
+    """
+    Build trace comments for OCL invariants that never reached this module.
+
+    The web editor's OCL type-checker records a constraint it rejects (bad
+    syntax, wrong property name, ...) in ``domain_model.conversion_issues``
+    instead of attaching it to ``domain_model.constraints``. That makes it
+    invisible to the Pydantic generator -- and to whoever has to implement it
+    -- so every issue whose ``context`` names this class gets the same
+    trace-comment treatment as a skipped constraint (see
+    :func:`get_constraints_for_class`).
+
+    Args:
+        conversion_issues: ``domain_model.conversion_issues`` -- a list of dicts
+            with ``context``/``name``/``expression``/``reason`` keys -- or None.
+        class_name: Name of the class to get rejected constraints for.
+
+    Returns:
+        List of ``{'rejected': True, 'constraint_name', 'comment_lines'}`` dicts,
+        ordered by constraint name so the generated code is deterministic.
+    """
+    rejected = []
+    for issue in conversion_issues or []:
+        if issue.get('context') != class_name:
+            continue
+        name = issue.get('name') or 'unnamed'
+        expression = issue.get('expression') or issue.get('original_text') or ''
+        reason = issue.get('reason') or 'rejected by the OCL converter'
+        if reason.startswith('Warning: '):
+            reason = reason[len('Warning: '):]
+        # The converter quotes the whole constraint back inside its reason
+        # ("Invalid OCL syntax in '<expression>': Property 'x' not found..."),
+        # which the comment already prints verbatim on its own OCL line. Keep
+        # the diagnosis, drop the second copy.
+        if expression:
+            reason = reason.replace(f" in '{expression}'", "", 1)
+        rejected.append({
+            'rejected': True,
+            'constraint_name': name,
+            'comment_lines': _format_unenforced_comment(name, expression, reason),
+        })
+
+    return sorted(rejected, key=lambda r: r['constraint_name'])
 
 
 def build_constraints_map(
@@ -198,14 +285,17 @@ def build_constraints_map(
     Args:
         domain_model: The DomainModel object
         include_model_level: Include multi-property (model-level) constraints
-        include_skipped: Include untranslatable constraints as ``{'skipped': True}``
+        include_skipped: Include untranslatable constraints as ``{'skipped': True}``,
+            and constraints the OCL converter rejected outright -- read from
+            ``domain_model.conversion_issues`` -- as ``{'rejected': True}``.
 
     Returns:
         Dict mapping class name -> list of parsed constraints
     """
     constraints_map = {}
+    conversion_issues = getattr(domain_model, 'conversion_issues', None) if include_skipped else None
 
-    if not domain_model.constraints:
+    if not domain_model.constraints and not conversion_issues:
         return constraints_map
 
     for cls in domain_model.get_classes():
@@ -216,6 +306,10 @@ def build_constraints_map(
             include_model_level=include_model_level,
             include_skipped=include_skipped,
         )
+        if conversion_issues:
+            class_constraints = class_constraints + get_rejected_constraints_for_class(
+                conversion_issues, cls.name
+            )
         if class_constraints:
             constraints_map[cls.name] = class_constraints
 
@@ -464,7 +558,10 @@ def _regex_literal(regex: str) -> str:
 
 def _translate_matches(text: str) -> str:
     """
-    Translate OCL ``<target>.matches('<regex>')`` calls into Python ``re.match`` calls.
+    Translate OCL ``matches`` as a whole-string match, not a prefix match.
+
+    ``re.match`` also permits a trailing newline when a regex ends with ``$``;
+    ``re.fullmatch`` enforces the entire value without rewriting its pattern.
     """
     def replace(match: "re.Match") -> str:
         raw = match.group('sq')
@@ -472,7 +569,7 @@ def _translate_matches(text: str) -> str:
             raw = match.group('dq')
         regex = _unescape_ocl_string(raw)
         target = re.sub(r"\s+", "", match.group('target'))
-        return f"re.match({_regex_literal(regex)}, {target}) is not None"
+        return f"re.fullmatch({_regex_literal(regex)}, {target}) is not None"
 
     return _MATCHES_CALL.sub(replace, text)
 
@@ -645,7 +742,7 @@ def _build_compound_message(property_name: str, body: str, python_expression: st
             raw = pure_match.group('dq')
         return f"{property_name} must match '{_unescape_ocl_string(raw)}'"
 
-    if 're.match(' in python_expression:
+    if 're.fullmatch(' in python_expression:
         readable = _collapse_whitespace_outside_quotes(body)
         return f"{property_name} must satisfy: {readable}"
 
@@ -727,13 +824,13 @@ def _is_safe_expression(expression: str, allow_self: bool) -> bool:
                 return False
         elif isinstance(node, ast.Call):
             func = node.func
-            is_re_match = (
+            is_re_fullmatch = (
                 isinstance(func, ast.Attribute)
-                and func.attr == 'match'
+                and func.attr == 'fullmatch'
                 and isinstance(func.value, ast.Name)
                 and func.value.id == 're'
             )
-            if not is_re_match:
+            if not is_re_fullmatch:
                 return False
         elif not isinstance(node, _ALLOWED_NODES):
             return False
@@ -775,5 +872,5 @@ def _finalize_result(
         return {'skipped': True}
 
     result['message_repr'] = repr(result['message'])
-    result['uses_re'] = 're.match(' in stripped
+    result['uses_re'] = 're.fullmatch(' in stripped
     return result

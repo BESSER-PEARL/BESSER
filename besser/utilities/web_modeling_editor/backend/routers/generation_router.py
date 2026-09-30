@@ -30,6 +30,7 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.github_oau
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.generators.agents.baf_generator import GenerationMode
 from besser.generators.agents.agent_personalization import call_openai_chat
+from besser.utilities.provenance import add_generation_provenance_to_zip, get_besser_version
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -125,12 +126,56 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 
 logger = logging.getLogger(__name__)
 
-SENSITIVE_KEYS = {'api_key', 'openai_api_key', 'secret', 'password', 'token', 'apikey', 'api-key'}
+# Key-name fragments that mark a value as sensitive. Substring match
+# (case-insensitive) so this catches camelCase, kebab-case, snake_case,
+# screaming-snake, and weird vendor names alike: ``openaiApiKey``,
+# ``OPENAI_API_KEY``, ``api-key``, ``X-Auth-Token`` all hit one of these.
+SENSITIVE_KEYS = frozenset({
+    "api_key", "apikey", "api-key",
+    "secret", "password", "passwd",
+    "token",                              # access_token, id_token, refresh_token
+    "credential",
+    "private",                            # private_key, private-key
+    "auth",                               # bearer_auth, basic_auth, x-auth-*
+    "cert",                               # cert, certificate
+    "session",                            # session_id, session_token
+    "key",                                # catch-all (last so longer matches dominate)
+})
 
 
-def sanitize_config(config: dict) -> dict:
-    """Return a shallow copy of config with sensitive values masked."""
-    return {k: '***' if any(s in k.lower() for s in SENSITIVE_KEYS) else v for k, v in config.items()}
+# _safe_path is IMPORTED above (services.utils.user_profile_utils.safe_path).
+# Do not re-add a local copy: the one that used to live here shadowed the import
+# with a weaker ``startswith`` containment check instead of the shared helper's
+# ``os.path.commonpath`` (which also handles the Windows cross-drive ValueError).
+
+
+def _key_is_sensitive(key: str) -> bool:
+    """True if a config key name looks like it holds a secret."""
+    if not isinstance(key, str):
+        return False
+    lowered = key.lower()
+    return any(token in lowered for token in SENSITIVE_KEYS)
+
+
+def sanitize_config(config: Any) -> Any:
+    """Return a deep-copied structure with sensitive values masked.
+
+    Walks nested dicts, lists, and tuples so a credential nested under
+    ``config["llm"]["openai"]["api_key"]`` is still masked. Non-dict
+    leaves are returned untouched (we only redact when the *key name*
+    looks sensitive — value-level heuristics are too prone to false
+    positives for now).
+    """
+    if isinstance(config, dict):
+        return {
+            k: ("***" if _key_is_sensitive(k) else sanitize_config(v))
+            for k, v in config.items()
+        }
+    if isinstance(config, list):
+        return [sanitize_config(item) for item in config]
+    if isinstance(config, tuple):
+        return tuple(sanitize_config(item) for item in config)
+    return config
 
 
 router = APIRouter(prefix="/besser_api", tags=["generation"])
@@ -704,11 +749,13 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
                 agent_config_yamls=agent_config_yamls,
             )
 
-        return _create_zip_response(temp_dir, "web_app")
+        options = {"versions": ", ".join(slug for slug, _ in version_specs)} if multi else None
+        return _create_zip_response(temp_dir, "web_app", options)
 
 
 def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
-    """Return a StreamingResponse wrapping a ZIP buffer."""
+    """Return a StreamingResponse wrapping an agent ZIP buffer."""
+    add_generation_provenance_to_zip(zip_buffer, "agent")
     return StreamingResponse(
         zip_buffer,
         media_type="application/zip",
@@ -923,20 +970,10 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
         output_dir=temp_dir,
     )
 
-    # DjangoGenerator.generate() shells out to `django-admin startproject`
-    # without a cwd, and several internal paths are derived from os.getcwd().
-    # The caller therefore has to chdir into temp_dir for the duration of the
-    # generation; otherwise the project gets scaffolded in the FastAPI
-    # process's cwd and the harvester below finds an empty temp_dir/<project>.
-    def _run_generate_in_temp_dir():
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(temp_dir)
-            generator_instance.generate()
-        finally:
-            os.chdir(original_cwd)
-
-    await asyncio.to_thread(_run_generate_in_temp_dir)
+    # DjangoGenerator anchors all of its filesystem effects on output_dir
+    # (its subprocesses run with an explicit cwd), so it can run directly on
+    # a worker thread without touching the process-wide working directory.
+    await asyncio.to_thread(generator_instance.generate)
 
     # Validate generation
     if not os.path.exists(project_dir) or not os.listdir(project_dir):
@@ -951,7 +988,9 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
                 arc_name = os.path.relpath(file_path, project_dir)
                 zip_file.write(file_path, arc_name)
 
-    zip_buffer.seek(0)
+    add_generation_provenance_to_zip(zip_buffer, "django", {
+        "project_name": project_name, "app_name": app_name, "containerization": containerization,
+    })
     file_name = get_filename_for_generator("django")
 
     return StreamingResponse(
@@ -1004,7 +1043,10 @@ async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: 
                 arc_name = os.path.relpath(file_path, project_dir)
                 zip_file.write(file_path, arc_name)
 
-    zip_buffer.seek(0)
+    add_generation_provenance_to_zip(zip_buffer, "spring", {
+        "project_name": project_name, "app_name": app_name, "spring_boot_version": spring_boot_version,
+        "java_version": java_version, "package_name": package_name,
+    })
     file_name = get_filename_for_generator("spring")
 
     return StreamingResponse(
@@ -1089,7 +1131,7 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
                     arc_name = os.path.relpath(file_path, temp_dir)
                     zip_file.write(file_path, arc_name)
 
-        zip_buffer.seek(0)
+        add_generation_provenance_to_zip(zip_buffer, "jsonschema", {"mode": mode})
 
         return StreamingResponse(
             zip_buffer,
@@ -1142,6 +1184,7 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
         )
     with open(output_file_path, "rb") as f:
         file_content = f.read()
+    file_content = _with_version_comment(file_content, download_filename)
 
     return Response(
         content=file_content,
@@ -1282,8 +1325,8 @@ async def _generate_standard(buml_model, generator_class, generator_type: str, g
         return _create_file_response(temp_dir, generator_type)
 
 
-def _create_zip_response(temp_dir: str, generator_type: str):
-    """Create a ZIP file response."""
+def _create_zip_response(temp_dir: str, generator_type: str, options: Optional[dict] = None):
+    """Create a ZIP file response, with ``BESSER_GENERATION.md`` at its root."""
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for root, _, files in os.walk(temp_dir):
@@ -1292,7 +1335,7 @@ def _create_zip_response(temp_dir: str, generator_type: str):
                 arc_name = os.path.relpath(file_path, temp_dir)
                 zip_file.write(file_path, arc_name)
 
-    zip_buffer.seek(0)
+    add_generation_provenance_to_zip(zip_buffer, generator_type, options)
     file_name = get_filename_for_generator(generator_type)
 
     return StreamingResponse(
@@ -1300,6 +1343,20 @@ def _create_zip_response(temp_dir: str, generator_type: str):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+
+
+# Single-file downloads get a leading version comment only where a comment
+# line is always valid; JSON, BPMN XML (the XML declaration must come first)
+# and Turtle ship unchanged.
+_VERSION_COMMENT_PREFIX = {".py": "#", ".sql": "--"}
+
+
+def _with_version_comment(content: bytes, file_name: str) -> bytes:
+    """Prefix ``content`` with ``Generated by BESSER <version>`` when its type allows a comment."""
+    prefix = _VERSION_COMMENT_PREFIX.get(os.path.splitext(file_name)[1].lower())
+    if not prefix:
+        return content
+    return f"{prefix} Generated by BESSER {get_besser_version()}\n".encode("utf-8") + content
 
 
 def _create_file_response(temp_dir: str, generator_type: str):
@@ -1325,6 +1382,7 @@ def _create_file_response(temp_dir: str, generator_type: str):
 
     # Use the proper filename from config
     proper_filename = get_filename_for_generator(generator_type)
+    file_content = _with_version_comment(file_content, proper_filename)
 
     return Response(
         content=file_content,

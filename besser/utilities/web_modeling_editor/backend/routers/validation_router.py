@@ -209,11 +209,9 @@ async def validate_diagram(input_data: DiagramInput):
         logger.warning("Construction validation error: %s", e)
         validation_errors.extend(str(e).splitlines())
     except Exception:
-        # Anything reaching here is a bug rather than a problem with the diagram,
-        # and its message describes our internals - a missing key, a repr, a path
-        # - none of which helps the person drawing the diagram. The traceback goes
-        # to the log, the caller gets a sentence. The OCL check below and the
-        # @handle_endpoint_errors decorator already behave this way.
+        # A bug, not a problem with the diagram: the message describes our
+        # internals and helps nobody drawing a diagram. Traceback to the log, one
+        # sentence to the caller - as the OCL check below already does.
         logger.exception("Unexpected error during diagram conversion/validation")
         validation_errors.append("An unexpected error occurred during validation.")
 

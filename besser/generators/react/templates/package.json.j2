@@ -1,6 +1,9 @@
 {
   "name": "frontend",
   "version": "0.1.0",
+  {# @tailwindcss/vite is ESM-only; without this Vite tries to require() it
+     and the dev server refuses to start. #}
+  "type": "module",
   "private": true,
   "dependencies": {
     "@testing-library/dom": "^10.4.1",
@@ -52,9 +55,8 @@
     "@types/leaflet": "^1.9.12",
     "@types/leaflet.heat": "^0.2.4",
 {% endif %}
+    "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^4.3.0",
-    "autoprefixer": "^10.4.21",
-    "postcss": "^8.5.6",
     "tailwindcss": "^4.1.14",
     "vite": "^5.4.0"
   }

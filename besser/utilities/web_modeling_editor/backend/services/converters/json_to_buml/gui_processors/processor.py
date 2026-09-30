@@ -52,7 +52,7 @@ from .component_parsers import (
     parse_text,
 )
 from .constants import CONTAINER_TAGS, CONTAINER_TYPES, INPUT_COMPONENT_TYPES, TEXT_TAGS
-from .styling import build_style_map, resolve_component_styling
+from .styling import build_style_map, build_stylesheet, resolve_component_styling
 from .utils import sanitize_name, get_element_by_id, clean_method_name
 
 
@@ -393,7 +393,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             isinstance(attributes, dict) and attributes.get("data-gui-type") == "Form"
         ):
             name = get_unique_name(component, "Form")
-            form = parse_form(component, styling, name, meta, parse_component_list)
+            form = parse_form(component, styling, name, meta, parse_component_list, class_model, domain_model)
             attach_meta(form, meta)
             return form
 
@@ -501,6 +501,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         versionName="1.0",
         modules=set(),
         description=str(raw_title or "Generated GUI"),
+        stylesheet=build_stylesheet(gui_model_json.get("styles", [])),
     )
 
     # Parse pages/screens
@@ -569,15 +570,33 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
     # Helper function to find component by ID recursively
     def find_component_by_id(elements, component_id):
-        """Recursively search for a component by its ID."""
-        for element in elements:
-            if hasattr(element, 'name') and element.name == component_id:
-                return element
-            if isinstance(element, ViewContainer) and hasattr(element, 'view_elements'):
-                found = find_component_by_id(element.view_elements, component_id)
-                if found:
-                    return found
-        return None
+        """Recursively search for a component by its editor id, then by name.
+
+        The editor stores the table's ``id`` attribute (e.g. ``table-book``),
+        which the element's sanitized name (``table_book``) does not match.
+        """
+        def search(elements, matches):
+            for element in elements:
+                if matches(element):
+                    return element
+                if isinstance(element, ViewContainer) and hasattr(element, 'view_elements'):
+                    found = search(element.view_elements, matches)
+                    if found:
+                        return found
+            return None
+
+        return (
+            search(elements, lambda e: getattr(e, 'component_id', None) == component_id)
+            or search(elements, lambda e: getattr(e, 'name', None) == component_id)
+        )
+
+    def resolve_class(class_ref):
+        """A domain class from the editor's class id, or from its name."""
+        if not domain_model or not class_ref:
+            return None
+        class_el = get_element_by_id(class_model, class_ref)
+        class_name = class_el.get('name') if class_el else class_ref
+        return domain_model.get_class_by_name(class_name)
 
     # Post-processing: Resolve Action and Button class references
     def resolve_action_references(elements):
@@ -614,16 +633,9 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
                 # Resolve entity_class for CRUD operations
                 if hasattr(element, '_entity_class_id'):
-                    entity_class_id = getattr(element, '_entity_class_id')
-                    # Step 1: Get the class element from class_model (JSON) by ID
-                    entity_class_el = get_element_by_id(class_model, entity_class_id)
-                    # Step 2: Extract the name from the JSON element
-                    entity_class_name = entity_class_el.get('name') if entity_class_el else None
-                    # Step 3: Use domain_model to get the actual BUML object by name
-                    if domain_model and entity_class_name:
-                        entity_class = domain_model.get_class_by_name(entity_class_name)
-                        if entity_class:
-                            element.entity_class = entity_class
+                    entity_class = resolve_class(getattr(element, '_entity_class_id'))
+                    if entity_class:
+                        element.entity_class = entity_class
 
                 # Resolve instance_source (Table component reference)
                 if element.instance_source and isinstance(element.instance_source, str):
@@ -666,10 +678,9 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                                 if target_screen:
                                     action.target_screen = target_screen
 
-                            # Resolve CRUD target_class
+                            # Resolve CRUD target_class (the editor stores the class id)
                             if isinstance(action, (Create, Read, Update, Delete)) and hasattr(action, '_target_class_name'):
-                                target_name = getattr(action, '_target_class_name')
-                                target_class = domain_model.get_class_by_name(target_name) if domain_model else None
+                                target_class = resolve_class(getattr(action, '_target_class_name'))
                                 if target_class:
                                     action.target_class = target_class
 
@@ -689,7 +700,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
     # style_entries is only used for the editor round-trip (buml_to_json),
     # not by any code generator. All styling is already captured in per-component
-    # Styling objects via build_style_map/resolve_component_styling.
+    # Styling objects (element-id rules) and in gui_model.stylesheet (all other rules).
     # TODO: rebuild styles from per-component Styling in buml_to_json, then remove this field entirely.
     # normalized_styles = []
     # for style_entry in gui_model_json.get("styles", []):

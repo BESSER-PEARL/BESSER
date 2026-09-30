@@ -51,7 +51,7 @@ As first-class citizen, function can be referenced by their name without parenth
     }
 
 Statements and Control Flow
-^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 BAL supports structured, imperative control flow.
 Similarly to most imperative languages, the main building blocks of BAL are statements.
@@ -174,10 +174,13 @@ In addition, datastructures traversal and method calls are also considered expre
 Basic expressions
 """"""""""""""""""""""""""
 Basic expressions provided by BAL includes:
+
 * Binary expressions
-    * **Arithmetic:** +, -, *, /, %
-    * **Boolean:** &&, ||
-    * **Comparison:** ==, !=, <, >, <=, >=
+
+  * **Arithmetic:** ``+``, ``-``, ``*``, ``/``, ``%``
+  * **Boolean:** ``&&``, ``||``
+  * **Comparison:** ``==``, ``!=``, ``<``, ``>``, ``<=``, ``>=``
+
 * Unary expression (prefix notation)
     * **Arithmetic:** -
     * **Boolean:** !
@@ -242,7 +245,7 @@ Type System
 BAL is a strongly typed language with a type system revolving around a set of primitive types, sequence types, model derived types and function types
 
 Primitive and Sequence Types
-^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Primitive types and sequences are directly embedded in the base language.
 Primitive types include: int, float, str, bool, nothing and any.
 These types can directly instantiated in the form of literals (e.g. ``1``, ``1.0``, ``"text"``, ``true``, ``null``)

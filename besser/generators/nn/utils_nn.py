@@ -2011,7 +2011,7 @@ def renumber_tensorop_variables(modules_details):
     1. Finds all tensorop entries that use op_X naming 
         (not original names)
     2. Creates a mapping from old op_X names to new sequential 
-        _op_1, _op_2, _op_3...
+        _op_1, _op_2, _op_3 and so on
     3. Finds all temp variables (_binop_temp_X, _nested_temp_X,
         _subscript_temp_X)
     4. Renumbers them sequentially within their prefix category

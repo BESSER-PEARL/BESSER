@@ -16,8 +16,15 @@ Basic Usage Example
 
     from besser.generators.terraform import TerraformGenerator
 
-    terraform_generator = TerraformGenerator(deployment_model=deployment_model)
+    terraform_generator = TerraformGenerator(
+        deployment_model=deployment_model,
+        output_dir="output",
+    )
     terraform_generator.generate()
+
+.. note::
+   Unlike most generators, ``output_dir`` is **required** here: the constructor
+   creates the directory immediately, so leaving it unset raises a ``TypeError``.
 
 
 Although B-UML enables the modeling of public clusters for different cloud providers and on-premises, currently the 
@@ -62,20 +69,20 @@ For example, if deploying to AWS with a cluster named "my-cluster", the folder s
 
     aws_my-cluster/
     ├── eks.tf
-    ├── iam-config.tf
+    ├── iam-oidc.tf
     ├── igw.tf
     ├── nat.tf
     ├── nodes.tf
     ├── provider.tf
-    ├── route.tf
+    ├── routes.tf
     ├── setup.bat
-    ├── subnet.tf
+    ├── subnets.tf
     └── vpc.tf
 
 For GCP with a cluster named "my-cluster", the folder structure would be:
 ::
 
-    gcp_my-cluster/
+    google_my-cluster/
     ├── api.tf
     ├── app.tf
     ├── cluster.tf

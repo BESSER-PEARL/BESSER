@@ -98,8 +98,14 @@ Container hardening
    ``no-new-privileges``, ``init: true``, ``pids_limit``, ``mem_limit``,
    ``cpus``, a tmpfs sessions root and a healthcheck. The container runs as
    root only so it can switch each session to its UID; agent code never runs
-   as root. ``security_opt: seccomp=unconfined, apparmor=unconfined`` is
-   required by bubblewrap (see ``sandbox.py``).
+   as root. ``security_opt: seccomp=unconfined, apparmor=unconfined,
+   systempaths=unconfined`` is required by bubblewrap (see ``sandbox.py``).
+   ``systempaths=unconfined`` lifts Docker's masking of parts of ``/proc``:
+   without it, stock kernels (for example Amazon Linux 2023) refuse the
+   private ``/proc`` each session mounts, and every session is refused. Only
+   container root, the simulator API process, can reach the unmasked
+   entries; agent code runs as unprivileged session users. Docker Desktop
+   does not need it.
 
 Residual risks (accepted)
    The network namespace is not unshared: agents need outbound access to the
@@ -109,6 +115,27 @@ Residual risks (accepted)
    (``AGENT_SIMULATOR_PORT_POOL_START`` and up), and the backend over
    ``agent_simulator_network``, which is the same API any internet user can
    reach.
+
+Reverse proxy
+-------------
+
+The editor opens a WebSocket to ``/besser_api/simulation/<session id>/ws``. A
+reverse proxy in front of the backend must forward the WebSocket upgrade for
+that path; a plain HTTP proxy rule for ``/besser_api`` turns the handshake into
+an ordinary ``GET`` that the backend answers with ``404``, and the editor shows
+"WebSocket connection error". With nginx, add a dedicated location before the
+general ``/besser_api`` one:
+
+.. code-block:: nginx
+
+   location ~ ^/besser_api/simulation/[^/]+/ws$ {
+       proxy_pass http://127.0.0.1:9000;
+       proxy_http_version 1.1;
+       proxy_set_header Upgrade    $http_upgrade;
+       proxy_set_header Connection "upgrade";
+       proxy_set_header Host       $host;
+       proxy_read_timeout 3600s;
+   }
 
 Configuration
 -------------

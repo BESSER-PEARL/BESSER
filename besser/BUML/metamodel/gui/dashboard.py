@@ -1416,10 +1416,12 @@ class MapLayer(ViewComponent):
         4. ``weight_field`` set → ``heatmap``
         5. ``latitude_field`` **and** ``longitude_field`` set → ``points``
         6. Attribute-name inspection of the bound domain class:
+
            - attribute ``geometry`` present → ``geojson`` (``choropleth`` if ``value`` also present)
            - attributes ``latitude``/``lat`` **and** ``longitude``/``lng``/``lon`` + ``weight``
              → ``heatmap``
            - attributes ``latitude``/``lat`` **and** ``longitude``/``lng``/``lon`` → ``points``
+
         7. Default: ``points``.
         """
         if self._layer_type is not None:

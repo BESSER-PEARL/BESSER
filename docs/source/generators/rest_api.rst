@@ -29,6 +29,12 @@ Parameters
    models and Pydantic validation models the API imports. Use the REST API generator when you only
    need API scaffolding; use the Backend generator when you need a complete backend with database.
 
+.. seealso::
+   Need endpoints the model does not describe, or auth on top of them? The
+   :doc:`Spec-Driven Agent <../spec_driven_agent/index>` runs this generator (or
+   the Backend generator) first, then lets an LLM customise the result to a
+   natural-language request.
+
 Output Files
 ------------
 

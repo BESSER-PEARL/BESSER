@@ -205,6 +205,28 @@ _VENDORED_PRICES_PATH = Path(__file__).with_name("data") / "model_prices.json"
 # listed, so a resold id can never be priced at some third party's rate.
 _PRICE_LOOKUP_PREFIXES = ("", "anthropic/", "openai/", "mistral/", "nebius/")
 
+# Gateways bill their own rates, which the vendored table does not know: pricing
+# Command Code's Kimi-K3 from the Nebius row billed cached input at the full
+# input rate ($3 instead of $0.30 per 1M), so long runs hit the per-run cap
+# about 3x too early. Source: https://commandcode.ai/docs/resources/pricing-limits
+# (USD per 1M tokens, checked 2026-09-30). Keys: endpoint host, lower-cased id.
+_ROUTE_PRICING: dict[str, dict[str, dict[str, float]]] = {
+    "api.commandcode.ai": {
+        "moonshotai/kimi-k3": {"input": 3.0, "output": 15.0, "cache_write": 0.0, "cache_read": 0.30},
+        "qwen/qwen3.8-max-0902": {"input": 2.0, "output": 6.0, "cache_write": 0.0, "cache_read": 0.25},
+        "meta/muse-spark-1.3": {"input": 1.25, "output": 4.25, "cache_write": 0.0, "cache_read": 0.15},
+        "poolside/laguna-s-2.1-free": {"input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0},
+    },
+}
+
+
+def _route_pricing(model_id: str, route: "str | None") -> "dict[str, float] | None":
+    """The rate a known gateway publishes for ``model_id``, if any."""
+    if not route:
+        return None
+    host = (urlparse(route).hostname or route).lower()
+    return _ROUTE_PRICING.get(host, {}).get(model_id.lower())
+
 
 @lru_cache(maxsize=1)
 def _vendored_price_index() -> dict[str, dict[str, float]]:
@@ -275,7 +297,7 @@ def _published_pricing(model_id: str) -> dict[str, float] | None:
     return None
 
 
-def _get_pricing(model_id: str, billed: bool = False) -> dict[str, float]:
+def _get_pricing(model_id: str, billed: bool = False, route: "str | None" = None) -> dict[str, float]:
     """Get the per-1M-token rates for a model ID.
 
     Published per-model rates come first, from the vendored table. The
@@ -298,6 +320,9 @@ def _get_pricing(model_id: str, billed: bool = False) -> dict[str, float]:
     official OpenAI, Mistral, Nebius): the id-shape free heuristic is skipped
     there, since ``codestral-2508`` on Mistral's API is not a local checkout.
     """
+    routed = _route_pricing(model_id, route)
+    if routed is not None:
+        return routed
     model_lower = model_id.lower()
     # Self-hosted / free local models — never bill, never trip the cost cap.
     if not billed and _is_free_local_model(model_lower):
@@ -342,13 +367,15 @@ def _get_pricing(model_id: str, billed: bool = False) -> dict[str, float]:
 class UsageTracker:
     """Tracks token usage and estimated cost across all API calls."""
 
-    def __init__(self, model: str, billed: bool = False, billed_to_user: bool = True):
+    def __init__(self, model: str, billed: bool = False, billed_to_user: bool = True,
+                 route: "str | None" = None):
         self.model = model
         self.billed = billed
         # False on the server-owned keyless route: the estimate still drives
         # the cost cap (it spends org credits) but is not the user's cost.
         self.billed_to_user = billed_to_user
-        self.pricing = _get_pricing(model, billed)
+        self.route = route
+        self.pricing = _get_pricing(model, billed, route)
         self.input_tokens = 0
         self.output_tokens = 0
         self.cache_creation_tokens = 0
@@ -412,7 +439,7 @@ class UsageTracker:
         self.cache_creation_tokens += cw
         self.cache_read_tokens += cr
         if model and model != self.model:
-            override = _get_pricing(model, self.billed)
+            override = _get_pricing(model, self.billed, self.route)
             primary = self.pricing
             delta = (
                 inp * (override["input"] - primary["input"])
@@ -434,7 +461,7 @@ class UsageTracker:
         if usd and usd > 0:
             self._extra_cost_usd += float(usd)
 
-    def reprice(self, model: str, billed: bool) -> None:
+    def reprice(self, model: str, billed: bool, route: "str | None" = None) -> None:
         """Bill tokens recorded from now on at ``model``'s rate.
 
         Spend so far is kept: the counters are cumulative, so the difference
@@ -442,7 +469,8 @@ class UsageTracker:
         """
         before = self.estimated_cost
         self.billed = billed
-        self.pricing = _get_pricing(model, billed)
+        self.route = route
+        self.pricing = _get_pricing(model, billed, route)
         self._extra_cost_usd += before - self.estimated_cost
 
     @property
@@ -1613,7 +1641,7 @@ class OpenAIProvider(LLMProvider):
         self._free_route = free_route
         self._usage = UsageTracker(
             self._model, billed=self._is_billed_route(resolved_base),
-            billed_to_user=not free_route,
+            billed_to_user=not free_route, route=resolved_base,
         )
         # Ordered fallback chain, used when the primary endpoint stays
         # unavailable past the retry budget. The switch is sticky for the run so
@@ -1672,7 +1700,7 @@ class OpenAIProvider(LLMProvider):
         self._client = OpenAI(**client_kwargs)
         self._base_url = base_url
         self._model = fb_model
-        self._usage.reprice(fb_model, self._is_billed_route(base_url))
+        self._usage.reprice(fb_model, self._is_billed_route(base_url), base_url)
         self._on_fallback = True
         # Why we fell back — lets the runner/UI say "free daily quota exhausted"
         # instead of a generic "primary unavailable" (the daily quota is the

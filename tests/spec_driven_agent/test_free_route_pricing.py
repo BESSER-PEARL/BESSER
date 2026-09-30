@@ -60,8 +60,13 @@ def test_a_free_tier_kimi_k3_run_is_priced_and_cost_capped(lineup):
     assert client.model == KIMI_K3
     assert client.usage.pricing["input"] == pytest.approx(3.0)
     assert client.usage.pricing["output"] == pytest.approx(15.0)
-
-    assert _run_like_the_reviewed_one(client) > CAP_USD
+    # Command Code bills cached input at $0.30/1M, so the reviewed run fits the
+    # cap; a run ten times as long still does not.
+    assert client.usage.pricing["cache_read"] == pytest.approx(0.30)
+    assert _run_like_the_reviewed_one(client) < CAP_USD
+    for _ in range(9):
+        _run_like_the_reviewed_one(client)
+    assert client.usage.estimated_cost > CAP_USD
 
 
 def test_a_free_tier_run_is_not_billed_to_the_user(lineup):
@@ -71,10 +76,18 @@ def test_a_free_tier_run_is_not_billed_to_the_user(lineup):
 
 
 @pytest.mark.parametrize("alt", UNPRICED_ALTS)
-def test_unpriced_paid_alts_get_the_conservative_fallback_rate(lineup, alt):
+def test_paid_alts_use_command_codes_published_rates(lineup, alt):
+    # These have no row in the vendored table; Command Code publishes them.
     client = create_llm_client(provider="free", model=alt)
     assert client.model == alt
-    assert client.usage.pricing == _MODEL_PRICING["gpt-4o"]
+    assert client.usage.pricing != _MODEL_PRICING["gpt-4o"]
+    assert client.usage.pricing["cache_read"] < client.usage.pricing["input"]
+
+
+def test_an_unpriced_paid_id_on_an_unknown_gateway_gets_the_conservative_rate():
+    from besser.spec_driven_agent.providers.llm_client import _get_pricing
+
+    assert _get_pricing("meta/muse-spark-1.3", route="https://gateway.example/v1") == _MODEL_PRICING["gpt-4o"]
 
 
 def test_the_free_suffixed_alt_is_zero(lineup):
@@ -120,3 +133,43 @@ def test_a_byok_nebius_kimi_k3_run_is_billed_to_the_user(lineup):
     assert client.usage.pricing["input"] == pytest.approx(3.0)
     assert client.usage.pricing["output"] == pytest.approx(15.0)
     assert cost == pytest.approx(4.30, abs=0.01)
+
+
+# --- Command Code's own rates (live run 438889bc, 2026-09-30) ----------------
+# Priced from the Nebius row, cached input billed at the full $3/1M: the run's
+# 1.33M cached tokens alone cost $4, it hit the $5 cap in Phase 2 and Phase 3
+# never ran. At Command Code's published $0.30/1M the same tokens cost ~$1.35.
+_CC = "https://api.commandcode.ai/provider/v1"
+
+
+def _cc_cost(model, input_tokens, output_tokens, cached):
+    from types import SimpleNamespace
+    from besser.spec_driven_agent.providers.llm_client import UsageTracker
+
+    tracker = UsageTracker(model, billed=False, billed_to_user=False, route=_CC)
+    tracker.record(SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens,
+                                   cache_creation_input_tokens=0, cache_read_input_tokens=cached))
+    return tracker.estimated_cost
+
+
+def test_command_code_kimi_prices_cached_input_at_its_published_rate():
+    cost = _cc_cost("moonshotai/Kimi-K3", 207003, 22027, 1332928)
+    assert cost == pytest.approx(207003 * 3e-6 + 22027 * 15e-6 + 1332928 * 0.3e-6)
+    assert cost < 1.5  # was 4.95 and tripped the $5 cap
+
+
+@pytest.mark.parametrize("model, rates", [
+    ("Qwen/Qwen3.8-Max-0902", (2.0, 6.0, 0.25)),
+    ("meta/muse-spark-1.3", (1.25, 4.25, 0.15)),
+    ("poolside/laguna-s-2.1-free", (0.0, 0.0, 0.0)),
+])
+def test_command_code_alternates_use_their_published_rates(model, rates):
+    inp, out, cached = rates
+    assert _cc_cost(model, 1_000_000, 1_000_000, 1_000_000) == pytest.approx(inp + out + cached)
+
+
+def test_the_same_id_on_another_route_keeps_that_routes_price():
+    from besser.spec_driven_agent.providers.llm_client import _get_pricing
+
+    nebius = _get_pricing("moonshotai/Kimi-K3", billed=True, route="https://api.studio.nebius.ai/v1/")
+    assert nebius["input"] == 3.0 and nebius["cache_read"] != 0.30

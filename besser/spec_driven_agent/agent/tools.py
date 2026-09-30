@@ -458,16 +458,25 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
     {
         "name": "run_command",
         "description": (
-            "Run a shell command in the workspace directory and return stdout + stderr. "
-            "Use it to test code, run linters and verify builds. Runs in the workspace "
-            "root (or working_dir) with a 120-second timeout; a server started in the "
-            "foreground blocks for the full timeout. Destructive or exfiltrating commands "
+            "Run a shell command in this run's shell and return stdout + stderr. Use it to "
+            "test code, run linters and verify builds. The shell is one session for the "
+            "whole run, like a terminal: `cd` and exported variables (`export X=1`, "
+            "`source .venv/bin/activate`) carry over to the next command, and a process "
+            "started in the background (`python app.py > app.log 2>&1 &`) keeps running "
+            "after its command returns, so a server started in one command can be tested "
+            "with curl in the next. What a background process prints after its command "
+            "returned is discarded: redirect it to a file. Each command has a 120-second "
+            "timeout; a command still running then is killed with everything it started, "
+            "while the session and earlier background processes keep running, so a server "
+            "started in the foreground blocks for the full timeout. When a result's notes "
+            "say the session was restarted or the command ran in a one-off sandbox, earlier "
+            "background processes are gone. A result's cwd field is the shell's directory "
+            "when it is not the workspace root. Destructive or exfiltrating commands "
             "are refused with an error. stdout/stderr are truncated (~15k chars total); "
             "when cut, full_output_path names a file holding the complete log. A command "
             "whose runtime is not installed returns success=true, skipped=true: treat it "
             "as not checked, not as passing. Several run_command calls in one turn run "
-            "one after another in the order given. Do not rely on a server started by an "
-            "earlier command: it does not outlive the command that started it."
+            "one after another in the order given."
         ),
         "input_schema": {
             "type": "object",
@@ -478,8 +487,11 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
                 },
                 "working_dir": {
                     "type": "string",
-                    "description": "Subdirectory to run in (relative to workspace). Default: workspace root.",
-                    "default": ".",
+                    "description": (
+                        "Directory for this command only, relative to the workspace root; "
+                        "the shell's own directory does not move. Default: the shell's "
+                        "current directory (the workspace root until a command cd's elsewhere)."
+                    ),
                 },
             },
             "required": ["command"],
@@ -493,7 +505,8 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "if package.json exists, runs npm install (both, when both exist). "
             "Returns an error when neither file is found. A custom command runs through "
             "run_command instead of auto-detection. Every install shares run_command's "
-            "120-second timeout and sandbox."
+            "120-second timeout and shell session, and leaves the shell's directory and "
+            "environment as they were."
         ),
         "input_schema": {
             "type": "object",

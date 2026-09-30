@@ -45,6 +45,7 @@ from besser.spec_driven_agent.errors import (
 )
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.execution.sandbox import sandbox_home
+from besser.spec_driven_agent.execution.shell_session import close_sessions_for
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,
@@ -164,7 +165,9 @@ _EXCLUDED_OUTPUT_DIRS = {
 
 
 def _remove_run_dir(path: str) -> None:
-    """Delete a run's workspace and the sandbox ``$HOME`` beside it."""
+    """Delete a run's workspace and the sandbox ``$HOME`` beside it, ending the
+    run's shell session first so none of its processes outlive the folder."""
+    close_sessions_for(path)
     shutil.rmtree(path, ignore_errors=True)
     shutil.rmtree(sandbox_home(path), ignore_errors=True)
 

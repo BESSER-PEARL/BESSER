@@ -78,7 +78,7 @@ is capped at `MAX_SPILL_SIZE` so a runaway command cannot fill the disk.
 | Planning, prompts, discovery | `planning/gap_analyzer.py`, `planning/action_inventory.py`, `planning/mutation_inventory.py`, `planning/stack_metadata.py`, `agent/prompt_builder.py`, `agent/runbook.py`, `model_serializer.py` |
 | Authoritative request | `planning/specification.py`, `planning/user_request.py` |
 | Tool contracts and execution | `agent/tools.py`, `agent/tool_executor.py`, `agent/edit_apply.py` |
-| Subprocess environment and sandbox | `execution/process.py`, `execution/sandbox.py` |
+| Subprocess environment, sandbox and the per-run shell session | `execution/process.py`, `execution/sandbox.py`, `execution/shell_session.py` |
 | Shared findings and source contracts | `parsed_source.py`, `validation/issues.py`, `validation/python_source.py`, `validation/python_imports.py`, `validation/frontend_schema.py`, `validation/frontend_source.py`, `validation/frontend_resolution.py`, `validation/frontend_build.py`, `validation/frontend_contract.py`, `validation/toolchain.py` |
 | Immediate source/model contracts | `validation/write_diagnostics.py`, `validation/contract_checks.py`, `validation/frontend_bindings.py`, `validation/endpoint_coherence.py` |
 | Deterministic repair (no model, no LLM) | `repair/import_repair.py`, `repair/scaffold_repair.py` |

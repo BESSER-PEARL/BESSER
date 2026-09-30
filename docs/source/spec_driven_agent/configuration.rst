@@ -95,6 +95,14 @@ Feature flags
   :ref:`spec-driven-shell-tools` before enabling it -- the local path has a
   timeout, a workspace-confined working directory, a stripped environment and a
   denylist, but it is not an operating-system sandbox.
+- ``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` (**900**) -- Close a run's shell
+  session after this many seconds without a command; its processes stop and
+  the next command starts a new session. ``0`` never closes it early; it
+  still ends with the run.
+- ``BESSER_LLM_SHELL_SESSION_MAX`` (**10**) -- Live shell sessions per worker
+  process. Past the cap a command runs in a one-off sandbox, so what it
+  starts in the background stops when it returns; ``0`` gives every command
+  its own sandbox. See :ref:`spec-driven-shell-tools`.
 - ``BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION`` (**off**) -- Run ``tsc`` /
   ``cargo`` / ``kotlinc`` in Phase 3. Costly on non-Python stacks. The cheap
   in-process checks (syntax, Dockerfile references, contracts, ``ruff``) run

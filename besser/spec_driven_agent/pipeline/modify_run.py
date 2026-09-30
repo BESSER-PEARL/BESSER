@@ -18,6 +18,7 @@ import os
 import time
 
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory
+from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 class ModifyRunMixin:
     """modify and friends; see the module docstring."""
 
+    @ends_shell_session
     def modify(self, instructions: str) -> str:
         """Edit a seeded workspace in place instead of rebuilding it.
 

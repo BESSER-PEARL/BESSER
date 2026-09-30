@@ -101,7 +101,7 @@ from besser.spec_driven_agent.planning.stack_metadata import (
     pre_generate_metadata,
     stack_label,
 )
-from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 from besser.spec_driven_agent.validation.docker_context import (
@@ -649,6 +649,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Main entry point
     # ==================================================================
 
+    @ends_shell_session
     def run(self, instructions: str) -> str:
         """Run the three-phase generation. Returns path to output directory."""
         if not instructions or not instructions.strip():
@@ -777,6 +778,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Resume entry point
     # ==================================================================
 
+    @ends_shell_session
     def resume(self, instructions: str) -> str:
         """Resume a previously-crashed run from its checkpoint.
 
@@ -2871,6 +2873,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         Phase 3 fix loop only acts on ``blocker`` items when
         ``auto_fix_issues`` is enabled.
         """
+        # The checks run in fresh sandboxes, but they read and build this
+        # workspace: nothing the model left running may write to it meanwhile.
+        self.executor.stop_shell_processes()
         # Repair the build configuration BEFORE looking for defects in it.
         # The class-only path never asks the model for a Vite config: across
         # 192 recorded class-only runs, 192 had none and 96 also had a JSX

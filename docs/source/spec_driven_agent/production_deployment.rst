@@ -135,7 +135,20 @@ Sandbox and network
   worker's own root process. Generated code never runs as that process; it
   runs inside bubblewrap's user namespace. Running the worker as a non-root
   user would narrow the exposure further.
-- The validators that execute generated code run in the same sandbox, with
+- A run's commands share one long-lived sandbox, its shell session, so a
+  server the agent starts in one command is still up for the next. It is torn
+  down when the run ends in any way, when its folder is deleted, and when the
+  worker exits (the session's control channel is a pipe to the worker
+  process). Two settings bound what sessions hold:
+  ``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` (900) closes a session that has
+  had no command for that long, and ``BESSER_LLM_SHELL_SESSION_MAX`` (10)
+  caps live sessions per worker; past it a command gets a one-off sandbox as
+  before. A session costs a bubblewrap process and a small Python supervisor
+  plus whatever the run left running, so size the worker's memory for
+  ``BESSER_LLM_SHELL_SESSION_MAX`` running apps rather than for one command
+  at a time.
+- The validators that execute generated code run in sandboxes of the same
+  kind, each fresh and never the run's shell session, with
   the network cut: the import check after each file write, the import smoke
   check, the startup, create and API probes, and the ``tsc``, ``cargo check``
   and ``npm run build`` checks. When the worker cannot start the sandbox they

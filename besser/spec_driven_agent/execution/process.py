@@ -107,10 +107,22 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 # Per-stream capture cap. The temp files sit outside the sandbox and are read
 # into worker memory; a `yes` or a log loop must not fill the disk or the heap.
 MAX_CAPTURE_BYTES = 8_000_000
+FLOOD_NOTE = f"\n[output exceeded {MAX_CAPTURE_BYTES // 1_000_000} MB; the command was killed]"
 
 
 def _captured_size(handle) -> int:
     return os.fstat(handle.fileno()).st_size
+
+
+def _dropped_marker(size: int) -> bytes:
+    return f"\n\n... [{size - 2 * (MAX_CAPTURE_BYTES // 2)} bytes of output dropped] ...\n\n".encode()
+
+
+def _text(data: bytes) -> str:
+    # What text=True would produce, minus its strict decode errors.
+    return io.TextIOWrapper(io.BytesIO(data),
+                            encoding=locale.getpreferredencoding(False),
+                            errors="replace").read()
 
 
 def _decode(handle) -> str:
@@ -120,14 +132,18 @@ def _decode(handle) -> str:
         half = MAX_CAPTURE_BYTES // 2
         head = handle.read(half)
         handle.seek(size - half)
-        marker = f"\n\n... [{size - 2 * half} bytes of output dropped] ...\n\n".encode()
-        data = head + marker + handle.read(half)
+        data = head + _dropped_marker(size) + handle.read(half)
     else:
         data = handle.read()
-    # What text=True would produce, minus its strict decode errors.
-    return io.TextIOWrapper(io.BytesIO(data),
-                            encoding=locale.getpreferredencoding(False),
-                            errors="replace").read()
+    return _text(data)
+
+
+def decode_output(data: bytes) -> str:
+    """:func:`_decode` for output captured in memory (the shell session)."""
+    if len(data) > MAX_CAPTURE_BYTES:
+        half = MAX_CAPTURE_BYTES // 2
+        data = data[:half] + _dropped_marker(len(data)) + data[-half:]
+    return _text(data)
 
 
 def run_bounded(args, *, timeout: float, cwd: str | None = None,
@@ -177,6 +193,5 @@ def run_bounded(args, *, timeout: float, cwd: str | None = None,
                 break
         stderr = _decode(err)
         if flooded:
-            stderr += (f"\n[output exceeded {MAX_CAPTURE_BYTES // 1_000_000} MB; "
-                       "the command was killed]")
+            stderr += FLOOD_NOTE
         return subprocess.CompletedProcess(args, proc.returncode, _decode(out), stderr)

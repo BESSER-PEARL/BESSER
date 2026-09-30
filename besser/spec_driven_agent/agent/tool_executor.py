@@ -14,12 +14,12 @@ them intelligently — e.g., read the error, fix the code, retry.
 
 import ast
 import fnmatch
+import functools
 import hashlib
 import json
 import logging
 import os
 import re
-import subprocess
 import sys
 import threading
 import weakref
@@ -50,13 +50,12 @@ from besser.spec_driven_agent.execution.process import (
     _safe_subprocess_env,
     _SAFE_ENV_ALLOWLIST as _SAFE_ENV_ALLOWLIST,
     _SECRET_SUBSTRINGS as _SECRET_SUBSTRINGS,
-    run_bounded,
 )
 from besser.spec_driven_agent.execution.sandbox import (
     SandboxUnavailable,
     run_confined,
-    sandboxed_command,
 )
+from besser.spec_driven_agent.execution.shell_session import ShellSession
 from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 from besser.spec_driven_agent.repair.dependency_pins import pin_requirements_file
 from besser.spec_driven_agent.agent.edit_apply import (
@@ -258,6 +257,17 @@ def _looks_like_command_not_found(stderr: str) -> bool:
         return True
     return bool(_EXEC_ENOENT_RE.search(stderr) or _DASH_NOT_FOUND_RE.search(stderr))
 
+
+def ends_shell_session(method):
+    """Close ``self.executor``'s shell session when a run entry point returns
+    or raises: its servers must not outlive the run."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self.executor.close()
+    return wrapper
 
 
 
@@ -491,6 +501,9 @@ class ToolExecutor:
     ):
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
         self.allow_shell = allow_shell
+        # The run's one shell: cwd, exported env and background processes
+        # carry over between run_command calls. No process until first use.
+        self._shell = ShellSession(self.workspace)
         # Serial number for spilled command logs (see _spill_command_output).
         self._command_log_count = 0
         self.domain_model = domain_model
@@ -584,6 +597,16 @@ class ToolExecutor:
         # until the model has demonstrably tried targeted edits — the
         # rewrite habit is where modify-run regressions come from.
         self._modify_guard = False
+
+    def close(self) -> None:
+        """End the run's shell session; every process it holds is killed."""
+        self._shell.close()
+
+    def stop_shell_processes(self) -> None:
+        """Before a harness validation sweep: nothing the model left running
+        (a dev server writing build output, a watcher) may overlap the checks."""
+        self._shell.stop_processes("the shell session was ended before the harness "
+                                   "re-checked the workspace")
 
     def enable_modify_guard(self) -> None:
         """Turn on the edit-first guardrail (modify runs only)."""
@@ -2980,22 +3003,26 @@ class ToolExecutor:
             return None
         return rel
 
-    def _run_command(self, args: dict) -> dict:
+    def _run_command(self, args: dict, *, adopt_state: bool = True) -> dict:
         """
-        Run a shell command in the workspace.
+        Run a shell command in the run's shell session.
 
         Security:
         - Working directory locked to workspace (or subdirectory)
-        - The command itself runs in a namespace sandbox that binds only this
-          run's directory and gives it its own PID 1 (see execution.sandbox).
-          The path lock covers tool arguments; the sandbox covers the command
-          string (e.g. `cd ../<other_run>`).
-        - Timeout enforced
+        - The command runs in the run's namespace sandbox, which binds only
+          this run's directory and has its own PID 1 (see execution.sandbox,
+          execution.shell_session). The path lock covers tool arguments; the
+          sandbox covers the command string (e.g. `cd ../<other_run>`).
+        - Timeout enforced per command
         - Output truncated to prevent context blow-up, full log spilled to
           the workspace when it is
+
+        ``adopt_state=False`` (install_dependencies) runs in the same session
+        without moving its directory or changing its environment.
         """
         command = args["command"]
-        working_dir = self._safe_cwd(args.get("working_dir", "."))
+        working_dir = args.get("working_dir")
+        start_dir = self._safe_cwd(working_dir) if working_dir else None
 
         # Refuse obviously-destructive or exfil commands before we hand
         # them to the shell. Returned as a normal tool error so the LLM
@@ -3010,13 +3037,13 @@ class ToolExecutor:
                 "success": False,
             }
 
-        # Fail closed: a command that cannot be confined is not run. Falling
-        # back to an unconfined shell would silently restore both holes the
-        # sandbox exists to close.
+        logger.info("Running command: %s (in %s)", command, start_dir or self._shell.cwd)
         try:
-            sandbox = sandboxed_command(
-                command, workspace=self.workspace, cwd=working_dir,
-            )
+            # Fail closed: a command that cannot be confined is not run.
+            # Falling back to an unconfined shell would silently restore both
+            # holes the sandbox exists to close.
+            result = self._shell.run(command, working_dir=start_dir,
+                                     timeout=COMMAND_TIMEOUT, adopt_state=adopt_state)
         except SandboxUnavailable as exc:
             logger.error("run_command refused, sandbox unavailable: %s", exc)
             return {
@@ -3025,89 +3052,77 @@ class ToolExecutor:
                 "exit_code": None,
                 "success": False,
             }
-
-        logger.info(
-            "Running command: %s (in %s, sandbox=%s)",
-            command, working_dir, sandbox.mode,
-        )
-
-        try:
-            # Tree-killing: `npm install` leaves node children holding the
-            # output, and subprocess.run's timeout then hangs on Windows.
-            result = run_bounded(
-                sandbox.argv,
-                shell=sandbox.use_shell,
-                cwd=working_dir,
-                timeout=COMMAND_TIMEOUT,
-                env=_safe_subprocess_env(),
-            )
-
-            startup_error = sandbox.startup_error(result.returncode, result.stderr)
-            if startup_error:
-                logger.error("run_command sandbox failed to start: %s", startup_error)
-                return {
-                    "error": _SANDBOX_REFUSAL,
-                    "command": command,
-                    "exit_code": None,
-                    "success": False,
-                }
-
-            raw_stdout = result.stdout or ""
-            raw_stderr = result.stderr or ""
-            stdout = self._truncate(raw_stdout, MAX_OUTPUT_SIZE // 2)
-            # For stderr (errors), keep the tail where the actual error message is
-            stderr = self._truncate(raw_stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True)
-
-            # If the command failed because the runtime isn't installed in
-            # this container (e.g. `ruby -c file.rb` when ruby is absent),
-            # treat it as a soft skip rather than a real error. Otherwise
-            # the LLM dutifully reports "Ruby is not installed in the
-            # execution environment" in its user-facing summary, which is
-            # noise the user can't act on.
-            if result.returncode != 0 and _looks_like_command_not_found(stderr):
-                logger.info(
-                    "run_command: runtime not available, treating as soft skip: %s",
-                    command,
-                )
-                return {
-                    "exit_code": 0,
-                    "stdout": "",
-                    "stderr": "",
-                    "success": True,
-                    "skipped": True,
-                    "skip_reason": (
-                        "Runtime for this command is not installed in the "
-                        "execution environment; validation skipped."
-                    ),
-                }
-
-            payload = {
-                "exit_code": result.returncode,
-                "stdout": stdout,
-                "stderr": stderr,
-                "success": result.returncode == 0,
-            }
-            spilled = self._spill_command_output(command, raw_stdout, raw_stderr)
-            if spilled:
-                payload["full_output_path"] = spilled
-                payload["full_output_note"] = (
-                    "stdout/stderr above are truncated and the middle is missing. "
-                    f"The complete output is in {spilled}: use search_in_files to "
-                    "locate the errors, then read_file with offset/limit. That file "
-                    "is run-internal and is not part of the generated project."
-                )
-            return payload
-
-        except subprocess.TimeoutExpired as exc:
-            # What it printed before the kill is often the reason it hung.
-            return {
-                "error": f"Command timed out after {COMMAND_TIMEOUT} seconds",
-                "command": command,
-                "stdout": self._truncate(exc.output or "", MAX_OUTPUT_SIZE // 2),
-                "stderr": self._truncate(exc.stderr or "", MAX_OUTPUT_SIZE // 2, keep_tail=True),
-            }
         except Exception as e:
+            logger.exception("run_command failed")
             return {"error": f"Failed to run command: {e}"}
+
+        extra: dict = {}
+        cwd = self._shell.relative_cwd()
+        if cwd != ".":
+            extra["cwd"] = cwd
+        if result.notes:
+            extra["notes"] = result.notes
+
+        if result.timed_out:
+            # What it printed before the kill is often the reason it hung.
+            survivors = (" The shell session and processes earlier commands left "
+                         "running are unaffected." if result.persistent else "")
+            return {
+                "error": f"Command timed out after {COMMAND_TIMEOUT} seconds and was killed, "
+                         f"with everything it started.{survivors}",
+                "command": command,
+                "stdout": self._truncate(result.stdout, MAX_OUTPUT_SIZE // 2),
+                "stderr": self._truncate(result.stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True),
+                **extra,
+            }
+
+        raw_stdout = result.stdout or ""
+        raw_stderr = result.stderr or ""
+        stdout = self._truncate(raw_stdout, MAX_OUTPUT_SIZE // 2)
+        # For stderr (errors), keep the tail where the actual error message is
+        stderr = self._truncate(raw_stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True)
+
+        # If the command failed because the runtime isn't installed in
+        # this container (e.g. `ruby -c file.rb` when ruby is absent),
+        # treat it as a soft skip rather than a real error. Otherwise
+        # the LLM dutifully reports "Ruby is not installed in the
+        # execution environment" in its user-facing summary, which is
+        # noise the user can't act on.
+        if result.returncode != 0 and _looks_like_command_not_found(stderr):
+            logger.info(
+                "run_command: runtime not available, treating as soft skip: %s",
+                command,
+            )
+            return {
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": "",
+                "success": True,
+                "skipped": True,
+                "skip_reason": (
+                    "Runtime for this command is not installed in the "
+                    "execution environment; validation skipped."
+                ),
+                **extra,
+            }
+
+        payload = {
+            "exit_code": result.returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "success": result.returncode == 0,
+            **extra,
+        }
+        spilled = self._spill_command_output(command, raw_stdout, raw_stderr)
+        if spilled:
+            payload["full_output_path"] = spilled
+            payload["full_output_note"] = (
+                "stdout/stderr above are truncated and the middle is missing. "
+                f"The complete output is in {spilled}: use search_in_files to "
+                "locate the errors, then read_file with offset/limit. That file "
+                "is run-internal and is not part of the generated project."
+            )
+        return payload
 
     def _install_dependencies(self, args: dict) -> dict:
         """
@@ -3136,7 +3151,8 @@ class ToolExecutor:
 
     def _install_detected(self, args: dict, working_dir: str, custom_command, requirements_txt: str) -> dict:
         if custom_command:
-            return self._run_command({"command": custom_command, "working_dir": args.get("working_dir", ".")})
+            return self._run_command({"command": custom_command, "working_dir": args.get("working_dir", ".")},
+                                     adopt_state=False)
 
         # Auto-detect
         package_json = os.path.join(working_dir, "package.json")
@@ -3145,11 +3161,13 @@ class ToolExecutor:
 
         if os.path.isfile(requirements_txt):
             pip_cmd = f"{sys.executable} -m pip install -r requirements.txt --quiet"
-            pip_result = self._run_command({"command": pip_cmd, "working_dir": args.get("working_dir", ".")})
+            pip_result = self._run_command({"command": pip_cmd, "working_dir": args.get("working_dir", ".")},
+                                           adopt_state=False)
             results.append({"type": "pip", "result": pip_result})
 
         if os.path.isfile(package_json):
-            npm_result = self._run_command({"command": "npm install --quiet", "working_dir": args.get("working_dir", ".")})
+            npm_result = self._run_command({"command": "npm install --quiet", "working_dir": args.get("working_dir", ".")},
+                                           adopt_state=False)
             results.append({"type": "npm", "result": npm_result})
 
         if not results:

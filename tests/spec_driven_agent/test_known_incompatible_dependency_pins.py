@@ -71,7 +71,7 @@ def _install(tmp_path, requirements):
     ex = ToolExecutor(workspace=str(tmp_path), allow_shell=True)
     seen = []
 
-    def run(args):
+    def run(args, **_):
         seen.append((tmp_path / "requirements.txt").read_text(encoding="utf-8"))
         return _OK
 
@@ -89,7 +89,7 @@ def test_install_dependencies_pins_before_installing(tmp_path):
 def test_install_dependencies_pins_before_a_custom_command(tmp_path):
     (tmp_path / "requirements.txt").write_text(RUN_438889BC, encoding="utf-8")
     ex = ToolExecutor(workspace=str(tmp_path), allow_shell=True)
-    ex._run_command = lambda args: _OK
+    ex._run_command = lambda args, **_: _OK
     result = ex._install_dependencies({"command": "pip install -r requirements.txt"})
     assert result["pinned"]
     assert "bcrypt==4.0.1" in (tmp_path / "requirements.txt").read_text()

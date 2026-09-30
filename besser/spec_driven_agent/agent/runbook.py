@@ -6,17 +6,15 @@ make hundreds of calls without ever booting the application.
 
 Two things are missing, and this module supplies both.
 
-**1. A boot that cannot block.** ``run_command`` is
-``subprocess.run(..., capture_output=True, timeout=120)``. That call returns
-only when the child exits *and* the inherited pipes reach EOF, so a server
-started in the foreground burns the whole 120-second budget and returns
-nothing; a server started with ``&`` but without redirecting its output keeps
-the pipe open and does exactly the same. Booting a web app from this tool
-therefore requires the model to know a detach idiom that differs per platform
-(``nohup … > log 2>&1 &`` on Linux, ``start /b … > log 2>&1`` on Windows) and
-to get it right first time - with a 120-second dead end as the penalty for
-getting it wrong. ``.besser_probe.py`` does the detaching in Python, so the
-model issues one literal command that behaves identically on both platforms.
+**1. A boot that cannot block.** A server started in the foreground of
+``run_command`` burns the whole 120-second budget, is killed, and returns
+nothing. Booting a web app from this tool therefore requires the model to know
+a detach idiom that differs per platform (``… > log 2>&1 &`` on Linux,
+``start /b … > log 2>&1`` on Windows) and to get it right first time - with a
+120-second dead end as the penalty for getting it wrong. ``.besser_probe.py``
+does the detaching in Python, so the model issues one literal command that
+behaves identically on both platforms. The run's shell session keeps the
+server running between commands (see ``execution/shell_session.py``).
 
 **2. A procedure with a defined next step at every branch.** Telling a model
 to "verify the app" is an exhortation; it measurably does not work. The
@@ -130,10 +128,12 @@ python {PROBE_FILENAME} log 60                   # last 60 lines of the server l
 python {PROBE_FILENAME} down                     # stop it
 ```
 
-A server does not outlive the `run_command` that started it: each command runs
-in its own process space, so `req` and `routes` boot their own server when none
-is answering (the SQLite file keeps records between commands), and `down` only
-stops a server started in the same command.
+The shell is one session for the whole run, so the server `up` starts keeps
+running between commands: `routes` and `req` reach that same server, and `down`
+stops it. If the session was restarted in between (a result's notes say so),
+`req` and `routes` boot a fresh server themselves; the SQLite file keeps
+records either way. The probe path is relative: if you `cd`-ed elsewhere, pass
+`working_dir="."`.
 
 ### The procedure — every outcome has exactly one next step
 
@@ -188,11 +188,10 @@ Run-internal helper written by the BESSER generator; not part of the app.
     python .besser_probe.py log 60
     python .besser_probe.py down
 
-Exists because run_command is a blocking subprocess with a 120-second cap:
-a foreground server consumes the whole budget and returns nothing, and a
-backgrounded one that still holds the inherited stdout pipe does the same.
-This starts the server as a detached child with its output on disk, so the
-command returns in a second or two on every platform.
+Exists because run_command has a 120-second cap: a foreground server
+consumes the whole budget and returns nothing. This starts the server as a
+detached child with its output on disk, so the command returns in a second
+or two on every platform.
 """
 
 import json
@@ -308,9 +307,10 @@ def is_probe_server(pid, port):
 def cmd_down(quiet=False):
     state = read_state()
     pid = state.get("pid")
-    # The recorded pid may name another process now: each sandboxed command
-    # has its own pid namespace, where it can even be a sibling of this one.
-    # Only a process that is recognisably our own server is stopped.
+    # The recorded pid may name another process now: after the shell session
+    # restarted, pids are reused in the new pid namespace and it can even be a
+    # sibling of this one. Only a process that is recognisably our own server
+    # is stopped.
     if pid and not is_probe_server(pid, state.get("port")):
         pid = None
     if not pid:
@@ -415,10 +415,10 @@ def boot(quiet=False):
 def ensure_up():
     """Port of a live server, booting one if none answers; None on failure.
 
-    Under the shell sandbox every command gets its own PID namespace, so the
-    server `up` started is gone by the next command. Each command that needs
-    it therefore boots its own; the SQLite file keeps records between them.
-    A recorded port is reused only while our own server still holds it;
+    The run's shell session normally keeps the server `up` started; when the
+    session was restarted (idle timeout, a one-off sandbox) it is gone, and
+    this boots a new one; the SQLite file keeps records between them. A
+    recorded port is reused only while our own server still holds it;
     otherwise whatever listens there now belongs to someone else.
     """
     state = read_state()

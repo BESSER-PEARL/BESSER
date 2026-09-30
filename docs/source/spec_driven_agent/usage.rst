@@ -11,8 +11,9 @@ Open the AI assistant, describe what you want ("a FastAPI backend for this
 model with JWT auth and Docker"), and confirm the run. When a free tier is
 configured it runs by default with no API-key prompt; to use a commercial
 provider for higher-fidelity results, supply your own key in the optional BYOK
-dialog first. Whenever a run would spend your own key, the assistant asks for
-explicit confirmation — a run never spends your key silently.
+dialog first. Asking for generation can start a run immediately with a saved
+key and incur provider charges. Set the per-run spend and time budgets in the
+key dialog before asking for generation.
 
 The assistant shows the phase timeline, the LLM's tool calls, and a live
 cost/runtime meter as the run streams. Closing the tab does not kill the run:

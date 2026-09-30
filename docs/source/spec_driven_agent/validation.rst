@@ -59,9 +59,12 @@ no build check can see it.
 
 For discovered TypeScript projects and frontend applications, required checks
 that are disabled, unavailable, timed out, or only partially run are recorded as
-``validation unverified:`` warnings. These keep the delivered output incomplete
-and retain its repair checkpoint, but do not spend LLM turns repairing an
-environment restriction. Optional lint checks remain advisory.
+``validation unverified:`` warnings. Their effect on completion depends on the
+check: some contribute to the completion gate, while others are advisory.
+The editor follows the ``done`` event's ``incomplete`` flag; it may present an
+application as ready with unverified checks. Read the findings to distinguish
+checks that passed from checks that did not run. Optional lint checks remain
+advisory.
 
 Checks that execute generated code (the import and runtime probes and the
 compiler and build checks) run in the bubblewrap sandbox described in

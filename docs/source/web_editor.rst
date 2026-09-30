@@ -1,237 +1,46 @@
 Web Modeling Editor
 ===================
 
-One of the practical ways to use BESSER is through the Web Modeling Editor, where you can rapidly 
-design :doc:`B-UML <../buml_language>` models and use the :doc:`BESSER code generators <../generators>`.
+The editor lets you draw B-UML models, describe changes to an assistant, and
+download generated code. Open `editor.besser-pearl.org
+<https://editor.besser-pearl.org>`_ to use the hosted version.
 
-.. note::
-   The BESSER Web Modeling Editor is now live and available at
-   `editor.besser-pearl.org <https://editor.besser-pearl.org>`_.
-   You can access and use it directly in your browser without installing anything locally.
+Start using the editor
+----------------------
 
-The full Web Modeling Editor documentation is published as a separate subproject:
-`BESSER Web Modeling Editor documentation <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/>`_.
-For contributor workflows like adding a new diagram type, see
-`Adding a New Diagram Type <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/contributing/new-diagram-guide/index.html>`_.
+* :doc:`start/browser`: create a project and download your first code.
+* `Editor user guide <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/>`_:
+  diagram tools, project backups, display settings, and AI features.
+* :doc:`guides/choose-generator`: choose an output for your model.
+* :doc:`guides/build-with-ai`: review a model and generate an application.
 
-.. image:: ./img/besser_new.gif
-   :width: 900
-   :alt: BESSER Web Modeling Editor interface
-   :align: center
+The editor guide is the reference for interface instructions and screenshots.
+This site covers the underlying model language, generators, and services.
 
-The editor's source code is available in the
-`BESSER-WEB-MODELING-EDITOR GitHub repository <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_.
-The frontend is vendored into this repository as a git submodule at
-``besser/utilities/web_modeling_editor/frontend``, while the backend services live here under
+Models and services
+-------------------
+
+Use class diagrams for data, GUI diagrams for screens, state machines and
+agent diagrams for behaviour, BPMN for processes, and neural-network diagrams
+for training architectures. See :doc:`buml_language` for the model catalogue.
+Available generation actions depend on the selected diagram and deployment.
+
+The assistant service creates and edits diagrams. The :doc:`Spec-Driven Agent
+<spec_driven_agent/index>` handles application files. Agent chat simulation
+uses a separate :doc:`simulator service <utilities/agent_simulator>`.
+
+Run or extend the editor
+------------------------
+
+The frontend is a Git submodule at
+``besser/utilities/web_modeling_editor/frontend``. Backend services live at
 ``besser/utilities/web_modeling_editor/backend``.
 
-Class Diagram Notation
-----------------------
-
-Class diagrams can be rendered in two equivalent notations, chosen from
-**Project Settings → Display → Class Diagram Notation**. The underlying B-UML
-model is identical in both cases — the notation only affects how the diagram is
-drawn, so switching is lossless.
-
-**UML** (default) — standard UML class notation with visibility prefixes,
-``{id}`` markers on identifier attributes, and ``min..max`` multiplicities.
-
-.. image:: ./img/class_diagram_uml.png
-   :width: 800
-   :alt: Library model rendered in UML notation
-   :align: center
-
-**ER** (Chen-style) — entity/relationship flavor aimed at users with a database
-modeling background. Identifier attributes (``is_id``) are underlined, the
-methods compartment is hidden, associations are drawn as named diamonds, and
-multiplicities are shown as ``(min,max)`` cardinality pairs (with ``*`` rendered
-as ``N``). Inheritance relationships keep their UML rendering since there is no
-direct ER equivalent.
-
-.. image:: ./img/class_diagram_er.png
-   :width: 800
-   :alt: Library model rendered in Chen-style ER notation
-   :align: center
-
-Agent Personalization
----------------------
-
-The editor exposes the full :doc:`agent personalization <generators/agent_personalization>`
-workflow under the *Agent* diagram type:
-
-- **User diagrams** (see :doc:`buml_language/model_types/user_diagram`) describe
-  an end-user — age, languages, skills, education, disabilities. They can be
-  created alongside the agent diagram in the same project.
-- The **Agent Configuration** panel lets you edit the structured configuration
-  (language, style, readability, modality, platform, LLM…) directly, or ask the
-  backend for a recommendation based on one of the saved user profiles.
-
-  - *Deterministic mapping* produces a configuration from a literature-backed
-    rule table — no OpenAI key needed.
-  - *LLM recommendation* calls the configured OpenAI model. An API key must be
-    set either in the panel or as the ``OPENAI_API_KEY`` environment variable
-    on the backend.
-- When generating or deploying, three variant mechanisms can run in parallel:
-  multi-language output, configuration variants, and per-profile
-  **personalization mappings** that bundle one agent variant per mapped user.
-
-The editor's *Publish to Render* action reuses the same pipeline to push a
-standalone, Streamlit-based agent to a GitHub repository with a ready-to-use
-Render blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
-
-AI Assistant & Spec-Driven Generation
--------------------------------------
-
-The editor ships with an AI assistant (a floating widget and a workspace
-drawer) backed by a modeling agent. Through it you
-can create and modify diagrams in natural language, ask questions about your
-model, and trigger code generation — including the
-:doc:`Spec-Driven Agent <spec_driven_agent/index>`.
-
-When you ask for a customised codebase ("a FastAPI backend for this model with
-JWT auth and Docker", "build this in Rust"), the assistant routes the request to
-the Spec-Driven Agent, which generates a deterministic scaffold, lets an LLM
-customise it, then validates and repairs the result. When a free tier is
-configured it is the **default** — the assistant runs on it with no API-key
-prompt. Bringing your own commercial API key (BYOK) is **optional**, offered for
-higher-fidelity results; whenever a run would spend your own key, the assistant
-always asks for explicit confirmation first — a run never spends your key
-silently.
-
-The run streams over `Server-Sent Events
-<https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events>`_ so the
-assistant can show the phase timeline, the LLM's tool calls, and a live
-cost/runtime meter as it works. The run is owned by the server rather than the
-browser connection, so closing the tab does not immediately kill it: you can
-reattach and keep watching. A run that stays unattended past the server's grace
-period is then cancelled, so an abandoned tab cannot burn a full budget.
-
-.. seealso::
-   The agent's own documentation is the
-   :doc:`Spec-Driven Agent <spec_driven_agent/index>` section:
-   :doc:`how it works <spec_driven_agent/how_it_works>`,
-   the :doc:`REST + SSE contract <spec_driven_agent/api>` behind this panel,
-   :doc:`providers and the free tier <spec_driven_agent/models>`, and
-   :doc:`durable runs <spec_driven_agent/runs>`.
-
-Building a web app (review-then-generate)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-When you ask the assistant to **create a web app**, it first builds the **data
-model** (a class diagram) *and* the **screens** (a GUI no-code diagram), then
-**pauses**: it presents the spec and screens for your review and does **not**
-auto-run code generation. To produce the code, reply with **"generate the web
-app"**. This deliberate pause is a safety and quality feature — there is no
-surprise, long-running code-generation pass until you approve the model and
-screens.
-
-Agent Simulation
-----------------
-
-The *Simulate Agent* action of an agent diagram runs the agent live and lets
-you chat with it without leaving the editor. The backend generates the BAF
-agent (see :doc:`generators/baf`) and hands it to a separate, sandboxed agent
-simulator service, which runs one isolated session per user.
-
-- The editor-facing endpoints, access rules and limits are described under
-  *Agent Simulation* in :doc:`web_editor_backend`.
-- The simulator service itself (sandbox, security model, configuration,
-  operations) is described in :doc:`utilities/agent_simulator`.
-- For the editor side (credentials dialog, chat panel, workspace files), see
-  `Agent Simulation <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/user-guide/agent-simulation.html>`_
-  in the Web Modeling Editor user guide.
-
-Neural Network Diagram
-----------------------
-
-The editor supports neural network architecture modeling through the *NN*
-diagram type. The underlying B-UML model captures layers, tensor operations,
-and training metadata in a form that the code generators use to produce
-runnable training code.
-
-- **Layers** cover the standard catalog (Conv1D/2D/3D, Pooling,
-  SimpleRNN/LSTM/GRU, Linear, Flatten, Embedding, Dropout, LayerNorm,
-  BatchNorm). Each layer carries the parameters needed to define it, such
-  as ``kernel_dim``, ``hidden_size`` or ``return_type``.
-- **Tensor operations** (``concatenate``, ``multiply``, ``matmultiply``,
-  ``reshape``, ``transpose``, ``permute``) compose layer outputs and are
-  placed inline with layers in the same container.
-- **NNContainer** holds the modules of a neural network. A diagram has one
-  top-level container and may include additional containers used as
-  sub-networks, linked into the main one via **NNReference** elements.
-- **NNNext** relationships order modules within a container, defining the
-  flow of data through the network.
-- **Training Dataset** and **Test Dataset** elements describe the data
-  feeding into the model: name, path, task type
-  (``binary``/``multi_class``/``regression``), and input format
-  (``csv``/``images``). When the input format is ``images``, an **Image**
-  element is attached to the dataset, holding the shape and an optional
-  normalization flag.
-- A **Configuration** element captures training hyperparameters: batch size,
-  epochs, learning rate, optimizer, loss function, metrics, plus optional
-  weight decay and momentum.
-
-The *Generate* menu offers four output variants: **PyTorch** or
-**TensorFlow**, each in **Subclassing** or **Sequential** form. Diagrams are
-checked against a set of metamodel rules (cross-reference integrity,
-identifier safety, numerical bounds, dataset consistency) and the
-**Validate** action surfaces any violations before code is generated. See
-:doc:`buml_language/model_types/nn` for the metamodel reference and
-:doc:`generators/pytorch` / :doc:`generators/tensorflow` for the generator
-details.
-
-BPMN Diagram
-------------
-
-The editor supports BPMN 2.0 process modelling through the *BPMN* diagram
-type. The underlying B-UML model (see :doc:`buml_language/model_types/bpmn`)
-covers the WME palette one-to-one and follows the OMG BPMN 2.0.2 abstract
-syntax.
-
-- **Flow nodes** cover the standard catalog: ``BPMNTask`` (with
-  ``taskType`` user / service / send / receive / manual / business-rule /
-  script / default and an optional ``marker`` for loops or multi-instance),
-  ``BPMNSubprocess``, ``BPMNTransaction``, ``BPMNCallActivity``,
-  ``BPMNStartEvent`` / ``BPMNIntermediateEvent`` / ``BPMNEndEvent`` (with
-  a flat ``eventType`` enum the backend splits into the spec's orthogonal
-  direction × event-definition pair), and ``BPMNGateway``
-  (``exclusive`` / ``inclusive`` / ``parallel`` / ``complex`` /
-  ``event-based``).
-- **Data and artifacts** are ``BPMNDataObject``, ``BPMNDataStore``,
-  ``BPMNAnnotation``, ``BPMNGroup``.
-- **Containment** is expressed via ``BPMNPool`` (a participant) holding
-  ``BPMNSwimlane``\ s and flow nodes; sub-processes can nest flow nodes.
-  Pool-less diagrams (one bare process) are valid.
-- **Flows** all use the single ``BPMNFlow`` relationship type; the
-  ``flowType`` field (``sequence`` / ``message`` / ``association`` /
-  ``data association``) and ``isDefault`` flag select the four metamodel
-  edge classes on the backend side.
-
-The editor round-trips ``.bpmn`` files entirely in the browser (BPMN 2.0
-XML import / export). The backend converters
-(``process_bpmn_diagram`` / ``bpmn_object_to_json``) handle the
-JSON ↔ B-UML side, and ``bpmn_model_to_code`` / ``bpmn_buml_to_json`` close the
-round-trip through executable BUML ``.py`` files.
-
-.. note::
-   The frontend BPMN editor ships in the
-   `BESSER-Web-Modeling-Editor <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_
-   repository, which this repo tracks as a submodule. It covers pools,
-   gateways, flows, start/intermediate/end events and call activities, and
-   supports importing BPMN 2.0 XML.
-
-Backend API Reference
----------------------
-
-The backend services that power code generation, validation, and deployment are
-documented separately. If you are integrating with the backend API or extending it,
-see:
+* `Run locally <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/user-guide/deploy_locally.html>`_.
+* `Add a diagram type <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/contributing/new-diagram-guide/index.html>`_.
+* `Frontend source <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_.
 
 .. toctree::
    :maxdepth: 1
 
    web_editor_backend
-
-.. note::
-   The BESSER Web Modeling Editor is based on a fork of the
-   `Apollon project <https://apollon-library.readthedocs.io/en/latest/>`_, a UML modeling editor.

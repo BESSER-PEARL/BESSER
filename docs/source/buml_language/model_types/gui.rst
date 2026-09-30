@@ -95,6 +95,17 @@ Forms
 ``show_cancel`` / ``cancel_label`` (optional cancel button), and ``columns`` (1–4
 uniform grid layout, default ``1``). All have backward-compatible defaults.
 
+A form that creates records of a class carries a ``data_binding``
+(``DataBinding(domain_concept=<Class>)``), and each of its ``InputField``\ s a
+``DataBinding`` whose ``data_field`` is the attribute it edits. When the
+editor's form is processed, the class comes from the form's ``data-source``
+(class id or name) or, without one, from the input names when they are all
+attributes of exactly one class and supply every attribute a new record of it
+requires (so a lookup form is not bound); a ``<label>`` becomes its input's ``label``
+and the first submit button's text the ``submit_label``. The React generator
+renders a bound form as a ``FormBlock`` that POSTs to ``/<class>/`` (see
+:doc:`../../generators/react`).
+
 Alert
 -----
 
@@ -116,8 +127,166 @@ For data visualization and dashboard-style interfaces, the metamodel includes:
   - ``FieldColumn``: A column bound to a specific class attribute.
   - ``LookupColumn``: A column that resolves values through an association.
 
+- **Map**: An interactive multi-layer map backed by `OpenStreetMap <https://www.openstreetmap.org/>`_
+  via the Leaflet library. Supports static and data-bound layers of types: ``points``,
+  ``geojson``, ``choropleth``, ``heatmap`` — see `Map Component`_ below and :ref:`maps`.
+
 - **AgentComponent**: A component that integrates a BESSER Agent Framework (BAF) agent
   into the user interface, enabling conversational or AI-driven interactions.
+
+A ``MetricCard``'s or a chart ``Series``' ``DataBinding`` may carry an optional
+``aggregation`` (a ``DataAggregation``: ``SUM``, ``AVG``, ``COUNT``, ``MIN``,
+``MAX``, ``MEDIAN``, ``FIRST``, ``LAST``; the names ``"sum"``, ``"avg"``,
+``"count"``, ``"min"``, ``"max"`` are accepted too). A metric card shows the
+aggregation of its ``data_field`` over all records; a chart series groups the
+records by its ``label_field`` and aggregates each group. In the editor JSON it
+is the ``aggregation`` attribute of the metric card, of a chart series, or of
+the chart (for all its series).
+
+Map Component
+-------------
+
+``Map`` is a ``ViewComponent`` that renders an interactive OpenStreetMap tile layer
+with one or more **typed data layers** stacked on top.  It requires no API key.
+See :ref:`maps` for full documentation including the column contract table,
+auto-detection rules, and the generated-code guide.
+
+**Map constructor parameters**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 12 66
+
+   * - Parameter
+     - Default
+     - Description
+   * - ``name``
+     - (required)
+     - Unique component name.
+   * - ``title``
+     - ``None``
+     - Optional heading displayed above the map.
+   * - ``center_latitude``
+     - ``0.0``
+     - Initial map centre latitude (decimal degrees).
+   * - ``center_longitude``
+     - ``0.0``
+     - Initial map centre longitude (decimal degrees).
+   * - ``zoom``
+     - ``10``
+     - Initial zoom level (1 = world, 18 = street).
+   * - ``layers``
+     - ``[]``
+     - List of ``MapLayer`` instances to render on this map.
+
+``WorldMap`` and ``LocationMap`` are thin subclasses of ``Map`` that forward all
+keyword arguments unchanged.
+
+**MapLayerType**
+
+.. code-block:: python
+
+   from besser.BUML.metamodel.gui.dashboard import MapLayerType
+
+   MapLayerType.points     # lat/lng markers
+   MapLayerType.geojson    # GeoJSON polygons or lines
+   MapLayerType.choropleth # value-coloured GeoJSON + auto legend
+   MapLayerType.heatmap    # density heat layer
+
+When ``layer_type`` is ``None``, ``effective_layer_type()`` infers the type from the
+configured field references and, as a final fallback, from the bound class's attribute
+names and types. See :ref:`maps` for the full auto-detection rules.
+
+**MapLayer constructor parameters**
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 12 66
+
+   * - Parameter
+     - Default
+     - Description
+   * - ``name``
+     - (required)
+     - Unique layer name.
+   * - ``layer_type``
+     - ``None``
+     - ``MapLayerType`` value; ``None`` → auto-detect.
+   * - ``data_binding``
+     - ``None``
+     - ``DataBinding`` linking this layer to a domain ``Class``.
+   * - ``latitude_field``
+     - ``None``
+     - ``Property`` for row latitude (``points`` / ``heatmap``).
+   * - ``longitude_field``
+     - ``None``
+     - ``Property`` for row longitude (``points`` / ``heatmap``).
+   * - ``label_field``
+     - ``None``
+     - ``Property`` shown in the popup (all types, optional).
+   * - ``weight_field``
+     - ``None``
+     - ``Property`` used as heat intensity (``heatmap``, optional).
+   * - ``geojson_field``
+     - ``None``
+     - ``Property`` containing a GeoJSON string (``geojson`` / ``choropleth``).
+   * - ``value_field``
+     - ``None``
+     - ``Property`` used to colour regions (``choropleth``).
+
+**Python code example — multi-layer map**
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.structural import (
+        Class, Property, DomainModel, FloatType, StringType,
+    )
+    from besser.BUML.metamodel.gui import GUIModel, Module, Screen, DataBinding
+    from besser.BUML.metamodel.gui.dashboard import Map, MapLayer, MapLayerType
+
+    # Domain model
+    lat        = Property(name="latitude",   type=FloatType)
+    lng        = Property(name="longitude",  type=FloatType)
+    store_name = Property(name="name",       type=StringType)
+    store = Class(name="Store", attributes={lat, lng, store_name})
+
+    geometry   = Property(name="geometry",   type=StringType)
+    population = Property(name="population", type=FloatType)
+    canton = Class(name="Canton", attributes={geometry, population})
+
+    domain = DomainModel(name="LuxMap", types={store, canton})
+
+    # Layers
+    store_layer = MapLayer(
+        name="stores",
+        layer_type=MapLayerType.points,
+        data_binding=DataBinding(name="store_binding", domain_concept=store),
+        latitude_field=lat,
+        longitude_field=lng,
+        label_field=store_name,
+    )
+    canton_layer = MapLayer(
+        name="cantons",
+        layer_type=MapLayerType.choropleth,
+        data_binding=DataBinding(name="canton_binding", domain_concept=canton),
+        geojson_field=geometry,
+        value_field=population,
+    )
+
+    # Map
+    lux_map = Map(
+        name="LuxMap",
+        title="Luxembourg — Stores & Cantons",
+        center_latitude=49.8153,
+        center_longitude=6.1296,
+        zoom=9,
+        layers=[store_layer, canton_layer],
+    )
+    screen = Screen(name="MapScreen", description="", view_elements={lux_map},
+                    is_main_page=True)
+    module = Module(name="AppModule", screens={screen})
+    gui = GUIModel(name="LuxApp", package="com.example.lux",
+                   versionCode="1", versionName="1.0", modules={module})
 
 Layout and Styling
 ------------------
@@ -133,6 +302,22 @@ The metamodel provides fine-grained control over how components are arranged and
   ``absolute``, ``fixed``).
 - **Style**: A dedicated class for visual customization that allows setting properties such as
   colors, fonts, borders, padding, and margins on any view component.
+- **Stylesheet**: ``GUIModel.stylesheet`` (``str``, default ``""``) holds raw CSS shared by the
+  whole GUI: class and compound-selector rules, ``:root`` design tokens (CSS custom
+  properties), ``@media`` blocks and state rules such as ``:hover``. Components opt in
+  through their ``css_classes``. When a GUI diagram is imported from the web editor,
+  every rule not tied to a single element id is kept here in its original order, while
+  element-id rules still become that component's ``Styling``.
+
+  .. code-block:: python
+
+      gui_model = GUIModel(
+          name="Shop", package="", versionCode="1", versionName="1.0",
+          modules={module}, description="",
+          stylesheet=":root{--ds-primary:#15293d}\n"
+                     ".app-btn{background:var(--ds-primary)}\n"
+                     "@media (max-width:850px){.app-btn{width:100%}}\n",
+      )
 
 Python Code Example
 -------------------

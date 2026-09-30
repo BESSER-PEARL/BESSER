@@ -46,6 +46,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_gui_diagram,
     process_quantum_diagram,
     process_nn_diagram,
+    link_method_neural_networks,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
@@ -76,6 +77,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
     normalize_user_model_output as _normalize_user_model_output,
     safe_path as _safe_path,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.gui_personalization_utils import (
+    personalize_gui_page as run_gui_personalization,
+)
 
 # Backend configuration
 from besser.utilities.web_modeling_editor.backend.config import (
@@ -101,9 +105,15 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEFAULT_DJANGO_PROJECT_NAME,
     DEFAULT_DJANGO_APP_NAME,
     DEFAULT_SUPABASE_USER_ROOT,
+    DEFAULT_SPRING_BOOT_VERSION,
+    DEFAULT_JAVA_VERSION,
+    DEFAULT_SPRING_APP_NAME,
+    DEFAULT_SPRING_PACKAGE_NAME,
+    DEFAULT_SPRING_PROJECT_NAME,
 )
 
-# Centralized error handling
+# Centralized error handling and shared auth gate
+from besser.utilities.web_modeling_editor.backend.routers.auth import require_github_session
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
@@ -112,36 +122,74 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     GenerationError,
     ValidationError,
 )
+from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
+    ensure_not_legacy_model,
+)
 
 logger = logging.getLogger(__name__)
 
-SENSITIVE_KEYS = {'api_key', 'openai_api_key', 'secret', 'password', 'token', 'apikey', 'api-key'}
+# Key-name fragments that mark a value as sensitive. Substring match
+# (case-insensitive) so this catches camelCase, kebab-case, snake_case,
+# screaming-snake, and weird vendor names alike: ``openaiApiKey``,
+# ``OPENAI_API_KEY``, ``api-key``, ``X-Auth-Token`` all hit one of these.
+SENSITIVE_KEYS = frozenset({
+    "api_key", "apikey", "api-key",
+    "secret", "password", "passwd",
+    "token",                              # access_token, id_token, refresh_token
+    "credential",
+    "private",                            # private_key, private-key
+    "auth",                               # bearer_auth, basic_auth, x-auth-*
+    "cert",                               # cert, certificate
+    "session",                            # session_id, session_token
+    "key",                                # catch-all (last so longer matches dominate)
+})
 
 
-def sanitize_config(config: dict) -> dict:
-    """Return a shallow copy of config with sensitive values masked."""
-    return {k: '***' if any(s in k.lower() for s in SENSITIVE_KEYS) else v for k, v in config.items()}
+# _safe_path is IMPORTED above (services.utils.user_profile_utils.safe_path).
+# Do not re-add a local copy: the one that used to live here shadowed the import
+# with a weaker ``startswith`` containment check instead of the shared helper's
+# ``os.path.commonpath`` (which also handles the Windows cross-drive ValueError).
+
+
+def _key_is_sensitive(key: str) -> bool:
+    """True if a config key name looks like it holds a secret."""
+    if not isinstance(key, str):
+        return False
+    lowered = key.lower()
+    return any(token in lowered for token in SENSITIVE_KEYS)
+
+
+def sanitize_config(config: Any) -> Any:
+    """Return a deep-copied structure with sensitive values masked.
+
+    Walks nested dicts, lists, and tuples so a credential nested under
+    ``config["llm"]["openai"]["api_key"]`` is still masked. Non-dict
+    leaves are returned untouched (we only redact when the *key name*
+    looks sensitive — value-level heuristics are too prone to false
+    positives for now).
+    """
+    if isinstance(config, dict):
+        return {
+            k: ("***" if _key_is_sensitive(k) else sanitize_config(v))
+            for k, v in config.items()
+        }
+    if isinstance(config, list):
+        return [sanitize_config(item) for item in config]
+    if isinstance(config, tuple):
+        return tuple(sanitize_config(item) for item in config)
+    return config
 
 
 router = APIRouter(prefix="/besser_api", tags=["generation"])
 
 
 def _require_github_session(github_session: Optional[str]) -> None:
-    """Verify a GitHub OAuth session is present and active.
+    """Verify a GitHub OAuth session is present and active (HTTP 401 otherwise).
 
-    Raises HTTPException(401) when the session header is missing or expired.
-    Mirrors the auth gate used by the deploy endpoints in github_deploy_api.py.
+    Delegates to the shared ``routers.auth.require_github_session`` and passes
+    this module's ``get_user_token`` so tests can keep patching it here.
     """
-    if not github_session:
-        raise HTTPException(
-            status_code=401,
-            detail="GitHub authentication required. Please sign in with GitHub first.",
-        )
-    if not get_user_token(github_session):
-        raise HTTPException(
-            status_code=401,
-            detail="GitHub session expired. Please sign in again.",
-        )
+    require_github_session(github_session, token_lookup=get_user_token)
 
 
 def _utc_now_iso() -> str:
@@ -163,6 +211,7 @@ async def recommend_agent_config_llm(
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")
+    ensure_not_legacy_model(user_profile_model, "UserDiagram", "userProfileModel")
 
     user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
     current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
@@ -176,10 +225,14 @@ async def recommend_agent_config_llm(
     profile_document = _generate_user_profile_document(user_profile_model)
     default_config = load_default_agent_recommendation_config()
 
+    # Provider choice and every per-provider model list are excluded: this prompt
+    # flow does not recommend the LLM provider, so shipping the model catalogues
+    # would only add noise. Matching on the "Models" suffix keeps this correct as
+    # new providers are added, instead of a hand-maintained key list.
     allowed_values_payload = {
         key: value
         for key, value in RECOMMENDATION_ALLOWED_VALUES.items()
-        if key not in {"llmProvider", "openaiModels"}
+        if key != "llmProvider" and not key.endswith("Models")
     }
 
     system_prompt = (
@@ -229,6 +282,47 @@ async def recommend_agent_config_llm(
         raise GenerationError("Failed to generate LLM recommendation") from exc
 
 
+@router.post("/personalize-gui-page")
+@handle_endpoint_errors("personalize_gui_page")
+async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
+    """Personalize a GUI page (GrapesJS) for a user profile using an LLM.
+
+    Open endpoint (no GitHub session required). The OpenAI API key is resolved
+    from the payload or the server's ``OPENAI_API_KEY`` environment variable.
+
+    Request body:
+        guiPage: {"components": [...], "css": [...]}  -- a GrapesJS page snapshot
+        userProfileModel: <UserDiagram UML model JSON>
+        pageName: str (optional)
+        model: str (optional OpenAI model id)
+
+    Returns the same ``{components, css}`` shape adapted in style and content,
+    ready to be imported back into the editor as a page variant.
+    """
+    if not isinstance(payload, dict):
+        raise ValidationError("Request body must be a JSON object")
+
+    # All validation, prompt building, the LLM call and response parsing live in
+    # gui_personalization_utils (mirroring agent_personalization). The router
+    # only resolves the API key, delegates off the event loop, and shapes the
+    # HTTP response; @handle_endpoint_errors maps ValidationError/GenerationError.
+    ensure_not_legacy_model(payload.get("userProfileModel"), "UserDiagram", "userProfileModel")
+    result = await asyncio.to_thread(
+        run_gui_personalization,
+        payload.get("guiPage"),
+        payload.get("userProfileModel"),
+        page_name=payload.get("pageName"),
+        model=payload.get("model"),
+        openai_api_key=extract_openai_api_key(payload),
+    )
+    return {
+        "guiPage": {"components": result["components"], "css": result["css"]},
+        "source": "openai",
+        "model": result["model"],
+        "generatedAt": _utc_now_iso(),
+    }
+
+
 @router.get("/agent-config-manual-mapping")
 @handle_endpoint_errors("get_agent_config_manual_mapping")
 async def get_agent_config_manual_mapping(
@@ -260,6 +354,7 @@ async def recommend_agent_config_mapping(
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")
+    ensure_not_legacy_model(user_profile_model, "UserDiagram", "userProfileModel")
 
     user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
     current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
@@ -335,7 +430,9 @@ def generate_agent_files(
             # containing only the raw agent_model.py.
             generator_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
 
-            # Use the BAFGenerator with the agent model from the module
+            # Use the BAFGenerator with the agent model from the module.
+            # gui_models is now serialized by agent_model_to_code, so the
+            # exec'd module's agent already carries it.
             if hasattr(agent_module, 'agent'):
                 generator = generator_class(
                     agent_module.agent,
@@ -435,6 +532,11 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     # Handle Web App generator (requires both ClassDiagram and GUINoCodeDiagram)
     if generator_type == "web_app":
         return await _handle_web_app_project_generation(input_data, generator_info, config)
+
+    # The backend runs methods implemented by a neural network, so it needs the
+    # project's NNDiagrams next to its ClassDiagram.
+    if generator_type == "backend":
+        return await _handle_backend_project_generation(input_data, generator_info)
 
     # Handle generators that consume a non-class diagram (Qiskit → quantum,
     # PyTorch/TensorFlow → neural network). The required diagram type comes
@@ -555,6 +657,22 @@ async def generate_code_output(input_data: DiagramInput):
         )
 
 
+@handle_endpoint_errors("_handle_backend_project_generation")
+async def _handle_backend_project_generation(input_data: ProjectInput, generator_info):
+    """Generate the FastAPI backend from the project's active ClassDiagram, with
+    NN-implemented methods linked to the project's NNDiagrams."""
+    class_diagram = input_data.get_active_diagram("ClassDiagram")
+    if not class_diagram:
+        raise HTTPException(status_code=400, detail="ClassDiagram is required for Backend generator")
+
+    with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
+        buml_model = process_class_diagram(class_diagram.model_dump())
+        link_method_neural_networks(buml_model, input_data.diagrams.get("NNDiagram", []))
+        return await _generate_standard(
+            buml_model, generator_info.generator_class, "backend", generator_info, temp_dir
+        )
+
+
 @handle_endpoint_errors("_handle_web_app_project_generation")
 async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict):
     """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram.
@@ -575,45 +693,68 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
             detail="ClassDiagram is required for Web App generator"
         )
 
+    # Personalization versions (optional). When present, the frontend has
+    # pre-assembled one COMPLETE GUI model per version (base + each user
+    # profile), each already resolved page-by-page. When absent, we generate a
+    # single app from the GUI diagram's own model (unchanged behavior).
+    web_app_versions = config.get("webAppVersions") if isinstance(config, dict) else None
+    if web_app_versions:
+        version_specs = [
+            (str(v.get("slug") or f"version-{i + 1}"), v.get("guiModel"))
+            for i, v in enumerate(web_app_versions)
+        ]
+    else:
+        version_specs = [(None, gui_diagram.model)]
+
+    multi = len(version_specs) > 1
+    generator_class = generator_info.generator_class
+
     with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
-        # Process class diagram to BUML
-        buml_model = process_class_diagram(class_diagram.model_dump())
+        for slug, gui_json in version_specs:
+            # Re-derive the class BUML per version so the generator can't leak
+            # mutations from one version into the next.
+            buml_model = process_class_diagram(class_diagram.model_dump())
+            link_method_neural_networks(buml_model, input_data.diagrams.get("NNDiagram", []))
+            gui_model = process_gui_diagram(gui_json, class_diagram.model, buml_model)
 
-        gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
-
-        # Collect every AgentDiagram in the project if the GUI uses agent components.
-        # The frontend dropdown enumerates all agents, so the generator must
-        # satisfy any binding — we don't filter to the active reference here.
-        agent_models = []
-        agent_configs = {}
-        agent_config_yamls: dict = {}
-        has_agent_components = _check_for_agent_components(gui_model)
-
-        if has_agent_components:
-            project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
-            default_cfg = project_agent_config or config
-            agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
-                input_data.diagrams.get("AgentDiagram", []),
-                default_config=default_cfg,
-            )
-            for name, cfg in agent_configs.items():
-                logger.debug("[WebApp agent] resolved config for %s: %s",
-                             name,
-                             json.dumps(sanitize_config(cfg), indent=2, default=str) if cfg else 'None')
-            if not agent_models:
-                logger.warning(
-                    "GUI contains agent components but no AgentDiagram was found. "
-                    "Agent components will not be functional."
+            # Collect every AgentDiagram in the project if this version's GUI uses
+            # agent components. The frontend dropdown enumerates all agents, so the
+            # generator must satisfy any binding — we don't filter to the active
+            # reference here.
+            agent_models = []
+            agent_configs = {}
+            agent_config_yamls: dict = {}
+            if _check_for_agent_components(gui_model):
+                project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
+                default_cfg = project_agent_config or config
+                agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
+                    input_data.diagrams.get("AgentDiagram", []),
+                    default_config=default_cfg,
                 )
+                for name, cfg in agent_configs.items():
+                    logger.debug("[WebApp agent] resolved config for %s: %s",
+                                 name,
+                                 json.dumps(sanitize_config(cfg), indent=2, default=str) if cfg else 'None')
+                if not agent_models:
+                    logger.warning(
+                        "GUI contains agent components but no AgentDiagram was found. "
+                        "Agent components will not be functional."
+                    )
 
-        # Generate Web App TypeScript project
-        generator_class = generator_info.generator_class
+            # Single version → generate at the zip root (current layout).
+            # Multiple versions → one profile-named subfolder each.
+            out_dir = temp_dir
+            if multi:
+                out_dir = _safe_path(temp_dir, os.path.basename(slug))
+                os.makedirs(out_dir, exist_ok=True)
 
-        return await _generate_web_app(
-            buml_model, gui_model, generator_class, config, temp_dir,
-            agent_models=agent_models, agent_configs=agent_configs,
-            agent_config_yamls=agent_config_yamls,
-        )
+            await _run_web_app_generator(
+                buml_model, gui_model, generator_class, out_dir,
+                agent_models=agent_models, agent_configs=agent_configs,
+                agent_config_yamls=agent_config_yamls,
+            )
+
+        return _create_zip_response(temp_dir, "web_app")
 
 
 def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
@@ -701,6 +842,8 @@ async def _handle_class_diagram_generation(
     # Generate based on generator type
     if generator_type == "django":
         return await _generate_django(buml_model, generator_class, config, temp_dir)
+    if generator_type == "spring":
+        return await _generate_spring(buml_model, generator_class, config, temp_dir)
     if generator_type == "sql":
         return await _generate_sql(buml_model, generator_class, config, temp_dir)
     if generator_type == "supabase":
@@ -833,20 +976,10 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
         output_dir=temp_dir,
     )
 
-    # DjangoGenerator.generate() shells out to `django-admin startproject`
-    # without a cwd, and several internal paths are derived from os.getcwd().
-    # The caller therefore has to chdir into temp_dir for the duration of the
-    # generation; otherwise the project gets scaffolded in the FastAPI
-    # process's cwd and the harvester below finds an empty temp_dir/<project>.
-    def _run_generate_in_temp_dir():
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(temp_dir)
-            generator_instance.generate()
-        finally:
-            os.chdir(original_cwd)
-
-    await asyncio.to_thread(_run_generate_in_temp_dir)
+    # DjangoGenerator anchors all of its filesystem effects on output_dir
+    # (its subprocesses run with an explicit cwd), so it can run directly on
+    # a worker thread without touching the process-wide working directory.
+    await asyncio.to_thread(generator_instance.generate)
 
     # Validate generation
     if not os.path.exists(project_dir) or not os.listdir(project_dir):
@@ -863,6 +996,59 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
 
     zip_buffer.seek(0)
     file_name = get_filename_for_generator("django")
+
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: str):
+    """Generate a Spring Boot project and return it as a ZIP."""
+    config = config or {}
+    project_name = config.get("project_name") or DEFAULT_SPRING_PROJECT_NAME
+    app_name = config.get("app_name") or DEFAULT_SPRING_APP_NAME
+    spring_boot_version = config.get("spring_boot_version") or DEFAULT_SPRING_BOOT_VERSION
+    java_version = config.get("java_version") or DEFAULT_JAVA_VERSION
+    package_name = config.get("package_name") or DEFAULT_SPRING_PACKAGE_NAME
+
+    # Sanitize project_name to prevent path traversal
+    project_name = os.path.basename(project_name)
+    if not project_name:
+        project_name = DEFAULT_SPRING_PROJECT_NAME
+
+    project_dir = _safe_path(temp_dir, project_name)
+    os.makedirs(project_dir, exist_ok=True)
+
+    # An invalid package name is a user input error, not a server fault.
+    try:
+        generator_instance = generator_class(
+            buml_model,
+            output_dir=project_dir,
+            app_name=app_name,
+            spring_boot_version=spring_boot_version,
+            java_version=java_version,
+            package_name=package_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await asyncio.to_thread(generator_instance.generate)
+
+    if not os.listdir(project_dir):
+        raise ValueError("Spring Boot project generation failed: Output directory is empty")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for root, _, files in os.walk(project_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arc_name = os.path.relpath(file_path, project_dir)
+                zip_file.write(file_path, arc_name)
+
+    zip_buffer.seek(0)
+    file_name = get_filename_for_generator("spring")
 
     return StreamingResponse(
         zip_buffer,
@@ -1008,14 +1194,15 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
 
 
 async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, temp_dir: str):
-    """Generate BPMN 2.0 XML from a BPMN diagram."""
+    """Generate vendor-neutral BPMN 2.0 XML.
+
+    Processes the BPMN diagram JSON via ``process_bpmn_diagram`` (re-wrapping
+    malformed-payload exceptions as ``ConversionError`` so they surface as 400),
+    then runs the BPMNGenerator and returns the emitted ``.bpmn`` file.
+    """
     try:
         bpmn_model = process_bpmn_diagram(json_data)
     except (KeyError, TypeError, AttributeError) as exc:
-        # Malformed BPMN payload (dangling ids, wrong types). Surface as a
-        # structured 400 via @handle_endpoint_errors instead of a 500.
-        # ValueError / ConversionError from process_bpmn_diagram is already
-        # mapped to 400 by the decorator — no explicit re-raise needed.
         raise ConversionError(f"Malformed BPMN diagram payload: {exc}") from exc
 
     generator_instance = generator_class(bpmn_model, output_dir=temp_dir)
@@ -1096,19 +1283,33 @@ def _check_container_for_agent_components(container):
                 return True
     return False
 
-async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str,
-                            agent_models=None, agent_configs=None, agent_config_yamls=None):
-    """Generate web application files.
+async def _run_web_app_generator(buml_model, gui_model, generator_class, out_dir: str,
+                                 agent_models=None, agent_configs=None, agent_config_yamls=None):
+    """Run the web app generator into ``out_dir`` WITHOUT zipping.
 
-    Supports multi-agent projects: ``agent_models`` is a list and each is emitted
-    under ``agents/<slug>/`` in the generated output.
+    Split out from ``_generate_web_app`` so multiple personalization versions can
+    each be generated into their own subdirectory before a single zip is built.
     """
     generator_instance = generator_class(
-        buml_model, gui_model, output_dir=temp_dir,
+        buml_model, gui_model, output_dir=out_dir,
         agent_models=agent_models, agent_configs=agent_configs,
         agent_config_yamls=agent_config_yamls,
     )
     await asyncio.to_thread(generator_instance.generate)
+
+
+async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str,
+                            agent_models=None, agent_configs=None, agent_config_yamls=None):
+    """Generate web application files (single version) and return a ZIP response.
+
+    Supports multi-agent projects: ``agent_models`` is a list and each is emitted
+    under ``agents/<slug>/`` in the generated output.
+    """
+    await _run_web_app_generator(
+        buml_model, gui_model, generator_class, temp_dir,
+        agent_models=agent_models, agent_configs=agent_configs,
+        agent_config_yamls=agent_config_yamls,
+    )
     return _create_zip_response(temp_dir, "web_app")
 
 @handle_endpoint_errors("_generate_standard")

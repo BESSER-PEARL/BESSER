@@ -538,6 +538,9 @@ class TestGetImplTypeName:
     def test_prefixed_string(self):
         assert _get_impl_type_name("MethodImplementationType.CODE") == "CODE"
 
+    def test_neural_network_value(self):
+        assert _get_impl_type_name("neural_network") == "NEURAL_NETWORK"
+
 
 class TestFormatMethodCodeLiteral:
     """Tests for _format_method_code_literal."""
@@ -763,10 +766,14 @@ class TestQuantumModelBuilder:
 # ---------------------------------------------------------------------------
 # agent_model_builder.py
 # ---------------------------------------------------------------------------
+from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text
 from besser.BUML.metamodel.state_machine.agent import (
-    Agent, AgentReply, Auto,
+    Agent, AgentReply, Auto, DBReply, GUIEvent, GUIReplyAction, LLMChatReply, LLMReply,
+    RAGReply, RAGTextSplitter, RAGVectorStore, WebCrawlLLMReply, WebSocketReplyHTML,
+    WebSocketReplyMarkdown, WebSocketReplySpeech,
 )
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
+from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
 
 
 class TestAgentModelBuilder:
@@ -897,6 +904,141 @@ class TestAgentModelBuilder:
         assert "A helpful agent" in code
 
 
+class TestAgentModelBuilderLiveTesting:
+    """Exec round trip (Agent -> code -> exec -> Agent) of the live-testing parameters."""
+
+    TRICKY = "It's C:\\dir 'q' \"dq\" \\n tail\\"
+
+    @staticmethod
+    def _signup_gui():
+        title = Text(name="title", content="Sign up")
+        screen = Screen(name="Signup", description="Signup page", view_elements={title}, is_main_page=True)
+        return GUIModel(
+            name="SignupGUI", package="app", versionCode="1", versionName="1.0",
+            modules={Module(name="SignupModule", screens={screen})}, description="Signup",
+        )
+
+    @classmethod
+    def _build_agent(cls):
+        agent = Agent("LiveAgent")
+        agent.new_llm(name="fast", provider="openai", parameters={"model": "gpt-4o-mini"})
+        agent.new_rag(
+            name="docs",
+            vector_store=RAGVectorStore(
+                embedding_provider="openai", embedding_parameters={}, persist_directory="vector_store/docs",
+            ),
+            splitter=RAGTextSplitter(splitter_type="recursive_character", chunk_size=100, chunk_overlap=10),
+            llm_name="fast",
+        )
+        agent.add_gui_model("signup", cls._signup_gui())
+        ask = agent.new_state("ask", initial=True)
+        think = agent.new_state("think")
+        files = agent.new_state("files")
+        ask.set_body(Body("ask_body", actions=[
+            AgentReply(cls.TRICKY, use_session_vars=True),
+            GUIReplyAction("signup", persist=False, width="420px", is_form=True),
+            WebSocketReplyMarkdown(message="**{name}**", use_session_vars=True),
+            WebSocketReplyHTML(message="<b>{name}</b>", use_session_vars=True),
+            WebSocketReplySpeech(message="Hi {name}", audio_speed=1.5, use_session_vars=True),
+        ]))
+        ask.set_fallback_body(Body("ask_fallback_body", actions=[
+            GUIReplyAction("signup"),
+            LLMReply(prompt=cls.TRICKY, llm_name="fast", input_prompt_mode="custom",
+                     custom_input_prompt="Retry {email}", send_reply=False),
+        ]))
+        think.set_body(Body("think_body", actions=[
+            LLMReply(prompt=cls.TRICKY, llm_name="fast", input_prompt_mode="custom",
+                     custom_input_prompt="Summarise {email}", custom_input_prompt_use_session_vars=True,
+                     system_prompt_use_session_vars=True, store_in_session="summary", send_reply=False),
+            LLMChatReply(prompt="Chat {summary}", llm_name="fast", system_prompt_use_session_vars=True,
+                         store_in_session="chat", send_reply=False),
+            RAGReply("docs", prompt="Cite {summary}", input_prompt_mode="custom", custom_input_prompt="Find {x}",
+                     custom_input_prompt_use_session_vars=True, prompt_use_session_vars=True,
+                     store_in_session="rag", send_reply=False),
+            DBReply(llm_name="fast", input_prompt_mode="custom", custom_input_prompt="Rows {x}",
+                    custom_input_prompt_use_session_vars=True, store_in_session="rows", send_reply=False),
+            WebCrawlLLMReply(initial_url="https://example.org", system_message_prefix="Site {x}",
+                             llm_name="fast", system_message_prefix_use_session_vars=True,
+                             store_in_session="crawl", send_reply=False),
+        ]))
+        ask.when_form_submitted(form_id="signup").go_to(think)
+        think.when_event(GUIEvent(message_id="signup")).go_to(files)
+        files.when_event(GUIEvent()).go_to(ask)
+        files.when_file_received(["application/pdf", "text/csv"]).go_to(ask)
+        return agent
+
+    @staticmethod
+    def _exec_agent(agent, tmp_path, name="agent.py"):
+        file_path = str(tmp_path / name)
+        agent_model_to_code(agent, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        namespace = {}
+        exec(compile(code, file_path, "exec"), namespace)
+        return code, namespace["agent"]
+
+    @staticmethod
+    def _gui_code(gui_model, tmp_path, name):
+        file_path = str(tmp_path / name)
+        gui_model_to_code(gui_model, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_no_future_import(self, tmp_path):
+        code, _ = self._exec_agent(self._build_agent(), tmp_path)
+        assert "from __future__" not in code
+
+    def test_actions_roundtrip(self, tmp_path):
+        agent = self._build_agent()
+        _, restored = self._exec_agent(agent, tmp_path)
+        for original, copy_ in zip(agent.states, restored.states):
+            for body_attr in ("body", "fallback_body"):
+                original_body = getattr(original, body_attr)
+                restored_body = getattr(copy_, body_attr)
+                assert [repr(a) for a in (original_body.actions if original_body else [])] == \
+                       [repr(a) for a in (restored_body.actions if restored_body else [])]
+
+    def test_strings_are_not_double_escaped(self, tmp_path):
+        _, restored = self._exec_agent(self._build_agent(), tmp_path)
+        ask = next(s for s in restored.states if s.name == "ask")
+        assert ask.body.actions[0].message == self.TRICKY
+        think = next(s for s in restored.states if s.name == "think")
+        assert think.body.actions[0].prompt == self.TRICKY
+
+    def test_transitions_roundtrip(self, tmp_path):
+        _, restored = self._exec_agent(self._build_agent(), tmp_path)
+        by_name = {s.name: s for s in restored.states}
+        form = by_name["ask"].transitions[0]
+        assert isinstance(form.event, GUIEvent) and form.event.message_id == "signup"
+        assert form.conditions[0].form_id == "signup"
+        gui_event = by_name["think"].transitions[0]
+        assert isinstance(gui_event.event, GUIEvent) and gui_event.event.message_id == "signup"
+        any_gui_event, files = by_name["files"].transitions
+        assert isinstance(any_gui_event.event, GUIEvent) and any_gui_event.event.message_id is None
+        assert files.conditions[0].allowed_types == ["application/pdf", "text/csv"]
+
+    def test_gui_models_roundtrip(self, tmp_path):
+        agent = self._build_agent()
+        code, restored = self._exec_agent(agent, tmp_path)
+        assert "GUI MODEL" not in code
+        assert set(restored.gui_models) == {"signup"}
+        assert self._gui_code(restored.gui_models["signup"], tmp_path, "restored_gui.py") == \
+               self._gui_code(agent.gui_models["signup"], tmp_path, "original_gui.py")
+        assert restored.validate(raise_exception=False)["success"]
+
+    def test_gui_variables_do_not_leak(self, tmp_path):
+        """GUI code is scoped in a builder function: a screen named like the agent variable is harmless."""
+        agent = self._build_agent()
+        agent.add_gui_model("clash", GUIModel(
+            name="Clash", package="", versionCode="1", versionName="1",
+            modules={Module(name="agent", screens={Screen(name="ask", description="", view_elements=set())})},
+            description="",
+        ))
+        _, restored = self._exec_agent(agent, tmp_path)
+        assert isinstance(restored, Agent)
+        assert set(restored.gui_models) == {"signup", "clash"}
+
+
 # ---------------------------------------------------------------------------
 # gui_model_builder.py
 # ---------------------------------------------------------------------------
@@ -1019,6 +1161,9 @@ class TestGUIModelBuilder:
 # ---------------------------------------------------------------------------
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.bpmn import BPMNModel
+from besser.BUML.metamodel.object import (
+    Object, AttributeLink, DataValue, ObjectModel,
+)
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 from tests.bpmn_models import _poolless_model
 
@@ -1100,6 +1245,34 @@ class TestProjectBuilder:
         recreated = namespace["project"]
         assert isinstance(recreated, Project)
         assert recreated.name == "TestProject"
+
+    def test_project_with_domain_model_and_agent_execs(self, tmp_path):
+        """A project export with a structural model AND an agent (with a GUI) is valid Python.
+
+        The agent section sits mid-file, so it must not carry ``from __future__`` imports,
+        and its embedded GUI must not open a new ``GUI MODEL`` section.
+        """
+        domain_project = self._build_simple_project()
+        agent = TestAgentModelBuilderLiveTesting._build_agent()
+        project = Project(
+            name="AgentProject", models=[*domain_project.models, agent], owner="tester",
+            metadata=Metadata(description="Domain + agent"),
+        )
+        file_path = str(tmp_path / "project.py")
+        project_to_code(project, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        assert "from __future__" not in code
+        assert code.count("GUI MODEL") == 0
+        namespace = {}
+        exec(compile(code, file_path, "exec"), namespace)
+        recreated = namespace["project"]
+        assert isinstance(recreated, Project)
+        restored_agent = next(m for m in recreated.models if isinstance(m, Agent))
+        assert set(restored_agent.gui_models) == {"signup"}
+        assert any(isinstance(m, DomainModel) for m in recreated.models)
 
     def test_multi_model_project(self, tmp_path):
         """Project with multiple domain models generates suffixed variable names."""
@@ -1235,6 +1408,126 @@ class TestProjectBuilder:
 
         assert "Test project" in code
 
+    def test_project_multiple_object_models_are_exported(self, tmp_path):
+        """Regression for WME #161.
+
+        A project with ONE domain model and MULTIPLE object models must export
+        every object model to the generated BUML Python file. Previously the
+        "standalone object models" loop gated on a non-existent
+        ``ObjectModel.domain_model`` attribute, so all object models were
+        silently dropped (JSON export was fine; only the .py export lost them).
+        """
+        # --- Domain model: Library + Book -------------------------------
+        title = Property(name="title", type=StringType)
+        pages = Property(name="pages", type=IntegerType)
+        book = Class(name="Book", attributes={title, pages})
+        lib_name = Property(name="name", type=StringType)
+        library = Class(name="Library", attributes={lib_name})
+        dm = DomainModel(name="LibraryModel", types={library, book}, associations=set())
+
+        # --- Two distinct object models over that same domain -----------
+        book_one = Object(
+            name="BookOne",
+            classifier=book,
+            slots=[
+                AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book One")),
+                AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=100)),
+            ],
+        )
+        om1 = ObjectModel(name="ObjectModelOne", objects={book_one})
+
+        book_two = Object(
+            name="BookTwo",
+            classifier=book,
+            slots=[
+                AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book Two")),
+                AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=200)),
+            ],
+        )
+        om2 = ObjectModel(name="ObjectModelTwo", objects={book_two})
+
+        meta = Metadata(description="Multi object-model project")
+        project = Project(
+            name="MultiObjectProject",
+            models=[dm, om1, om2],
+            owner="tester",
+            metadata=meta,
+        )
+
+        file_path = str(tmp_path / "multi_object.py")
+        project_to_code(project, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # Both object models must be emitted as ObjectModel(...) definitions...
+        assert code.count("ObjectModel(") == 2
+        # ...and both must be referenced in the final Project(models=[...]) list.
+        assert "object_model_1" in code
+        assert "object_model_2" in code
+
+        # The generated file must be valid, runnable Python that reconstructs a
+        # project holding BOTH object models (i.e. nothing was dropped).
+        compile(code, file_path, "exec")
+        namespace: dict = {}
+        exec(code, namespace)
+        recreated = namespace["project"]
+        assert isinstance(recreated, Project)
+        object_models = [m for m in recreated.models if isinstance(m, ObjectModel)]
+        assert len(object_models) == 2
+
+    def test_project_multiple_object_models_roundtrip_no_empty_diagrams(self, tmp_path):
+        """Regression for the WME #161 follow-up (round-trip import).
+
+        Re-importing the exported ``.py`` must yield EXACTLY the object models it
+        contains — not extra empty ones. ``project_builder`` used to emit both a
+        ``# OBJECT MODEL N #`` section header AND the ``# OBJECT MODEL #`` banner
+        per model; the importer's section splitter matched both, so every model
+        produced one real object diagram plus a spurious import-only (empty) one.
+        The builder now writes a single numbered+titled banner per model.
+        """
+        import re
+        from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.project_converter import (
+            project_to_json,
+        )
+
+        title = Property(name="title", type=StringType)
+        pages = Property(name="pages", type=IntegerType)
+        book = Class(name="Book", attributes={title, pages})
+        library = Class(name="Library", attributes={Property(name="name", type=StringType)})
+        dm = DomainModel(name="LibraryModel", types={library, book}, associations=set())
+
+        om1 = ObjectModel(name="ObjectModelOne", objects={Object(
+            name="BookOne", classifier=book,
+            slots=[AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book One")),
+                   AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=100))])})
+        om2 = ObjectModel(name="ObjectModelTwo", objects={Object(
+            name="BookTwo", classifier=book,
+            slots=[AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book Two")),
+                   AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=200))])})
+
+        project = Project(name="MultiObjectProject", models=[dm, om1, om2], owner="tester",
+                          metadata=Metadata(description="roundtrip"))
+
+        file_path = str(tmp_path / "multi_object_roundtrip.py")
+        project_to_code(project, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # Exactly one "# OBJECT MODEL ... #" banner per object model (no duplicate).
+        headers = re.findall(r'#\s*OBJECT\s+MODEL[^\n#]*#', code, flags=re.IGNORECASE)
+        assert len(headers) == 2, headers
+
+        result = project_to_json(code)
+        object_diagrams = result["diagrams"].get("ObjectDiagram", [])
+        # Exactly two object diagrams come back — no spurious empty ones.
+        assert len(object_diagrams) == 2
+        # Object-model names survive the round-trip.
+        assert {d["title"] for d in object_diagrams} == {"ObjectModelOne", "ObjectModelTwo"}
+        # Each diagram carries real content, not an empty import-only shell.
+        for d in object_diagrams:
+            assert d["model"]["nodes"], f"object diagram {d['title']!r} came back empty"
+
 
 # ---------------------------------------------------------------------------
 # domain_model_builder: advanced scenarios
@@ -1365,6 +1658,36 @@ class TestDomainModelBuilderAdvanced:
 
         assert "is_navigable=False" in code
 
+    def test_navigability_roundtrip_exec(self, tmp_path):
+        """Per-end navigability survives DomainModel -> code -> exec() for plain and composite associations."""
+        a = Class(name="A")
+        b = Class(name="B")
+        one_way = BinaryAssociation(name="a_b_assoc", ends={
+            Property(name="a", type=a, multiplicity=Multiplicity(1, 1), is_navigable=False),
+            Property(name="b", type=b, multiplicity=Multiplicity(0, "*")),
+        })
+        # Composition whose composite (whole) end is non-navigable; the part end stays navigable.
+        composition = BinaryAssociation(name="a_parts", ends={
+            Property(name="whole", type=a, multiplicity=Multiplicity(1, 1), is_composite=True, is_navigable=False),
+            Property(name="parts", type=b, multiplicity=Multiplicity(0, "*")),
+        })
+        model = DomainModel(name="NavModel", types={a, b}, associations={one_way, composition})
+
+        file_path = str(tmp_path / "nav_roundtrip.py")
+        domain_model_to_code(model, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        namespace = {}
+        exec(code, namespace)
+
+        recreated = namespace["domain_model"]
+        ends = {end.name: end for assoc in recreated.associations for end in assoc.ends}
+        assert ends["a"].is_navigable is False
+        assert ends["b"].is_navigable is True
+        assert ends["whole"].is_navigable is False and ends["whole"].is_composite is True
+        assert ends["parts"].is_navigable is True and ends["parts"].is_composite is False
+        assert recreated.validate(raise_exception=False)["success"] is True
+
     def test_constraint_generated(self, tmp_path):
         """OCL constraints appear in the generated code."""
         cls = Class(name="Order")
@@ -1416,6 +1739,26 @@ class TestDomainModelBuilderAdvanced:
 
         assert "MethodImplementationType.CODE" in code
         assert "return 42" in code
+
+    def test_method_with_neural_network_implementation(self, tmp_path):
+        """NN-implemented methods keep their type and link to the project's NN variable."""
+        method = Method(
+            name="predict",
+            type=StringType,
+            implementation_type=MethodImplementationType.NEURAL_NETWORK,
+        )
+        cls = Class(name="Classifier", methods={method})
+        model = DomainModel(name="NNImplModel", types={cls}, associations=set())
+
+        file_path = str(tmp_path / "nn_impl.py")
+        domain_model_to_code(model, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        compile(code, file_path, "exec")
+        assert "implementation_type=MethodImplementationType.NEURAL_NETWORK" in code
+        assert ".neural_network = nn_model" in code
 
 
 # ---------------------------------------------------------------------------
@@ -1609,6 +1952,132 @@ class TestNNModelBuilder:
         names = {type(m).__name__ for m in out.modules}
         assert {"LayerNormLayer", "BatchNormLayer"} <= names
 
+    # ------------------------------------------------------------------ #
+    # Regression: attributes set in plain Python must survive the builder  #
+    # ------------------------------------------------------------------ #
+    # The "was this explicitly set?" sidecar is only ever populated by the
+    # web editor's JSON importer. Everything else -- hand-written BUML, the
+    # BUML AST parser behind /get-json-model -- leaves it empty, so the
+    # builder has to fall back to comparing each value against the default
+    # declared by the metamodel constructor.
+
+    def test_conv2d_explicit_attributes_survive_without_sidecar(self, tmp_path):
+        """All nine non-default Conv2D kwargs must reach the generated call.
+
+        Before the default-comparison fallback this emitted only
+        ``Conv2D(name='c1', kernel_dim=[3, 3], out_channels=8,
+        stride_dim=[1, 1])`` -- seven of nine kwargs silently dropped.
+        """
+        nn = NN(name="ConvRepro")
+        nn.add_layer(Conv2D(
+            name="c1", kernel_dim=[3, 3], out_channels=8, bias=False,
+            permute_in=True, permute_out=True, is_layer_call=True,
+            dilation=[2, 2], groups=4, input_reused=True,
+        ))
+        path = str(tmp_path / "conv_repro.py")
+        nn_model_to_code(nn, path)
+        with open(path, "r", encoding="utf-8") as f:
+            code = f.read()
+        for fragment in (
+            "name='c1'", "kernel_dim=[3, 3]", "out_channels=8", "bias=False",
+            "permute_in=True", "permute_out=True", "is_layer_call=True",
+            "dilation=[2, 2]", "groups=4", "input_reused=True",
+        ):
+            assert fragment in code, f"{fragment} missing from generated code"
+
+        out = self._exec_and_get_nn(tmp_path, nn)
+        conv = out.modules[0]
+        assert conv.bias is False
+        assert conv.permute_in is True
+        assert conv.permute_out is True
+        assert conv.is_layer_call is True
+        assert conv.dilation == [2, 2]
+        assert conv.groups == 4
+        assert conv.input_reused is True
+
+    def test_conv2d_defaults_are_not_emitted(self, tmp_path):
+        """The fallback must stay quiet for values left at their default,
+        otherwise every generated call turns into noise."""
+        nn = NN(name="ConvDefaults")
+        nn.add_layer(Conv2D(name="c1", kernel_dim=[3, 3], out_channels=8))
+        path = str(tmp_path / "conv_defaults.py")
+        nn_model_to_code(nn, path)
+        with open(path, "r", encoding="utf-8") as f:
+            code = f.read()
+        for fragment in ("bias=", "permute_in=", "permute_out=",
+                         "is_layer_call=", "groups=", "input_reused="):
+            assert fragment not in code, f"default {fragment} should not be emitted"
+
+    def test_embedding_and_dropout_permute_flags_emitted(self, tmp_path):
+        """_write_embedding / _write_dropout never emitted permute_in and
+        permute_out, although both are real constructor parameters."""
+        nn = NN(name="PermuteFlags")
+        nn.add_layer(EmbeddingLayer(
+            name="emb", num_embeddings=10, embedding_dim=4,
+            permute_in=True, permute_out=True,
+        ))
+        nn.add_layer(DropoutLayer(
+            name="drop", rate=0.25, dimension="1D",
+            permute_in=True, permute_out=True,
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        emb, drop = out.modules[0], out.modules[1]
+        assert (emb.permute_in, emb.permute_out) == (True, True)
+        assert (drop.permute_in, drop.permute_out) == (True, True)
+        assert drop.dimension == "1D"
+
+    def test_batch_norm_permute_flags_emitted(self, tmp_path):
+        """BatchNormLayer gained permute_in/permute_out in the metamodel."""
+        nn = NN(name="BNPermute")
+        nn.add_layer(BatchNormLayer(
+            name="bn", num_features=8, dimension="2D",
+            permute_in=True, permute_out=True, affine=False, eps=0.001,
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        bn = out.modules[0]
+        assert (bn.permute_in, bn.permute_out) == (True, True)
+        assert bn.affine is False
+        assert bn.eps == 0.001
+
+    def test_rnn_non_default_attributes_survive(self, tmp_path):
+        """LSTM flags that only differ from their defaults (no sidecar entry)."""
+        nn = NN(name="LSTMFlags")
+        nn.add_layer(LSTMLayer(
+            name="lstm", hidden_size=8, bidirectional=True, dropout=0.3,
+            batch_first=False, bias=False, cell_unused=True,
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        lstm = out.modules[0]
+        assert lstm.bidirectional is True
+        assert lstm.dropout == 0.3
+        assert lstm.batch_first is False
+        assert lstm.bias is False
+        assert lstm.cell_unused is True
+
+    def test_tensor_op_shape_dim_emitted(self, tmp_path):
+        """shape_dim was never written by _write_tensor_op."""
+        nn = NN(name="ShapeDimOp")
+        nn.add_tensor_op(TensorOp(
+            name="op", tns_type="shape_dim", reduce_dim=0, shape_dim=2,
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        op = out.modules[0]
+        assert op.tns_type == "shape_dim"
+        assert op.reduce_dim == 0
+        assert op.shape_dim == 2
+
+    def test_tensor_op_subscript_indices_survive(self, tmp_path):
+        """subscript_indices is a list[dict]; make sure the emitted literal
+        both compiles and reproduces the structure."""
+        indices = [{"type": "index", "value": 0},
+                   {"type": "slice", "start": 1, "stop": 3, "step": None}]
+        nn = NN(name="SubscriptOp")
+        nn.add_tensor_op(TensorOp(
+            name="op", tns_type="subscript", subscript_indices=indices,
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        assert out.modules[0].subscript_indices == indices
+
     def test_tensor_op_exec_roundtrip_for_every_tns_type(self, tmp_path):
         """Build one NN per tns_type and assert exec() produces a TensorOp
         with the right type. Regression guard against the per-branch emit
@@ -1617,8 +2086,8 @@ class TestNNModelBuilder:
             ("concatenate", {"concatenate_dim": 1, "layers_of_tensors": ["a", "b"]}),
             ("multiply",    {"layers_of_tensors": ["a", "b"]}),
             ("matmultiply", {"layers_of_tensors": ["a", "b"]}),
-            ("reshape",     {"reshape_dim": [1, -1]}),
-            ("transpose",   {"transpose_dim": [0, 2, 1]}),
+            ("reshape",     {"layers_of_tensors": ["a"], "reshape_dim": [1, -1]}),
+            ("transpose",   {"layers_of_tensors": ["a"], "transpose_dim": [0, 2]}),
             ("permute",     {"permute_dim": [0, 3, 1, 2]}),
         ]
         for tns_type, kwargs in cases:
@@ -1630,3 +2099,39 @@ class TestNNModelBuilder:
             assert ops[0].tns_type == tns_type, (
                 f"tns_type mismatch: expected {tns_type}, got {ops[0].tns_type}"
             )
+
+    def test_explicit_but_none_attrs_do_not_emit_empty_strings(self, tmp_path):
+        """A field marked explicit while still holding None must be omitted
+        by the builder, never emitted as input_var='' / output_var='' /
+        dimension='' — the metamodel rejects '' as an identifier, so the
+        generated file would fail to exec()."""
+        from besser.utilities.buml_code_builder.nn_explicit_attrs import (
+            mark_explicit,
+        )
+
+        nn = NN(name="ExplicitNone")
+        layer = EmbeddingLayer(name="e1", num_embeddings=10, embedding_dim=4)
+        for attr in ("input_var", "output_var"):
+            mark_explicit(layer, attr)
+        nn.add_layer(layer)
+        drop = DropoutLayer(name="d1", rate=0.5)
+        for attr in ("dimension", "input_var", "output_var"):
+            mark_explicit(drop, attr)
+        nn.add_layer(drop)
+        op = TensorOp(name="r1", tns_type="repeat", repeat_dim=[2],
+                      layers_of_tensors=["e1"])
+        for attr in ("input_var", "output_var"):
+            mark_explicit(op, attr)
+        nn.add_tensor_op(op)
+
+        path = str(tmp_path / f"nn_{nn.name}.py")
+        nn_model_to_code(nn, path)
+        with open(path, "r", encoding="utf-8") as f:
+            code = f.read()
+        assert "input_var=''" not in code
+        assert "output_var=''" not in code
+        assert "dimension=''" not in code
+
+        out = self._exec_and_get_nn(tmp_path, nn)
+        assert {type(m).__name__ for m in out.modules} == {
+            "EmbeddingLayer", "DropoutLayer", "TensorOp"}

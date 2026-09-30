@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     RELATIONSHIP_TYPES,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
+)
 
 
 def parse_buml_content(content: str) -> DomainModel:
@@ -40,27 +43,10 @@ def parse_buml_content(content: str) -> DomainModel:
         if isinstance(content, DomainModel):
             return content
 
-        # __name__ is set to a sentinel (not "__main__") so any
-        # ``if __name__ == "__main__":`` guarded blocks in user files are
-        # skipped during import — matching normal Python import semantics.
-        safe_globals = {
-            "__name__": "besser_buml_import",
-            "__builtins__": {
-                "set": set,
-                "list": list,
-                "dict": dict,
-                "tuple": tuple,
-                "str": str,
-                "int": int,
-                "float": float,
-                "bool": bool,
-                "len": len,
-                "range": range,
-                "True": True,
-                "False": False,
-                "None": None,
-                "print": lambda *a, **kw: None,
-            },
+        # Allowlist of names that may appear in the BUML source. Everything
+        # else is rejected by the safe AST-based loader (which also skips a
+        # trailing ``if __name__ == "__main__":`` block).
+        allowed_names = {
             "Class": Class,
             "Property": Property,
             "Method": Method,
@@ -78,6 +64,9 @@ def parse_buml_content(content: str) -> DomainModel:
             "Metadata": Metadata,
             "MethodImplementationType": MethodImplementationType,
             "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
             "StringType": PrimitiveDataType("str"),
             "IntegerType": PrimitiveDataType("int"),
             "FloatType": PrimitiveDataType("float"),
@@ -120,8 +109,8 @@ def parse_buml_content(content: str) -> DomainModel:
             cleaned_lines.append(line)
         cleaned_content = "\n".join(cleaned_lines)
 
-        local_vars = {}
-        exec(cleaned_content, safe_globals, local_vars)
+        # Execute the cleaned B-UML content through the safe AST-based loader.
+        local_vars = safe_load_buml(cleaned_content, allowed_names)
 
         domain_name = "Imported_Domain_Model"
         for var_name, var_value in local_vars.items():
@@ -148,21 +137,26 @@ def parse_buml_content(content: str) -> DomainModel:
         raise ValueError(f"Failed to parse B-UML content: {str(e)}")
 
 
-def _multiplicity_str(prop: Property) -> str:
-    """Render a property's multiplicity as its UML association-end label.
+def _format_multiplicity_label(multiplicity) -> str:
+    """Render a ``Multiplicity`` as its UML association-end label.
 
     Collapses an exact multiplicity (``min == max``) to a single value
-    (``1..1`` -> ``1``); an unbounded upper bound renders as ``*`` (``0..*``,
-    ``1..*``). The result round-trips through ``parse_multiplicity`` (a bare
-    ``N`` is read back as ``N..N``).
+    (``1..1`` -> ``1``, ``5..5`` -> ``5``); an unbounded upper bound renders as
+    ``*`` (``0..*``, ``1..*``). The result round-trips through
+    ``parse_multiplicity`` (a bare ``N`` is read back as ``N..N``).
     """
-    min_val = prop.multiplicity.min
-    max_val = prop.multiplicity.max
+    min_val = multiplicity.min
+    max_val = multiplicity.max
     if max_val == UNLIMITED_MAX_MULTIPLICITY:
         return f"{min_val}..*"
     if min_val == max_val:
         return f"{min_val}"
     return f"{min_val}..{max_val}"
+
+
+def _multiplicity_str(prop: Property) -> str:
+    """Render a property's multiplicity as its UML association-end label."""
+    return _format_multiplicity_label(prop.multiplicity)
 
 
 def _json_safe_default(value):
@@ -240,6 +234,7 @@ def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> d
             MethodImplementationType.BAL: "bal",
             MethodImplementationType.STATE_MACHINE: "state_machine",
             MethodImplementationType.QUANTUM_CIRCUIT: "quantum_circuit",
+            MethodImplementationType.NEURAL_NETWORK: "neural_network",
         }
         impl_type = method.implementation_type
         if isinstance(impl_type, str):
@@ -247,7 +242,7 @@ def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> d
             if normalized_impl_type.startswith("MethodImplementationType."):
                 normalized_impl_type = normalized_impl_type.split(".", maxsplit=1)[1]
             mapped = normalized_impl_type.lower()
-            if mapped in {"none", "code", "bal", "state_machine", "quantum_circuit"}:
+            if mapped in {"none", "code", "bal", "state_machine", "quantum_circuit", "neural_network"}:
                 row["implementationType"] = mapped
             else:
                 row["implementationType"] = "none"
@@ -265,6 +260,13 @@ def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> d
         quantum_circuit_id = method.quantum_circuit.name
     if quantum_circuit_id:
         row["quantumCircuitId"] = quantum_circuit_id
+    neural_network_id = refs.get("neuralNetworkId") or None
+    if not neural_network_id and getattr(method, "neural_network", None):
+        # Without a saved diagram id, reference the network by name
+        # (``method_nn_linker`` resolves ids and titles alike).
+        neural_network_id = method.neural_network.name
+    if neural_network_id:
+        row["neuralNetworkId"] = neural_network_id
 
     if not row.get("implementationType"):
         row.pop("implementationType", None)
@@ -272,6 +274,8 @@ def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> d
         row.pop("stateMachineId", None)
     if not row.get("quantumCircuitId"):
         row.pop("quantumCircuitId", None)
+    if not row.get("neuralNetworkId"):
+        row.pop("neuralNetworkId", None)
     return row
 
 
@@ -435,40 +439,43 @@ def class_buml_to_json(domain_model):
             if len(ends) != 2:
                 continue
             source_prop, target_prop = ends
+            saved_rel = layout_positions.get(f"rel_{name}") or {}
 
+            # Keep the orientation the diagram was drawn with (recorded by
+            # the JSON -> BUML processor as ``source_role``), so the saved
+            # handles / points are applied to the right classes. Navigability
+            # does not affect orientation: it is emitted explicitly per end.
+            if saved_rel.get("source_role") == target_prop.name:
+                source_prop, target_prop = target_prop, source_prop
+
+            # The composite (whole) end of a composition is always the target.
             if source_prop.is_composite and not target_prop.is_composite:
                 source_prop, target_prop = target_prop, source_prop
-            elif not source_prop.is_composite and not target_prop.is_composite:
-                if not source_prop.is_navigable and target_prop.is_navigable:
-                    pass
-                elif source_prop.is_navigable and not target_prop.is_navigable:
-                    source_prop, target_prop = target_prop, source_prop
-                elif not source_prop.is_navigable and not target_prop.is_navigable:
-                    logger.warning("Both ends of association %s are not navigable. Skipping.", name)
-                    continue
 
             source_class = source_prop.type
             target_class = target_prop.type
             if source_class not in class_id_map or target_class not in class_id_map:
                 continue
 
+            # Plain associations are always emitted as ClassBidirectional;
+            # which ends are navigable rides on the explicit per-end
+            # ``sourceNavigable`` / ``targetNavigable`` flags. (The metamodel
+            # has no aggregation flag, so aggregations round-trip as
+            # ClassBidirectional too.)
             rel_type = (
                 RELATIONSHIP_TYPES["composition"]
                 if target_prop.is_composite
-                else (
-                    RELATIONSHIP_TYPES["bidirectional"]
-                    if source_prop.is_navigable and target_prop.is_navigable
-                    else RELATIONSHIP_TYPES["unidirectional"]
-                )
+                else RELATIONSHIP_TYPES["bidirectional"]
             )
 
-            saved_rel = layout_positions.get(f"rel_{name}") or {}
             edge_data: dict = {
                 "name": name,
                 "sourceRole": source_prop.name,
                 "sourceMultiplicity": _multiplicity_str(source_prop),
+                "sourceNavigable": bool(source_prop.is_navigable),
                 "targetRole": target_prop.name,
                 "targetMultiplicity": _multiplicity_str(target_prop),
+                "targetNavigable": bool(target_prop.is_navigable),
                 "points": saved_rel.get("path", []),
             }
             if "isManuallyLayouted" in saved_rel:

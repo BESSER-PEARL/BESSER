@@ -3,7 +3,10 @@ from enum import Enum
 import json
 from typing import Any, Callable, Optional
 
-from besser.BUML.metamodel.state_machine.state_machine import Action, Event, Condition, StateMachine, State, Session, TransitionBuilder
+from besser.BUML.metamodel.gui import GUIModel
+from besser.BUML.metamodel.state_machine.state_machine import (
+    Action, Event, Condition, StateMachine, State, Session, TransitionBuilder,
+)
 from besser.BUML.metamodel.structural import NamedElement
 
 
@@ -33,88 +36,253 @@ class File:
         self.base64: str = file_base64
 
 
+VALID_INPUT_PROMPT_MODES = {"last_user_message", "custom"}
+"""Accepted values for the ``input_prompt_mode`` of LLMReply, RAGReply and DBReply."""
+
+
+class _InputPromptConfig:
+    """Validated ``input_prompt_mode`` / ``custom_input_prompt`` pair.
+
+    Shared by the actions whose user-facing input can be replaced by a custom
+    template (:class:`LLMReply`, :class:`RAGReply`, :class:`DBReply`). The mode
+    must be one of :data:`VALID_INPUT_PROMPT_MODES`, and ``'custom'`` requires a
+    non-empty ``custom_input_prompt``.
+    """
+
+    VALID_INPUT_PROMPT_MODES = VALID_INPUT_PROMPT_MODES
+
+    def _init_input_prompt(self, input_prompt_mode: str, custom_input_prompt: Optional[str]) -> None:
+        self._input_prompt_mode = "last_user_message"
+        self.custom_input_prompt = custom_input_prompt
+        self.input_prompt_mode = input_prompt_mode
+
+    @property
+    def input_prompt_mode(self) -> str:
+        """str: ``'last_user_message'`` or ``'custom'``."""
+        return self._input_prompt_mode
+
+    @input_prompt_mode.setter
+    def input_prompt_mode(self, input_prompt_mode: str):
+        if input_prompt_mode not in VALID_INPUT_PROMPT_MODES:
+            raise ValueError(
+                f"Unsupported input_prompt_mode '{input_prompt_mode}'. "
+                f"Expected one of {sorted(VALID_INPUT_PROMPT_MODES)}."
+            )
+        if input_prompt_mode == "custom" and not self._custom_input_prompt:
+            raise ValueError("input_prompt_mode 'custom' requires a non-empty custom_input_prompt.")
+        self._input_prompt_mode = input_prompt_mode
+
+    @property
+    def custom_input_prompt(self) -> Optional[str]:
+        """str | None: Template used as input when the mode is ``'custom'``."""
+        return self._custom_input_prompt
+
+    @custom_input_prompt.setter
+    def custom_input_prompt(self, custom_input_prompt: Optional[str]):
+        if self._input_prompt_mode == "custom" and not custom_input_prompt:
+            raise ValueError("input_prompt_mode 'custom' requires a non-empty custom_input_prompt.")
+        self._custom_input_prompt = custom_input_prompt
+
+
 class AgentReply(Action):
     """Primitive action that represents sending a reply message.
 
     Args:
-        message (Expression): The message to send (can be Literal, VariableRef, ParameterRef, or any Expression)
+        message (str): The message to send.
+        use_session_vars (bool): When True, ``{key}`` placeholders in *message* are
+            replaced at runtime with ``session.get("key")``. The special placeholder
+            ``{user_message}`` resolves to ``session.event.message``.
 
     Attributes:
-        message (Expression): The message expression
+        message (str): The message text.
+        use_session_vars (bool): Whether session-variable interpolation is enabled.
     """
 
-    def __init__(self, message: str):
+    def __init__(self, message: str, use_session_vars: bool = False):
         self.message: str = message
+        self.use_session_vars: bool = use_session_vars
 
     def __repr__(self):
-        return f"AgentReply(message={self.message!r})"
+        return f"AgentReply(message={self.message!r}, use_session_vars={self.use_session_vars!r})"
 
 
-class LLMReply(Action):
+class LLMReply(_InputPromptConfig, Action):
     """Primitive action that represents sending a reply using an LLM.
 
     Args:
-        prompt (str, optional): Additional system prompt injected when calling the LLM.
+        prompt (str, optional): System prompt injected when calling the LLM.
         llm_name (str, optional): Name of the LLM (registered on the agent via
             :meth:`Agent.new_llm`) that should serve this reply. ``None`` lets
             the generator fall back to the agent's default LLM.
+        input_prompt_mode (str): How the user-facing message is built. One of
+            :data:`VALID_INPUT_PROMPT_MODES`: ``'last_user_message'`` (default)
+            passes ``session.event.message`` directly, ``'custom'`` uses
+            *custom_input_prompt* instead.
+        custom_input_prompt (str, optional): Template string used as the LLM
+            input when *input_prompt_mode* is ``'custom'`` (required then).
+        custom_input_prompt_use_session_vars (bool): When True, ``{key}``
+            placeholders in *custom_input_prompt* are replaced with
+            ``session.get("key")``. ``{user_message}`` resolves to
+            ``session.event.message``.
+        system_prompt_use_session_vars (bool): When True, applies the same
+            ``{key}`` interpolation to *prompt* (the system message).
+        store_in_session (str, optional): When set, the LLM reply is stored in
+            the session under this key via ``session.set(key, message)``.
+        send_reply (bool): When True (default) the LLM answer is sent to the
+            user. Set to False to only compute (and typically store) it.
 
     Attributes:
-        prompt (str | None): Optional system prompt that augments the user message.
+        prompt (str | None): Optional system prompt.
         llm_name (str | None): Name of the LLM used for this reply.
+        input_prompt_mode (str): ``'last_user_message'`` or ``'custom'``.
+        custom_input_prompt (str | None): Custom input template.
+        custom_input_prompt_use_session_vars (bool): Session-var interpolation for input.
+        system_prompt_use_session_vars (bool): Session-var interpolation for system prompt.
+        store_in_session (str | None): Session key to persist the result.
+        send_reply (bool): Whether the answer is sent to the user.
     """
 
-    def __init__(self, prompt: Optional[str] = None, llm_name: Optional[str] = None):
+    def __init__(
+        self,
+        prompt: Optional[str] = None,
+        llm_name: Optional[str] = None,
+        input_prompt_mode: str = 'last_user_message',
+        custom_input_prompt: Optional[str] = None,
+        custom_input_prompt_use_session_vars: bool = False,
+        system_prompt_use_session_vars: bool = False,
+        store_in_session: Optional[str] = None,
+        send_reply: bool = True,
+    ):
         super().__init__()
         self.prompt: Optional[str] = prompt
         self.llm_name: Optional[str] = llm_name
+        self._init_input_prompt(input_prompt_mode, custom_input_prompt)
+        self.custom_input_prompt_use_session_vars: bool = custom_input_prompt_use_session_vars
+        self.system_prompt_use_session_vars: bool = system_prompt_use_session_vars
+        self.store_in_session: Optional[str] = store_in_session
+        self.send_reply: bool = send_reply
 
     def __repr__(self):
-        return f"LLMReply(prompt={self.prompt!r}, llm_name={self.llm_name!r})"
-
-
-class RAGReply(Action):
-    """Primitive action that represents sending a reply using a configured RAG pipeline.
-
-    Args:
-        rag_db_name (str): The logical name of the RAG database to query.
-        prompt (str, optional): Optional instructions passed to the LLM phase of the RAG answer.
-
-    Attributes:
-        rag_db_name (str): Identifier of the RAG database that should handle the reply.
-        prompt (str | None): Additional instructions for the downstream LLM.
-    """
-
-    def __init__(self, rag_db_name: str, prompt: Optional[str] = None):
-        super().__init__()
-        self.rag_db_name: str = rag_db_name
-        self.prompt: Optional[str] = prompt
-
-    def __repr__(self):
-        return f"RAGReply(rag_db_name={self.rag_db_name!r}, prompt={self.prompt!r})"
+        return (
+            f"LLMReply(prompt={self.prompt!r}, llm_name={self.llm_name!r}, "
+            f"input_prompt_mode={self.input_prompt_mode!r}, "
+            f"custom_input_prompt={self.custom_input_prompt!r}, "
+            f"custom_input_prompt_use_session_vars={self.custom_input_prompt_use_session_vars!r}, "
+            f"system_prompt_use_session_vars={self.system_prompt_use_session_vars!r}, "
+            f"store_in_session={self.store_in_session!r}, send_reply={self.send_reply!r})"
+        )
 
 
 class LLMChatReply(Action):
     """Primitive action that represents sending a chat-style reply using an LLM.
 
     Args:
-        prompt (str, optional): Additional system prompt injected in the chat call.
+        prompt (str, optional): System prompt injected in the chat call.
         llm_name (str, optional): Name of the LLM (registered on the agent via
             :meth:`Agent.new_llm`) that should serve this reply. ``None`` lets
             the generator fall back to the agent's default LLM.
+        system_prompt_use_session_vars (bool): When True, ``{key}`` placeholders
+            in *prompt* are replaced with ``session.get("key")`` at runtime.
+            ``{user_message}`` resolves to ``session.event.message``.
+        store_in_session (str, optional): When set, the LLM reply is stored in
+            the session under this key.
+        send_reply (bool): When True (default) the LLM answer is sent to the
+            user. Set to False to only compute (and typically store) it.
 
     Attributes:
         prompt (str | None): Optional system prompt used by ``llm.chat(...)``.
         llm_name (str | None): Name of the LLM used for this reply.
+        system_prompt_use_session_vars (bool): Session-var interpolation for system prompt.
+        store_in_session (str | None): Session key to persist the result.
+        send_reply (bool): Whether the answer is sent to the user.
     """
 
-    def __init__(self, prompt: Optional[str] = None, llm_name: Optional[str] = None):
+    def __init__(
+        self,
+        prompt: Optional[str] = None,
+        llm_name: Optional[str] = None,
+        system_prompt_use_session_vars: bool = False,
+        store_in_session: Optional[str] = None,
+        send_reply: bool = True,
+    ):
         super().__init__()
         self.prompt: Optional[str] = prompt
         self.llm_name: Optional[str] = llm_name
+        self.system_prompt_use_session_vars: bool = system_prompt_use_session_vars
+        self.store_in_session: Optional[str] = store_in_session
+        self.send_reply: bool = send_reply
 
     def __repr__(self):
-        return f"LLMChatReply(prompt={self.prompt!r}, llm_name={self.llm_name!r})"
+        return (
+            f"LLMChatReply(prompt={self.prompt!r}, llm_name={self.llm_name!r}, "
+            f"system_prompt_use_session_vars={self.system_prompt_use_session_vars!r}, "
+            f"store_in_session={self.store_in_session!r}, send_reply={self.send_reply!r})"
+        )
+
+
+class RAGReply(_InputPromptConfig, Action):
+    """Primitive action that represents sending a reply using a configured RAG pipeline.
+
+    Args:
+        rag_db_name (str): The logical name of the RAG database to query.
+        prompt (str, optional): Optional instructions passed to the LLM phase of the RAG answer.
+        input_prompt_mode (str): How the retrieval query is built. One of
+            :data:`VALID_INPUT_PROMPT_MODES`: ``'last_user_message'`` (default)
+            passes ``session.event.message`` directly, ``'custom'`` uses
+            *custom_input_prompt* instead.
+        custom_input_prompt (str, optional): Template string used as the retrieval
+            query when *input_prompt_mode* is ``'custom'`` (required then).
+        custom_input_prompt_use_session_vars (bool): When True, ``{key}``
+            placeholders in *custom_input_prompt* are replaced with
+            ``session.get("key")``. ``{user_message}`` resolves to
+            ``session.event.message``.
+        prompt_use_session_vars (bool): When True, applies the same ``{key}``
+            interpolation to *prompt* (the LLM hint passed to the RAG pipeline).
+        store_in_session (str, optional): When set, the RAG reply is stored in
+            the session under this key.
+        send_reply (bool): When True (default) the RAG answer is sent to the
+            user. Set to False to only compute (and typically store) it.
+
+    Attributes:
+        rag_db_name (str): Identifier of the RAG database that should handle the reply.
+        prompt (str | None): Additional instructions for the downstream LLM.
+        input_prompt_mode (str): ``'last_user_message'`` or ``'custom'``.
+        custom_input_prompt (str | None): Custom retrieval query template.
+        custom_input_prompt_use_session_vars (bool): Session-var interpolation for retrieval query.
+        prompt_use_session_vars (bool): Session-var interpolation for the LLM hint.
+        store_in_session (str | None): Session key to persist the result.
+        send_reply (bool): Whether the answer is sent to the user.
+    """
+
+    def __init__(
+        self,
+        rag_db_name: str,
+        prompt: Optional[str] = None,
+        input_prompt_mode: str = 'last_user_message',
+        custom_input_prompt: Optional[str] = None,
+        custom_input_prompt_use_session_vars: bool = False,
+        prompt_use_session_vars: bool = False,
+        store_in_session: Optional[str] = None,
+        send_reply: bool = True,
+    ):
+        super().__init__()
+        self.rag_db_name: str = rag_db_name
+        self.prompt: Optional[str] = prompt
+        self._init_input_prompt(input_prompt_mode, custom_input_prompt)
+        self.custom_input_prompt_use_session_vars: bool = custom_input_prompt_use_session_vars
+        self.prompt_use_session_vars: bool = prompt_use_session_vars
+        self.store_in_session: Optional[str] = store_in_session
+        self.send_reply: bool = send_reply
+
+    def __repr__(self):
+        return (
+            f"RAGReply(rag_db_name={self.rag_db_name!r}, prompt={self.prompt!r}, "
+            f"input_prompt_mode={self.input_prompt_mode!r}, "
+            f"custom_input_prompt={self.custom_input_prompt!r}, "
+            f"custom_input_prompt_use_session_vars={self.custom_input_prompt_use_session_vars!r}, "
+            f"prompt_use_session_vars={self.prompt_use_session_vars!r}, "
+            f"store_in_session={self.store_in_session!r}, send_reply={self.send_reply!r})"
+        )
 
 
 class WebCrawlLLMReply(Action):
@@ -135,6 +303,13 @@ class WebCrawlLLMReply(Action):
         system_message_prefix (str, optional): Prepended to the crawl result when building
             the LLM system message. Defaults to a generic instruction when None.
         llm_name (str, optional): Name of the LLM to use. Falls back to the agent default.
+        system_message_prefix_use_session_vars (bool): When True, ``{key}``
+            placeholders in *system_message_prefix* are replaced with
+            ``session.get("key")`` at runtime.
+        store_in_session (str, optional): When set, the LLM reply is stored in
+            the session under this key.
+        send_reply (bool): When True (default) the LLM answer is sent to the
+            user. Set to False to only compute (and typically store) it.
 
     Attributes:
         initial_url (str): Target URL.
@@ -146,6 +321,9 @@ class WebCrawlLLMReply(Action):
         no_crawl_error_message (str): Error reply when no cached data exists.
         system_message_prefix (str | None): Prefix for the LLM system message.
         llm_name (str | None): Name of the LLM to use.
+        system_message_prefix_use_session_vars (bool): Session-var interpolation for the prefix.
+        store_in_session (str | None): Session key to persist the result.
+        send_reply (bool): Whether the answer is sent to the user.
     """
 
     def __init__(
@@ -159,6 +337,9 @@ class WebCrawlLLMReply(Action):
         no_crawl_error_message: str = "No web crawl data is available yet.",
         system_message_prefix: Optional[str] = None,
         llm_name: Optional[str] = None,
+        system_message_prefix_use_session_vars: bool = False,
+        store_in_session: Optional[str] = None,
+        send_reply: bool = True,
     ):
         super().__init__()
         self.initial_url: str = initial_url
@@ -170,6 +351,9 @@ class WebCrawlLLMReply(Action):
         self.no_crawl_error_message: str = no_crawl_error_message
         self.system_message_prefix: Optional[str] = system_message_prefix
         self.llm_name: Optional[str] = llm_name
+        self.system_message_prefix_use_session_vars: bool = system_message_prefix_use_session_vars
+        self.store_in_session: Optional[str] = store_in_session
+        self.send_reply: bool = send_reply
 
     def __repr__(self):
         return (
@@ -182,7 +366,10 @@ class WebCrawlLLMReply(Action):
             f"run_crawl={self.run_crawl!r}, "
             f"no_crawl_error_message={self.no_crawl_error_message!r}, "
             f"system_message_prefix={self.system_message_prefix!r}, "
-            f"llm_name={self.llm_name!r}"
+            f"llm_name={self.llm_name!r}, "
+            f"system_message_prefix_use_session_vars={self.system_message_prefix_use_session_vars!r}, "
+            f"store_in_session={self.store_in_session!r}, "
+            f"send_reply={self.send_reply!r}"
             ")"
         )
 
@@ -190,35 +377,52 @@ class WebCrawlLLMReply(Action):
 class WebSocketReplyMarkdown(Action):
     """Send a Markdown-formatted text reply via WebSocketPlatform.reply_markdown()."""
 
-    def __init__(self, message: str = ""):
+    def __init__(self, message: str = "", use_session_vars: bool = False):
         super().__init__()
         self.message: str = message
+        self.use_session_vars: bool = use_session_vars
 
     def __repr__(self):
-        return f"WebSocketReplyMarkdown(message={self.message!r})"
+        return (
+            f"WebSocketReplyMarkdown(message={self.message!r}, "
+            f"use_session_vars={self.use_session_vars!r})"
+        )
 
 
 class WebSocketReplyHTML(Action):
     """Send an HTML-formatted text reply via WebSocketPlatform.reply_html()."""
 
-    def __init__(self, message: str = ""):
+    def __init__(self, message: str = "", use_session_vars: bool = False):
         super().__init__()
         self.message: str = message
+        self.use_session_vars: bool = use_session_vars
 
     def __repr__(self):
-        return f"WebSocketReplyHTML(message={self.message!r})"
+        return (
+            f"WebSocketReplyHTML(message={self.message!r}, "
+            f"use_session_vars={self.use_session_vars!r})"
+        )
 
 
 class WebSocketReplySpeech(Action):
     """Convert text to speech and send the audio via WebSocketPlatform.reply_speech()."""
 
-    def __init__(self, message: str = "", audio_speed: Optional[float] = None):
+    def __init__(
+        self,
+        message: str = "",
+        audio_speed: Optional[float] = None,
+        use_session_vars: bool = False,
+    ):
         super().__init__()
         self.message: str = message
         self.audio_speed: Optional[float] = audio_speed
+        self.use_session_vars: bool = use_session_vars
 
     def __repr__(self):
-        return f"WebSocketReplySpeech(message={self.message!r}, audio_speed={self.audio_speed!r})"
+        return (
+            f"WebSocketReplySpeech(message={self.message!r}, audio_speed={self.audio_speed!r}, "
+            f"use_session_vars={self.use_session_vars!r})"
+        )
 
 
 class WebSocketReplyOptions(Action):
@@ -272,7 +476,49 @@ class WebSocketReplyPlotly(Action):
         return "WebSocketReplyPlotly()"
 
 
-class DBReply(Action):
+class GUIReplyAction(Action):
+    """Action that sends a GUI (defined by the BESSER GUI metamodel) as a chat message reply.
+
+    The GUI itself is a :class:`~besser.BUML.metamodel.gui.GUIModel` registered on the
+    agent under ``gui_id`` (see :attr:`Agent.gui_models`); :meth:`Agent.validate` reports
+    a reply whose ``gui_id`` is not registered.
+
+    Args:
+        gui_id (str): Key of the GUI in :attr:`Agent.gui_models`; also used as the id of
+            the chat message that carries the GUI.
+        persist (bool): Whether to persist GUI input values in the session.
+        width (str, optional): CSS width for the GUI bubble.
+        is_form (bool): When True the GUI is a form: submitting it emits a
+            form-submission event that ``AgentState.when_form_submitted`` transitions react to.
+
+    Attributes:
+        gui_id (str): Key of the GUI in :attr:`Agent.gui_models`.
+        persist (bool): Whether to persist form inputs in session.
+        width (str | None): CSS width for the GUI bubble.
+        is_form (bool): Whether this GUI is a form.
+    """
+
+    def __init__(
+            self,
+            gui_id: str,
+            persist: bool = True,
+            width: Optional[str] = None,
+            is_form: bool = False,
+    ):
+        super().__init__()
+        self.gui_id: str = gui_id
+        self.persist: bool = persist
+        self.width: Optional[str] = width
+        self.is_form: bool = is_form
+
+    def __repr__(self):
+        return (
+            f"GUIReplyAction(gui_id={self.gui_id!r}, persist={self.persist!r}, "
+            f"width={self.width!r}, is_form={self.is_form!r})"
+        )
+
+
+class DBReply(_InputPromptConfig, Action):
     """Primitive action that represents fetching information from a database.
 
     Args:
@@ -282,6 +528,15 @@ class DBReply(Action):
         db_operation (str): SQL operation restriction. Supported values are ``any``, ``select``, ``insert``,
             ``update`` and ``delete``.
         db_sql_query (str, optional): SQL query to run when ``db_query_mode`` is ``sql``.
+        llm_name (str, optional): Name of the LLM that writes the query in ``llm_query`` mode.
+        input_prompt_mode (str): How the LLM query request is built. One of
+            :data:`VALID_INPUT_PROMPT_MODES`: ``'last_user_message'`` (default)
+            or ``'custom'`` (uses *custom_input_prompt*, required then).
+        custom_input_prompt (str, optional): Template used when *input_prompt_mode* is ``'custom'``.
+        custom_input_prompt_use_session_vars (bool): When True, ``{key}`` placeholders in
+            *custom_input_prompt* are replaced with ``session.get("key")``.
+        store_in_session (str, optional): When set, the result is stored in the session under this key.
+        send_reply (bool): When True (default) the result is sent to the user.
 
     Attributes:
         db_selection_type (str): Whether the default application database or a named custom database is used.
@@ -289,6 +544,12 @@ class DBReply(Action):
         db_query_mode (str): How the query will be produced at runtime.
         db_operation (str): Which DB handler method must be used when executing the query.
         db_sql_query (str | None): Raw SQL query when SQL mode is selected.
+        llm_name (str | None): Name of the LLM used in ``llm_query`` mode.
+        input_prompt_mode (str): ``'last_user_message'`` or ``'custom'``.
+        custom_input_prompt (str | None): Custom input template.
+        custom_input_prompt_use_session_vars (bool): Session-var interpolation for the input.
+        store_in_session (str | None): Session key to persist the result.
+        send_reply (bool): Whether the result is sent to the user.
     """
 
     VALID_SELECTION_TYPES = {"default", "custom"}
@@ -303,6 +564,11 @@ class DBReply(Action):
             db_operation: str = "any",
             db_sql_query: Optional[str] = None,
             llm_name: Optional[str] = None,
+            input_prompt_mode: str = 'last_user_message',
+            custom_input_prompt: Optional[str] = None,
+            custom_input_prompt_use_session_vars: bool = False,
+            store_in_session: Optional[str] = None,
+            send_reply: bool = True,
     ):
         super().__init__()
 
@@ -335,6 +601,10 @@ class DBReply(Action):
         self.db_operation: str = normalized_operation
         self.db_sql_query: Optional[str] = db_sql_query
         self.llm_name: Optional[str] = llm_name
+        self._init_input_prompt(input_prompt_mode, custom_input_prompt)
+        self.custom_input_prompt_use_session_vars: bool = custom_input_prompt_use_session_vars
+        self.store_in_session: Optional[str] = store_in_session
+        self.send_reply: bool = send_reply
 
     def __repr__(self):
         return (
@@ -344,7 +614,12 @@ class DBReply(Action):
             f"db_query_mode={self.db_query_mode!r}, "
             f"db_operation={self.db_operation!r}, "
             f"db_sql_query={self.db_sql_query!r}, "
-            f"llm_name={self.llm_name!r}"
+            f"llm_name={self.llm_name!r}, "
+            f"input_prompt_mode={self.input_prompt_mode!r}, "
+            f"custom_input_prompt={self.custom_input_prompt!r}, "
+            f"custom_input_prompt_use_session_vars={self.custom_input_prompt_use_session_vars!r}, "
+            f"store_in_session={self.store_in_session!r}, "
+            f"send_reply={self.send_reply!r}"
             ")"
         )
 
@@ -423,6 +698,7 @@ class LLMSuite(Enum):
     huggingface = "huggingface"
     huggingface_inference_api = "huggingface-inference-api"
     replicate = "replicate"
+    ollama = "ollama"
 
 
 class LLMIntentClassifierConfiguration(IntentClassifierConfiguration):
@@ -731,6 +1007,472 @@ class LLMReplicate(LLMWrapper):
         self.num_previous_messages = num_previous_messages
 
 
+class LLMOllama(LLMWrapper):
+    """An LLM wrapper for locally hosted models served via Ollama.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name
+        parameters (dict): the LLM parameters. Typically includes ``base_url``
+            (default ``http://localhost:11434``) and ``model`` (e.g. ``"llama3"``).
+        num_previous_messages (int): for the chat functionality, the number of previous
+            messages of the conversation to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous
+            messages of the conversation to add to the prompt context (must be > 0)
+        _global_context (str): the global context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMMistral(LLMWrapper):
+    """An LLM wrapper for Mistral AI models via Mistral's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"mistral-small-latest"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMDeepSeek(LLMWrapper):
+    """An LLM wrapper for DeepSeek models via DeepSeek's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"deepseek-chat"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMGoogle(LLMWrapper):
+    """An LLM wrapper for Google Gemini models via Google's OpenAI-compatible endpoint.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"gemini-2.5-flash"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMMeta(LLMWrapper):
+    """An LLM wrapper for Meta Llama models via Meta's hosted OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"Llama-3.3-70B-Instruct"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMAnthropic(LLMWrapper):
+    """An LLM wrapper for Anthropic Claude models using the native anthropic SDK.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"claude-opus-5"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMQwen(LLMWrapper):
+    """An LLM wrapper for Alibaba Qwen models via DashScope's OpenAI-compatible endpoint.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"qwen-max"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMxAI(LLMWrapper):
+    """An LLM wrapper for xAI Grok models via xAI's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"grok-3-mini"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMGroq(LLMWrapper):
+    """An LLM wrapper for Groq-hosted models via Groq's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"llama-3.3-70b-versatile"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMTogether(LLMWrapper):
+    """An LLM wrapper for Together AI-hosted models via Together's OpenAI-compatible API.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier (e.g. ``"meta-llama/Llama-3.3-70B-Instruct-Turbo"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
+class LLMOpenRouter(LLMWrapper):
+    """An LLM wrapper for models accessed via OpenRouter's OpenAI-compatible API.
+
+    OpenRouter provides a unified gateway to hundreds of models from many providers.
+
+    Args:
+        agent (Agent): the agent the LLM belongs to
+        name (str): the LLM name / model identifier in OpenRouter format
+            (e.g. ``"anthropic/claude-opus-4"``, ``"openai/gpt-4o"``)
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): for the chat functionality, the number of previous messages of the conversation
+            to add to the prompt context (must be > 0)
+        global_context (str): the global context to be provided to the LLM for each request
+
+    Attributes:
+        name (str): the LLM name
+        parameters (dict): the LLM parameters
+        num_previous_messages (int): number of previous messages used in chat
+        _global_context (str): the global context to be provided to the LLM for each request
+        _user_context (dict): user specific context to be provided to the LLM for each request
+    """
+
+    def __init__(self, agent: 'Agent', name: str, parameters: dict, num_previous_messages: int = 1,
+                 global_context: str = None):
+        super().__init__(name, agent, parameters, global_context=global_context)
+        self.agent: 'Agent' = agent
+        self.num_previous_messages: int = num_previous_messages
+
+    def set_model(self, name: str) -> None:
+        """Set the LLM model name.
+
+        Args:
+            name (str): the new LLM name
+        """
+        self.name = name
+
+    def set_num_previous_messages(self, num_previous_messages: int) -> None:
+        """Set the number of previous messages to use in the chat functionality
+
+        Args:
+            num_previous_messages (int): the new number of previous messages
+        """
+        self.num_previous_messages = num_previous_messages
+
+
 class RAGVectorStore:
     """Declarative description of a vector store used by a RAG pipeline.
 
@@ -775,7 +1517,15 @@ class RAG(NamedElement):
 
         vector_store = Chroma(...)
         splitter = RecursiveCharacterTextSplitter(...)
-        rag = RAG(agent=agent, vector_store=vector_store, splitter=splitter, llm_name='gpt-4o-mini', k=4, num_previous_messages=0)
+        rag = RAG(
+            agent=agent,
+            vector_store=vector_store,
+            splitter=splitter,
+            llm_name='gpt-4o-mini',
+            llm_prompt='Use only trusted corpus facts.',
+            k=4,
+            num_previous_messages=0,
+        )
 
     Args:
         name (str): Logical name of the RAG resource.
@@ -798,6 +1548,8 @@ class RAG(NamedElement):
             llm_prompt: Optional[str] = None,
             k: int = 4,
             num_previous_messages: int = 0,
+            use_hybrid_rag: bool = False,
+            bm25_weight: float = 0.6,
     ):
         super().__init__(name)
         self.agent: 'Agent' = agent
@@ -807,6 +1559,8 @@ class RAG(NamedElement):
         self.llm_prompt: Optional[str] = llm_prompt
         self.k: int = k
         self.num_previous_messages: int = num_previous_messages
+        self.use_hybrid_rag: bool = use_hybrid_rag
+        self.bm25_weight: float = bm25_weight
 
 
 # --- Reasoning extension primitives -------------------------------------- #
@@ -1334,6 +2088,38 @@ class ReceiveFileEvent(Event):
         self.file: File = file
 
 
+class GUIEvent(Event):
+    """Event triggered by user interaction with a GUI component (e.g. button click, form submit).
+
+    Args:
+        message_id (str, optional): The id of the AgentGUI chat message that originated this event.
+            When set, only interactions from the GUI with that id trigger this event.
+
+    Attributes:
+        message_id (str | None): The AgentGUI message id filter.
+    """
+
+    def __init__(self, message_id: Optional[str] = None):
+        super().__init__(name='gui_event')
+        self.message_id: Optional[str] = message_id
+
+
+class FormSubmitMatcher(Condition):
+    """Condition that matches a GUI form submission event, optionally filtered to a specific form.
+
+    Args:
+        form_id (str, optional): The gui_id of the AgentGUI form whose submissions should trigger
+            this transition. If None, any form submission matches.
+
+    Attributes:
+        form_id (str | None): The form GUI id filter.
+    """
+
+    def __init__(self, form_id: Optional[str] = None):
+        super().__init__('form_submitted', None)
+        self.form_id: Optional[str] = form_id
+
+
 class IntentMatcher(Condition):
     """This event checks if 2 intents are the same (returning True, and False otherwise), used for intent matching
     checking.
@@ -1542,6 +2328,23 @@ class AgentState(State):
         transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[FileTypeMatcher(allowed_types)])
         return transition_builder
 
+    def when_form_submitted(self, form_id: Optional[str] = None) -> TransitionBuilder:
+        """Start the definition of a "form submitted" transition on this state.
+
+        Triggered when the user submits a GUI form. If ``form_id`` is provided, only submissions
+        from the GUI with that id will trigger the transition.
+
+        Args:
+            form_id (str, optional): The gui_id of the AgentGUI form whose submissions should trigger
+                this transition. If None, any form submission triggers this transition.
+
+        Returns:
+            TransitionBuilder: the transition builder
+        """
+        event: GUIEvent = GUIEvent(message_id=form_id)
+        condition: FormSubmitMatcher = FormSubmitMatcher(form_id)
+        return TransitionBuilder(source=self, event=event, conditions=[condition])
+
     def when_event(self, event: Event) -> TransitionBuilder:
         """Start the definition of a transition triggered by a custom event.
 
@@ -1667,7 +2470,10 @@ class Agent(StateMachine):
             agent states.
         intents (list[Intent]): The agent intents.
         entities (list[Entity]): The agent entities.
-        global_initial_states (list[state_machine.State, Intent]): List of tuples of initial global states and their triggering intent
+        global_initial_states (list[state_machine.State, Intent]): List of tuples of initial global states and their
+            triggering intent
+        gui_models (dict[str, GUIModel]): The GUIs the agent can send as chat replies, keyed by gui id. A
+            :class:`GUIReplyAction` references one of these keys through its ``gui_id``.
     """
 
     def __init__(self, name: str):
@@ -1684,6 +2490,46 @@ class Agent(StateMachine):
         self.tools: list[Tool] = []
         self.skills: list[Skill] = []
         self.workspaces: list[Workspace] = []
+        self.gui_models: dict[str, GUIModel] = {}
+
+    @property
+    def gui_models(self) -> dict[str, GUIModel]:
+        """dict[str, GUIModel]: The agent GUIs keyed by gui id (referenced by ``GUIReplyAction.gui_id``)."""
+        return self._gui_models
+
+    @gui_models.setter
+    def gui_models(self, gui_models: dict[str, GUIModel]):
+        """dict[str, GUIModel]: Replace the agent GUIs. Keys must be non-empty strings, values GUIModels."""
+        if not isinstance(gui_models, dict):
+            raise TypeError(f"gui_models must be a dict[str, GUIModel], got {type(gui_models).__name__}.")
+        for gui_id, gui_model in gui_models.items():
+            self._check_gui_entry(gui_id, gui_model)
+        self._gui_models = dict(gui_models)
+
+    @staticmethod
+    def _check_gui_entry(gui_id: str, gui_model: GUIModel) -> None:
+        if not isinstance(gui_id, str) or not gui_id.strip():
+            raise ValueError(f"A GUI id must be a non-empty string, got {gui_id!r}.")
+        if not isinstance(gui_model, GUIModel):
+            raise TypeError(
+                f"The GUI registered under '{gui_id}' must be a GUIModel, got {type(gui_model).__name__}."
+            )
+
+    def add_gui_model(self, gui_id: str, gui_model: GUIModel) -> GUIModel:
+        """Register a GUI the agent can send as a chat reply.
+
+        Args:
+            gui_id (str): The id :class:`GUIReplyAction` uses to reference this GUI.
+            gui_model (GUIModel): The GUI definition.
+
+        Returns:
+            GUIModel: the registered GUI model.
+        """
+        self._check_gui_entry(gui_id, gui_model)
+        if gui_id in self._gui_models:
+            raise ValueError(f"A GUI with id '{gui_id}' is already registered on agent '{self.name}'.")
+        self._gui_models[gui_id] = gui_model
+        return gui_model
 
     def validate(self, raise_exception: bool = True) -> dict:
         """
@@ -1702,6 +2548,7 @@ class Agent(StateMachine):
         self._validate_transition_intent_references(errors)
         self._validate_reasoning_primitives(errors, warnings)
         self._validate_llm_references(errors, warnings)
+        self._validate_gui_references(errors)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -1897,12 +2744,12 @@ class Agent(StateMachine):
     ) -> 'LLMWrapper':
         """Register an LLM on the agent and return the :class:`LLMWrapper` instance.
 
-        ``provider`` selects the concrete subclass: ``openai`` →
-        :class:`LLMOpenAI`, ``huggingface`` → :class:`LLMHuggingFace`,
-        ``huggingface_api`` → :class:`LLMHuggingFaceAPI`,
-        ``replicate`` → :class:`LLMReplicate`. Names must be unique on the
-        agent so other elements (reasoning states, RAG, replies, intent
-        classifiers) can reference the LLM by ``llm_name``.
+        ``provider`` selects the concrete :class:`LLMWrapper` subclass via
+        :attr:`Agent._LLM_PROVIDERS`; ``sorted(Agent._LLM_PROVIDERS)`` is the
+        authoritative list of accepted keys (the :class:`ValueError` raised below
+        reports it). Names must be unique on the agent so other elements
+        (reasoning states, RAG, replies, intent classifiers) can reference the
+        LLM by ``llm_name``.
         """
         if any(existing.name == name for existing in self.llms):
             raise ValueError(
@@ -1952,6 +2799,8 @@ class Agent(StateMachine):
             llm_prompt: Optional[str] = None,
             k: int = 4,
             num_previous_messages: int = 0,
+            use_hybrid_rag: bool = False,
+            bm25_weight: float = 0.6,
     ) -> RAG:
         """Register a Retrieval-Augmented Generation configuration on the agent."""
 
@@ -1966,6 +2815,8 @@ class Agent(StateMachine):
             llm_prompt=llm_prompt,
             k=k,
             num_previous_messages=num_previous_messages,
+            use_hybrid_rag=use_hybrid_rag,
+            bm25_weight=bm25_weight,
         )
         self.rags.append(rag)
         return rag
@@ -2142,9 +2993,9 @@ class Agent(StateMachine):
                 if body is None or not getattr(body, "actions", None):
                     continue
                 for action in body.actions:
-                    if isinstance(action, LLMReply):
+                    if isinstance(action, (LLMReply, LLMChatReply)):
                         _check(
-                            f"State '{state.name}' {label} LLMReply",
+                            f"State '{state.name}' {label} {action.__class__.__name__}",
                             action.llm_name,
                         )
                     elif isinstance(action, DBReply) and action.db_query_mode == "llm_query":
@@ -2174,6 +3025,20 @@ class Agent(StateMachine):
         # Default LLM pointer.
         if self.default_llm_name is not None:
             _check("Agent.default_llm_name", self.default_llm_name)
+
+    def _validate_gui_references(self, errors: list[str]) -> None:
+        """Validate that every ``GUIReplyAction.gui_id`` is a key of :attr:`gui_models`."""
+        for state in self.states:
+            for body, label in ((state.body, "body"), (state.fallback_body, "fallback_body")):
+                if body is None:
+                    continue
+                for action in body.actions:
+                    if isinstance(action, GUIReplyAction) and action.gui_id not in self.gui_models:
+                        errors.append(
+                            f"State '{state.name}' {label} GUIReplyAction references GUI "
+                            f"'{action.gui_id}' which is not registered on agent '{self.name}'. "
+                            f"Register it via agent.add_gui_model(...) first."
+                        )
 
     # ─── Reasoning validation ─────────────────────────────────────────── #
 
@@ -2260,6 +3125,17 @@ Agent._LLM_PROVIDERS = {
     "huggingface": LLMHuggingFace,
     "huggingface_api": LLMHuggingFaceAPI,
     "replicate": LLMReplicate,
+    "ollama": LLMOllama,
+    "mistral": LLMMistral,
+    "deepseek": LLMDeepSeek,
+    "google": LLMGoogle,
+    "meta": LLMMeta,
+    "anthropic": LLMAnthropic,
+    "qwen": LLMQwen,
+    "xai": LLMxAI,
+    "groq": LLMGroq,
+    "together": LLMTogether,
+    "openrouter": LLMOpenRouter,
 }
 
 

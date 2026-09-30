@@ -63,11 +63,11 @@ class CustomCodeAction(Action):
 
     def __init__(self, source: str = None, callable: Callable = None):
         if callable is not None:
-            src = inspect.getsource(callable)
-            self.code = textwrap.dedent(src)
+            self.code = inspect.getsource(callable)
+        elif source is not None:
+            self.code = textwrap.dedent(source)
         else:
-            self.code = textwrap.dedent(source) if source else ""
-
+            self.code = None
     def to_code(self) -> str:
         return self.code
 

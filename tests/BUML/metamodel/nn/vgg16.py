@@ -1,14 +1,16 @@
 """
 BUML code for VGG16 from the literature.
 """
-from besser.BUML.metamodel.nn import NN, Conv2D, PoolingLayer, \
-    LinearLayer, DropoutLayer, FlattenLayer
-from besser.generators.nn.pytorch.pytorch_code_generator import (
-    PytorchGenerator
+from besser.BUML.metamodel.nn import (
+    NN,
+    Conv2D,
+    DropoutLayer,
+    FlattenLayer,
+    LinearLayer,
+    PoolingLayer,
 )
+from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 from besser.generators.nn.tf.tf_code_generator import TFGenerator
-
-
 
 features: NN = NN(name="features")
 features.add_layer(Conv2D(name="f1", actv_func="relu", in_channels=3,

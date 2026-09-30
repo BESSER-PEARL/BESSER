@@ -1,4 +1,5 @@
 {% import "class_parameters.py.j2" as class_parameters -%}
+{% import "method_body.py.j2" as method_body -%}
 from datetime import datetime, date, time
 {%- set ns = namespace(abstract_found=false) %}
 {%- for class in domain.classes_sorted_by_inheritance() -%}
@@ -16,7 +17,7 @@ from enum import Enum
 # Definition of Enumerations
 ############################################
 
-{% for enum in domain.get_enumerations() -%}
+{% for enum in domain.get_enumerations()|sort(attribute='name') -%}
 class {{ enum.name }}(Enum):
 {%- if enum.literals %}
 {%- for literal in sort_by_timestamp(enum.literals) %}
@@ -32,12 +33,12 @@ class {{ enum.name }}(Enum):
 # Definition of Classes
 ############################################
 {% for class in domain.classes_sorted_by_inheritance() %}
-class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC){% endif %}:
+class {{ class.name }}{% if class.parents() %}({% for parent in class.parents()|sort(attribute='name') %}{{parent.name}}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC){% endif %}:
 {% if class.all_attributes() or class.methods %}
     def __init__({{ class_parameters.init_parameters(class, sort_by_timestamp) }}):
         {{ class_parameters.init_parameters_definition(class, sort_by_timestamp) }}
 
-    {%- for attribute in class.attributes %}
+    {%- for attribute in class.attributes|sort(attribute='name') %}
     @property
     def {{ attribute.name }}(self) -> {{ attribute.type.name }}:
         return self.__{{ attribute.name }}
@@ -47,7 +48,7 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
         self.__{{ attribute.name }} = {{ attribute.name }}
 {% endfor -%}
 
-    {% for end in class.association_ends() if end.is_navigable %}
+    {% for end in class.association_ends()|sort(attribute='name') if end.is_navigable %}
     @property
     def {{ end.name }}(self):
         return self.__{{ end.name }}
@@ -113,21 +114,20 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
         {%- endif %}
 {% endfor -%}
 
-    {%- for method in class.methods %}
+    {%- for method in class.methods|sort(attribute='name') %}
     {%- if method.code %}
     {#- If method has code, use it directly (it contains the full function definition) #}
-{{ method.code | indent(4, first=true) }}
+{{ normalize_code(method.code, method.name) | indent(4, first=true) }}
     {%- else %}
     {#- Otherwise generate method signature from metadata #}
     {%- if method.is_abstract %}
     @abstractmethod
     {%- endif %}
-    def {{ method.name }}(self{% if method.parameters %}, {% for param in method.parameters %}{{ param.name }}: {{ param.type.name }}{% if param.default_value %}{% if param.type.name == 'str' %} = "{{ param.default_value }}"{% else %} = {{ param.default_value }}{% endif %}{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}{% endif %}){%- if method.type %} -> {{ method.type.name }}{% endif %}:
+    def {{ method.name }}(self{% if method.parameters %}, {% for param in method.parameters %}{{ param.name }}: {{ param.type.name }}{% if param.default_value %} = {{ param.default_value | python_default(param.type.name, owner=method.name ~ '(' ~ param.name ~ ')') }}{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}{% endif %}){%- if method.type %} -> {{ method.type.name }}{% endif %}:
         {%- if method.is_abstract %}
         pass
         {%- else %}
-        # TODO: Implement {{ method.name }} method
-        pass
+        {{ method_body.infer_body(class, method) }}
         {%- endif %}
     {%- endif %}
 {% endfor -%}

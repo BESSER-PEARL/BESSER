@@ -1,0 +1,65 @@
+Version 7.14.2
+==============
+
+Patch release: **a modular per-resource FastAPI backend, and correct deletes,
+edits and multiplicities in generated web applications**. Everything was
+verified end to end on a hotel-booking model: every generated API route was
+driven with real data, and the generated React screens were exercised in a
+browser. No metamodel or API-contract changes — freshly generated applications
+keep the same REST contract, so existing frontends and deployments are not
+affected.
+
+Highlights
+----------
+
+- **The generated backend is modular**: ``BackendGenerator`` now emits a slim
+  ``main_api.py`` (app setup, middleware, exception handlers, system endpoints)
+  that wires one ``routers/<class>.py`` per resource, plus ``database.py`` (the
+  shared engine/session, honoring the ``DATABASE_URL`` environment variable)
+  and ``bal_stdlib.py``. ``RESTAPIGenerator(backend=True)`` renders the same
+  API layer, and the ~100 KB monolithic ``main_api.py`` template is gone, so
+  the association-class, OCL and method-normalization logic lives in exactly
+  one place. The route table is identical to the previous generator on the
+  reference model. A few behaviors were fixed along the way: ``/search/``
+  endpoints expose real filter parameters (including inherited attributes —
+  the old type check never matched, so every search returned everything),
+  path parameters use the declared type of the primary key, a modeled method
+  without an implementation answers ``501`` instead of a fake success,
+  ``/health`` actually queries the database, and ``sql_alchemy.py`` shares
+  ``DATABASE_URL`` with the API, no longer creates tables as an import side
+  effect, and types association-class foreign keys after the referenced
+  primary key.
+- **Deleting an entity deletes its association-class links**: deleting a
+  ``Booking`` that had ``ReservedRoom`` rows crashed the generated backend
+  (the link's foreign key is part of its composite primary key, so SQLAlchemy
+  could neither null it nor knew to delete it). The entity → links
+  relationships now carry ``cascade="all, delete-orphan"`` from both ends, and
+  ``DELETE`` returns a snapshot of the deleted row. The generated table also
+  addresses rows by their real key (``row_key_fields`` in the data binding):
+  a ``Room`` by ``number`` and a link by both foreign keys
+  (``/reservedroom/{booking_id}/{rooms_id}/``) — previously it guessed the
+  first column of the row, which for a link was its price.
+- **Lower-bound multiplicities are enforced wherever a relationship can
+  shrink**: creation already refused a ``Booking`` without guests, but every
+  later path could strip them — editing the booking with an empty list,
+  removing the link, or deleting the last ``Guest`` itself. The ORM cannot
+  express a lower bound on the many side, so the generated routers enforce it:
+  deleting an entity, removing a link (plain or association-class), or editing
+  a relationship list is refused with a ``409`` naming the entity and the
+  minimum (``Cannot delete Guest 3: Booking 10 requires at least 1 guests``),
+  and deleting the target of a mandatory to-one end gets the same message
+  instead of a ``NOT NULL`` crash. Editing the owner of a one-to-many end
+  (``Employee.manages``) now diffs the current and requested members instead of
+  nulling every foreign key first, which had made such entities impossible to
+  edit at all.
+- **Generated edit dialogs are safe and fast**: the table fetches the detailed
+  rows whenever its form has a relationship, so the edit dialog opens with the
+  current selections instead of empty ones — a save used to silently detach
+  every relationship of the edited entity — and a relationship the row never
+  carried is left out of the save. An open Add/Edit dialog no longer fires
+  about a thousand lookup requests per second (a memoization loop on tables
+  without explicit columns). A refused delete shows the backend's reason in a
+  dismissible banner instead of failing silently, inherited attributes (an
+  ``Employee``'s ``last_name``, defined on ``Person``) are updated by ``PUT``,
+  and a ``PUT`` that omits a many-to-many list leaves the links untouched
+  instead of crashing.

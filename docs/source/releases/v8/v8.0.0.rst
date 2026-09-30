@@ -1,0 +1,255 @@
+Version 8.0.0
+=============
+
+Major release: **the Spec-Driven Agent**. BESSER gains a hybrid generator that
+starts from the deterministic scaffold of its own code generators, lets an LLM
+customise it to a natural-language specification, and then validates and
+repairs the result against the model it came from. Around it, this release
+makes GUI designs reach generated applications intact (their stylesheet,
+working create/update/delete buttons, class-bound forms and aggregated
+charts), aligns the generated FastAPI backend with its data contract,
+hardens generated code and model import, and adds support for GPT-6 and
+Claude 5.x models as well as local, OpenAI-compatible endpoints. Several
+generator behaviours change; read *Migration and breaking changes* before
+upgrading.
+
+Highlights
+----------
+
+- **The Spec-Driven Agent** (``besser.spec_driven_agent``, see
+  :doc:`/spec_driven_agent/index`): Phase 1 generates a scaffold with the
+  BESSER generator that fits the request (or, when none fits, stack metadata
+  to build from), Phase 2 is an LLM customisation loop with a tool surface for
+  files, model queries, the other BESSER generators and a checklist that gates
+  the end of the turn, and Phase 3 validates the result and runs a bounded
+  auto-fix loop that keeps the best tree it reached. A run cannot report
+  complete while the delivered application cannot boot or create a record.
+  Runs are owned by the server: they survive a closed tab or a dropped
+  connection, can be replayed from any event and resumed from a checkpoint.
+  In the web editor, runs are started from the modeling assistant and shown
+  as run cards with live progress, cost and the deterministic-versus-LLM split
+  of the delivered files.
+
+- **Validation of generated code**: a validation layer separate from model
+  validation classifies findings as ``blocker``, ``warning`` or ``style``, and
+  blockers drive the fix loop. It covers syntax and import errors, ruff's
+  undefined-name rules, dependency conflicts, Dockerfile references, a data
+  contract derived from the model, runtime probes that boot the application
+  and create each entity through its API, frontend contracts (a page that
+  renders blank on load, a form wired to nothing), and ``tsc`` / ``cargo`` /
+  ``kotlinc`` errors when toolchain validation is on. A check that could not run is reported as
+  skipped, so "0 blockers" means the checks ran. See
+  :doc:`/spec_driven_agent/validation`.
+
+- **Providers and models**: the agent runs on a keyless free tier configured
+  by the deployment, a server-sponsored tier gated by a demo token, or the
+  user's own key for Anthropic, OpenAI, Mistral or Nebius Token Factory. The
+  client shapes requests for the models that need it: GPT-6 ``sol`` / ``luna``
+  and the GPT-5.6 family (``max_completion_tokens``, reasoning disabled when
+  tools are sent), Claude Fable 5.1 and Opus 5.5 (forced tool calls sent as
+  named ``tool_choice: auto`` requests), and Claude 5 / 4.x. Costs come from a
+  vendored price table, so every paid model is billed and the per-run cost cap
+  applies to it. See :doc:`/spec_driven_agent/models`.
+
+- **Local and gateway endpoints**: a request may carry its own
+  OpenAI-compatible ``base_url``, which is what the editor's PIA (LIST's
+  private AI gateway, backed by AWS Bedrock) and Local (for example Ollama)
+  providers send. The server opens a user-supplied URL only when
+  ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL`` is set: it is off in code and in
+  ``docker-compose.prod.yml``, and on in the local ``docker-compose.yml``.
+
+- **GUI designs keep their styling**: ``GUIModel.stylesheet`` holds the CSS a
+  design shares across elements (class and compound selectors, ``:root``
+  tokens, ``@media`` and state rules), which the GUI processor used to drop.
+  The React generator, and with it the Web App generator, writes it to
+  ``src/design.css`` and applies the design's class names to tables, charts
+  and metric cards. The stylesheet
+  round-trips through B-UML export and import. See
+  :doc:`/buml_language/model_types/gui` and :doc:`/generators/react`.
+
+- **Generated GUIs act on their data**: buttons with a create, update or
+  delete action now work, driving the table they are bound to (open the Add
+  dialog, edit or delete the selected row). A form bound to a class is
+  generated as a create form that posts the typed values and shows the
+  server's answer; a form with no explicit data source is bound to a class
+  only when its inputs can create a record of it. Metric cards and chart
+  series take an aggregation (``DataBinding.aggregation``: count, sum, average,
+  minimum, maximum, median, first or last), and table forms leave out
+  ``readOnly`` columns and any relationship the backend's Create schema does not accept.
+
+- **A generated backend that honours its data contract**: Create schemas no
+  longer ask the client for values the server owns, primary-key types are used
+  consistently for every foreign key, path parameter and link, entity creation
+  is atomic, and models in which two tables hold mandatory foreign keys to
+  each other, or an association class is the target of another association,
+  now produce applications that create their tables and records.
+
+- **Security**: a modelled default value is emitted as a typed literal and can
+  no longer inject code into generated source; uploaded B-UML files are loaded
+  through an AST allowlist instead of a restricted ``exec``; the agent's shell
+  tools are off unless a deployment enables them, and on Linux each command
+  runs in a bubblewrap sandbox with a stripped environment, or is refused when
+  the sandbox cannot start; secrets are redacted from every streamed event and
+  from the delivered workspace; GitHub imports are bounded in size and member
+  count.
+
+Migration and breaking changes
+------------------------------
+
+**Spec-Driven Agent package**
+
+The agent is ``besser.spec_driven_agent``; import the generator with
+``from besser.spec_driven_agent import LLMGenerator``. Its modules are grouped
+into subpackages (``pipeline``, ``agent``, ``providers``, ``validation``,
+``planning``, ``state``, ``execution``, ``repair``). Code written against the
+pre-release ``besser.generators.llm`` package, which was never part of a
+published release, must use the new path.
+
+**Shell tools and compilers are opt-in**
+
+``LLMGenerator`` and ``LLMOrchestrator`` take ``allow_shell_tools`` and
+``enable_toolchain_validation``, both ``False`` by default. A caller that wants
+the agent to run commands (``run_command``, ``install_dependencies``) or to
+compile its output must pass them explicitly::
+
+    LLMGenerator(model=model, instructions=..., allow_shell_tools=True,
+                 enable_toolchain_validation=True)
+
+The web backend reads ``BESSER_LLM_ENABLE_SHELL_TOOLS`` and
+``BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION`` (both off); no request field can
+enable them.
+
+**Server-owned fields are not in Create schemas**
+
+In backend mode, the Pydantic ``<Class>Create`` schemas, which the generated
+FastAPI routers use for ``POST`` and ``PUT``, no longer contain an attribute
+named ``id`` that is not a declared primary key, the ``createdAt`` /
+``updatedAt`` timestamps, or attributes marked ``is_derived``. A declared
+primary key (``is_id=True``) is always client-supplied and stays in the
+schema, whatever its name. Clients that sent these fields must stop, and a
+model whose ``id`` must come from the client must mark it ``is_id``. On the
+non-owning side of a one-to-one association the Create schema no longer has a
+field; the link is set from the side that holds the foreign key. Relationship
+fields are typed after the referenced primary key instead of always ``int``.
+
+**Default values must be literals**
+
+``SQLAlchemyGenerator``, ``PydanticGenerator``, ``PythonGenerator``,
+``DjangoGenerator`` and the backend routers render ``default_value`` through
+``besser.generators.default_literals``: the value is coerced to the attribute's
+type and emitted as a literal, so a string default is always a string. A
+default that cannot be coerced, such as ``"abc"`` or an expression for an
+``int``, raises ``InvalidDefaultValueError`` at generation time, as does an
+empty default for a non-string type. An enumeration default must name one of
+its literals.
+
+**DjangoGenerator reports failures**
+
+``DjangoGenerator.generate()`` raises instead of printing the error and
+returning, including for an error while updating ``settings.py``. It generates under ``output_dir`` without changing the process's
+working directory, and refuses to replace an existing, non-empty directory
+that is not a generated Django project (no ``manage.py``).
+
+**Method bodies of generated classes**
+
+``PythonGenerator`` and ``DjangoGenerator`` emit a body for a method without
+an implementation only when it can be inferred from the class (getters,
+setters, boolean predicates, ``__str__``). Any other such method raises
+``NotImplementedError`` instead of silently doing nothing.
+
+**Models and metamodel**
+
+- Renaming a ``Class`` renames the association ends that were named after it
+  (``book`` / ``books`` follow ``Book`` → ``Volume``); intentionally different
+  role names are left alone. Plural role names follow English rules
+  (``Box`` → ``boxes``, ``City`` → ``cities``), and a rename that would give a
+  class two association ends with the same name is skipped.
+- ``DomainModel.validate()`` warns about a cycle of mandatory associations
+  (no class in it can be created first) and about a pair of classes connected
+  by more than one association. It reports an error when a class reaches two
+  association ends with the same name, which construction checks but a later
+  rename does not.
+- ``AssociationClass`` passes its ``timestamp`` and ``metadata`` on to
+  ``Class``; they used to land in the ``methods`` and ``is_abstract``
+  parameters.
+- ``GUIModel`` takes an optional ``stylesheet`` (default ``""``), and
+  ``DataBinding`` an optional ``aggregation`` (a ``DataAggregation`` or its
+  name; an unknown name raises ``ValueError``). Existing constructors are
+  unaffected.
+
+**Web editor backend**
+
+- ``DEFAULT_SQL_DIALECT`` is ``sqlite``. The previous ``standard`` was not a
+  valid ``SQLAlchemyGenerator`` dialect, so a request without a dialect
+  failed.
+- Uploaded B-UML files may contain only the statements the code builders
+  produce; anything else is rejected with an error instead of being executed.
+  An ``if __name__ == "__main__":`` block is ignored.
+
+**Dependencies**
+
+- ``tiktoken`` is a new core dependency and ``httpx`` is bounded to ``<0.28``.
+- The backend requirements pin ``fastapi`` to ``0.110.x`` and ``starlette`` to
+  ``0.36.x``, and add ``anthropic`` (``>=0.88,<1``), ``ruff==0.16.6`` and
+  ``pyflakes``. ``anthropic`` is also in the ``agents`` extra
+  (``pip install besser[agents]``). Without ruff, Phase 3's undefined-name
+  checks are skipped.
+
+Other improvements and fixes
+----------------------------
+
+- The PlantUML object-diagram parser works again: every object parse used to
+  fail on the first attribute value.
+- Promoting a class to an association class in the editor no longer orphans
+  its associations, and an unresolvable method return type from an older save
+  no longer rejects the whole diagram.
+- Duplicate association-end names on one class no longer crash the JSON to
+  B-UML converter.
+- The SQLAlchemy generator makes a derived column without a zero value
+  nullable, defers one foreign key of a mandatory table cycle so the tables
+  can be created, and gives an association class that another association
+  targets its own key.
+- Generated output is the same from one run to the next. Where the metamodel
+  holds unordered sets, generators iterate attributes, association ends,
+  enumeration literals and methods sorted by name; ``sort_by_timestamp``
+  keeps declaration order and breaks timestamp ties by name, and
+  ``DomainModel.classes_sorted_by_inheritance`` breaks ties between classes by
+  name.
+- The Django template emits valid Python for enumerations and relationship
+  fields, and for a class with several modelled methods. Inferred method
+  bodies (``__str__``, getters, predicates) take inherited attributes into
+  account.
+- Quantum circuits with ``Rx`` / ``Ry`` / ``Rz`` gates, and function gates
+  whose names contain symbols such as ``^`` or ``(``, export to B-UML code.
+- A GUI form keeps its field labels and submit button when a B-UML GUI model
+  is opened in the editor.
+- Pydantic models carry a ``TODO`` naming each OCL constraint they do not
+  enforce, instead of dropping it silently.
+- Exported GUI projects re-import instead of producing an empty diagram.
+- The backend's request-size limit is pure ASGI and no longer reads the body,
+  which had made ``POST`` requests hang or fail depending on the installed
+  Starlette.
+
+Deployment
+----------
+
+- The root ``Dockerfile`` has two targets. ``backend`` holds Python, the
+  requirements and BESSER, without compilers. ``smartgen-worker`` adds Node.js
+  with ``tsc``, JDK 21, Rust, ``kotlinc`` and bubblewrap for the Spec-Driven
+  Agent. The production backend runs
+  ``artefacts.list.lu/besser/web_modeling_editor/backend:latest``; the new
+  ``besser-wme-smartgen`` worker runs
+  ``artefacts.list.lu/besser/web_modeling_editor/smartgen_worker:latest``. The
+  local ``docker-compose.yml`` builds the worker target, since one container
+  serves both there.
+- Building the ``Dockerfile`` requires BuildKit: proxy certificates are read
+  from ``ca-certs-extra/`` through a bind mount and trusted only while
+  building (``--build-arg TRUST_EXTRA_CAS=1``). The build fails if a known
+  TLS-inspection CA is still in the system trust store, or in the worker's
+  JDK keystore, when the image is finished.
+- The worker gets only the LLM credentials (no ``env_file``), is the only
+  service with shell tools enabled, and needs ``seccomp=unconfined`` and
+  ``apparmor=unconfined`` for its sandbox. Add it to the production host's
+  compose file before deploying: the deploy workflow checks for it and stops
+  without pushing anything if it is missing or on the wrong image. Everything
+  the host needs is listed in :doc:`/spec_driven_agent/production_deployment`.

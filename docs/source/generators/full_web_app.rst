@@ -6,6 +6,13 @@ application from your structural (class diagram) and GUI models. This generator 
 the process of building modern web apps by producing all the backend, frontend, and deployment
 files you need—no manual coding required.
 
+.. seealso::
+   The output is a fixed, model-faithful scaffold. To go beyond it — a feature
+   the templates don't cover, or a different stack entirely — the
+   :doc:`Spec-Driven Agent <../spec_driven_agent/index>` runs this generator
+   first and then lets an LLM customise its output to a natural-language
+   request.
+
 Overview
 --------
 
@@ -126,7 +133,10 @@ Generated Output Structure
 
    my_app/
    ├── backend/
-   │   ├── main_api.py          # REST API endpoints
+   │   ├── main_api.py          # FastAPI app entry point (wires in the routers)
+   │   ├── routers/             # One router module per class (all endpoints)
+   │   ├── database.py          # Shared engine/session setup (DATABASE_URL)
+   │   ├── bal_stdlib.py        # B-UML Action Language helpers
    │   ├── pydantic_classes.py  # Data validation models
    │   ├── sql_alchemy.py       # Database ORM models
    │   ├── Dockerfile           # Backend container
@@ -143,13 +153,13 @@ Generated Output Structure
    │   ├── alpha/
    │   │   ├── Alpha.py
    │   │   ├── config.yaml
-   │   │   ├── Dockerfile
-   │   │   └── requirements.txt
+   │   │   ├── readme.txt
+   │   │   └── Dockerfile
    │   └── beta/
    │       ├── Beta.py
    │       ├── config.yaml
-   │       ├── Dockerfile
-   │       └── requirements.txt
+   │       ├── readme.txt
+   │       └── Dockerfile
    ├── docker-compose.yml       # Container orchestration
 
 
@@ -191,6 +201,12 @@ Operate at the class level, performing operations on the entire collection.
 **Supported Parameter Types:**
 
 ``str``, ``int``, ``float``, ``bool``, ``date``, ``datetime``, ``time``
+
+**Methods implemented by a neural network**: in the web editor, set a method's type to
+*Neural Network* and pick one of the project's NN diagrams. The generated backend gets the
+PyTorch network under ``backend/neural_networks/`` and a class-level endpoint that runs it;
+drop the trained weights in ``backend/neural_networks/weights/`` (see
+:ref:`the backend documentation <backend-nn-methods>`).
 
 See :doc:`backend` for complete method endpoint documentation.
 

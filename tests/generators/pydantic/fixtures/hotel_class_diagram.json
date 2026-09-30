@@ -1,0 +1,862 @@
+{
+  "title": "Class Diagram",
+  "model": {
+    "version": "4.0.0",
+    "type": "ClassDiagram",
+    "nodes": [
+      {
+        "id": "class_2vb9jr4yc_mu7ieunf_l9p",
+        "type": "class",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "Person",
+          "stereotype": null,
+          "attributes": [
+            {
+              "id": "attr_137b7ofxo_mu7ieunf_tqx",
+              "name": "id",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "int",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_7rrd8b60h_mu7ieunf_w69",
+              "name": "identifyingNumber",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": true
+            },
+            {
+              "id": "attr_5radimdwq_mu7ieunf_irj",
+              "name": "firstName",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_tzv5eeb38_mu7ieunf_osf",
+              "name": "familyName",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_kfrst3v1i_mu7ieunf_5az",
+              "name": "phone",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_s6gbyez5r_mu7ieunf_3yr",
+              "name": "email",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            }
+          ],
+          "methods": []
+        }
+      },
+      {
+        "id": "class_trt2pfaa4_mu7ieunf_kvf",
+        "type": "class",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "Employee",
+          "stereotype": "Abstract",
+          "attributes": [],
+          "methods": []
+        }
+      },
+      {
+        "id": "class_t166jgxi2_mu7ieunf_4d2",
+        "type": "class",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "Guest",
+          "stereotype": "Abstract",
+          "attributes": [],
+          "methods": []
+        }
+      },
+      {
+        "id": "class_e9ggzl13o_mu7ieunf_qqw",
+        "type": "class",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "Room",
+          "stereotype": null,
+          "attributes": [
+            {
+              "id": "attr_m0jgiuvsi_mu7ieunf_3mx",
+              "name": "id",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "int",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_7xsc9sdlj_mu7ieunf_6gn",
+              "name": "roomNumber",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": true
+            },
+            {
+              "id": "attr_licqewbw0_mu7ieunf_drb",
+              "name": "maxOccupancy",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "int",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_fuqjak27r_mu7ieunf_f1f",
+              "name": "description",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_01zkkthc0_mu7ieunf_6uq",
+              "name": "standardPrice",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "float",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            }
+          ],
+          "methods": []
+        }
+      },
+      {
+        "id": "class_bsml8y91t_mu7ieunf_dut",
+        "type": "class",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "BookingCommercialStatus",
+          "stereotype": "Enumeration",
+          "attributes": [
+            {
+              "id": "attr_9shat154a_mu7ieunf_mze",
+              "name": "AWAITING_PAYMENT",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_8g0f5vw4g_mu7ieunf_xbh",
+              "name": "CONFIRMED",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_wiq6ajqql_mu7ieunf_81z",
+              "name": "CANCELLED",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            }
+          ],
+          "methods": []
+        }
+      },
+      {
+        "id": "class_cyxh0umwq_mu7ieunf_6z0",
+        "type": "class",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "BookingPhysicalStatus",
+          "stereotype": "Enumeration",
+          "attributes": [
+            {
+              "id": "attr_bu8gxc5eb_mu7ieunf_xhp",
+              "name": "NOT_YET_ARRIVED",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_69i5nboz0_mu7ieunf_ggk",
+              "name": "CHECKED_IN",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_68lnp8t5w_mu7ieunf_kj7",
+              "name": "CHECKED_OUT",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            }
+          ],
+          "methods": []
+        }
+      },
+      {
+        "id": "class_jqybaoo04_mu7ieunf_bn5",
+        "type": "class",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "Booking",
+          "stereotype": null,
+          "attributes": [
+            {
+              "id": "attr_6a1f1yofy_mu7ieunf_w4t",
+              "name": "id",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "int",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_feli1gfcg_mu7ieunf_ovc",
+              "name": "bookingNumber",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": true
+            },
+            {
+              "id": "attr_5zlkf2g43_mu7ieunf_ag3",
+              "name": "arrivalDate",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "date",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_bxw45qgw3_mu7ieunf_ve8",
+              "name": "departureDate",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "date",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_y0adojddk_mu7ieunf_f5t",
+              "name": "commercialStatus",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "BookingCommercialStatus",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": true,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_vij8lkjey_mu7ieunf_16b",
+              "name": "physicalStatus",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "BookingPhysicalStatus",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": true,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_8x509eted_mu7ieunf_00c",
+              "name": "totalPrice",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "float",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": true,
+              "isId": false,
+              "isExternalId": false
+            }
+          ],
+          "methods": [
+            {
+              "id": "method_jb5tcyrhs_mu7ieunf_s68",
+              "name": "produceBill()",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "bool",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "method_bk03s2lz8_mu7ieunf_r2j",
+              "name": "registerArrival()",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "bool",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "method_z4jkxnodk_mu7ieunf_8cq",
+              "name": "registerDeparture()",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "bool",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "method_m0e9tte3r_mu7ieunf_fm7",
+              "name": "cancel()",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "bool",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "method_5mwmxnci5_mu7ieunf_n9p",
+              "name": "computeAmountOwed()",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "float",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            }
+          ]
+        }
+      },
+      {
+        "id": "class_r8t9pltt6_mu7ieunf_gy1",
+        "type": "class",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "ReservedRoom",
+          "stereotype": null,
+          "attributes": [
+            {
+              "id": "attr_dqalotw5n_mu7ieunf_bo2",
+              "name": "id",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "int",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_v5mryd86p_mu7ieunf_d73",
+              "name": "agreedPrice",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "float",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_3qwx8xg51_mu7ieunf_cvb",
+              "name": "extraCharges",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "float",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            }
+          ],
+          "methods": []
+        }
+      },
+      {
+        "id": "class_1wpg30up3_mu7ieung_bh0",
+        "type": "class",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "Bill",
+          "stereotype": null,
+          "attributes": [
+            {
+              "id": "attr_gqwnbk0w6_mu7ieung_u3j",
+              "name": "id",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "int",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_nxck0rx7x_mu7ieung_st0",
+              "name": "billNumber",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "str",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": true
+            },
+            {
+              "id": "attr_ybm2vklnb_mu7ieung_i2f",
+              "name": "issuedDate",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "date",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_tm6xohy8j_mu7ieung_tb7",
+              "name": "totalAmountDue",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "float",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            },
+            {
+              "id": "attr_vuqe7i9iz_mu7ieung_k55",
+              "name": "settled",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "bool",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            }
+          ],
+          "methods": [
+            {
+              "id": "method_k7ttve4vr_mu7ieung_rkc",
+              "name": "registerPayment()",
+              "code": "",
+              "visibility": "public",
+              "attributeType": "bool",
+              "implementationType": "none",
+              "stateMachineId": "",
+              "quantumCircuitId": "",
+              "isOptional": false,
+              "isDerived": false,
+              "isId": false,
+              "isExternalId": false
+            }
+          ]
+        }
+      },
+      {
+        "id": "ocl_6nabls1jg_mu7ieung_w37",
+        "type": "ClassOCLConstraint",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "",
+          "expression": "context Person inv validEmail: self.email.matches('^[^\\s@]+@[^\\s@]+\\.[A-Za-z]{2,}$')\n\ncontext Person inv validPhone: self.phone.matches('^\\+?[0-9]{7,15}$')"
+        }
+      },
+      {
+        "id": "ocl_jyb9dtxcg_mu7ieung_q6e",
+        "type": "ClassOCLConstraint",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "",
+          "expression": "context Booking inv arrivalBeforeDeparture: self.arrivalDate <= self.departureDate\n\ncontext Booking inv guestsWithinCapacity: self.guests->size() <= self.rooms->collect(maxOccupancy)->sum()"
+        }
+      },
+      {
+        "id": "ocl_ccum3m92y_mu7ieung_fz6",
+        "type": "ClassOCLConstraint",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "width": 160,
+        "height": 100,
+        "data": {
+          "name": "",
+          "expression": "context Room inv noOverlappingBookings: self.bookings->forAll(b1, b2 | b1 <> b2 implies b1.departureDate <= b2.arrivalDate or b2.departureDate <= b1.arrivalDate)"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "rel_4l5240nbt_mu7ieung_taq",
+        "type": "ClassInheritance",
+        "source": "class_trt2pfaa4_mu7ieunf_kvf",
+        "target": "class_2vb9jr4yc_mu7ieunf_l9p",
+        "data": {
+          "points": []
+        }
+      },
+      {
+        "id": "rel_yedxwj2il_mu7ieung_85d",
+        "type": "ClassInheritance",
+        "source": "class_t166jgxi2_mu7ieunf_4d2",
+        "target": "class_2vb9jr4yc_mu7ieunf_l9p",
+        "data": {
+          "points": []
+        }
+      },
+      {
+        "id": "rel_4aqarvgdw_mu7ieung_h6s",
+        "type": "ClassBidirectional",
+        "source": "class_jqybaoo04_mu7ieunf_bn5",
+        "target": "class_2vb9jr4yc_mu7ieunf_l9p",
+        "data": {
+          "points": [],
+          "name": "contact",
+          "sourceRole": "",
+          "sourceMultiplicity": "0..*",
+          "targetRole": "contact",
+          "targetMultiplicity": "1"
+        }
+      },
+      {
+        "id": "rel_cx29ls8vv_mu7ieung_j44",
+        "type": "ClassBidirectional",
+        "source": "class_t166jgxi2_mu7ieunf_4d2",
+        "target": "class_jqybaoo04_mu7ieunf_bn5",
+        "data": {
+          "points": [],
+          "name": "guests",
+          "sourceRole": "",
+          "sourceMultiplicity": "1..*",
+          "targetRole": "guests",
+          "targetMultiplicity": "0..*"
+        }
+      },
+      {
+        "id": "rel_2985ttxpf_mu7ieung_iin",
+        "type": "ClassBidirectional",
+        "source": "class_trt2pfaa4_mu7ieunf_kvf",
+        "target": "class_jqybaoo04_mu7ieunf_bn5",
+        "data": {
+          "points": [],
+          "name": "handledBy",
+          "sourceRole": "",
+          "sourceMultiplicity": "1",
+          "targetRole": "handledBy",
+          "targetMultiplicity": "0..*"
+        }
+      },
+      {
+        "id": "rel_6rre31swa_mu7ieung_6bv",
+        "type": "ClassBidirectional",
+        "source": "class_jqybaoo04_mu7ieunf_bn5",
+        "target": "class_e9ggzl13o_mu7ieunf_qqw",
+        "data": {
+          "points": [],
+          "name": "rooms",
+          "sourceRole": "",
+          "sourceMultiplicity": "0..*",
+          "targetRole": "rooms",
+          "targetMultiplicity": "1..*"
+        }
+      },
+      {
+        "id": "classlink_d882tel7g_mu7ieung_9sy",
+        "type": "ClassLinkRel",
+        "source": "class_r8t9pltt6_mu7ieunf_gy1",
+        "target": "rel_6rre31swa_mu7ieung_6bv",
+        "data": {
+          "points": []
+        }
+      },
+      {
+        "id": "rel_del02h87r_mu7ieung_496",
+        "type": "ClassBidirectional",
+        "source": "class_jqybaoo04_mu7ieunf_bn5",
+        "target": "class_1wpg30up3_mu7ieung_bh0",
+        "data": {
+          "points": [],
+          "name": "bill",
+          "sourceRole": "",
+          "sourceMultiplicity": "1",
+          "targetRole": "bill",
+          "targetMultiplicity": "0..1"
+        }
+      },
+      {
+        "id": "ocllink_hbjv76j5m_mu7ieung_pq3",
+        "type": "ClassOCLLink",
+        "source": "ocl_6nabls1jg_mu7ieung_w37",
+        "target": "class_2vb9jr4yc_mu7ieunf_l9p",
+        "data": {
+          "points": []
+        }
+      },
+      {
+        "id": "ocllink_2vn83brhi_mu7ieung_ddx",
+        "type": "ClassOCLLink",
+        "source": "ocl_jyb9dtxcg_mu7ieung_q6e",
+        "target": "class_jqybaoo04_mu7ieunf_bn5",
+        "data": {
+          "points": []
+        }
+      },
+      {
+        "id": "ocllink_um3738yr7_mu7ieung_gez",
+        "type": "ClassOCLLink",
+        "source": "ocl_ccum3m92y_mu7ieung_fz6",
+        "target": "class_e9ggzl13o_mu7ieunf_qqw",
+        "data": {
+          "points": []
+        }
+      }
+    ]
+  }
+}

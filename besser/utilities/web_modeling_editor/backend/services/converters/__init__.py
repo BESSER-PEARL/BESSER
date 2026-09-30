@@ -12,6 +12,7 @@ from .json_to_buml import (
     process_gui_diagram,
     process_quantum_diagram,
     process_nn_diagram,
+    link_method_neural_networks,
 )
 from .buml_to_json import (
     class_buml_to_json,
@@ -41,6 +42,7 @@ __all__ = [
     "process_gui_diagram",
     "process_quantum_diagram",
     "process_nn_diagram",
+    "link_method_neural_networks",
     "class_buml_to_json",
     "parse_buml_content",
     "bpmn_object_to_json",

@@ -7,33 +7,38 @@ the spec at ``docs/source/migrations/uml-v4-shape.md`` — there are no
 separate ``*Attribute*Layer*`` child elements in v4.
 """
 
+import ast
+import bisect
+import json
+
 from besser.BUML.metamodel.nn import (
     NN,
+    ALLOWED_TENSOR_OP_TYPES,
+    BatchNormLayer,
     Configuration,
-    TensorOp,
     Conv1D,
     Conv2D,
     Conv3D,
+    Dataset,
+    DropoutLayer,
+    EmbeddingLayer,
+    FlattenLayer,
+    GRULayer,
+    Image,
+    LayerNormLayer,
+    LinearLayer,
+    LSTMLayer,
     PoolingLayer,
     SimpleRNNLayer,
-    LSTMLayer,
-    GRULayer,
-    LinearLayer,
-    FlattenLayer,
-    EmbeddingLayer,
-    DropoutLayer,
-    LayerNormLayer,
-    BatchNormLayer,
-    Dataset,
-    Image,
+    TensorOp,
 )
-import bisect
-import ast
-from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import sanitize_name
+from besser.utilities.buml_code_builder.nn_explicit_attrs import mark_explicit
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
     node_data,
 )
-from besser.utilities.buml_code_builder.nn_explicit_attrs import mark_explicit
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import (
+    sanitize_name,
+)
 
 # Keep these aligned with the whitelists the NN metamodel setters enforce.
 _ALLOWED_POOLING_TYPES = (
@@ -46,9 +51,8 @@ _ALLOWED_INPUT_FORMATS = ('csv', 'images')
 _ALLOWED_OPTIMIZERS = ('sgd', 'adam', 'adamW', 'adagrad')
 _ALLOWED_LOSS_FUNCTIONS = ('crossentropy', 'binary_crossentropy', 'mse')
 _ALLOWED_METRICS = ('accuracy', 'precision', 'recall', 'f1-score', 'mae')
-_ALLOWED_TNS_TYPES = (
-    'concatenate', 'multiply', 'matmultiply', 'reshape', 'transpose', 'permute',
-)
+# ``tns_type`` reuses the metamodel's own whitelist (imported above) rather
+# than a local copy, so the two can never drift apart.
 _ALLOWED_PADDING_TYPES = ('same', 'valid')
 _CONV_EXPECTED_DIMS = {'Conv1D': 1, 'Conv2D': 2, 'Conv3D': 3}
 
@@ -71,6 +75,10 @@ _ATTR_KEY_TO_NAME = {
     'InputReusedAttribute': 'input_reused',
     'PermuteInAttribute': 'permute_in',
     'PermuteOutAttribute': 'permute_out',
+    'BiasAttribute': 'bias',
+    'IsLayerCallAttribute': 'is_layer_call',
+    'InputVarAttribute': 'input_var',
+    'OutputVarAttribute': 'output_var',
     'PoolingTypeAttribute': 'pooling_type',
     'DimensionAttribute': 'dimension',  # see _LAYER_KIND_PREFIX for qualified-slug disambiguation
     'OutputDimAttribute': 'output_dim',
@@ -80,21 +88,56 @@ _ATTR_KEY_TO_NAME = {
     'BidirectionalAttribute': 'bidirectional',
     'DropoutAttribute': 'dropout',
     'BatchFirstAttribute': 'batch_first',
+    'HxSourceAttribute': 'hx_source',
+    'HiddenStateVarAttribute': 'hidden_state_var',
+    'HiddenUnusedAttribute': 'hidden_unused',
+    'HiddenSubscriptSourceAttribute': 'hidden_subscript_source',
+    'HiddenSubscriptTargetAttribute': 'hidden_subscript_target',
+    'CellStateVarAttribute': 'cell_state_var',
+    'CellUnusedAttribute': 'cell_unused',
     'OutFeaturesAttribute': 'out_features',
     'InFeaturesAttribute': 'in_features',
     'StartDimAttribute': 'start_dim',
     'EndDimAttribute': 'end_dim',
     'NumEmbeddingsAttribute': 'num_embeddings',
     'EmbeddingDimAttribute': 'embedding_dim',
+    'PaddingIdxAttribute': 'padding_idx',
     'RateAttribute': 'rate',
     'NormalizedShapeAttribute': 'normalized_shape',
     'NumFeaturesAttribute': 'num_features',
+    'DilationAttribute': 'dilation',
+    'GroupsAttribute': 'groups',
+    'EpsAttribute': 'eps',
+    'AffineAttribute': 'affine',
+    'TrackRunningStatsAttribute': 'track_running_stats',
     'TnsTypeAttribute': 'tns_type',
     'ConcatenateDimAttribute': 'concatenate_dim',
     'LayersOfTensorsAttribute': 'layers_of_tensors',
     'ReshapeDimAttribute': 'reshape_dim',
     'TransposeDimAttribute': 'transpose_dim',
     'PermuteDimAttribute': 'permute_dim',
+    'ReduceDimAttribute': 'reduce_dim',
+    'ReduceKeepdimAttribute': 'reduce_keepdims',
+    'ShapeDimAttribute': 'shape_dim',
+    'ActualVarsAttribute': 'actual_vars',
+    'SubscriptIndicesAttribute': 'subscript_indices',
+    'RepeatDimAttribute': 'repeat_dim',
+    'InterpolateSizeAttribute': 'interpolate_size',
+    'InterpolateScaleAttribute': 'interpolate_scale',
+    'InterpolateModeAttribute': 'interpolate_mode',
+    'PadAmountAttribute': 'pad_amount',
+    'PadModeAttribute': 'pad_mode',
+    'PadValueAttribute': 'pad_value',
+    'DropoutRateAttribute': 'dropout_rate',
+    'DropoutTrainingAwareAttribute': 'dropout_training_aware',
+    'SplitDimAttribute': 'split_dim',
+    'SplitSizesAttribute': 'split_sizes',
+    'OutputVarsAttribute': 'output_vars',
+    'InputVarAttributeTensorOp': 'input_var',
+    'OutputVarAttributeTensorOp': 'output_var',
+    'PermuteInAttributeTensorOp': 'permute_in',
+    'PermuteOutAttributeTensorOp': 'permute_out',
+    'LayersOfTensorsAttributeTensorOp': 'layers_of_tensors',
     'BatchSizeAttribute': 'batch_size',
     'EpochsAttribute': 'epochs',
     'LearningRateAttribute': 'learning_rate',
@@ -165,6 +208,82 @@ def get_element_attribute(node: dict, attr_key: str, elements_or_default=None, d
             if qualified in attrs:
                 return attrs[qualified]
     return attrs.get(name, fallback)
+
+
+def _coerce_list_item(item, prefer_int: bool = False):
+    """Coerce one item of a list attribute that legitimately mixes types.
+
+    Numeric-looking items become numbers (``int`` when ``prefer_int``, else
+    ``float``); everything else is kept as a bare string with any surrounding
+    quotes stripped. Booleans pass through untouched.
+    """
+    if isinstance(item, bool):
+        return item
+    if isinstance(item, (int, float)):
+        return int(item) if prefer_int else item
+    text = str(item).strip().strip("'\"")
+    if not text:
+        return text
+    try:
+        return int(text) if prefer_int else float(text)
+    except ValueError:
+        return text
+
+
+def parse_mixed_list(value, prefer_int: bool = False, default=None):
+    """Parse a list attribute whose items may be numbers *or* names.
+
+    Used for the metamodel fields typed ``list[str | float | int]``
+    (``layers_of_tensors``) and ``list[int | str]`` (``repeat_dim``), where
+    :func:`parse_list_of_ints` throws the whole value away as soon as it hits
+    a non-integer item — the frontend legitimately emits ``[1, 'op_3', 1]``
+    for ``repeat_dim``.
+
+    Accepts a real list/tuple, a scalar number, or the editor's string forms
+    ``"[a, b]"`` / ``"a, b"``. Anything else yields ``default``.
+    """
+    if value is None or isinstance(value, bool):
+        return default
+    if isinstance(value, (list, tuple)):
+        return [_coerce_list_item(item, prefer_int) for item in value]
+    if isinstance(value, (int, float)):
+        return [_coerce_list_item(value, prefer_int)]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return default
+        if text.startswith('[') and text.endswith(']'):
+            text = text[1:-1]
+        return [_coerce_list_item(item, prefer_int)
+                for item in text.split(',') if item.strip()]
+    return default
+
+
+def parse_structured_literal(value, owner: str, field: str, expected: str):
+    """Parse a nested (dict / list-of-list) attribute value.
+
+    JSON first — that is what the BUML->JSON converter emits — then
+    ``ast.literal_eval`` for legacy payloads carrying a Python repr.
+
+    Raises a user-facing ``ValueError`` naming the element and the field when
+    neither parses, matching how the surrounding function already reports a
+    malformed ``reshape_dim`` / ``permute_dim`` / ``transpose_dim``. Swallowing
+    the error here used to turn a typo into a silently dropped attribute.
+    """
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        pass
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, TypeError, SyntaxError) as exc:
+        raise ValueError(
+            f"TensorOp '{owner}' has a malformed '{field}' attribute "
+            f"{value!r}: expected {expected}."
+        ) from exc
 
 
 def parse_tuple_or_int(value, default=None):
@@ -438,18 +557,31 @@ def process_nn_diagram(json_data):
     if not isinstance(edges, list):
         edges = []
 
-    # Step 1: identify all NNContainer nodes.
+    # Step 1: identify all NNContainer nodes, with their optional
+    # ``data.input_var`` / ``data.return_vars`` (the NN's forward signature).
     containers = {}  # container_id -> name
+    container_io = {}  # container_id -> (input_var, return_vars_str)
     for node in nodes:
         if node.get('type') == 'NNContainer':
-            containers[node.get('id')] = sanitize_name(node_data(node).get('name', 'Neural_Network'))
+            data = node_data(node)
+            containers[node.get('id')] = sanitize_name(data.get('name', 'Neural_Network'))
+            container_io[node.get('id')] = (
+                _container_input_var(data.get('input_var')),
+                _container_return_vars(data.get('return_vars')),
+            )
 
     # Step 2: identify NNReference nodes.
+    # ``referenceTarget`` is the referenced container's node id (what the
+    # editor stores) or, in older payloads and backend output, its name.
     nn_references = {}  # node_id -> referenced_container_name
     for node in nodes:
         if node.get('type') == 'NNReference':
             data = node_data(node)
-            ref_name = sanitize_name(data.get('referenceTarget') or data.get('name', ''))
+            target = data.get('referenceTarget') or data.get('name', '')
+            if target in containers:
+                ref_name = containers[target]
+            else:
+                ref_name = sanitize_name(target)
             nn_references[node.get('id')] = ref_name
 
     # Step 3: group layers / tensorops by parent container.
@@ -556,7 +688,8 @@ def process_nn_diagram(json_data):
 
     nn_by_name = {}
     for container_id, container_name in container_order:
-        nn = NN(name=container_name)
+        input_var, return_vars = container_io.get(container_id, (None, None))
+        nn = NN(name=container_name, input_var=input_var, return_vars=return_vars)
         nn_by_name[container_name] = nn
 
         container_layers = layers_by_container[container_id]
@@ -565,7 +698,7 @@ def process_nn_diagram(json_data):
 
         all_module_ids = (set(container_layers.keys()) |
                           set(container_tensor_ops.keys()) |
-                          set(ref_id for ref_id, _ in container_refs))
+                          {ref_id for ref_id, _ in container_refs})
 
         module_name_by_id = {}
         for mid, layer in container_layers.items():
@@ -652,6 +785,34 @@ def process_nn_diagram(json_data):
 
     main_nn.validate(raise_exception=True)
     return main_nn
+
+
+def _container_input_var(value):
+    """``NNContainer.data.input_var`` -> the ``NN.input_var`` string (or None)."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _container_return_vars(value):
+    """``NNContainer.data.return_vars`` -> the comma-separated ``NN.return_vars``.
+
+    The BUML->JSON converter emits a list (``["rep", "recon"]``); the editor
+    may also hand over the comma-separated string the user typed. Both are
+    accepted; an empty value yields None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        parts = [str(v).strip() for v in value]
+    else:
+        text = str(value).strip()
+        if text.startswith('[') and text.endswith(']'):
+            text = text[1:-1]
+        parts = [p.strip().strip("'\"") for p in text.split(',')]
+    parts = [p for p in parts if p]
+    return ", ".join(parts) if parts else None
 
 
 def topological_sort(module_ids, outgoing_connections, name_by_id=None):
@@ -790,6 +951,45 @@ def _create_conv_layer(node, conv_class, default_stride):
         layer.permute_out = parse_bool(permute_out)
         mark_explicit(layer, 'permute_out')
 
+    # New attributes added for Conv layers
+    dilation = get_element_attribute(node, 'DilationAttribute')
+    if dilation is not None:
+        dilation_parsed = parse_list_of_ints(dilation)
+        if dilation_parsed is not None:
+            # Accept single-element list as valid for any Conv dimension (PyTorch/TF handle expansion)
+            if expected_dim is not None and len(dilation_parsed) != expected_dim and len(dilation_parsed) != 1:
+                raise ValueError(
+                    f"{class_name} layer '{name}' dilation has "
+                    f"{len(dilation_parsed)} element(s), expected {expected_dim} or 1."
+                )
+            layer.dilation = dilation_parsed
+            mark_explicit(layer, 'dilation')
+
+    groups = get_element_attribute(node, 'GroupsAttribute')
+    if groups is not None:
+        layer.groups = parse_tuple_or_int(groups)
+        mark_explicit(layer, 'groups')
+
+    bias = get_element_attribute(node, 'BiasAttribute')
+    if bias is not None:
+        layer.bias = parse_bool(bias)
+        mark_explicit(layer, 'bias')
+
+    is_layer_call = get_element_attribute(node, 'IsLayerCallAttribute')
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(node, 'InputVarAttribute')
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(node, 'OutputVarAttribute')
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
     return layer
 
 
@@ -878,6 +1078,21 @@ def create_pooling_layer(node):
         layer.permute_out = parse_bool(permute_out)
         mark_explicit(layer, 'permute_out')
 
+    is_layer_call = get_element_attribute(node, 'IsLayerCallAttribute')
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(node, 'InputVarAttribute')
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(node, 'OutputVarAttribute')
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
     return layer
 
 
@@ -940,6 +1155,63 @@ def _create_rnn_like_layer(node, rnn_class):
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
 
+    bias = get_element_attribute(node, 'BiasAttribute')
+    if bias is not None:
+        layer.bias = parse_bool(bias)
+        mark_explicit(layer, 'bias')
+
+    hx_source = get_element_attribute(node, 'HxSourceAttribute')
+    if hx_source is not None and str(hx_source).strip() != '':
+        layer.hx_source = hx_source
+        mark_explicit(layer, 'hx_source')
+
+    is_layer_call = get_element_attribute(node, 'IsLayerCallAttribute')
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(node, 'InputVarAttribute')
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(node, 'OutputVarAttribute')
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
+    hidden_state_var = get_element_attribute(node, 'HiddenStateVarAttribute')
+    if hidden_state_var is not None and str(hidden_state_var).strip() != '':
+        layer.hidden_state_var = hidden_state_var
+        mark_explicit(layer, 'hidden_state_var')
+
+    hidden_unused = get_element_attribute(node, 'HiddenUnusedAttribute')
+    if hidden_unused is not None:
+        layer.hidden_unused = parse_bool(hidden_unused)
+        mark_explicit(layer, 'hidden_unused')
+
+    hidden_subscript_source = get_element_attribute(node, 'HiddenSubscriptSourceAttribute')
+    if hidden_subscript_source is not None and str(hidden_subscript_source).strip() != '':
+        layer.hidden_subscript_source = hidden_subscript_source
+        mark_explicit(layer, 'hidden_subscript_source')
+
+    hidden_subscript_target = get_element_attribute(node, 'HiddenSubscriptTargetAttribute')
+    if hidden_subscript_target is not None and str(hidden_subscript_target).strip() != '':
+        layer.hidden_subscript_target = hidden_subscript_target
+        mark_explicit(layer, 'hidden_subscript_target')
+
+    # LSTM-specific attributes
+    if rnn_class.__name__ == 'LSTMLayer':
+        cell_state_var = get_element_attribute(node, 'CellStateVarAttribute')
+        if cell_state_var is not None and str(cell_state_var).strip() != '':
+            layer.cell_state_var = cell_state_var
+            mark_explicit(layer, 'cell_state_var')
+
+        cell_unused = get_element_attribute(node, 'CellUnusedAttribute')
+        if cell_unused is not None:
+            layer.cell_unused = parse_bool(cell_unused)
+            mark_explicit(layer, 'cell_unused')
+
     return layer
 
 
@@ -976,6 +1248,26 @@ def create_linear_layer(node):
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
 
+    bias = get_element_attribute(node, 'BiasAttribute')
+    if bias is not None:
+        layer.bias = parse_bool(bias)
+        mark_explicit(layer, 'bias')
+
+    is_layer_call = get_element_attribute(node, 'IsLayerCallAttribute')
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(node, 'InputVarAttribute')
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(node, 'OutputVarAttribute')
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
     return layer
 
 
@@ -1009,6 +1301,21 @@ def create_flatten_layer(node):
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
+
+    is_layer_call = get_element_attribute(node, 'IsLayerCallAttribute')
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(node, 'InputVarAttribute')
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(node, 'OutputVarAttribute')
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
 
     return layer
 
@@ -1048,6 +1355,36 @@ def create_embedding_layer(node):
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
 
+    padding_idx = get_element_attribute(node, 'PaddingIdxAttribute')
+    if padding_idx is not None and str(padding_idx).strip() != '':
+        layer.padding_idx = parse_tuple_or_int(padding_idx)
+        mark_explicit(layer, 'padding_idx')
+
+    permute_in = get_element_attribute(node, 'PermuteInAttribute')
+    if permute_in is not None:
+        layer.permute_in = parse_bool(permute_in)
+        mark_explicit(layer, 'permute_in')
+
+    permute_out = get_element_attribute(node, 'PermuteOutAttribute')
+    if permute_out is not None:
+        layer.permute_out = parse_bool(permute_out)
+        mark_explicit(layer, 'permute_out')
+
+    is_layer_call = get_element_attribute(node, 'IsLayerCallAttribute')
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(node, 'InputVarAttribute')
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(node, 'OutputVarAttribute')
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
     return layer
 
 
@@ -1075,6 +1412,36 @@ def create_dropout_layer(node):
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
+
+    dimension = get_element_attribute(node, 'DimensionAttribute')
+    if dimension is not None and str(dimension).strip() != '':
+        layer.dimension = dimension
+        mark_explicit(layer, 'dimension')
+
+    permute_in = get_element_attribute(node, 'PermuteInAttribute')
+    if permute_in is not None:
+        layer.permute_in = parse_bool(permute_in)
+        mark_explicit(layer, 'permute_in')
+
+    permute_out = get_element_attribute(node, 'PermuteOutAttribute')
+    if permute_out is not None:
+        layer.permute_out = parse_bool(permute_out)
+        mark_explicit(layer, 'permute_out')
+
+    is_layer_call = get_element_attribute(node, 'IsLayerCallAttribute')
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(node, 'InputVarAttribute')
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(node, 'OutputVarAttribute')
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
 
     return layer
 
@@ -1107,6 +1474,31 @@ def create_layer_norm_layer(node):
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
+
+    eps = get_element_attribute(node, 'EpsAttribute')
+    if eps is not None and str(eps).strip() != '':
+        layer.eps = float(eps)
+        mark_explicit(layer, 'eps')
+
+    affine = get_element_attribute(node, 'AffineAttribute')
+    if affine is not None:
+        layer.affine = parse_bool(affine)
+        mark_explicit(layer, 'affine')
+
+    is_layer_call = get_element_attribute(node, 'IsLayerCallAttribute')
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(node, 'InputVarAttribute')
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(node, 'OutputVarAttribute')
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
 
     return layer
 
@@ -1146,6 +1538,53 @@ def create_batch_norm_layer(node):
         layer.input_reused = parse_bool(input_reused)
         mark_explicit(layer, 'input_reused')
 
+    eps = get_element_attribute(node, 'EpsAttribute')
+    if eps is not None and str(eps).strip() != '':
+        layer.eps = float(eps)
+        mark_explicit(layer, 'eps')
+
+    momentum = get_element_attribute(node, 'MomentumAttribute')
+    if momentum is not None and str(momentum).strip() != '':
+        layer.momentum = float(momentum)
+        mark_explicit(layer, 'momentum')
+
+    affine = get_element_attribute(node, 'AffineAttribute')
+    if affine is not None:
+        layer.affine = parse_bool(affine)
+        mark_explicit(layer, 'affine')
+
+    track_running_stats = get_element_attribute(node, 'TrackRunningStatsAttribute')
+    if track_running_stats is not None:
+        layer.track_running_stats = parse_bool(track_running_stats)
+        mark_explicit(layer, 'track_running_stats')
+
+    # BatchNorm takes permute_in / permute_out as real constructor parameters
+    # (LayerNorm hard-codes them to False), so both directions must carry them.
+    permute_in = get_element_attribute(node, 'PermuteInAttribute')
+    if permute_in is not None and str(permute_in).strip() != '':
+        layer.permute_in = parse_bool(permute_in)
+        mark_explicit(layer, 'permute_in')
+
+    permute_out = get_element_attribute(node, 'PermuteOutAttribute')
+    if permute_out is not None and str(permute_out).strip() != '':
+        layer.permute_out = parse_bool(permute_out)
+        mark_explicit(layer, 'permute_out')
+
+    is_layer_call = get_element_attribute(node, 'IsLayerCallAttribute')
+    if is_layer_call is not None:
+        layer.is_layer_call = parse_bool(is_layer_call)
+        mark_explicit(layer, 'is_layer_call')
+
+    input_var = get_element_attribute(node, 'InputVarAttribute')
+    if input_var is not None and str(input_var).strip() != '':
+        layer.input_var = input_var
+        mark_explicit(layer, 'input_var')
+
+    output_var = get_element_attribute(node, 'OutputVarAttribute')
+    if output_var is not None and str(output_var).strip() != '':
+        layer.output_var = output_var
+        mark_explicit(layer, 'output_var')
+
     return layer
 
 
@@ -1158,10 +1597,10 @@ def create_tensor_op(node):
     tns_type = get_element_attribute(node, 'TnsTypeAttribute')
     if not tns_type:
         raise ValueError(f"TensorOp '{name}' missing mandatory 'tns_type' attribute")
-    if tns_type not in _ALLOWED_TNS_TYPES:
+    if tns_type not in ALLOWED_TENSOR_OP_TYPES:
         raise ValueError(
             f"TensorOp '{name}' has invalid tns_type '{tns_type}'. "
-            f"Allowed values: {', '.join(_ALLOWED_TNS_TYPES)}."
+            f"Allowed values: {', '.join(ALLOWED_TENSOR_OP_TYPES)}."
         )
 
     concatenate_dim = get_element_attribute(node, 'ConcatenateDimAttribute')
@@ -1171,23 +1610,10 @@ def create_tensor_op(node):
     layers_of_tensors_raw = get_element_attribute(node, 'LayersOfTensorsAttribute')
     layers_of_tensors = None
     if layers_of_tensors_raw:
-        def _coerce(item):
-            if isinstance(item, (int, float)) and not isinstance(item, bool):
-                return item
-            s = str(item).strip().strip("'\"")
-            if not s:
-                return s
-            try:
-                return float(s)
-            except ValueError:
-                return s
-        if isinstance(layers_of_tensors_raw, str):
-            val = layers_of_tensors_raw.strip()
-            if val.startswith('[') and val.endswith(']'):
-                val = val[1:-1]
-            layers_of_tensors = [_coerce(layer) for layer in val.split(',') if layer.strip()]
-        elif isinstance(layers_of_tensors_raw, list):
-            layers_of_tensors = [_coerce(layer) for layer in layers_of_tensors_raw]
+        # The metamodel declares this as list[str | float | int]. Preserve
+        # numeric items as floats so round-trip doesn't quietly rewrite
+        # e.g. [0.5, 'x'] to ['0.5', 'x'].
+        layers_of_tensors = parse_mixed_list(layers_of_tensors_raw)
 
     reshape_dim = get_element_attribute(node, 'ReshapeDimAttribute')
     if reshape_dim is not None:
@@ -1201,6 +1627,123 @@ def create_tensor_op(node):
     if permute_dim is not None:
         permute_dim = parse_list_of_ints(permute_dim)
 
+    reduce_dim = get_element_attribute(node, 'ReduceDimAttribute')
+    if reduce_dim is not None:
+        reduce_dim = parse_tuple_or_int(reduce_dim)
+
+    reduce_keepdims = get_element_attribute(node, 'ReduceKeepdimAttribute')
+    if reduce_keepdims is not None:
+        reduce_keepdims = parse_bool(reduce_keepdims)
+
+    shape_dim = get_element_attribute(node, 'ShapeDimAttribute')
+    if shape_dim is not None:
+        shape_dim = parse_tuple_or_int(shape_dim)
+
+    actual_vars_raw = get_element_attribute(node, 'ActualVarsAttribute')
+    actual_vars = None
+    if actual_vars_raw:
+        if isinstance(actual_vars_raw, str):
+            val = actual_vars_raw.strip()
+            if val.startswith('[') and val.endswith(']'):
+                val = val[1:-1]
+            actual_vars = [v.strip().strip("'\"") for v in val.split(',') if v.strip()]
+        elif isinstance(actual_vars_raw, list):
+            actual_vars = [str(v).strip("'\"") for v in actual_vars_raw]
+
+    subscript_indices_raw = get_element_attribute(node, 'SubscriptIndicesAttribute')
+    subscript_indices = None
+    if subscript_indices_raw:
+        subscript_indices = parse_structured_literal(
+            subscript_indices_raw, name, 'subscript_indices',
+            'a list of index descriptors like '
+            '[{"type": "index", "value": 0}]',
+        )
+
+    repeat_dim = get_element_attribute(node, 'RepeatDimAttribute')
+    if repeat_dim is not None:
+        # Declared list[int | str]: the frontend legitimately emits
+        # [1, 'op_3', 1] to repeat along a dimension taken from another op.
+        # parse_list_of_ints() returns None on the first non-int item, which
+        # dropped the user's whole value.
+        repeat_dim = parse_mixed_list(repeat_dim, prefer_int=True)
+
+    interpolate_size_raw = get_element_attribute(node, 'InterpolateSizeAttribute')
+    interpolate_size = None
+    if interpolate_size_raw:
+        parsed = parse_list_of_ints(interpolate_size_raw)
+        if parsed:
+            interpolate_size = tuple(parsed)
+
+    interpolate_scale = get_element_attribute(node, 'InterpolateScaleAttribute')
+    if interpolate_scale is not None:
+        interpolate_scale = parse_float(interpolate_scale)
+
+    interpolate_mode = get_element_attribute(node, 'InterpolateModeAttribute')
+
+    pad_amount_raw = get_element_attribute(node, 'PadAmountAttribute')
+    pad_amount = None
+    if pad_amount_raw:
+        pad_amount = parse_structured_literal(
+            pad_amount_raw, name, 'pad_amount',
+            'a list of [before, after] pairs like [[1, 1], [2, 2]]',
+        )
+
+    pad_mode = get_element_attribute(node, 'PadModeAttribute')
+
+    pad_value = get_element_attribute(node, 'PadValueAttribute')
+    if pad_value is not None:
+        pad_value = parse_float(pad_value)
+
+    dropout_rate = get_element_attribute(node, 'DropoutRateAttribute')
+    if dropout_rate is not None:
+        dropout_rate = parse_float(dropout_rate)
+
+    dropout_training_aware = get_element_attribute(node, 'DropoutTrainingAwareAttribute')
+    if dropout_training_aware is not None:
+        dropout_training_aware = parse_bool(dropout_training_aware)
+
+    split_dim = get_element_attribute(node, 'SplitDimAttribute')
+    if split_dim is not None:
+        split_dim = parse_tuple_or_int(split_dim)
+
+    split_sizes_raw = get_element_attribute(node, 'SplitSizesAttribute')
+    split_sizes = None
+    if split_sizes_raw:
+        try:
+            parsed = parse_list_of_ints(split_sizes_raw)
+            if parsed and len(parsed) == 1:
+                split_sizes = parsed[0]
+            else:
+                split_sizes = parsed
+        except (ValueError, TypeError):
+            try:
+                split_sizes = parse_tuple_or_int(split_sizes_raw)
+            except (ValueError, TypeError):
+                split_sizes = None
+
+    output_vars_raw = get_element_attribute(node, 'OutputVarsAttribute')
+    output_vars = None
+    if output_vars_raw:
+        if isinstance(output_vars_raw, str):
+            val = output_vars_raw.strip()
+            if val.startswith('[') and val.endswith(']'):
+                val = val[1:-1]
+            output_vars = [v.strip().strip("'\"") for v in val.split(',') if v.strip()]
+        elif isinstance(output_vars_raw, list):
+            output_vars = [str(v).strip("'\"") for v in output_vars_raw]
+
+    permute_in = get_element_attribute(node, 'PermuteInAttribute')
+    if permute_in is not None:
+        permute_in = parse_bool(permute_in)
+
+    permute_out = get_element_attribute(node, 'PermuteOutAttribute')
+    if permute_out is not None:
+        permute_out = parse_bool(permute_out)
+
+    input_var = get_element_attribute(node, 'InputVarAttribute')
+    output_var = get_element_attribute(node, 'OutputVarAttribute')
+
+    # Validate required attributes based on tns_type
     types_requiring_layers = ['multiply', 'matmultiply', 'concatenate']
     if tns_type in types_requiring_layers and not layers_of_tensors:
         raise ValueError(
@@ -1232,28 +1775,126 @@ def create_tensor_op(node):
             f"Please specify the target shape."
         )
 
+    # Create TensorOp with attributes based on tns_type
     tensor_op_params = {
         'name': sanitize_name(name),
         'tns_type': tns_type,
     }
 
-    if tns_type == 'concatenate':
+    binops = ['binop_add', 'binop_subtract', 'binop_multiply',
+              'binop_divide', 'binop_floor_divide']
+
+    # Type-specific required attributes
+    if tns_type == 'reshape':
+        tensor_op_params['reshape_dim'] = reshape_dim
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
+    elif tns_type == 'concatenate':
         tensor_op_params['concatenate_dim'] = concatenate_dim
         tensor_op_params['layers_of_tensors'] = layers_of_tensors
-    elif tns_type in ('multiply', 'matmultiply'):
-        tensor_op_params['layers_of_tensors'] = layers_of_tensors
-    elif tns_type == 'reshape':
-        tensor_op_params['reshape_dim'] = reshape_dim
+        if actual_vars is not None:
+            tensor_op_params['actual_vars'] = actual_vars
     elif tns_type == 'transpose':
         tensor_op_params['transpose_dim'] = transpose_dim
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
     elif tns_type == 'permute':
         tensor_op_params['permute_dim'] = permute_dim
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+    elif tns_type in ['shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize']:
+        if reduce_dim is not None:
+            tensor_op_params['reduce_dim'] = reduce_dim
+        if shape_dim is not None:
+            tensor_op_params['shape_dim'] = shape_dim
+        if tns_type == 'max' and reduce_keepdims is not None:
+            tensor_op_params['reduce_keepdims'] = reduce_keepdims
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
+    elif tns_type == 'subscript':
+        if subscript_indices is not None:
+            tensor_op_params['subscript_indices'] = subscript_indices
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+    elif tns_type == 'repeat':
+        if repeat_dim is not None:
+            tensor_op_params['repeat_dim'] = repeat_dim
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
+    elif tns_type == 'interpolate':
+        if interpolate_size is not None:
+            tensor_op_params['interpolate_size'] = interpolate_size
+        if interpolate_scale is not None:
+            tensor_op_params['interpolate_scale'] = interpolate_scale
+        if interpolate_mode is not None:
+            tensor_op_params['interpolate_mode'] = interpolate_mode
+    elif tns_type == 'pad':
+        if pad_amount is not None:
+            tensor_op_params['pad_amount'] = pad_amount
+        if pad_mode is not None:
+            tensor_op_params['pad_mode'] = pad_mode
+        if pad_value is not None:
+            tensor_op_params['pad_value'] = pad_value
+    elif tns_type == 'dropout':
+        if dropout_rate is not None:
+            tensor_op_params['dropout_rate'] = dropout_rate
+        if dropout_training_aware is not None:
+            tensor_op_params['dropout_training_aware'] = dropout_training_aware
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+    elif tns_type == 'split':
+        if split_dim is not None:
+            tensor_op_params['split_dim'] = split_dim
+        if split_sizes is not None:
+            tensor_op_params['split_sizes'] = split_sizes
+        if output_vars is not None:
+            tensor_op_params['output_vars'] = output_vars
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
+    elif tns_type in binops:
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if actual_vars is not None:
+            tensor_op_params['actual_vars'] = actual_vars
+    elif tns_type in ('multiply', 'matmultiply', 'zeros_like', 'identity'):
+        if layers_of_tensors is not None:
+            tensor_op_params['layers_of_tensors'] = layers_of_tensors
+        if input_var is not None:
+            tensor_op_params['input_var'] = input_var
 
     tensor_op = TensorOp(**tensor_op_params)
 
-    input_reused = get_element_attribute(node, 'InputReusedAttribute')
-    if input_reused is not None:
-        tensor_op.input_reused = parse_bool(input_reused)
+    # Mark input_var as explicit if it was passed to constructor
+    # For types that don't have either/or validation, set input_var post-construction
+    if input_var is not None:
+        if 'input_var' not in tensor_op_params:
+            tensor_op.input_var = input_var
+        mark_explicit(tensor_op, 'input_var')
+
+    # Common optional attributes - set and mark explicit if present (not None)
+    # Unlike regular layers, we don't filter empty strings - if the attribute
+    # node exists in the JSON, we mark it explicit so it round-trips
+    if permute_in is not None:
+        tensor_op.permute_in = permute_in
+        mark_explicit(tensor_op, 'permute_in')
+    if permute_out is not None:
+        tensor_op.permute_out = permute_out
+        mark_explicit(tensor_op, 'permute_out')
+    if output_var is not None:
+        tensor_op.output_var = output_var
+        mark_explicit(tensor_op, 'output_var')
+
+    input_reused_attr = get_element_attribute(node, 'InputReusedAttribute')
+    if input_reused_attr is not None:
+        tensor_op.input_reused = parse_bool(input_reused_attr)
         mark_explicit(tensor_op, 'input_reused')
 
     return tensor_op
@@ -1307,7 +1948,7 @@ def create_configuration(node):
     elif isinstance(metrics_str, list):
         metrics = [m.strip("'\"") if isinstance(m, str) else m for m in metrics_str]
     else:
-        raise ValueError("Configuration 'metrics' attribute has invalid format")
+        raise TypeError("Configuration 'metrics' attribute has invalid format")
     invalid_metrics = [m for m in metrics if m not in _ALLOWED_METRICS]
     if invalid_metrics:
         raise ValueError(

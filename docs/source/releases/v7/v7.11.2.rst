@@ -1,0 +1,36 @@
+Version 7.11.2
+==============
+
+Patch release: **B-UML export now keeps every object model in multi-object
+projects**. A fix to the Python code builder so that exporting a class model
+together with more than one object model no longer silently drops the object
+models. No metamodel or API contract changes.
+
+Highlights
+----------
+
+- **Multiple object models are no longer lost on B-UML** (``.py``) **export**:
+  exporting a project that combined a domain (class) model with two or more
+  object models produced a Python file that contained none of the object models,
+  while exporting the same project to JSON was unaffected (`web editor issue #161
+  <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/issues/161>`_).
+  The root cause was in ``project_to_code``
+  (``besser/utilities/buml_code_builder/project_builder.py``): the
+  standalone-object loop only emitted a model when
+  ``getattr(om, "domain_model", None)`` was truthy, but ``ObjectModel`` has no
+  ``domain_model`` attribute, so the branch never ran — and the models were also
+  omitted from the generated ``Project(models=[...])`` list. A single object
+  model still worked because it took a separate one-to-one pairing path.
+- **The fix** extracts the object-writing logic from ``domain_model_to_code``
+  into a reusable ``object_model_to_code`` helper (``domain_model_to_code``
+  output is byte-for-byte unchanged), and ``project_to_code`` now emits every
+  standalone object model as an object-only section that references the domain
+  classes already written earlier in the same file. A new regression test
+  exports one domain model plus two object models and executes the generated
+  file back into two ``ObjectModel`` instances.
+
+No metamodel or API contract changes.
+
+Thanks to `@rdegiovanni <https://github.com/rdegiovanni>`_ for the report
+(`web editor issue #161
+<https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/issues/161>`_).

@@ -172,7 +172,8 @@
                   "name": "DropoutLayer",
                   "attributes": {
                     "name": "l3",
-                    "rate": "0.2"
+                    "rate": "0.2",
+                    "name_module_input": "l2"
                   }
                 },
                 "parentId": "90295e37-f91c-4880-8924-d4d78c99d4b7"
@@ -222,7 +223,8 @@
                     "name": "l5",
                     "out_features": "40",
                     "in_features": "40",
-                    "actv_func": "relu"
+                    "actv_func": "relu",
+                    "name_module_input": "l4"
                   }
                 },
                 "parentId": "90295e37-f91c-4880-8924-d4d78c99d4b7"

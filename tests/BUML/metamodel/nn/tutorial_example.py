@@ -3,13 +3,18 @@ BUML code for a NN using CNNs and the CIFAR10 dataset
 available in this link:
 https://www.kaggle.com/datasets/swaroopkml/cifar10-pngs-in-folders
 """
-from besser.BUML.metamodel.nn import NN, Conv2D, PoolingLayer, \
-    FlattenLayer, LinearLayer, Configuration, Image, Dataset
-from besser.generators.nn.pytorch.pytorch_code_generator import (
-    PytorchGenerator
+from besser.BUML.metamodel.nn import (
+    NN,
+    Configuration,
+    Conv2D,
+    Dataset,
+    FlattenLayer,
+    Image,
+    LinearLayer,
+    PoolingLayer,
 )
+from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 from besser.generators.nn.tf.tf_code_generator import TFGenerator
-
 
 nn_model: NN = NN(name="my_model")
 nn_model.add_layer(Conv2D(name="l1", actv_func="relu", in_channels=3,

@@ -7,7 +7,7 @@ from besser.generators.django import DjangoGenerator
 from besser.generators.python_classes import PythonGenerator
 from besser.generators.java_classes import JavaGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
-from besser.generators.testgen import TestCaseGenerator
+from besser.generators.spring.spring_backend_generator import SpringBackendGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.supabase import SupabaseGenerator
@@ -21,8 +21,9 @@ from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.react import ReactGenerator
 from besser.generators.flutter import FlutterGenerator
 from besser.generators.terraform import TerraformGenerator
+from besser.generators.testgen import TestCaseGenerator
 from besser.generators.bpmn import BPMNGenerator
-from besser.utilities.web_modeling_editor.backend.constants.constants import BPMN_DIAGRAM_TYPE
+from besser.utilities.web_modeling_editor.backend.constants.constants import BPMN_PROJECT_DIAGRAM_KEY
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -73,6 +74,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="object_oriented",
         requires_class_diagram=True
     ),
+
     "test_case": GeneratorInfo(
         generator_class=TestCaseGenerator,
         output_type="file",
@@ -84,6 +86,13 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # Web framework generators (class diagram based)
     "django": GeneratorInfo(
         generator_class=DjangoGenerator,
+        output_type="zip",
+        file_extension=".zip",
+        category="web_framework",
+        requires_class_diagram=True
+    ),
+    "spring": GeneratorInfo(
+        generator_class=SpringBackendGenerator,
         output_type="zip",
         file_extension=".zip",
         category="web_framework",
@@ -209,14 +218,15 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         requires_class_diagram=False
     ),
 
-    # BPMN generator (BPMN diagram based) — emits vendor-neutral BPMN 2.0 XML.
+    # BPMN generator (vendor-neutral BPMN 2.0 XML; reads BPMNDiagram)
     "bpmn": GeneratorInfo(
         generator_class=BPMNGenerator,
         output_type="file",
         file_extension=".bpmn",
         category="business_process",
         requires_class_diagram=False,
-        required_diagram_type=BPMN_DIAGRAM_TYPE,
+        # Project bucket key ("BPMN"); the model inside has type "BPMNDiagram".
+        required_diagram_type=BPMN_PROJECT_DIAGRAM_KEY,
     ),
 }
 
@@ -272,13 +282,12 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
     info = get_generator_info(generator_type)
     if not info:
         return f"{base_name}.txt"
-
     if generator_type == "python":
         return "classes.py"
-    elif generator_type == "pydantic":
-        return "pydantic_classes.py"
     elif generator_type == "test_case":
         return "test_hypothesis.py"
+    elif generator_type == "pydantic":
+        return "pydantic_classes.py"
     elif generator_type == "sqlalchemy":
         return "sql_alchemy.py"
     elif generator_type == "sql":

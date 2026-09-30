@@ -7,7 +7,7 @@ It creates executable Python code that can recreate the GUI model programmatical
 
 import os
 from besser.BUML.metamodel.gui import GUIModel
-from besser.utilities.buml_code_builder.common import safe_class_name, _escape_python_string
+from besser.utilities.buml_code_builder.common import _comment_safe, safe_class_name, _escape_python_string
 from besser.BUML.metamodel.gui.graphical_ui import (
     ViewContainer,
     Button,
@@ -23,7 +23,7 @@ from besser.BUML.metamodel.gui.graphical_ui import (
 )
 from besser.BUML.metamodel.gui.dashboard import (
     LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,
-    FieldColumn, LookupColumn, ExpressionColumn, MetricCard
+    FieldColumn, LookupColumn, ExpressionColumn, Map, MetricCard
 )
 from besser.BUML.metamodel.gui.events_actions import Transition, Create, Read, Update, Delete
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
@@ -246,12 +246,16 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.dashboard import (\n")
         f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,\n")
-        f.write("    Column, FieldColumn, LookupColumn, ExpressionColumn, MetricCard, Series\n")
+        f.write("    Column, FieldColumn, LookupColumn, ExpressionColumn,\n")
+        f.write("    Map, MapLayer, MapLayerType, WorldMap, LocationMap, MetricCard, Series\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.events_actions import (\n")
         f.write("    Event, EventType, Transition, Create, Read, Update, Delete, Parameter\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.binding import DataBinding\n")
+        f.write("from besser.utilities.buml_code_builder.common import (\n")
+        f.write("    bind_association_end, bind_data_source, bind_domain_field, build_data_binding\n")
+        f.write(")\n")
         f.write("\n")
 
         # Track created variables to avoid duplicates
@@ -261,7 +265,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
 
         # Process each module
         for module_idx, module in enumerate(sorted(model.modules, key=lambda m: m.name)):
-            f.write(f"# Module: {module.name}\n")
+            f.write(f"# Module: {_comment_safe(module.name)}\n")
 
             # Process each screen in the module
             for screen_idx, screen in enumerate(sorted(module.screens, key=lambda s: s.name)):
@@ -270,7 +274,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
                     screen_var = f"{screen_var}_{screen_idx}"
                 created_vars.add(screen_var)
 
-                f.write(f"\n# Screen: {screen.name}\n")
+                f.write(f"\n# Screen: {_comment_safe(screen.name)}\n")
 
                 # Create screen (view_elements is required, will be set after processing children)
                 screen_params = [f'name="{_escape_string(screen.name)}"']
@@ -374,8 +378,15 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write(f'    versionCode="{_escape_string(model.versionCode)}",\n')
         f.write(f'    versionName="{_escape_string(model.versionName)}",\n')
         f.write(f'    modules={{{", ".join(module_vars)}}},\n')
-        f.write(f'    description="{_escape_string(model.description)}"\n')
-        f.write(")\n")
+        f.write(f'    description="{_escape_string(model.description)}"')
+        stylesheet = getattr(model, 'stylesheet', '')
+        if stylesheet:
+            # One string literal per stylesheet line keeps the export readable.
+            f.write(",\n    stylesheet=(\n")
+            for line in stylesheet.splitlines(keepends=True):
+                f.write(f'        "{_escape_string(line)}"\n')
+            f.write("    )")
+        f.write("\n)\n")
 
     print(f"GUI model code saved to {file_path}")
 
@@ -439,6 +450,8 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
         _write_table(f, comp_var, component)
     elif isinstance(component, MetricCard):
         _write_metric_card(f, comp_var, component)
+    elif isinstance(component, Map):
+        _write_map(f, comp_var, component, created_vars)
     elif isinstance(component, AgentComponent):
         _write_agent_component(f, comp_var, component)
     elif isinstance(component, ViewContainer):
@@ -464,8 +477,14 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
                 layout_var = _write_layout(f, component.layout, created_vars, f"{comp_var}_layout")
                 f.write(f'{comp_var}.layout = {layout_var}\n')
         else:
-            # Simple ViewComponent with no children
-            f.write(f'{comp_var} = ViewComponent(name="{_escape_string(component.name)}", description="{_escape_string(component.description or "")}")\n')
+            # Simple ViewComponent with no children; keeps its tag, attributes and
+            # display order like every other component (an <br> or empty slot
+            # otherwise re-imports as an unordered, tagless element).
+            params = [
+                f'name="{_escape_string(component.name)}"',
+                f'description="{_escape_string(component.description or "")}"',
+            ]
+            _write_constructor(f, comp_var, 'ViewComponent', params, component)
 
     # Styling and metadata are now written by type-specific writers via _write_constructor
 
@@ -501,9 +520,10 @@ def _write_button(f, var_name, button, created_vars, pending_button_events):
         if isinstance(button.instance_source, str):
             params.append(f'instance_source="{_escape_string(button.instance_source)}"')
         elif hasattr(button.instance_source, 'name'):
-            # Reference the component variable
-            instance_var = safe_var_name(button.instance_source.name)
-            params.append(f'instance_source={instance_var}')
+            # By the component's id, as the editor stores it: the component's
+            # variable may be written after the button (or renamed on a clash).
+            source_id = getattr(button.instance_source, 'component_id', None) or button.instance_source.name
+            params.append(f'instance_source="{_escape_string(source_id)}"')
         else:
             # Fallback: convert to string
             params.append(f'instance_source="{_escape_string(str(button.instance_source))}"')
@@ -694,6 +714,8 @@ def _write_input_field(f, var_name, input_field):
     if hasattr(input_field, 'validationRules') and input_field.validationRules:
         params.append(f'validationRules="{_escape_string(input_field.validationRules)}"')
     _write_constructor(f, var_name, 'InputField', params, input_field)
+    if getattr(input_field, 'data_binding', None):
+        _write_data_binding_assignment(f, var_name, input_field.data_binding)
 
 
 def _write_form(f, var_name, form, created_vars, pending_button_events):
@@ -708,7 +730,13 @@ def _write_form(f, var_name, form, created_vars, pending_button_events):
 
     fields_str = f'{{{", ".join(field_vars)}}}' if field_vars else '{}'
     params = [f'name="{_escape_string(form.name)}"', f'description="{_escape_string(form.description or "")}"', f'inputFields={fields_str}']
+    if getattr(form, 'title', None):
+        params.append(f'title="{_escape_string(form.title)}"')
+    if getattr(form, 'submit_label', 'Submit') != 'Submit':
+        params.append(f'submit_label="{_escape_string(form.submit_label)}"')
     _write_constructor(f, var_name, 'Form', params, form)
+    if getattr(form, 'data_binding', None):
+        _write_data_binding_assignment(f, var_name, form.data_binding)
 
     # Write form events (e.g. OnSubmit)
     if hasattr(form, 'events') and form.events:
@@ -972,15 +1000,25 @@ def _write_table(f, var_name, chart):
             col_var = f'{var_name}_col_{i}'
             if isinstance(col, FieldColumn):
                 field_ref = col.field.name if hasattr(col.field, 'name') else str(col.field)
-                # Reference the Property variable from the domain model
-                # The domain model builder names them: ClassName_attributeName
-                # We need to find which class owns this property
+                # Reference the Property variable from the domain model.
+                # The domain model builder names them ClassName_attributeName
+                # after the class that *declares* the property, so resolve the
+                # owner rather than the class the table is bound to. For an
+                # inherited attribute the two differ, and naming it after the
+                # binding emitted a reference to a variable that is never
+                # defined: a table bound to Guest showed Person.id as Guest_id.
+                owner = getattr(col.field, 'owner', None)
                 binding = getattr(chart, 'data_binding', None)
-                if binding and hasattr(binding, 'domain_concept') and binding.domain_concept:
-                    class_name = binding.domain_concept.name
+                if owner is not None and getattr(owner, 'name', None):
+                    class_name = safe_class_name(owner.name)
+                elif binding and hasattr(binding, 'domain_concept') and binding.domain_concept:
+                    class_name = safe_class_name(binding.domain_concept.name)
+                else:
+                    class_name = None
+                if class_name:
                     f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={class_name}_{field_ref})\n')
                 else:
-                    # Fallback: try to find the property variable by name
+                    # Fallback: reference the property variable by bare name
                     f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={field_ref})\n')
             elif isinstance(col, LookupColumn):
                 # path is an association end Property (defined inline in BinaryAssociation)
@@ -988,15 +1026,21 @@ def _write_table(f, var_name, chart):
                 path_name = col.path.name if hasattr(col.path, 'name') else str(col.path)
                 field_name = col.field.name if hasattr(col.field, 'name') else str(col.field)
                 # Resolve field: TargetClass_fieldName (e.g. Book_title)
+                # Same owner rule as FieldColumn above: the property variable
+                # is named after the class that declares the field, which is
+                # not necessarily the association's target class.
+                field_owner = getattr(col.field, 'owner', None)
                 path_type = getattr(col.path, 'type', None)
-                if path_type and hasattr(path_type, 'name'):
-                    field_ref = f'{path_type.name}_{field_name}'
+                if field_owner is not None and getattr(field_owner, 'name', None):
+                    field_ref = f'{safe_class_name(field_owner.name)}_{field_name}'
+                elif path_type and hasattr(path_type, 'name'):
+                    field_ref = f'{safe_class_name(path_type.name)}_{field_name}'
                 else:
                     field_ref = field_name
                 # Path property lives inside a BinaryAssociation's ends, not as a standalone variable.
                 # Generate a runtime lookup via domain_model.
                 path_var = f'{col_var}_path'
-                f.write(f'{path_var} = next(end for assoc in domain_model.associations for end in assoc.ends if end.name == "{_escape_string(path_name)}")\n')
+                f.write(f'{path_var} = bind_association_end(domain_model, "{_escape_string(path_name)}")\n')
                 f.write(f'{col_var} = LookupColumn(label="{_escape_string(col.label)}", path={path_var}, field={field_ref})\n')
             elif isinstance(col, ExpressionColumn):
                 f.write(f'{col_var} = ExpressionColumn(label="{_escape_string(col.label)}", expression="{_escape_string(col.expression)}")\n')
@@ -1199,6 +1243,79 @@ def _write_styling(f, component_var, styling, created_vars):
     f.write(f'{component_var}.styling = {styling_var}\n')
 
 
+def _write_map_layer(f, layer_var, layer_comp, created_vars):
+    """Write code for a single MapLayer (helper called from _write_map)."""
+    params = [f'name="{_escape_string(layer_comp.name)}"']
+    lt = getattr(layer_comp, "layer_type", None)
+    if lt is not None:
+        params.append(f"layer_type=MapLayerType.{lt.name}")
+
+    f.write(f"{layer_var} = MapLayer({', '.join(params)})\n")
+    created_vars.add(layer_var)
+
+    if getattr(layer_comp, "styling", None):
+        _write_styling(f, layer_var, layer_comp.styling, created_vars)
+
+    # Data binding
+    binding = getattr(layer_comp, "data_binding", None)
+    if binding:
+        _write_data_binding_assignment(f, layer_var, binding)
+
+    # Re-attach field Property references from the bound domain class
+    domain_name = _get_attr_name(getattr(binding, "domain_concept", None)) if binding else None
+    if domain_name:
+        _field_attrs = (
+            ("latitude_field", getattr(layer_comp, "latitude_field", None)),
+            ("longitude_field", getattr(layer_comp, "longitude_field", None)),
+            ("label_field", getattr(layer_comp, "label_field", None)),
+            ("weight_field", getattr(layer_comp, "weight_field", None)),
+            ("geojson_field", getattr(layer_comp, "geojson_field", None)),
+            ("value_field", getattr(layer_comp, "value_field", None)),
+        )
+        for attr_name, field_attr in _field_attrs:
+            field_name = _get_attr_name(field_attr)
+            if field_name:
+                escaped_domain = _escape_string(domain_name)
+                escaped_field = _escape_string(field_name)
+                # domain_model may be absent when the GUI model is emitted
+                # standalone, so the assignment is guarded and left unset.
+                # Keep it to ONE call - see bind_domain_field.
+                f.write("try:\n")
+                f.write(
+                    f"    {layer_var}.{attr_name} = "
+                    f"bind_domain_field(domain_model, \"{escaped_domain}\", \"{escaped_field}\")\n"
+                )
+                f.write("except NameError:\n")
+                f.write("    pass\n")
+
+
+def _write_map(f, var_name, map_comp, created_vars):
+    """Write code for a Map component and its layers."""
+    params = [f'name="{_escape_string(map_comp.name)}"']
+    if hasattr(map_comp, "title") and map_comp.title:
+        params.append(f'title="{_escape_string(map_comp.title)}"')
+    if hasattr(map_comp, "center_latitude") and map_comp.center_latitude is not None:
+        params.append(f"center_latitude={map_comp.center_latitude}")
+    if hasattr(map_comp, "center_longitude") and map_comp.center_longitude is not None:
+        params.append(f"center_longitude={map_comp.center_longitude}")
+    if hasattr(map_comp, "zoom") and map_comp.zoom is not None:
+        params.append(f"zoom={map_comp.zoom}")
+
+    # Preserve the concrete subclass (WorldMap / LocationMap) on round-trip
+    _write_constructor(f, var_name, type(map_comp).__name__, params, map_comp)
+
+    # Write each layer and collect variable names
+    layer_var_names = []
+    for idx, layer in enumerate(getattr(map_comp, "layers", None) or []):
+        layer_var = f"{var_name}_layer_{idx}"
+        _write_map_layer(f, layer_var, layer, created_vars)
+        layer_var_names.append(layer_var)
+
+    # Assign the layers list back to the map
+    if layer_var_names:
+        f.write(f"{var_name}.layers = [{', '.join(layer_var_names)}]\n")
+
+
 def _write_agent_component(f, var_name, agent):
     """Write code for an AgentComponent."""
     params = [f'name="{_escape_string(agent.name)}"']
@@ -1283,20 +1400,20 @@ def _write_data_binding(f, binding_var, binding):
     label_path = getattr(binding, "label_field_path", None)
     data_path = getattr(binding, "data_field_path", None)
     filter_expr = getattr(binding, "filter_expression", None)
+    aggregation = getattr(binding, "aggregation", None)
 
     if not domain_name:
         f.write(f"# DataBinding for {binding_var} skipped: no domain concept specified.\n")
         return None
 
-    escaped_domain = _escape_string(domain_name)
-    f.write("domain_model_ref = globals().get('domain_model') or next((v for k, v in globals().items() if k.startswith('domain_model') and hasattr(v, 'get_class_by_name')), None)\n")
-    f.write(f"{binding_var}_domain = None\n")
-    f.write("if domain_model_ref is not None:\n")
-    f.write(f"    {binding_var}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
-    f.write(f"if {binding_var}_domain:\n")
-
-    # Build DataBinding constructor params
-    binding_params = [f"domain_concept={binding_var}_domain"]
+    # One guarded helper call - see bind_domain_field for why nothing is inlined.
+    # The binding stays None when the helper or domain_model is absent (a GUI
+    # model exported on its own) or the class is not in the domain model.
+    binding_params = [f'"{_escape_string(domain_name)}"']
+    if label_name:
+        binding_params.append(f'label_field="{_escape_string(label_name)}"')
+    if data_name:
+        binding_params.append(f'data_field="{_escape_string(data_name)}"')
     if binding_name:
         binding_params.append(f'name="{_escape_string(binding_name)}"')
     if label_path:
@@ -1305,17 +1422,13 @@ def _write_data_binding(f, binding_var, binding):
         binding_params.append(f'data_field_path="{_escape_string(data_path)}"')
     if filter_expr:
         binding_params.append(f'filter_expression="{_escape_string(filter_expr)}"')
-    f.write(f"    {binding_var} = DataBinding({', '.join(binding_params)})\n")
-
-    if label_name:
-        escaped_label = _escape_string(label_name)
-        f.write(f"    {binding_var}.label_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_label}\"), None)\n")
-    if data_name:
-        escaped_data = _escape_string(data_name)
-        f.write(f"    {binding_var}.data_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_data}\"), None)\n")
-    f.write("else:\n")
-    f.write(f"    # Domain class '{escaped_domain}' not resolved; data binding skipped.\n")
-    f.write(f"    {binding_var} = None\n")
+    if aggregation is not None:
+        binding_params.append(f'aggregation="{aggregation.value}"')
+    f.write(f"{binding_var} = None\n")
+    f.write("try:\n")
+    f.write(f"    {binding_var} = build_data_binding(domain_model, {', '.join(binding_params)})\n")
+    f.write("except NameError:\n")
+    f.write("    pass\n")
     return binding_var
 
 
@@ -1324,8 +1437,7 @@ def _write_data_binding_assignment(f, var_name, binding):
     binding_var = f"{var_name}_binding"
     result = _write_data_binding(f, binding_var, binding)
     if result:
-        f.write(f"if {binding_var}:\n")
-        f.write(f"    {var_name}.data_binding = {binding_var}\n")
+        f.write(f"{var_name}.data_binding = {binding_var}\n")
 
 
 def _update_data_source_element(f, var_name, source):
@@ -1354,41 +1466,27 @@ def _update_data_source_element(f, var_name, source):
     if not any([domain_name, field_names, label_name, value_name]):
         return
 
-    f.write("domain_model_ref = globals().get('domain_model') or next((v for k, v in globals().items() if k.startswith('domain_model') and hasattr(v, 'get_class_by_name')), None)\n")
-    f.write(f"{var_name}_domain = None\n")
+    # The unresolved names first, so a model loaded without its domain model
+    # keeps them; bind_data_source then adds the resolved class and properties.
+    if field_names:
+        f.write(f"{var_name}.field_names = {repr(field_names)}\n")
+    if label_name:
+        f.write(f"{var_name}.label_field_name = \"{_escape_string(label_name)}\"\n")
+    if value_name:
+        f.write(f"{var_name}.value_field_name = \"{_escape_string(value_name)}\"\n")
     if domain_name:
-        escaped_domain = _escape_string(domain_name)
-        f.write("if domain_model_ref is not None:\n")
-        f.write(f"    {var_name}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
-        f.write(f"if {var_name}_domain:\n")
-        f.write(f"    {var_name}.dataSourceClass = {var_name}_domain\n")
+        source_params = [var_name, "domain_model", f'"{_escape_string(domain_name)}"']
         if field_names:
-            fields_list = repr(field_names)
-            f.write(f"    {var_name}.field_names = {fields_list}\n")
-            f.write(f"    {var_name}.fields = set(attr for attr in {var_name}_domain.attributes if attr.name in {fields_list})\n")
+            source_params.append(f"field_names={repr(field_names)}")
         if label_name:
-            escaped_label = _escape_string(label_name)
-            f.write(f"    {var_name}.label_field = next((attr for attr in {var_name}_domain.attributes if attr.name == \"{escaped_label}\"), None)\n")
-            f.write(f"    {var_name}.label_field_name = \"{escaped_label}\"\n")
+            source_params.append(f'label_field="{_escape_string(label_name)}"')
         if value_name:
-            escaped_value = _escape_string(value_name)
-            f.write(f"    {var_name}.value_field = next((attr for attr in {var_name}_domain.attributes if attr.name == \"{escaped_value}\"), None)\n")
-            f.write(f"    {var_name}.value_field_name = \"{escaped_value}\"\n")
-        f.write("else:\n")
-        f.write(f"    # Domain class '{escaped_domain}' not resolved for data source '{_escape_string(getattr(source, 'name', var_name))}'.\n")
-        if field_names:
-            f.write(f"    {var_name}.field_names = {repr(field_names)}\n")
-        if label_name:
-            f.write(f"    {var_name}.label_field_name = \"{_escape_string(label_name)}\"\n")
-        if value_name:
-            f.write(f"    {var_name}.value_field_name = \"{_escape_string(value_name)}\"\n")
-    else:
-        if field_names:
-            f.write(f"{var_name}.field_names = {repr(field_names)}\n")
-        if label_name:
-            f.write(f"{var_name}.label_field_name = \"{_escape_string(label_name)}\"\n")
-        if value_name:
-            f.write(f"{var_name}.value_field_name = \"{_escape_string(value_name)}\"\n")
+            source_params.append(f'value_field="{_escape_string(value_name)}"')
+        f.write("try:\n")
+        f.write(f"    bind_data_source({', '.join(source_params)})\n")
+        f.write("except NameError:\n")
+        f.write("    pass\n")
+
 
 def _write_layout(f, layout, created_vars, layout_var):
     """Write code for Layout object."""

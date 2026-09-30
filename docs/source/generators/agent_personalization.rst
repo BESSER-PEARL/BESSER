@@ -76,7 +76,7 @@ The full list of allowed values is defined in
 
 - ``agentLanguage``: ``original``, ``english``, ``french``, ``german``,
   ``spanish``, ``luxembourgish``, ``portuguese``
-- ``agentStyle``: ``original``, ``formal``, ``informal``
+- ``agentStyle``: ``original``, ``formal``, ``informal``, ``friendly``, ``technical``
 - ``languageComplexity``: ``original``, ``simple``, ``medium``, ``complex``
 - ``sentenceLength``: ``original``, ``concise``, ``verbose``
 - ``font``: ``sans``, ``serif``, ``monospace``, ``neutral``, ``grotesque``, ``condensed``
@@ -86,8 +86,28 @@ The full list of allowed values is defined in
 - ``responseTiming``: ``instant``, ``delayed``
 - ``agentPlatform``: ``websocket``, ``streamlit``, ``telegram``
 - ``intentRecognitionTechnology``: ``classical``, ``llm-based``
-- ``llmProvider``: ``openai``, ``huggingface``, ``huggingfaceapi``, ``replicate``
-- ``openaiModels``: ``gpt-5``, ``gpt-5-mini``, ``gpt-5-nano``
+- ``llmProvider``: ``openai``, ``huggingface``, ``huggingface_api``, ``huggingfaceapi``
+  (legacy spelling, still accepted), ``replicate``, ``ollama``,
+  ``mistral``, ``deepseek``, ``google``, ``meta``, ``anthropic``,
+  ``qwen``, ``xai``, ``groq``, ``together``, ``openrouter``
+- ``openaiModels``: ``gpt-5.5``, ``gpt-5``, ``gpt-5-mini``, ``gpt-5-nano``
+- ``ollamaModels``: ``llama3``, ``llama3.1``, ``mistral``, ``qwen2.5``, ``gemma3``, ``phi4``, ``gemma3n:e2b``
+- ``mistralModels``: ``mistral-small-latest``, ``mistral-large-latest``, ``open-mistral-nemo``
+- ``deepseekModels``: ``deepseek-chat``, ``deepseek-reasoner``
+- ``googleModels``: ``gemini-2.5-pro``, ``gemini-2.5-flash``, ``gemini-2.0-flash``
+- ``metaModels``: ``Llama-3.3-70B-Instruct``, ``Llama-4-Scout-17B-16E-Instruct-FP8``
+- ``anthropicModels``: ``claude-opus-5``, ``claude-sonnet-5``, ``claude-haiku-4-5``
+- ``qwenModels``: ``qwen-max``, ``qwen-plus``, ``qwen-turbo``
+- ``xaiModels``: ``grok-3``, ``grok-3-mini``, ``grok-2-latest``
+- ``groqModels``: ``llama-3.3-70b-versatile``, ``gemma2-9b-it``, ``mixtral-8x7b-32768``
+- ``togetherModels``: ``meta-llama/Llama-3.3-70B-Instruct-Turbo``, ``Qwen/Qwen2.5-72B-Instruct-Turbo``
+- ``openrouterModels``: ``anthropic/claude-opus-4``, ``google/gemini-2.5-pro``, ``openai/gpt-4o``
+
+The ``ollama`` provider targets a locally hosted `Ollama <https://ollama.com>`_
+server: set the ``model`` and optionally the ``base_url`` (default
+``http://localhost:11434``) in the LLM parameters. Ollama can also be selected as
+the embedding provider for RAG vector stores, with its own ``base_url`` and
+embedding ``model`` (e.g. ``nomic-embed-text``).
 
 .. note::
 
@@ -172,7 +192,7 @@ and asks it to return a valid configuration JSON. The output is parsed by
 ``normalize_recommended_agent_config`` before being returned to the caller.
 
 The LLM backend requires an OpenAI API key. The model name is caller-selectable
-(``gpt-5``, ``gpt-5-mini``, ``gpt-5-nano``).
+(``gpt-5.5``, ``gpt-5``, ``gpt-5-mini``, ``gpt-5-nano``).
 
 
 Variants

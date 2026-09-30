@@ -8,6 +8,28 @@ stores -> flows) is unchanged, only the emitted shape differs (flat node/edge
 lists instead of ``elements``/``relationships`` dicts, ``parentId`` instead of
 ``owner``, one edge ``type`` per flow kind instead of ``"BPMNFlow"`` +
 ``flowType``).
+
+Two entry points:
+
+* ``bpmn_object_to_json(model: BPMNModel) -> dict`` — converts a metamodel object
+  directly. Mirror of ``json_to_buml.bpmn_diagram_processor.process_bpmn_diagram``.
+* ``bpmn_buml_to_json(content: str) -> dict`` — loads a BPMN BUML ``.py`` source string
+  through the safe AST-allowlist loader, finds the resulting ``BPMNModel``, and delegates to
+  ``bpmn_object_to_json``. The ``.py`` files emitted by
+  ``besser.utilities.buml_code_builder.bpmn_model_builder.bpmn_model_to_code`` are
+  exactly what this wrapper expects.
+
+Design points (mirror of the processor):
+
+* **Stable round-trip ids.** ``id_for(obj)`` reuses the original WME id stashed in
+  ``obj.layout["id"]`` when present, falling back to a fresh uuid. The metamodel stays
+  id-free; ``layout`` is the per-element side-channel.
+* **Layout fallback.** When ``layout`` is missing / partial (a freshly-built model, or
+  one loaded from BUML code that didn't emit layout), a deterministic grid layout fills
+  the gaps.
+* **Deterministic walk.** Set members are walked in ``timestamp`` order via
+  ``besser.utilities.sort_by_timestamp`` so the export is reproducible (BPMN names are
+  not unique — sorting by name is not an option).
 """
 
 import logging
@@ -52,6 +74,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._node_builders import (
     make_node, make_edge,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
+)
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 logger = logging.getLogger(__name__)
@@ -69,7 +94,7 @@ _TYPE_FOR_CLASS = {
     DataStore: "bpmnDataStore",
     TextAnnotation: "bpmnAnnotation",
     Group: "bpmnGroup",
-    Lane: "bpmnSwimlane",  # forward-compat, see processor note
+    Lane: "bpmnSwimlane",
     Participant: "bpmnPool",
 }
 
@@ -131,6 +156,9 @@ class _GridLayout:
 
 
 def bpmn_object_to_json(model: BPMNModel) -> dict:
+    """Convert a ``BPMNModel`` into a v4 WME BPMN diagram JSON dict
+    (``version``, ``type``, ``title``, ``size``, ``nodes``, ``edges``,
+    ``interactive``, ``assessments``)."""
     nodes: list = []
     edges: list = []
     id_map: dict = {}
@@ -169,27 +197,29 @@ def bpmn_object_to_json(model: BPMNModel) -> dict:
         if node:
             nodes.append(node)
 
+    emitted_ids = {node["id"] for node in nodes}
     for process in sort_by_timestamp(model.processes):
         for flow in sort_by_timestamp(process.sequence_flows):
-            _emit_flow(flow, edges, id_for)
+            _emit_flow(flow, edges, id_for, emitted_ids)
         for flow in sort_by_timestamp(process.associations):
-            _emit_flow(flow, edges, id_for)
+            _emit_flow(flow, edges, id_for, emitted_ids)
         for flow in sort_by_timestamp(process.data_associations):
-            _emit_flow(flow, edges, id_for)
+            _emit_flow(flow, edges, id_for, emitted_ids)
 
+    # Sequence flows nested in SubProcesses
     for sub in _walk_subprocesses(model):
         for flow in sort_by_timestamp(sub.sequence_flows):
-            _emit_flow(flow, edges, id_for)
+            _emit_flow(flow, edges, id_for, emitted_ids)
 
     if model.collaboration is not None:
         for flow in sort_by_timestamp(model.collaboration.message_flows):
-            _emit_flow(flow, edges, id_for)
+            _emit_flow(flow, edges, id_for, emitted_ids)
 
     return {
         "version": "4.0.0",
         "type": BPMN_DIAGRAM_TYPE,
         "title": getattr(model, "name", "") or "",
-        "size": {"width": 1400, "height": 740},
+        "size": _compute_envelope_size(nodes),
         "nodes": nodes,
         "edges": edges,
         "interactive": {"elements": {}, "relationships": {}},
@@ -251,7 +281,7 @@ def _emit_node(obj, parent_id, id_for, grid: "_GridLayout"):
     name = obj.text if isinstance(obj, TextAnnotation) else obj.name
 
     data: dict = {"name": name}
-    for style_key in ("fillColor", "strokeColor", "textColor"):
+    for style_key in ("fillColor", "strokeColor", "textColor", "highlight"):
         if style_key in layout:
             data[style_key] = layout[style_key]
 
@@ -271,10 +301,19 @@ def _emit_node(obj, parent_id, id_for, grid: "_GridLayout"):
     )
 
 
-def _emit_flow(flow: "BPMNConnectingObject", edges: list, id_for) -> None:
+def _emit_flow(flow: "BPMNConnectingObject", edges: list, id_for, emitted_ids: set) -> None:
     edge_type = _EDGE_TYPE_FOR_FLOW_CLASS.get(type(flow))
     if edge_type is None:
         logger.warning("BPMN export: unknown connecting object %s; skipping.", type(flow).__name__)
+        return
+
+    source_id = id_for(flow.source)
+    target_id = id_for(flow.target)
+    if source_id not in emitted_ids or target_id not in emitted_ids:
+        # Endpoint wasn't emitted (defensive — happens only on a malformed model).
+        logger.warning(
+            "BPMN flow '%s' references an endpoint that was not emitted; skipping.", flow.name,
+        )
         return
 
     layout = flow.layout or {}
@@ -288,7 +327,7 @@ def _emit_flow(flow: "BPMNConnectingObject", edges: list, id_for) -> None:
         edge_data["isDefault"] = True
 
     edges.append(make_edge(
-        edge_id=id_for(flow), source=id_for(flow.source), target=id_for(flow.target),
+        edge_id=id_for(flow), source=source_id, target=target_id,
         type_=edge_type, data=edge_data,
         source_handle=layout.get("source_direction") or "Right",
         target_handle=layout.get("target_direction") or "Left",
@@ -296,6 +335,7 @@ def _emit_flow(flow: "BPMNConnectingObject", edges: list, id_for) -> None:
 
 
 def _walk_subprocesses(model: BPMNModel):
+    """Yield every ``SubProcess`` (including nested ones) in the model."""
     def _recurse(container):
         for node in container.flow_nodes:
             if isinstance(node, SubProcess):
@@ -305,19 +345,32 @@ def _walk_subprocesses(model: BPMNModel):
         yield from _recurse(process)
 
 
-# bpmn_buml_to_json is unchanged from v3 (only touches BUML .py source text via
-# exec(), never the WME envelope) — copy the origin/development implementation
-# verbatim, updating only the trailing call to bpmn_object_to_json(model) above.
+def _compute_envelope_size(nodes: list) -> dict:
+    """Bounding box of all top-level node bounds, with a sensible minimum."""
+    max_x = 0
+    max_y = 0
+    for node in nodes:
+        if node.get("parentId"):
+            continue  # child positions are relative to their parent
+        position = node.get("position") or {}
+        right = (position.get("x") or 0) + (node.get("width") or 0)
+        bottom = (position.get("y") or 0) + (node.get("height") or 0)
+        max_x = max(max_x, right)
+        max_y = max(max_y, bottom)
+    return {"width": max(int(max_x) + 40, 800), "height": max(int(max_y) + 40, 600)}
+
+
 def bpmn_buml_to_json(content: str) -> dict:
-    safe_globals = {
-        "__name__": "besser_buml_import",
-        "__builtins__": {
-            "set": set, "list": list, "dict": dict, "tuple": tuple,
-            "str": str, "int": int, "float": float, "bool": bool,
-            "len": len, "range": range,
-            "True": True, "False": False, "None": None,
-            "print": lambda *a, **kw: None,
-        },
+    """Convert a BPMN BUML ``.py`` source string into a v4 WME BPMN diagram JSON dict.
+
+    Loads ``content`` through ``safe_load_buml`` (AST allowlist — no raw ``exec``),
+    locates the resulting ``BPMNModel``, and delegates to :func:`bpmn_object_to_json`.
+
+    Raises:
+        ConversionError: if the source fails to parse / execute, or if no
+            ``BPMNModel`` instance is produced.
+    """
+    allowed_names = {
         "BPMNModel": BPMNModel, "Process": Process, "Collaboration": Collaboration,
         "Participant": Participant, "Task": Task, "TaskType": TaskType,
         "LoopCharacteristics": LoopCharacteristics, "SubProcess": SubProcess,
@@ -348,9 +401,8 @@ def bpmn_buml_to_json(content: str) -> dict:
         cleaned_lines.append(line)
     cleaned_content = "\n".join(cleaned_lines)
 
-    local_vars: dict = {}
     try:
-        exec(cleaned_content, safe_globals, local_vars)
+        local_vars = safe_load_buml(cleaned_content, allowed_names)
     except (SyntaxError, NameError, TypeError, ValueError) as exc:
         raise ConversionError(f"BPMN BUML file failed to execute: {exc}") from exc
 
@@ -364,6 +416,7 @@ def bpmn_buml_to_json(content: str) -> dict:
 
 
 def _find_bpmn_model(namespace: dict):
+    """Return the ``BPMNModel`` from the loaded namespace, preferring ``bpmn_model``."""
     candidate = namespace.get("bpmn_model")
     if isinstance(candidate, BPMNModel):
         return candidate

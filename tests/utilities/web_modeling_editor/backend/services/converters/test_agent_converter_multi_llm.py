@@ -216,6 +216,12 @@ class TestMultiLlmRoundTrip:
     def _nodes_by_type(self, payload, node_type):
         return [n for n in payload.get("nodes", []) if n.get("type") == node_type]
 
+    def _components_by_type(self, payload, component_type):
+        """Off-canvas components (``model.components``) of one type. They are
+        never emitted as canvas nodes."""
+        assert not self._nodes_by_type(payload, component_type)
+        return [c for c in (payload.get("components") or {}).values() if c.get("type") == component_type]
+
     def _reasoning_nodes(self, payload):
         """AgentState nodes folded into a reasoning state (``data.stateType
         == "reasoning"``) — the canonical v4 emission shape."""
@@ -225,16 +231,16 @@ class TestMultiLlmRoundTrip:
         ]
 
     def test_agent_llm_nodes_reemitted(self, reemitted):
-        llm_nodes = self._nodes_by_type(reemitted, "AgentLLM")
-        assert {n["data"]["name"] for n in llm_nodes} == {"fast", "big"}
-        fast = next(n for n in llm_nodes if n["data"]["name"] == "fast")
-        assert fast["data"]["provider"] == "openai"
-        assert fast["data"]["parameters"] == {
+        llms = self._components_by_type(reemitted, "AgentLLM")
+        assert {c["name"] for c in llms} == {"fast", "big"}
+        fast = next(c for c in llms if c["name"] == "fast")
+        assert fast["provider"] == "openai"
+        assert fast["parameters"] == {
             "model": "gpt-4o-mini",
             "temperature": 0.2,
         }
-        assert fast["data"]["num_previous_messages"] == 3
-        assert fast["data"]["global_context"] == "Be terse."
+        assert fast["num_previous_messages"] == 3
+        assert fast["global_context"] == "Be terse."
 
     def test_default_llm_name_reemitted_in_config(self, reemitted):
         assert reemitted.get("config", {}).get("default_llm_name") == "big"
@@ -245,9 +251,9 @@ class TestMultiLlmRoundTrip:
         assert rs["data"]["llm_name"] == "fast"
 
     def test_rag_llm_name_reemitted(self, reemitted):
-        rag = self._nodes_by_type(reemitted, "AgentRagElement")[0]
-        assert rag["data"]["name"] == "manuals"
-        assert rag["data"]["llm_name"] == "big"
+        rag = self._components_by_type(reemitted, "AgentRagElement")[0]
+        assert rag["name"] == "manuals"
+        assert rag["llm_name"] == "big"
 
     def test_llm_reply_body_llm_name_reemitted(self, reemitted):
         answer = next(

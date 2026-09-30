@@ -13,7 +13,7 @@ and operate on the v4 layout. They never mutate their inputs.
 
 from __future__ import annotations
 
-from typing import Any, Iterator, Optional
+from typing import Iterator, Optional
 
 
 def _nodes(model: dict) -> list[dict]:

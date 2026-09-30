@@ -1,0 +1,76 @@
+Version 7.8.2
+=============
+
+Patch release: **state-machine validation errors now reach the user** in
+the Web Modeling Editor instead of being silently swallowed, and
+``StateMachine.validate()`` gains its first two structural rules. No
+metamodel API changes — the new rules sit behind the existing
+``validate()`` entry point and a previously-empty stub is now filled
+in. Closes `#467 <https://github.com/BESSER-PEARL/BESSER/issues/467>`_
+(PR `#545 <https://github.com/BESSER-PEARL/BESSER/pull/545>`_, thanks
+to Vasiliki Zontanou).
+
+Fixes
+-----
+
+* **Silent error swallowing in the state-machine processor**: in
+  ``besser/utilities/web_modeling_editor/backend/services/converters/json_to_buml/state_machine_processor.py``
+  three ``except ValueError`` clauses called ``logger.warning(...)``
+  and continued, so duplicate state names, invalid transitions, and
+  guard-only-transition failures were dropped on the floor and never
+  surfaced through ``/validate-diagram`` or ``/generate-output``.
+  All three sites now re-raise as ``ConversionError``, matching the
+  pattern already in ``class_diagram_processor.py``.
+* **Project converter dropped the propagated error**: even after the
+  processor was fixed, the JSON→BUML project converter at
+  ``besser/utilities/web_modeling_editor/backend/services/converters/json_to_buml/project_converter.py``
+  wrapped each ``StateMachineDiagram`` processing call in a
+  ``try/except Exception → logger.warning`` and continued the loop —
+  so the new ``ConversionError`` was caught and discarded before
+  reaching the API layer. The wrapper is removed; errors now reach
+  the user.
+
+Validation rules
+----------------
+
+``StateMachine.validate()`` in
+``besser/BUML/metamodel/state_machine/state_machine.py`` was a stub.
+It now collects errors and warnings in the same style as
+``DomainModel.validate()`` and enforces two structural rules:
+
+* **Final state with outgoing transitions** (error): a final state
+  marks the end of execution and must not have outgoing transitions;
+  this violates the UML specification.
+* **Unreachable non-initial state** (warning): a state that is not
+  the initial state and has no incoming transitions can never be
+  visited at runtime.
+
+Construction-time constraints (duplicate state names, invalid
+transition targets, missing initial state) continue to be enforced by
+``StateMachine.new_state()`` and ``TransitionBuilder.go_to()`` and
+raise a ``ValueError`` immediately.
+
+Behavior change worth flagging
+------------------------------
+
+Project imports containing **one invalid state machine** previously
+succeeded for the rest of the diagrams while silently dropping the
+broken state machine. They now fail the import outright with the
+state machine's ``ConversionError``. The error was always present in
+the model — the editor just stopped surfacing it. If you relied on
+"partial" project imports as a workflow, fix the state-machine
+diagram in question (or remove it) before re-importing.
+
+Tests and docs
+--------------
+
+* ``tests/BUML/metamodel/state_machine/test_state_machine.py`` gains
+  ``test_validate_unreachable_states`` and
+  ``test_validate_final_state_with_transitions`` to cover both rules.
+* ``tests/utilities/web_modeling_editor/backend/test_api_integration.py``
+  ``test_validate_state_machine_duplicate_names`` is tightened to
+  assert ``isValid is False`` and that the offending state name
+  reaches ``errors`` — previously it documented the silent-skip
+  behavior that this release removes.
+* ``docs/source/buml_language/model_types/state_machine.rst`` documents
+  the new rules.

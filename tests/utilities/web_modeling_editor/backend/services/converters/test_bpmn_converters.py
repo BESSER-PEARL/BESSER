@@ -163,7 +163,7 @@ def pool_lane_fixture():
     return {
         "title": "Sales",
         "model": {
-            "type": "BPMNDiagram",  # exercise the alternate accepted spelling
+            "type": "BPMNDiagram",  # canonical spelling (other fixtures use the legacy "BPMN")
             "nodes": [
                 _node("pool1", "bpmnPool", "Customer"),
                 _node("lane1", "bpmnSwimlane", "Agent", parent_id="pool1"),
@@ -315,7 +315,7 @@ class TestBpmnObjectToJson:
     def test_node_type_strings(self):
         model = process_bpmn_diagram(simple_process_fixture())
         payload = bpmn_object_to_json(model)
-        assert payload["type"] == "BPMN"
+        assert payload["type"] == "BPMNDiagram"
         assert payload["version"] == "4.0.0"
         types = {n.get("type") for n in _nodes(payload)}
         assert types == {"bpmnStartEvent", "bpmnTask", "bpmnGateway", "bpmnEndEvent"}
@@ -492,7 +492,7 @@ class TestBpmnToJsonWrapper:
         source = py_path.read_text(encoding="utf-8")
 
         payload = bpmn_buml_to_json(source)
-        assert payload["type"] == "BPMN"
+        assert payload["type"] == "BPMNDiagram"
         types = Counter(n.get("type") for n in _nodes(payload))
         assert types["bpmnStartEvent"] == 1
         assert types["bpmnTask"] == 1
@@ -503,3 +503,213 @@ class TestBpmnToJsonWrapper:
     def test_missing_model_raises_conversion_error(self):
         with pytest.raises(ConversionError):
             bpmn_buml_to_json("x = 1\n")
+
+
+# ---------------------------------------------------------------------------
+# Ported from feature/smart-generator's (v3) suite — same assertions, v4 shape
+# ---------------------------------------------------------------------------
+
+from besser.BUML.metamodel.bpmn import (  # noqa: E402
+    Collaboration,
+    Gateway,
+    GatewayType,
+    MessageFlow,
+    Process,
+    SequenceFlow,
+    SubProcess,
+    Task,
+    TaskType,
+)
+
+
+def two_pool_collaboration_fixture():
+    """Two pools, each with one task; one MessageFlow between them."""
+    return {
+        "title": "Buyer-Seller",
+        "model": {
+            "type": "BPMNDiagram",
+            "nodes": [
+                _node("p1", "bpmnPool", "Buyer"),
+                _node("p2", "bpmnPool", "Seller"),
+                _node("t1", "bpmnTask", "Place order", parent_id="p1", taskType="default", marker="none"),
+                _node("t2", "bpmnTask", "Ship", parent_id="p2", taskType="default", marker="none"),
+            ],
+            "edges": [
+                _edge("m1", "BPMNMessageFlow", "t1", "t2", name="order"),
+            ],
+        },
+    }
+
+
+class TestPortedProcessBehaviour:
+    def test_layout_ids_stashed(self):
+        model = process_bpmn_diagram(simple_process_fixture())
+        ids = {(n.layout or {}).get("id") for n in model.all_flow_nodes()}
+        assert ids == {"start1", "task1", "gw1", "end1"}
+
+    def test_simple_process_validates(self):
+        model = process_bpmn_diagram(simple_process_fixture())
+        result = model.validate(raise_exception=False)
+        assert result["success"] is True, result["errors"]
+
+    def test_two_pool_builds_collaboration(self):
+        model = process_bpmn_diagram(two_pool_collaboration_fixture())
+        assert isinstance(model.collaboration, Collaboration)
+        assert len(model.collaboration.participants) == 2
+        assert len(model.processes) == 2
+        assert len(model.collaboration.message_flows) == 1
+        msg = next(iter(model.collaboration.message_flows))
+        assert isinstance(msg, MessageFlow)
+        assert msg.name == "order"
+
+    def test_gateway_default_flow_is_the_gateway_default(self):
+        model = process_bpmn_diagram(simple_process_fixture())
+        gateway = next(n for n in model.all_flow_nodes() if isinstance(n, Gateway))
+        assert gateway.gateway_type is GatewayType.EXCLUSIVE
+        defaults = [f for f in gateway.outgoing() if f.is_default]
+        assert len(defaults) == 1
+        assert gateway.default_flow is defaults[0]
+
+    def test_inner_sequence_flow_lives_in_the_subprocess(self):
+        model = process_bpmn_diagram(subprocess_fixture())
+        sub = next(n for n in model.all_flow_nodes() if isinstance(n, SubProcess))
+        outer = next(iter(model.processes))
+        assert sub in outer.flow_nodes
+        assert all(f.source.container is sub for f in sub.sequence_flows)
+
+    def test_dangling_endpoint_logs(self, caplog):
+        fixture = simple_process_fixture()
+        fixture["model"]["edges"].append(_edge("bad", "BPMNSequenceFlow", "start1", "missing"))
+        with caplog.at_level("WARNING"):
+            process_bpmn_diagram(fixture)
+        assert any("dangling endpoint" in rec.message for rec in caplog.records)
+
+    def test_illegal_is_default_logs_and_downgrades(self, caplog):
+        # A parallel gateway cannot carry a default flow (BPMN 8.3.13).
+        fixture = {
+            "title": "Parallel",
+            "model": {
+                "type": "BPMNDiagram",
+                "nodes": [
+                    _node("g1", "bpmnGateway", "", gatewayType="parallel"),
+                    _node("t1", "bpmnTask", "A", taskType="default", marker="none"),
+                    _node("t2", "bpmnTask", "B", taskType="default", marker="none"),
+                ],
+                "edges": [
+                    _edge("fa", "BPMNSequenceFlow", "g1", "t1"),
+                    _edge("fb", "BPMNSequenceFlow", "g1", "t2", isDefault=True),
+                ],
+            },
+        }
+        with caplog.at_level("WARNING"):
+            model = process_bpmn_diagram(fixture)
+        flows = next(iter(model.processes)).sequence_flows
+        assert all(not f.is_default for f in flows)
+        assert any("downgrading to is_default=False" in rec.message for rec in caplog.records)
+
+    def test_unknown_node_type_logs(self, caplog):
+        fixture = simple_process_fixture()
+        fixture["model"]["nodes"].append(_node("u1", "bpmnNonsense", "?"))
+        with caplog.at_level("WARNING"):
+            process_bpmn_diagram(fixture)
+        assert any("unknown type 'bpmnNonsense'" in rec.message for rec in caplog.records)
+
+    def test_missing_model_key_raises(self):
+        with pytest.raises(ConversionError, match="missing the 'model' key"):
+            process_bpmn_diagram({"title": "x"})
+
+    def test_highlight_style_round_trips(self):
+        fixture = simple_process_fixture()
+        fixture["model"]["nodes"][1]["data"]["highlight"] = "#ff0"
+        payload = bpmn_object_to_json(process_bpmn_diagram(fixture))
+        assert _data(_node_by_name(payload, "Review"))["highlight"] == "#ff0"
+
+
+class TestPortedObjectToJson:
+    def test_envelope_keys_present(self):
+        out = bpmn_object_to_json(process_bpmn_diagram(simple_process_fixture()))
+        assert out["version"] == "4.0.0"
+        assert out["type"] == "BPMNDiagram"
+        assert set(out.keys()) >= {
+            "version", "type", "title", "size", "interactive", "nodes", "edges", "assessments",
+        }
+
+    def test_pool_parent_pointer(self):
+        out = bpmn_object_to_json(process_bpmn_diagram(two_pool_collaboration_fixture()))
+        pool_ids = {n["id"] for n in _nodes_by_type(out, "bpmnPool")}
+        task_parents = {n.get("parentId") for n in _nodes_by_type(out, "bpmnTask")}
+        assert task_parents.issubset(pool_ids)
+
+    def test_message_flow_emitted(self):
+        out = bpmn_object_to_json(process_bpmn_diagram(two_pool_collaboration_fixture()))
+        assert {e["type"] for e in _edges(out)} == {"BPMNMessageFlow"}
+
+    def test_ids_are_reused_from_layout(self):
+        out = bpmn_object_to_json(process_bpmn_diagram(simple_process_fixture()))
+        assert {n["id"] for n in _nodes(out)} == {"start1", "task1", "gw1", "end1"}
+        assert {e["id"] for e in _edges(out)} == {"f1", "f2", "f3"}
+
+
+def _simple_buml_model():
+    """A minimal BPMNModel built programmatically (no ``layout`` anywhere)."""
+    s = StartEvent(name="start")
+    t = Task(name="work", task_type=TaskType.SERVICE)
+    e = EndEvent(name="end")
+    p = Process(name="P", flow_nodes={s, t, e},
+                sequence_flows={SequenceFlow(s, t), SequenceFlow(t, e)})
+    return BPMNModel(name="Programmatic", processes={p})
+
+
+def test_layout_fallback_emits_geometry_for_every_node():
+    out = bpmn_object_to_json(_simple_buml_model())
+    assert len(_nodes(out)) == 3
+    for node in _nodes(out):
+        assert {"x", "y"} <= set(node["position"].keys())
+        assert node["width"] > 0 and node["height"] > 0
+    assert len(_edges(out)) == 2
+
+
+def test_layout_fallback_envelope_size_min_800x600():
+    out = bpmn_object_to_json(_simple_buml_model())
+    assert out["size"]["width"] >= 800
+    assert out["size"]["height"] >= 600
+
+
+class TestPortedBumlWrapper:
+    @pytest.mark.parametrize(
+        "fixture_fn",
+        [simple_process_fixture, pool_lane_fixture, subprocess_fixture, artifact_fixture,
+         two_pool_collaboration_fixture],
+    )
+    def test_full_round_trip_via_builder(self, fixture_fn):
+        # JSON -> BUML model -> emitted .py -> safe loader -> BPMNModel -> JSON must agree
+        # with bpmn_object_to_json on the model for the load-bearing fields.
+        model = process_bpmn_diagram(fixture_fn())
+        json_out = bpmn_buml_to_json(bpmn_model_to_code(model))
+        direct = bpmn_object_to_json(model)
+        assert _type_name_pairs(json_out) == _type_name_pairs(direct)
+        assert _containment_by_name(json_out) == _containment_by_name(direct)
+        assert Counter(e["type"] for e in _edges(json_out)) == Counter(e["type"] for e in _edges(direct))
+
+    def test_exec_failure_raises_conversion_error(self):
+        with pytest.raises(ConversionError, match="failed to execute"):
+            bpmn_buml_to_json("undefined_symbol\n")
+
+    def test_no_bpmn_model_raises_conversion_error(self):
+        with pytest.raises(ConversionError, match="produced no BPMNModel"):
+            bpmn_buml_to_json("x = 1\n")
+
+    def test_finds_model_under_any_variable_name(self):
+        source = (
+            "from besser.BUML.metamodel.bpmn import BPMNModel, Process, Task\n"
+            "task_x = Task(name='x')\n"
+            "p = Process(name='P', flow_nodes={task_x})\n"
+            "weird_var_name = BPMNModel(name='X', processes={p})\n"
+        )
+        out = bpmn_buml_to_json(source)
+        assert out["type"] == "BPMNDiagram"
+        assert len(_nodes(out)) == 1
+
+    def test_syntax_error_raises_conversion_error(self):
+        with pytest.raises(ConversionError, match="failed to execute"):
+            bpmn_buml_to_json("def broken(:\n    pass\n")

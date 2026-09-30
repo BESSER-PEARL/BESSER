@@ -9,6 +9,22 @@ various applications.
    Most generators consume :doc:`structural models <buml_language/model_types/structural>` (class diagrams).
    Some generators require additional model types (GUI, agent, quantum, deployment) as noted below.
 
+The generators on this page are **template-based**: one pass over your model,
+same input in, same output out, with no natural-language step. (The one
+qualification is :doc:`agent personalization <generators/agent_personalization>`,
+whose variant mechanisms can optionally call an LLM to re-write an agent's
+messages.)
+
+.. tip::
+   Need something the templates don't cover — authentication, Docker, tests —
+   or a stack with no BESSER generator at all? The
+   :doc:`Spec-Driven Agent <spec_driven_agent/index>` is the agentic layer on
+   top of these generators: it runs one of them to get a model-faithful
+   scaffold, lets an LLM customise it to satisfy a natural-language request,
+   then validates the result and repairs blocker-level issues before handing it
+   back. Most of the generators below are reachable as one of the agent's
+   :doc:`tools <spec_driven_agent/tools>`.
+
 Choosing a Generator
 --------------------
 
@@ -32,6 +48,10 @@ Choosing a Generator
      - Structural
      - ZIP (FastAPI + SQLAlchemy)
      - You need only a REST API backend without frontend
+   * - **Spring Boot**
+     - Structural
+     - ZIP (Maven project)
+     - You need a Java REST backend with JPA entities, repositories and controllers
    * - **REST API**
      - Structural
      - Python files
@@ -44,6 +64,10 @@ Choosing a Generator
      - Structural
      - .py
      - You need Pydantic validation models with OCL constraints
+   * - **Test Cases**
+     - Structural
+     - .py (pytest + Hypothesis)
+     - You want an auto-generated pytest + Hypothesis test suite for your model
    * - **Java**
      - Structural
      - .java files
@@ -56,10 +80,20 @@ Choosing a Generator
      - Structural
      - .py
      - You need SQLAlchemy ORM models
+   * - **Supabase**
+     - Structural
+     - .sql
+     - You need a Supabase migration: Postgres DDL plus ``auth.users``
+       mirroring, grants and Row Level Security policies
    * - **JSON Schema**
      - Structural
      - .json
      - You need JSON Schema or Smart Data Models
+   * - **JSON Object**
+     - Object
+     - .json
+     - You need your *instances* as JSON — fixtures, seed data, a worked
+       example of a system state
    * - **RDF**
      - Structural
      - .ttl
@@ -97,7 +131,15 @@ Choosing a Generator
      - ZIP
      - You want a BAF agent adapted to an end-user profile (language, style,
        accessibility, modality); see :doc:`generators/agent_personalization`
+   * - **BPMN**
+     - BPMN
+     - .bpmn (XML)
+     - You need vendor-neutral BPMN 2.0 XML readable by every BPMN-aware tool
 
+None of the above a fit? If you need a customised codebase — extra features
+(auth, JWT, Docker, tests) or a stack with no built-in generator (Rails, Rust,
+Kotlin, Next.js) — use the :doc:`Spec-Driven Agent <spec_driven_agent/index>`
+instead. It runs keyless on the free tier, or with your own API key.
 
 Web Application
 ---------------
@@ -108,6 +150,7 @@ Generate complete web applications with frontend, backend, and database:
    :maxdepth: 2
 
    generators/full_web_app
+   generators/maps
 
 Frameworks & Languages
 ----------------------
@@ -119,9 +162,11 @@ Generate code for various frameworks and programming languages:
 
    generators/django
    generators/backend
+   generators/spring
    generators/rest_api
    generators/python
    generators/pydantic
+   generators/test_case
    generators/java
    generators/flutter
    generators/react
@@ -138,6 +183,7 @@ Generate database schemas, APIs, and data formats:
    generators/supabase
    generators/alchemy
    generators/json_schema
+   generators/json_object
    generators/rdf
    generators/terraform
 
@@ -172,6 +218,16 @@ Generate conversational agents:
 
    generators/baf
    generators/agent_personalization
+
+Business Process
+----------------
+
+Generate BPMN 2.0 XML for any BPMN-aware engine or modeller:
+
+.. toctree::
+   :maxdepth: 1
+
+   generators/bpmn
 
 Build Your Own
 --------------

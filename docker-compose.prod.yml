@@ -1,6 +1,8 @@
 version: '3.8'
 
 services:
+  # Dockerfile target backend: no compilers or sandbox, Spec-Driven runs are
+  # served by besser-wme-smartgen.
   besser-wme-backend:
     image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
     ports:
@@ -10,14 +12,25 @@ services:
       - ./.env
     environment:
       - PYTHONPATH=/app
+      # BESSER_LLM_RUN_WORKSPACE_ROOT is deliberately unset here: the runner
+      # creates run directories inside that root, which would fail on the
+      # read-only /workspace mount below.
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
+      - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}
+      - AGENT_SIMULATOR_URL=${AGENT_SIMULATOR_URL:-http://besser-wme-agent-simulator:8001}
     volumes:
       - feedback_data:/app/besser/feedback_data
+      # Read-only view of the worker's run workspaces: push-to-github and
+      # import-github-run need the backend's OAuth session, so they run here
+      # and read the generated files through this mount.
+      - smartgen_workspace:/workspace:ro
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     restart: unless-stopped
     networks:
       - besser_network
+      # Only to reach the agent simulator (see that service).
+      - agent_simulator_network
 
   besser-wme-frontend:
     image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
@@ -43,11 +56,183 @@ services:
     networks:
       - besser_network
 
+  # Spec-Driven Agent worker. Its image is the backend's plus the toolchains
+  # and bubblewrap (Dockerfile target smartgen-worker): generation is the only
+  # path that runs LLM-authored code, so it gets the toolchains but not the
+  # backend's secrets.
+  #
+  # No `env_file`: the backend loads all of ./.env (SMTP, GitHub OAuth, GPG,
+  # telemetry admin token, ...). This service gets an explicit allowlist, so a
+  # compromise during generation reaches the LLM credentials and nothing else.
+  besser-wme-smartgen:
+    image: artefacts.list.lu/besser/web_modeling_editor/smartgen_worker:latest
+    container_name: besser-wme-smartgen
+    ports:
+      - "127.0.0.1:9001:9000"
+    working_dir: /app/besser
+    environment:
+      - PYTHONPATH=/app
+      - BESSER_LLM_MAX_CONCURRENT_RUNS=${BESSER_LLM_MAX_CONCURRENT_RUNS:-8}
+      # The image carries tsc / cargo / kotlinc / javac; compiling generated
+      # code catches errors the static checks miss.
+      - BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION=true
+      # Shell tools are enabled on this service only: it holds just the LLM
+      # tokens, is off besser_network and is disposable. Being off the network
+      # hides the other services' names, not ports they publish on 0.0.0.0.
+      # Each run's shell is confined (security_opt below); the worker process
+      # itself is not, so a compromise still reaches the LLM tokens.
+      - BESSER_LLM_ENABLE_SHELL_TOOLS=true
+      - BESSER_LLM_ALLOW_CUSTOM_BASE_URL=false
+      # Shared (read-only) with the backend, which serves push-to-github.
+      - BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs
+      - BESSER_LLM_RUN_STORE_PATH=/workspace/runs/run_store.sqlite3
+      # Budgets
+      - BESSER_LLM_DEFAULT_MAX_COST_USD=${BESSER_LLM_DEFAULT_MAX_COST_USD:-5.0}
+      - BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS=${BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS:-2400}
+      - BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP=${BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP:-2400}
+      # LLM credentials -- the only secrets this service is given.
+      - BESSER_FREE_LLM_BASE_URL=${BESSER_FREE_LLM_BASE_URL:-}
+      - BESSER_FREE_LLM_TOKEN=${BESSER_FREE_LLM_TOKEN:-}
+      - BESSER_FREE_LLM_MODEL=${BESSER_FREE_LLM_MODEL:-}
+      # The config endpoint is served by this container, so every variable it
+      # reads must be in this allowlist or it reads as unset.
+      - BESSER_FREE_LLM_ALT_MODELS=${BESSER_FREE_LLM_ALT_MODELS:-}
+      # Keyless model pre-selected for an opt-in telemetry session.
+      - BESSER_PILOT_LLM_MODEL=${BESSER_PILOT_LLM_MODEL:-}
+      # Run telemetry is recorded where generation runs. The admin token is
+      # not here: the report endpoint it guards stays on the backend.
+      - BESSER_TELEMETRY_ENABLED=${BESSER_TELEMETRY_ENABLED:-}
+      - BESSER_TELEMETRY_DIR=${BESSER_TELEMETRY_DIR:-/app/telemetry}
+      - BESSER_FREE_LLM_FALLBACK_BASE_URL=${BESSER_FREE_LLM_FALLBACK_BASE_URL:-}
+      - BESSER_FREE_LLM_FALLBACK_TOKEN=${BESSER_FREE_LLM_FALLBACK_TOKEN:-}
+      - BESSER_FREE_LLM_FALLBACK_MODEL=${BESSER_FREE_LLM_FALLBACK_MODEL:-}
+      - BESSER_SPONSORED_LLM_BASE_URL=${BESSER_SPONSORED_LLM_BASE_URL:-}
+      - BESSER_SPONSORED_LLM_TOKEN=${BESSER_SPONSORED_LLM_TOKEN:-}
+      - BESSER_SPONSORED_LLM_MODEL=${BESSER_SPONSORED_LLM_MODEL:-}
+      # Secret authorising the sponsored tier (?demo= links). The gate runs
+      # here and fails closed: without it every demo run is refused.
+      - BESSER_DEMO_TOKEN=${BESSER_DEMO_TOKEN:-}
+    volumes:
+      - smartgen_workspace:/workspace
+      - ./telemetry-logs:/app/telemetry
+    # run_command wraps every model-authored command in bubblewrap, which needs
+    # an unprivileged user namespace. Docker's default seccomp profile gates
+    # unshare/mount/pivot_root behind CAP_SYS_ADMIN and the docker-default
+    # AppArmor profile carries `deny mount`, so both step aside (cap_add
+    # SYS_ADMIN alone still fails on pivot_root). No capability is added, and
+    # each run's shell sees only its own workspace and PID namespace.
+    # Without these two lines the worker fails closed: every run_command is
+    # refused.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    command: python -m besser.utilities.web_modeling_editor.backend.backend
+    restart: unless-stopped
+    # NOT on besser_network: generation has no reason to reach the backend, the
+    # frontend or the modeling agent by name. It still has outbound internet for
+    # the LLM endpoints via its own bridge.
+    networks:
+      - smartgen_network
+
+  # Agent simulator: runs user-designed agents (live testing in the editor).
+  # It executes user-controlled code, so it gets the smartgen treatment:
+  # * NO env_file: the backend's ./.env holds SMTP / GitHub / OpenAI secrets.
+  #   Only the variables listed below reach this container, and each session
+  #   process gets a further scrubbed environment (agent_simulator/sandbox.py).
+  # * Its own network. The backend joins agent_simulator_network to reach it;
+  #   the frontend and the modeling agent are not on it, so agent code cannot
+  #   resolve or reach them by name. Outbound internet (LLM APIs) still works.
+  # * No published port: only the backend talks to it, over the network.
+  besser-wme-agent-simulator:
+    image: artefacts.list.lu/besser/web_modeling_editor/agent_simulator:latest
+    container_name: besser-wme-agent-simulator
+    environment:
+      # Shared secret: every HTTP / WS request must carry it in the
+      # X-Agent-Simulator-Token header. Unset -> every request gets 503.
+      - AGENT_SIMULATOR_API_TOKEN=${AGENT_SIMULATOR_API_TOKEN:-}
+      - AGENT_SIMULATOR_MAX_SESSIONS=${AGENT_SIMULATOR_MAX_SESSIONS:-5}
+      - AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS=${AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS:-900}
+      - AGENT_SIMULATOR_PORT_POOL_START=${AGENT_SIMULATOR_PORT_POOL_START:-7700}
+      - AGENT_SIMULATOR_SESSION_UID_BASE=${AGENT_SIMULATOR_SESSION_UID_BASE:-20000}
+      - AGENT_SIMULATOR_RLIMIT_AS_GB=${AGENT_SIMULATOR_RLIMIT_AS_GB:-4}
+      - AGENT_SIMULATOR_RLIMIT_CPU_SEC=${AGENT_SIMULATOR_RLIMIT_CPU_SEC:-120}
+      - AGENT_SIMULATOR_RLIMIT_FSIZE_MB=${AGENT_SIMULATOR_RLIMIT_FSIZE_MB:-100}
+      - AGENT_SIMULATOR_RLIMIT_NPROC=${AGENT_SIMULATOR_RLIMIT_NPROC:-64}
+      - AGENT_SIMULATOR_RLIMIT_NOFILE=${AGENT_SIMULATOR_RLIMIT_NOFILE:-1024}
+      # auto (default) = every session runs in bubblewrap, refused if it
+      # cannot start. "off" is a single-tenant development opt-out ONLY.
+      - AGENT_SIMULATOR_SANDBOX=${AGENT_SIMULATOR_SANDBOX:-auto}
+    # Each session runs inside bubblewrap, which needs an unprivileged user
+    # namespace. Docker's default seccomp profile gates unshare/mount/pivot_root
+    # behind CAP_SYS_ADMIN and the docker-default AppArmor profile carries
+    # `deny mount`, so both step aside (same measurement as besser-wme-smartgen:
+    # seccomp=unconfined works, cap_add SYS_ADMIN alone does not). No capability
+    # is ADDED: the cap set is cut down to what the per-session UID switch and
+    # cleanup need (chown/chmod of the work dir, setuid/setgid/setgroups,
+    # reading and removing uid-owned work dirs, killing uid-owned processes).
+    # bwrap itself needs none: it runs as the session uid.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+      # Docker masks parts of /proc (kcore, keys, sysrq-trigger, ...), and on
+      # stock kernels (measured on Amazon Linux 2023) that makes the kernel
+      # refuse the private /proc bubblewrap mounts for each session. Only
+      # container root, the simulator API with all but five capabilities
+      # dropped, sees the unmasked entries; agent code runs as unprivileged
+      # session users inside bwrap. Docker Desktop does not need this.
+      - systempaths=unconfined
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - KILL
+    # Reaps orphaned processes, so a finished session never leaves zombies
+    # owned by its uid behind.
+    init: true
+    # Whole-container ceilings on top of the per-session rlimits. The same
+    # AGENT_SIMULATOR_MEMORY_MB / _CPU_CORES / _DISK_MB values are what the
+    # backend reports to the editor (its simulation /limits endpoint).
+    # pids_limit covers MAX_SESSIONS x RLIMIT_NPROC (5 x 64) plus the API
+    # process; raise it together with those two.
+    pids_limit: 512
+    mem_limit: ${AGENT_SIMULATOR_MEMORY_MB:-6144}m
+    cpus: ${AGENT_SIMULATOR_CPU_CORES:-2}
+    tmpfs:
+      - /tmp/sessions:size=${AGENT_SIMULATOR_DISK_MB:-512}m,mode=0711
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, urllib.request;
+          urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8001/health',
+          headers={'X-Agent-Simulator-Token': os.environ['AGENT_SIMULATOR_API_TOKEN']}), timeout=5)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - agent_simulator_network
+
 volumes:
   feedback_data:
     driver: local
+  smartgen_workspace:
+    driver: local
 
 networks:
+  smartgen_network:
+    name: smartgen_network
+    driver: bridge
   besser_network:
     name: besser_network
+    driver: bridge
+  agent_simulator_network:
+    name: agent_simulator_network
     driver: bridge

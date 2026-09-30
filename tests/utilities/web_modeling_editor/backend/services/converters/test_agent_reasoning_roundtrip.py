@@ -295,6 +295,12 @@ class TestReasoningRoundTrip:
     def _nodes_by_type(self, payload, node_type):
         return [n for n in payload.get("nodes", []) if n.get("type") == node_type]
 
+    def _components_by_type(self, payload, component_type):
+        """Off-canvas components (``model.components``) of one type. They are
+        never emitted as canvas nodes."""
+        assert not self._nodes_by_type(payload, component_type)
+        return [c for c in (payload.get("components") or {}).values() if c.get("type") == component_type]
+
     def _reasoning_nodes(self, payload):
         """AgentState nodes folded into a reasoning state (``data.stateType
         == "reasoning"``) — the canonical v4 emission shape."""
@@ -304,25 +310,25 @@ class TestReasoningRoundTrip:
         ]
 
     def test_tool_node_reemitted(self, reemitted):
-        tools = self._nodes_by_type(reemitted, "AgentTool")
+        tools = self._components_by_type(reemitted, "AgentTool")
         assert len(tools) == 1
-        data = tools[0]["data"]
+        data = tools[0]
         assert data["name"] == "ping"
         assert data["description"] == "Ping the server."
         assert data["code"] == TOOL_CODE
 
     def test_skill_node_reemitted(self, reemitted):
-        skills = self._nodes_by_type(reemitted, "AgentSkill")
+        skills = self._components_by_type(reemitted, "AgentSkill")
         assert len(skills) == 1
-        data = skills[0]["data"]
+        data = skills[0]
         assert data["name"] == "GreetByName"
         assert data["content"] == "Always greet the user by name."
         assert data["description"] == "Greeting playbook."
 
     def test_workspace_node_reemitted(self, reemitted):
-        workspaces = self._nodes_by_type(reemitted, "AgentWorkspace")
+        workspaces = self._components_by_type(reemitted, "AgentWorkspace")
         assert len(workspaces) == 1
-        data = workspaces[0]["data"]
+        data = workspaces[0]
         assert data["name"] == "cinema"
         assert data["path"] == "/tmp/cinema"
         assert data["description"] == "Cinema files."
@@ -342,16 +348,17 @@ class TestReasoningRoundTrip:
         assert data["system_prompt"] == "Be concise."
         assert data["fallback_message"] == "Sorry, something broke."
 
-    def test_initial_edge_targets_reasoning_state(self, reemitted):
+    def test_initial_flag_on_reasoning_state(self, reemitted):
+        # v4: the initial state is ``data.initial`` on the state itself — no
+        # StateInitialNode marker and no AgentStateTransitionInit edge.
         rs_node = self._reasoning_nodes(reemitted)[0]
-        init_node = self._nodes_by_type(reemitted, "StateInitialNode")[0]
-        init_edges = [
-            e for e in reemitted.get("edges", [])
-            if e.get("type") == "AgentStateTransitionInit"
+        assert rs_node["data"]["initial"] is True
+        initial_states = [
+            n for n in self._nodes_by_type(reemitted, "AgentState") if n["data"].get("initial")
         ]
-        assert len(init_edges) == 1
-        assert init_edges[0]["source"] == init_node["id"]
-        assert init_edges[0]["target"] == rs_node["id"]
+        assert initial_states == [rs_node]
+        assert not self._nodes_by_type(reemitted, "StateInitialNode")
+        assert not [e for e in reemitted.get("edges", []) if e.get("type") == "AgentStateTransitionInit"]
 
     def test_transition_reemitted_between_states(self, reemitted):
         rs_node = self._reasoning_nodes(reemitted)[0]

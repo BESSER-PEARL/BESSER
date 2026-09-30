@@ -176,16 +176,21 @@ type ClassifierMember = {
   attributeType: string;            // canonical Python-style: 'str','int','float','bool','date','datetime','time','any', or custom
   visibility: 'public' | 'private' | 'protected' | 'package';
   code?: string;
-  implementationType?: 'none' | 'code' | 'bal' | 'state_machine' | 'quantum_circuit';
+  implementationType?: 'none' | 'code' | 'bal' | 'state_machine' | 'quantum_circuit' | 'neural_network';
   stateMachineId?: string;
   quantumCircuitId?: string;
+  neuralNetworkId?: string;         // method rows with implementationType 'neural_network': id of the
+                                    // project NNDiagram that implements the method (a network name is
+                                    // also accepted, for models imported from BUML)
   isOptional?: boolean;
   isDerived?: boolean;
   isId?: boolean;
   isExternalId?: boolean;
   defaultValue?: unknown;
   // Method rows only — structured signature (the inspector mirrors
-  // returnType onto attributeType; 'any' means "no explicit return type").
+  // returnType onto attributeType; 'any' means "no explicit return type":
+  // the backend reads it as an untyped method (Method.type = None), and
+  // buml_to_json writes 'any' back for one, so JSON -> B-UML -> JSON is stable).
   parameters?: { id: string; name: string; parameterType?: string; defaultValue?: unknown }[];
   returnType?: string;
 };
@@ -217,6 +222,8 @@ legacy lowercase data). Map v3 element `type`:
   sourceMultiplicity?: string;
   targetRole?: string;
   targetMultiplicity?: string;
+  sourceNavigable?: boolean;        // per-end navigability (associations, aggregations, compositions)
+  targetNavigable?: boolean;
   isManuallyLayouted?: boolean;
   points: IPoint[];
 }
@@ -256,12 +263,41 @@ legacy lowercase data). Map v3 element `type`:
   `type: 'class'` + `data.stereotype: 'oclConstraint'` fallback) and the
   context class is re-derived from the OCL text itself, with the
   `ClassOCLLink` edge resolving owners for legacy body-only rows.
+  Legacy body-only constraints (v3 `constraint` holding just the body plus
+  `kind: 'invariant' | 'precondition' | 'postcondition'`) keep their v3
+  metadata as `data.constraintName` (the name used for the synthesised
+  `context …` header) and `data.targetMethodId` (pre/post only: the target
+  method row id) — on the node's `data` or on the `data.oclConstraints` row.
+  Without them a pre/post body-only row cannot be resolved (`unknown_method`).
+  The backend processor reads both fields from either place: an invariant
+  keeps `constraintName` as its constraint name, and a pre/post condition
+  attaches to the method whose row `id` equals `targetMethodId` (its header
+  is synthesised from that method's signature). BOCL names only
+  invariants, so pre/post conditions get generated names
+  (`<method>_pre_<n>_<m>`), as they did before v4.
 - Associations: `edge.source = v3.source.element`, `edge.target =
   v3.target.element`. Direction mapping uses
   `sourceHandle = v3.source.direction` and `targetHandle =
   v3.target.direction` (the strings `'Up'|'Down'|'Left'|'Right'` are
   preserved verbatim — React Flow accepts arbitrary handle ids).
 - Roles & multiplicities lift directly into `edge.data.sourceRole` etc.
+- Navigability: v3 `source.navigable` / `target.navigable` lift into
+  `edge.data.sourceNavigable` / `edge.data.targetNavigable`. A plain
+  association is always `ClassBidirectional`; `ClassUnidirectional` is
+  **legacy** and is read as `ClassBidirectional` with
+  `sourceNavigable: false, targetNavigable: true` (by the TS migrators and
+  by the backend processor). When the flags are absent the legacy default
+  applies (`ClassUnidirectional` → source non-navigable, everything else →
+  both navigable); a present but non-boolean value falls back to that
+  default with a warning. Rules enforced on ingest (corrected with a
+  warning, never a hard failure): at least one end is navigable, and the
+  part (source) end of a composition is navigable — the composite (whole,
+  diamond) end is the target. BUML → JSON always emits `ClassBidirectional`
+  (or `ClassComposition`) with both flags, keeping the drawn orientation
+  (the processor records the source role in the layout side-channel).
+- Association-end names are deduplicated per owning class (the class at the
+  opposite end): a colliding role gets a `_1`, `_2`, … suffix instead of
+  failing the conversion.
 - `path` becomes `edge.data.points`. If `isManuallyLayouted` is set, copy
   it through; otherwise omit.
 - Member name parsing: if a v3 `ClassAttribute.name` is `"+ counter:
@@ -469,46 +505,126 @@ The agent diagram **inherits all StateMachine element types** plus its own:
 ### v4 node types (agent diagram)
 
 ```ts
-// State + StateMachine inherited types are reused as-is.
-'AgentState'
-'AgentIntent'
-'AgentRagElement'
+// Canvas node types. State + StateMachine inherited types are reused as-is.
+'AgentState'   // standard and reasoning states (data.stateType)
+'comment'      // tethered to states by 'CommentLink' edges
 ```
 
-(`AgentStateBody` / `AgentStateFallbackBody` / `AgentIntentBody` /
-`AgentIntentDescription` / `AgentIntentObjectComponent` collapse into the
-parent's `data` exactly like StateBody — v3-only sub-elements that never
-emit v4 nodes.)
+`AgentIntent`, `AgentRagElement`, `AgentLLM`, `AgentTool`, `AgentSkill`,
+`AgentWorkspace` (and `AgentGUI`) are **no longer v4 node types**: they are
+off-canvas *components* stored in the model's top-level `components` map (see
+*Components* below). Nodes of those types are accepted as **legacy input
+only** (React Flow models saved before the Components page) and are migrated
+into `components` on load by the library (`normalizeAgentComponents`), the
+webapp and the backend processor. `AgentReasoningState` is likewise a legacy
+input type, read as `AgentState` + `stateType: 'reasoning'`.
+
+(`AgentStateBody` / `AgentStateFallbackBody` collapse into the state's
+`data.bodies` / `data.fallbackBodies` rows exactly like StateBody — v3-only
+sub-elements that never emit v4 nodes.)
 
 ```ts
-type AgentStateNodeData = StateNodeData & {
-  replyType: string;        // 'text' | 'image' | 'json' | 'llm' | ...
-};
-
-type AgentIntentNodeData = {
+type AgentStateNodeData = {
   name: string;
-  intent_description: string;
-  bodies: { id: string; name: string }[];      // intent body rows (training utterances)
-  description?: string;
+  initial?: boolean;                 // exactly one state carries true (replaces StateInitialNode + init edge)
+  stateType?: 'standard' | 'reasoning';
+  bodies: AgentActionRow[];          // ordered: executed in this order
+  fallbackBodies: AgentActionRow[];
+  fallbackBodyEnabled?: boolean;     // absent = true
+  // reasoning states only
+  llm_name?: string; max_steps?: number; enable_task_planning?: boolean;
+  stream_steps?: boolean; system_prompt?: string; fallback_message?: string;
   fillColor?: string; strokeColor?: string; textColor?: string;
 };
 
-type AgentRagElementNodeData = {
-  name: string;
-  ragDatabaseName?: string;
-  dbSelectionType?: string;       // 'predefined' | 'custom'
-  dbCustomName?: string;
-  dbQueryMode?: string;           // 'sql' | 'natural_language'
-  dbOperation?: string;
-  dbSqlQuery?: string;
+// One action of a state body. Field names are the old editor's AgentStateMember
+// serialization verbatim; only the fields of the row's action type are required.
+type AgentActionRow = {
+  id: string;
+  name: string;                      // text of a text reply / source of a code row / display label otherwise
+  replyType: 'text' | 'llm' | 'llm_chat' | 'rag' | 'db_reply' | 'code' | 'web_crawl_llm'
+    | 'ws_markdown' | 'ws_html' | 'ws_speech' | 'ws_options' | 'ws_location'
+    | 'ws_file' | 'ws_image' | 'ws_dataframe' | 'ws_plotly' | 'gui_reply';
+  actionType?: string;               // metamodel class name, e.g. 'LLMReplyAction' (writer emits both; reader prefers actionType)
+  code?: string;                     // code rows: the source (reader falls back to name)
+  llm_name?: string;                 // registered LLM by name; '' = agent default
+  system_message?: string;           // llm / llm_chat system prompt
+  ragDatabaseName?: string; prompt?: string;                      // rag
+  dbSelectionType?: string; dbCustomName?: string; dbQueryMode?: string;
+  dbOperation?: string; dbSqlQuery?: string;                      // db_reply
+  // prompt customisation & session data flow
+  inputPromptMode?: 'last_user_message' | 'custom';               // llm, rag, db_reply
+  customInputPrompt?: string; customInputPromptUseSessionVars?: boolean;
+  systemPromptUseSessionVars?: boolean;                           // llm, llm_chat
+  promptUseSessionVars?: boolean;                                 // rag
+  useSessionVars?: boolean;                                       // text, ws_markdown, ws_html, ws_speech
+  storeInSession?: string;           // session variable receiving the generated answer
+  sendReply?: boolean;               // default true; false = silent (store only)
+  // web_crawl_llm
+  initial_url?: string; max_depth?: number; max_pages?: number; crawl_format?: string;
+  base_url_prefix?: string; run_crawl?: boolean; no_crawl_error_message?: string;
+  system_message_prefix?: string; systemMessagePrefixUseSessionVars?: boolean;
+  // websocket replies
+  ws_message?: string; ws_audio_speed?: number | null; ws_options?: string; // options: one per line
+  ws_latitude?: number; ws_longitude?: number;
+  guiId?: string;                    // gui_reply: gui_id of an AgentGUI component
 };
 ```
 
+`replyType` ↔ `actionType`: text↔TextReplyAction, llm↔LLMReplyAction,
+llm_chat↔LLMChatAction, rag↔RAGReplyAction, db_reply↔DBAction,
+code↔CustomCodeAction, web_crawl_llm↔WebCrawlLLMAction,
+ws_markdown/ws_html/ws_speech/ws_options/ws_location/ws_file/ws_image/ws_dataframe/ws_plotly
+↔ WebSocketReply{Markdown,HTML,Speech,Options,Location,File,Image,Dataframe,Plotly}Action,
+gui_reply↔GUIReplyAction. Legacy rows: an `llm` / `llm_chat` row without
+`system_message` had its prompt on `name` (ignored when it is the
+placeholder `"AI response 🪄"`).
+
+### Components (agent diagram)
+
+```ts
+type AgentDiagramModel = UMLModel & {
+  components?: { [id: string]: AgentComponent };   // sibling of nodes / edges
+  config?: { default_llm_name?: string; [key: string]: unknown };
+};
+
+// Flat entry, no geometry (bounds / position). Identical to the v3
+// smart-generator `model.components` entry, so v3 and v4 share it verbatim.
+type AgentComponent = { id: string; type: AgentComponentType; name: string; owner?: string | null } & TypeFields;
+```
+
+| `type` | fields (defaults) |
+|---|---|
+| `AgentLLM` | `provider` (`'openai'`), `parameters` (`{}`), `num_previous_messages` (1), `global_context` (`''`) |
+| `AgentIntent` | `intent_description` (`''`), `bodies: string[]` — ordered ids of its `AgentIntentBody` entries |
+| `AgentIntentBody` | `name` = one training sentence, `owner` = intent id |
+| `AgentRagElement` | `llm_name` (`''` = default LLM), `llm_prompt`, `k` (4), `num_previous_messages` (0), `embedding_provider` (`'openai'` \| `'ollama'`), `embedding_base_url`, `embedding_model` (Ollama defaults `http://localhost:11434` / `nomic-embed-text`), `use_hybrid_rag` (false), `bm25_weight` (0.6, 0 < w < 1) |
+| `AgentTool` | `description`, `code` |
+| `AgentSkill` | `description`, `content` |
+| `AgentWorkspace` | `path`, `description`, `writable` (true), `max_read_bytes` (200000) |
+| `AgentGUI` | `gui_id`, `persist` (true), `width` (`''`), `is_form` (false), `guiModel` (GrapesJS GUI JSON, or `null` = not designed yet) |
+
+Canvas → component references are **by name** (`intentName`, `llm_name`,
+`ragDatabaseName`) or by **`gui_id`** (`guiId`, `formGuiId`, `guiEventGuiId`).
+
+Legacy locations, merged into `components` on read (later wins; the
+canonical `model.components` always wins):
+1. v4 `nodes` of a component type — `node.data` is flattened onto the entry;
+   an intent's `data.training_phrases` (or `data.bodies`) rows `{id, name}`
+   become `AgentIntentBody` entries owned by the intent. Edges touching a
+   migrated node are dropped.
+2. v3 `model.elements` of a component type (backend processor only).
+3. Diagram-level (`ProjectDiagram.agentComponents`) and model-level
+   `model.agentComponents` maps (an early components-panel build).
+
+`buml_to_json` emits components **only** in `model.components`, never as nodes.
+
 ### v4 edge types (agent diagram)
 
-`'AgentStateTransition' | 'AgentStateTransitionInit'`
+`'AgentStateTransition' | 'CommentLink'`
 
-`AgentStateTransitionInit` carries no extra payload beyond `points`.
+(`AgentStateTransitionInit` is legacy input only: the initial state is the
+`data.initial` flag.)
 
 `AgentStateTransition` is the most complex edge in the migration. The v4
 `edge.data` shape is the **canonical** form:
@@ -516,12 +632,13 @@ type AgentRagElementNodeData = {
 ```ts
 type AgentStateTransitionData = {
   name?: string;
-  params: { [key: string]: string };
+  params?: { [key: string]: string };
   transitionType: 'predefined' | 'custom';
   predefined?: {
-    predefinedType: string;             // e.g. 'when_intent_matched', 'when_no_intent_matched', 'auto', 'when_variable_operation_matched', 'when_file_received', 'custom_transition'
+    predefinedType: string;             // 'when_intent_matched' | 'when_no_intent_matched' | 'auto' | 'when_variable_operation_matched' | 'when_file_received' | 'when_form_submitted'
     intentName?: string;                // for when_intent_matched
-    fileType?: string;                  // for when_file_received
+    fileType?: string;                  // for when_file_received: one or more comma-separated MIME types or extensions ('pdf, csv, image/png')
+    formGuiId?: string;                 // for when_form_submitted: gui_id of a form AgentGUI ('' = any form)
     conditionValue?:
       | string
       | { variable: string; operator: string; targetValue: string };
@@ -534,8 +651,10 @@ type AgentStateTransitionData = {
       | 'ReceiveMessageEvent'
       | 'ReceiveTextEvent'
       | 'ReceiveJSONEvent'
-      | 'ReceiveFileEvent';
+      | 'ReceiveFileEvent'
+      | 'GUIEvent';
     condition: string[];
+    guiEventGuiId?: string;             // for GUIEvent: GUIEvent.message_id (gui_id of the AgentGUI)
   };
   points: IPoint[];
 };
@@ -543,7 +662,8 @@ type AgentStateTransitionData = {
 
 **`predefined` is filled when `transitionType === 'predefined'` and `custom`
 is filled when `transitionType === 'custom'`.** The migrator always emits
-the canonical shape and strips the legacy flat fields.
+the canonical shape and strips the legacy flat fields (legacy flat
+`formGuiId` / `guiEventGuiId` are lifted into the blocks).
 
 ### Legacy AgentStateTransition shapes (must round-trip)
 
@@ -673,13 +793,17 @@ migrator must implement identical fallthrough order:
 
 ### Mapping rules (AgentDiagram)
 
-- `AgentState` and `AgentIntent` collapse their body children just like
-  `State` collapses `StateBody`. `AgentRagElement` has no children to
-  collapse.
-- `replyType` defaults to `'text'` when missing.
+- `AgentState` collapses its body children into `data.bodies` /
+  `data.fallbackBodies` rows just like `State` collapses `StateBody`.
+- v3 component elements (`AgentIntent` + `AgentIntentBody`, `AgentLLM`,
+  `AgentRagElement`, `AgentTool`, `AgentSkill`, `AgentWorkspace`,
+  `AgentGUI`) and v3 `model.components` / `agentComponents` go to the v4
+  `components` map verbatim (bounds stripped) — never to `nodes`.
+- `StateInitialNode` + `AgentStateTransitionInit` fold into `data.initial`
+  on the target state.
+- `replyType` defaults to `'text'` when missing (or is derived from
+  `actionType`).
 - `AgentIntent.intent_description` defaults to `''`.
-- `AgentRagElement` may appear inside an `AgentState` as a child via
-  `owner` — preserve that as `parentId`.
 
 ---
 
@@ -803,11 +927,16 @@ type NNLayerNodeData = {
 
 type NNContainerNodeData = {
   name: string;                                 // model name
+  input_var?: string;                           // NN.input_var (forward-pass input variable)
+  return_vars?: string[];                       // NN.return_vars, one entry per returned variable
+                                                // (readers also accept the comma-separated string)
 };
 
 type NNReferenceNodeData = {
   name: string;
-  referenceTarget?: string;                     // id of referenced container, if any
+  referenceTarget?: string;                     // id of the referenced NNContainer node (the editor
+                                                // writes the id; the backend emits the container
+                                                // name — readers resolve id first, then name)
 };
 ```
 
@@ -868,10 +997,41 @@ type (without the layer suffix), normalized to `snake_case`:
 | `NormalizeAttributeDataset`           | `normalize`           |
 | `NameAttributeDataset`                | `name`*               |
 
-\* The `Name*` v3 attribute element holds the **same** value as the layer
-element's `name` field. The migrator should prefer the more recently set
-value if they diverge; otherwise just copy the layer's `name` and drop the
-attribute element.
+\* The `Name*` v3 attribute element holds the layer's **instance** name
+(`conv1d_layer`, `l1`, …); the v3 layer element's own `name` is only the
+palette label (`Conv1D Layer`). v4 keeps the instance name on both
+`data.name` (what the canvas shows) and `data.attributes.name` (what
+`json_to_buml/nn_diagram_processor.py` reads — it rejects a layer or dataset
+without it). The migrator prefers the attribute value and falls back to the
+layer name; the inspector keeps the two in sync. Default names are
+lowercase identifiers (`conv1d_layer`, `pooling_layer`, `tensorop`,
+`dataset`, …).
+
+Extended attribute keys (smart-generator; all optional, stored as strings /
+booleans like the table above):
+
+| Layer kinds | v4 attribute keys |
+|-------------|-------------------|
+| every layer (inherited from `Layer`) | `is_layer_call`, `input_var`, `output_var` |
+| Conv1D/2D/3D | `dilation`, `groups`, `bias` |
+| Linear | `bias` |
+| RNN / LSTM / GRU | `bias`, `hx_source`, `hidden_state_var`, `hidden_unused`, `hidden_subscript_source`, `hidden_subscript_target` |
+| LSTM only | `cell_state_var`, `cell_unused` |
+| Embedding | `padding_idx`, `permute_in`, `permute_out` |
+| Dropout | `dimension` (plain key, `1D`/`2D`/`3D`), `permute_in`, `permute_out` |
+| LayerNormalization | `eps`, `affine` |
+| BatchNormalization | `eps`, `momentum`, `affine`, `track_running_stats`, `permute_in`, `permute_out` |
+| TensorOp | `input_var`, `output_var`, `output_vars` (split), `permute_in`, `permute_out`, `reduce_dim`, `reduce_keepdims`, `shape_dim`, `actual_vars`, `subscript_indices` (JSON list of `{type: "index"\|"slice", …}`), `repeat_dim`, `interpolate_size`, `interpolate_scale`, `interpolate_mode`, `pad_amount` (`[[l, r], …]`), `pad_mode`, `pad_value`, `dropout_rate`, `dropout_training_aware`, `split_dim`, `split_sizes` |
+
+`tns_type` takes the metamodel's `ALLOWED_TENSOR_OP_TYPES` (reshape,
+concatenate, transpose, permute, multiply, matmultiply, split,
+binop_add/subtract/multiply/divide/floor_divide, mean, max, squeeze,
+unsqueeze, shape_dim, normalize, repeat, zeros_like, interpolate, pad,
+dropout, subscript, identity). `layers_of_tensors` is a list literal whose
+items are quoted module names (or `'INPUT'`, the network input) or bare
+numeric literals for the binary ops, e.g. `['conv_1', 1.5]`. Only the
+Pooling and BatchNormalization `dimension` keys are qualified
+(`pooling.dimension` / `batch_normalization.dimension`).
 
 The full attribute schema and validation defaults live at
 `packages/library/lib/nodes/nnDiagram/nnAttributeWidgetConfig.ts` and
@@ -890,11 +1050,17 @@ type NNEdgeData = {
 
 ### Mapping rules (NNDiagram)
 
-- For each v3 layer element, walk `model.elements` for siblings whose
-  `owner === layerId` and whose `type` is one of the per-layer attribute
-  element types. Drop them from the v4 node list, accumulate them into the
-  parent's `data.attributes` keyed by the snake_case slug above. Their
-  `value` field becomes the value (string).
+- For each v3 layer element, collect its attribute elements — the ids in the
+  layer's `attributes` list (what the old backend read) plus any element with
+  `owner === layerId` — whose `type` is one of the per-layer attribute
+  element types, or, failing that, whose `attributeName` names a field of the
+  layer's schema (the old backend matched on `attributeName`). Drop them from
+  the v4 node list, accumulate them into the parent's `data.attributes` keyed
+  by the snake_case slug above. Their `value` field becomes the value (string).
+- Dropdown values outside the current whitelist (e.g. padding `zeros`,
+  optimizer `rmsprop`, loss `cross_entropy`) are preserved verbatim — never
+  coerced to a default — so the backend reports the real value as a
+  validation error, exactly as it did for the v3 file.
 - For boolean attributes (`'true'`/`'false'`), normalize to JS `boolean`
   in v4 — the widget config's `BOOLEAN_OPTIONS` is the source of truth for
   which keys are boolean.
@@ -910,6 +1076,82 @@ type NNEdgeData = {
 
 ---
 
+## BPMNDiagram
+
+Model `type` on the wire is **`"BPMNDiagram"`** (`UMLDiagramType.BPMN`);
+readers also accept the legacy `"BPMN"`. The project-envelope bucket key is
+`project.diagrams.BPMN` (not the model type). Backend constants:
+`BPMN_DIAGRAM_TYPE`, `BPMN_DIAGRAM_TYPES`, `BPMN_PROJECT_DIAGRAM_KEY`,
+`BPMN_FLOW_EDGE_TYPES` in `backend/constants/constants.py`.
+
+### v4 node types (BPMNDiagram)
+
+| v3 `type` | v4 `node.type` | `node.data` fields (besides `name`, colours, `highlight`) |
+|-----------|----------------|------------------------------------------------------------|
+| `BPMNTask` | `bpmnTask` | `taskType` (`default`/`user`/`service`/`send`/`receive`/`manual`/`business-rule`/`script`), `marker` (`none`/`loop`/`parallel multi instance`/`sequential multi instance`) |
+| `BPMNSubprocess` / `BPMNTransaction` / `BPMNCallActivity` | `bpmnSubprocess` / `bpmnTransaction` / `bpmnCallActivity` | `marker`; `isExpanded?` (subprocess/transaction) |
+| `BPMNStartEvent` / `BPMNIntermediateEvent` / `BPMNEndEvent` | `bpmnStartEvent` / `bpmnIntermediateEvent` / `bpmnEndEvent` | `eventType` (see `bpmn_event_mapping.py`) |
+| `BPMNGateway` | `bpmnGateway` | `gatewayType` (`exclusive`/`parallel`/`inclusive`/`event-based`/`complex`) |
+| `BPMNDataObject` / `BPMNDataStore` | `bpmnDataObject` / `bpmnDataStore` | — |
+| `BPMNAnnotation` | `bpmnAnnotation` | `name` carries the annotation text |
+| `BPMNGroup` | `bpmnGroup` | — |
+| `BPMNPool` | `bpmnPool` | — |
+| `BPMNSwimlane` | `bpmnSwimlane` | — (always `parentId` = its pool) |
+
+Containment is `parentId` (v3 `owner`): a lane's parent is a pool; a flow
+node's parent is a lane, a pool, or a subprocess/transaction. React Flow moves
+a node with a container only through `parentId`, and the backend assigns flow
+nodes to a pool's process / lane only through `parentId` (an unparented node
+lands in a synthetic top-level process). A top-level flow node, data object,
+annotation or group whose bounds lie inside a pool / lane / expanded
+subprocess is therefore adopted on load (`normalizeV4Model` and
+`migrateBpmnDiagramV3ToV4` → `adoptBpmnContainment`, `utils/bpmnContainment.ts`):
+parent = the smallest enclosing container (a straddling node in a laned pool
+goes to the lane under its centre), position made parent-relative, lane header
+strip kept clear. Already-parented nodes are never touched; parents precede
+children in `nodes`.
+
+### v4 edge types (BPMNDiagram)
+
+One edge `type` per flow kind (v3 used a single `BPMNFlow` + `flowType`):
+`BPMNSequenceFlow` (`sequence`), `BPMNMessageFlow` (`message`),
+`BPMNAssociationFlow` (`association`), `BPMNDataAssociationFlow`
+(`data association`).
+
+```ts
+// edge.data
+{
+  name?: string;               // backend reads name, falls back to label
+  label?: string;              // BPMNDiagramEdge.tsx renders data.label; the backend emits both
+  isDefault?: boolean;         // BPMNSequenceFlow only
+  isManuallyLayouted?: boolean;
+  points: IPoint[];
+}
+```
+
+### Mapping rules (BPMNDiagram)
+
+- v3 → v4: `BPMNFlow` + `flowType` picks the edge type. The old editor emitted
+  `'sequence' | 'message' | 'association' | 'data association'` (with a
+  space); the migrator also accepts `dataAssociation` / `data_association` /
+  `data-association`, and a missing `flowType` means `sequence`. v3
+  `isDefault: true` becomes `edge.data.isDefault: true`.
+
+- `isDefault` is legal only on a sequence flow whose source is an activity or an
+  exclusive / inclusive / complex gateway, and a source has at most one default
+  flow. The editor clears the flag when a sibling is made default, when the
+  gateway type changes to parallel / event-based, and when a flip or endpoint
+  reconnect gives the flow an ineligible source; the backend downgrades an
+  illegal flag to `false` with a warning.
+- Children of a `bpmnSwimlane` keep `position.x >= 30` (the lane header strip,
+  `LANE_HEADER_WIDTH`); lanes sit at `x = 40` (`POOL_HEADER_WIDTH`) inside their
+  pool, stacked vertically.
+- The backend stashes `id`, `parentId`, geometry and colours in the metamodel's
+  opaque `layout` so JSON → B-UML → JSON keeps ids and positions; B-UML `.py`
+  import goes through the safe AST-allowlist loader (`safe_load_buml`).
+
+---
+
 ## Conversion direction guarantees
 
 Two directions, both must be implemented:
@@ -920,6 +1162,23 @@ Two directions, both must be implemented:
   parses v4 directly. `buml_to_json/<diagram>_diagram_converter.py` emits
   v4 directly. **No v3 emission path** anywhere on the backend after Wave
   3 (the old fork is deleted).
+- **Backend rejects v3 on ingest.** The backend has no v3 *read* path
+  either, so a v3 UML model would convert to an empty B-UML model. Every
+  endpoint that takes diagram or project JSON therefore refuses one with
+  HTTP 400 (`LegacyDiagramFormatError`, a `ConversionError`; the check is
+  `services/validators/legacy_format.py`, run by the `DiagramInput` /
+  `SimulationSessionInput` model validators — so also for every diagram
+  nested in a `ProjectInput` — and explicitly on the raw-dict bodies of
+  `/github/deploy-webapp` and the `userProfileModel` of the
+  personalization endpoints). A model is legacy when it has a UML `type`
+  and a `version` starting with `3.`, or `elements` / `relationships` and
+  no `nodes`, including an object diagram's `referenceDiagramData`.
+  `GUINoCodeDiagram` (GrapesJS) and `QuantumCircuitDiagram` models keep
+  their own formats and are never treated as legacy. The message tells the
+  user to open the diagram in the current editor, whose migrator upgrades it
+  on load, or to re-export it from there. Saving a v3 project to GitHub is
+  storage and still succeeds; `/github/project/save` skips the B-UML export
+  of its legacy diagrams.
 
 Round-trip tests must hold for **every diagram type** for at least:
 

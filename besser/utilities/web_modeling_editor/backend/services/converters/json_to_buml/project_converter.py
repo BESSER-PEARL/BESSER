@@ -14,6 +14,7 @@ from . import (
     process_agent_diagram,
     process_state_machine,
 )
+from .method_nn_linker import link_method_neural_networks
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -200,9 +201,11 @@ def json_to_buml_project(project):
     from .nn_diagram_processor import process_nn_diagram
 
     nn_titles: dict = {}
+    processed_nn_models = {}  # diagram ID -> NN, reused to link methods
     for nn_diag in diagrams.get("NNDiagram", []):
         nn_model = process_nn_diagram(nn_diag.model_dump())
         model_list.append(nn_model)
+        processed_nn_models[nn_diag.id or id(nn_diag)] = nn_model
         # Preserve the diagram's user-facing title so project_to_code can
         # emit it in the section header — the NN metamodel only stores a
         # sanitized name, so without this the title is lost on round-trip.
@@ -210,11 +213,14 @@ def json_to_buml_project(project):
         if nn_title:
             nn_titles[id(nn_model)] = nn_title
 
+    # Methods implemented by a neural network point at the NN models above.
+    for cd_model in processed_class_diagrams.values():
+        link_method_neural_networks(cd_model, diagrams.get("NNDiagram", []), processed_nn_models)
+
     # ── Process ALL BPMNDiagrams ──────────────────────────────────────
-    # BPMN is standalone (no ClassDiagram cross-reference, unlike
-    # ObjectDiagram / GUINoCodeDiagram).
     for bpmn_diag in diagrams.get("BPMN", []):
-        model_list.append(process_bpmn_diagram(bpmn_diag.model_dump()))
+        bpmn_model = process_bpmn_diagram(bpmn_diag.model_dump())
+        model_list.append(bpmn_model)
 
     # Ensure ALL processed ClassDiagrams are in model_list.
     # Object/GUI diagrams may reference ClassDiagrams that were not in the

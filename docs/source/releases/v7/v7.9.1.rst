@@ -1,0 +1,27 @@
+Version 7.9.1
+=============
+
+Patch release: **object diagram attributes are no longer dropped when**
+**exporting to PNG or SVG**. This is a **frontend-only** release — no metamodel,
+generator, or backend API changes; the only backend-repo change is the
+web-modeling-editor submodule pointer bump.
+
+Fixes
+-----
+
+* **Object diagrams exported as empty header boxes**: the export-only SVG scene
+  (``packages/editor/src/main/scenes/svg.tsx``) special-cased only
+  ``UMLClassifierComponent`` to nest its member children (attributes and methods)
+  inside the box. Object boxes render through ``UMLObjectNameComponent``, which
+  fell into the ``default`` branch and was drawn alone, while each object's
+  ``ObjectAttribute`` / ``ObjectMethod`` members — mapped to
+  ``UMLClassifierMemberComponent`` — hit the skipped member case on the
+  assumption they had already been nested inside a classifier. They never were,
+  so exported object diagrams showed a white header box with no attribute rows.
+  The live editor canvas was unaffected because it renders container children
+  directly; only the export path special-cased the classifier. The fix routes
+  ``UMLObjectNameComponent`` through the same member-nesting branch as
+  ``UMLClassifierComponent``. Matching on the component (rather than the element
+  type) also covers ``UserModelName``, which maps to the same component. PNG
+  export rasterizes the result of ``exportAsSVG``, so both formats are fixed by
+  the single change.

@@ -15,6 +15,16 @@ flow routing via ``process_of``) is unchanged.
 by the metamodel (type-checked as dict-or-None, content never interpreted),
 so this port is free to redefine the internal stash shape for v4 — see
 ``_layout_dict`` / ``_flow_layout_dict``.
+
+Design points:
+
+* **Identity is by object**: WME ids ride in ``element.layout`` so the converter
+  pair can round-trip them, but the metamodel itself stays id-free.
+* **Layout is opaque**: ``BPMNElement.layout`` carries the WME position / size /
+  points stash without the metamodel ever interpreting it.
+* **Validation is a separate concern**: this processor never calls
+  ``BPMNModel.validate`` — it only produces a ``BPMNModel``. Callers run
+  validation if they need it.
 """
 
 import logging
@@ -92,7 +102,7 @@ def _layout_dict(node: dict) -> dict:
         "bounds": node_bounds(node),
     }
     data = node_data(node)
-    for style_key in ("fillColor", "strokeColor", "textColor"):
+    for style_key in ("fillColor", "strokeColor", "textColor", "highlight"):
         if style_key in data:
             layout[style_key] = data[style_key]
     return layout
@@ -165,10 +175,8 @@ def _build_node(node: dict):
     if node_type == "bpmnGroup":
         return Group(name=name)
     if node_type == "bpmnSwimlane":
-        # Forward-compat only: no bpmnSwimlane entry exists yet in
-        # packages/library/lib/nodes/types.ts / lib/constants.ts palette /
-        # bpmnConstraints.ts drop-rules. Unreachable from the running app
-        # until the frontend adds it; kept so no second backend PR is needed then.
+        # packages/library/lib/nodes/bpmn/BPMNSwimlane.tsx — a lane is a child
+        # (parentId) of its bpmnPool.
         return Lane(name=name)
     if node_type == "bpmnPool":
         return Participant(name=name, process=Process(name=name))
@@ -209,8 +217,20 @@ def _outer_process(container):
 
 def process_bpmn_diagram(json_data: dict) -> BPMNModel:
     """Convert a v4 BPMN diagram (``{nodes, edges}``) into a ``BPMNModel``.
-    v3-shape input is not supported — mirrors process_class_diagram's contract."""
+    v3-shape input is not supported — mirrors process_class_diagram's contract.
+
+    Returns:
+        ``BPMNModel``. ``model.collaboration`` is ``None`` for a pool-less diagram and a
+        ``Collaboration`` (with one ``Participant`` per pool) otherwise.
+
+    Raises:
+        ConversionError: structural failures (missing ``model`` key, unknown enum
+            strings, unknown BPMN edge type). Non-fatal cases (dangling flow
+            endpoint, unknown node type, illegal ``isDefault``) log and skip.
+    """
     title = json_data.get('title') or 'Generated_BPMN_Model'
+    if json_data.get('model') is None:
+        raise ConversionError("BPMN diagram JSON is missing the 'model' key.")
     model_payload = json_data.get('model') or {}
     model_type = model_payload.get('type')
     if model_type and model_type not in BPMN_DIAGRAM_TYPES:

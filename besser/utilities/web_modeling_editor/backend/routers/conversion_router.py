@@ -12,6 +12,8 @@ import tempfile
 import uuid
 import importlib.util
 import json
+
+import requests
 from copy import deepcopy
 from datetime import datetime, timezone
 
@@ -73,6 +75,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
 )
+from besser.utilities.web_modeling_editor.backend.services.svg_postprocess import (
+    fit_svg_viewbox_to_content,
+)
 
 # Backend configuration
 from besser.utilities.web_modeling_editor.backend.config import (
@@ -88,6 +93,8 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     OUTPUT_DIR_NAME,
     AGENT_MODEL_FILENAME,
     BPMN_DIAGRAM_TYPES,
+    BPMN_DIAGRAM_TYPE,
+    BPMN_PROJECT_DIAGRAM_KEY,
 )
 
 # Centralized error handling
@@ -507,7 +514,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             for dtype in (
                 "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
                 "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
-                "BPMN", "QuantumCircuitDiagram",
+                BPMN_PROJECT_DIAGRAM_KEY, "QuantumCircuitDiagram",
             ):
                 if dtype not in priority:
                     priority.append(dtype)
@@ -516,7 +523,9 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 entry = _pick_entry(dtype)
                 if entry is not None:
                     diagram_data = entry
-                    diagram_type = dtype
+                    # The project bucket key is "BPMN"; the model type on
+                    # the wire is BPMN_DIAGRAM_TYPE ("BPMNDiagram").
+                    diagram_type = BPMN_DIAGRAM_TYPE if dtype == BPMN_PROJECT_DIAGRAM_KEY else dtype
                     break
 
             if diagram_data and diagram_data.get("title"):
@@ -597,7 +606,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 "title": diagram_title,
                 "model": bpmn_json
             }
-            diagram_type = "BPMN"
+            diagram_type = BPMN_DIAGRAM_TYPE
         except Exception as bpmn_error:
             logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
 
@@ -605,7 +614,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     if diagram_data is None or diagram_type is None:
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
-            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMN, or Project."
+            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, "
+            "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, or Project."
         )
 
     # Return the diagram in the format expected by the frontend
@@ -619,6 +629,54 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "version": API_VERSION
     }
+
+@router.post("/get-svg")
+@handle_endpoint_errors("get_svg")
+async def get_svg(buml_file: UploadFile = File(...)):
+    """
+    Convert a B-UML class-diagram file to an auto-laid-out SVG image.
+
+    Pipeline: parse the B-UML to a DomainModel, convert it to the editor JSON
+    model, then delegate rendering to the WME Node server (Apollon, headless),
+    which runs ELK auto-layout and exports SVG. The Node server base URL is read
+    from the WME_NODE_SERVER_URL env var (default http://localhost:8080).
+    """
+    content = await buml_file.read()
+    _validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
+    _validate_file_content(content, buml_file.filename or "")
+    buml_content = content.decode("utf-8")
+
+    domain_model = parse_buml_content(buml_content)
+    if not domain_model or len(domain_model.types) == 0:
+        raise HTTPException(status_code=400, detail="No class/enumeration types found in the B-UML model")
+
+    diagram_json = class_buml_to_json(domain_model)
+
+    node_server_url = os.environ.get("WME_NODE_SERVER_URL", "http://localhost:8080").rstrip("/")
+    try:
+        render_response = requests.post(
+            f"{node_server_url}/api/svg",
+            json={"model": diagram_json, "autoLayout": True},
+            timeout=30,
+        )
+        render_response.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"SVG render service unavailable: {exc}") from exc
+
+    svg = render_response.json().get("svg")
+    if not svg:
+        raise HTTPException(status_code=502, detail="SVG render service returned no SVG content")
+
+    # Safety net: the renderer sizes the canvas to node/edge geometry but omits
+    # association-end labels, so self-referential associations clip on the left.
+    # Expand the viewport to fit all content before returning.
+    svg = fit_svg_viewbox_to_content(svg)
+
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Content-Disposition": 'inline; filename="diagram.svg"'},
+    )
 
 @router.post("/csv-to-domain-model", response_model=DiagramExportResponse)
 @handle_endpoint_errors("csv_to_domain_model_endpoint")
@@ -826,8 +884,11 @@ async def transform_agent_model_json(input_data: DiagramInput):
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
         generation_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
+        resolved_agent = getattr(agent_module, "agent", agent_model)
+        # gui_models is now serialized by agent_model_to_code, so the
+        # exec'd module's agent already carries it.
         generator_instance = generator_class(
-            getattr(agent_module, "agent", agent_model),
+            resolved_agent,
             config=config,
             openai_api_key=extract_openai_api_key(config),
             output_dir=generation_output_dir,

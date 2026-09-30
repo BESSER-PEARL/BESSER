@@ -125,6 +125,85 @@ def test_binary_association():
     assert "A binary association must have exactly two ends" in str(excinfo.value)
 
 
+def _navigability_ends(a_navigable=True, b_navigable=True, a_composite=False, b_composite=False):
+    whole: Class = Class(name="Whole")
+    part: Class = Class(name="Part")
+    end_a = Property(name="parts", type=part, multiplicity=Multiplicity(0, "*"),
+                     is_navigable=a_navigable, is_composite=a_composite)
+    end_b = Property(name="whole", type=whole, multiplicity=Multiplicity(1, 1),
+                     is_navigable=b_navigable, is_composite=b_composite)
+    return whole, part, end_a, end_b
+
+
+# Testing that a binary association needs at least one navigable end
+def test_binary_association_requires_a_navigable_end():
+    _, _, end_a, end_b = _navigability_ends(a_navigable=False, b_navigable=False)
+    with pytest.raises(ValueError) as excinfo:
+        BinaryAssociation(name="Contains", ends={end_a, end_b})
+    message = str(excinfo.value)
+    assert "Association 'Contains'" in message
+    assert "at least one end must be navigable" in message
+    assert "'parts' (Part)" in message and "'whole' (Whole)" in message
+
+
+# The part (non-composite) end of a composition must be navigable, whichever end is the composite one
+@pytest.mark.parametrize("composite_on", ["a", "b"])
+def test_composition_part_end_must_be_navigable(composite_on):
+    if composite_on == "a":
+        # end_a is composite -> end_b is the part end
+        _, _, end_a, end_b = _navigability_ends(a_composite=True, b_navigable=False)
+        part_end = "'whole' (Whole)"
+    else:
+        _, _, end_a, end_b = _navigability_ends(b_composite=True, a_navigable=False)
+        part_end = "'parts' (Part)"
+    with pytest.raises(ValueError) as excinfo:
+        BinaryAssociation(name="Contains", ends={end_a, end_b})
+    message = str(excinfo.value)
+    assert "Association 'Contains'" in message
+    assert f"the non-composite end {part_end} of a composition must be navigable" in message
+
+
+@pytest.mark.parametrize("a_navigable, b_navigable, a_composite", [
+    (True, True, False),    # bidirectional
+    (True, False, False),   # one-way
+    (False, True, False),   # one-way, other direction
+    (False, True, True),    # composition whose composite (whole) end is non-navigable
+    (True, True, True),     # composition navigable both ways
+])
+def test_valid_navigability_combinations(a_navigable, b_navigable, a_composite):
+    _, _, end_a, end_b = _navigability_ends(a_navigable=a_navigable, b_navigable=b_navigable,
+                                            a_composite=a_composite)
+    association = BinaryAssociation(name="Contains", ends={end_a, end_b})
+    assert end_a.is_navigable is a_navigable
+    assert end_b.is_navigable is b_navigable
+    assert association._navigability_errors() == []
+
+
+# Ends made non-navigable after construction are reported by DomainModel.validate()
+def test_validate_reports_post_construction_navigability_violations():
+    whole, part, end_a, end_b = _navigability_ends(b_navigable=False)
+    association = BinaryAssociation(name="Contains", ends={end_a, end_b})
+    model = DomainModel(name="M", types={whole, part}, associations={association})
+    assert model.validate(raise_exception=False)["success"] is True
+
+    end_a.is_navigable = False
+    result = model.validate(raise_exception=False)
+    assert result["success"] is False
+    assert any("Association 'Contains': at least one end must be navigable" in e for e in result["errors"])
+    with pytest.raises(ValueError, match="at least one end must be navigable"):
+        model.validate()
+
+    # Composition whose part end is made non-navigable later
+    whole2, part2, c_a, c_b = _navigability_ends(b_composite=True)
+    composition = BinaryAssociation(name="Composes", ends={c_a, c_b})
+    model2 = DomainModel(name="M2", types={whole2, part2}, associations={composition})
+    assert model2.validate(raise_exception=False)["success"] is True
+    c_a.is_navigable = False
+    errors = model2.validate(raise_exception=False)["errors"]
+    assert any("Association 'Composes': the non-composite end 'parts' (Part) of a composition must be navigable"
+               in e for e in errors)
+
+
 # Testing the creation of an association class with an attribute
 def test_association_class():
     class1: Class = Class(name="name1", attributes=None)
@@ -204,6 +283,14 @@ def test_method_initialization():
     assert method.owner == cls
     assert method.name == "method_1"
     assert method.type.name == "class_1"
+
+# A method linked to a neural network is detected as NN-implemented
+def test_method_implemented_by_neural_network():
+    from besser.BUML.metamodel.nn import NN
+    nn_model = NN(name="Classifier")
+    method: Method = Method(name="predict", neural_network=nn_model)
+    assert method.neural_network is nn_model
+    assert method.implementation_type == MethodImplementationType.NEURAL_NETWORK
 
 # Testing parameters with repeated name
 def test_parameters_same_name():
@@ -781,3 +868,434 @@ def test_no_attribute_shadowing_validation():
 
     result = domain_model.validate(raise_exception=False)
     assert result["success"] is True
+
+
+# Tests for class-rename propagation to matching association role names.
+# Renaming a class to which an association end refers should automatically
+# update role names that were the (case-insensitive, plural-tolerant) form of
+# the old class name. Role names that intentionally differ must be left alone.
+
+def test_class_rename_propagates_to_matching_role_simple_plural():
+    """``Member`` -> ``User`` should rename role ``members`` to ``users``."""
+    book: Class = Class(name="Book", attributes=set())
+    member: Class = Class(name="Member", attributes=set())
+    books_end: Property = Property(name="books", type=book, multiplicity=Multiplicity(0, "*"))
+    members_end: Property = Property(name="members", type=member, multiplicity=Multiplicity(0, "*"))
+    assoc: BinaryAssociation = BinaryAssociation(name="book_member", ends={books_end, members_end})
+
+    member.name = "User"
+
+    assert member.name == "User"
+    # The end pointing to the renamed class is propagated.
+    assert members_end.name == "users"
+    # The other end (typed Book) is untouched.
+    assert books_end.name == "books"
+    # Association linkage is intact.
+    assert assoc.ends == {books_end, members_end}
+
+
+def test_class_rename_preserves_intentional_role_name():
+    """A role name that does not match the class name (``borrower`` -> ``Member``)
+    must be left alone when the class is renamed."""
+    book: Class = Class(name="Book", attributes=set())
+    member: Class = Class(name="Member", attributes=set())
+    books_end: Property = Property(name="books", type=book, multiplicity=Multiplicity(0, "*"))
+    borrower_end: Property = Property(name="borrower", type=member, multiplicity=Multiplicity(1, 1))
+    BinaryAssociation(name="book_borrower", ends={books_end, borrower_end})
+
+    member.name = "User"
+
+    assert member.name == "User"
+    # ``borrower`` is an intentional role and must remain unchanged.
+    assert borrower_end.name == "borrower"
+    assert books_end.name == "books"
+
+
+def test_class_rename_propagates_singular_role():
+    """A singular role name (``member``) matching the old class name should
+    be renamed to the singular of the new class name (``user``)."""
+    book: Class = Class(name="Book", attributes=set())
+    member: Class = Class(name="Member", attributes=set())
+    book_end: Property = Property(name="book", type=book, multiplicity=Multiplicity(1, 1))
+    member_end: Property = Property(name="member", type=member, multiplicity=Multiplicity(1, 1))
+    BinaryAssociation(name="book_member_owner", ends={book_end, member_end})
+
+    member.name = "User"
+
+    assert member_end.name == "user"
+    assert book_end.name == "book"
+
+
+def test_class_rename_propagates_ies_plural():
+    """Role ``categories`` -> class ``Category`` is renamed to ``Tag`` -> ``tags``."""
+    product: Class = Class(name="Product", attributes=set())
+    category: Class = Class(name="Category", attributes=set())
+    products_end: Property = Property(name="products", type=product, multiplicity=Multiplicity(0, "*"))
+    categories_end: Property = Property(name="categories", type=category, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="product_category", ends={products_end, categories_end})
+
+    category.name = "Tag"
+
+    assert categories_end.name == "tags"
+    assert products_end.name == "products"
+
+
+def test_class_rename_no_op_when_role_does_not_match_old_name():
+    """When the role name does not match the old class name (e.g. typo or
+    deliberately different), renaming the class must not touch the role."""
+    book: Class = Class(name="Book", attributes=set())
+    member: Class = Class(name="Member", attributes=set())
+    library_end: Property = Property(name="library", type=book, multiplicity=Multiplicity(1, 1))
+    users_end: Property = Property(name="users", type=member, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="book_member_users", ends={library_end, users_end})
+
+    # Renaming ``Member`` to ``User`` should NOT touch ``users`` because the
+    # role name does not match the *old* class name.
+    member.name = "User"
+    assert users_end.name == "users"
+    assert library_end.name == "library"
+
+
+def test_class_rename_preserves_case_style():
+    """The propagated role name keeps the case convention of the original."""
+    # Lowercase role
+    a: Class = Class(name="Item", attributes=set())
+    b: Class = Class(name="Bin", attributes=set())
+    other: Property = Property(name="other", type=a, multiplicity=Multiplicity(1, 1))
+    bins_end: Property = Property(name="bins", type=b, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="item_bin", ends={other, bins_end})
+    b.name = "Container"
+    assert bins_end.name == "containers"
+
+    # PascalCase role
+    c: Class = Class(name="Order", attributes=set())
+    d: Class = Class(name="Line", attributes=set())
+    other2: Property = Property(name="Order", type=c, multiplicity=Multiplicity(1, 1))
+    lines_end: Property = Property(name="Lines", type=d, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="order_line", ends={other2, lines_end})
+    d.name = "Item"
+    assert lines_end.name == "Items"
+
+
+def test_class_rename_during_construction_is_noop():
+    """Constructing a class must not raise even though the setter is invoked
+    by ``__init__`` before associations exist."""
+    cls = Class(name="Thing", attributes=set())
+    assert cls.name == "Thing"
+
+
+def test_class_rename_avoids_role_name_collision():
+    """If a propagated role would collide with the sibling end's name on the
+    same association, the rename is skipped to preserve uniqueness."""
+    member: Class = Class(name="Member", attributes=set())
+    # Self-association: both ends typed Member. ``members`` is the only end
+    # name we want to rename; ``user`` is the sibling end. Renaming
+    # ``Member`` -> ``User`` would attempt to rename ``members`` to
+    # ``users``; that's distinct from sibling ``user`` so it should succeed.
+    members_end: Property = Property(name="members", type=member, multiplicity=Multiplicity(0, "*"))
+    leader_end: Property = Property(name="leader", type=member, multiplicity=Multiplicity(1, 1))
+    BinaryAssociation(name="member_self", ends={members_end, leader_end})
+
+    member.name = "User"
+    assert members_end.name == "users"
+    assert leader_end.name == "leader"
+
+    # Now arrange a collision case: rename ``Member`` -> ``Leader`` when one
+    # end is already called ``leader``. The propagation must be skipped so
+    # that the metamodel keeps unique end names.
+    member2: Class = Class(name="Member", attributes=set())
+    members_end2: Property = Property(name="members", type=member2, multiplicity=Multiplicity(0, "*"))
+    leader_end2: Property = Property(name="leader", type=member2, multiplicity=Multiplicity(1, 1))
+    BinaryAssociation(name="member_leader", ends={members_end2, leader_end2})
+
+    member2.name = "Leader"
+    # ``leaders`` does not collide with ``leader``; the rename should apply.
+    assert members_end2.name == "leaders"
+    assert leader_end2.name == "leader"
+
+
+def test_method_sharing_a_name_with_an_attribute_is_reported():
+    """A method cannot share its name with a feature of the same class.
+
+    Generated code reaches both through that one name, so one wins and the other
+    becomes unreachable - a body reading self.check_out - self.check_in then
+    subtracts two methods instead of two dates. The diagram is where that has to
+    be caught.
+    """
+    booking = Class(
+        name="Booking",
+        attributes={Property(name="check_in", type=StringType)},
+        methods={Method(name="check_in")},
+    )
+    domain_model = DomainModel(name="TestModel", types={booking})
+
+    result = domain_model.validate(raise_exception=False)
+    assert result["success"] is False
+    assert any("check_in" in e and "Booking" in e for e in result["errors"])
+
+
+def test_a_method_named_differently_from_every_attribute_is_accepted():
+    booking = Class(
+        name="Booking",
+        attributes={Property(name="check_in", type=StringType)},
+        methods={Method(name="register_arrival")},
+    )
+    domain_model = DomainModel(name="TestModel", types={booking})
+
+    assert domain_model.validate(raise_exception=False)["success"] is True
+
+
+# ----------------------------------------------------------------------
+# Constructibility: a model can be structurally valid and still describe an
+# application nobody can use.
+#
+# Regression (hotel booking model): validate() returned
+# SUCCESS with 0 errors and 0 warnings. The generated FastAPI app booted,
+# served 69 paths, and its central aggregate could not be created by any
+# client: BookingCreate required a ReservedRoom id and ReservedRoomCreate
+# required a Booking id. Two separate associations, each mandatory in the
+# opposite direction, so no per-association check can see it:
+#
+#     reservedRooms   ReservedRoom [1..*]   -> a Booking needs >=1 ReservedRoom
+#     booking_1       Booking      [1..1]   -> a ReservedRoom needs exactly 1
+#
+# The same diagram also connected three class pairs twice each
+# (Booking<->ReservedRoom, Room<->ReservedRoom, Bill<->Booking), which is
+# what produced duplicate foreign keys and `_1`-suffixed role names in the
+# generated schema.
+# ----------------------------------------------------------------------
+
+
+def _assoc(name, cls_a, role_a, mult_a, cls_b, role_b, mult_b):
+    """A binary association, written the way a diagram reads."""
+    return BinaryAssociation(name=name, ends={
+        Property(name=role_a, type=cls_a, multiplicity=Multiplicity(*mult_a)),
+        Property(name=role_b, type=cls_b, multiplicity=Multiplicity(*mult_b)),
+    })
+
+
+def test_mandatory_creation_cycle_is_reported():
+    """Neither end can be created first — the aggregate is unconstructible.
+
+    A warning here, not an error: 1..1 on both ends is legal UML and BESSER's
+    own user_reference_domain_model ships three such pairs. The Spec-Driven
+    Agent promotes it to a blocker, where generating a CRUD API is the intent.
+    """
+    booking = Class(name="Booking", attributes=set())
+    reserved = Class(name="ReservedRoom", attributes=set())
+    model = DomainModel(
+        name="Hotel",
+        types={booking, reserved},
+        associations={
+            # A Booking needs at least one ReservedRoom.
+            _assoc("reservedRooms", booking, "booking", (0, 9999),
+                   reserved, "reservedRooms", (1, 9999)),
+            # A ReservedRoom needs exactly one Booking.
+            _assoc("booking_1", booking, "booking_1", (1, 1),
+                   reserved, "reservedroom", (0, 9999)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    joined = " ".join(result["warnings"])
+    assert "Booking" in joined and "ReservedRoom" in joined
+    assert "cycle" in joined.lower()
+
+
+def test_one_optional_end_breaks_the_cycle():
+    """Relaxing either side to 0..* makes the aggregate constructible."""
+    booking = Class(name="Booking", attributes=set())
+    reserved = Class(name="ReservedRoom", attributes=set())
+    model = DomainModel(
+        name="Hotel",
+        types={booking, reserved},
+        associations={
+            _assoc("reservedRooms", booking, "booking", (0, 9999),
+                   reserved, "reservedRooms", (0, 9999)),   # now optional
+            _assoc("booking_1", booking, "booking_1", (1, 1),
+                   reserved, "reservedroom", (0, 9999)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    assert result["success"] is True
+    assert not any("cycle" in w.lower() for w in result["warnings"])
+
+
+def test_a_chain_of_mandatory_ends_is_not_a_cycle():
+    """Bill needs Booking needs Person is a valid creation ORDER, not a cycle."""
+    person = Class(name="Person", attributes=set())
+    booking = Class(name="Booking", attributes=set())
+    bill = Class(name="Bill", attributes=set())
+    model = DomainModel(
+        name="Hotel",
+        types={person, booking, bill},
+        associations={
+            _assoc("contact", booking, "bookings", (0, 9999),
+                   person, "contact", (1, 1)),
+            _assoc("billOf", bill, "bills", (0, 9999),
+                   booking, "booking", (1, 1)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    assert result["success"] is True
+    assert not any("cycle" in w.lower() for w in result["warnings"])
+
+
+def test_self_association_that_is_mandatory_is_a_cycle():
+    """An Employee that must have a manager can never have a first Employee."""
+    employee = Class(name="Employee", attributes=set())
+    model = DomainModel(
+        name="Org",
+        types={employee},
+        associations={
+            _assoc("manages", employee, "reports", (0, 9999),
+                   employee, "manager", (1, 1)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    assert any("Employee" in w and "cycle" in w.lower() for w in result["warnings"])
+
+
+def test_optional_self_association_is_fine():
+    employee = Class(name="Employee", attributes=set())
+    model = DomainModel(
+        name="Org",
+        types={employee},
+        associations={
+            _assoc("manages", employee, "reports", (0, 9999),
+                   employee, "manager", (0, 1)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    assert result["success"] is True
+    assert not any("cycle" in w.lower() for w in result["warnings"])
+
+
+def test_duplicate_associations_over_one_class_pair_warn():
+    """Two associations between the same pair: one concept drawn twice.
+
+    A warning, not an error — parallel associations are legal UML
+    (homeAddress / workAddress) — but in the motivating model all three duplicated
+    pairs carried a `_1`-suffixed role, the collision marker, and each became
+    a redundant foreign key in the generated schema.
+    """
+    room = Class(name="Room", attributes=set())
+    reserved = Class(name="ReservedRoom", attributes=set())
+    model = DomainModel(
+        name="Hotel",
+        types={room, reserved},
+        associations={
+            _assoc("room_1", reserved, "reservedroom", (0, 9999),
+                   room, "room_1", (1, 1)),
+            _assoc("reservations", reserved, "reservations", (0, 9999),
+                   room, "room", (0, 9999)),
+        },
+    )
+    result = model.validate(raise_exception=False)
+    # Legal, so the model still validates...
+    assert result["success"] is True
+    # ...but the reviewer is told.
+    joined = " ".join(result["warnings"])
+    assert "Room" in joined and "ReservedRoom" in joined
+    assert "2" in joined
+
+
+def test_a_single_association_per_pair_does_not_warn():
+    room = Class(name="Room", attributes=set())
+    reserved = Class(name="ReservedRoom", attributes=set())
+    model = DomainModel(
+        name="Hotel",
+        types={room, reserved},
+        associations={
+            _assoc("room_1", reserved, "reservedroom", (0, 9999),
+                   room, "room_1", (1, 1)),
+        },
+    )
+    assert model.validate(raise_exception=False)["warnings"] == []
+
+
+def test_class_rename_does_not_duplicate_end_names_on_opposite_class():
+    """Renaming ``Customer`` -> ``Client`` would turn role ``customer`` into
+    ``client``, which ``Order`` already reaches through another association."""
+    order = Class(name="Order")
+    customer = Class(name="Customer")
+    person = Class(name="Person")
+    customer_end = Property(name="customer", type=customer, multiplicity=Multiplicity(1, 1))
+    BinaryAssociation(name="order_customer", ends={
+        Property(name="orders", type=order, multiplicity=Multiplicity(0, "*")), customer_end})
+    BinaryAssociation(name="order_client", ends={
+        Property(name="purchases", type=order, multiplicity=Multiplicity(0, "*")),
+        Property(name="client", type=person, multiplicity=Multiplicity(1, 1))})
+
+    customer.name = "Client"
+
+    assert customer_end.name == "customer"
+    names = [e.name for e in order.all_association_ends()]
+    assert len(names) == len(set(names))
+
+
+def test_validate_reports_duplicate_end_names_on_a_class():
+    order = Class(name="Order")
+    customer = Class(name="Customer")
+    person = Class(name="Person")
+    customer_end = Property(name="customer", type=customer, multiplicity=Multiplicity(1, 1))
+    a1 = BinaryAssociation(name="order_customer", ends={
+        Property(name="orders", type=order, multiplicity=Multiplicity(0, "*")), customer_end})
+    a2 = BinaryAssociation(name="order_client", ends={
+        Property(name="purchases", type=order, multiplicity=Multiplicity(0, "*")),
+        Property(name="client", type=person, multiplicity=Multiplicity(1, 1))})
+    customer_end.name = "client"  # bypasses the construction-time check
+    model = DomainModel(name="M", types={order, customer, person}, associations={a1, a2})
+
+    result = model.validate(raise_exception=False)
+
+    assert not result["success"]
+    assert any("'Order'" in e and "'client'" in e for e in result["errors"])
+
+
+@pytest.mark.parametrize("new_name, expected", [
+    ("Box", "boxes"), ("Address", "addresses"), ("Status", "statuses"),
+    ("Church", "churches"), ("City", "cities"), ("Key", "keys"), ("Settings", "settings"),
+])
+def test_class_rename_uses_english_plurals(new_name, expected):
+    owner = Class(name="Owner")
+    item = Class(name="Item")
+    items_end = Property(name="items", type=item, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="owner_item", ends={
+        Property(name="owner", type=owner, multiplicity=Multiplicity(1, 1)), items_end})
+
+    item.name = new_name
+
+    assert items_end.name == expected
+
+
+@pytest.mark.parametrize("old_name, role, new_name, expected", [
+    ("House", "houses", "Home", "homes"),    # -es guess ("hous") is wrong, -s is right
+    ("Movie", "movies", "Film", "films"),    # -ies guess ("movy") is wrong
+    ("Status", "status", "State", "state"),  # singular that ends in -s
+])
+def test_class_rename_tries_every_stem_guess(old_name, role, new_name, expected):
+    owner = Class(name="Owner")
+    target = Class(name=old_name)
+    end = Property(name=role, type=target, multiplicity=Multiplicity(0, "*"))
+    BinaryAssociation(name="owner_target", ends={
+        Property(name="owner", type=owner, multiplicity=Multiplicity(1, 1)), end})
+
+    target.name = new_name
+
+    assert end.name == expected
+
+
+def test_association_class_accepts_timestamp_and_metadata():
+    """Both used to be passed positionally into Class's ``methods``/``is_abstract`` slots."""
+    from datetime import datetime
+    a, b = Class(name="A"), Class(name="B")
+    assoc = BinaryAssociation(name="ab", ends={
+        Property(name="a", type=a, multiplicity=Multiplicity(0, "*")),
+        Property(name="b", type=b, multiplicity=Multiplicity(0, "*"))})
+    stamp = datetime(2026, 1, 1)
+    metadata = Metadata(description="link")
+    link = AssociationClass(name="AB", attributes=set(), association=assoc, timestamp=stamp, metadata=metadata)
+    assert link.timestamp == stamp
+    assert link.metadata is metadata
+    assert link.methods == set()
+    assert link.is_abstract is False

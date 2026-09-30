@@ -147,12 +147,27 @@ def get_element_by_id(class_model, element_id):
         if element_id in class_model:
             return class_model[element_id]
 
-        # v4 wire shape: full diagram dict with nodes list
+        # v4 wire shape: full diagram dict with nodes list. Class nodes keep
+        # their name on ``data.name`` and their attribute / method rows under
+        # ``data.attributes`` / ``data.methods`` (rows are not nodes), so the
+        # callers' v3-era ``element.get('name')`` lookups get a copy of the
+        # node with ``name`` hoisted, and row ids resolve to the row itself.
         nodes = class_model.get('nodes')
         if isinstance(nodes, list):
             for node in nodes:
                 if isinstance(node, dict) and node.get('id') == element_id:
+                    data = node.get('data')
+                    if isinstance(data, dict) and 'name' not in node and 'name' in data:
+                        return {**node, 'name': data.get('name')}
                     return node
+            for node in nodes:
+                data = node.get('data') if isinstance(node, dict) else None
+                if not isinstance(data, dict):
+                    continue
+                for row_key in ('attributes', 'methods'):
+                    for row in data.get(row_key) or []:
+                        if isinstance(row, dict) and row.get('id') == element_id:
+                            return row
 
     # List format
     if isinstance(class_model, list):

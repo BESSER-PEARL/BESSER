@@ -13,10 +13,10 @@ from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.state_machine.state_machine import StateMachine
-from besser.BUML.metamodel.bpmn import BPMNModel
-from besser.utilities.buml_code_builder.common import _escape_python_string
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string
 from besser.utilities.buml_code_builder.domain_model_builder import (
     domain_model_to_code,
+    object_model_to_code,
     contains_user_class,
     is_user_object_model,
 )
@@ -109,6 +109,12 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     except ImportError:
         NN = None
 
+    # Import BPMNModel locally to avoid potential circular imports
+    try:
+        from besser.BUML.metamodel.bpmn import BPMNModel
+    except ImportError:
+        BPMNModel = None
+
     for model in project.models:
         if isinstance(model, DomainModel):
             if contains_user_class(model):
@@ -130,7 +136,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             quantum_models.append(model)
         elif NN and isinstance(model, NN):
             nn_models.append(model)
-        elif isinstance(model, BPMNModel):
+        elif BPMNModel and isinstance(model, BPMNModel):
             bpmn_models.append(model)
 
     # If we have user object models but no user domain model, use the
@@ -190,7 +196,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_domain > 1:
-                    label = getattr(dm, "name", f"Model {idx}")
+                    label = _comment_safe(getattr(dm, "name", "")) or f"Model {idx}"
                     section = f"# STRUCTURAL MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"domain_model_{idx}.py")
@@ -217,28 +223,36 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                     _write_temp_to_output(tmp_path, f, section_header=section)
                     model_vars.append(var_name)
 
-            # Standalone object models (when not paired 1:1 with domain models)
+            # Standalone object models (when not paired 1:1 with domain models).
+            # The domain model these objects reference is already written above
+            # (in the domain_pairs loop). Since the whole project is concatenated
+            # into ONE file, each object-only section can reference the class and
+            # enum variables defined earlier, so we emit just the object portion.
+            #
+            # object_model_to_code writes the single "# OBJECT MODEL ... #" section
+            # banner itself (numbered + titled when there is more than one), so we
+            # must NOT add a second section header here: a duplicate header makes
+            # the project importer split each model into an extra, empty section on
+            # round-trip (WME issue #161).
             if not (len(domain_models) == 1 and len(object_models) == 1):
                 n_standalone_obj = len(object_models)
                 for idx, om in enumerate(object_models, start=1):
                     obj_var_name = _suffixed_name("object_model", idx, n_standalone_obj)
-                    # Object models need a domain_model to reference; pass None and
-                    # generate just the object portion via domain_model_to_code.
-                    # For standalone objects without a paired domain model we find
-                    # the domain_model attribute on the ObjectModel itself.
-                    paired_dm = getattr(om, "domain_model", None)
-                    if paired_dm:
-                        dm_var = _suffixed_name("object_domain_model", idx, n_standalone_obj)
-                        tmp_path = os.path.join(temp_dir, f"object_model_{idx}.py")
-                        domain_model_to_code(
-                            model=paired_dm,
-                            file_path=tmp_path,
-                            objectmodel=om,
-                            model_var_name=dm_var,
-                            object_model_var_name=obj_var_name,
-                        )
-                        _write_temp_to_output(tmp_path, f)
-                        model_vars.append(obj_var_name)
+
+                    header_label = None
+                    if n_standalone_obj > 1:
+                        label = (_comment_safe(getattr(om, "name", "")) or f"Object Model {idx}").replace('"', "'")
+                        header_label = f'OBJECT MODEL {idx}: "{label}"'
+
+                    tmp_path = os.path.join(temp_dir, f"object_model_{idx}.py")
+                    object_model_to_code(
+                        objectmodel=om,
+                        file_path=tmp_path,
+                        object_model_var_name=obj_var_name,
+                        header_label=header_label,
+                    )
+                    _write_temp_to_output(tmp_path, f)
+                    model_vars.append(obj_var_name)
 
             # ---------------------------------------------------------- #
             # USER DOMAIN MODELS                                         #
@@ -250,7 +264,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_user > 1:
-                    label = getattr(udm, "name", f"User Model {idx}")
+                    label = _comment_safe(getattr(udm, "name", "")) or f"User Model {idx}"
                     section = f"# USER MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"user_model_{idx}.py")
@@ -275,7 +289,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_agent > 1:
-                    label = getattr(am, "name", f"Agent {idx}")
+                    label = _comment_safe(getattr(am, "name", "")) or f"Agent {idx}"
                     section = f"# AGENT MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"agent_model_{idx}.py")
@@ -298,7 +312,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                     section = ""
                     if n_gui > 1:
-                        label = getattr(gm, "name", f"GUI {idx}")
+                        label = _comment_safe(getattr(gm, "name", "")) or f"GUI {idx}"
                         section = f"# GUI MODEL {idx}: \"{label}\" #\n\n"
 
                     tmp_path = os.path.join(temp_dir, f"gui_model_{idx}.py")
@@ -320,7 +334,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_quantum > 1:
-                    label = getattr(qm, "name", f"Quantum {idx}")
+                    label = _comment_safe(getattr(qm, "name", "")) or f"Quantum {idx}"
                     section = f"# QUANTUM MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"quantum_model_{idx}.py")
@@ -340,7 +354,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_sm > 1:
-                    label = getattr(smm, "name", f"State Machine {idx}")
+                    label = _comment_safe(getattr(smm, "name", "")) or f"State Machine {idx}"
                     section = f"# STATE MACHINE MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"state_machine_{idx}.py")

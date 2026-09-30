@@ -5,6 +5,28 @@ if "." in __name__:
 else:
     from ODParser import ODParser
 from besser.BUML.metamodel.object.object import *
+from datetime import datetime
+from besser.BUML.metamodel.structural import (
+    DateType, FloatType, IntegerType, StringType
+)
+
+
+def parse_property_value(text: str):
+    """Return the typed Python value and primitive type of a propertyValue token."""
+    if text.startswith('"') and text.endswith('"'):
+        return text[1:-1], StringType
+    if text.isdigit():
+        return int(text), IntegerType
+    try:
+        return float(text), FloatType
+    except ValueError:
+        pass
+    try:
+        # DATE is the grammar's only N/N/N token; PlantUML fixes no format, day first.
+        return datetime.strptime(text, "%d/%m/%Y").date(), DateType
+    except ValueError:
+        return text, StringType
+
 # This class defines a complete listener for a parse tree produced by ODParser.
 class ODListener(ParseTreeListener):
 
@@ -88,7 +110,9 @@ class ODListener(ParseTreeListener):
     # Enter a parse tree produced by ODParser#propertyValue.
     def enterPropertyValue(self, ctx:ODParser.PropertyValueContext):
 
-        prop = AttributeLink(value = ctx.getText(),attribute= self.property )
+        value, value_type = parse_property_value(ctx.getText())
+        self.property.type = value_type
+        prop = AttributeLink(value = DataValue(classifier=value_type, value=value),attribute= self.property )
         self.obj.add_slot(prop)
         pass
 
@@ -150,7 +174,8 @@ class ODListener(ParseTreeListener):
 
     def getObject(self, param):
         for object in self.objs:
-            if object.name == param:
+            # name_ is the object's own identifier; name resolves to a "name" slot.
+            if object.name_ == param:
                         return object
 
 

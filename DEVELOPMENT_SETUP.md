@@ -63,7 +63,10 @@ pip install -e .
 python besser/utilities/web_modeling_editor/backend/backend.py
 ```
 
-The backend runs on `http://localhost:9000/besser_api`.
+The backend runs on `http://localhost:9000/besser_api`. To use the
+Spec-Driven Agent's PIA or Local (e.g. Ollama) providers, set
+`BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true` before starting it (the local
+`docker-compose.yml` does this for you).
 
 ---
 

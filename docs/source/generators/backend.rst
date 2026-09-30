@@ -11,6 +11,12 @@ The BESSER backend generator streamlines the development process by leveraging m
 - **Database Models**: Integrates BESSER's SQL Alchemy Generator to construct efficient ORM-based models for database interactions.
 - **Data Validation Models**: Employs BESSER's Pydantic Generator to ensure that data conforms to the defined schemas, enhancing the integrity and security of the backend.
 
+.. seealso::
+   This generator emits a fixed scaffold. If you need more than the template
+   provides — JWT authentication, a Dockerfile, migrations, tests — the
+   :doc:`Spec-Driven Agent <../spec_driven_agent/index>` runs *this* generator
+   first and then lets an LLM customise its output to a natural-language
+   request, validating and repairing the result before handing it back.
 
 To generate the complete backend for a B-UML model, follow the steps below. The example uses the ``library`` example B-UML model as a reference.
 
@@ -31,12 +37,17 @@ entities using their identifiers. The default setting is False, which restricts 
 
 
 Invoke the generate method to produce the backend code.The generated files will be placed in the ``<<current_directory>>/output_backend``.
-This method will generate several files:
+This method will generate a modular project (rather than one large file) so each concern lives in its own module:
 
-   + ``main_api.py``: Contains the REST API endpoints.
+   + ``main_api.py``: The slim FastAPI application entry point (app setup, middleware, exception handlers, system endpoints, and one ``include_router`` per resource). It keeps its historical filename and module-level ``app`` object, so ``uvicorn main_api:app`` works unchanged.
+   + ``routers/<class>.py``: One router module per class in the model, containing all of that class's CRUD, relationship and method endpoints.
+   + ``database.py``: The shared engine/session setup and the ``get_db`` dependency. The database defaults to ``sqlite:///./data/<model>.db`` and can be overridden with the ``DATABASE_URL`` environment variable (shared with ``sql_alchemy.py``, so the ORM and the API always point at the same database).
+   + ``bal_stdlib.py``: The B-UML Action Language standard-library helpers plus the association-class link helpers, shared by the routers.
    + ``sql_alchemy.py``: Includes SQL Alchemy database models.
    + ``pydantic_classes.py``: Consists of Pydantic validation models.
-   + ``database.db``: A SqlLite database file.
+   + ``requirements.txt``: The dependencies of the generated application.
+
+Running the application creates the SQLite database file under ``data/`` (unless ``DATABASE_URL`` points elsewhere).
 
 
 .. image:: ../img/backend_generator_schema.png
@@ -137,6 +148,21 @@ CRUD Operations
    * - DELETE
      - ``/{entity}/bulk/``
      - Bulk delete by IDs
+
+.. versionchanged:: 8.0.0
+   The request bodies of ``POST`` and ``PUT`` (the Pydantic ``<Class>Create``
+   schemas) no longer accept fields the server owns: an attribute named ``id``
+   that is not a declared primary key, the ``createdAt`` / ``updatedAt``
+   timestamps, and attributes marked ``is_derived``. A declared primary key
+   (``is_id=True``) is client-supplied and stays in the schema, so a model
+   whose ``id`` must come from the client should mark it ``is_id``. On the
+   non-owning side of a one-to-one association the schema has no field for the
+   link; set it from the side that holds the foreign key. Relationship fields
+   are typed after the referenced primary key rather than always ``int``.
+
+   A ``default_value`` must be expressible as a literal of the attribute's
+   type; otherwise generation raises ``InvalidDefaultValueError``. See the
+   :doc:`release notes </releases/v8/v8.0.0>`.
 
 Relationship Management (N:M)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -270,6 +296,33 @@ The generator creates:
 
    The ``database`` parameter is automatically injected by the API framework and should not be passed in the request body.
    Any ``print()`` statements executed during method execution are captured and returned in the ``output`` field of the response.
+
+.. _backend-nn-methods:
+
+Methods Implemented by a Neural Network
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A method whose ``implementation_type`` is ``NEURAL_NETWORK`` and whose ``neural_network`` points to an
+:doc:`NN model <../buml_language/model_types/nn>` becomes a class-level endpoint that runs the network
+(see :doc:`../buml_language/model_types/structural` for how to link one). The generator then also emits:
+
+- ``neural_networks/<network>.py``: the PyTorch ``NeuralNetwork`` class, as produced by the :doc:`pytorch`.
+- ``neural_networks/weights/``: where you put the trained weights, ``<network>.pt`` (a ``state_dict``
+  saved with ``torch.save(model.state_dict(), ...)``). The folder's ``README.md`` lists the expected files.
+- ``nn_runtime.py``: loads each network once, on first call, and runs it.
+- ``torch`` in ``requirements.txt`` (and in the ``Dockerfile`` when ``docker_image=True``).
+
+Calling the method runs the network on its parameters, in their declared order, as one input sample; the
+batch dimension is added for you. A method with a single list parameter uses that list as the whole sample
+(for example an image as nested lists). For a ``Patient`` class with ``score(height: float, weight: float)``:
+
+- Endpoint: ``POST /patient/methods/score/``
+- Request body: ``{"params": {"height": 1.7, "weight": 70.0}}``
+- Response ``result``: ``{"network": "scorer", "output": [0.42]}``
+
+Until the weights file exists, the endpoint answers ``503``; inputs that are not numbers, or that do not match
+the network's input shape, answer ``422``. Methods with the ``NEURAL_NETWORK`` type but no linked network
+answer ``501`` like any other method without an implementation.
 
 
 System Endpoints

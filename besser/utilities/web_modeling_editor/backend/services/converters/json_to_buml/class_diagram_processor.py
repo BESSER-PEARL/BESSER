@@ -5,8 +5,10 @@ Reads the v4 wire shape (``{nodes, edges}``) natively. See
 ``docs/source/migrations/uml-v4-shape.md`` for the spec.
 """
 
+import hashlib
+import json
 import logging
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
@@ -376,6 +378,7 @@ def _process_classes(
                 impl_type_str = impl_type_str.strip().lower()
             state_machine_id = method.get("stateMachineId", "")
             quantum_circuit_id = method.get("quantumCircuitId", "")
+            neural_network_id = method.get("neuralNetworkId", "")
 
             impl_type_map = {
                 "none": MethodImplementationType.NONE,
@@ -383,6 +386,7 @@ def _process_classes(
                 "bal": MethodImplementationType.BAL,
                 "state_machine": MethodImplementationType.STATE_MACHINE,
                 "quantum_circuit": MethodImplementationType.QUANTUM_CIRCUIT,
+                "neural_network": MethodImplementationType.NEURAL_NETWORK,
             }
             implementation_type = impl_type_map.get(impl_type_str, MethodImplementationType.NONE)
             if implementation_type == MethodImplementationType.NONE and method_code:
@@ -412,10 +416,13 @@ def _process_classes(
                 implementation_type=implementation_type,
             )
 
-            if state_machine_id or quantum_circuit_id:
+            # Diagram references are resolved later by project-level
+            # processing (see ``method_nn_linker`` for neural networks).
+            if state_machine_id or quantum_circuit_id or neural_network_id:
                 method_diagram_refs[(class_name, name)] = {
                     "stateMachineId": state_machine_id or "",
                     "quantumCircuitId": quantum_circuit_id or "",
+                    "neuralNetworkId": neural_network_id or "",
                 }
 
             if return_type:
@@ -428,6 +435,58 @@ def _process_classes(
                 method_id_to_method[method_id] = method_obj
 
     return class_id_to_class, method_id_to_method
+
+
+def _dedupe_end_name(name: str, owner_class, reserved: set[str] = frozenset()) -> str:
+    """Return *name* made unique among *owner_class*'s association-end names.
+
+    A class cannot have two association ends with the same name -- the metamodel
+    raises a hard ``ValueError`` otherwise. ``owner_class`` is the class that
+    navigates *via* the end being named, i.e. the class on the opposite side of
+    the end's own type (see :meth:`Class.association_ends`, which drops the end
+    whose ``type`` is the class itself). ``reserved`` lets a caller also avoid
+    names claimed by a sibling end in the same (self-)association that hasn't been
+    attached to the model yet.
+
+    Because ``owner_class.all_association_ends()`` reflects associations already
+    added earlier in the processing loop, calling this incrementally as each
+    association is built keeps every class's end names unique.
+    """
+    taken = {e.name for e in owner_class.all_association_ends()} | set(reserved)
+    if name not in taken:
+        return name
+    counter = 1
+    while f"{name}_{counter}" in taken:
+        counter += 1
+    return f"{name}_{counter}"
+
+
+def _read_end_navigable(
+    edge_data: dict[str, Any], side: str, legacy_default: bool, rel_id: str, all_warnings: list[str]
+) -> bool:
+    """Return the navigability of one relationship end.
+
+    v4 carries it as ``edge.data.sourceNavigable`` / ``edge.data.targetNavigable``
+    (see ``docs/source/migrations/uml-v4-shape.md``). When the key is missing
+    (payload saved before per-end navigability existed) the legacy default
+    inferred from the relationship type is used. A present but non-boolean
+    value (e.g. ``"false"`` or ``null``) is invalid: the legacy default is used
+    and a warning is recorded.
+    """
+    key = f"{side}Navigable"
+    if key not in edge_data:
+        return legacy_default
+    value = edge_data[key]
+    if isinstance(value, bool):
+        return value
+    logger.warning(
+        "Relationship %s: %s is not a boolean (%r); using %s.", rel_id, key, value, legacy_default
+    )
+    all_warnings.append(
+        f"Relationship '{rel_id}': {key} must be true or false (got {value!r}); "
+        f"defaulted it to {'navigable' if legacy_default else 'non-navigable'}."
+    )
+    return legacy_default
 
 
 def _process_relationships(
@@ -500,21 +559,62 @@ def _process_relationships(
 
         if rel_type in ("ClassBidirectional", "ClassUnidirectional", "ClassComposition", "ClassAggregation"):
             is_composite = rel_type == "ClassComposition"
-            source_navigable = rel_type != "ClassUnidirectional"
-            target_navigable = True
+            # Navigability is an explicit per-end boolean
+            # (``sourceNavigable`` / ``targetNavigable``); this applies to
+            # plain associations, compositions and aggregations alike.
+            # Payloads saved before the fields existed only carry the
+            # relationship type, so fall back to the legacy inference
+            # (legacy ``ClassUnidirectional`` => source non-navigable).
+            source_navigable = _read_end_navigable(
+                edge_data, "source", rel_type != "ClassUnidirectional", rel_id, all_warnings,
+            )
+            target_navigable = _read_end_navigable(edge_data, "target", True, rel_id, all_warnings)
+
+            # BinaryAssociation rejects a composition whose part end (source;
+            # the composite end is target) is not navigable. Correct such an
+            # invalid payload and report it, rather than failing the import.
+            if is_composite and not source_navigable:
+                logger.warning(
+                    "Relationship %s: the part end of a composition must be navigable; made source navigable.",
+                    rel_id,
+                )
+                all_warnings.append(
+                    f"Relationship '{rel_id}': the part (source) end of a composition must be navigable; "
+                    f"it was made navigable."
+                )
+                source_navigable = True
+
+            # BinaryAssociation also rejects an association with no navigable
+            # end. Correct the payload and report it, rather than failing the import.
+            if not source_navigable and not target_navigable:
+                logger.warning(
+                    "Relationship %s has no navigable end; made target navigable.", rel_id
+                )
+                all_warnings.append(
+                    f"Relationship '{rel_id}': at least one end must be navigable but both were not; "
+                    f"the target end was made navigable."
+                )
+                target_navigable = True
 
             source_multiplicity = parse_multiplicity(edge_data.get("sourceMultiplicity", "1"))
             target_multiplicity = parse_multiplicity(edge_data.get("targetMultiplicity", "1"))
 
-            source_role = edge_data.get("sourceRole")
-            if not source_role:
-                source_role = source_class.name.lower()
-                existing_roles = {end.name for assoc in domain_model.associations for end in assoc.ends}
-                if source_role in existing_roles:
-                    counter = 1
-                    while f"{source_role}_{counter}" in existing_roles:
-                        counter += 1
-                    source_role = f"{source_role}_{counter}"
+            # Association-end names must be unique per *owning* class, else the
+            # metamodel raises a hard ValueError. The owner of an end is the class
+            # on the opposite side of the end's own type: the source end (typed by
+            # source_class) is owned by target_class, and vice versa. Two
+            # associations can legitimately give one class an end with the same
+            # role name (e.g. two Loan->Member links both rolled "member"), so
+            # suffix such collisions deterministically. Covers both explicit
+            # roles and the auto-derived (class-name) fallbacks.
+            source_role = edge_data.get("sourceRole") or source_class.name.lower()
+            target_role = edge_data.get("targetRole") or target_class.name.lower()
+
+            source_role = _dedupe_end_name(source_role, target_class)
+            # For a self-association both ends are owned by the same class, so the
+            # target end must also avoid the name we just assigned the source end.
+            reserved = {source_role} if source_class is target_class else set()
+            target_role = _dedupe_end_name(target_role, source_class, reserved)
 
             source_property = Property(
                 name=source_role,
@@ -522,16 +622,6 @@ def _process_relationships(
                 multiplicity=source_multiplicity,
                 is_navigable=source_navigable,
             )
-
-            target_role = edge_data.get("targetRole")
-            if not target_role:
-                target_role = target_class.name.lower()
-                existing_roles = {end.name for assoc in domain_model.associations for end in assoc.ends}
-                if target_role in existing_roles:
-                    counter = 1
-                    while f"{target_role}_{counter}" in existing_roles:
-                        counter += 1
-                    target_role = f"{target_role}_{counter}"
 
             target_property = Property(
                 name=target_role,
@@ -556,7 +646,9 @@ def _process_relationships(
             domain_model.associations.add(association)
             association_by_id[rel_id] = association
 
-            rel_layout: dict[str, Any] = {}
+            # "source_role" records the drawn orientation so BUML -> JSON puts
+            # each end (and its saved handles / points) back on the same side.
+            rel_layout: dict[str, Any] = {"source_role": source_role}
             if edge_data.get("points"):
                 rel_layout["path"] = edge_data["points"]
             if edge_data.get("isManuallyLayouted") is not None:
@@ -565,8 +657,7 @@ def _process_relationships(
                 rel_layout["source_direction"] = edge["sourceHandle"]
             if edge.get("targetHandle"):
                 rel_layout["target_direction"] = edge["targetHandle"]
-            if rel_layout:
-                layout_positions[f"rel_{association_name}"] = rel_layout
+            layout_positions[f"rel_{association_name}"] = rel_layout
 
         elif rel_type == "ClassInheritance":
             generalization = Generalization(general=target_class, specific=source_class)
@@ -622,12 +713,34 @@ def _process_association_classes(
         domain_model.types.discard(class_obj)
         domain_model.types.add(association_class)
 
+        # Re-point everything that still holds the DISCARDED class. Class
+        # compares by identity, so an end left bound to the old object makes
+        # validate() report "referencing type 'X' which is not in the domain
+        # model" for a class plainly on the canvas.
+        for assoc in domain_model.associations:
+            for end in assoc.ends:
+                if end.type is class_obj:
+                    end.type = association_class
+                    # Without this association_ends() on the promoted class is
+                    # empty and generators omit its side of the association.
+                    association_class._add_association(assoc)
+        for generalization in domain_model.generalizations:
+            if generalization.general is class_obj:
+                generalization.general = association_class
+            if generalization.specific is class_obj:
+                generalization.specific = association_class
+        for some_type in domain_model.types:
+            for prop in getattr(some_type, "attributes", None) or ():
+                if prop.type is class_obj:
+                    prop.type = association_class
+
 
 def _ocl_box_to_full_text(
     ocl_row: dict[str, Any],
     owner_class: Optional[Class],
     method_id_to_method: dict[str, Method],
     warnings: list[str],
+    on_rejection: Optional[Callable[[str, str], None]] = None,
 ) -> Optional[str]:
     """Coerce an OCL constraint row to its canonical full-text form.
 
@@ -635,28 +748,40 @@ def _ocl_box_to_full_text(
     ``data.oclConstraints`` array; each row carries an ``expression``
     field with the canonical full text. Legacy body-only fields are
     accepted for backward compatibility with hand-authored fixtures.
+
+    Rejections are appended to ``warnings`` and, when ``on_rejection`` is
+    given, also reported as ``(code, reason)`` so the caller can record a
+    structured conversion issue.
     """
     raw = ocl_row.get("expression") or ocl_row.get("constraint")
     if not raw:
         return None
+
+    def reject(code: str, reason: str) -> None:
+        warnings.append(reason)
+        if on_rejection is not None:
+            on_rejection(code, reason)
 
     if raw.lstrip().lower().startswith("context"):
         return raw
 
     legacy_kind = ocl_row.get("kind")
     if not legacy_kind:
-        warnings.append(
+        reject(
+            "unsupported_shape",
             f"Warning: OCL constraint {ocl_row.get('id')!r} has no recognisable header "
             f"and no legacy 'kind' field; skipping."
         )
         return None
     if legacy_kind not in ("invariant", "precondition", "postcondition"):
-        warnings.append(
+        reject(
+            "unsupported_shape",
             f"Warning: OCL constraint {ocl_row.get('id')!r} has unknown kind {legacy_kind!r}; skipping."
         )
         return None
     if owner_class is None:
-        warnings.append(
+        reject(
+            "detached",
             f"Warning: legacy body-only OCL constraint {ocl_row.get('id')!r} has no owner class; skipping."
         )
         return None
@@ -665,13 +790,15 @@ def _ocl_box_to_full_text(
     if legacy_kind in ("precondition", "postcondition"):
         target_method_id = ocl_row.get("targetMethodId")
         if not target_method_id:
-            warnings.append(
+            reject(
+                "unknown_method",
                 f"Warning: legacy {legacy_kind} constraint {ocl_row.get('id')!r} has no targetMethodId; skipping."
             )
             return None
         method = method_id_to_method.get(target_method_id)
         if method is None:
-            warnings.append(
+            reject(
+                "unknown_method",
                 f"Warning: legacy {legacy_kind} constraint {ocl_row.get('id')!r} targets missing method "
                 f"{target_method_id}; skipping."
             )
@@ -686,7 +813,7 @@ def _ocl_box_to_full_text(
             method=method,
         )
     except ValueError as e:
-        warnings.append(f"Warning: legacy {legacy_kind} constraint {ocl_row.get('id')!r}: {e}")
+        reject("unsupported_shape", f"Warning: legacy {legacy_kind} constraint {ocl_row.get('id')!r}: {e}")
         return None
 
 
@@ -697,6 +824,9 @@ def _process_constraints(
     all_warnings: list[str],
     class_id_to_class: dict[str, Class],
     method_id_to_method: dict[str, Method],
+    *,
+    diagram_id: Optional[str] = None,
+    diagram_title: str = "",
 ) -> None:
     """Walk every class node's ``data.oclConstraints`` and any free-standing
     ``ClassOCLConstraint`` nodes.
@@ -706,7 +836,44 @@ def _process_constraints(
     (full ``context ...`` text), tethered to its class via a
     ``ClassOCLLink`` edge. The link resolves the owner class for legacy
     body-only rows; full-text rows derive the context from the OCL text
-    itself."""
+    itself.
+
+    Malformed OCL, unresolved methods, and duplicate names are skipped with a
+    warning rather than aborting conversion. Their original text is retained
+    as a structured conversion issue on ``domain_model.conversion_issues``,
+    never inserted into executable constraints or silently treated as an
+    implemented rule."""
+    conversion_issues: list[dict[str, Any]] = []
+    domain_model.conversion_issues = conversion_issues
+
+    def provenance(row: dict, owner_class: Optional[Class], details: Optional[dict] = None) -> dict:
+        details = details or {}
+        element_id = row.get("id")
+        original_text = row.get("expression") or row.get("constraint") or ""
+        context = details.get("context")
+        if context is None and owner_class is not None:
+            context = owner_class.name
+        target_method = method_id_to_method.get(row.get("targetMethodId"))
+        source = {
+            "diagram_id": diagram_id,
+            "diagram_title": diagram_title or domain_model.name,
+            "element_id": element_id,
+            "block_index": details.get("block_index", 1),
+        }
+        expression = details.get("expression", original_text)
+        identity = json.dumps([source, expression], sort_keys=True, ensure_ascii=False)
+        return {
+            "id": "ocl-conversion-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20],
+            "category": "ocl",
+            "source": source,
+            "context": context,
+            "method": details.get("method") or (target_method.name if target_method else None),
+            "name": details.get("name") or row.get("constraintName") or row.get("name"),
+            "kind": details.get("kind") or row.get("kind"),
+            "expression": expression,
+            "original_text": original_text,
+        }
+
     method_by_qualified_name: dict[tuple[str, str], Method] = {}
     duplicates: set[tuple[str, str]] = set()
 
@@ -741,7 +908,7 @@ def _process_constraints(
             f"ambiguous. Closest definition wins."
         )
 
-    extra_invariants: list = []
+    extra_invariants: list[tuple[Any, dict]] = []
     counter = 0
 
     # ClassOCLLink edges tether a free-standing constraint node to the
@@ -792,46 +959,68 @@ def _process_constraints(
             ocl_rows.append((row, owner_class))
 
     for row, owner_class in ocl_rows:
-        text = _ocl_box_to_full_text(row, owner_class, method_id_to_method, all_warnings)
+        text = _ocl_box_to_full_text(
+            row, owner_class, method_id_to_method, all_warnings,
+            on_rejection=lambda code, reason, row=row, owner_class=owner_class: conversion_issues.append({
+                **provenance(row, owner_class), "code": code, "reason": reason,
+            }),
+        )
         if not text:
             continue
         description = row.get("description")
         counter += 1
+        parser_issues: list[dict] = []
+        source_blocks: dict[int, dict] = {}
         try:
             routing, warnings = process_ocl_constraints(
                 text, domain_model, counter, default_description=description,
+                issues=parser_issues, source_blocks=source_blocks,
             )
         except (BOCLSyntaxError, ValueError) as e:
-            all_warnings.append(f"Warning: Error processing OCL element {row.get('id')!r}: {e}")
+            reason = f"Warning: Error processing OCL element {row.get('id')!r}: {e}"
+            all_warnings.append(reason)
+            conversion_issues.append({**provenance(row, owner_class), "code": "parse_error", "reason": reason})
             continue
         all_warnings.extend(warnings)
+        for issue in parser_issues:
+            conversion_issues.append({
+                **provenance(row, owner_class, issue),
+                "code": issue["code"], "reason": issue["reason"],
+            })
 
         for kind, constraint, class_name, method_name in routing:
+            origin = provenance(row, owner_class, source_blocks.get(id(constraint)))
             try:
                 if kind == "invariant":
-                    extra_invariants.append(constraint)
+                    extra_invariants.append((constraint, origin))
                 else:
                     method = method_by_qualified_name.get((class_name, method_name)) if method_name else None
                     if method is None:
-                        all_warnings.append(
+                        reason = (
                             f"Warning: {kind} '{constraint.name}' targets unknown method "
                             f"{class_name}::{method_name}; skipping."
                         )
+                        all_warnings.append(reason)
+                        conversion_issues.append({**origin, "code": "unknown_method", "reason": reason})
                         continue
                     if kind == "precondition":
                         method.add_pre(constraint)
                     else:
                         method.add_post(constraint)
             except ValueError as e:
-                all_warnings.append(f"Warning: Could not attach {kind} '{constraint.name}': {e}")
+                reason = f"Warning: Could not attach {kind} '{constraint.name}': {e}"
+                all_warnings.append(reason)
+                conversion_issues.append({**origin, "code": "attachment_error", "reason": reason})
 
     by_name: dict[str, Any] = {c.name: c for c in domain_model.constraints}
-    for c in extra_invariants:
+    for c, origin in extra_invariants:
         if c.name in by_name and by_name[c.name] is not c:
-            all_warnings.append(
+            reason = (
                 f"Warning: duplicate constraint name {c.name!r} across OCL boxes; "
                 f"keeping the first occurrence."
             )
+            all_warnings.append(reason)
+            conversion_issues.append({**origin, "code": "duplicate_name", "reason": reason})
             continue
         by_name[c.name] = c
     domain_model.ocl_warnings = all_warnings
@@ -889,6 +1078,7 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     _process_constraints(
         nodes, edges, domain_model, all_warnings,
         class_id_to_class, method_id_to_method,
+        diagram_id=json_data.get("id"), diagram_title=json_data.get("title", ""),
     )
 
     # Apply collected comments.
@@ -919,7 +1109,11 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
                     domain_model.metadata.description = comment_text
 
     domain_model.association_by_id = association_by_id
+    # Keyed by (class_name, method_name) ->
+    # {"stateMachineId": ..., "quantumCircuitId": ..., "neuralNetworkId": ...}
     domain_model.method_diagram_refs = method_diagram_refs
+    # WME node-id -> Class side-map for project-level cross-diagram resolution.
+    domain_model._wme_class_index = dict(class_id_to_class)
     domain_model._layout_positions = layout_positions
 
     return domain_model

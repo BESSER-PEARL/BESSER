@@ -1,28 +1,89 @@
 """
 Agent BUML -> v4 JSON converter.
 
-Emits the v4 wire shape (``{nodes, edges}``) directly. ``AgentStateTransition``
+The agent code is parsed (``ast``) into a flat element index keyed by id
+(states, their action rows, comments, components, transitions), which
+``_flat_to_v4`` then turns into the v4 wire shape: canvas ``nodes`` /
+``edges`` plus the off-canvas ``components`` map. ``AgentStateTransition``
 edges are emitted in the canonical form (``transitionType +
-predefined|custom``) — legacy variants are an *input* concern handled by
-the agent processor's ``_normalise_agent_transitions``.
+predefined|custom``); legacy variants are an *input* concern handled by the
+agent processor's ``_normalise_agent_transitions``.
 """
 
-import logging
-import uuid
 import ast
-from typing import Dict, Any
+import logging
+import textwrap
+import uuid
+from typing import Any, Dict, List
+
+from besser.utilities.buml_code_builder.agent_model_builder import GUI_BUILDER_FUNCTION_PREFIX
+from .gui_diagram_converter import gui_buml_to_json
+from ._node_builders import make_edge, make_node
+from ...utils.layout_calculator import (
+    determine_connection_direction,
+    calculate_connection_points,
+    calculate_path_points,
+    calculate_relationship_bounds,
+)
 
 logger = logging.getLogger(__name__)
 
-from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._node_builders import (
-    make_node, make_edge,
-)
+
+def _extract_agent_guis(tree: ast.Module, content: str) -> Dict[str, Dict[str, Any]]:
+    """Pull the agent GUIs out of the parsed agent module.
+
+    ``agent_model_builder`` emits each GUI as a builder function followed by
+    ``agent.add_gui_model('<gui_id>', <builder>())``. Each function body is GUI B-UML code
+    (the ``gui_model_to_code`` output) and is converted with :func:`gui_buml_to_json`.
+    The function definitions and ``add_gui_model`` statements are removed from ``tree``
+    so the agent passes below never walk the GUI code.
+
+    Returns:
+        dict: gui id -> GrapesJS JSON of the GUI.
+    """
+    builders = {
+        node.name: node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith(GUI_BUILDER_FUNCTION_PREFIX)
+    }
+    gui_jsons: Dict[str, Dict[str, Any]] = {}
+    consumed: List[ast.stmt] = []
+    for node in tree.body:
+        call = node.value if isinstance(node, ast.Expr) else None
+        if not (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "add_gui_model"
+            and len(call.args) == 2
+            and isinstance(call.args[0], ast.Constant)
+            and isinstance(call.args[0].value, str)
+            and isinstance(call.args[1], ast.Call)
+            and isinstance(call.args[1].func, ast.Name)
+            and call.args[1].func.id in builders
+        ):
+            continue
+        builder = builders[call.args[1].func.id]
+        statements = [stmt for stmt in builder.body if not isinstance(stmt, ast.Return)]
+        lines = content.splitlines()[statements[0].lineno - 1:statements[-1].end_lineno] if statements else []
+        gui_jsons[call.args[0].value] = gui_buml_to_json(textwrap.dedent("\n".join(lines)))
+        consumed.extend((node, builder))
+    tree.body = [node for node in tree.body if all(node is not done for done in consumed)]
+    return gui_jsons
 
 
 def analyze_function_node(node: ast.FunctionDef, source_code: str) -> Dict[str, Any]:
-    """Analyze a function node to determine its reply type and content."""
+    """
+    Analyze a function node to determine its reply type and content.
+
+    Args:
+        node: AST function definition node
+        source_code: Source code of the function
+
+    Returns:
+        Dictionary with reply type and content information
+    """
     body = node.body
 
+    # Case 1: Only session.reply("constant")
     replies = []
     if all(
         isinstance(stmt, ast.Expr) and
@@ -38,8 +99,12 @@ def analyze_function_node(node: ast.FunctionDef, source_code: str) -> Dict[str, 
     ):
         for stmt in body:
             replies.append(stmt.value.args[0].value)
-        return {"replyType": "text", "replies": replies}
+        return {
+            "replyType": "text",
+            "replies": replies
+        }
 
+    # Case 2: One line session.reply(llm.predict(session.event.message))
     if len(body) == 1:
         stmt = body[0]
         if (
@@ -69,59 +134,139 @@ def analyze_function_node(node: ast.FunctionDef, source_code: str) -> Dict[str, 
                     isinstance(msg_arg.value.value, ast.Name) and
                     msg_arg.value.value.id == 'session'
                 ):
-                    return {"replyType": "llm"}
+                    return {
+                        "replyType": "llm"
+                    }
 
-    return {"replyType": "code", "code": source_code}
-
-
-def _make_body_row(name: str, reply_type: str, **extras) -> dict:
-    row: dict = {"id": str(uuid.uuid4()), "name": name, "replyType": reply_type}
-    for k, v in extras.items():
-        if v is not None:
-            row[k] = v
-    return row
+    # Case 3: Default fallback
+    return {
+        "replyType": "code",
+        "code": source_code
+    }
 
 
-def agent_buml_to_json(content: str) -> Dict[str, Any]:
-    """Convert an agent Python file to the v4 ``{nodes, edges}`` wire shape."""
-    nodes: list = []
-    edges: list = []
+def _agent_buml_to_flat_json(content: str) -> Dict[str, Any]:
+    """
+    Convert an agent Python file content to JSON format matching the frontend structure.
 
+    Args:
+        content: Agent model Python code as string
+
+    Returns:
+        Dictionary representing the agent diagram in JSON format
+    """
+    # Initialize structures
+    elements = {}
+    relationships = {}
+
+    # Default diagram size
+    default_size = {"width": 1980, "height": 640}
+
+    # Track positions for layout
     states_x = -550
     states_y = -300
 
+    # Parse the Python code
     tree = ast.parse(content)
-    states: dict = {}
-    functions: dict = {}
-    intents: dict = {}
-    intent_var_to_name: dict = {}
-    state_var_to_name: dict = {}
-    state_comments: dict = {}
-    agent_comment = None
+    gui_jsons = _extract_agent_guis(tree, content)
+    # gui id -> AgentGUI settings (persist/width/is_form) read from the GUIReplyAction calls
+    gui_settings: Dict[str, Dict[str, Any]] = {}
+    # Track states and functions
+    states = {}  # name -> state_id mapping
+    functions = {}  # name -> function_node mapping
+    intents = {}  # name -> intent_id mapping
+    # Map Python variable identifier -> declared intent/state name. Needed because
+    # ``agent_model_builder`` emits lowercased identifiers (``muscles_intent``) that
+    # bind to the original PascalCase name passed as the first positional arg
+    # (``agent.new_intent('Muscles_intent', ...)``). Transitions reference the
+    # variable, so without these maps we'd round-trip the slug back to the
+    # frontend as the canonical intent/state name and break casing.
+    intent_var_to_name = {}
+    state_var_to_name = {}
 
-    intent_id_by_name: dict = {}
 
-    def _bodies_for_action(action_data, state_node_id: str, fallback: bool = False) -> list:
-        result: list = []
+    # Track metadata for comments
+    state_comments = {}  # state_var -> comment_text
+    agent_comment = None  # Agent metadata comment
+
+    def _add_action_elements_to_state(state_id: str, action_data: Any, fallback: bool = False) -> None:
+        element_type = "AgentStateFallbackBody" if fallback else "AgentStateBody"
+        state_key = "fallbackActions" if fallback else "actions"
+
         if not isinstance(action_data, list):
-            return result
+            return
+
         for action in action_data:
             if not isinstance(action, dict):
                 continue
-            t = action.get("type")
-            if t == "text":
-                msg = (action.get("message") or "").replace("\\'", "'")
-                result.append(_make_body_row(msg, "text"))
-            elif t == "llm":
-                # The system prompt rides on the row ``name`` (the
-                # inspector's "System prompt" textarea); ``llm_name`` is an
-                # optional passthrough.
-                result.append(_make_body_row(
-                    action.get("prompt") or "AI response 🪄",
-                    "llm",
-                    llm_name=action.get("llm_name") or None,
-                ))
-            elif t == "rag":
+
+            action_type = action.get("type")
+            if action_type == "text":
+                message = action.get("message") or ""
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": message,
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "actionType": "TextReplyAction",
+                    "useSessionVars": bool(action.get("useSessionVars", False)),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "llm":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": "LLM Reply",
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "actionType": "LLMReplyAction",
+                    "replyType": "llm",
+                    "system_message": action.get("prompt") or "",
+                    "llm_name": action.get("llm_name", "") or "",
+                    "inputPromptMode": action.get("inputPromptMode", "last_user_message") or "last_user_message",
+                    "customInputPrompt": action.get("customInputPrompt", "") or "",
+                    "customInputPromptUseSessionVars": bool(action.get("customInputPromptUseSessionVars", False)),
+                    "systemPromptUseSessionVars": bool(action.get("systemPromptUseSessionVars", False)),
+                    "storeInSession": action.get("storeInSession", "") or "",
+                    "sendReply": bool(action.get("sendReply", True)),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "llm_chat":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": "LLM Chat",
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "actionType": "LLMChatAction",
+                    "replyType": "llm_chat",
+                    "system_message": action.get("prompt") or "",
+                    "llm_name": action.get("llm_name", "") or "",
+                    "systemPromptUseSessionVars": bool(action.get("systemPromptUseSessionVars", False)),
+                    "storeInSession": action.get("storeInSession", "") or "",
+                    "sendReply": bool(action.get("sendReply", True)),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "rag":
                 rag_db_name = action.get("ragDatabaseName") or ""
                 rag_prompt = action.get("prompt") or ""
                 display_name = (
@@ -129,12 +274,30 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     if rag_db_name
                     else "RAG reply"
                 )
-                result.append(_make_body_row(
-                    display_name, "rag",
-                    ragDatabaseName=rag_db_name,
-                    prompt=rag_prompt or None,
-                ))
-            elif t == "db_reply":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": display_name,
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "actionType": "RAGReplyAction",
+                    "ragDatabaseName": rag_db_name,
+                    "prompt": rag_prompt,
+                    "inputPromptMode": action.get("inputPromptMode", "last_user_message") or "last_user_message",
+                    "customInputPrompt": action.get("customInputPrompt", "") or "",
+                    "customInputPromptUseSessionVars": bool(action.get("customInputPromptUseSessionVars", False)),
+                    "promptUseSessionVars": bool(action.get("promptUseSessionVars", False)),
+                    "storeInSession": action.get("storeInSession", "") or "",
+                    "sendReply": bool(action.get("sendReply", True)),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "db_reply":
                 db_selection_type = action.get("dbSelectionType") or "default"
                 db_custom_name = action.get("dbCustomName") or ""
                 db_query_mode = action.get("dbQueryMode") or "llm_query"
@@ -143,80 +306,188 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 database_label = db_custom_name if db_selection_type == "custom" and db_custom_name else "Default database"
                 mode_label = "SQL" if db_query_mode == "sql" else "LLM query"
                 operation_label = "Any" if db_operation == "any" else db_operation.upper()
-                result.append(_make_body_row(
-                    f"DB action using {database_label} ({mode_label}, {operation_label})",
-                    "db_reply",
-                    dbSelectionType=db_selection_type,
-                    dbCustomName=db_custom_name,
-                    dbQueryMode=db_query_mode,
-                    dbOperation=db_operation,
-                    dbSqlQuery=db_sql_query,
-                    llm_name=action.get("llm_name") or None,
-                ))
-            elif t == "llm_chat":
-                result.append(_make_body_row(
-                    action.get("prompt") or "AI response 🪄",
-                    "llm_chat",
-                    llm_name=action.get("llm_name") or None,
-                ))
-            elif t == "web_crawl_llm":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": f"DB action using {database_label} ({mode_label}, {operation_label})",
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "actionType": "DBAction",
+                    "dbSelectionType": db_selection_type,
+                    "dbCustomName": db_custom_name,
+                    "dbQueryMode": db_query_mode,
+                    "dbOperation": db_operation,
+                    "dbSqlQuery": db_sql_query,
+                    "llm_name": action.get("llm_name", "") or "",
+                    "inputPromptMode": action.get("inputPromptMode", "last_user_message") or "last_user_message",
+                    "customInputPrompt": action.get("customInputPrompt", "") or "",
+                    "customInputPromptUseSessionVars": bool(action.get("customInputPromptUseSessionVars", False)),
+                    "storeInSession": action.get("storeInSession", "") or "",
+                    "sendReply": bool(action.get("sendReply", True)),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "web_crawl_llm":
                 initial_url = action.get("initial_url") or ""
                 display_name = f"Web Crawl + LLM: {initial_url}" if initial_url else "Web Crawl + LLM Reply"
-                result.append(_make_body_row(
-                    display_name,
-                    "web_crawl_llm",
-                    initial_url=initial_url,
-                    max_depth=action.get("max_depth", 2),
-                    max_pages=action.get("max_pages", 20),
-                    crawl_format=action.get("crawl_format", "markdown"),
-                    base_url_prefix=action.get("base_url_prefix", ""),
-                    run_crawl=action.get("run_crawl", True),
-                    no_crawl_error_message=action.get("no_crawl_error_message", "No web crawl data is available yet."),
-                    system_message_prefix=action.get("system_message_prefix", ""),
-                    llm_name=action.get("llm_name") or None,
-                ))
-            elif t == "ws_markdown":
-                result.append(_make_body_row(
-                    "Reply Markdown", "ws_markdown",
-                    ws_message=action.get("ws_message") or action.get("message") or "",
-                ))
-            elif t == "ws_html":
-                result.append(_make_body_row(
-                    "Reply HTML", "ws_html",
-                    ws_message=action.get("ws_message") or action.get("message") or "",
-                ))
-            elif t == "ws_speech":
-                result.append(_make_body_row(
-                    "Reply Speech", "ws_speech",
-                    ws_message=action.get("ws_message") or action.get("message") or "",
-                    ws_audio_speed=action.get("ws_audio_speed"),
-                ))
-            elif t == "ws_options":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": display_name,
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "actionType": "WebCrawlLLMAction",
+                    "replyType": "web_crawl_llm",
+                    "initial_url": initial_url,
+                    "max_depth": action.get("max_depth", 2),
+                    "max_pages": action.get("max_pages", 20),
+                    "crawl_format": action.get("crawl_format", "markdown"),
+                    "base_url_prefix": action.get("base_url_prefix", ""),
+                    "run_crawl": action.get("run_crawl", True),
+                    "no_crawl_error_message": action.get("no_crawl_error_message", "No web crawl data is available yet."),
+                    "system_message_prefix": action.get("system_message_prefix", ""),
+                    "systemMessagePrefixUseSessionVars": bool(action.get("systemMessagePrefixUseSessionVars", False)),
+                    "llm_name": action.get("llm_name", "") or "",
+                    "storeInSession": action.get("storeInSession", "") or "",
+                    "sendReply": bool(action.get("sendReply", True)),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_markdown":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Markdown", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyMarkdownAction", "replyType": "ws_markdown",
+                    "ws_message": action.get("ws_message") or action.get("message") or "",
+                    "useSessionVars": bool(action.get("useSessionVars", False)),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_html":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply HTML", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyHTMLAction", "replyType": "ws_html",
+                    "ws_message": action.get("ws_message") or action.get("message") or "",
+                    "useSessionVars": bool(action.get("useSessionVars", False)),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_speech":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Speech", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplySpeechAction", "replyType": "ws_speech",
+                    "ws_message": action.get("ws_message") or action.get("message") or "",
+                    "ws_audio_speed": action.get("ws_audio_speed"),
+                    "useSessionVars": bool(action.get("useSessionVars", False)),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_options":
+                body_id = str(uuid.uuid4())
                 opts = action.get("ws_options") or action.get("options") or ""
                 if isinstance(opts, list):
                     opts = "\n".join(opts)
-                result.append(_make_body_row("Reply Options", "ws_options", ws_options=opts))
-            elif t == "ws_location":
-                result.append(_make_body_row(
-                    "Reply Location", "ws_location",
-                    ws_latitude=float(action.get("ws_latitude") or action.get("latitude") or 0.0),
-                    ws_longitude=float(action.get("ws_longitude") or action.get("longitude") or 0.0),
-                ))
-            elif t == "ws_file":
-                result.append(_make_body_row("Reply File", "ws_file"))
-            elif t == "ws_image":
-                result.append(_make_body_row("Reply Image", "ws_image"))
-            elif t == "ws_dataframe":
-                result.append(_make_body_row("Reply Dataframe", "ws_dataframe"))
-            elif t == "ws_plotly":
-                result.append(_make_body_row("Reply Plotly", "ws_plotly"))
-        return result
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Options", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyOptionsAction", "replyType": "ws_options",
+                    "ws_options": opts,
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_location":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Location", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyLocationAction", "replyType": "ws_location",
+                    "ws_latitude": float(action.get("ws_latitude") or action.get("latitude") or 0.0),
+                    "ws_longitude": float(action.get("ws_longitude") or action.get("longitude") or 0.0),
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_file":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply File", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyFileAction", "replyType": "ws_file",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_image":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Image", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyImageAction", "replyType": "ws_image",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_dataframe":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Dataframe", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyDataframeAction", "replyType": "ws_dataframe",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "ws_plotly":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": "Reply Plotly", "type": element_type, "owner": state_id,
+                    "bounds": {"x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"], "width": 159, "height": 30},
+                    "actionType": "WebSocketReplyPlotlyAction", "replyType": "ws_plotly",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "gui_reply":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id, "name": f"GUI Reply: {action['guiId']}", "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"], "y": elements[state_id]["bounds"]["y"],
+                        "width": 159, "height": 30,
+                    },
+                    "actionType": "GUIReplyAction", "replyType": "gui_reply",
+                    "guiId": action["guiId"],
+                }
+                elements[state_id][state_key].append(body_id)
 
     try:
-        # First pass: collect intents, RAG dbs, and Agent metadata.
+        # Pre-pass: collect RAGVectorStore variable bindings (var_name → {embedding_provider, ...})
+        # so they can be emitted back onto AgentRagElement when found in new_rag() calls.
+        rag_vector_store_vars: Dict[str, Dict] = {}
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "RAGVectorStore"
+            ):
+                vs_info: Dict = {}
+                for kw in node.value.keywords:
+                    try:
+                        vs_info[kw.arg] = ast.literal_eval(kw.value)
+                    except (ValueError, SyntaxError):
+                        pass
+                rag_vector_store_vars[node.targets[0].id] = vs_info
+
+        # First pass: collect all intents and Agent metadata
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
                 if isinstance(node.value, ast.Call):
+                    # Check for Agent instantiation with metadata
                     if isinstance(node.value.func, ast.Name) and node.value.func.id == "Agent":
                         for kw in node.value.keywords:
                             if kw.arg == "metadata":
@@ -230,43 +501,62 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     ):
                         intent_id = str(uuid.uuid4())
                         intent_name = None
+                        sentences = []
                         intent_description = ""
-                        body_rows: list = []
 
                         args = node.value.args
                         intent_name = ast.literal_eval(args[0])
+
                         for kw in node.value.keywords:
                             if kw.arg == "description":
                                 intent_description = ast.literal_eval(kw.value)
 
                         if len(args) >= 2 and isinstance(args[1], ast.List):
                             for elt in args[1].elts:
-                                if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                    body_rows.append({
-                                        "id": str(uuid.uuid4()),
-                                        "name": elt.value.replace("\\'", "'"),
-                                    })
+                                if isinstance(elt, ast.Constant) and isinstance(
+                                    elt.value, str
+                                ):
+                                    sentence_id = str(uuid.uuid4())
+                                    elements[sentence_id] = {
+                                        "id": sentence_id,
+                                        "name": elt.value,
+                                        "type": "AgentIntentBody",
+                                        "owner": intent_id,
+                                        "bounds": {
+                                            "x": states_x,
+                                            "y": states_y,
+                                            "width": 160,
+                                            "height": 30,
+                                        },
+                                    }
+                                    sentences.append(sentence_id)
 
                         if intent_name:
-                            intents[intent_name] = {"id": intent_id, "name": intent_name}
-                            intent_id_by_name[intent_name] = intent_id
-                            if node.targets and isinstance(node.targets[0], ast.Name):
+                            intents[intent_name] = {
+                                "id": intent_id,
+                                "name": intent_name,
+                            }
+                            if (
+                                node.targets
+                                and isinstance(node.targets[0], ast.Name)
+                            ):
                                 intent_var_to_name[node.targets[0].id] = intent_name
-                            nodes.append(make_node(
-                                node_id=intent_id,
-                                type_="AgentIntent",
-                                data={
-                                    "name": intent_name,
-                                    "intent_description": intent_description,
-                                    # The frontend reads training utterances
-                                    # from ``data.training_phrases``
-                                    # (``AgentIntentNodeProps``).
-                                    "training_phrases": body_rows,
+
+                            elements[intent_id] = {
+                                "id": intent_id,
+                                "name": intent_name,
+                                "type": "AgentIntent",
+                                "owner": None,
+                                "bounds": {
+                                    "x": states_x,
+                                    "y": states_y,
+                                    "width": 160,
+                                    "height": 100,
                                 },
-                                position={"x": states_x, "y": states_y},
-                                width=160,
-                                height=100,
-                            ))
+                                "bodies": sentences,
+                                "intent_description": intent_description,
+                            }
+
                             if states_x < 200:
                                 states_x += 300
                             else:
@@ -279,12 +569,18 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         rag_name = None
                         rag_llm_name = ""
                         rag_llm_prompt = ""
+                        rag_k = 4
+                        rag_num_previous_messages = 0
+                        rag_use_hybrid_rag = False
+                        rag_bm25_weight = 0.6
+                        rag_vector_store_var = None
                         if (
                             node.value.args
                             and isinstance(node.value.args[0], ast.Constant)
                             and isinstance(node.value.args[0].value, str)
                         ):
                             rag_name = node.value.args[0].value
+
                         for kw in node.value.keywords:
                             if (
                                 kw.arg == "name"
@@ -297,36 +593,70 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 and isinstance(kw.value, ast.Constant)
                                 and isinstance(kw.value.value, str)
                             ):
-                                # Registered-LLM reference; empty means
-                                # "(use default)" at codegen time.
                                 rag_llm_name = kw.value.value
-                            elif (
-                                kw.arg == "llm_prompt"
-                                and isinstance(kw.value, ast.Constant)
-                                and isinstance(kw.value.value, str)
-                            ):
-                                # Optional prefix instructions injected before
-                                # each RAG prompt; ``None`` in code -> "" here.
-                                rag_llm_prompt = kw.value.value
+                            elif kw.arg == "llm_prompt":
+                                if isinstance(kw.value, ast.Constant):
+                                    rag_llm_prompt = kw.value.value or ""
+                            elif kw.arg == "k":
+                                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, int):
+                                    rag_k = kw.value.value
+                            elif kw.arg == "num_previous_messages":
+                                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, int):
+                                    rag_num_previous_messages = kw.value.value
+                            elif kw.arg == "use_hybrid_rag":
+                                if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, bool):
+                                    rag_use_hybrid_rag = kw.value.value
+                            elif kw.arg == "bm25_weight":
+                                if (
+                                    isinstance(kw.value, ast.Constant)
+                                    and isinstance(kw.value.value, (int, float))
+                                    and not isinstance(kw.value.value, bool)
+                                ):
+                                    rag_bm25_weight = float(kw.value.value)
+                            elif kw.arg == "vector_store" and isinstance(kw.value, ast.Name):
+                                rag_vector_store_var = kw.value.id
+
+                        vs_info = rag_vector_store_vars.get(rag_vector_store_var or "", {})
+                        rag_embedding_provider = vs_info.get("embedding_provider", "openai")
+                        rag_embedding_params = vs_info.get("embedding_parameters") or {}
+                        rag_embedding_base_url = rag_embedding_params.get("base_url", "")
+                        rag_embedding_model = rag_embedding_params.get("model", "")
+
                         if isinstance(rag_name, str) and rag_name.strip():
-                            nodes.append(make_node(
-                                node_id=str(uuid.uuid4()),
-                                type_="AgentRagElement",
-                                data={"name": rag_name, "llm_name": rag_llm_name, "llm_prompt": rag_llm_prompt},
-                                position={"x": states_x, "y": states_y},
-                                width=120,
-                                height=110,
-                            ))
+                            rag_id = str(uuid.uuid4())
+                            elements[rag_id] = {
+                                "id": rag_id,
+                                "name": rag_name,
+                                "type": "AgentRagElement",
+                                "owner": None,
+                                "bounds": {
+                                    "x": states_x,
+                                    "y": states_y,
+                                    "width": 120,
+                                    "height": 110,
+                                },
+                                "llm_name": rag_llm_name,
+                                        "llm": rag_llm_name,
+                                "llm_prompt": rag_llm_prompt,
+                                "k": rag_k,
+                                "num_previous_messages": rag_num_previous_messages,
+                                        "numPreviousMessages": rag_num_previous_messages,
+                                "use_hybrid_rag": rag_use_hybrid_rag,
+                                "bm25_weight": rag_bm25_weight,
+                                "embedding_provider": rag_embedding_provider,
+                                "embedding_base_url": rag_embedding_base_url,
+                                "embedding_model": rag_embedding_model,
+                            }
                             if states_x < 200:
                                 states_x += 300
                             else:
                                 states_x = -280
                                 states_y += 220
 
-        # Collect Tool / Skill / Workspace primitives. The model builder
-        # emits them as bare expression statements (``agent.new_tool(...)``),
-        # not assignments, so this scan walks every Call node separately
-        # from the Assign-based loop above.
+        # Collect Tool/Skill/Workspace primitives. The model_builder emits
+        # them as bare expression statements (``agent.new_tool(...)``), not
+        # assignments, so this scan is separate from the Assign-based loop
+        # above and walks every Call node.
         primitive_factories = {"new_tool", "new_skill", "new_workspace"}
         seen_primitive_calls: set = set()
         for call_node in ast.walk(tree):
@@ -358,173 +688,78 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             if not isinstance(primitive_name, str) or not primitive_name.strip():
                 continue
 
+            primitive_id = str(uuid.uuid4())
+            base_bounds = {
+                "x": states_x,
+                "y": states_y,
+                "width": 160,
+                "height": 80,
+            }
             if builder_attr == "new_tool":
-                primitive_type = "AgentTool"
-                primitive_data: Dict[str, Any] = {
+                primitive_element = {
+                    "id": primitive_id,
                     "name": primitive_name,
+                    "type": "AgentTool",
+                    "owner": None,
+                    "bounds": base_bounds,
                     "description": primitive_kwargs.get("description", "") or "",
                     "code": primitive_kwargs.get("code", "") or "",
                 }
             elif builder_attr == "new_skill":
-                primitive_type = "AgentSkill"
-                primitive_data = {
+                primitive_element = {
+                    "id": primitive_id,
                     "name": primitive_name,
+                    "type": "AgentSkill",
+                    "owner": None,
+                    "bounds": base_bounds,
                     "content": primitive_kwargs.get("content", "") or "",
-                    "description": primitive_kwargs.get("description") or "",
+                    "description": primitive_kwargs.get("description"),
                 }
             else:  # new_workspace
-                primitive_type = "AgentWorkspace"
-                primitive_data = {
+                primitive_element = {
+                    "id": primitive_id,
                     "name": primitive_name,
+                    "type": "AgentWorkspace",
+                    "owner": None,
+                    "bounds": base_bounds,
                     "path": primitive_kwargs.get("path", "") or "",
-                    "description": primitive_kwargs.get("description") or "",
+                    "description": primitive_kwargs.get("description"),
                     "writable": bool(primitive_kwargs.get("writable", True)),
                     "max_read_bytes": int(primitive_kwargs.get("max_read_bytes", 200_000)),
                 }
-            nodes.append(make_node(
-                node_id=str(uuid.uuid4()),
-                type_=primitive_type,
-                data=primitive_data,
-                position={"x": states_x, "y": states_y},
-                width=160,
-                height=80,
-            ))
+            elements[primitive_id] = primitive_element
             if states_x < 200:
                 states_x += 300
             else:
                 states_x = -280
                 states_y += 220
 
-        # Build a var-name -> LLM name map so reasoning states can resolve
-        # their ``llm=...`` kwarg back to the registered LLM name when the
-        # builder emitted a variable reference instead of a literal.
-        # Also collects full LLM definitions so we can emit ``AgentLLM``
-        # data-only nodes for each registered LLM (the Agent
-        # Customization panel's LLMs card round-trips through these).
-        llm_var_to_name: Dict[str, str] = {}
-        # Insertion-ordered name -> definition map.
-        llm_definitions: Dict[str, Dict[str, Any]] = {}
-        _direct_llm_class_to_provider = {
-            "LLMOpenAI": "openai",
-            "LLMHuggingFace": "huggingface",
-            "LLMHuggingFaceAPI": "huggingface_api",
-            "LLMReplicate": "replicate",
-        }
-
-        def _collect_llm_kwargs(call: ast.Call) -> Dict[str, Any]:
-            collected: Dict[str, Any] = {}
-            for kw in call.keywords:
-                if kw.arg is None:
-                    continue
-                try:
-                    collected[kw.arg] = ast.literal_eval(kw.value)
-                except (ValueError, SyntaxError):
-                    continue
-            return collected
-
-        for node in ast.walk(tree):
-            if not (
-                isinstance(node, ast.Assign)
-                and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
-                and isinstance(node.value, ast.Call)
-            ):
-                continue
-            var_id = node.targets[0].id
-            # Legacy direct constructor: ``LLMOpenAI(agent=..., name=..., parameters=...)``
-            if (
-                isinstance(node.value.func, ast.Name)
-                and node.value.func.id in _direct_llm_class_to_provider
-            ):
-                llm_kwargs = _collect_llm_kwargs(node.value)
-                resolved_name = llm_kwargs.get("name")
-                if isinstance(resolved_name, str) and resolved_name:
-                    llm_var_to_name[var_id] = resolved_name
-                    llm_definitions.setdefault(resolved_name, {
-                        "provider": _direct_llm_class_to_provider[node.value.func.id],
-                        "parameters": llm_kwargs.get("parameters") or {},
-                        "num_previous_messages": llm_kwargs.get("num_previous_messages", 1),
-                        "global_context": llm_kwargs.get("global_context"),
-                    })
-            # New canonical form: ``agent.new_llm(name='...', provider='...', parameters=..., ...)``
-            elif (
-                isinstance(node.value.func, ast.Attribute)
-                and node.value.func.attr == "new_llm"
-            ):
-                llm_kwargs = _collect_llm_kwargs(node.value)
-                resolved_name = llm_kwargs.get("name")
-                if isinstance(resolved_name, str) and resolved_name:
-                    llm_var_to_name[var_id] = resolved_name
-                    llm_definitions.setdefault(resolved_name, {
-                        "provider": (llm_kwargs.get("provider") or "openai"),
-                        "parameters": llm_kwargs.get("parameters") or {},
-                        "num_previous_messages": llm_kwargs.get("num_previous_messages", 1),
-                        "global_context": llm_kwargs.get("global_context"),
-                    })
-
-        # Detect ``agent.set_default_llm('...')`` so we can round-trip the
-        # default-LLM choice through a ``config.default_llm_name`` payload
-        # (the LLM list itself is not rendered on the canvas).
-        default_llm_name_value = None
-        for call_node in ast.walk(tree):
-            if (
-                isinstance(call_node, ast.Call)
-                and isinstance(call_node.func, ast.Attribute)
-                and call_node.func.attr == "set_default_llm"
-                and call_node.args
-                and isinstance(call_node.args[0], ast.Constant)
-                and isinstance(call_node.args[0].value, str)
-            ):
-                default_llm_name_value = call_node.args[0].value
-
-        # Fallback: when no explicit set_default_llm is present, the agent's
-        # default is the first registered LLM (mirroring the metamodel).
-        if default_llm_name_value is None and llm_definitions:
-            default_llm_name_value = next(iter(llm_definitions))
-
-        # Emit AgentLLM nodes (one per registered LLM) so the WME
-        # round-trips the LLM list defined in the agent customization tab.
-        llm_y = 40
-        for llm_name, llm_def in llm_definitions.items():
-            nodes.append(make_node(
-                node_id=str(uuid.uuid4()),
-                type_="AgentLLM",
-                data={
-                    "name": llm_name,
-                    "provider": llm_def.get("provider", "openai"),
-                    "parameters": llm_def.get("parameters") or {},
-                    "num_previous_messages": llm_def.get("num_previous_messages", 1),
-                    "global_context": llm_def.get("global_context"),
-                },
-                position={"x": 40, "y": llm_y},
-                width=200,
-                height=90,
-            ))
-            llm_y += 110
-
-        # Collect functions.
+        # Second pass: collect all functions
         states_x = -280
         states_y += 220
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
-                functions[node.name] = {
+                function_name = node.name
+                function_source = ast.get_source_segment(content, node)
+                functions[function_name] = {
                     "node": node,
-                    "source": ast.get_source_segment(content, node),
+                    "source": function_source,
                 }
-
-        custom_code_actions: dict = {}
-        custom_condition_callables: dict = {}
+        custom_code_actions = {}
+        custom_condition_callables = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
                 var_name = node.targets[0].id
                 if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == 'CustomCodeAction':
+                    # Check for 'callable' keyword argument
                     callable_name = None
                     for kw in node.value.keywords:
                         if kw.arg == 'callable' and isinstance(kw.value, ast.Name):
                             callable_name = kw.value.id
                     if callable_name:
-                        custom_code_actions[var_name] = callable_name
+                        custom_code_actions[var_name] = callable_name  # e.g., 'CustomCodeAction_initial' -> 'action_name'
                 elif isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == 'Condition':
+                    # Map condition object variable names (e.g., condition_6_1) to their callable function names.
                     callable_name = None
                     for kw in node.value.keywords:
                         if kw.arg == 'callable' and isinstance(kw.value, ast.Name):
@@ -549,34 +784,103 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     return callable_source
             return condition_ref_name
 
-        # Collect actions.
-        actions: dict = {}
+        # Third pass collect all actions
+        actions = {}
         for node in ast.walk(tree):
             if (
-                isinstance(node, ast.Expr)
-                and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Attribute)
-                and node.value.func.attr == 'add_action'
-                and isinstance(node.value.func.value, ast.Name)
-                and len(node.value.args) == 1
-            ):
-                body_var = node.value.func.value.id
-                if (
-                    isinstance(node.value.args[0], ast.Call)
-                    and isinstance(node.value.args[0].func, ast.Name)
+                isinstance(node, ast.Expr) and
+                isinstance(node.value, ast.Call) and
+                isinstance(node.value.func, ast.Attribute) and
+                node.value.func.attr == 'add_action' and
+                isinstance(node.value.func.value, ast.Name) and
+                len(node.value.args) == 1
                 ):
-                    fn_id = node.value.args[0].func.id
-                    if fn_id == 'AgentReply' and len(node.value.args[0].args) == 1 and isinstance(node.value.args[0].args[0], ast.Constant) and isinstance(node.value.args[0].args[0].value, str):
-                        actions.setdefault(body_var, []).append({"type": "text", "message": node.value.args[0].args[0].value})
-                    elif fn_id == 'LLMReply':
-                        llm_action: Dict[str, Any] = {"type": "llm"}
+                body_var = node.value.func.value.id  # e.g., 'initial_body'
+                if (
+                    isinstance(node.value.args[0], ast.Call) and
+                    isinstance(node.value.args[0].func, ast.Name)
+                    ):
+                    if (node.value.args[0].func.id == 'AgentReply' and
+                        len(node.value.args[0].args) == 1 and
+                        isinstance(node.value.args[0].args[0], ast.Constant) and
+                        isinstance(node.value.args[0].args[0].value, str)
+                        ):
+                        text_action: Dict[str, Any] = {
+                            "type": "text",
+                            "message": node.value.args[0].args[0].value,
+                            "useSessionVars": False,
+                        }
                         for kw in node.value.args[0].keywords:
-                            if kw.arg == 'prompt' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                                llm_action["prompt"] = kw.value.value
-                            elif kw.arg == 'llm_name' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                                llm_action["llm_name"] = kw.value.value
-                        actions.setdefault(body_var, []).append(llm_action)
-                    elif fn_id == 'RAGReply':
+                            if (
+                                kw.arg == 'use_session_vars'
+                                and isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, bool)
+                            ):
+                                text_action["useSessionVars"] = kw.value.value
+                        if body_var not in actions:
+                            actions[body_var] = [text_action]
+                        else:
+                            actions[body_var].append(text_action)
+                    elif node.value.args[0].func.id == 'LLMReply':
+                        llm_action: Dict[str, Any] = {
+                            "type": "llm",
+                            "inputPromptMode": "last_user_message",
+                            "customInputPrompt": "",
+                            "customInputPromptUseSessionVars": False,
+                            "systemPromptUseSessionVars": False,
+                            "storeInSession": "",
+                            "sendReply": True,
+                        }
+                        for kw in node.value.args[0].keywords:
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'llm_name' and isinstance(val, str):
+                                llm_action["llm_name"] = val
+                            elif kw.arg == 'prompt' and isinstance(val, str):
+                                llm_action["prompt"] = val
+                            elif kw.arg == 'input_prompt_mode' and isinstance(val, str):
+                                llm_action["inputPromptMode"] = val
+                            elif kw.arg == 'custom_input_prompt' and isinstance(val, str):
+                                llm_action["customInputPrompt"] = val
+                            elif kw.arg == 'custom_input_prompt_use_session_vars' and isinstance(val, bool):
+                                llm_action["customInputPromptUseSessionVars"] = val
+                            elif kw.arg == 'system_prompt_use_session_vars' and isinstance(val, bool):
+                                llm_action["systemPromptUseSessionVars"] = val
+                            elif kw.arg == 'store_in_session' and isinstance(val, str):
+                                llm_action["storeInSession"] = val
+                            elif kw.arg == 'send_reply' and isinstance(val, bool):
+                                llm_action["sendReply"] = val
+                        if body_var not in actions:
+                            actions[body_var] = [llm_action]
+                        else:
+                            actions[body_var].append(llm_action)
+                    elif node.value.args[0].func.id == 'LLMChatReply':
+                        llm_chat_action: Dict[str, Any] = {
+                            "type": "llm_chat",
+                            "systemPromptUseSessionVars": False,
+                            "storeInSession": "",
+                            "sendReply": True,
+                        }
+                        for kw in node.value.args[0].keywords:
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'llm_name' and isinstance(val, str):
+                                llm_chat_action["llm_name"] = val
+                            elif kw.arg == 'prompt' and isinstance(val, str):
+                                llm_chat_action["prompt"] = val
+                            elif kw.arg == 'system_prompt_use_session_vars' and isinstance(val, bool):
+                                llm_chat_action["systemPromptUseSessionVars"] = val
+                            elif kw.arg == 'store_in_session' and isinstance(val, str):
+                                llm_chat_action["storeInSession"] = val
+                            elif kw.arg == 'send_reply' and isinstance(val, bool):
+                                llm_chat_action["sendReply"] = val
+                        if body_var not in actions:
+                            actions[body_var] = [llm_chat_action]
+                        else:
+                            actions[body_var].append(llm_chat_action)
+                    elif node.value.args[0].func.id == 'RAGReply':
                         rag_db_name = ""
                         rag_prompt = ""
                         if (
@@ -585,23 +889,42 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             and isinstance(node.value.args[0].args[0].value, str)
                         ):
                             rag_db_name = node.value.args[0].args[0].value
+                        rag_action: Dict[str, Any] = {
+                            "type": "rag",
+                            "inputPromptMode": "last_user_message",
+                            "customInputPrompt": "",
+                            "customInputPromptUseSessionVars": False,
+                            "promptUseSessionVars": False,
+                            "storeInSession": "",
+                            "sendReply": True,
+                        }
                         for kw in node.value.args[0].keywords:
-                            if (
-                                kw.arg == 'rag_db_name'
-                                and isinstance(kw.value, ast.Constant)
-                                and isinstance(kw.value.value, str)
-                            ):
-                                rag_db_name = kw.value.value
-                            elif (
-                                kw.arg == 'prompt'
-                                and isinstance(kw.value, ast.Constant)
-                                and isinstance(kw.value.value, str)
-                            ):
-                                rag_prompt = kw.value.value
-                        actions.setdefault(body_var, []).append(
-                            {"type": "rag", "ragDatabaseName": rag_db_name, "prompt": rag_prompt}
-                        )
-                    elif fn_id == 'DBReply':
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'rag_db_name' and isinstance(val, str):
+                                rag_db_name = val
+                            elif kw.arg == 'prompt' and isinstance(val, str):
+                                rag_prompt = val
+                            elif kw.arg == 'input_prompt_mode' and isinstance(val, str):
+                                rag_action["inputPromptMode"] = val
+                            elif kw.arg == 'custom_input_prompt' and isinstance(val, str):
+                                rag_action["customInputPrompt"] = val
+                            elif kw.arg == 'custom_input_prompt_use_session_vars' and isinstance(val, bool):
+                                rag_action["customInputPromptUseSessionVars"] = val
+                            elif kw.arg == 'prompt_use_session_vars' and isinstance(val, bool):
+                                rag_action["promptUseSessionVars"] = val
+                            elif kw.arg == 'store_in_session' and isinstance(val, str):
+                                rag_action["storeInSession"] = val
+                            elif kw.arg == 'send_reply' and isinstance(val, bool):
+                                rag_action["sendReply"] = val
+                        rag_action["ragDatabaseName"] = rag_db_name
+                        rag_action["prompt"] = rag_prompt
+                        if body_var not in actions:
+                            actions[body_var] = [rag_action]
+                        else:
+                            actions[body_var].append(rag_action)
+                    elif node.value.args[0].func.id == 'DBReply':
                         db_action = {
                             "type": "db_reply",
                             "dbSelectionType": "default",
@@ -610,31 +933,44 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "dbOperation": "any",
                             "dbSqlQuery": "",
                             "llm_name": "",
+                            "inputPromptMode": "last_user_message",
+                            "customInputPrompt": "",
+                            "customInputPromptUseSessionVars": False,
+                            "storeInSession": "",
+                            "sendReply": True,
                         }
                         for kw in node.value.args[0].keywords:
-                            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                                if kw.arg == 'db_selection_type':
-                                    db_action["dbSelectionType"] = kw.value.value
-                                elif kw.arg == 'db_custom_name':
-                                    db_action["dbCustomName"] = kw.value.value
-                                elif kw.arg == 'db_query_mode':
-                                    db_action["dbQueryMode"] = kw.value.value
-                                elif kw.arg == 'db_operation':
-                                    db_action["dbOperation"] = kw.value.value
-                                elif kw.arg == 'db_sql_query':
-                                    db_action["dbSqlQuery"] = kw.value.value
-                                elif kw.arg == 'llm_name':
-                                    db_action["llm_name"] = kw.value.value
-                        actions.setdefault(body_var, []).append(db_action)
-                    elif fn_id == 'LLMChatReply':
-                        llm_chat_action: Dict[str, Any] = {"type": "llm_chat"}
-                        for kw in node.value.args[0].keywords:
-                            if kw.arg == 'prompt' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                                llm_chat_action["prompt"] = kw.value.value
-                            elif kw.arg == 'llm_name' and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
-                                llm_chat_action["llm_name"] = kw.value.value
-                        actions.setdefault(body_var, []).append(llm_chat_action)
-                    elif fn_id == 'WebCrawlLLMReply':
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg == 'db_selection_type' and isinstance(val, str):
+                                db_action["dbSelectionType"] = val
+                            elif kw.arg == 'db_custom_name' and isinstance(val, str):
+                                db_action["dbCustomName"] = val
+                            elif kw.arg == 'db_query_mode' and isinstance(val, str):
+                                db_action["dbQueryMode"] = val
+                            elif kw.arg == 'db_operation' and isinstance(val, str):
+                                db_action["dbOperation"] = val
+                            elif kw.arg == 'db_sql_query' and isinstance(val, str):
+                                db_action["dbSqlQuery"] = val
+                            elif kw.arg == 'llm_name' and isinstance(val, str):
+                                db_action["llm_name"] = val
+                            elif kw.arg == 'input_prompt_mode' and isinstance(val, str):
+                                db_action["inputPromptMode"] = val
+                            elif kw.arg == 'custom_input_prompt' and isinstance(val, str):
+                                db_action["customInputPrompt"] = val
+                            elif kw.arg == 'custom_input_prompt_use_session_vars' and isinstance(val, bool):
+                                db_action["customInputPromptUseSessionVars"] = val
+                            elif kw.arg == 'store_in_session' and isinstance(val, str):
+                                db_action["storeInSession"] = val
+                            elif kw.arg == 'send_reply' and isinstance(val, bool):
+                                db_action["sendReply"] = val
+
+                        if body_var not in actions:
+                            actions[body_var] = [db_action]
+                        else:
+                            actions[body_var].append(db_action)
+                    elif node.value.args[0].func.id == 'WebCrawlLLMReply':
                         web_crawl_action: Dict[str, Any] = {
                             "type": "web_crawl_llm",
                             "initial_url": "",
@@ -645,7 +981,10 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "run_crawl": True,
                             "no_crawl_error_message": "No web crawl data is available yet.",
                             "system_message_prefix": "",
+                            "systemMessagePrefixUseSessionVars": False,
                             "llm_name": "",
+                            "storeInSession": "",
+                            "sendReply": True,
                         }
                         for kw in node.value.args[0].keywords:
                             if not isinstance(kw.value, ast.Constant):
@@ -667,16 +1006,26 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 web_crawl_action["no_crawl_error_message"] = val
                             elif kw.arg == 'system_message_prefix':
                                 web_crawl_action["system_message_prefix"] = val if isinstance(val, str) else ""
+                            elif kw.arg == 'system_message_prefix_use_session_vars' and isinstance(val, bool):
+                                web_crawl_action["systemMessagePrefixUseSessionVars"] = val
                             elif kw.arg == 'llm_name' and isinstance(val, str):
                                 web_crawl_action["llm_name"] = val
-                        actions.setdefault(body_var, []).append(web_crawl_action)
-                    elif fn_id in (
+                            elif kw.arg == 'store_in_session' and isinstance(val, str):
+                                web_crawl_action["storeInSession"] = val
+                            elif kw.arg == 'send_reply' and isinstance(val, bool):
+                                web_crawl_action["sendReply"] = val
+                        if body_var not in actions:
+                            actions[body_var] = [web_crawl_action]
+                        else:
+                            actions[body_var].append(web_crawl_action)
+                    elif node.value.args[0].func.id in (
                         'WebSocketReplyMarkdown', 'WebSocketReplyHTML', 'WebSocketReplySpeech',
                         'WebSocketReplyOptions', 'WebSocketReplyLocation',
                         'WebSocketReplyFile', 'WebSocketReplyImage',
                         'WebSocketReplyDataframe', 'WebSocketReplyPlotly',
                     ):
-                        ws_type_map = {
+                        cls_name = node.value.args[0].func.id
+                        type_map = {
                             'WebSocketReplyMarkdown': 'ws_markdown',
                             'WebSocketReplyHTML': 'ws_html',
                             'WebSocketReplySpeech': 'ws_speech',
@@ -687,7 +1036,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             'WebSocketReplyDataframe': 'ws_dataframe',
                             'WebSocketReplyPlotly': 'ws_plotly',
                         }
-                        ws_action: Dict[str, Any] = {"type": ws_type_map[fn_id]}
+                        ws_action: Dict[str, Any] = {"type": type_map[cls_name], "useSessionVars": False}
                         for kw in node.value.args[0].keywords:
                             if kw.arg == 'options' and isinstance(kw.value, ast.List):
                                 opts = [elt.value for elt in kw.value.elts if isinstance(elt, ast.Constant) and isinstance(elt.value, str)]
@@ -704,23 +1053,182 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 ws_action["ws_latitude"] = float(val)
                             elif kw.arg == 'longitude' and isinstance(val, (int, float)) and not isinstance(val, bool):
                                 ws_action["ws_longitude"] = float(val)
-                        actions.setdefault(body_var, []).append(ws_action)
+                            elif kw.arg == 'use_session_vars' and isinstance(val, bool):
+                                ws_action["useSessionVars"] = val
+                        if body_var not in actions:
+                            actions[body_var] = [ws_action]
+                        else:
+                            actions[body_var].append(ws_action)
+                    elif (
+                        node.value.args[0].func.id == 'GUIReplyAction'
+                        and node.value.args[0].args
+                        and isinstance(node.value.args[0].args[0], ast.Constant)
+                        and isinstance(node.value.args[0].args[0].value, str)
+                    ):
+                        gui_id = node.value.args[0].args[0].value
+                        settings = gui_settings.setdefault(gui_id, {"persist": True, "width": "", "is_form": False})
+                        for kw in node.value.args[0].keywords:
+                            if not isinstance(kw.value, ast.Constant):
+                                continue
+                            val = kw.value.value
+                            if kw.arg in ('persist', 'is_form') and isinstance(val, bool):
+                                settings[kw.arg] = val
+                            elif kw.arg == 'width' and isinstance(val, str):
+                                settings["width"] = val
+                        actions.setdefault(body_var, []).append({"type": "gui_reply", "guiId": gui_id})
                 elif isinstance(node.value.args[0], ast.Name):
-                    action_var = node.value.args[0].id
+                    # Handle references to CustomCodeAction variables
+                    action_var = node.value.args[0].id  # e.g., 'CustomCodeAction_initial'
                     if action_var in custom_code_actions:
-                        function_name = custom_code_actions[action_var]
-                        actions[body_var] = function_name
+                        function_name = custom_code_actions[action_var]  # e.g., 'action_name'
+                        actions[body_var] = function_name  # Store the resolved function name
 
-        # The initial state is now a boolean property on the state itself
-        # (``data.initial``) rather than a separate ``StateInitialNode`` marker
-        # + init edge. We stamp it below while collecting states, then ensure
-        # exactly one state carries it.
+        # Create initial node
+        initial_node_id = str(uuid.uuid4())
+        elements[initial_node_id] = {
+            "id": initial_node_id,
+            "name": "",
+            "type": "StateInitialNode",
+            "owner": None,
+            "bounds": {
+                "x": states_x - 300,
+                "y": states_y + 20,
+                "width": 45,
+                "height": 45,
+            },
+        }
 
-        # Collect states.
+        # Store the initial node ID for later use with transitions
+
+
+        # Build a var-name -> LLM name map so reasoning states can resolve
+        # their ``llm=...`` kwarg back to the registered LLM name.
+        # Also collects full LLM definitions so we can emit AgentLLM elements
+        # for each registered LLM.
+        llm_var_to_name: Dict[str, str] = {}
+        # name -> {provider, parameters, num_previous_messages, global_context}
+        llm_definitions: Dict[str, Dict[str, Any]] = {}
+
+        _direct_llm_class_to_provider = {
+            "LLMOpenAI": "openai",
+            "LLMHuggingFace": "huggingface",
+            "LLMHuggingFaceAPI": "huggingface_api",
+            "LLMReplicate": "replicate",
+            "LLMOllama": "ollama",
+            "LLMMistral": "mistral",
+            "LLMDeepSeek": "deepseek",
+            "LLMGoogle": "google",
+            "LLMMeta": "meta",
+            "LLMAnthropic": "anthropic",
+            "LLMQwen": "qwen",
+            "LLMxAI": "xai",
+            "LLMGroq": "groq",
+            "LLMTogether": "together",
+            "LLMOpenRouter": "openrouter",
+        }
+
+        def _collect_llm_kwargs(call: ast.Call) -> Dict[str, Any]:
+            collected: Dict[str, Any] = {}
+            for kw in call.keywords:
+                if kw.arg is None:
+                    continue
+                try:
+                    collected[kw.arg] = ast.literal_eval(kw.value)
+                except (ValueError, SyntaxError):
+                    continue
+            return collected
+
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign):
-                continue
-            if isinstance(node.targets[0], ast.Name):
+            # Legacy direct constructor: ``LLMOpenAI(agent=..., name=..., parameters=...)``
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id in _direct_llm_class_to_provider
+            ):
+                llm_kwargs = _collect_llm_kwargs(node.value)
+                resolved_name = llm_kwargs.get("name")
+                if isinstance(resolved_name, str) and resolved_name:
+                    var_id = node.targets[0].id
+                    llm_var_to_name[var_id] = resolved_name
+                    llm_definitions.setdefault(resolved_name, {
+                        "provider": _direct_llm_class_to_provider[node.value.func.id],
+                        "parameters": llm_kwargs.get("parameters") or {},
+                        "num_previous_messages": llm_kwargs.get("num_previous_messages", 1),
+                        "global_context": llm_kwargs.get("global_context"),
+                    })
+            # New canonical form: ``agent.new_llm(name='...', provider='...', parameters=..., ...)``
+            elif (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Attribute)
+                and node.value.func.attr == "new_llm"
+            ):
+                llm_kwargs = _collect_llm_kwargs(node.value)
+                resolved_name = llm_kwargs.get("name")
+                if isinstance(resolved_name, str) and resolved_name:
+                    var_id = node.targets[0].id
+                    llm_var_to_name[var_id] = resolved_name
+                    llm_definitions.setdefault(resolved_name, {
+                        "provider": (llm_kwargs.get("provider") or "openai"),
+                        "parameters": llm_kwargs.get("parameters") or {},
+                        "num_previous_messages": llm_kwargs.get("num_previous_messages", 1),
+                        "global_context": llm_kwargs.get("global_context"),
+                    })
+
+        # Detect ``agent.set_default_llm('...')`` so we can round-trip the
+        # default-LLM choice through a ``config.default_llm_name`` payload
+        # (the LLM list itself is not rendered on the canvas).
+        default_llm_name_value: str | None = None
+        for call_node in ast.walk(tree):
+            if (
+                isinstance(call_node, ast.Call)
+                and isinstance(call_node.func, ast.Attribute)
+                and call_node.func.attr == "set_default_llm"
+                and call_node.args
+                and isinstance(call_node.args[0], ast.Constant)
+                and isinstance(call_node.args[0].value, str)
+            ):
+                default_llm_name_value = call_node.args[0].value
+                break
+        # Fallback: when no explicit set_default_llm is present, the agent's
+        # default is the first registered LLM (mirroring the metamodel).
+        if default_llm_name_value is None and llm_definitions:
+            default_llm_name_value = next(iter(llm_definitions))
+
+        # Emit AgentLLM elements (one per registered LLM) so the WME
+        # round-trips the LLM list defined in the agent customization tab.
+        for llm_name, llm_def in llm_definitions.items():
+            llm_id = str(uuid.uuid4())
+            elements[llm_id] = {
+                "id": llm_id,
+                "name": llm_name,
+                "type": "AgentLLM",
+                "owner": None,
+                "bounds": {
+                    "x": states_x,
+                    "y": states_y,
+                    "width": 200,
+                    "height": 90,
+                },
+                "provider": llm_def.get("provider", "openai"),
+                "parameters": llm_def.get("parameters") or {},
+                "num_previous_messages": llm_def.get("num_previous_messages", 1),
+                "global_context": llm_def.get("global_context"),
+            }
+            if states_x < 200:
+                states_x += 240
+            else:
+                states_x = -280
+                states_y += 130
+
+        # Second pass: collect states and their configurations
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
                 var_name = node.targets[0].id
                 if (
                     isinstance(node.value, ast.Call)
@@ -732,7 +1240,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     is_initial = False
                     rs_kwargs: Dict[str, Any] = {}
                     llm_var_ref = None
-                    llm_literal_name = None
+                    llm_literal_name: str | None = None
 
                     if (
                         node.value.args
@@ -757,63 +1265,75 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             except (ValueError, SyntaxError):
                                 continue
 
-                    if llm_literal_name is not None:
-                        llm_name_resolved = llm_literal_name
-                    elif llm_var_ref:
-                        llm_name_resolved = llm_var_to_name.get(llm_var_ref) or ""
-                    else:
-                        llm_name_resolved = ""
-
                     state_var_to_name[var_name] = state_name
-                    states[var_name] = {
+
+                    state_obj = {
                         "id": state_id,
                         "name": state_name,
                         "is_initial": is_initial,
                         "bodies": [],
-                        "fallbackBodies": [],
+                        "fallback_bodies": [],
                     }
-                    # Canonical v4 shape folds reasoning states into
-                    # ``type: "AgentState"`` with ``data.stateType ==
-                    # "reasoning"`` — this is what the React Flow frontend's
-                    # AgentState node component now expects; it no longer
-                    # renders a separate ``AgentReasoningState`` node type.
-                    nodes.append(make_node(
-                        node_id=state_id,
-                        type_="AgentState",
-                        data={
-                            "name": state_name,
-                            "initial": is_initial,
-                            "stateType": "reasoning",
-                            "llm_name": llm_name_resolved,
-                            "max_steps": int(rs_kwargs.get("max_steps", 8)),
-                            "enable_task_planning": bool(rs_kwargs.get("enable_task_planning", True)),
-                            "stream_steps": bool(rs_kwargs.get("stream_steps", True)),
-                            "system_prompt": rs_kwargs.get("system_prompt") or "",
-                            "fallback_message": rs_kwargs.get("fallback_message") or "",
-                            "bodies": [],
-                            "fallbackBodies": [],
+                    states[var_name] = state_obj
+                    if state_name != var_name:
+                        states[state_name] = state_obj
+
+                    if llm_literal_name is not None:
+                        llm_name_resolved = llm_literal_name
+                    elif llm_var_ref:
+                        llm_name_resolved = llm_var_to_name.get(llm_var_ref)
+                    else:
+                        llm_name_resolved = None
+
+                    elements[state_id] = {
+                        "id": state_id,
+                        "name": state_name,
+                        # Reasoning states are modelled as an AgentState with
+                        # stateType "reasoning" (the editor no longer registers a
+                        # separate AgentReasoningState element type, so emitting the
+                        # legacy type would fail to deserialize on import).
+                        "type": "AgentState",
+                        "stateType": "reasoning",
+                        "owner": None,
+                        "bounds": {
+                            "x": states_x,
+                            "y": states_y,
+                            "width": 200,
+                            "height": 110,
                         },
-                        position={"x": states_x, "y": states_y},
-                        width=200,
-                        height=80,
-                    ))
+                        "llm_name": llm_name_resolved,
+                        "max_steps": int(rs_kwargs.get("max_steps", 8)),
+                        "enable_task_planning": bool(rs_kwargs.get("enable_task_planning", True)),
+                        "stream_steps": bool(rs_kwargs.get("stream_steps", True)),
+                        "system_prompt": rs_kwargs.get("system_prompt"),
+                        "fallback_message": rs_kwargs.get("fallback_message"),
+                    }
+
                     if states_x < 200:
                         states_x += 490
                     else:
                         states_x = -280
                         states_y += 220
                     continue
+
                 if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "new_state":
                     state_id = str(uuid.uuid4())
-                    state_name = var_name
+                    state_name = var_name  # Default to variable name
                     is_initial = False
 
+                    # ``agent.new_state('Idle')`` passes the name as a positional
+                    # arg; the builder emits this form, so check positional args
+                    # before falling back to the variable name. Without this,
+                    # round-trips lose the original casing because the builder's
+                    # ``safe_var_name`` lowercases identifiers (``Idle`` -> ``idle``).
                     if (
                         node.value.args
                         and isinstance(node.value.args[0], ast.Constant)
                         and isinstance(node.value.args[0].value, str)
                     ):
                         state_name = node.value.args[0].value
+
+                    # Try to extract state name and initial flag from keywords
                     for kw in node.value.keywords:
                         if kw.arg == "name" and isinstance(kw.value, ast.Constant):
                             state_name = kw.value.value
@@ -821,64 +1341,117 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             is_initial = kw.value.value
 
                     state_var_to_name[var_name] = state_name
+
+                    # Create the state object
                     state_obj = {
                         "id": state_id,
                         "name": state_name,
                         "is_initial": is_initial,
                         "bodies": [],
+                        "fallback_bodies": [],
+                    }
+
+                    # Store by variable name for transitions
+                    states[var_name] = state_obj
+                    # Create element for visualization
+                    elements[state_id] = {
+                        "id": state_id,
+                        "name": state_name,
+                        "type": "AgentState",
+                        "stateType": "standard",
+                        "owner": None,
+                        "bounds": {
+                            "x": states_x,
+                            "y": states_y,
+                            "width": 160,
+                            "height": 100,
+                        },
+                        "actions": [],
+                        "fallbackActions": [],
+                        "bodies": [],
                         "fallbackBodies": [],
                     }
-                    states[var_name] = state_obj
-                    nodes.append(make_node(
-                        node_id=state_id,
-                        type_="AgentState",
-                        data={
-                            "name": state_name,
-                            "initial": is_initial,
-                            "bodies": [],
-                            "fallbackBodies": [],
-                        },
-                        position={"x": states_x, "y": states_y},
-                        width=160,
-                        height=100,
-                    ))
+
+                    # Update position for next element
                     if states_x < 200:
                         states_x += 490
                     else:
                         states_x = -280
                         states_y += 220
-            elif len(node.targets) == 1:
-                # ``state_var.metadata = Metadata(description=...)`` — the
-                # shape the agent code builder writes for state comments.
-                # The target is an ``ast.Attribute``, so this must be a
-                # sibling of the Name-target branch above.
-                target = node.targets[0]
-                if isinstance(target, ast.Attribute) and target.attr == "metadata":
-                    state_var = target.value.id if isinstance(target.value, ast.Name) else None
-                    if state_var and isinstance(node.value, ast.Call):
-                        for kw in node.value.keywords:
-                            if kw.arg == "description":
-                                state_comments[state_var] = ast.literal_eval(kw.value)
+            # Check for state.metadata = Metadata(...) patterns
+            elif isinstance(node, ast.Assign):
+                if len(node.targets) == 1:
+                    target = node.targets[0]
+                    if isinstance(target, ast.Attribute) and target.attr == "metadata":
+                        state_var = target.value.id if isinstance(target.value, ast.Name) else None
+                        if state_var and isinstance(node.value, ast.Call):
+                            for kw in node.value.keywords:
+                                if kw.arg == "description":
+                                    state_comments[state_var] = ast.literal_eval(kw.value)
 
-        nodes_by_id = {n["id"]: n for n in nodes}
 
-        # Ensure exactly one state carries ``data.initial = True``. Prefer a
-        # state already flagged ``initial=True`` in the BUML source; otherwise
-        # fall back to the first collected state so the diagram always has an
-        # entry point (mirrors the old init-edge fallback, now as a property).
+        # Find initial state and create initial transition
         initial_state = None
-        for state_info in states.values():
+        for state_key, state_info in states.items():
             if state_info["is_initial"]:
                 initial_state = state_info
                 break
-        if not initial_state and states:
-            initial_state = states[next(iter(states))]
-        if initial_state:
-            init_node = nodes_by_id.get(initial_state["id"])
-            if init_node is not None:
-                init_node.setdefault("data", {})["initial"] = True
 
-        # Process bodies and transitions.
+        # If no initial state is marked, use the first state as fallback
+        if not initial_state and states:
+            # Get the first state
+            first_state_key = next(iter(states))
+            initial_state = states[first_state_key]
+
+        if initial_state:
+            initial_rel_id = str(uuid.uuid4())
+            relationships[initial_rel_id] = {
+                "id": initial_rel_id,
+                "name": "",
+                "type": "AgentStateTransitionInit",
+                "owner": None,
+                "source": {
+                    "direction": "Right",
+                    "element": initial_node_id,
+                    "bounds": {
+                        "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "target": {
+                    "direction": "Left",
+                    "element": initial_state["id"],
+                    "bounds": {
+                        "x": elements[initial_state["id"]]["bounds"]["x"],
+                        "y": elements[initial_state["id"]]["bounds"]["y"] + 35,
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "bounds": {
+                    "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                    "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    "width": elements[initial_state["id"]]["bounds"]["x"]
+                    - (elements[initial_node_id]["bounds"]["x"] + 45),
+                    "height": 1,
+                },
+                "path": [
+                    {
+                        "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    },
+                    {
+                        "x": elements[initial_state["id"]]["bounds"]["x"],
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    },
+                ],
+                "isManuallyLayouted": False,
+            }
+
+        # Third pass: process state bodies and transitions
+
         for node in ast.walk(tree):
             try:
                 if (
@@ -888,28 +1461,38 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 ):
                     if node.value.func.attr == "go_to":
                         source_state = node.value.func.value.id if isinstance(node.value.func.value, ast.Name) else None
+                        rel_id = str(uuid.uuid4())
                         condition_name = "auto"
-                        transition_payload: object = ""
+                        transition_payload = ""
                         event_name = None
                         target_state = node.value.args[0].id if node.value.args and isinstance(node.value.args[0], ast.Name) else None
 
                         call_chain = node.value.func.value
-                        custom_conditions: list = []
+                        custom_conditions: list[str] = []
 
                         while isinstance(call_chain, ast.Call) and isinstance(call_chain.func, ast.Attribute):
                             chain_attr = call_chain.func.attr
+
                             if chain_attr == "with_condition":
                                 if call_chain.args and isinstance(call_chain.args[0], ast.Name):
                                     condition_func_name = call_chain.args[0].id
                                     custom_conditions.insert(0, _resolve_condition_source(condition_func_name))
                                 call_chain = call_chain.func.value
                                 continue
+
                             if isinstance(call_chain.func.value, ast.Name):
                                 source_state = call_chain.func.value.id
+
                             if chain_attr == "when_intent_matched":
                                 condition_name = "when_intent_matched"
                                 if call_chain.args and isinstance(call_chain.args[0], ast.Name):
                                     intent_var = call_chain.args[0].id
+                                    # Resolve the variable back to its declared
+                                    # intent name. The builder emits lowercased
+                                    # variable identifiers, so without this lookup
+                                    # the round-tripped intentName would not match
+                                    # the intent definition's name and downstream
+                                    # generation would emit an undefined reference.
                                     transition_payload = intent_var_to_name.get(intent_var, intent_var)
                             elif chain_attr == "when_no_intent_matched":
                                 condition_name = "when_no_intent_matched"
@@ -934,64 +1517,163 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         transition_payload["targetValue"] = kw.value.value
                             elif chain_attr == "when_file_received":
                                 condition_name = "when_file_received"
-                                if call_chain.args and isinstance(call_chain.args[0], ast.Constant):
-                                    transition_payload = call_chain.args[0].value
+                                _reverse_mime = {
+                                    "application/pdf": "pdf",
+                                    "text/plain": "txt",
+                                    "application/json": "json",
+                                    "text/csv": "csv",
+                                    "text/xml": "xml",
+                                    "image/png": "png",
+                                    "image/jpeg": "jpg",
+                                    "image/gif": "gif",
+                                    "audio/mpeg": "mp3",
+                                    "video/mp4": "mp4",
+                                }
+                                if call_chain.args:
+                                    arg = call_chain.args[0]
+                                    if isinstance(arg, ast.Constant):
+                                        raw = arg.value
+                                        transition_payload = _reverse_mime.get(raw, raw)
+                                    elif isinstance(arg, ast.List):
+                                        values = [elt.value for elt in arg.elts if isinstance(elt, ast.Constant)]
+                                        transition_payload = ", ".join(_reverse_mime.get(v, v) for v in values)
+                            elif chain_attr == "when_form_submitted":
+                                condition_name = "when_form_submitted"
+                                form_id = None
+                                for kw in call_chain.keywords:
+                                    if kw.arg == "form_id" and isinstance(kw.value, ast.Constant):
+                                        form_id = kw.value.value
+                                if form_id is None and call_chain.args:
+                                    arg0 = call_chain.args[0]
+                                    if isinstance(arg0, ast.Constant):
+                                        form_id = arg0.value
+                                transition_payload = form_id or ""
                             elif chain_attr == "when_event":
                                 condition_name = "custom_transition"
                                 selected_event = "None"
+                                gui_event_message_id = None
                                 if call_chain.args:
                                     event_arg = call_chain.args[0]
                                     if isinstance(event_arg, ast.Call) and isinstance(event_arg.func, ast.Name):
                                         event_name = event_arg.func.id
                                         selected_event = event_name
+                                        # Extract GUIEvent(message_id=...) keyword arg
+                                        if event_name == "GUIEvent":
+                                            for kw in event_arg.keywords:
+                                                if kw.arg == "message_id" and isinstance(kw.value, ast.Constant):
+                                                    gui_event_message_id = kw.value.value
                                     elif isinstance(event_arg, ast.Name):
                                         event_name = event_arg.id
                                         selected_event = event_name
-                                transition_payload = {"event": selected_event, "conditions": custom_conditions}
+
+                                transition_payload = {
+                                    "event": selected_event,
+                                    "conditions": custom_conditions,
+                                }
+                                if gui_event_message_id is not None:
+                                    transition_payload["guiEventGuiId"] = gui_event_message_id
                             elif chain_attr == "when_condition":
                                 condition_name = "custom_transition"
                                 if call_chain.args and isinstance(call_chain.args[0], ast.Name):
                                     condition_func_name = call_chain.args[0].id
                                     custom_conditions.insert(0, _resolve_condition_source(condition_func_name))
-                                transition_payload = {"event": "None", "conditions": custom_conditions}
+
+                                transition_payload = {
+                                    "event": "None",
+                                    "conditions": custom_conditions,
+                                }
+
                             break
 
                         if source_state in states and target_state in states:
-                            transition_type = "custom" if condition_name == "custom_transition" else "predefined"
-                            edge_data: dict = {
-                                "name": event_name or "",
-                                "transitionType": transition_type,
-                                "points": [],
-                            }
-                            if transition_type == "predefined":
-                                pred = {"predefinedType": condition_name}
-                                if condition_name == "when_intent_matched":
-                                    pred["intentName"] = transition_payload if isinstance(transition_payload, str) else ""
-                                elif condition_name == "when_file_received":
-                                    pred["fileType"] = transition_payload if isinstance(transition_payload, str) else ""
-                                elif transition_payload not in (None, ""):
-                                    pred["conditionValue"] = transition_payload
-                                edge_data["predefined"] = pred
-                            else:
-                                edge_data["custom"] = {
-                                    "event": event_name or "None",
-                                    "condition": (
-                                        transition_payload.get("conditions", [])
-                                        if isinstance(transition_payload, dict)
-                                        else []
-                                    ),
-                                }
-                            edges.append(make_edge(
-                                edge_id=str(uuid.uuid4()),
-                                source=states[source_state]["id"],
-                                target=states[target_state]["id"],
-                                type_="AgentStateTransition",
-                                data=edge_data,
-                            ))
+                            source_element = elements[states[source_state]["id"]]
+                            target_element = elements[states[target_state]["id"]]
 
+                            source_dir, target_dir = determine_connection_direction(
+                                source_element["bounds"], target_element["bounds"]
+                            )
+
+                            source_point = calculate_connection_points(
+                                source_element["bounds"], source_dir
+                            )
+                            target_point = calculate_connection_points(
+                                target_element["bounds"], target_dir
+                            )
+
+                            path_points = calculate_path_points(
+                                source_point, target_point, source_dir, target_dir
+                            )
+                            rel_bounds = calculate_relationship_bounds(path_points)
+
+                            transition_type = "custom" if condition_name == "custom_transition" else "predefined"
+                            predefined_block = {
+                                "predefinedType": condition_name if transition_type == "predefined" else "",
+                                "conditionValue": transition_payload if transition_type == "predefined" else "",
+                            }
+                            if transition_type == "predefined" and condition_name == "when_intent_matched":
+                                predefined_block["intentName"] = transition_payload if isinstance(transition_payload, str) else ""
+                                predefined_block.pop("conditionValue", None)
+                            elif transition_type == "predefined" and condition_name == "when_file_received":
+                                predefined_block["fileType"] = transition_payload if isinstance(transition_payload, str) else ""
+                                predefined_block.pop("conditionValue", None)
+                            elif transition_type == "predefined" and condition_name == "when_form_submitted":
+                                predefined_block["formGuiId"] = (
+                                    transition_payload if isinstance(transition_payload, str) else ""
+                                )
+                                predefined_block.pop("conditionValue", None)
+                            custom_block = {
+                                "event": (event_name or "None") if transition_type == "custom" else "None",
+                                "condition": (
+                                    transition_payload.get("conditions", [])
+                                    if transition_type == "custom" and isinstance(transition_payload, dict)
+                                    else []
+                                ),
+                            }
+                            # Preserve GUIEvent.message_id so the round-trip is lossless.
+                            if transition_type == "custom" and isinstance(transition_payload, dict):
+                                _mid = transition_payload.get("guiEventGuiId")
+                                if _mid:
+                                    custom_block["guiEventGuiId"] = _mid
+
+                            relationships[rel_id] = {
+                                "id": rel_id,
+                                "name": event_name or "",
+                                "type": "AgentStateTransition",
+                                "owner": None,
+                                "bounds": rel_bounds,
+                                "path": path_points,
+                                "source": {
+                                    "direction": source_dir,
+                                    "element": states[source_state]["id"],
+                                    "bounds": {
+                                        "x": source_point["x"],
+                                        "y": source_point["y"],
+                                        "width": 0,
+                                        "height": 0,
+                                    },
+                                },
+                                "target": {
+                                    "direction": target_dir,
+                                    "element": states[target_state]["id"],
+                                    "bounds": {
+                                        "x": target_point["x"],
+                                        "y": target_point["y"],
+                                        "width": 0,
+                                        "height": 0,
+                                    },
+                                },
+                                "isManuallyLayouted": False,
+                                "transitionType": transition_type,
+                                "predefined": predefined_block,
+                                "custom": custom_block,
+                            }
+
+
+                    # Handle set_body
                     elif node.value.func.attr == "set_body":
                         try:
                             function_name = None
+                            # Extract function name from Body('function_name', function_name) pattern
                             if isinstance(node.value.args[0], ast.Name):
                                 function_name = node.value.args[0].id
                             else:
@@ -1003,45 +1685,137 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         function_name = body_args[0].value
                                 if not function_name:
                                     continue
+
                             state_name = node.value.func.value.id
                             if state_name not in states:
                                 continue
+
                             state = states[state_name]
-                            state_node = nodes_by_id.get(state["id"])
-                            if not state_node:
-                                continue
 
                             if function_name in functions or (isinstance(actions.get(function_name), str) and actions.get(function_name) in functions):
                                 if (isinstance(actions.get(function_name), str) and actions.get(function_name) in functions):
                                     function_name = actions[function_name]
                                 result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
+
                                 if result["replyType"] == "text":
                                     for reply in result["replies"]:
-                                        state_node["data"]["bodies"].append(_make_body_row(reply, "text"))
+                                        body_id = str(uuid.uuid4())
+                                        elements[body_id] = {
+                                            "id": body_id,
+                                            "name": reply,
+                                            "type": "AgentStateBody",
+                                            "owner": state["id"],
+                                            "bounds": {
+                                                "x": elements[state["id"]]["bounds"]["x"],
+                                                "y": elements[state["id"]]["bounds"]["y"],
+                                                "width": 159,
+                                                "height": 30,
+                                            },
+                                            "actionType": "TextReplyAction",
+                                        }
+                                        elements[state["id"]]["actions"].append(body_id)
                                 elif result["replyType"] == "llm":
-                                    state_node["data"]["bodies"].append(_make_body_row("AI response 🪄", "llm"))
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": "LLM Reply",
+                                        "type": "AgentStateBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "actionType": "LLMReplyAction",
+                                        "replyType": "llm",
+                                        "system_message": "",
+                                    }
+                                    elements[state["id"]]["actions"].append(body_id)
                                 elif result["replyType"] == "code":
-                                    state_node["data"]["bodies"].append(_make_body_row(result["code"], "code"))
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": result["code"],
+                                        "type": "AgentStateBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "actionType": "CustomCodeAction",
+                                    }
+                                    elements[state["id"]]["actions"].append(body_id)
                             elif function_name in actions:
                                 if actions[function_name] == 'LLMReply':
-                                    state_node["data"]["bodies"].append(_make_body_row("AI response 🪄", "llm"))
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": "LLM Reply",
+                                        "type": "AgentStateBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "actionType": "LLMReplyAction",
+                                        "replyType": "llm",
+                                        "system_message": "",
+                                    }
+                                    elements[state["id"]]["actions"].append(body_id)
                                 elif isinstance(actions[function_name], list):
-                                    state_node["data"]["bodies"].extend(_bodies_for_action(actions[function_name], state["id"], False))
+                                    _add_action_elements_to_state(state["id"], actions[function_name], fallback=False)
                                 else:
                                     for message in actions[function_name]:
-                                        state_node["data"]["bodies"].append(_make_body_row(message.replace("\\'", "'"), "text"))
+                                        body_id = str(uuid.uuid4())
+                                        elements[body_id] = {
+                                            "id": body_id,
+                                            "name": message,
+                                            "type": "AgentStateBody",
+                                            "owner": state["id"],
+                                            "bounds": {
+                                                "x": elements[state["id"]]["bounds"]["x"],
+                                                "y": elements[state["id"]]["bounds"]["y"],
+                                                "width": 159,
+                                                "height": 30,
+                                            },
+                                            "actionType": "TextReplyAction",
+                                        }
+                                        elements[state["id"]]["actions"].append(body_id)
+
+
                             else:
-                                state_node["data"]["bodies"].append({
-                                    "id": str(uuid.uuid4()),
+                                # Fallback if function not found
+                                body_id = str(uuid.uuid4())
+                                elements[body_id] = {
+                                    "id": body_id,
                                     "name": function_name,
-                                })
+                                    "type": "AgentStateBody",
+                                    "owner": state["id"],
+                                    "bounds": {
+                                        "x": elements[state["id"]]["bounds"]["x"],
+                                        "y": elements[state["id"]]["bounds"]["y"],
+                                        "width": 159,
+                                        "height": 30,
+                                    },
+                                }
+                                elements[state["id"]]["bodies"].append(body_id)
+
                         except Exception as e:
                             logger.error("Error processing agent body: %s", e, exc_info=True)
                             continue
 
+                    # Add handling for fallback bodies
                     elif node.value.func.attr == "set_fallback_body":
                         try:
+                            # Extract function name from Body('function_name', function_name) pattern
+
                             function_name = None
+                            # Extract function name from Body('function_name', function_name) pattern
                             if isinstance(node.value.args[0], ast.Name):
                                 function_name = node.value.args[0].id
                             else:
@@ -1051,15 +1825,16 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         function_name = body_args[1].id
                                     elif isinstance(body_args[0], ast.Constant) and isinstance(body_args[0].value, str):
                                         function_name = body_args[0].value
+
                                 if not function_name:
                                     continue
+
+
                             state_name = node.value.func.value.id
                             if state_name not in states:
                                 continue
+
                             state = states[state_name]
-                            state_node = nodes_by_id.get(state["id"])
-                            if not state_node:
-                                continue
 
                             mapped_action = actions.get(function_name)
                             if function_name in functions or (isinstance(mapped_action, str) and mapped_action in functions):
@@ -1068,90 +1843,518 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
                                 if result["replyType"] == "text":
                                     for reply in result["replies"]:
-                                        state_node["data"]["fallbackBodies"].append(_make_body_row(reply, "text"))
+                                        body_id = str(uuid.uuid4())
+                                        elements[body_id] = {
+                                            "id": body_id,
+                                            "name": reply,
+                                            "type": "AgentStateFallbackBody",
+                                            "owner": state["id"],
+                                            "bounds": {
+                                                "x": elements[state["id"]]["bounds"]["x"],
+                                                "y": elements[state["id"]]["bounds"]["y"],
+                                                "width": 159,
+                                                "height": 30,
+                                            },
+                                            "actionType": "TextReplyAction",
+                                        }
+                                        elements[state["id"]]["fallbackActions"].append(body_id)
                                 elif result["replyType"] == "llm":
-                                    state_node["data"]["fallbackBodies"].append(_make_body_row("AI response 🪄", "llm"))
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": "LLM Reply",
+                                        "type": "AgentStateFallbackBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "actionType": "LLMReplyAction",
+                                        "replyType": "llm",
+                                        "system_message": "",
+                                    }
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
                                 elif result["replyType"] == "code":
-                                    state_node["data"]["fallbackBodies"].append(_make_body_row(result["code"], "code"))
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": result["code"],
+                                        "type": "AgentStateFallbackBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "actionType": "CustomCodeAction",
+                                    }
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
+
                             elif function_name in actions:
                                 if actions[function_name] == 'LLMReply':
-                                    state_node["data"]["fallbackBodies"].append(_make_body_row("AI response 🪄", "llm"))
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": "LLM Reply",
+                                        "type": "AgentStateFallbackBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "actionType": "LLMReplyAction",
+                                        "replyType": "llm",
+                                        "system_message": "",
+                                    }
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
                                 elif isinstance(actions[function_name], list):
-                                    state_node["data"]["fallbackBodies"].extend(_bodies_for_action(actions[function_name], state["id"], True))
+                                    _add_action_elements_to_state(state["id"], actions[function_name], fallback=True)
                                 else:
-                                    state_node["data"]["fallbackBodies"].append(_make_body_row(actions[function_name].replace("\\'", "'"), "text"))
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": actions[function_name],
+                                        "type": "AgentStateFallbackBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "actionType": "TextReplyAction",
+                                    }
+                                    elements[state["id"]]["fallbackActions"].append(body_id)
+
                             else:
-                                state_node["data"]["fallbackBodies"].append({
-                                    "id": str(uuid.uuid4()),
+                                # Fallback if function not found
+                                body_id = str(uuid.uuid4())
+                                elements[body_id] = {
+                                    "id": body_id,
                                     "name": function_name,
-                                })
+                                    "type": "AgentStateFallbackBody",
+                                    "owner": state["id"],
+                                    "bounds": {
+                                        "x": elements[state["id"]]["bounds"]["x"],
+                                        "y": elements[state["id"]]["bounds"]["y"],
+                                        "width": 159,
+                                        "height": 30,
+                                    },
+                                }
+                                elements[state["id"]]["fallbackBodies"].append(body_id)
                         except Exception as e:
                             logger.warning("Error processing agent fallback body: %s", e, exc_info=True)
                             continue
             except Exception as e:
                 logger.error("Error processing agent state machine: %s", e, exc_info=True)
                 continue
+        # Find initial state and create initial transition
+        initial_state = None
+        for state_key, state_info in states.items():
+            if state_info["is_initial"]:
+                initial_state = state_info
+                break
 
-        # Comments (``comment`` nodes + ``CommentLink`` edges — the types
-        # the React Flow frontend registers).
+        # If no initial state is marked, use the first state as fallback
+        if not initial_state and states:
+            # Get the first state
+            first_state_key = next(iter(states))
+            initial_state = states[first_state_key]
+
+        if initial_state:
+            initial_rel_id = str(uuid.uuid4())
+            relationships[initial_rel_id] = {
+                "id": initial_rel_id,
+                "name": "",
+                "type": "AgentStateTransitionInit",
+                "owner": None,
+                "source": {
+                    "direction": "Right",
+                    "element": initial_node_id,
+                    "bounds": {
+                        "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "target": {
+                    "direction": "Left",
+                    "element": initial_state["id"],
+                    "bounds": {
+                        "x": elements[initial_state["id"]]["bounds"]["x"],
+                        "y": elements[initial_state["id"]]["bounds"]["y"] + 35,
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "bounds": {
+                    "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                    "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    "width": elements[initial_state["id"]]["bounds"]["x"]
+                    - (elements[initial_node_id]["bounds"]["x"] + 45),
+                    "height": 1,
+                },
+                "path": [
+                    {
+                        "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    },
+                    {
+                        "x": elements[initial_state["id"]]["bounds"]["x"],
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    },
+                ],
+                "isManuallyLayouted": False,
+            }
+
+        # Position for comments
         comment_x = -970
         comment_y = -300
+
+        # Create comment elements from metadata
+        # 1. Agent comment (unlinked)
         if agent_comment:
-            nodes.append(make_node(
-                node_id=str(uuid.uuid4()),
-                type_="comment",
-                data={"name": agent_comment},
-                position={"x": comment_x, "y": comment_y},
-                width=200,
-                height=100,
-            ))
+            comment_id = str(uuid.uuid4())
+            elements[comment_id] = {
+                "id": comment_id,
+                "name": agent_comment,
+                "type": "Comments",
+                "owner": None,
+                "bounds": {
+                    "x": comment_x,
+                    "y": comment_y,
+                    "width": 200,
+                    "height": 100,
+                },
+            }
             comment_y += 130
 
+        # 2. State comments (linked to states)
         for state_var, comment_text in state_comments.items():
             if state_var in states:
                 comment_id = str(uuid.uuid4())
-                nodes.append(make_node(
-                    node_id=comment_id,
-                    type_="comment",
-                    data={"name": comment_text},
-                    position={"x": comment_x, "y": comment_y},
-                    width=200,
-                    height=100,
-                ))
-                edges.append(make_edge(
-                    edge_id=str(uuid.uuid4()),
-                    source=comment_id,
-                    target=states[state_var]["id"],
-                    type_="CommentLink",
-                    data={"points": []},
-                ))
+                state_id = states[state_var]["id"]
+
+                elements[comment_id] = {
+                    "id": comment_id,
+                    "name": comment_text,
+                    "type": "Comments",
+                    "owner": None,
+                    "bounds": {
+                        "x": comment_x,
+                        "y": comment_y,
+                        "width": 200,
+                        "height": 100,
+                    },
+                }
+
+                # Create Link relationship
+                link_id = str(uuid.uuid4())
+                source_element = elements[comment_id]
+                target_element = elements[state_id]
+
+                source_dir, target_dir = determine_connection_direction(
+                    source_element["bounds"], target_element["bounds"]
+                )
+
+                source_point = calculate_connection_points(
+                    source_element["bounds"], source_dir
+                )
+                target_point = calculate_connection_points(
+                    target_element["bounds"], target_dir
+                )
+
+                path_points = calculate_path_points(
+                    source_point, target_point, source_dir, target_dir
+                )
+                rel_bounds = calculate_relationship_bounds(path_points)
+
+                relationships[link_id] = {
+                    "id": link_id,
+                    "name": "",
+                    "type": "Link",
+                    "owner": None,
+                    "bounds": rel_bounds,
+                    "path": path_points,
+                    "source": {
+                        "direction": source_dir,
+                        "element": comment_id,
+                        "bounds": {
+                            "x": source_point["x"],
+                            "y": source_point["y"],
+                            "width": 0,
+                            "height": 0,
+                        },
+                    },
+                    "target": {
+                        "direction": target_dir,
+                        "element": state_id,
+                        "bounds": {
+                            "x": target_point["x"],
+                            "y": target_point["y"],
+                            "width": 0,
+                            "height": 0,
+                        },
+                    },
+                    "isManuallyLayouted": False,
+                }
+
                 comment_y += 130
 
+        # AgentGUI components: the GUI design plus the settings carried by its replies.
+        for gui_id, gui_json in gui_jsons.items():
+            gui_element_id = str(uuid.uuid4())
+            settings = gui_settings.get(gui_id, {"persist": True, "width": "", "is_form": False})
+            elements[gui_element_id] = {
+                "id": gui_element_id,
+                "name": gui_id,
+                "type": "AgentGUI",
+                "owner": None,
+                "gui_id": gui_id,
+                "persist": settings["persist"],
+                "width": settings["width"],
+                "is_form": settings["is_form"],
+                "guiModel": gui_json,
+            }
+
+        # Split elements into canvas elements (stay in "elements") and off-canvas
+        # components (go into the new "components" section without bounds).
+        _COMPONENT_TYPES = {
+            'AgentIntent', 'AgentIntentBody', 'AgentRagElement',
+            'AgentTool', 'AgentSkill', 'AgentWorkspace', 'AgentLLM', 'AgentGUI',
+        }
+        canvas_elements: Dict[str, Any] = {}
+        component_elements: Dict[str, Any] = {}
+        for eid, el in elements.items():
+            if el.get('type') in _COMPONENT_TYPES:
+                # Strip canvas-only "bounds" – components are not positioned on canvas
+                component_elements[eid] = {k: v for k, v in el.items() if k != 'bounds'}
+            else:
+                canvas_elements[eid] = el
+
         result = {
-            "version": "4.0.0",
+            "version": "3.0.0",
             "type": "AgentDiagram",
-            "title": "",
-            "size": {"width": 1980, "height": 640},
-            "nodes": nodes,
-            "edges": edges,
+            "size": default_size,
             "interactive": {"elements": {}, "relationships": {}},
+            "elements": canvas_elements,
+            "components": component_elements,
+            "relationships": relationships,
             "assessments": {},
         }
         if default_llm_name_value:
-            # Round-trip the default-LLM pointer; the frontend persists it
-            # on the agent diagram's ``config`` block (``default_llm_name``).
             result["config"] = {"default_llm_name": default_llm_name_value}
         return result
 
     except Exception:
         logger.exception("Error converting agent BUML to JSON; returning partial diagram")
+        # On error return partial results, also split into canvas / components
+        _COMPONENT_TYPES_FALLBACK = {
+            'AgentIntent', 'AgentIntentBody', 'AgentRagElement',
+            'AgentTool', 'AgentSkill', 'AgentWorkspace', 'AgentLLM', 'AgentGUI',
+        }
+        canvas_elements_fb: Dict[str, Any] = {}
+        component_elements_fb: Dict[str, Any] = {}
+        for eid, el in elements.items():
+            if el.get('type') in _COMPONENT_TYPES_FALLBACK:
+                component_elements_fb[eid] = {k: v for k, v in el.items() if k != 'bounds'}
+            else:
+                canvas_elements_fb[eid] = el
         return {
-            "version": "4.0.0",
+            "version": "3.0.0",
             "type": "AgentDiagram",
-            "title": "",
-            "size": {"width": 1980, "height": 640},
-            "nodes": nodes,
-            "edges": edges,
+            "size": default_size,
             "interactive": {"elements": {}, "relationships": {}},
+            "elements": canvas_elements_fb,
+            "components": component_elements_fb,
+            "relationships": relationships,
             "assessments": {},
         }
+
+
+# ---------------------------------------------------------------------------
+# v4 wire shape
+# ---------------------------------------------------------------------------
+
+# Off-canvas agent component types: emitted in the top-level ``components``
+# map, never as canvas nodes (see uml-v4-shape.md, AgentDiagram -> Components).
+AGENT_COMPONENT_TYPES = frozenset({
+    "AgentIntent", "AgentIntentBody", "AgentRagElement", "AgentTool",
+    "AgentSkill", "AgentWorkspace", "AgentLLM", "AgentGUI",
+})
+
+# replyType (editor key) <-> actionType (metamodel class name). Body rows carry both.
+REPLY_TYPE_TO_ACTION_TYPE = {
+    "text": "TextReplyAction",
+    "llm": "LLMReplyAction",
+    "llm_chat": "LLMChatAction",
+    "rag": "RAGReplyAction",
+    "db_reply": "DBAction",
+    "code": "CustomCodeAction",
+    "web_crawl_llm": "WebCrawlLLMAction",
+    "ws_markdown": "WebSocketReplyMarkdownAction",
+    "ws_html": "WebSocketReplyHTMLAction",
+    "ws_speech": "WebSocketReplySpeechAction",
+    "ws_options": "WebSocketReplyOptionsAction",
+    "ws_location": "WebSocketReplyLocationAction",
+    "ws_file": "WebSocketReplyFileAction",
+    "ws_image": "WebSocketReplyImageAction",
+    "ws_dataframe": "WebSocketReplyDataframeAction",
+    "ws_plotly": "WebSocketReplyPlotlyAction",
+    "gui_reply": "GUIReplyAction",
+}
+ACTION_TYPE_TO_REPLY_TYPE = {v: k for k, v in REPLY_TYPE_TO_ACTION_TYPE.items()}
+
+_ROW_DROP_KEYS = ("type", "owner", "bounds")
+_COMPONENT_DROP_KEYS = ("bounds", "llm", "numPreviousMessages")
+
+
+def _body_rows(elements: Dict[str, Any], ids: List[str]) -> List[Dict[str, Any]]:
+    """Inline the body elements referenced by ``ids`` as v4 ``data.bodies`` rows."""
+    rows: List[Dict[str, Any]] = []
+    seen = set()
+    for body_id in ids or []:
+        if body_id in seen:
+            continue
+        seen.add(body_id)
+        element = elements.get(body_id)
+        if not isinstance(element, dict):
+            continue
+        row = {k: v for k, v in element.items() if k not in _ROW_DROP_KEYS}
+        action_type = row.get("actionType")
+        reply_type = row.get("replyType")
+        if not reply_type:
+            reply_type = ACTION_TYPE_TO_REPLY_TYPE.get(action_type, "text")
+            row["replyType"] = reply_type
+        if not action_type:
+            row["actionType"] = REPLY_TYPE_TO_ACTION_TYPE.get(reply_type, reply_type)
+        if row["replyType"] == "code" and "code" not in row:
+            # v4 code rows carry the source on ``code`` (``name`` doubles as label).
+            row["code"] = row.get("name", "")
+        rows.append(row)
+    return rows
+
+
+def _flat_to_v4(flat: Dict[str, Any]) -> Dict[str, Any]:
+    """Turn the flat element index built by the parser into the v4 wire shape."""
+    elements: Dict[str, Any] = flat.get("elements") or {}
+    relationships: Dict[str, Any] = flat.get("relationships") or {}
+    components: Dict[str, Any] = dict(flat.get("components") or {})
+
+    # Component entries that ended up in ``elements`` (defensive) move out too.
+    for element_id, element in list(elements.items()):
+        if element.get("type") in AGENT_COMPONENT_TYPES:
+            components.setdefault(element_id, element)
+    components = {
+        cid: {k: v for k, v in comp.items() if k not in _COMPONENT_DROP_KEYS}
+        for cid, comp in components.items()
+    }
+
+    initial_marker_ids = {eid for eid, el in elements.items() if el.get("type") == "StateInitialNode"}
+    initial_state_ids = set()
+    for rel in relationships.values():
+        source_id = (rel.get("source") or {}).get("element")
+        if rel.get("type") == "AgentStateTransitionInit" or source_id in initial_marker_ids:
+            target_id = (rel.get("target") or {}).get("element")
+            if target_id:
+                initial_state_ids.add(target_id)
+
+    nodes: List[Dict[str, Any]] = []
+    for element_id, element in elements.items():
+        element_type = element.get("type")
+        bounds = element.get("bounds") or {}
+        position = {"x": bounds.get("x", 0), "y": bounds.get("y", 0)}
+        if element_type == "AgentState":
+            data: Dict[str, Any] = {
+                "name": element.get("name", ""),
+                "initial": element_id in initial_state_ids,
+                "stateType": element.get("stateType") or "standard",
+                "bodies": _body_rows(
+                    elements, list(element.get("actions") or []) + list(element.get("bodies") or [])
+                ),
+                "fallbackBodies": _body_rows(
+                    elements,
+                    list(element.get("fallbackActions") or []) + list(element.get("fallbackBodies") or []),
+                ),
+            }
+            if data["stateType"] == "reasoning":
+                data.update({
+                    "llm_name": element.get("llm_name") or "",
+                    "max_steps": element.get("max_steps", 8),
+                    "enable_task_planning": element.get("enable_task_planning", True),
+                    "stream_steps": element.get("stream_steps", True),
+                    "system_prompt": element.get("system_prompt") or "",
+                    "fallback_message": element.get("fallback_message") or "",
+                })
+            nodes.append(make_node(
+                node_id=element_id, type_="AgentState", data=data, position=position,
+                width=bounds.get("width", 160), height=bounds.get("height", 100),
+            ))
+        elif element_type == "Comments":
+            nodes.append(make_node(
+                node_id=element_id, type_="comment", data={"name": element.get("name", "")},
+                position=position, width=bounds.get("width", 200), height=bounds.get("height", 100),
+            ))
+
+    edges: List[Dict[str, Any]] = []
+    for rel_id, rel in relationships.items():
+        rel_type = rel.get("type")
+        source = rel.get("source") or {}
+        target = rel.get("target") or {}
+        source_id = source.get("element")
+        target_id = target.get("element")
+        handles = {
+            "source_handle": source.get("direction") or "Right",
+            "target_handle": target.get("direction") or "Left",
+        }
+        if rel_type == "AgentStateTransition" and source_id not in initial_marker_ids:
+            transition_type = rel.get("transitionType") or "predefined"
+            edge_data: Dict[str, Any] = {"name": rel.get("name") or "", "transitionType": transition_type}
+            if transition_type == "custom":
+                custom = dict(rel.get("custom") or {})
+                custom.setdefault("event", "None")
+                custom.setdefault("condition", [])
+                edge_data["custom"] = custom
+            else:
+                predefined = {
+                    k: v for k, v in (rel.get("predefined") or {}).items()
+                    if not (k == "conditionValue" and v in (None, ""))
+                }
+                edge_data["predefined"] = predefined
+            edges.append(make_edge(rel_id, source_id, target_id, "AgentStateTransition", edge_data, **handles))
+        elif rel_type == "Link":
+            edges.append(make_edge(rel_id, source_id, target_id, "CommentLink", {}, **handles))
+
+    result: Dict[str, Any] = {
+        "version": "4.0.0",
+        "type": "AgentDiagram",
+        "title": "",
+        "size": flat.get("size") or {"width": 1980, "height": 640},
+        "nodes": nodes,
+        "edges": edges,
+        "components": components,
+        "interactive": {"elements": {}, "relationships": {}},
+        "assessments": {},
+    }
+    if flat.get("config"):
+        result["config"] = flat["config"]
+    return result
+
+
+def agent_buml_to_json(content: str) -> Dict[str, Any]:
+    """Convert agent B-UML Python code to the v4 AgentDiagram wire shape.
+
+    Canvas: ``AgentState`` nodes (inline ``data.bodies`` / ``data.fallbackBodies``
+    action rows, ``data.initial``, reasoning states as ``data.stateType ==
+    'reasoning'``), ``comment`` nodes, ``AgentStateTransition`` and
+    ``CommentLink`` edges. Off-canvas: intents (+ ``AgentIntentBody`` entries),
+    LLMs, RAG databases, tools, skills, workspaces and GUIs in the top-level
+    ``components`` map.
+    """
+    return _flat_to_v4(_agent_buml_to_flat_json(content))

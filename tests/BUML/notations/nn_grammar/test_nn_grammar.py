@@ -1,7 +1,9 @@
 import os
+
 import pytest
-from besser.BUML.metamodel.nn import NN, Label
+from besser.BUML.metamodel.nn import Label
 from besser.BUML.notations.nn import buml_neural_network
+
 
 @pytest.fixture
 def nn_model_data(tmpdir):

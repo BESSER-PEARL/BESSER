@@ -7,14 +7,17 @@ the spec at ``docs/source/migrations/uml-v4-shape.md``).
 """
 
 import ast
+import json
 import threading
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
+import besser.BUML.metamodel.nn as nn_module
 from besser.BUML.metamodel.nn import NN, Configuration, Dataset
-from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
+from besser.utilities.buml_code_builder.nn_model_builder import is_attr_explicitly_set
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._node_builders import (
-    make_node, make_edge,
+    make_edge,
+    make_node,
 )
 
 
@@ -53,33 +56,76 @@ _MODULE_TYPE_MAP = {
 
 
 def _is_attr_set(obj, attr_name: str) -> bool:
-    return is_explicit(obj, attr_name)
+    """True when an attribute has to be emitted for the model to round-trip.
+
+    Shares the code builder's rule so BUML->JSON and BUML->Python agree:
+    the editor's explicit-set sidecar OR a value that diverges from the
+    metamodel's declared default. The second half is what keeps hand-written
+    BUML models (and models rebuilt by :func:`_parse_nn_buml_ast`, which never
+    populate the sidecar) from silently losing their attributes.
+    """
+    return is_attr_explicitly_set(obj, attr_name)
 
 
 def _fmt_value(value: Any) -> str:
-    """Convert a Python value to the string representation used in v4 attributes."""
+    """Convert a Python value to the string stored in v4 ``data.attributes``.
+
+    Lists are formatted as ``[a, b, c]`` with string items single-quoted (the
+    processor strips the quotes again). Items containing ``,``, ``[``, ``]``
+    or ``'`` would round-trip incorrectly, so they are rejected instead of
+    silently truncated.
+
+    Dicts (and lists containing them — ``TensorOp.subscript_indices`` is a
+    ``list[dict]``) are emitted as real JSON via :func:`json.dumps`. ``str()``
+    would produce a Python repr with single quotes, which the frontend's
+    ``JSON.parse`` rejects outright.
+    """
     if value is None:
         return ''
     if isinstance(value, bool):
         return 'true' if value else 'false'
+    if isinstance(value, dict) or (
+        isinstance(value, (list, tuple))
+        and any(isinstance(item, dict) for item in value)
+    ):
+        return json.dumps(value)
     if isinstance(value, (list, tuple)):
         parts = []
         for v in value:
-            formatted = _fmt_value(v)
-            if isinstance(v, str) and (',' in v or ']' in v or '[' in v):
-                raise ValueError(
-                    f"List item {v!r} contains unsupported characters (,[]) "
-                    f"that would break round-trip through the editor format"
-                )
-            parts.append(formatted)
+            if isinstance(v, str):
+                # Quote string items for proper semantics (parser strips quotes during parse)
+                if (',' in v or ']' in v or '[' in v or "'" in v):
+                    raise ValueError(
+                        f"List item {v!r} contains unsupported characters (,[]') "
+                        f"that would break round-trip through the editor format"
+                    )
+                parts.append(f"'{v}'")
+            else:
+                formatted = _fmt_value(v)
+                parts.append(formatted)
         return '[' + ', '.join(parts) + ']'
     return str(value)
 
 
-def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
-    """Return the list of (field_name, value, type_hint, mandatory) tuples for a module."""
+def _append_base_layer_fields(fields: list[tuple[str, Any, str, bool]], module) -> None:
+    """Append base-layer fields (inherited from Layer) to the fields list."""
+    if _is_attr_set(module, 'is_layer_call'):
+        fields.append(('is_layer_call', module.is_layer_call, 'bool', False))
+    if module.input_var:
+        fields.append(('input_var', module.input_var, 'str', False))
+    if module.output_var:
+        fields.append(('output_var', module.output_var, 'str', False))
+
+
+def _module_fields(module) -> list[tuple[str, Any, str, bool]]:
+    """
+    Return the list of (field_name, value, type_hint, mandatory) tuples to emit for a module.
+
+    Mirrors the builder's emission rules: only emits fields that are explicitly set
+    or diverge from defaults, so round-trip stays minimal.
+    """
     cls = type(module).__name__
-    fields: List[Tuple[str, Any, str, bool]] = []
+    fields: list[tuple[str, Any, str, bool]] = []
 
     if cls in ('Conv1D', 'Conv2D', 'Conv3D'):
         fields.append(('name', module.name, 'str', True))
@@ -103,6 +149,14 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('permute_in', module.permute_in, 'bool', False))
         if _is_attr_set(module, 'permute_out'):
             fields.append(('permute_out', module.permute_out, 'bool', False))
+        # Conv-specific optional fields
+        if _is_attr_set(module, 'dilation') or module.dilation:
+            fields.append(('dilation', module.dilation, 'List', False))
+        if _is_attr_set(module, 'groups') or (module.groups is not None and module.groups != 1):
+            fields.append(('groups', module.groups, 'int', False))
+        if _is_attr_set(module, 'bias'):
+            fields.append(('bias', module.bias, 'bool', False))
+        _append_base_layer_fields(fields, module)
 
     elif cls == 'PoolingLayer':
         fields.append(('name', module.name, 'str', True))
@@ -128,6 +182,7 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('permute_in', module.permute_in, 'bool', False))
         if _is_attr_set(module, 'permute_out'):
             fields.append(('permute_out', module.permute_out, 'bool', False))
+        _append_base_layer_fields(fields, module)
 
     elif cls in ('SimpleRNNLayer', 'LSTMLayer', 'GRULayer'):
         fields.append(('name', module.name, 'str', True))
@@ -148,6 +203,26 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        if _is_attr_set(module, 'bias'):
+            fields.append(('bias', module.bias, 'bool', False))
+        # RNN-specific optional fields
+        if module.hx_source:
+            fields.append(('hx_source', module.hx_source, 'str', False))
+        if module.hidden_state_var:
+            fields.append(('hidden_state_var', module.hidden_state_var, 'str', False))
+        if _is_attr_set(module, 'hidden_unused'):
+            fields.append(('hidden_unused', module.hidden_unused, 'bool', False))
+        if module.hidden_subscript_source:
+            fields.append(('hidden_subscript_source', module.hidden_subscript_source, 'str', False))
+        if module.hidden_subscript_target:
+            fields.append(('hidden_subscript_target', module.hidden_subscript_target, 'str', False))
+        # LSTM-specific fields
+        if cls == 'LSTMLayer':
+            if module.cell_state_var:
+                fields.append(('cell_state_var', module.cell_state_var, 'str', False))
+            if _is_attr_set(module, 'cell_unused'):
+                fields.append(('cell_unused', module.cell_unused, 'bool', False))
+        _append_base_layer_fields(fields, module)
 
     elif cls == 'LinearLayer':
         fields.append(('name', module.name, 'str', True))
@@ -160,6 +235,10 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # Linear-specific optional fields
+        if _is_attr_set(module, 'bias'):
+            fields.append(('bias', module.bias, 'bool', False))
+        _append_base_layer_fields(fields, module)
 
     elif cls == 'FlattenLayer':
         fields.append(('name', module.name, 'str', True))
@@ -177,6 +256,7 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        _append_base_layer_fields(fields, module)
 
     elif cls == 'EmbeddingLayer':
         fields.append(('name', module.name, 'str', True))
@@ -188,6 +268,14 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # Embedding-specific optional fields
+        if _is_attr_set(module, 'padding_idx') or module.padding_idx is not None:
+            fields.append(('padding_idx', module.padding_idx, 'int', False))
+        if _is_attr_set(module, 'permute_in'):
+            fields.append(('permute_in', module.permute_in, 'bool', False))
+        if _is_attr_set(module, 'permute_out'):
+            fields.append(('permute_out', module.permute_out, 'bool', False))
+        _append_base_layer_fields(fields, module)
 
     elif cls == 'DropoutLayer':
         fields.append(('name', module.name, 'str', True))
@@ -196,6 +284,14 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # Dropout-specific optional fields
+        if module.dimension:
+            fields.append(('dimension', module.dimension, 'str', False))
+        if _is_attr_set(module, 'permute_in'):
+            fields.append(('permute_in', module.permute_in, 'bool', False))
+        if _is_attr_set(module, 'permute_out'):
+            fields.append(('permute_out', module.permute_out, 'bool', False))
+        _append_base_layer_fields(fields, module)
 
     elif cls == 'LayerNormLayer':
         fields.append(('name', module.name, 'str', True))
@@ -206,6 +302,12 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # LayerNorm-specific optional fields
+        if _is_attr_set(module, 'eps') or (module.eps is not None and module.eps != 1e-5):
+            fields.append(('eps', module.eps, 'float', False))
+        if _is_attr_set(module, 'affine'):
+            fields.append(('affine', module.affine, 'bool', False))
+        _append_base_layer_fields(fields, module)
 
     elif cls == 'BatchNormLayer':
         fields.append(('name', module.name, 'str', True))
@@ -217,31 +319,129 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # BatchNorm-specific optional fields
+        if _is_attr_set(module, 'eps') or (module.eps is not None and module.eps != 1e-5):
+            fields.append(('eps', module.eps, 'float', False))
+        if _is_attr_set(module, 'momentum') or (module.momentum is not None and module.momentum != 0.1):
+            fields.append(('momentum', module.momentum, 'float', False))
+        if _is_attr_set(module, 'affine'):
+            fields.append(('affine', module.affine, 'bool', False))
+        if _is_attr_set(module, 'track_running_stats'):
+            fields.append(('track_running_stats', module.track_running_stats, 'bool', False))
+        # BatchNorm inherits permute_in / permute_out as real constructor
+        # parameters (unlike LayerNorm, which hard-codes them to False).
+        if _is_attr_set(module, 'permute_in'):
+            fields.append(('permute_in', module.permute_in, 'bool', False))
+        if _is_attr_set(module, 'permute_out'):
+            fields.append(('permute_out', module.permute_out, 'bool', False))
+        _append_base_layer_fields(fields, module)
 
     elif cls == 'TensorOp':
         fields.append(('name', module.name, 'str', True))
         fields.append(('tns_type', module.tns_type, 'str', True))
         tns_type = module.tns_type
+        # Common TensorOp fields (all types)
+        if module.input_var:
+            fields.append(('input_var', module.input_var, 'str', False))
+        if module.output_var:
+            fields.append(('output_var', module.output_var, 'str', False))
+        if _is_attr_set(module, 'permute_in'):
+            fields.append(('permute_in', module.permute_in, 'bool', False))
+        if _is_attr_set(module, 'permute_out'):
+            fields.append(('permute_out', module.permute_out, 'bool', False))
+        # Type-specific parameters
         if tns_type == 'concatenate':
             if module.concatenate_dim is not None:
                 fields.append(('concatenate_dim', module.concatenate_dim, 'int', False))
             if module.layers_of_tensors is not None:
                 fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
+            if module.actual_vars is not None:
+                fields.append(('actual_vars', module.actual_vars, 'List', False))
         elif tns_type in ('multiply', 'matmultiply') and module.layers_of_tensors is not None:
             fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
-        elif tns_type == 'reshape' and module.reshape_dim is not None:
-            fields.append(('reshape_dim', module.reshape_dim, 'List', False))
+        elif tns_type == 'reshape':
+            if module.reshape_dim is not None:
+                fields.append(('reshape_dim', module.reshape_dim, 'List', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         elif tns_type == 'transpose' and module.transpose_dim is not None:
             fields.append(('transpose_dim', module.transpose_dim, 'List', False))
-        elif tns_type == 'permute' and module.permute_dim is not None:
-            fields.append(('permute_dim', module.permute_dim, 'List', False))
+        elif tns_type == 'permute':
+            if module.permute_dim is not None:
+                fields.append(('permute_dim', module.permute_dim, 'List', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
+        elif tns_type == 'repeat':
+            if module.repeat_dim is not None:
+                fields.append(('repeat_dim', module.repeat_dim, 'List', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
+        # Binary operations
+        elif tns_type in ('binop_add', 'binop_subtract', 'binop_multiply',
+                           'binop_divide', 'binop_floor_divide'):
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
+            if module.actual_vars is not None:
+                fields.append(('actual_vars', module.actual_vars, 'List', False))
+        # Reduce operations
+        elif tns_type in ('shape_dim', 'mean', 'max', 'squeeze', 'unsqueeze', 'normalize'):
+            if module.reduce_dim is not None:
+                fields.append(('reduce_dim', module.reduce_dim, 'int', False))
+            if module.shape_dim is not None:
+                fields.append(('shape_dim', module.shape_dim, 'int', False))
+            if tns_type == 'max' and module.reduce_keepdims is not None:
+                fields.append(('reduce_keepdims', module.reduce_keepdims, 'bool', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
+        # Subscript
+        elif tns_type == 'subscript':
+            if module.subscript_indices is not None:
+                fields.append(('subscript_indices', module.subscript_indices, 'List', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
+        # Interpolate
+        elif tns_type == 'interpolate':
+            if module.interpolate_size is not None:
+                fields.append(('interpolate_size', module.interpolate_size, 'List', False))
+            if module.interpolate_scale is not None:
+                fields.append(('interpolate_scale', module.interpolate_scale, 'float', False))
+            if module.interpolate_mode:
+                fields.append(('interpolate_mode', module.interpolate_mode, 'str', False))
+        # Pad
+        elif tns_type == 'pad':
+            if module.pad_amount is not None:
+                fields.append(('pad_amount', module.pad_amount, 'List', False))
+            if module.pad_mode:
+                fields.append(('pad_mode', module.pad_mode, 'str', False))
+            if module.pad_value is not None:
+                fields.append(('pad_value', module.pad_value, 'float', False))
+        # Dropout (TensorOp variant)
+        elif tns_type == 'dropout':
+            if module.dropout_rate is not None:
+                fields.append(('dropout_rate', module.dropout_rate, 'float', False))
+            if module.dropout_training_aware is not None:
+                fields.append(('dropout_training_aware', module.dropout_training_aware, 'bool', False))
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
+        # Split
+        elif tns_type == 'split':
+            if module.split_dim is not None:
+                fields.append(('split_dim', module.split_dim, 'int', False))
+            if module.split_sizes is not None:
+                fields.append(('split_sizes', module.split_sizes, 'int', False))
+            if module.output_vars is not None:
+                fields.append(('output_vars', module.output_vars, 'List', False))
+        # Identity and zeros_like
+        elif tns_type in ('identity', 'zeros_like'):
+            if module.layers_of_tensors is not None:
+                fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
 
     return fields
 
 
-def _configuration_fields(config: Configuration) -> List[Tuple[str, Any, str, bool]]:
+def _configuration_fields(config: Configuration) -> list[tuple[str, Any, str, bool]]:
     fields = [
         ('batch_size',     config.batch_size,     'int',  True),
         ('epochs',         config.epochs,         'int',  True),
@@ -261,8 +461,8 @@ def _configuration_fields(config: Configuration) -> List[Tuple[str, Any, str, bo
     return fields
 
 
-def _dataset_fields(dataset: Dataset) -> List[Tuple[str, Any, str, bool]]:
-    fields: List[Tuple[str, Any, str, bool]] = [
+def _dataset_fields(dataset: Dataset) -> list[tuple[str, Any, str, bool]]:
+    fields: list[tuple[str, Any, str, bool]] = [
         ('name',      dataset.name,      'str', True),
         ('path_data', dataset.path_data, 'str', True),
     ]
@@ -278,7 +478,7 @@ def _dataset_fields(dataset: Dataset) -> List[Tuple[str, Any, str, bool]]:
     return fields
 
 
-def _attrs_dict(fields: List[Tuple[str, Any, str, bool]], layer_kind: str | None = None) -> dict:
+def _attrs_dict(fields: list[tuple[str, Any, str, bool]], layer_kind: str | None = None) -> dict:
     """Collapse the field list into the v4 ``data.attributes`` dict.
 
     Some attribute slugs collide across layer kinds (e.g. ``dimension`` lives
@@ -324,12 +524,21 @@ def _emit_module_node(module, parent_id: str, x: int, y: int, nodes: list) -> st
     return node_id
 
 
-def _emit_container_node(name: str, x: int, y: int, width: int, height: int, nodes: list) -> str:
+def _emit_container_node(name: str, x: int, y: int, width: int, height: int, nodes: list,
+                         input_var: str | None = None,
+                         return_vars: list[str] | None = None) -> str:
     container_id = _new_id()
+    data: dict[str, Any] = {"name": name}
+    # The NN's forward signature (NN.input_var / NN.return_vars) lives on the
+    # container node: ``data.input_var`` (str), ``data.return_vars`` (list).
+    if input_var:
+        data["input_var"] = input_var
+    if return_vars:
+        data["return_vars"] = list(return_vars)
     nodes.append(make_node(
         node_id=container_id,
         type_="NNContainer",
-        data={"name": name},
+        data=data,
         position={"x": x, "y": y},
         width=width,
         height=height,
@@ -402,14 +611,23 @@ def _emit_dataset_node(dataset: Dataset, parent_type: str, x: int, y: int, nodes
 
 
 def _emit_nn_container(nn: NN, y_base: int, nodes: list, edges: list,
-                       sub_nn_ids: Optional[Dict[int, str]] = None) -> str:
+                       sub_nn_ids: dict[int, str] | None = None) -> str:
     step = 140
     module_count = max(len(nn.modules), 1)
     width = 30 + module_count * step
     container_x = -width // 2
-    container_id = _emit_container_node(nn.name, container_x, y_base, width, 250, nodes)
+    # NN.return_vars is a comma-separated string; the editor stores a list.
+    return_vars_list = (
+        [v.strip() for v in nn.return_vars.split(",") if v.strip()]
+        if nn.return_vars else None
+    )
+    container_id = _emit_container_node(
+        nn.name, container_x, y_base, width, 250, nodes,
+        input_var=nn.input_var or None,
+        return_vars=return_vars_list,
+    )
 
-    prev_id: Optional[str] = None
+    prev_id: str | None = None
     for i, module in enumerate(nn.modules):
         x = container_x + 20 + i * step
         y = y_base + 60
@@ -441,13 +659,18 @@ def _collect_all_sub_nns(nn_model: NN) -> list:
     return ordered
 
 
-def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
+def nn_model_to_json(nn_model: NN) -> dict[str, Any]:
     """Convert a BUML NN instance into the v4 NNDiagram model dict."""
+    # Deterministic IDs: reset the per-conversion counter so the same input
+    # produces the same JSON bytes on every call.
     _reset_id_state()
     nodes: list = []
     edges: list = []
 
-    sub_nn_ids: Dict[int, str] = {}
+    # Emit every transitively-reachable sub-NN, not just the top-level list;
+    # keyed by id(sub_nn) so two sibling sub-NNs with the same display name
+    # stay distinct.
+    sub_nn_ids: dict[int, str] = {}
     y_cursor = -700
     for sub_nn in _collect_all_sub_nns(nn_model):
         cid = _emit_nn_container(sub_nn, y_cursor, nodes, edges, sub_nn_ids=sub_nn_ids)
@@ -616,16 +839,19 @@ def _parse_nn_buml_ast(content: str, nn_module):
     except SyntaxError as exc:
         raise ValueError(f"Failed to parse NN BUML content: {exc}") from exc
 
-    env: Dict[str, Any] = {}
+    env: dict[str, Any] = {}
     for stmt in tree.body:
         _run_stmt(stmt, env)
     return env
 
 
-def nn_buml_to_json(content: str) -> Dict[str, Any]:
-    """Convert NN BUML Python source to the v4 NNDiagram model dict."""
-    import besser.BUML.metamodel.nn as nn_module
+def nn_buml_to_json(content: str) -> dict[str, Any]:
+    """Convert an NN model Python section to the editor NNDiagram model dict.
 
+    Uses an ``ast.parse`` whitelist visitor rather than ``exec`` so that
+    uploaded BUML content cannot escape the sandbox (``().__class__.__bases__
+    .__subclasses__()``-style tricks) or run arbitrary system calls.
+    """
     env = _parse_nn_buml_ast(content, nn_module)
 
     all_nns = [v for v in env.values() if isinstance(v, NN)]

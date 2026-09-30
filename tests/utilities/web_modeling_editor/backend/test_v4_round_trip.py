@@ -249,7 +249,8 @@ def test_v4_agent_diagram_full_chain_re_emits_v4_shape():
     types_out = _node_types(re_emitted)
     edges_out = _edge_types(re_emitted)
     assert types_out["AgentState"] == 2
-    assert types_out["AgentIntent"] == 1
+    # Intents are off-canvas components (``model.components``), not nodes.
+    assert types_out["AgentIntent"] == 0
     assert types_out["comment"] == 1
     assert edges_out["CommentLink"] == 1
 
@@ -258,11 +259,15 @@ def test_v4_agent_diagram_full_chain_re_emits_v4_shape():
         n for n in nodes
         if n["type"] == "AgentState" and n["data"]["name"] == "AIHelp"
     )
-    assert [(b["name"], b["replyType"]) for b in ai_help["data"]["bodies"]] == [
-        ("You are a friendly gym assistant.", "llm"),
+    # The LLM system prompt is emitted on the row's ``system_message``.
+    assert [(b["system_message"], b["replyType"], b["actionType"]) for b in ai_help["data"]["bodies"]] == [
+        ("You are a friendly gym assistant.", "llm", "LLMReplyAction"),
     ]
-    intent = next(n for n in nodes if n["type"] == "AgentIntent")
-    assert [p["name"] for p in intent["data"]["training_phrases"]] == ["hi", "hello"]
+    components = re_emitted["components"]
+    intent = next(c for c in components.values() if c["type"] == "AgentIntent")
+    assert intent["name"] == "greet"
+    assert [components[body_id]["name"] for body_id in intent["bodies"]] == ["hi", "hello"]
+    assert all(components[body_id]["owner"] == intent["id"] for body_id in intent["bodies"])
     comment = next(n for n in nodes if n["type"] == "comment")
     assert comment["data"]["name"] == "Welcomes the user."
 

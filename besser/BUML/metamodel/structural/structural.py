@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any, Union, List, TYPE_CHECKING, Literal
 import keyword
 import logging
-import time
+import threading
 
 if TYPE_CHECKING:
     from besser.BUML.metamodel.state_machine import StateMachine
@@ -13,6 +13,24 @@ if TYPE_CHECKING:
 
 # constant
 UNLIMITED_MAX_MULTIPLICITY = 9999
+
+_last_timestamp = datetime.min
+_timestamp_lock = threading.Lock()
+
+
+def _next_timestamp() -> datetime:
+    """Current time, bumped so each call is strictly later than the previous one.
+
+    The clock often returns the same value for objects created back to back, and
+    generators order members by timestamp, so ties made declaration order unstable.
+    """
+    global _last_timestamp
+    with _timestamp_lock:
+        now = datetime.now()
+        if now <= _last_timestamp:
+            now = _last_timestamp + timedelta(microseconds=1)
+        _last_timestamp = now
+        return now
 
 class Element(ABC):
     """Element is the Superclass of all structural model elements.
@@ -29,8 +47,7 @@ class Element(ABC):
     """
 
     def __init__(self, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0):
-        self.timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
-                         timedelta(microseconds=(time.perf_counter_ns() % 1_000_000) / 1000)
+        self.timestamp: datetime = timestamp if timestamp is not None else _next_timestamp()
         self.is_derived: bool = is_derived
         self.uncertainty: float = uncertainty
 
@@ -1139,6 +1156,99 @@ class BehaviorDeclaration(NamedElement):
         return f'BehaviorDeclaration({self.name}, {self.implementations})'
 
 
+def _stem_candidates(role_name: str) -> list[tuple[str, str]]:
+    """All plausible ``(stem, suffix_tag)`` readings of ``role_name``, best guess first.
+
+    ``suffix_tag`` is ``"ies"``, ``"es"`` or ``"s"`` for a plural reading and
+    ``""`` for the name taken as-is (always the last candidate), so that
+    ``houses`` can still match ``House`` and ``status`` can match ``Status``.
+    """
+    if not role_name:
+        return [(role_name, "")]
+    lower = role_name.lower()
+    candidates = []
+    if lower.endswith("ies") and len(lower) > 3:
+        # categories -> category
+        candidates.append((role_name[:-3] + ("Y" if role_name[-3].isupper() else "y"), "ies"))
+    if lower.endswith("es") and len(lower) > 2 and lower[:-2].endswith(("s", "sh", "ch", "x", "z")):
+        candidates.append((role_name[:-2], "es"))
+    if lower.endswith("s") and not lower.endswith("ss") and len(lower) > 1:
+        candidates.append((role_name[:-1], "s"))
+    candidates.append((role_name, ""))
+    return candidates
+
+
+def _stem_role_name(role_name: str) -> tuple[str, str]:
+    """Strip a common English plural suffix from ``role_name``.
+
+    Returns the best-guess ``(stem, suffix_tag)`` from :func:`_stem_candidates`.
+    Only conservative English pluralisation rules are applied so that
+    intentional role names like ``"borrower"`` are not mistaken for plurals.
+    """
+    return _stem_candidates(role_name)[0]
+
+
+def _pluralize(word: str) -> str:
+    """Regular English plural of ``word`` (``box`` -> ``boxes``, ``city`` -> ``cities``)."""
+    lower = word.lower()
+    if lower.endswith("is") and len(word) > 2:
+        return word[:-2] + "es"  # analysis -> analyses
+    if lower.endswith("z") and len(word) > 1 and lower[-2] in "aeiou":
+        return word + "zes"  # quiz -> quizzes
+    if lower.endswith(("ss", "us", "as", "os", "sh", "ch", "x", "z")):
+        return word + "es"
+    if lower.endswith("s"):
+        # Already plural (``Settings``).
+        return word
+    if lower.endswith("y") and len(word) > 1 and lower[-2] not in "aeiou":
+        return word[:-1] + "ies"
+    return word + "s"
+
+
+def _pluralize_for_role(base: str, suffix_tag: str) -> str:
+    """Plural of ``base`` when ``suffix_tag`` marks a plural role, else ``base`` unchanged."""
+    return _pluralize(base) if suffix_tag else base
+
+
+def _match_role_case(template: str, candidate: str) -> str:
+    """Adapt ``candidate`` to mirror the casing convention of ``template``.
+
+    Heuristic:
+
+    - If ``template`` is all lowercase -> return ``candidate.lower()``.
+    - If ``template`` is all uppercase -> return ``candidate.upper()``.
+    - If ``template`` starts with a lowercase letter (camelCase-ish role
+      like ``borrowedBooks``) -> first char lowercase, rest as-is from
+      ``candidate``.
+    - Otherwise return ``candidate`` unchanged (preserves PascalCase).
+    """
+    if not template:
+        return candidate
+    if template.islower():
+        return candidate.lower()
+    if template.isupper():
+        return candidate.upper()
+    if template[0].islower() and candidate:
+        return candidate[0].lower() + candidate[1:]
+    return candidate
+
+
+def _role_name_matches_class(role_name: str, class_name: str) -> tuple[bool, str]:
+    """Return ``(matches, suffix_tag)`` if ``role_name`` is the (possibly
+    pluralised) lowercase form of ``class_name``.
+
+    The match is exact after stripping a recognised plural suffix and
+    case-folding -- intentionally non-fuzzy so that role names like
+    ``"borrower"`` (pointing to a ``Member`` class) are left alone.
+    """
+    for stem, suffix_tag in _stem_candidates(role_name):
+        if stem.lower() == class_name.lower():
+            return True, suffix_tag
+    if role_name.lower() == _pluralize(class_name).lower():
+        return True, "s"  # plurals the stems miss: quizzes, analyses
+    return False, ""
+
+
 class Class(Type):
     """Represents a class in a modeling context.
 
@@ -1180,6 +1290,57 @@ class Class(Type):
         self.methods: set[Method] = methods if methods is not None else set()
         self.__associations: set[Association] = set()
         self.__generalizations: set[Generalization] = set()
+
+    @NamedElement.name.setter
+    def name(self, name: str):
+        """str: Set the name of the class.
+
+        Beyond the validation inherited from :class:`NamedElement`, this
+        setter propagates a class rename to any *role-style* association end
+        names that referenced the old class name. Concretely, for every
+        association end whose ``type`` is this class and whose name is the
+        case-insensitive (possibly pluralised) form of the previous class
+        name, the role name is rewritten to the matching form of the new
+        class name. Role names that intentionally differ from the class name
+        (e.g. ``"borrower"`` pointing to a ``Member`` class) are left alone.
+
+        See :func:`_role_name_matches_class` for the matching rule and
+        :func:`_pluralize_for_role` for the pluralisation policy. Renames
+        that would collide with an existing end name on the same class are
+        skipped to preserve metamodel invariants.
+        """
+        # During ``__init__`` neither the name nor the associations exist yet,
+        # so both getters raise AttributeError and getattr yields None.
+        old_name = getattr(self, "name", None)
+        super(Class, Class).name.fset(self, name)
+        if old_name is None or old_name == name:
+            return
+        associations = getattr(self, "associations", None)
+        if not associations:
+            return
+        for association in associations:
+            for end in association.ends:
+                if end.type is not self:
+                    continue
+                matches, suffix_tag = _role_name_matches_class(end.name, old_name)
+                if not matches:
+                    continue
+                new_role = _pluralize_for_role(name, suffix_tag)
+                new_role = _match_role_case(end.name, new_role)
+                if new_role == end.name:
+                    continue
+                # Renaming in place skips the uniqueness check done on ``ends``
+                # assignment: the end belongs to the classes at the other ends,
+                # so it must not collide with any end name they already reach.
+                taken = {e.name for e in association.ends if e is not end}
+                for other in association.ends:
+                    if other is not end and isinstance(other.type, Class):
+                        # Subclasses inherit the end, so their own ends count too.
+                        for cls in {other.type} | other.type.all_specializations():
+                            taken |= {e.name for e in cls.all_association_ends() if e is not end}
+                if new_role in taken:
+                    continue
+                end.name = new_role
 
     @property
     def attributes(self) -> set[Property]:
@@ -1626,7 +1787,8 @@ class AssociationClass(Class):
 
     def __init__(self, name: str, attributes: set[Property], association: Association, timestamp: datetime = None,
                  metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, attributes, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+        super().__init__(name, attributes, timestamp=timestamp, metadata=metadata, is_derived=is_derived,
+                         uncertainty=uncertainty)
         self.association: Association = association
 
     @property
@@ -2275,9 +2437,12 @@ class DomainModel(Model):
             )
 
     def classes_sorted_by_inheritance(self) -> list[Class]:
-        """list[Class]: Get the list of classes ordered by inheritance."""
-        from besser.utilities import sort_by_timestamp
-        classes = sort_by_timestamp(self.get_classes())
+        """list[Class]: Get the list of classes ordered by inheritance (parents first), ties by name.
+
+        Sorted by name, not timestamp: timestamps tie at clock resolution, so
+        ties fell back to set order and the result changed between runs.
+        """
+        classes = sorted(self.get_classes(), key=lambda c: c.name)
         # Set up a dependency graph
         child_map = {cl: set() for cl in classes}
         # Populating the child_map based on generalizations (edges in top-sort graph)
@@ -2287,7 +2452,7 @@ class DomainModel(Model):
         # Helper function for DFS
         def dfs(cl, visited, sorted_list):
             visited.add(cl)
-            for child in child_map[cl]:
+            for child in sorted(child_map[cl], key=lambda c: c.name):
                 if child not in visited:
                     dfs(child, visited, sorted_list)
             sorted_list.append(cl)
@@ -2320,6 +2485,9 @@ class DomainModel(Model):
         self._validate_circular_inheritance(errors)
         self._validate_attribute_shadowing(errors)
         self._validate_member_name_collisions(errors)
+        self._validate_unique_end_names(errors)
+        self._validate_mandatory_cycles(warnings)
+        self._validate_duplicate_associations(warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -2373,6 +2541,100 @@ class DomainModel(Model):
                         f"Association '{association.name}', end '{end.name}': "
                         f"min multiplicity ({mult.min}) cannot exceed max ({mult.max})."
                     )
+
+    def _mandatory_dependencies(self) -> dict[str, set[str]]:
+        """``{class: classes it needs to exist before it can be created}``.
+
+        An end with ``min >= 1`` says every instance of the classes at the
+        OTHER ends must already be linked to at least one instance of this
+        end's type — so those classes depend on this one.
+        """
+        needs: dict[str, set[str]] = {}
+        for association in self.__associations:
+            ends = list(association.ends)
+            if len(ends) < 2:
+                continue
+            for end in ends:
+                if end.multiplicity.min < 1:
+                    continue
+                for other in ends:
+                    if other is end:
+                        continue
+                    needs.setdefault(other.type.name, set()).add(end.type.name)
+        return needs
+
+    def _validate_mandatory_cycles(self, warnings: list[str]):
+        """Flag a set of classes that can never be instantiated.
+
+        Example: ``Booking`` requires at least one ``ReservedRoom`` (1..*)
+        while ``ReservedRoom`` requires exactly one ``Booking`` (1..1), through
+        two DIFFERENT associations — so no per-association check sees it, and
+        the generated API cannot create either class. A self-association with
+        a mandatory end is the same defect with a cycle of length one.
+
+        A WARNING, not an error: an association with 1..1 on both ends is
+        legal UML and BESSER's own ``user_reference_domain_model`` ships three
+        of them (Input/Output/Interaction_Modality, Knowledge/Topic), so the
+        general metamodel validator must not reject it. It is fatal only when
+        the model is about to be turned into a CRUD API, which is where the
+        Spec-Driven Agent promotes this to a blocker.
+        """
+        needs = self._mandatory_dependencies()
+        reported: set[frozenset] = set()
+        # Iterative DFS keeping the path, so the message can name the cycle.
+        for start in sorted(needs):
+            stack: list[tuple[str, list[str]]] = [(start, [start])]
+            seen: set[str] = set()
+            while stack:
+                node, path = stack.pop()
+                for nxt in sorted(needs.get(node, ())):
+                    if nxt in path:
+                        cycle = path[path.index(nxt):]
+                        key = frozenset(cycle)
+                        if key in reported:
+                            continue
+                        reported.add(key)
+                        warnings.append(
+                            "Mandatory creation cycle: "
+                            + " -> ".join(cycle + [nxt])
+                            + ". Each class requires an instance of the next "
+                            "before it can be created, so none of them can be "
+                            "created first and the generated API cannot "
+                            "construct any of them. Relax one of the "
+                            "association ends in the cycle to an optional "
+                            "multiplicity (0..1 or 0..*)."
+                        )
+                    elif nxt not in seen:
+                        seen.add(nxt)
+                        stack.append((nxt, path + [nxt]))
+
+    def _validate_duplicate_associations(self, warnings: list[str]):
+        """Warn when one class pair is connected by more than one association.
+
+        Legal UML — ``homeAddress`` / ``workAddress`` are genuinely different
+        relationships — so this is a warning, not an error. More often the
+        pair is one concept drawn twice, which produces a redundant foreign key
+        plus a ``_1``-suffixed role name (the collision marker) in the
+        generated schema.
+        """
+        by_pair: dict[frozenset, list[str]] = {}
+        for association in self.__associations:
+            ends = list(association.ends)
+            if len(ends) != 2:
+                continue
+            pair = frozenset((ends[0].type.name, ends[1].type.name))
+            by_pair.setdefault(pair, []).append(association.name)
+        for pair, names in by_pair.items():
+            if len(names) < 2:
+                continue
+            classes = " and ".join(f"'{n}'" for n in sorted(pair))
+            warnings.append(
+                f"Classes {classes} are connected by {len(names)} "
+                f"associations ({', '.join(sorted(names))}). If these are the "
+                "same relationship drawn twice, the generated code will carry "
+                "duplicate foreign keys and a suffixed role name for one of "
+                "them; keep both only if they are genuinely different roles."
+            )
 
     def _validate_constraints(self, errors: list[str]):
         """Validate that constraint contexts reference classes in the model.
@@ -2452,6 +2714,19 @@ class DomainModel(Model):
                         f"of one of its attributes or association ends. A generated object "
                         f"can only carry one of them under that name."
                     )
+
+    def _validate_unique_end_names(self, errors: list[str]):
+        """Validate that no class reaches two association ends with the same name.
+
+        Construction checks this, but renaming an end (or a class, which
+        propagates to role names) afterwards does not.
+        """
+        for cls in self.get_classes():
+            names = [end.name for end in cls.all_association_ends()]
+            for name in sorted({n for n in names if names.count(n) > 1}):
+                errors.append(
+                    f"Class '{cls.name}' has more than one association end named '{name}'."
+                )
 
     def __repr__(self):
         return (

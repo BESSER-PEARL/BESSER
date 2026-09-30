@@ -16,6 +16,8 @@ from besser.BUML.metamodel.object.object import ObjectModel
 from besser.utilities import sort_by_timestamp as sort
 from besser.utilities.buml_code_builder.common import (
     PRIMITIVE_TYPE_MAPPING,
+    _comment_safe,
+    buml_header,
     _escape_python_string,
     safe_class_name,
     safe_var_name,
@@ -139,6 +141,7 @@ def domain_model_to_code(
     object_model_var_name = object_model_var_name or "object_model"
 
     with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(buml_header())
         # Write imports
         f.write("####################\n")
         f.write("# STRUCTURAL MODEL #\n")
@@ -214,7 +217,7 @@ def domain_model_to_code(
         # Write class members for regular classes
         for cls in regular_classes:
             cls_var_name = safe_class_name(cls.name)
-            f.write(f"# {cls.name} class attributes and methods\n")
+            f.write(f"# {_comment_safe(cls.name)} class attributes and methods\n")
 
             # Write attributes
             for attr in sort(cls.attributes):

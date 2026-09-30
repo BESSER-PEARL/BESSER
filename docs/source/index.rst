@@ -18,6 +18,12 @@ a simplified version of the better known UML, the Unified Modeling Language).
 BESSER enables users to model, generate, personalize and deploy smart and complex software systems. BESSER is
 based around our B-UML language and a number of generators built on top of it (See the high-level architecture below).
 
+Generation comes in two flavours, and they compose. The :doc:`code generators <generators>` are
+**deterministic**: one template pass over your model, same input in, same output out. On top of them sits the
+:doc:`Spec-Driven Agent <spec_driven_agent/index>`, a **hybrid agentic** layer that runs one of those generators
+to get a model-faithful scaffold, lets an LLM customise it to satisfy a natural-language request, then validates
+the result and repairs what it can. The model stays the source of truth in both cases.
+
 .. image:: img/blc.png
   :width: 800
   :alt: B-UML metamodel
@@ -47,6 +53,12 @@ Choose your path depending on what you want to do:
    with the :doc:`buml_language` to learn how to define models in Python, then pick a
    :doc:`generator <generators>` to produce code.
 
+**I want to describe an application and have it built**
+   Use the :doc:`Spec-Driven Agent <spec_driven_agent/index>`. It generates a deterministic
+   scaffold from your model, lets an LLM customise it to your request — extra features, or a
+   stack BESSER has no generator for — then validates and repairs the result. It runs keyless
+   on the free tier when the deployment configures one.
+
 **I want to contribute to the project**
    Read the :doc:`contributing/index` section for onboarding, coding standards, and
    how to add new generators or model types.
@@ -65,6 +77,7 @@ Contents
    web_editor
    buml_language
    generators
+   spec_driven_agent/index
    utilities
    examples
    troubleshooting

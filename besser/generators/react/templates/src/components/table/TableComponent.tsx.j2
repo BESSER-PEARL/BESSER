@@ -31,10 +31,13 @@ interface TableColumn {
   required?: boolean;
   lookupField?: string;
   targetField?: string;
+  targetType?: string;
   relationshipKey?: string;
   associationClass?: AssociationClassMeta;
   // The model's default for the attribute (e.g. an enumeration literal); preselected for new records
   defaultValue?: any;
+  // Shown in the create/edit form but never edited or sent (e.g. a server-computed total)
+  readOnly?: boolean;
 }
 
 interface TableOptions {
@@ -53,6 +56,7 @@ interface Props {
   data?: any[];
   options?: TableOptions;
   styles?: CSSProperties;
+  className?: string;
   dataBinding?: Record<string, any>;
 }
 
@@ -93,18 +97,44 @@ const getNestedValue = (obj: any, path: string): any => {
   return path.split('.').reduce((current, key) => current?.[key], obj);
 };
 
+// Selection follows the record, never its position after sorting/filtering.
+// JSON preserves composite-key boundaries (unlike joining key parts with '/').
+const getRowKey = (row: any, keyFields?: string[]): string | undefined => {
+  if (!row) return undefined;
+  const parts = Array.isArray(keyFields) && keyFields.length > 0
+    ? keyFields.map((field) => row[field])
+    : [row.id ?? row.ID ?? row.Id];
+  return parts.every((part) => typeof part === 'string' || typeof part === 'number')
+    ? JSON.stringify(parts)
+    : undefined;
+};
+
+// HTML selects store strings. Convert numeric keys only; e.g. Room.number='001'
+// is a string identifier and must never become the different identifier 1.
+const coerceLookupTarget = (column: TableColumn, value: any): string | number | null => {
+  if (value === undefined || value === null || value === '') return null;
+  const type = (column.targetType ?? 'int').toLowerCase();
+  if (!['int', 'integer', 'float', 'double', 'number'].includes(type)) return String(value);
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || (['int', 'integer'].includes(type) && !Number.isInteger(numeric))) return null;
+  return numeric;
+};
+
 export const TableComponent: React.FC<Props> = ({
   id,
   title,
   data,
   options,
   styles,
+  className,
   dataBinding,
 }) => {
   // Local state for table data
   const [tableData, setTableData] = useState<any[]>(data ?? []);
-  const { setSelectedRow, registerTableRefresh } = useTableContext();
-  const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
+  const { selectedRows, setSelectedRow, registerTableRefresh, registerTableActions } = useTableContext();
+  const selectedRow = selectedRows[id];
+  const rowKeyFields: string[] | undefined = dataBinding?.row_key_fields ?? dataBinding?.rowKeyFields;
+  const selectedRowKey = getRowKey(selectedRow, rowKeyFields);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [sortConfig, setSortConfig] = useState<{ field: string; direction: 'asc' | 'desc' } | null>(null);
 
@@ -217,8 +247,10 @@ export const TableComponent: React.FC<Props> = ({
           defaultValue: (col as any).defaultValue ?? (col as any).default_value,
           lookupField: col.column_type === "lookup" ? lookupField : undefined,
           targetField: col.column_type === "lookup" ? targetField : undefined,
+          targetType: col.column_type === "lookup" ? ((col as any).target_type ?? (col as any).targetType) : undefined,
           relationshipKey: relationshipKey,
           associationClass: col.column_type === "lookup" ? associationClass : undefined,
+          readOnly: Boolean((col as any).readOnly ?? (col as any).read_only),
         };
       });
   };
@@ -236,6 +268,16 @@ export const TableComponent: React.FC<Props> = ({
         return { value: row };
       });
   }, [tableData]);
+
+  // Refresh the action context with the current row, or clear a deleted row.
+  // Unkeyed display-only rows use object identity; never guess another record.
+  useEffect(() => {
+    if (!selectedRow) return;
+    const currentRow = normalizedRows.find((row) => selectedRowKey === undefined
+      ? row === selectedRow
+      : getRowKey(row, rowKeyFields) === selectedRowKey);
+    if (currentRow !== selectedRow) setSelectedRow(id, currentRow ?? null);
+  }, [normalizedRows, selectedRow, selectedRowKey, rowKeyFields, id, setSelectedRow]);
 
   const columns: TableColumn[] = useMemo(() => {
     if (resolvedOptions.columns.length > 0) {
@@ -542,6 +584,19 @@ export const TableComponent: React.FC<Props> = ({
     return (col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`;
   };
 
+  // Text of a display-only form field: the edited row's value (a related
+  // record's display field for a lookup); empty for a new record.
+  const readOnlyText = (col: TableColumn): string => {
+    if (col.columnType === 'lookup' && col.lookupField) {
+      const related = editRowData?.[col.relationshipKey || col.field];
+      if (Array.isArray(related)) {
+        return related.map((item: any) => item?.[col.lookupField!]).filter((v: any) => v !== null && v !== undefined).join(', ');
+      }
+      return formatCellValue(related && typeof related === 'object' ? related[col.lookupField] : related);
+    }
+    return formatCellValue(formValues[col.field]);
+  };
+
   useEffect(() => {
     setCurrentPage(1);
   }, [pageSize, filteredRows.length]);
@@ -600,11 +655,14 @@ export const TableComponent: React.FC<Props> = ({
           // For new records, initialize appropriately
           if (col.columnType === 'lookup' && col.type === 'list') {
             initialValues[col.field] = [];
+          } else if (col.columnType !== 'lookup' && (col.type === 'bool' || col.type === 'boolean')) {
+            // An unchecked required checkbox is a valid false value, not missing text.
+            initialValues[col.field] = typeof col.defaultValue === 'boolean'
+              ? col.defaultValue
+              : String(col.defaultValue).toLowerCase() === 'true';
           } else if (col.columnType !== 'lookup' && col.defaultValue !== undefined && col.defaultValue !== null) {
             // Preselect the model's default (e.g. booking_status = pending_payment)
-            initialValues[col.field] = (col.type === 'bool' || col.type === 'boolean')
-              ? (typeof col.defaultValue === 'boolean' ? col.defaultValue : String(col.defaultValue).toLowerCase() === 'true')
-              : String(col.defaultValue);
+            initialValues[col.field] = String(col.defaultValue);
           } else {
             initialValues[col.field] = "";
           }
@@ -739,8 +797,47 @@ export const TableComponent: React.FC<Props> = ({
     return row?.id ?? row?.ID ?? row?.Id ?? Object.values(row)[0];
   };
 
+  const deleteRow = async (row: any) => {
+    const endpoint = getEndpoint();
+    const rowId = getRowId(row);
+    const url = endpoint.replace(/\/$/, "");
+    const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
+    const fullUrl = url.startsWith("/") ? `${backendBase}${url}/${rowId}/` : `${url}/${rowId}/`;
+    try {
+      await axios.delete(fullUrl);
+      setRowActionError("");
+      await fetchTableData();
+    } catch (err) {
+      console.error("Error deleting data:", err);
+      // Surface the backend's reason (e.g. a refused delete because a
+      // related entity still requires this one) instead of failing silently
+      const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
+      setRowActionError(
+        typeof detail === "string" ? detail
+          : detail ? JSON.stringify(detail)
+          : "Could not delete this row."
+      );
+    }
+  };
+
+  // Create/update/delete buttons elsewhere on the page drive this table's own
+  // dialog and endpoint (re-registered each render so they see current state).
+  useEffect(() => registerTableActions(id, {
+    create: () => {
+      setModalMode('add');
+      setEditRowData(null);
+      setShowModal(true);
+    },
+    edit: (row: any) => {
+      setModalMode('edit');
+      setEditRowData(row);
+      setShowModal(true);
+    },
+    remove: deleteRow,
+  }));
+
   return (
-    <div id={id} style={containerStyle} className="table-wrapper">
+    <div id={id} style={containerStyle} className={className ? `table-wrapper ${className}` : "table-wrapper"}>
       {title && (
         <h3 style={{ margin: 0, color: "#1e293b", fontSize: "18px" }}>{title}</h3>
       )}
@@ -875,6 +972,9 @@ export const TableComponent: React.FC<Props> = ({
                   // Validate required fields
                   const missingFields: string[] = [];
                   formColumns.forEach(col => {
+                    if (col.readOnly) {
+                      return;
+                    }
                     if (col.required) {
                       if (col.columnType === 'lookup') {
                         if (col.type === 'list') {
@@ -884,7 +984,7 @@ export const TableComponent: React.FC<Props> = ({
                           }
                         } else {
                           const value = formValues[col.field];
-                          if (!value || value === "") {
+                          if (value === undefined || value === null || value === "") {
                             missingFields.push(col.label);
                           }
                         }
@@ -925,6 +1025,10 @@ export const TableComponent: React.FC<Props> = ({
                   // Process form values based on column types
                   const processedValues: Record<string, any> = {};
                   formColumns.forEach(col => {
+                    if (col.readOnly) {
+                      // Display-only: the server owns this value
+                      return;
+                    }
                     // For lookup columns, use the path as the API field name
                     if (col.columnType === 'lookup' && col.path) {
                       const selection = formValues[col.field];
@@ -940,9 +1044,10 @@ export const TableComponent: React.FC<Props> = ({
                         const value = formValues[col.field];
                         const selected: string[] = Array.isArray(value) ? value : [];
                         processedValues[col.path] = selected
-                          .filter(v => !isNaN(parseInt(v, 10)))
+                          .map(v => coerceLookupTarget(col, v))
+                          .filter((v): v is string | number => v !== null)
                           .map(v => {
-                            const link: Record<string, any> = { target: parseInt(v, 10) };
+                            const link: Record<string, any> = { target: v };
                             col.associationClass!.fields.forEach(linkField => {
                               link[linkField.name] = coerceLinkAttrValue(
                                 linkField.type,
@@ -955,12 +1060,12 @@ export const TableComponent: React.FC<Props> = ({
                         // For list-type lookups (N:M or 1:N), send array of IDs
                         const value = formValues[col.field];
                         processedValues[col.path] = Array.isArray(value)
-                          ? value.map(v => parseInt(v, 10)).filter(v => !isNaN(v))
+                          ? value.map(v => coerceLookupTarget(col, v)).filter(v => v !== null)
                           : [];
                       } else {
                         // For single lookups (N:1), send single FK ID using the field from form
                         const value = formValues[col.field];
-                        processedValues[col.path] = (value && value !== "") ? parseInt(value, 10) : null;
+                        processedValues[col.path] = coerceLookupTarget(col, value);
                       }
                     } else {
                       const value = formValues[col.field];
@@ -1087,6 +1192,32 @@ export const TableComponent: React.FC<Props> = ({
                     ? (isRelation ? 'Relationships' : 'Details')
                     : (isRelation && !prevIsRelation ? 'Relationships' : null);
                   const fieldNode = (() => {
+                  if (col.readOnly) {
+                    return (
+                      <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                        <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
+                          {col.label}
+                        </label>
+                        <input
+                          id={`modal-input-${col.field}`}
+                          type="text"
+                          value={readOnlyText(col) || "—"}
+                          readOnly
+                          aria-readonly="true"
+                          tabIndex={-1}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: "6px",
+                            border: "1px solid #e2e8f0",
+                            fontSize: "15px",
+                            color: "#64748b",
+                            background: "#f1f5f9",
+                            cursor: "default",
+                          }}
+                        />
+                      </div>
+                    );
+                  }
                   // For lookup columns, render a select dropdown
                   if (col.columnType === 'lookup' && col.entity) {
                     const endpoint = col.entity.toLowerCase();
@@ -1568,14 +1699,14 @@ export const TableComponent: React.FC<Props> = ({
             )}
             <tbody>
               {visibleRows.map((row, rowIndex) => {
-                const actualRowIndex = (currentPage - 1) * pageSize + rowIndex;
-                const isSelected = selectedRowIndex === actualRowIndex;
+                const rowKey = getRowKey(row, rowKeyFields);
+                const isSelected = row === selectedRow || (rowKey !== undefined && rowKey === selectedRowKey);
                 
                 return (
                 <tr
-                  key={`${id}-row-${rowIndex}`}
+                  key={`${id}-row-${rowKey ?? rowIndex}`}
+                  aria-selected={isSelected}
                   onClick={() => {
-                    setSelectedRowIndex(actualRowIndex);
                     setSelectedRow(id, row);
                     console.log(`[TableComponent] Row selected in table ${id}:`, row);
                   }}
@@ -1687,28 +1818,7 @@ export const TableComponent: React.FC<Props> = ({
                           }}
                           type="button"
                           title="Remove"
-                          onClick={async () => {
-                            const endpoint = getEndpoint();
-                            const rowId = getRowId(row);
-                            const url = endpoint.replace(/\/$/, "");
-                            const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
-                            const fullUrl = url.startsWith("/") ? `${backendBase}${url}/${rowId}/` : `${url}/${rowId}/`;
-                            try {
-                              await axios.delete(fullUrl);
-                              setRowActionError("");
-                              await fetchTableData();
-                            } catch (err) {
-                              console.error("Error deleting data:", err);
-                              // Surface the backend's reason (e.g. a refused delete because a
-                              // related entity still requires this one) instead of failing silently
-                              const detail = axios.isAxiosError(err) ? err.response?.data?.detail : undefined;
-                              setRowActionError(
-                                typeof detail === "string" ? detail
-                                  : detail ? JSON.stringify(detail)
-                                  : "Could not delete this row."
-                              );
-                            }
-                          }}
+                          onClick={() => deleteRow(row)}
                         >
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m5 0V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
                         </button>

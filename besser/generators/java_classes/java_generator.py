@@ -3,6 +3,7 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.utilities import sort_by_timestamp
 
 class JavaGenerator(GeneratorInterface):
 
@@ -15,6 +16,7 @@ class JavaGenerator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(
             templates_path), trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
+        env.globals["sort_by_timestamp"] = sort_by_timestamp
 
         package_name = self.package_name
 

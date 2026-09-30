@@ -7,9 +7,26 @@ and with the participation of `SnT/UL <https://wwwfr.uni.lu/snt>`_, it has the a
 of BESSER will have a strong scientific, technical and economic impact by expanding the number of potential smart software creators, 
 **increasing the quality and reducing the time-to-market** for this type of software. This project can **democratize the creation of smart software**, 
 a key benefit in the current developers shortage. Moreover, by simplifying the specification and testing of ethical concerns, BESSER can also play a role
-in the fair use of AI in software, a major societal challenge. Overall, We strongly believe BESSER will significantly improve the **competitiveness** of 
+in the fair use of AI in software, a major societal challenge. Overall, We strongly believe BESSER will significantly improve the **competitiveness** of
 Luxembourgian and, in general, European companies in the global market.
 
+What BESSER provides
+--------------------
+
+BESSER is built around two complementary capabilities, both anchored on the same
+:doc:`B-UML models <buml_language>`:
+
+- **Deterministic, model-driven generation.** A suite of :doc:`code generators <generators>`
+  turns a model into code for a target technology — the same input always producing the same
+  output. This is the classic model-driven path, and it is reproducible, free and offline.
+- **Hybrid agentic generation.** The :doc:`Spec-Driven Agent <spec_driven_agent/index>` runs
+  one of those deterministic generators to get a model-faithful scaffold, then lets an LLM
+  customise it to satisfy a natural-language request, and finally validates the result and
+  repairs what it can. It reaches features and stacks the templates do not cover, without the
+  LLM ever starting from a blank page.
+
+The model remains the source of truth in both cases — that is what keeps the agentic path
+anchored to your design rather than drifting into invention.
 
 License
 -------

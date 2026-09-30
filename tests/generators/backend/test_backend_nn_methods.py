@@ -56,7 +56,7 @@ def test_nn_method_generates_network_module_runtime_and_endpoint(tmp_path):
     assert "class NeuralNetwork" in (out / "neural_networks" / "scorer.py").read_text(encoding="utf-8")
     assert "torch" in (out / "requirements.txt").read_text(encoding="utf-8")
 
-    router = (out / "routers" / "patient.py").read_text(encoding="utf-8")
+    router = (out / "routers" / "patient_methods.py").read_text(encoding="utf-8")
     ast.parse(router)
     ast.parse((out / "nn_runtime.py").read_text(encoding="utf-8"))
     # Class-level endpoint (no entity id): the network is stateless.
@@ -72,7 +72,7 @@ def test_nn_method_without_linked_network_stays_501(tmp_path):
     assert not (out / "nn_runtime.py").exists()
     assert not (out / "neural_networks").exists()
     assert "torch" not in (out / "requirements.txt").read_text(encoding="utf-8")
-    router = (out / "routers" / "patient.py").read_text(encoding="utf-8")
+    router = (out / "routers" / "patient_methods.py").read_text(encoding="utf-8")
     assert "has no implementation" in router
 
 

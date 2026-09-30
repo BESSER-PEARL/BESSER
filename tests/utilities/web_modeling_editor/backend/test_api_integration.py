@@ -1203,7 +1203,7 @@ class TestProjectGeneration:
 
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
             names = set(archive.namelist())
-            router = archive.read("routers/classifier.py").decode("utf-8")
+            router = archive.read("routers/classifier_methods.py").decode("utf-8")
             requirements = archive.read("requirements.txt").decode("utf-8")
 
         assert "nn_runtime.py" in names

@@ -17,38 +17,19 @@ from besser.BUML.metamodel.gui.dashboard import (
     Map, MapLayer, MapLayerType,
 )
 from besser.BUML.metamodel.gui.dashboard import Series
+from besser.BUML.metamodel.gui.binding import DataAggregation
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
 
-# TODO: Uncomment when backend aggregation is ready
-# def _parse_aggregation(aggregation_str: str) -> DataAggregation:
-#     """
-#     Parse aggregation string from JSON attributes to DataAggregation enum.
-
-#     Args:
-#         aggregation_str: String value like "sum", "average", "count", etc.
-
-#     Returns:
-#         DataAggregation enum value or None if invalid
-#     """
-#     if not aggregation_str or not isinstance(aggregation_str, str):
-#         return None
-
-#     aggregation_map = {
-#         'sum': DataAggregation.SUM,
-#         'avg': DataAggregation.AVG,
-#         'average': DataAggregation.AVG,
-#         'count': DataAggregation.COUNT,
-#         'min': DataAggregation.MIN,
-#         'minimum': DataAggregation.MIN,
-#         'max': DataAggregation.MAX,
-#         'maximum': DataAggregation.MAX,
-#         'median': DataAggregation.MEDIAN,
-#         'first': DataAggregation.FIRST,
-#         'last': DataAggregation.LAST,
-#     }
-
-#     return aggregation_map.get(aggregation_str.lower())
+def _parse_aggregation(*sources: Dict[str, Any]):
+    """The ``aggregation`` (sum, avg, count, min, max, ...) of the first source
+    that names a known one, e.g. a series and then its chart."""
+    for source in sources:
+        if isinstance(source, dict):
+            parsed = DataAggregation.parse(source.get('aggregation') or source.get('data-aggregation'))
+            if parsed is not None:
+                return parsed
+    return None
 
 
 def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) -> tuple:
@@ -196,7 +177,8 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
                     data_field=data_field,
                     label_field_path=label_field_path,
                     data_field_path=data_field_path,
-                    filter_expression=data_filter
+                    filter_expression=data_filter,
+                    aggregation=_parse_aggregation(s_attrs, attrs),
                 )
 
             # Extract color from series attributes and create styling
@@ -289,7 +271,8 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
                     data_field=data_field,
                     label_field_path=label_field_path,
                     data_field_path=data_field_path,
-                    filter_expression=data_filter
+                    filter_expression=data_filter,
+                    aggregation=_parse_aggregation(s_attrs, attrs),
                 )
 
             # Extract color from series attributes and create styling
@@ -383,7 +366,8 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
                     data_field=data_field,
                     label_field_path=label_field_path,
                     data_field_path=data_field_path,
-                    filter_expression=data_filter
+                    filter_expression=data_filter,
+                    aggregation=_parse_aggregation(s_attrs, attrs),
                 )
             styling = None
             if 'styling' in s_attrs:
@@ -488,7 +472,8 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
                     data_field=data_field,
                     label_field_path=label_field_path,
                     data_field_path=data_field_path,
-                    filter_expression=data_filter
+                    filter_expression=data_filter,
+                    aggregation=_parse_aggregation(s_attrs, attrs),
                 )
             styling = None
             if 'styling' in s_attrs:
@@ -587,7 +572,8 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
                     domain_concept=domain_class,
                     label_field=label_field,
                     data_field=data_field,
-                    filter_expression=data_filter
+                    filter_expression=data_filter,
+                    aggregation=_parse_aggregation(s_attrs, attrs),
                 )
             styling = None
             if 'styling' in s_attrs:
@@ -847,7 +833,8 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
             domain_concept=domain_class,
             label_field=None,  # Metric cards don't need label field
             data_field=data_field,
-            data_field_path=data_field_path
+            data_field_path=data_field_path,
+            aggregation=_parse_aggregation(attrs),
         )
 
     # Create metric card

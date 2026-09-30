@@ -41,17 +41,18 @@ Code Style
 Branching and PR Workflow
 -------------------------
 
-1. Create a feature branch from ``master`` (e.g., ``feature/add-rdf-generator``).
+1. Create a feature branch from ``development`` (e.g., ``feature/add-rdf-generator``).
 2. Make focused, incremental commits.
-3. Run tests: ``python -m pytest``
+3. Run tests: ``python -m pytest tests/``
 4. Run linting: ``ruff check besser/``
 5. Build docs (if changed): ``cd docs && make html``
-6. Push and open a pull request against ``master``.
+6. Push and open a pull request against ``development`` (not ``master`` —
+   see :doc:`../contributor_guide`).
 7. Fill in the PR description with: what changed, why, how to test, any follow-up work.
 8. Respond to review feedback — reviews are collaborative.
 
-CI will automatically run tests on Python 3.10/3.11/3.12, Ruff linting, and
-(for frontend changes) npm lint + build.
+CI will automatically run tests on Python 3.11 and 3.12, Ruff linting, and a
+docs build gated on new Sphinx warnings.
 
 .. toctree::
    :maxdepth: 1

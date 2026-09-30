@@ -6,6 +6,13 @@ application from your structural (class diagram) and GUI models. This generator 
 the process of building modern web apps by producing all the backend, frontend, and deployment
 files you need—no manual coding required.
 
+.. seealso::
+   The output is a fixed, model-faithful scaffold. To go beyond it — a feature
+   the templates don't cover, or a different stack entirely — the
+   :doc:`Spec-Driven Agent <../spec_driven_agent/index>` runs this generator
+   first and then lets an LLM customise its output to a natural-language
+   request.
+
 Overview
 --------
 
@@ -146,13 +153,13 @@ Generated Output Structure
    │   ├── alpha/
    │   │   ├── Alpha.py
    │   │   ├── config.yaml
-   │   │   ├── Dockerfile
-   │   │   └── requirements.txt
+   │   │   ├── readme.txt
+   │   │   └── Dockerfile
    │   └── beta/
    │       ├── Beta.py
    │       ├── config.yaml
-   │       ├── Dockerfile
-   │       └── requirements.txt
+   │       ├── readme.txt
+   │       └── Dockerfile
    ├── docker-compose.yml       # Container orchestration
 
 

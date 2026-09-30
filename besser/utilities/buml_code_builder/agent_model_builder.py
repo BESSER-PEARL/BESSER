@@ -19,7 +19,7 @@ from besser.BUML.metamodel.state_machine.agent import (
     GUIReplyAction, GUIEvent, ReceiveMessageEvent,
 )
 from besser.BUML.metamodel.state_machine.state_machine import Action, Body, CustomCodeAction, Event
-from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, buml_header, safe_var_name
 from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
 
 # Prefix of the module-level functions that build the agent GUIs in the generated code.
@@ -261,8 +261,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
     Parameters:
     model (Agent): The B-UML Agent model object containing states, intents, and transitions.
     file_path (str): The path where the generated code will be saved.
-    model_var_name (str, optional): Name of the Agent variable in the generated code.
-        Defaults to "agent".
+    model_var_name (str, optional): Name of the Agent variable in the generated code. Defaults to "agent".
 
     Outputs:
     - A Python file containing the code representation of the B-UML agent model.
@@ -278,6 +277,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
     intent_var_names = {intent.name: safe_var_name(intent.name) for intent in model.intents}
 
     with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(buml_header())
         # Write imports
         f.write("###############\n")
         f.write("# AGENT MODEL #\n")
@@ -500,6 +500,17 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
             "Auto",
         }
         written_custom_conditions = set()
+        # Condition name -> Python identifier; the name may be ``is.ready`` or ``if``.
+        condition_vars = {}
+
+        def condition_var(name):
+            if name not in condition_vars:
+                var = safe_var_name(name, lowercase=False)
+                while var in condition_vars.values():
+                    var = f"{var}_"
+                condition_vars[name] = var
+            return condition_vars[name]
+
         has_custom_conditions = False
         for state in model.states:
             for transition in state.transitions:
@@ -520,10 +531,17 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                         function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', condition_code)
                         callable_name = function_match.group(1) if function_match else None
 
-                    if not callable_name:
-                        callable_name = f"{condition_name}_callable"
-
-                    f.write(f"{condition_name} = Condition('{callable_name}', callable={callable_name})\n\n")
+                    if callable_name:
+                        f.write(
+                            f"{condition_var(condition_name)} = "
+                            f"Condition('{callable_name}', callable={callable_name})\n\n"
+                        )
+                    else:
+                        # No code: nothing to reference, so emit a code-less Condition.
+                        f.write(
+                            f"{condition_var(condition_name)} = "
+                            f"Condition('{_escape_python_string(condition_name)}')\n\n"
+                        )
                     written_custom_conditions.add(condition_name)
                     has_custom_conditions = True
 
@@ -533,7 +551,7 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         # Write bodies for states
         for state in model.states:
             state_var = state_var_names[state.name]
-            f.write(f"# {state.name} state\n")
+            f.write(f"# {_comment_safe(state.name)} state\n")
             if state.body and state.body.actions:
                 _write_body(f, state_var, state.name, state.body, fallback=False)
             if state.fallback_body and state.fallback_body.actions:
@@ -601,15 +619,15 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                         # Custom transition with a single condition.
                         if event:
                             transition_chain = f"{state_var}.when_event({_event_expr(event)})"
-                            transition_chain += f".with_condition({condition.name})"
+                            transition_chain += f".with_condition({condition_var(condition.name)})"
                         else:
-                            transition_chain = f"{state_var}.when_condition({condition.name})"
+                            transition_chain = f"{state_var}.when_condition({condition_var(condition.name)})"
                         transition_chain += f".go_to({dest_var})"
                         f.write(f"{transition_chain}\n")
 
                 elif len(conditions) > 1:
                     # Custom transition with multiple conditions.
-                    condition_names = [c.name for c in conditions]
+                    condition_names = [condition_var(c.name) for c in conditions]
                     if event:
                         transition_chain = f"{state_var}.when_event({_event_expr(event)})"
                         for condition_name in condition_names:

@@ -19,6 +19,8 @@ import os
 import re as _re
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
+from besser.spec_driven_agent.execution.workspace_fs import open_plain, open_plain_write, walk_plain
+from besser.spec_driven_agent.repair.dependency_pins import pin_known_incompatible
 
 
 # The deterministic Phase-1 backend generator always writes a correct
@@ -97,7 +99,7 @@ def _project_has_npm_lockfile(output_dir: str) -> bool:
     ``npm ci`` refuses to run without one, whatever directory the Dockerfile
     builds from.
     """
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", _SNAPSHOT_DIR)]
         if "package-lock.json" in files or "npm-shrinkwrap.json" in files:
             return True
@@ -114,7 +116,7 @@ def _ensure_requirements_txt(docker_dir: str) -> bool:
     if os.path.isfile(req_path):
         return False
     extras: set = set()
-    for root, _, files in os.walk(docker_dir):
+    for root, _, files in walk_plain(docker_dir):
         for fn in files:
             if not fn.endswith(".py"):
                 continue
@@ -127,8 +129,9 @@ def _ensure_requirements_txt(docker_dir: str) -> bool:
                 if _re.search(rf"^\s*(?:import|from)\s+{token}\b", src, _re.MULTILINE):
                     extras.add(pkg)
     content = _DEFAULT_BACKEND_REQUIREMENTS + "".join(sorted(e + "\n" for e in extras))
+    content, _ = pin_known_incompatible(content)
     try:
-        with open(req_path, "w", encoding="utf-8") as f:
+        with open_plain_write(req_path, "w", root=docker_dir, encoding="utf-8") as f:
             f.write(content)
         return True
     except Exception:
@@ -333,15 +336,31 @@ build argument - `docker-compose.yml` already passes it that way.
 
 def _read_text(path: str) -> str:
     try:
-        with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+        with open_plain(path, "r", encoding="utf-8", errors="ignore") as handle:
             return handle.read()
     except OSError:
         return ""
 
 
+# Run workspaces are temp folders named after the run, never the app.
+_RUN_DIR_PREFIX = "besser_llm_"
+
+
+def _app_title(output_dir: str, backend_entry: str) -> str:
+    """The app's name for the README: the model name the backend generator put
+    in ``FastAPI(title="<Name> API")``, else a user-chosen folder name."""
+    found = _re.search(r'FastAPI\(\s*title\s*=\s*"([^"]+?)(?: API)?"', _read_text(backend_entry))
+    if found and found.group(1).strip():
+        return found.group(1).strip()
+    folder = os.path.basename(os.path.abspath(output_dir))
+    if folder and not folder.startswith(_RUN_DIR_PREFIX):
+        return folder.replace("_", " ").strip() or "Generated app"
+    return "Generated app"
+
+
 def _write_text(path: str, content: str) -> bool:
     try:
-        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        with open_plain_write(path, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(content)
         return True
     except OSError:
@@ -350,7 +369,7 @@ def _write_text(path: str, content: str) -> bool:
 
 def _iter_project_dirs(root: str):
     """Yield (dir, filenames) for the tree, skipping build/vendor folders."""
-    for folder, dirs, files in os.walk(root):
+    for folder, dirs, files in walk_plain(root):
         dirs[:] = [d for d in dirs
                    if d not in _FRONTEND_SKIP_DIRS and not d.startswith(".besser_")]
         yield folder, files
@@ -570,11 +589,11 @@ def _ensure_deployment_files(output_dir: str, frontend_dir: str) -> list:
     readme = os.path.join(output_dir, "README.md")
     if not os.path.isfile(readme):
         entry = _re.search(r'"(\w+\.py)"', cmd)
-        title = os.path.basename(os.path.abspath(output_dir)).replace("_", " ").strip()
+        entry_file = entry.group(1) if entry else "main_api.py"
         if _write_text(readme, _README_TEMPLATE.format(
-                title=title or "Generated app",
+                title=_app_title(output_dir, os.path.join(backend_dir, entry_file)),
                 backend=backend_name, frontend=frontend_name,
-                entry=entry.group(1) if entry else "main_api.py")):
+                entry=entry_file)):
             repairs.append("README.md")
     return repairs
 

@@ -21,7 +21,7 @@ from django.core.exceptions import ValidationError
 {# Enumeration definition -#}
 {%- for enum in model.get_enumerations()|sort(attribute='name') %}
 class {{ enum.name }}(models.TextChoices):
-    {% for literal in enum.literals|sort(attribute='name') %}
+    {% for literal in sort_by_timestamp(enum.literals) %}
     {{ literal.name }} = '{{ literal.name }}', '{{ literal.name }}'
     {% endfor %}
 
@@ -53,8 +53,8 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     {{ end.name.replace(' ', '_') }} = models.ManyToManyField(
         '{{ end.type.name }}', related_name='{{ ns.opposite_end.name }}'{%- if end.multiplicity.min == 0 %}, blank=True{%- endif %})
     {% endif -%}
-    {# ForeignKey in Django #}
-    {%- if class_obj.name == fkeys.get(end.owner.name) %}
+    {# ForeignKey in Django: on the to-one end only (a self association lists both ends) #}
+    {%- if class_obj.name == fkeys.get(end.owner.name) and end.multiplicity.max <= 1 %}
     {{ end.name.replace(' ', '_') }} = models.ForeignKey(
         '{{ end.type.name }}', related_name='{{ ns.opposite_end.name }}', on_delete=models.{% if end.is_composite %}CASCADE
                 {%- elif end.multiplicity.min == 0%}SET_NULL, blank=True, null=True{% else %}PROTECT{% endif %})

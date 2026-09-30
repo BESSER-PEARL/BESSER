@@ -1,88 +1,74 @@
-Welcome to BESSER's Documentation
-=================================
+BESSER documentation
+====================
+
+Build software from a model. Draw your system in the browser or define it in
+Python, then generate the code for your application.
+
+.. container:: doc-lead
+
+   **New to BESSER?** Start in the
+   `online editor <https://editor.besser-pearl.org>`_. You do not need to
+   install anything or write Python to create your first model.
+
+Choose your starting point
+--------------------------
+
+.. container:: doc-path
+
+   .. rubric:: 01 / Use the editor
+
+   Create a project, draw or describe a model, and download generated code.
+
+   :doc:`Start in the browser <start/browser>`
+
+.. container:: doc-path
+
+   .. rubric:: 02 / Use Python
+
+   Install BESSER and turn a small model into Python classes.
+
+   :doc:`Create your first model <start/first-model>`
+
+.. container:: doc-path
+
+   .. rubric:: 03 / Build an application with AI
+
+   Review your model, ask for an application, and follow a Spec-Driven Agent run.
+
+   :doc:`Generate with the agent <guides/build-with-ai>`
+
+Find what you need
+------------------
+
+* :doc:`guides/index` — choose a generator, import models, or generate an app.
+* :doc:`concepts/index` — understand models, diagrams, and generation.
+* :doc:`reference/index` — look up model types, generator options, and APIs.
+* :doc:`operations/index` — install locally or deploy the services.
+* :doc:`troubleshooting` — recover from a problem or report it.
 
 .. note::
-   Checkout the latest repository: `BESSER-Dataset <https://github.com/BESSER-PEARL/BESSER-Dataset>`_
-   The B-UML Dataset is a large-scale dataset containing 5,000+ B-UML models for research in modeling languages and AI-assisted modeling.
 
-**BESSER** (*BEtter Smart Software fastER*) is a `low-modeling <https://modeling-languages.com/welcome-to-the-low-modeling-revolution/>`_
-`low-code <https://modeling-languages.com/low-code-vs-model-driven/>`_ open-source platform built on top
-of our Python-based personal interpretation of a "Universal Modeling Language" (yes, heavily inspired and
-a simplified version of the better known UML, the Unified Modeling Language).
-
-.. note::
-   BESSER is funded thanks to an `FNR Pearl grant <https://modeling-languages.com/a-smart-low-code-platform-for-smart-software-in-luxembourg-goodbye-barcelona/>`_
-   led by the `Luxembourg Institute of Science and Technology <https://www.list.lu/>`_ with the participation
-   of the `Snt/University of Luxembourg <https://www.uni.lu/snt-en/>`_ and open to all your contributions!
-
-BESSER enables users to model, generate, personalize and deploy smart and complex software systems. BESSER is
-based around our B-UML language and a number of generators built on top of it (See the high-level architecture below).
-
-Generation comes in two flavours, and they compose. The :doc:`code generators <generators>` are
-**deterministic**: one template pass over your model, same input in, same output out. On top of them sits the
-:doc:`Spec-Driven Agent <spec_driven_agent/index>`, a **hybrid agentic** layer that runs one of those generators
-to get a model-faithful scaffold, lets an LLM customise it to satisfy a natural-language request, then validates
-the result and repairs what it can. The model stays the source of truth in both cases.
-
-.. image:: img/blc.png
-  :width: 800
-  :alt: B-UML metamodel
-  :align: center
-
-You'll find here all the necessary information about the B-UML language (to model the problem domain) and the
-different code generators to produce a deployable solution. You could even build your own code generator for
-a target technology.
-
-.. note::
-   This repository hosts the backend of the BESSER platform: the B-UML metamodel,
-   generators, utilities, and services that the web modeling editor consumes.
-   The editor's frontend is maintained in the `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_
-   project, included here only as a submodule (``besser/utilities/web_modeling_editor/frontend``) for local deployments.
-
-Getting Started
----------------
-
-Choose your path depending on what you want to do:
-
-**I want to design models visually**
-   Go to `editor.besser-pearl.org <https://editor.besser-pearl.org>`_ and start modeling
-   immediately. See :doc:`web_editor` for details.
-
-**I want to use BESSER as a Python library**
-   Install with ``pip install besser``, then follow the :doc:`installation` guide. Start
-   with the :doc:`buml_language` to learn how to define models in Python, then pick a
-   :doc:`generator <generators>` to produce code.
-
-**I want to describe an application and have it built**
-   Use the :doc:`Spec-Driven Agent <spec_driven_agent/index>`. It generates a deterministic
-   scaffold from your model, lets an LLM customise it to your request — extra features, or a
-   stack BESSER has no generator for — then validates and repairs the result. It runs keyless
-   on the free tier when the deployment configures one.
-
-**I want to contribute to the project**
-   Read the :doc:`contributing/index` section for onboarding, coding standards, and
-   how to add new generators or model types.
-
-**I want to build my own code generator**
-   See :doc:`generators/build_generator` for a step-by-step guide to creating and
-   registering a custom generator.
-
-Contents
---------
+   Reading the v8 documentation while upgrading an existing installation?
+   Start with :doc:`the release notes <releases/v8/v8.0.0>` and
+   :doc:`the migration guide <releases/v8/migration>`.
 
 .. toctree::
+   :hidden:
    :maxdepth: 2
+   :caption: Learn and build
 
-   installation
-   web_editor
-   buml_language
-   generators
-   spec_driven_agent/index
-   utilities
-   examples
+   start/index
+   guides/index
+   concepts/index
+
+.. toctree::
+   :hidden:
+   :maxdepth: 2
+   :caption: Look up and maintain
+
+   reference/index
+   operations/index
    troubleshooting
-   api
-   releases
    contributing/index
+   releases
    about
-

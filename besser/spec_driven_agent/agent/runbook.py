@@ -35,6 +35,7 @@ import logging
 import os
 
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
+from besser.spec_driven_agent.execution.workspace_fs import open_plain_write, walk_plain
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ def _find_backend(output_dir: str) -> str | None:
     than handing the model commands that cannot work.
     """
     try:
-        for root, dirs, files in os.walk(output_dir):
+        for root, dirs, files in walk_plain(output_dir):
             dirs[:] = sorted(d for d in dirs if d not in WORKSPACE_SKIP_DIRS and not d.startswith(".besser_"))
             if "main_api.py" in files and "sql_alchemy.py" in files:
                 rel = os.path.relpath(root, output_dir).replace("\\", "/")
@@ -78,8 +79,10 @@ def install_probe(output_dir: str) -> bool:
     reaches this one only through the literal path the runbook prints.
     """
     try:
-        with open(os.path.join(output_dir, PROBE_FILENAME), "w",
-                  encoding="utf-8", newline="\n") as handle:
+        path = os.path.join(output_dir, PROBE_FILENAME)
+        # The worker writes this unsandboxed: never through a planted link.
+        with open_plain_write(path, "w", root=output_dir,
+                              encoding="utf-8", newline="\n") as handle:
             handle.write(PROBE_SCRIPT)
         return True
     except OSError:
@@ -122,9 +125,15 @@ python {PROBE_FILENAME} routes                   # the paths and schemas the app
 python {PROBE_FILENAME} req GET /health
 python {PROBE_FILENAME} req POST /<entity> {{"field": "value"}}
 python {PROBE_FILENAME} req POST /<entity>/<id>/<action> {{}}
+python {PROBE_FILENAME} req GET /<entity> -H "Authorization: Bearer <token>"
 python {PROBE_FILENAME} log 60                   # last 60 lines of the server log
 python {PROBE_FILENAME} down                     # stop it
 ```
+
+A server does not outlive the `run_command` that started it: each command runs
+in its own process space, so `req` and `routes` boot their own server when none
+is answering (the SQLite file keeps records between commands), and `down` only
+stops a server started in the same command.
 
 ### The procedure — every outcome has exactly one next step
 
@@ -148,6 +157,9 @@ python {PROBE_FILENAME} down                     # stop it
    change actually changed. An action that answers 200 and changes nothing is
    a failure, not a pass - it is the single most common defect in these apps.
 6. After any edit: `down`, then `up`. The server does not reload.
+   A **401/403** means the endpoint needs auth: register and log in through
+   the app's own endpoints (`routes auth`), then repeat the request with
+   `-H "Authorization: Bearer <access_token from the login response>"`.
 7. Only when every entity creates and every action both succeeds and has a
    visible effect may you report the app as working. If an action cannot be
    made to work, leave its checklist item blocked with what you observed -
@@ -172,6 +184,7 @@ Run-internal helper written by the BESSER generator; not part of the app.
     python .besser_probe.py up
     python .besser_probe.py routes
     python .besser_probe.py req POST /book {"title": "x"}
+    python .besser_probe.py req GET /book -H "Authorization: Bearer <token>"
     python .besser_probe.py log 60
     python .besser_probe.py down
 
@@ -197,6 +210,9 @@ SKIP = {"node_modules", ".venv", "venv", "__pycache__", ".git", "dist", "build"}
 MAX_LIFETIME = 1800          # a forgotten server reaps itself after 30 minutes
 BOOT_WAIT = 45
 BODY_CHARS = 1800
+# In the server's own command line, so `down` can tell it from an unrelated
+# process holding the same pid (e.g. a pid recorded in another pid namespace).
+SERVE_MARKER = "BESSER_PROBE_SERVE"
 
 
 def find_backend():
@@ -231,10 +247,11 @@ def log_tail(lines=40):
     return "".join(content[-lines:]).rstrip() or "(server log is empty)"
 
 
-def request(method, path, body, port, timeout=25, _hops=0):
+def request(method, path, body, port, timeout=25, _hops=0, extra_headers=None):
     url = "http://127.0.0.1:%d%s" % (port, path if path.startswith("/") else "/" + path)
     data = None
     headers = {"Accept": "application/json"}
+    headers.update(extra_headers or {})
     if body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
@@ -252,7 +269,7 @@ def request(method, path, body, port, timeout=25, _hops=0):
             if location.startswith("http"):
                 location = "/" + location.split("/", 3)[-1] if location.count("/") > 2 else "/"
             follow = "GET" if exc.code == 303 else method
-            return request(follow, location, body, port, timeout, _hops + 1)
+            return request(follow, location, body, port, timeout, _hops + 1, extra_headers)
         return exc.code, exc.read().decode("utf-8", "replace")
     except Exception as exc:                    # connection refused, reset, timeout
         return 0, "%s: %s" % (type(exc).__name__, exc)
@@ -263,9 +280,39 @@ def is_up(port):
     return status == 200
 
 
+def command_line(pid):
+    """The command line of ``pid``, or "" when it is gone or unreadable."""
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as handle:
+            return handle.read().replace(b"\0", b" ").decode("utf-8", "replace")
+    except OSError:
+        pass
+    try:
+        if os.name == "nt":
+            argv = ["powershell", "-NoProfile", "-Command",
+                    "(Get-CimInstance Win32_Process -Filter 'ProcessId=%d').CommandLine" % pid]
+        else:
+            argv = ["ps", "-ww", "-o", "args=", "-p", str(pid)]
+        return subprocess.run(argv, capture_output=True, text=True, timeout=15).stdout
+    except Exception:
+        return ""
+
+
+def is_probe_server(pid, port):
+    """Whether ``pid`` is the server this probe started on ``port``."""
+    if type(pid) is not int or pid <= 0 or pid in (os.getpid(), os.getppid()):
+        return False
+    return ("%s port=%s" % (SERVE_MARKER, port)) in command_line(pid)
+
+
 def cmd_down(quiet=False):
     state = read_state()
     pid = state.get("pid")
+    # The recorded pid may name another process now: each sandboxed command
+    # has its own pid namespace, where it can even be a sibling of this one.
+    # Only a process that is recognisably our own server is stopped.
+    if pid and not is_probe_server(pid, state.get("port")):
+        pid = None
     if not pid:
         if not quiet:
             print("NOT_RUNNING")
@@ -281,6 +328,8 @@ def cmd_down(quiet=False):
                 os.kill(pid, 9)
             except OSError:
                 pass
+    except ProcessLookupError:
+        pass                            # already gone, e.g. with its sandbox
     except Exception as exc:
         print("STOP_FAILED %s: %s" % (type(exc).__name__, exc))
     try:
@@ -292,14 +341,24 @@ def cmd_down(quiet=False):
     return 0
 
 
-def cmd_up():
+def cmd_up(quiet=False):
+    return boot(quiet)[0]
+
+
+def boot(quiet=False):
+    """Start a server; returns (exit code, the port THIS call started).
+
+    The port is returned, not re-read from the state file, which a concurrent
+    invocation may have overwritten with its own.
+    """
     backend = find_backend()
     if backend is None:
         print("NO_BACKEND: no directory holds both main_api.py and sql_alchemy.py.")
-        return 2
+        return 2, None
     cmd_down(quiet=True)
     port = free_port()
     serve = (
+        "# %s port=%d\n"
         "import os,sys,threading,time\n"
         "sys.path.insert(0, os.getcwd())\n"
         "threading.Timer(%d, lambda: os._exit(0)).start()\n"
@@ -312,7 +371,7 @@ def cmd_up():
         "    raise SystemExit('main_api defines no FastAPI app')\n"
         "import uvicorn\n"
         "uvicorn.run(app, host='127.0.0.1', port=%d, log_level='info')\n"
-    ) % (MAX_LIFETIME, port)
+    ) % (SERVE_MARKER, port, MAX_LIFETIME, port)
     handle = open(LOG, "w", encoding="utf-8")
     try:
         creation = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" \
@@ -339,25 +398,41 @@ def cmd_up():
             else:
                 print("NEXT: fix the file and line named in the traceback above, "
                       "then rerun `up`. Nothing else can be checked until it boots.")
-            return 1
+            return 1, None
         if is_up(port):
-            print("BOOT_OK  port=%d  backend=%s  pid=%d" % (port, rel, child.pid))
-            print("NEXT: `routes` to see the paths and schemas the app really has.")
-            return 0
+            if not quiet:
+                print("BOOT_OK  port=%d  backend=%s  pid=%d" % (port, rel, child.pid))
+                print("NEXT: `routes` to see the paths and schemas the app really has.")
+            return 0, port
         time.sleep(0.4)
     print("BOOT_TIMEOUT after %ds  backend=%s" % (BOOT_WAIT, rel))
     print(log_tail(40))
     print("NEXT: read the log above; the process started but never served "
           "/openapi.json. A blocking call at import time is the usual cause.")
-    return 1
+    return 1, None
+
+
+def ensure_up():
+    """Port of a live server, booting one if none answers; None on failure.
+
+    Under the shell sandbox every command gets its own PID namespace, so the
+    server `up` started is gone by the next command. Each command that needs
+    it therefore boots its own; the SQLite file keeps records between them.
+    A recorded port is reused only while our own server still holds it;
+    otherwise whatever listens there now belongs to someone else.
+    """
+    state = read_state()
+    port = state.get("port")
+    if port and is_probe_server(state.get("pid"), port) and is_up(port):
+        return port
+    code, port = boot(quiet=True)
+    return port if code == 0 else None
 
 
 def cmd_routes(argv):
-    state = read_state()
-    port = state.get("port")
-    if not port or not is_up(port):
-        print("NOT_RUNNING\nNEXT: `up` first.")
-        return 2
+    port = ensure_up()
+    if not port:
+        return 1
     status, body = request("GET", "/openapi.json", None, port)
     if status != 200:
         print("OPENAPI_FAILED %s\n%s" % (status, body[:400]))
@@ -398,9 +473,39 @@ def _body_fields(operation, spec):
     return ", ".join(parts[:14]) + (", ..." if len(parts) > 14 else "")
 
 
+def split_headers(argv):
+    """Remove ``-H 'Name: value'`` / ``--header 'Name: value'`` pairs from argv."""
+    rest, headers = [], {}
+    items = iter(argv)
+    for item in items:
+        if item in ("-H", "--header"):
+            raw = next(items, "")
+        elif item.startswith("--header="):
+            raw = item[len("--header="):]
+        else:
+            rest.append(item)
+            continue
+        # cmd.exe does not strip single quotes, so 'Name: a b' arrives in parts.
+        while raw[:1] in ("'", '"') and not (len(raw) > 1 and raw.endswith(raw[0])):
+            part = next(items, None)
+            if part is None:
+                break
+            raw += " " + part
+        name, sep, value = raw.strip().strip("'\"").partition(":")
+        if not sep or not name.strip():
+            raise ValueError("a header must look like 'Name: value'")
+        headers[name.strip()] = value.strip()
+    return rest, headers
+
+
 def cmd_req(argv):
+    try:
+        argv, headers = split_headers(argv)
+    except ValueError as exc:
+        print('BAD_HEADER %s\nNEXT: pass it as -H "Authorization: Bearer <token>".' % exc)
+        return 2
     if len(argv) < 2:
-        print("USAGE: req <METHOD> <PATH> [JSON]")
+        print("USAGE: req <METHOD> <PATH> [JSON] [-H 'Name: value']")
         return 2
     method, path = argv[0], argv[1]
     raw = " ".join(argv[2:]).strip()
@@ -419,13 +524,13 @@ def cmd_req(argv):
             return 2
     elif method.upper() in ("POST", "PUT", "PATCH"):
         body = {}                       # the literal {} a generated button sends
-    state = read_state()
-    port = state.get("port")
+    port = ensure_up()
     if not port:
-        print("NOT_RUNNING\nNEXT: `up` first.")
-        return 2
-    status, text = request(method, path, body, port)
-    print("%s %s %s" % (status or "CONNECTION_FAILED", method.upper(), path))
+        return 1
+    status, text = request(method, path, body, port, extra_headers=headers)
+    # Header names only: a value can be a credential.
+    sent = ("  (headers: %s)" % ", ".join(sorted(headers))) if headers else ""
+    print("%s %s %s%s" % (status or "CONNECTION_FAILED", method.upper(), path, sent))
     print(text[:BODY_CHARS] + (" ...[truncated]" if len(text) > BODY_CHARS else ""))
     if status == 0:
         print("--- server log (last 40) ---")
@@ -443,8 +548,13 @@ def cmd_req(argv):
     elif status == 404:
         print("NEXT: that path does not exist. Run `routes` and use a real one.")
     elif status in (401, 403):
-        print("NEXT: the endpoint requires auth. Register and log in through the "
-              "app's own endpoints (`routes auth`), then repeat with the token.")
+        if headers:
+            print("NEXT: the credential was refused. Log in again through the app's own "
+                  "endpoint and repeat with the token its response returns.")
+        else:
+            print("NEXT: the endpoint requires auth. Register and log in through the "
+                  "app's own endpoints (`routes auth`), then repeat this request with "
+                  '-H "Authorization: Bearer <access_token from the login response>".')
     elif 300 <= status < 400:
         print("NEXT: unfollowed redirect. Retry against the Location path "
               "(most often the same path with a trailing slash).")

@@ -14,7 +14,7 @@ def sort_by_timestamp(obj_set: set) -> list:
 
     Returns:
     list: A list of the objects sorted by their `timestamp` in ascending order.
-    Ties (common: timestamps have ~1 ms resolution on Windows) are broken by name.
+    Ties (only possible with explicitly passed timestamps) are broken by name.
     """
     return sorted(obj_set, key=lambda x: (x.timestamp, str(getattr(x, "name", "") or "")))
 

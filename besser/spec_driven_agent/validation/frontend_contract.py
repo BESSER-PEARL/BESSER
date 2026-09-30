@@ -16,6 +16,7 @@ import re as _re
 from besser.spec_driven_agent.pipeline.constants import FRONTEND_WALK_SKIP_DIRS
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.validation.frontend_bindings import literal_component_props
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 
 def _method_button_source_issues(output_dir: str) -> list[str]:
@@ -28,7 +29,7 @@ def _method_button_source_issues(output_dir: str) -> list[str]:
     one-file check; a button whose table is not on the page is left alone.
     """
     issues: list[str] = []
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
         for fname in files:
             if not fname.endswith((".tsx", ".jsx")):
@@ -95,7 +96,7 @@ def collect_frontend_contract_issues(output_dir: str) -> list[str]:
     issues: list[str] = []
     frontend_files: list[tuple[str, str]] = []  # (rel, content)
 
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         # Prune noisy / irrelevant trees in place.
         dirs[:] = [d for d in dirs if d not in FRONTEND_WALK_SKIP_DIRS]
         for fname in files:

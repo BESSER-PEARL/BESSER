@@ -106,7 +106,7 @@ def test_download_zip_skips_symlinked_file_and_dir(tmp_path):
     assert entry.is_zip
     with zipfile.ZipFile(entry.file_path) as archive:
         names = archive.namelist()
-        assert sorted(names) == ["app.py", "main.py"]
+        assert sorted(names) == ["BESSER_GENERATION.md", "app.py", "main.py"]
         assert all(SECRET not in archive.read(n).decode("utf-8") for n in names)
 
 

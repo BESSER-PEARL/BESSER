@@ -16,6 +16,13 @@ model on the request's behalf. The free tier is gated by
 ``BESSER_FREE_LLM_TOKEN`` environment variables (see :doc:`configuration`); the
 backend config endpoint reports it as ``free_tier: {available, model, models}``.
 
+The user pays nothing for a free-tier run, and the run card says "No cost".
+Internally, a free-tier model that draws on the deployment's provider credits
+(for example ``moonshotai/Kimi-K3``) is still priced at its list rate, so the
+per-run cost cap bounds it; a run that reaches the cap reports "Free tier
+per-run usage limit reached". Models with an explicit free marker
+(``:free`` / ``-free``) and a self-hosted fallback are priced at $0.
+
 **Bring Your Own Key (BYOK, optional).** To target a commercial provider —
 ``anthropic``, ``openai``, ``mistral``, or ``nebius`` — for higher-fidelity
 results, the
@@ -65,7 +72,7 @@ provider default is used:
      - Planning model
      - Override field
    * - ``anthropic``
-     - ``claude-sonnet-4-6``
+     - ``claude-sonnet-5``
      - ``claude-haiku-4-5``
      - ``llm_model``
    * - ``openai``
@@ -140,13 +147,23 @@ a request shaped for them, which the client does automatically:
      - Forced tool calls use ``tool_choice`` with thinking disabled.
 
 No sampling parameters (``temperature``, ``top_p``, ``top_k``) are sent to any
-Anthropic or OpenAI model. A reply that stops with ``stop_reason: "refusal"``
-(a provider safety classifier) ends the run with that reason and its category
-rather than an opaque provider error.
+Anthropic or OpenAI model. A reply that a provider safety classifier stops (Anthropic's
+``stop_reason: "refusal"``, OpenAI's ``finish_reason: "content_filter"``) ends
+the run with that reason and its category rather than an opaque provider
+error.
 
-Every model above has a price in the client's rate table, so ``max_cost_usd``
-counts its real spend; an unpriced paid model is billed at a middle-tier
-fallback rate instead.
+Every model above has a price, so ``max_cost_usd`` counts its real spend.
+Prices come first from a vendored copy of litellm's published price table.
+A route to a paid vendor API (Anthropic, the official OpenAI endpoint,
+Mistral, Nebius) is always billed: the name-based open-weight test that prices
+self-hosted models at zero is skipped there. A paid model id found in no table
+is billed at the ``gpt-4o`` rate, a deliberately middle-tier fallback. After a
+fallback-chain switch, tokens from then on are billed at the fallback model's
+rate; spend so far is kept.
+
+A provider timeout is not retried at length: when the tier has a fallback
+chain the run switches to the next model at once, and without one it is
+retried twice before the run fails.
 
 The planning model
 ------------------
@@ -158,8 +175,8 @@ not work: when the main model is already on the cheap tier (a ``haiku`` model
 on Anthropic, a ``mini`` / ``nano`` model on OpenAI), and — on the
 OpenAI-compatible providers — when the model reads as self-hosted or
 open-weight, whose endpoint has no such sibling. That last test is name-based
-(a ``name:size`` tag, or a known open-weight family), which is what makes the
-``free`` tier route planning to its own model. ``nebius`` opts out explicitly:
+(a ``name:size`` tag, or a known open-weight family). The ``free`` tier always
+runs its planning calls on its own model. ``nebius`` opts out explicitly:
 its default is already a small-activation MoE, and the OpenAI cheap sibling
 does not exist on that endpoint.
 

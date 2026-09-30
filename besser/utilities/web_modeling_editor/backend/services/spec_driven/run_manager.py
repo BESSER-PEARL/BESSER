@@ -703,10 +703,11 @@ class DurableRunManager:
                 event_type = stored.event_type
                 payload = stored.payload
                 if event_type == "done":
-                    incomplete = (
-                        payload.get("incomplete")
-                        or int(payload.get("blockerCount") or 0) > 0
-                    )
+                    # The runner's flag is authoritative; blockerCount also counts
+                    # checks that merely could not run. Older events lack the flag.
+                    incomplete = payload.get("incomplete")
+                    if incomplete is None:
+                        incomplete = int(payload.get("blockerCount") or 0) > 0
                     terminal_status = (
                         "abandoned"
                         if abandoned and incomplete

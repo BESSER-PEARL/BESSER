@@ -38,7 +38,7 @@ RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt
 
 FROM python-deps AS backend
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml setup.cfg README.md ./
 COPY besser/ ./besser/
 RUN pip install --no-cache-dir -e .
 
@@ -95,7 +95,7 @@ RUN apt-get update \
 ENV PATH="/root/.cargo/bin:/opt/kotlinc/bin:${PATH}"
 
 # Same code layers and CA strip as the backend target.
-COPY pyproject.toml README.md ./
+COPY pyproject.toml setup.cfg README.md ./
 COPY besser/ ./besser/
 RUN pip install --no-cache-dir -e .
 

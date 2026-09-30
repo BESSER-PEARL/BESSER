@@ -31,6 +31,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_VALIDATION_ISSUE,
 )
 from besser.spec_driven_agent.validation.issues import ValidationIssue
+from besser.spec_driven_agent.execution.workspace_fs import open_plain
 
 logger = logging.getLogger(__name__)
 
@@ -274,7 +275,7 @@ class ModifyRunMixin:
         if not os.path.isfile(recipe_path):
             return
         try:
-            with open(recipe_path, "r", encoding="utf-8") as fh:
+            with open_plain(recipe_path, "r", root=self.output_dir, encoding="utf-8") as fh:
                 recipe = json.load(fh)
         except Exception:
             logger.debug(

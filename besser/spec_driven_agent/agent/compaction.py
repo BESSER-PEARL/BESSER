@@ -17,6 +17,7 @@ import logging
 import os
 import urllib.request
 from typing import Any
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 logger = logging.getLogger(__name__)
 
@@ -546,7 +547,7 @@ def _summarize_messages(
         )
     try:
         files = []
-        for root, _, fnames in os.walk(output_dir):
+        for root, _, fnames in walk_plain(output_dir):
             for f in fnames:
                 if not f.startswith(".besser_"):
                     files.append(

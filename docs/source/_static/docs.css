@@ -1,0 +1,113 @@
+/* BESSER brand values match the Web Modeling Editor's styles.css. */
+:root {
+  --md-text-font: "Segoe UI";
+  --md-code-font: "Cascadia Code";
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: hsl(193, 45%, 40%);
+  --md-primary-fg-color--light: hsl(193, 45%, 50%);
+  --md-primary-fg-color--dark: hsl(193, 45%, 30%);
+  --md-accent-fg-color: hsl(193, 45%, 30%);
+  --besser-border: #dbe7eb;
+  --besser-surface: #f2f8fa;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: hsl(195, 52%, 64%);
+  --md-primary-fg-color--light: hsl(195, 55%, 72%);
+  --md-primary-fg-color--dark: hsl(195, 50%, 54%);
+  --md-accent-fg-color: hsl(195, 55%, 72%);
+  --md-default-bg-color: #17212b;
+  --md-default-fg-color: #e5edf1;
+  --md-default-fg-color--light: #bdcbd3;
+  --md-default-fg-color--lighter: #91a7b4;
+  --md-code-bg-color: #101a24;
+  --besser-border: #344853;
+  --besser-surface: #1d2e39;
+}
+
+.md-header {
+  background: white;
+  color: #183b47;
+  border-bottom: 3px solid hsl(193, 45%, 40%);
+  box-shadow: none;
+}
+[data-md-color-scheme="slate"] .md-header { background: #1d2e39; color: #e5edf1; }
+[data-md-color-scheme="default"] .md-header__button.md-logo img { content: url("besser_logo_light.png"); }
+[data-md-color-scheme="default"] .md-search__form { background: #e9f2f5; }
+[data-md-color-scheme="default"] .md-search__input,
+[data-md-color-scheme="default"] .md-search__icon { color: #183b47; }
+[data-md-color-scheme="default"] .md-search__input::placeholder { color: #426775; }
+.md-header__button.md-logo { margin-right: 0.5rem; }
+.md-header__button.md-logo img { height: 1.75rem; width: auto; }
+.md-header__title { font-weight: 600; }
+/* The repository badge's latest tag can lag the documentation under review. */
+.md-source__facts { display: none; }
+.md-grid { max-width: 64rem; }
+.md-main__inner { margin-top: 1.8rem; }
+.md-content { min-width: 0; padding-bottom: 2rem; }
+.md-typeset { font-size: 0.82rem; line-height: 1.7; }
+.md-typeset h1 { color: var(--md-default-fg-color); font-weight: 650; font-size: 2rem; letter-spacing: -0.03em; }
+.md-typeset h2 { font-weight: 600; font-size: 1.35rem; margin-top: 2rem; }
+.md-typeset h3 { font-weight: 600; }
+.md-typeset > p:first-of-type { font-size: 0.9rem; }
+.md-typeset a { text-underline-offset: 0.2em; }
+.md-typeset a:hover { text-decoration: underline; }
+.md-nav { font-size: 0.7rem; }
+.md-nav__item--section > .md-nav__link { color: var(--md-primary-fg-color); }
+
+.md-typeset .doc-lead.container {
+  border-left: 3px solid var(--md-primary-fg-color);
+  background: var(--besser-surface);
+  padding: 0.65rem 1rem;
+  margin: 1.5rem 0 1.75rem;
+}
+.doc-lead p { margin: 0.4rem 0; }
+.md-typeset .doc-path.container {
+  border-bottom: 1px solid var(--besser-border);
+  padding: 0.65rem 0 1.1rem;
+}
+.md-typeset .doc-path .rubric {
+  color: var(--md-primary-fg-color);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  margin-bottom: 0.4rem;
+}
+.doc-path p { margin: 0.5rem 0; }
+.doc-path p:last-child { font-weight: 650; }
+.md-typeset img { height: auto; border-radius: 0.35rem; }
+.md-typeset .admonition { box-shadow: none; }
+.md-typeset table:not([class]) { font-size: 0.72rem; }
+.md-typeset pre { line-height: 1.6; }
+a:focus-visible, button:focus-visible, input:focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 3px;
+}
+
+@media (max-width: 1219px) {
+  .md-nav--primary .md-nav__title[for="__drawer"] {
+    background: white;
+    color: #183b47;
+  }
+  [data-md-color-scheme="default"] .md-nav__button.md-logo img {
+    content: url("besser_logo_light.png");
+  }
+  [data-md-color-scheme="slate"] .md-nav--primary .md-nav__title[for="__drawer"] {
+    background: #1d2e39;
+    color: #e5edf1;
+  }
+}
+
+@media (max-width: 600px) {
+  .md-header__button.md-logo { display: none; }
+  .md-header__title { font-size: 0.8rem; }
+  .md-typeset h1 { font-size: 1.7rem; }
+  .md-main__inner { margin-top: 1rem; }
+}
+
+@media print {
+  .doc-path, .doc-lead { break-inside: avoid; }
+}

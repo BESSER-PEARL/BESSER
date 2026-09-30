@@ -71,7 +71,20 @@ def _is_placeholder(value: str) -> bool:
     )
 
 
-def redact_text(value: str, *, env_style: bool = True) -> tuple[str, int]:
+# The run's own key is matched literally, so a short value would redact
+# ordinary text; real provider keys are far longer.
+_MIN_OWN_SECRET_LENGTH = 16
+
+
+def _own_secrets(secrets: Iterable[str]) -> list[str]:
+    """Literal secrets long enough to redact safely, longest first."""
+    return sorted({s for s in secrets if s and len(s) >= _MIN_OWN_SECRET_LENGTH},
+                  key=len, reverse=True)
+
+
+def redact_text(
+    value: str, *, env_style: bool = True, secrets: Iterable[str] = (),
+) -> tuple[str, int]:
     """Return ``value`` with credential material replaced and a match count.
 
     ``env_style`` controls the NAME-based assignment heuristic, which belongs to
@@ -85,8 +98,17 @@ def redact_text(value: str, *, env_style: bool = True) -> tuple[str, int]:
 
     With ``env_style=False`` only the provider-token pattern runs; it matches
     the token itself, not the quotes around it, so the file still parses.
+
+    ``secrets`` are literal values (the run's own API key) redacted whatever
+    their shape, since a key with no known prefix escapes the token pattern.
     """
     findings = 0
+    # Literal secrets first: the token pattern may rewrite part of one.
+    for secret in _own_secrets(secrets):
+        count = value.count(secret)
+        if count:
+            value = value.replace(secret, REDACTED_SECRET)
+            findings += count
 
     def _assignment_replacement(match: re.Match[str]) -> str:
         nonlocal findings
@@ -104,26 +126,26 @@ def redact_text(value: str, *, env_style: bool = True) -> tuple[str, int]:
     return redacted, findings + token_count
 
 
-def redact_data(value: Any) -> tuple[Any, int]:
+def redact_data(value: Any, secrets: Iterable[str] = ()) -> tuple[Any, int]:
     """Recursively redact strings in JSON-like event or recipe data."""
     if isinstance(value, str):
-        return redact_text(value)
+        return redact_text(value, secrets=secrets)
     if isinstance(value, list):
         output = []
         findings = 0
         for item in value:
-            safe_item, item_findings = redact_data(item)
+            safe_item, item_findings = redact_data(item, secrets)
             output.append(safe_item)
             findings += item_findings
         return output, findings
     if isinstance(value, tuple):
-        safe_list, findings = redact_data(list(value))
+        safe_list, findings = redact_data(list(value), secrets)
         return tuple(safe_list), findings
     if isinstance(value, dict):
         output = {}
         findings = 0
         for key, item in value.items():
-            safe_item, item_findings = redact_data(item)
+            safe_item, item_findings = redact_data(item, secrets)
             output[key] = safe_item
             findings += item_findings
         return output, findings
@@ -147,6 +169,7 @@ def scrub_secret_files(
     workdir: str,
     *,
     excluded_names: Iterable[str] = (),
+    secrets: Iterable[str] = (),
 ) -> SecretScrubResult:
     """Remove populated ``.env`` files and redact secrets in other text files.
 
@@ -156,6 +179,7 @@ def scrub_secret_files(
     """
     root_path = os.path.realpath(workdir)
     excluded = tuple(excluded_names)
+    secrets = tuple(secrets)
     removed: list[str] = []
     redacted_files: list[str] = []
     findings = 0
@@ -190,7 +214,8 @@ def scrub_secret_files(
             # heuristic is a .env rule and destroys source code (see redact_text).
             lowered = name.lower()
             is_env = lowered.startswith(".env")
-            safe_content, file_findings = redact_text(content, env_style=is_env)
+            safe_content, file_findings = redact_text(
+                content, env_style=is_env, secrets=secrets)
             if not file_findings:
                 continue
 

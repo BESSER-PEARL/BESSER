@@ -43,6 +43,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     create_llm_client,
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ class LLMGenerator(GeneratorInterface):
 
         # Validate that something was actually generated
         generated_files = []
-        for root, _, files in os.walk(result):
+        for root, _, files in walk_plain(result):
             for f in files:
                 if not f.startswith(".besser_"):
                     generated_files.append(os.path.relpath(os.path.join(root, f), result))

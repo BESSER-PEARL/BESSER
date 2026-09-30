@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import tempfile
+import time
 
 
 # Workspace subdirectory holding the untruncated output of shell commands.
@@ -103,10 +104,28 @@ def _kill_tree(proc: subprocess.Popen) -> None:
         pass
 
 
+# Per-stream capture cap. The temp files sit outside the sandbox and are read
+# into worker memory; a `yes` or a log loop must not fill the disk or the heap.
+MAX_CAPTURE_BYTES = 8_000_000
+
+
+def _captured_size(handle) -> int:
+    return os.fstat(handle.fileno()).st_size
+
+
 def _decode(handle) -> str:
+    size = _captured_size(handle)
     handle.seek(0)
+    if size > MAX_CAPTURE_BYTES:
+        half = MAX_CAPTURE_BYTES // 2
+        head = handle.read(half)
+        handle.seek(size - half)
+        marker = f"\n\n... [{size - 2 * half} bytes of output dropped] ...\n\n".encode()
+        data = head + marker + handle.read(half)
+    else:
+        data = handle.read()
     # What text=True would produce, minus its strict decode errors.
-    return io.TextIOWrapper(io.BytesIO(handle.read()),
+    return io.TextIOWrapper(io.BytesIO(data),
                             encoding=locale.getpreferredencoding(False),
                             errors="replace").read()
 
@@ -124,7 +143,8 @@ def run_bounded(args, *, timeout: float, cwd: str | None = None,
     the command gets its own process group, the whole tree is killed on
     timeout, and output goes to temp files, which nothing can hold "open"
     against the reader. Raises ``subprocess.TimeoutExpired`` after the kill.
-    ``input`` is fed on stdin, from a temp file for the same reason.
+    A stream past :data:`MAX_CAPTURE_BYTES` also kills the tree; only its
+    head and tail are read back. ``input`` is fed on stdin, from a temp file for the same reason.
     """
     group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
              else {"start_new_session": True})
@@ -136,14 +156,27 @@ def run_bounded(args, *, timeout: float, cwd: str | None = None,
         proc = subprocess.Popen(args, cwd=cwd, env=env, shell=shell,
                                 stdin=stdin if input is not None else None,
                                 stdout=out, stderr=err, **group)
-        try:
-            proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            _kill_tree(proc)
+        deadline = time.monotonic() + timeout
+        flooded = False
+        while True:
             try:
-                proc.wait(timeout=10)
+                proc.wait(timeout=min(0.05, max(deadline - time.monotonic(), 0)))
+                break
             except subprocess.TimeoutExpired:
                 pass
-            raise subprocess.TimeoutExpired(args, timeout, output=_decode(out),
-                                            stderr=_decode(err)) from None
-        return subprocess.CompletedProcess(args, proc.returncode, _decode(out), _decode(err))
+            flooded = max(_captured_size(out), _captured_size(err)) > MAX_CAPTURE_BYTES
+            if flooded or time.monotonic() >= deadline:
+                _kill_tree(proc)
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+                if not flooded:
+                    raise subprocess.TimeoutExpired(args, timeout, output=_decode(out),
+                                                    stderr=_decode(err)) from None
+                break
+        stderr = _decode(err)
+        if flooded:
+            stderr += (f"\n[output exceeded {MAX_CAPTURE_BYTES // 1_000_000} MB; "
+                       "the command was killed]")
+        return subprocess.CompletedProcess(args, proc.returncode, _decode(out), stderr)

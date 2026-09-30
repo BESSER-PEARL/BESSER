@@ -13,7 +13,7 @@ from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.state_machine.state_machine import StateMachine
-from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, buml_header
 from besser.utilities.buml_code_builder.domain_model_builder import (
     domain_model_to_code,
     object_model_to_code,
@@ -45,6 +45,8 @@ def _write_temp_to_output(temp_path: str, out_file, section_header: str = ""):
     """Read a temp file and append its content (with optional header) to *out_file*."""
     with open(temp_path, "r", encoding="utf-8") as tmp:
         content = tmp.read()
+    # One version header per file: the project writes its own at the top.
+    content = content.removeprefix(buml_header())
     if section_header:
         out_file.write(section_header)
     out_file.write(content)
@@ -183,6 +185,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     model_vars = []
 
     with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(buml_header())
         temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
 
         try:

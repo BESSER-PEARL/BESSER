@@ -18,10 +18,24 @@ and no Docker. Missing runtime prerequisites do not count as verified execution:
 - Retained ``test_api`` workflows replayed after source changes.
 
 - Dockerfile coherence — referenced ``requirements.txt`` / ``package.json``
-  must exist. Several common mistakes are repaired outright without spending
+  must exist. A ``COPY`` source is resolved against the build context, as
+  Docker does: the compose ``build.context`` when a compose file names the
+  Dockerfile, else the Dockerfile's own folder. ``COPY --from=<stage>`` copies
+  from a build stage and is not checked. This check only reports; it never
+  writes a file. A separate repair step before validation restores a
+  ``requirements.txt`` that a Phase 2 edit deleted from a FastAPI scaffold.
+  Several other common mistakes are repaired outright without spending
   an LLM turn (``npm ci`` with no lockfile anywhere in the project becomes
   ``npm install``; a ``COPY`` of a non-existent ``package-lock.json`` is
-  dropped; ``passlib`` pins ``bcrypt==4.0.1``).
+  dropped).
+- Known-incompatible dependencies — a table of pairs that pip resolves
+  without complaint but that break at runtime (``passlib`` needs
+  ``bcrypt<4.1``: bcrypt 5 rejects the >72-byte secret passlib's self-test
+  hashes, so every password hash fails). Each ``requirements.txt`` that
+  declares the first package gets the second pinned, unless its declared range
+  is already compatible. The same table is applied when scaffold repair writes
+  a ``requirements.txt`` and by ``install_dependencies`` before it installs,
+  so the delivered file is pinned even when Phase 3 is skipped.
 - Local-import resolution — an import naming a module the app does not ship
   where it is used. ``ruff`` is structurally blind to this (a star import
   excuses every name), and it is fatal at startup.
@@ -53,9 +67,12 @@ no build check can see it.
 
 For discovered TypeScript projects and frontend applications, required checks
 that are disabled, unavailable, timed out, or only partially run are recorded as
-``validation unverified:`` warnings. These keep the delivered output incomplete
-and retain its repair checkpoint, but do not spend LLM turns repairing an
-environment restriction. Optional lint checks remain advisory.
+``validation unverified:`` warnings. Their effect on completion depends on the
+check: some contribute to the completion gate, while others are advisory.
+The editor follows the ``done`` event's ``incomplete`` flag; it may present an
+application as ready with unverified checks. Read the findings to distinguish
+checks that passed from checks that did not run. Optional lint checks remain
+advisory.
 
 Checks that execute generated code (the import and runtime probes and the
 compiler and build checks) run in the bubblewrap sandbox described in
@@ -115,7 +132,9 @@ Findings are classified into three severities:
        nothing); a requirement the user stated that the code does not
        implement (``requirement:`` — the verbatim request is turned into
        atomic requirements once and each is judged against the generated
-       code, with every "implemented" citation re-checked by the harness);
+       code, with every "implemented" citation re-checked by the harness;
+       only behaviour the request states is listed, so a vague request
+       yields few requirements or none);
        partial requirements and unverified evidence (distinct from proven missing
        behavior); unresolved checklist work and unimplemented action contracts;
        a method button that takes its row id from a table of another
@@ -130,7 +149,9 @@ Findings are classified into three severities:
        variable), ``E501``, whitespace, blank lines, import order.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now) and the model-derived acceptance matrix.
+       now), the model-derived acceptance matrix, and ``requirement out of
+       scope:`` — a UI requirement on a run that neither has nor asked for a
+       frontend, which a backend-only output has no files to satisfy.
 
 Only ``blocker`` findings spend LLM turns. The ``done`` event reports
 ``blockerCount`` — completion-blocking defects and required verification gaps
@@ -167,6 +188,7 @@ cost and runtime budgets. The loop stops when blockers reach zero, after two
 consecutive unchanged/repeated source states, or after three consecutive rounds
 that change the tree without improving it. A round is progress when the tree
 scores better, the source changed, or a verification obligation was discharged
+(a checklist or scenario change counts only if it changed the set of blockers)
 — writing no source is not by itself a stop, because a round spent closing
 checklist items or correcting a scenario can resolve blockers without touching
 a file, and a round whose edits were all rejected feeds those rejections into
@@ -176,6 +198,10 @@ ends the loop immediately rather than paying for the same attempt twice. A large
 import may expose several previously unreachable CRUD failures. Unresolved
 output remains explicitly incomplete. Startup and data-entry failures are
 repaired before spending tokens on business requirement judgment.
+
+A fix turn whose reply is cut off at the output-token limit is retried with
+an instruction to emit less, up to four times per attempt, rather than
+applying a half-written edit.
 
 For concrete code defects, an attempt without a successful edit — the model explained
 the fix instead of making it, or read files until its turn budget ran out — is

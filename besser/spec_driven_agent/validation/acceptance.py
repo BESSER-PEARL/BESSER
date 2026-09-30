@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import os
 import re
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 _FRONTEND_EXTS = (".js", ".jsx", ".ts", ".tsx")
 _SKIP_DIRS = ("node_modules", "dist", "build", "__pycache__")
@@ -268,7 +269,7 @@ def build_acceptance_matrix(
 
     # Collect frontend files once: (rel path, content).
     frontend_files: list[tuple[str, str]] = []
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
         for fname in files:
             if not fname.endswith(_FRONTEND_EXTS):

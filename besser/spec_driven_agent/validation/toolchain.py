@@ -31,6 +31,7 @@ from besser.spec_driven_agent.validation.issues import (
     _RUFF_LINE_RE,
     _RUFF_STYLE_CODES,
 )
+from besser.spec_driven_agent.execution.workspace_fs import open_plain_write, walk_plain
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ def _toolchain_commands_for(
 
 
 def _build_toolchain_reminder(
-    toolchain_blockers: list[ValidationIssue]
+    toolchain_blockers: list[ValidationIssue], *, shell_tools: bool = True
 ) -> str:
     """High-salience reminder text for the toolchain-fix loop.
 
@@ -110,11 +111,15 @@ def _build_toolchain_reminder(
         "The generated project does not compile on its own toolchain. "
         "The project is not deliverable until these errors are fixed:\n"
         f"{bulleted}{more}\n\n"
-        "You MUST drive these to zero. After EACH edit, invoke "
-        "run_command with the appropriate toolchain check (npx tsc "
-        "--noEmit / cargo check / kotlinc) and read the output. "
-        "Only call end_turn once the toolchain reports zero errors, "
-        "or after you have made a clear good-faith attempt that the "
+        + ("You MUST drive these to zero. After EACH edit, invoke "
+           "run_command with the appropriate toolchain check (npx tsc "
+           "--noEmit / cargo check / kotlinc) and read the output. "
+           "Only call end_turn once the toolchain reports zero errors, "
+           if shell_tools else
+           "You MUST drive these to zero. run_command is unavailable in this "
+           "run; the harness re-runs the toolchain when this attempt ends. "
+           "Only call end_turn once every reported error is fixed, ")
+        + "or after you have made a clear good-faith attempt that the "
         "remaining errors require dependencies you cannot add."
         "</system-reminder>"
     )
@@ -159,13 +164,12 @@ def _collect_ruff_issues(
                 "does not cover import-time NameErrors. Install ruff in the "
                 "image to enable them."
             )
-        # A visible (non-blocking) validation note, deliberately phrased
-        # without a ruff rule code so _classify_issue keeps it a warning.
-        return [
-            "validation: ruff is not installed on this host - Python "
-            "undefined-name/import checks were skipped (install ruff to "
-            "enable them)"
-        ], warned_missing
+        # The skipped-check wording, so the run report lists it as not
+        # verified; no ruff rule code, so _classify_issue keeps it a warning.
+        return [_check_did_not_run(
+            "ruff", "ruff is not installed on this host; install it to enable "
+            "the Python undefined-name/import checks",
+        )], warned_missing
 
     try:
         result = subprocess.run(
@@ -174,7 +178,10 @@ def _collect_ruff_issues(
                 "--output-format=concise",
                 "--no-cache",
                 "--exit-zero",
-                "--exclude", _SNAPSHOT_DIR,
+                # The snapshot and the harness's own files (e.g. the runbook's
+                # .besser_probe.py) are not the app. One list: with an absolute
+                # target, a separate --extend-exclude replaces --exclude.
+                "--exclude", f"{_SNAPSHOT_DIR},.besser_*",
                 output_dir,
             ],
             capture_output=True, text=True, timeout=30,
@@ -288,7 +295,7 @@ def _collect_tsc_issues(
 
     tsconfigs: list[str] = []
     workspace = os.path.realpath(output_dir)
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         retained = []
         for directory in dirs:
             if directory in excluded_dirs or directory.startswith(".besser_"):
@@ -355,7 +362,7 @@ def _collect_tsc_issues(
             )
         except SandboxUnavailable as exc:
             issues.append(required_check_unverified(
-                f"tsc [{rel}]", f"the sandbox is unavailable: {exc}"))
+                f"tsc [{rel}]", str(exc)))
             continue
         except subprocess.TimeoutExpired:
             issues.append(required_check_unverified(f"tsc [{rel}]", "timed out after 60s"))
@@ -459,7 +466,7 @@ def _tsc_project_arg(project_dir: str, deps_installed: bool):
 
     probe = os.path.join(project_dir, _TSC_PROBE_NAME)
     try:
-        with open(probe, "w", encoding="utf-8") as handle:
+        with open_plain_write(probe, "w", root=project_dir, encoding="utf-8") as handle:
             handle.write(_TSC_PROBE_BODY)
     except OSError:
         return ".", lambda: None
@@ -568,9 +575,8 @@ def _collect_cargo_issues(output_dir: str) -> list[str]:
     Mirrors ``_collect_tsc_issues`` for the Rust toolchain. Looks
     for ``Cargo.toml`` files at any depth (skipping the snapshot
     dir and any ``target/`` build output) and runs ``cargo check
-    --message-format=short`` per crate. Skips silently if ``cargo``
-    is not on PATH, like the other toolchain checks when the
-    toolchain isn't installed on the run host.
+    --message-format=short`` per crate. When crates exist but ``cargo``
+    is not on PATH it reports the check as not run, like tsc.
 
     ``cargo check`` is used in preference to ``cargo build``: it
     runs the front-end and type-checker without producing artifacts,
@@ -589,11 +595,9 @@ def _collect_cargo_issues(output_dir: str) -> list[str]:
     )
 
     cargo_bin = _shutil.which("cargo") or _shutil.which("cargo.exe")
-    if not cargo_bin:
-        return []
 
     crates: list[str] = []
-    for root, _, files in os.walk(output_dir):
+    for root, _, files in walk_plain(output_dir):
         rel_root = os.path.relpath(root, output_dir).replace("\\", "/")
         if rel_root.startswith(_SNAPSHOT_DIR):
             continue
@@ -607,6 +611,9 @@ def _collect_cargo_issues(output_dir: str) -> list[str]:
 
     if not crates:
         return []
+    if not cargo_bin:
+        # A Rust project that nothing compiled is unverified, not clean.
+        return [_check_did_not_run("cargo check", "cargo is not installed on this host")]
 
     # Redirect cargo's build cache OUT of the user workspace: without
     # this, ``target/`` (thousands of files for a typical axum crate)
@@ -636,7 +643,7 @@ def _collect_cargo_issues(output_dir: str) -> list[str]:
             )
         except SandboxUnavailable as exc:
             issues.append(_check_did_not_run(
-                f"cargo [{rel}]", f"the sandbox is unavailable: {exc}"))
+                f"cargo [{rel}]", str(exc)))
             continue
         except subprocess.TimeoutExpired:
             issues.append(_check_did_not_run(f"cargo [{rel}]", "timed out after 180s"))
@@ -701,8 +708,8 @@ def _collect_kotlinc_issues(output_dir: str) -> list[str]:
         the invocation cheap. Multi-module projects compile one
         module at a time.
 
-    Soft-skips when ``kotlinc`` is not on PATH (no warning in the
-    recipe — the run host either has it or doesn't).
+    When a Kotlin module exists but ``kotlinc`` is not on PATH it reports
+    the check as not run, like tsc.
     """
     import shutil as _shutil
     import subprocess
@@ -712,14 +719,12 @@ def _collect_kotlinc_issues(output_dir: str) -> list[str]:
         or _shutil.which("kotlinc.bat")
         or _shutil.which("kotlinc.cmd")
     )
-    if not kotlinc_bin:
-        return []
 
     # Locate Kotlin source roots. We look for ``src/main/kotlin``
     # under any directory containing a Gradle build file, which is
     # the convention every Phase 0.5 Kotlin template lands in.
     modules: list[str] = []
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         rel_root = os.path.relpath(root, output_dir).replace("\\", "/")
         if rel_root.startswith(_SNAPSHOT_DIR):
             continue
@@ -740,6 +745,8 @@ def _collect_kotlinc_issues(output_dir: str) -> list[str]:
 
     if not modules:
         return []
+    if not kotlinc_bin:
+        return [_check_did_not_run("kotlinc", "kotlinc is not installed on this host")]
 
     issues: list[str] = []
     for src_root in modules:
@@ -751,7 +758,7 @@ def _collect_kotlinc_issues(output_dir: str) -> list[str]:
         # bounds on Windows; if a project exceeds that, the rest
         # are skipped (and the LLM still sees the first batch).
         kt_files: list[str] = []
-        for kt_root, _, kt_files_in_dir in os.walk(src_root):
+        for kt_root, _, kt_files_in_dir in walk_plain(src_root):
             for fname in kt_files_in_dir:
                 if fname.endswith(".kt"):
                     kt_files.append(os.path.join(kt_root, fname))

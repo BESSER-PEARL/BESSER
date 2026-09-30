@@ -126,6 +126,10 @@ services:
     security_opt:
       - seccomp=unconfined
       - apparmor=unconfined
+      # Amazon Linux: Docker's masked /proc paths make the kernel refuse
+      # bwrap's private /proc mount (measured on experimental 2026-09-29).
+      - systempaths=unconfined
+      - no-new-privileges:true
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     restart: unless-stopped
     # NOT on besser_network: generation has no reason to reach the backend, the

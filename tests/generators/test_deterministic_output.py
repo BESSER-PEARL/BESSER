@@ -13,6 +13,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 GENERATE = textwrap.dedent('''
     import itertools, os, sys
     from datetime import datetime, timedelta
@@ -23,8 +25,10 @@ GENERATE = textwrap.dedent('''
     )
     from besser.generators.backend import BackendGenerator
     from besser.generators.django import DjangoGenerator
+    from besser.generators.java_classes import JavaGenerator
     from besser.generators.pydantic_classes import PydanticGenerator
     from besser.generators.python_classes import PythonGenerator
+    from besser.generators.rest_api import RESTAPIGenerator
     from besser.generators.sql_alchemy import SQLAlchemyGenerator
 
     out = sys.argv[1]
@@ -33,6 +37,8 @@ GENERATE = textwrap.dedent('''
     # runs comes from iterating a set.
     _tick = itertools.count()
     def ts():
+        if os.environ.get("DEFAULT_TIMESTAMPS"):
+            return None  # the metamodel's own creation-order stamps
         return datetime(2026, 1, 1) + timedelta(milliseconds=next(_tick))
     def attrs(*spec):
         return {Property(name=n, type=t, timestamp=ts()) for n, t in spec}
@@ -66,14 +72,23 @@ GENERATE = textwrap.dedent('''
     loan = AssociationClass(name="Loan", timestamp=ts(), attributes=attrs(
         ("start", DateType), ("due", DateType), ("renewals", IntegerType), ("fee", FloatType)),
         association=loan_assoc)
+    # Self associations: both ends have the same type, so a template that picks
+    # "the other end" by list position depends on set order.
+    manages = BinaryAssociation(name="manages", timestamp=ts(), ends={
+        end("manager", person, 0, 1), end("reports", person, 0, "*")})
+    friends = BinaryAssociation(name="friends", timestamp=ts(), ends={
+        end("friends_of", member, 0, "*"), end("friends_with", member, 0, "*")})
     model = DomainModel(name="Lib", types={person, member, book, library, loan, status},
-                        associations={holds, visits, loan_assoc},
+                        associations={holds, visits, loan_assoc, manages, friends},
                         generalizations={Generalization(general=person, specific=member, timestamp=ts())})
 
     PythonGenerator(model, output_dir=os.path.join(out, "python")).generate()
     PydanticGenerator(model, backend=True, output_dir=os.path.join(out, "pydantic")).generate()
     SQLAlchemyGenerator(model, output_dir=os.path.join(out, "sqla")).generate()
     BackendGenerator(model, output_dir=os.path.join(out, "backend")).generate()
+    RESTAPIGenerator(model, output_dir=os.path.join(out, "rest")).generate()
+    RESTAPIGenerator(model, backend=True, output_dir=os.path.join(out, "rest_backend")).generate()
+    JavaGenerator(model, output_dir=os.path.join(out, "java")).generate()
     django = DjangoGenerator(model, project_name="proj", app_name="app",
                              output_dir=os.path.join(out, "django"))
     os.makedirs(django._app_dir(), exist_ok=True)
@@ -83,21 +98,22 @@ GENERATE = textwrap.dedent('''
 SEEDS = ("0", "1", "2", "3")
 
 
-def _generate(out: Path, seed: str) -> dict[str, bytes]:
+def _generate(out: Path, seed: str, default_timestamps: bool = False) -> dict[str, bytes]:
     repo = Path(__file__).resolve().parents[2]
     env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONDONTWRITEBYTECODE": "1",
-           "PYTHONPATH": str(repo)}
+           "PYTHONPATH": str(repo), "DEFAULT_TIMESTAMPS": "1" if default_timestamps else ""}
     subprocess.run([sys.executable, "-c", GENERATE, str(out)], env=env, check=True,
                    cwd=repo, capture_output=True)
     return {
         str(p.relative_to(out)): p.read_bytes()
         for p in sorted(out.rglob("*"))
-        if p.is_file() and p.suffix in {".py", ".txt"}
+        if p.is_file() and p.suffix in {".py", ".txt", ".java"}
     }
 
 
-def test_generated_code_is_identical_across_hash_seeds(tmp_path):
-    runs = {seed: _generate(tmp_path / seed, seed) for seed in SEEDS}
+@pytest.mark.parametrize("default_timestamps", [False, True], ids=["explicit_ts", "default_ts"])
+def test_generated_code_is_identical_across_hash_seeds(tmp_path, default_timestamps):
+    runs = {seed: _generate(tmp_path / seed, seed, default_timestamps) for seed in SEEDS}
     reference = runs[SEEDS[0]]
     assert reference, "nothing was generated"
     for seed in SEEDS[1:]:
@@ -116,3 +132,12 @@ def test_str_lists_fields_sorted_by_name(tmp_path):
     assert 'return f"Member(active={self.active}, age={self.age}, email={self.email}' in python
     django = files[os.path.join("django", "proj", "app", "models.py")].decode()
     assert 'return f"Member(active={self.active}, age={self.age}, email={self.email}' in django
+
+
+def test_generated_python_classes_compile(tmp_path):
+    # An inherited to-one end had no default after defaulted parameters, so a
+    # subclass's __init__ was a SyntaxError ("non-default argument follows
+    # default argument").
+    files = _generate(tmp_path / "out", "0")
+    source = files["python\classes.py" if "python\classes.py" in files else "python/classes.py"]
+    compile(source, "classes.py", "exec")

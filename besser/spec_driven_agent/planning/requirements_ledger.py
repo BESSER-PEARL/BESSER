@@ -17,7 +17,6 @@ from __future__ import annotations
 import ast
 import json
 import logging
-import os
 from pathlib import Path
 import re
 import time
@@ -28,6 +27,7 @@ from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
 from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
 )
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,12 @@ _EXTRACT_SYSTEM_PROMPT = (
     "requirements a tester would check in the running application.\n"
     "Rules:\n"
     "- One behaviour per item, in the user's own words where possible.\n"
-    "- Include: validations and the shape a value must have; uniqueness; "
+    "- List only behaviour the request itself states. Never add what an app "
+    "of that kind usually has: no validations, refusals, endpoints, screens "
+    "or display details the text does not name.\n"
+    "- A vague request states little; return few items or an empty list. 'I "
+    "want a todo app' states no testable requirement: return [].\n"
+    "- Where stated, include: validations and the shape a value must have; uniqueness; "
     "business rules and limits; values that are computed rather than typed "
     "in; state transitions and the conditions under which an action must be "
     "refused; every named action and what it reports back; screens or "
@@ -444,7 +449,7 @@ def _source_files(output_dir: str) -> dict[str, str]:
     """Only application source, never run logs/recipes or an escaped symlink."""
     base = Path(output_dir).resolve()
     files: dict[str, str] = {}
-    for root, dirs, names in os.walk(base):
+    for root, dirs, names in walk_plain(base):
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _DIGEST_SKIP_DIRS
                    and not (Path(root) == base and d in _ARTIFACT_ROOT_DIRS)]
         for name in names:
@@ -935,6 +940,21 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
     return checked
 
 
+def scope_to_output(verdicts: list[dict], has_frontend: bool) -> list[dict]:
+    """Mark unresolved UI requirements out of scope on an output with no frontend.
+
+    A backend-only generator cannot satisfy or show a screen requirement, so
+    judging one against backend source can only return a blocker the fix loop
+    has no files to resolve.
+    """
+    if has_frontend:
+        return verdicts
+    return [dict(v, status="out_of_scope", evidence="",
+                 note="UI requirement; this output has no frontend")
+            if v.get("kind") == "ui" and v.get("status") != "implemented" else v
+            for v in verdicts]
+
+
 def ledger_issues(verdicts: list[dict]) -> list[str]:
     """Unresolved requirements block completion without claiming they are absent."""
     issues: list[str] = []
@@ -942,6 +962,10 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         label = f"R{v['id']} — {v['text']}"
         note = f" ({v['note']})" if v.get("note") else ""
         status = v.get("status")
+        if status == "out_of_scope":
+            # Unclassified prefix: a warning, never a blocker.
+            issues.append(f"requirement out of scope: {label}{note}")
+            continue
         if v.get("kind") == "verification":
             issues.append(f"requirement unverified: {label}{note}")
             continue

@@ -64,6 +64,7 @@ docs build gated on new Sphinx warnings.
    create_generator
    create_dsl
    diagram_dsl_workflow
+   documentation
 
 Our Team
 --------

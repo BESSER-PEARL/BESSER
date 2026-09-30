@@ -10,6 +10,7 @@ from collections.abc import Callable
 
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.validation.issues import required_check_unverified, required_dependency_setup
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 _EXCLUDED = {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
              ".next", "target", ".gradle"}
@@ -39,7 +40,7 @@ def collect_frontend_build_issues(
         except ValueError:
             return False
 
-    for folder, dirs, files in os.walk(workspace):
+    for folder, dirs, files in walk_plain(workspace):
         dirs[:] = sorted(d for d in dirs if d not in _EXCLUDED
                          and not d.startswith(".besser_") and contained(os.path.join(folder, d)))
         if "package.json" not in files:
@@ -110,7 +111,7 @@ def collect_frontend_build_issues(
                 timeout=max(1, min(timeout, 120)),
             )
         except SandboxUnavailable as exc:
-            issues.append(required_check_unverified(label, f"the sandbox is unavailable: {exc}"))
+            issues.append(required_check_unverified(label, str(exc)))
             continue
         except subprocess.TimeoutExpired:
             issues.append(required_check_unverified(label, "configured build timed out"))

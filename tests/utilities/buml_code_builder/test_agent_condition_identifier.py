@@ -48,3 +48,19 @@ def test_a_non_identifier_condition_name_exports_and_reimports(condition_name, t
     baseline = _custom_conditions(agent_buml_to_json(_export("ready", tmp_path / "base")[1]))
     assert _custom_conditions(agent_buml_to_json(code)) == baseline
     assert "def is_ready" in baseline[0][0]
+
+
+def test_a_condition_without_code_exports_and_reloads(tmp_path):
+    # Used to emit ``Condition('x_callable', callable=x_callable)`` with
+    # ``x_callable`` never defined: a NameError on load.
+    agent = Agent("CondAgent")
+    start = agent.new_state("start", initial=True)
+    done = agent.new_state("done")
+    start.when_condition(Condition("is_ready")).go_to(done)
+    path = os.path.join(str(tmp_path), "agent.py")
+    agent_model_to_code(agent, path)
+
+    start = next(s for s in runpy.run_path(path)["agent"].states if s.name == "start")
+    [condition] = [c for t in start.transitions for c in t.conditions]
+    assert condition.name == "is_ready"
+    assert condition.code is None

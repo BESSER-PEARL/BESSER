@@ -34,6 +34,7 @@ from besser.spec_driven_agent.providers.model_settings import (
     sampling_kwargs,
     thinking_can_be_disabled,
 )
+from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
 from besser.spec_driven_agent.providers.tool_input import normalize_tool_blocks
 
 logger = logging.getLogger(__name__)
@@ -204,6 +205,28 @@ _VENDORED_PRICES_PATH = Path(__file__).with_name("data") / "model_prices.json"
 # listed, so a resold id can never be priced at some third party's rate.
 _PRICE_LOOKUP_PREFIXES = ("", "anthropic/", "openai/", "mistral/", "nebius/")
 
+# Gateways bill their own rates, which the vendored table does not know: pricing
+# Command Code's Kimi-K3 from the Nebius row billed cached input at the full
+# input rate ($3 instead of $0.30 per 1M), so long runs hit the per-run cap
+# about 3x too early. Source: https://commandcode.ai/docs/resources/pricing-limits
+# (USD per 1M tokens, checked 2026-09-30). Keys: endpoint host, lower-cased id.
+_ROUTE_PRICING: dict[str, dict[str, dict[str, float]]] = {
+    "api.commandcode.ai": {
+        "moonshotai/kimi-k3": {"input": 3.0, "output": 15.0, "cache_write": 0.0, "cache_read": 0.30},
+        "qwen/qwen3.8-max-0902": {"input": 2.0, "output": 6.0, "cache_write": 0.0, "cache_read": 0.25},
+        "meta/muse-spark-1.3": {"input": 1.25, "output": 4.25, "cache_write": 0.0, "cache_read": 0.15},
+        "poolside/laguna-s-2.1-free": {"input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0},
+    },
+}
+
+
+def _route_pricing(model_id: str, route: "str | None") -> "dict[str, float] | None":
+    """The rate a known gateway publishes for ``model_id``, if any."""
+    if not route:
+        return None
+    host = (urlparse(route).hostname or route).lower()
+    return _ROUTE_PRICING.get(host, {}).get(model_id.lower())
+
 
 @lru_cache(maxsize=1)
 def _vendored_price_index() -> dict[str, dict[str, float]]:
@@ -274,7 +297,7 @@ def _published_pricing(model_id: str) -> dict[str, float] | None:
     return None
 
 
-def _get_pricing(model_id: str) -> dict[str, float]:
+def _get_pricing(model_id: str, billed: bool = False, route: "str | None" = None) -> dict[str, float]:
     """Get the per-1M-token rates for a model ID.
 
     Published per-model rates come first, from the vendored table. The
@@ -292,10 +315,17 @@ def _get_pricing(model_id: str) -> dict[str, float]:
     cheaper tier. Falls back to ``gpt-4o`` so an unknown *paid* model
     gets a reasonable middle-tier rate; self-hosted/open models are
     detected first and priced at $0.
+
+    ``billed`` is set when the route itself is a paid vendor API (Anthropic,
+    official OpenAI, Mistral, Nebius): the id-shape free heuristic is skipped
+    there, since ``codestral-2508`` on Mistral's API is not a local checkout.
     """
+    routed = _route_pricing(model_id, route)
+    if routed is not None:
+        return routed
     model_lower = model_id.lower()
     # Self-hosted / free local models — never bill, never trip the cost cap.
-    if _is_free_local_model(model_lower):
+    if not billed and _is_free_local_model(model_lower):
         return _ZERO_PRICING
     published = _published_pricing(model_id)
     if published is not None:
@@ -337,9 +367,15 @@ def _get_pricing(model_id: str) -> dict[str, float]:
 class UsageTracker:
     """Tracks token usage and estimated cost across all API calls."""
 
-    def __init__(self, model: str):
+    def __init__(self, model: str, billed: bool = False, billed_to_user: bool = True,
+                 route: "str | None" = None):
         self.model = model
-        self.pricing = _get_pricing(model)
+        self.billed = billed
+        # False on the server-owned keyless route: the estimate still drives
+        # the cost cap (it spends org credits) but is not the user's cost.
+        self.billed_to_user = billed_to_user
+        self.route = route
+        self.pricing = _get_pricing(model, billed, route)
         self.input_tokens = 0
         self.output_tokens = 0
         self.cache_creation_tokens = 0
@@ -403,7 +439,7 @@ class UsageTracker:
         self.cache_creation_tokens += cw
         self.cache_read_tokens += cr
         if model and model != self.model:
-            override = _get_pricing(model)
+            override = _get_pricing(model, self.billed, self.route)
             primary = self.pricing
             delta = (
                 inp * (override["input"] - primary["input"])
@@ -424,6 +460,18 @@ class UsageTracker:
         """
         if usd and usd > 0:
             self._extra_cost_usd += float(usd)
+
+    def reprice(self, model: str, billed: bool, route: "str | None" = None) -> None:
+        """Bill tokens recorded from now on at ``model``'s rate.
+
+        Spend so far is kept: the counters are cumulative, so the difference
+        between the old and new rate over them moves into the correction.
+        """
+        before = self.estimated_cost
+        self.billed = billed
+        self.route = route
+        self.pricing = _get_pricing(model, billed, route)
+        self._extra_cost_usd += before - self.estimated_cost
 
     @property
     def total_tokens(self) -> int:
@@ -451,6 +499,7 @@ class UsageTracker:
             "cache_read_tokens": self.cache_read_tokens,
             "total_tokens": self.total_tokens,
             "estimated_cost_usd": round(self.estimated_cost, 4),
+            "billed_to_user": self.billed_to_user,
             "model": self.model,
         }
 
@@ -604,19 +653,79 @@ _MAX_BACKOFF = 5.0  # seconds — cap for ordinary (5xx/timeout) retries
 _RATELIMIT_MAX_BACKOFF = 30.0  # seconds
 
 
+# A status in the text only counts next to a status word: a bare "401" or
+# "500" also occurs inside token counts ("140133 tokens", "205000 tokens").
+_STATUS_IN_TEXT_RE = re.compile(
+    r"\b(?:error code|status(?: code)?|http(?:/[\d.]+)?)\s*[:=]?\s*([1-5]\d\d)\b",
+    re.IGNORECASE,
+)
+
+
+def _status_code(error: Exception) -> int | None:
+    """HTTP status of a provider error: SDK attribute first, then the text."""
+    for source in (error, getattr(error, "response", None)):
+        code = getattr(source, "status_code", None)
+        if isinstance(code, int):
+            return code
+    match = _STATUS_IN_TEXT_RE.search(str(error))
+    return int(match.group(1)) if match else None
+
+
+@lru_cache(maxsize=1)
+def _transport_error_types() -> tuple[type, ...]:
+    """Timeout / connection failures that carry no HTTP status."""
+    types: list[type] = [TimeoutError, ConnectionError]
+    for module in ("openai", "anthropic"):
+        try:
+            # APITimeoutError subclasses APIConnectionError in both SDKs.
+            types.append(__import__(module).APIConnectionError)
+        except (ImportError, AttributeError):
+            pass
+    try:
+        import httpx
+        types.append(httpx.TransportError)
+    except ImportError:
+        pass
+    return tuple(types)
+
+
+# A timeout already cost a full SDK timeout (300s), so cap its retries hard.
+_MAX_TRANSPORT_RETRIES = 2
+
+
+def _is_transport_error(error: Exception) -> bool:
+    """Timeout / connection failure (no HTTP response)."""
+    if isinstance(error, _transport_error_types()):
+        return True
+    return _status_code(error) is None and any(
+        marker in str(error).lower() for marker in ("timed out", "timeout"))
+
+
+def _stop_retrying_transport(error: Exception, attempt: int, has_fallback: bool) -> bool:
+    """True when a timeout should not be retried again on this endpoint.
+
+    With a fallback it goes there at once; without one it gets
+    ``_MAX_TRANSPORT_RETRIES`` retries, not the full budget (~25 min worst case).
+    """
+    if not _is_transport_error(error):
+        return False
+    return has_fallback or attempt >= _MAX_TRANSPORT_RETRIES
+
+
 def _is_retryable(error: Exception) -> bool:
     """Check if an API error is worth retrying."""
+    if isinstance(error, _transport_error_types()):
+        return True
+    status = _status_code(error)
+    if status is not None:
+        # Every 5xx, as the SDKs' own retry did: 529 (overloaded) and the 52x
+        # a Cloudflare tunnel returns are transient too.
+        return status in _RETRYABLE_STATUS_CODES or status >= 500
     error_str = str(error).lower()
-    # Auth errors are NEVER retryable (a longer wait won't fix a bad key).
-    if "401" in error_str or "403" in error_str:
-        return False
-    # Rate limit or transient server/network errors
-    for marker in ("429", "rate limit", "rate_limit", "rate-limited",
-                   "ratelimited", "500", "502", "503", "504",
-                   "timeout", "connection"):
-        if marker in error_str:
-            return True
-    return False
+    return any(marker in error_str for marker in (
+        "rate limit", "rate_limit", "rate-limited", "ratelimited",
+        "timeout", "timed out", "connection",
+    ))
 
 
 def _is_model_unavailable(error: Exception) -> bool:
@@ -638,10 +747,12 @@ def _is_model_unavailable(error: Exception) -> bool:
 
 def _is_rate_limit(error: Exception) -> bool:
     """True if the error is a provider rate-limit (HTTP 429)."""
+    status = _status_code(error)
+    if status is not None:
+        return status == 429
     s = str(error).lower()
     return (
-        "429" in s
-        or "rate limit" in s
+        "rate limit" in s
         or "rate_limit" in s
         or "rate-limited" in s
         or "ratelimited" in s
@@ -727,11 +838,14 @@ def _backoff_seconds(error: Exception, attempt: int) -> float:
 
 
 def _is_auth_error(error: Exception) -> bool:
-    """Heuristic: did the provider reject our credentials?"""
+    """Did the provider reject our credentials? Decided by status when known."""
+    status = _status_code(error)
+    if status is not None:
+        return status in (401, 403)
     error_str = str(error).lower()
     return any(
         marker in error_str
-        for marker in ("401", "403", "authentication", "invalid x-api-key",
+        for marker in ("authentication", "invalid x-api-key",
                        "invalid api key", "incorrect api key")
     )
 
@@ -765,7 +879,7 @@ def _tools_unsupported_message(model: str) -> str:
         f"The selected model '{model}' can't run the Spec-Driven Agent: it "
         f"rejected the code-generation tools on the chat/completions endpoint. "
         f"Pick a tool-capable model instead — e.g. gpt-5.5 or gpt-4o for "
-        f"OpenAI, or an Anthropic Claude model (claude-sonnet-4-6) for the "
+        f"OpenAI, or an Anthropic Claude model (claude-sonnet-5) for the "
         f"strongest code fidelity."
     )
 
@@ -779,7 +893,7 @@ class ClaudeLLMClient(LLMProvider):
     Anthropic Claude client with retry, cost tracking, and prompt caching.
     """
 
-    DEFAULT_MODEL = "claude-sonnet-4-6"
+    DEFAULT_MODEL = "claude-sonnet-5"
     DEFAULT_MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
 
     PLANNING_MODEL = "claude-haiku-4-5"
@@ -803,6 +917,8 @@ class ClaudeLLMClient(LLMProvider):
         client_kwargs: dict[str, Any] = {
             "api_key": api_key,
             "timeout": timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS,
+            # Our retry loop owns retries; the SDK default (2) would multiply it.
+            "max_retries": 0,
         }
         resolved_base = base_url or os.environ.get("ANTHROPIC_BASE_URL")
         if resolved_base:
@@ -811,7 +927,7 @@ class ClaudeLLMClient(LLMProvider):
         self._client = anthropic.Anthropic(**client_kwargs)
         self._model = model or self.DEFAULT_MODEL
         self._max_tokens = max_tokens or max_output_tokens(self._model)
-        self._usage = UsageTracker(self._model)
+        self._usage = UsageTracker(self._model, billed=True)
 
     @property
     def model(self) -> str:
@@ -943,7 +1059,8 @@ class ClaudeLLMClient(LLMProvider):
                 }, response)
             except Exception as e:
                 last_error = e
-                if attempt < _MAX_RETRIES and _is_retryable(e):
+                if (attempt < _MAX_RETRIES and _is_retryable(e)
+                        and not _stop_retrying_transport(e, attempt, False)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "API call failed (attempt %d/%d), retrying in %.1fs: %s",
@@ -989,7 +1106,8 @@ class ClaudeLLMClient(LLMProvider):
 
             except Exception as e:
                 last_error = e
-                if attempt < _MAX_RETRIES and _is_retryable(e):
+                if (attempt < _MAX_RETRIES and _is_retryable(e)
+                        and not _stop_retrying_transport(e, attempt, False)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning("Stream failed (attempt %d), retrying: %s", attempt + 1, e)
                     time.sleep(backoff)
@@ -1268,6 +1386,8 @@ def _openai_messages_to_api(system: str, messages: list[dict]) -> list[dict]:
                         "tool_call_id": block["tool_use_id"],
                         "content": block.get("content", ""),
                     })
+                elif isinstance(block, dict) and block.get("type") == "text":
+                    api_messages.append({"role": "user", "content": block.get("text", "")})
                 else:
                     api_messages.append({"role": "user", "content": str(block)})
         elif role == "assistant" and isinstance(content, list):
@@ -1352,6 +1472,8 @@ def _openai_stop_reason(finish_reason: str | None, complete_tool_calls: bool) ->
         return "tool_use"
     if finish_reason in (None, "stop"):
         return "tool_use" if complete_tool_calls else "end_turn"
+    if finish_reason == "content_filter":
+        return "refusal"  # OpenAI's safety stop; the loop handles "refusal"
     return finish_reason
 
 
@@ -1399,8 +1521,8 @@ def _openai_response_to_common(response, tools: list[dict] | None = None) -> dic
         for tc in message.tool_calls:
             try:
                 arguments = _json.loads(tc.function.arguments)
-            except (ValueError, TypeError):
-                arguments = {}
+            except (ValueError, TypeError) as exc:
+                arguments = {INVALID_ARGUMENTS_KEY: f"{type(exc).__name__}: {exc}"}
                 complete_tool_calls = False
             name = _canonical_tool_name(tc.function.name, tool_index)
             if not isinstance(arguments, dict) or not tc.id or not name:
@@ -1485,6 +1607,7 @@ class OpenAIProvider(LLMProvider):
         timeout: float | None = None,
         default_headers: dict[str, str] | None = None,
         fallback: tuple[str, str, str] | None = None,
+        free_route: bool = False,
     ):
         try:
             from openai import OpenAI
@@ -1497,6 +1620,8 @@ class OpenAIProvider(LLMProvider):
         client_kwargs: dict[str, Any] = {
             "api_key": api_key,
             "timeout": timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS,
+            # Our retry loop owns retries; the SDK default (2) would multiply it.
+            "max_retries": 0,
         }
         resolved_base = base_url or os.environ.get("OPENAI_BASE_URL")
         if resolved_base:
@@ -1510,7 +1635,14 @@ class OpenAIProvider(LLMProvider):
         self._base_url = resolved_base
         self._model = model or self.DEFAULT_MODEL
         self._max_tokens = max_tokens or max_output_tokens(self._model)
-        self._usage = UsageTracker(self._model)
+        # The keyless tier (server env endpoint + token). Its paid ids (e.g.
+        # ``moonshotai/Kimi-K3``) draw org credits, so they stay priced and
+        # capped; only the user is not billed.
+        self._free_route = free_route
+        self._usage = UsageTracker(
+            self._model, billed=self._is_billed_route(resolved_base),
+            billed_to_user=not free_route, route=resolved_base,
+        )
         # Ordered fallback chain, used when the primary endpoint stays
         # unavailable past the retry budget. The switch is sticky for the run so
         # later calls don't re-pay the retry tax. Accepts a single
@@ -1526,6 +1658,17 @@ class OpenAIProvider(LLMProvider):
         self._fallback_step = 0
         self._on_fallback = False
         self.fallback_reason: str | None = None
+
+    # True on a vendor that only serves paid API models (Mistral, Nebius).
+    _PAID_VENDOR = False
+
+    def _is_billed_route(self, base_url: str | None) -> bool:
+        """Paid vendor API rather than a gateway / self-hosted endpoint."""
+        return (self._PAID_VENDOR or not base_url
+                or _is_official_openai_base_url(base_url))
+
+    def _has_fallback(self) -> bool:
+        return self._fallback_step < len(self._fallback_chain)
 
     def _activate_fallback(self, error: Exception) -> bool:
         """Switch to the configured fallback endpoint, if any.
@@ -1544,6 +1687,7 @@ class OpenAIProvider(LLMProvider):
             "api_key": "fallback",
             "base_url": base_url,
             "timeout": _DEFAULT_SDK_TIMEOUT_SECONDS,
+            "max_retries": 0,
         }
         if token:
             client_kwargs["default_headers"] = {"Authorization": f"Bearer {token}"}
@@ -1556,6 +1700,7 @@ class OpenAIProvider(LLMProvider):
         self._client = OpenAI(**client_kwargs)
         self._base_url = base_url
         self._model = fb_model
+        self._usage.reprice(fb_model, self._is_billed_route(base_url), base_url)
         self._on_fallback = True
         # Why we fell back — lets the runner/UI say "free daily quota exhausted"
         # instead of a generic "primary unavailable" (the daily quota is the
@@ -1582,11 +1727,11 @@ class OpenAIProvider(LLMProvider):
             return None if env.lower() == "primary" else env
         if any(tier in self._model.lower() for tier in ("mini", "nano")):
             return None  # already on a cheap tier
-        # Self-hosted / free-local models (ollama gateways): the OpenAI
-        # cheap sibling doesn't exist there — a gpt-4o-mini override just
-        # burns two failing round-trips per gap analysis before the
-        # primary-model retry kicks in.
-        if _is_free_local_model(self._model.lower()):
+        # Self-hosted / free-local models (ollama gateways) and the keyless
+        # route (not in its catalog): the OpenAI cheap sibling doesn't exist
+        # there — a gpt-4o-mini override just burns two failing round-trips
+        # per gap analysis before the primary-model retry kicks in.
+        if self._free_route or _is_free_local_model(self._model.lower()):
             return None
         return self.PLANNING_MODEL
 
@@ -1663,7 +1808,8 @@ class OpenAIProvider(LLMProvider):
                         "OpenAI API call hit a daily quota limit — not retrying: %s",
                         str(e)[:200],
                     )
-                elif attempt < _MAX_RETRIES and _is_retryable(e):
+                elif (attempt < _MAX_RETRIES and _is_retryable(e)
+                      and not _stop_retrying_transport(e, attempt, self._has_fallback())):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "OpenAI API call failed (attempt %d/%d), retrying in %.1fs: %s",
@@ -1791,8 +1937,8 @@ class OpenAIProvider(LLMProvider):
                     import json as _json
                     try:
                         arguments = _json.loads(tc_data["arguments"])
-                    except (ValueError, TypeError):
-                        arguments = {}
+                    except (ValueError, TypeError) as exc:
+                        arguments = {INVALID_ARGUMENTS_KEY: f"{type(exc).__name__}: {exc}"}
                         complete_tool_calls = False
                     name = _canonical_tool_name(tc_data["name"], tool_index)
                     if not isinstance(arguments, dict) or not tc_data["id"] or not name:
@@ -1823,7 +1969,8 @@ class OpenAIProvider(LLMProvider):
                         "OpenAI stream hit a daily quota limit — not retrying: %s",
                         str(e)[:200],
                     )
-                elif attempt < _MAX_RETRIES and _is_retryable(e):
+                elif (attempt < _MAX_RETRIES and _is_retryable(e)
+                      and not _stop_retrying_transport(e, attempt, self._has_fallback())):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning("OpenAI stream failed (attempt %d), retrying: %s", attempt + 1, e)
                     time.sleep(backoff)
@@ -1880,6 +2027,7 @@ class MistralProvider(OpenAIProvider):
     # planning calls. Like the other providers this is overridable via
     # ``BESSER_LLM_PLANNING_MODEL`` (set to ``primary`` to disable).
     PLANNING_MODEL = "mistral-small-latest"
+    _PAID_VENDOR = True
     DEFAULT_BASE_URL = "https://api.mistral.ai/v1"
 
     def __init__(
@@ -1961,6 +2109,7 @@ class NebiusProvider(OpenAIProvider):
     # (3B active of 30B), so routing planning calls elsewhere buys nothing
     # and a wrong id costs two failing round-trips per gap analysis.
     PLANNING_MODEL = None
+    _PAID_VENDOR = True
     DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 
     def __init__(
@@ -2358,6 +2507,7 @@ def create_llm_client(
                 base_url=fb_base_url,
                 default_headers=fb_headers,
                 fallback=None,
+                free_route=True,
                 **kwargs,
             )
         free_base_url, token, free_model = _resolve_free_tier_config()
@@ -2376,6 +2526,7 @@ def create_llm_client(
             # self-hosted fallback last. An alt sits on the same shared cloud endpoint
             # and sheds requests the same way, so it needs the chain too.
             fallback=_resolve_free_fallback_chain(chosen),
+            free_route=True,
             **kwargs,
         )
     elif provider == "anthropic":

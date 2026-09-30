@@ -197,7 +197,10 @@ def _fastapi_backends(output_dir: str) -> list[str]:
     ``sql_alchemy.py``) - the scaffold family the probe knows how to drive."""
     found: list[str] = []
     try:
-        for root, dirs, files in os.walk(output_dir):
+        # Imported here: this module also runs as a stdlib-only child script.
+        from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+
+        for root, dirs, files in walk_plain(output_dir):
             dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".besser_"))
             if "main_api.py" in files and "sql_alchemy.py" in files:
                 found.append(root)
@@ -212,14 +215,12 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
     """Execute the child, sandboxed with no network, on a scratch copy of
     ``folder`` (inside the run ``workspace``); never raises."""
     from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
+    from besser.spec_driven_agent.execution.workspace_fs import copytree_plain
 
     work = tempfile.mkdtemp(prefix="besser_probe_")
     try:
         app_dir = os.path.join(work, "app")
-        shutil.copytree(
-            folder, app_dir,
-            ignore=shutil.ignore_patterns(*_SKIP_DIRS, ".besser_*", "*.db"),
-        )
+        copytree_plain(folder, app_dir, (*_SKIP_DIRS, ".besser_*", "*.db"))
         env = dict(env)
         env["DATABASE_URL"] = "sqlite:///" + os.path.join(work, "probe.db").replace("\\", "/")
         if model_actions:
@@ -239,7 +240,7 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
                 env=env, timeout=_PROBE_TIMEOUT_SECONDS,
             )
         except SandboxUnavailable as exc:
-            return {"boot": "probe_error", "error": f"the sandbox is unavailable: {exc}"}
+            return {"boot": "probe_error", "error": str(exc)}
         except subprocess.TimeoutExpired:
             return {"boot": "probe_error",
                     "error": f"timed out after {_PROBE_TIMEOUT_SECONDS}s"}

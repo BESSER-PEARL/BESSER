@@ -17,6 +17,7 @@ import subprocess
 import pytest
 
 from besser.spec_driven_agent.validation import toolchain as tc
+from besser.spec_driven_agent.validation.issues import _classify_issue
 
 
 @pytest.fixture
@@ -103,10 +104,12 @@ def test_no_kotlin_module_means_nothing_to_report(tmp_path, kotlinc_on_path):
     assert tc._collect_kotlinc_issues(str(tmp_path)) == []
 
 
-def test_kotlinc_absent_stays_silent(monkeypatch, kotlin_module):
-    """Documented soft-skip: the bench host either has kotlinc or it doesn't."""
+def test_kotlinc_absent_is_reported_as_not_run(monkeypatch, kotlin_module):
+    """A Kotlin module nothing compiled is unverified, not clean."""
     monkeypatch.setattr(shutil, "which", lambda *_a, **_k: None)
-    assert tc._collect_kotlinc_issues(kotlin_module) == []
+    issues = tc._collect_kotlinc_issues(kotlin_module)
+    assert len(issues) == 1 and "kotlinc did not run" in issues[0]
+    assert _classify_issue(issues[0]).severity == "warning"
 
 
 def test_a_successful_compile_still_reports_its_errors(

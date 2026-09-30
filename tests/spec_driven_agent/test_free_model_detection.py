@@ -109,12 +109,11 @@ def test_the_vendored_table_ships_and_is_readable():
     assert table["claude-sonnet-5"]["input_cost_per_token"] == pytest.approx(2e-06)
 
 
-def test_the_self_hosted_fallback_stays_free():
+def test_the_self_hosted_fallback_stays_free(monkeypatch):
     """The one model this heuristic exists for must not regress into billing."""
     from besser.spec_driven_agent.providers.llm_client import free_fallback_model
-    import os
 
-    os.environ.setdefault("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3-coder:30b")
+    monkeypatch.setenv("BESSER_FREE_LLM_FALLBACK_MODEL", "qwen3-coder:30b")
     fallback = free_fallback_model()
     if fallback:
         assert _get_pricing(fallback) == _ZERO_PRICING

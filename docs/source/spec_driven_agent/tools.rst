@@ -38,6 +38,18 @@ content may instead produce ``possible_replay``: no write is made, but no succes
 is claimed. Missing-file responses suggest existing paths without substituting
 them for the requested path.
 
+``write_file`` over an existing file requires the whole file to have been read
+this run; a rewrite from memory would drop scaffold code. Like the other
+editors, it refuses an edit that would make the ORM or Pydantic module
+(``sql_alchemy.py``, ``pydantic_classes.py``) fail to import. Only the
+``NNN| `` line numbering that ``read_file`` displays is stripped from edit
+text, and only when it is uniform; a single copied numbered line is refused
+rather than guessed at. ``list_files`` and ``search_in_files`` skip links that
+resolve outside the workspace, and the harness never reads or writes a
+workspace file through a symbolic link or special file. A call with a missing required argument, or
+arguments that are not valid JSON, returns a tool error naming the problem
+instead of running.
+
 After two rejected text edits on a file, the executor provides an explicit
 recovery sequence: ``read_file`` followed by ``replace_file_lines``. This applies
 in customization and validation repair. Repeated quotation failures do not
@@ -75,6 +87,18 @@ after a coherent edit. Validation runs after writes in the same tool batch.
 one generated FastAPI backend and a fresh SQLite database. Requests share state
 within a scenario; later requests may reference response JSON using
 ``{{0.room.id}}``. Assertions specify expected statuses and dotted JSON fields.
+
+A request may carry ``headers``, whose values accept the same references, so a
+scenario can register, log in and send the returned token on later requests:
+``{"Authorization": "Bearer {{1.access_token}}"}``. Allowed names are
+``Authorization``, ``Accept``, ``Content-Type``, ``Accept-Language``,
+``If-Match``, ``If-None-Match``, ``Idempotency-Key`` and ``X-*`` API headers;
+``Host``, ``Cookie``, framing and hop-by-hop headers, ``X-Forwarded-*`` and
+method-override headers are refused. Cookies a response sets are kept for the
+rest of the scenario. The values of credential-bearing headers (``Authorization``
+and names containing words such as *key*, *token*, *secret* or *auth*) are
+redacted from the report, from ``action="get"`` and from the trace, as is the
+value wherever the app echoes it.
 Named scenarios are retained during the run and replayed after source changes;
 failures block completion. Correcting a mistaken test requires an explicit
 ``correction_reason``. Model-authored scenarios are supplemental checks, not an
@@ -160,6 +184,10 @@ difference between a run with them and a run without. They are also arbitrary
 code execution in the backend process, so who is allowed to switch them on is a
 deployment decision, never a per-request one.
 
+Before it installs, ``install_dependencies`` pins the known-incompatible
+dependency pairs described in :doc:`validation` into the working directory's
+``requirements.txt`` and lists each change under ``pinned`` in its result.
+
 The policy
 ~~~~~~~~~~
 
@@ -185,8 +213,10 @@ backend loads. See :doc:`production_deployment`.
 **On, deliberately, for a local or on-prem install.** One machine, one tenant,
 the operator's own data: the multi-tenant objection does not apply, and
 withholding the tools is pure loss. The local ``docker-compose.yml`` already
-carries the sandbox's ``security_opt`` entries, so setting the variable in
-``./.env`` is enough there.
+carries the sandbox's ``seccomp`` and ``apparmor`` entries, so setting the
+variable in ``./.env`` is enough there on Docker Desktop; a Linux host such as
+Amazon Linux also needs ``systempaths=unconfined`` (see
+:doc:`production_deployment`).
 
 The decision is read from the process environment at start-up:
 
@@ -219,8 +249,9 @@ What it does:
 - **Working directory inside the run workspace.** ``working_dir`` is resolved
   against the workspace and a path that escapes it is rejected.
 - **A 120-second timeout** per command; the spawned shell is killed when it
-  expires. Be aware of both edges: a cold ``npm install`` can exceed it, and a
-  process the command detached can outlive it.
+  expires. A cold ``npm install`` can exceed it. Under the sandbox a process
+  the command detached does not outlive the command: the sandbox's PID
+  namespace goes with it.
 - **A stripped environment.** The child process gets an allowlist (``PATH``,
   ``HOME``, locale, temp dirs, a few Python/Node variables) with anything
   name-matching a secret removed, so provider API keys, OAuth secrets and SMTP
@@ -228,19 +259,25 @@ What it does:
 - **A denylist** for the obvious catastrophes: ``sudo``, ``rm -rf /``,
   curl-pipe-shell, fork bombs, reads of ``~/.ssh`` and ``~/.aws``.
 - **A bounded amount of output** in the model's context, with the full log
-  still reachable (below).
+  still reachable (below). Each stream is also capped at 8 MB while it is
+  captured: past that the command's process tree is killed, and the head and
+  tail are kept with a marker for the dropped middle.
 
 - **A bubblewrap sandbox on Linux.** Each command runs in its own user, PID
   and mount namespaces. The container filesystem is visible read-only, other
-  runs' workspaces and the telemetry folder are hidden, and only the run
+  runs' workspaces, the telemetry folder and the incident log folder
+  (``BESSER_INCIDENT_LOG_DIR``) are hidden, and only the run
   workspace and a per-run ``$HOME`` (``<run dir>.sandbox-home``) are writable.
   ``/usr/local`` and ``/root`` stay read-only, so ``install_dependencies``
   (``pip install``, ``npm install``) installs into that per-run ``$HOME``
   rather than into the worker or into later runs. The per-run ``$HOME`` sits
-  outside the workspace, so it is never packaged or pushed, and the 24-hour
-  temp cleanup removes it. If the sandbox cannot start, every command is
+  outside the workspace, so it is never packaged or pushed; it is removed
+  with the run, and by the 24-hour temp cleanup. If the sandbox cannot start, every command is
   refused; ``BESSER_LLM_SHELL_SANDBOX=off`` lifts that on a single-tenant
-  Linux host whose kernel forbids unprivileged user namespaces.
+  Linux host whose kernel forbids unprivileged user namespaces. The model,
+  and any validation finding, sees only "the shell sandbox is unavailable on
+  this server"; the cause and the override are written to the server log
+  only.
 
 What it does not:
 
@@ -256,6 +293,21 @@ What it does not:
   The sandbox is what contains a command, not the denylist.
 - **It does not make generated code safe to execute.** Download and run the
   output with the care you would give any unreviewed code.
+
+When shell tools are on and the workspace holds a generated FastAPI backend,
+Phase 2's system prompt gains a *runtime verification* runbook, and a probe
+script, ``.besser_probe.py``, is written to the workspace root. Its
+subcommands (``up``, ``routes``, ``req``, ``log``, ``down``) boot the server
+detached, list its routes and send requests, so the agent can run the app
+rather than only read it. Because each sandboxed command has its own PID
+namespace, ``routes`` and ``req`` start their own server when none is
+answering; the SQLite file keeps records between commands. ``req`` sends
+extra headers with ``-H "Name: value"`` (e.g. a bearer token from a login) and
+prints only their names. ``down`` stops a process only when its command line
+identifies it as the probe's own server, since a recorded PID from another
+namespace can name an unrelated process. Several ``run_command`` (and
+``install_dependencies``) calls in one turn run one after another, in order.
+``BESSER_LLM_SHELL_RUNBOOK=0`` leaves the runbook out.
 
 Where no sandbox applies, treat "enable shell tools" as "I am willing to run
 model-authored commands on this machine, as this user". That is acceptable on

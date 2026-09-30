@@ -36,7 +36,7 @@ from abc import ABC, abstractmethod
 {# Handle enums first #}
 {% for enum in domain.get_enumerations()|sort(attribute='name') -%}
 class {{ enum.name }}(Enum):
-{% for literal in enum.literals|sort(attribute='name') %}
+{% for literal in sort_by_timestamp(enum.literals) %}
     {{ literal.name }} = "{{ literal.name }}"
 {% endfor %}
 
@@ -137,7 +137,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                 {%- endif %}
             {%- endfor %}
             {%- else %}
-            {%- set ends_list = association.ends | list %}
+            {%- set ends_list = association.ends | sort(attribute='name') | list %}
             {%- set is_self_assoc = (ends_list[0].type.name == ends_list[1].type.name) %}
             {%- if is_self_assoc %}
                 {%- for i in range(2) %}

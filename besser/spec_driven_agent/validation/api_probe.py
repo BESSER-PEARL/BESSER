@@ -4,7 +4,9 @@ The caller must enforce the existing opt-in runtime/import-smoke setting. This
 executes generated application code, just like the constructibility probe, in
 the run sandbox with no network; it is not proof of complete specification
 coverage.
-No commands, external URLs, credentials, or Python expressions are accepted.
+No commands, external URLs or Python expressions are accepted. Request headers
+are limited to an allow-list, and the values of sensitive ones never appear in
+the report.
 The child imports no BESSER package and runs this same file as a script.
 """
 from __future__ import annotations
@@ -30,6 +32,19 @@ _BODY_CHARS = 2000
 _MAX_REPORTED_FAILURES = 5
 _NO_JSON = object()
 _REFERENCE = re.compile(r"\{\{(\d+)(?:\.([^{}]+))?\}\}")
+_MAX_HEADERS = 10
+_HEADER_VALUE_CHARS = 4096
+_HEADER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,63}")
+# Everything else a client legitimately sets on an API call is an X-* header
+# (X-API-Key, X-Tenant-ID, ...). Host, Cookie (the client keeps its own jar
+# within a scenario), framing and hop-by-hop headers are refused, as are the
+# X-* headers proxies use to assert a client identity or rewrite the request.
+_PLAIN_HEADERS = frozenset({"accept", "accept-language", "content-type", "if-match", "if-none-match"})
+_ALLOWED_HEADERS = _PLAIN_HEADERS | {"authorization", "idempotency-key"}
+_DENIED_X_HEADERS = frozenset({"x-real-ip", "x-http-method-override", "x-method-override",
+                               "x-original-url", "x-rewrite-url", "x-original-method"})
+_SENSITIVE_PARTS = ("auth", "key", "token", "secret", "session", "signature", "password", "credential")
+_REDACTED = "[REDACTED]"
 _SCOPE = "Only the submitted scenario was checked; this is not complete specification verification."
 
 
@@ -50,6 +65,65 @@ def _local_path(path):
     return path
 
 
+def _header_allowed(name):
+    lowered = name.lower()
+    if lowered in _ALLOWED_HEADERS:
+        return True
+    return lowered.startswith("x-") and lowered not in _DENIED_X_HEADERS and not lowered.startswith("x-forwarded-")
+
+
+def _validate_headers(headers, index):
+    if not isinstance(headers, dict) or len(headers) > _MAX_HEADERS:
+        raise ValueError(f"request {index}: headers must be an object of at most {_MAX_HEADERS} entries")
+    for name, value in headers.items():
+        if not isinstance(name, str) or not _HEADER_NAME.fullmatch(name) or not _header_allowed(name):
+            raise ValueError(
+                f"request {index}: header {str(name)[:64]!r} is not allowed; use Authorization, Accept, "
+                "Content-Type, Accept-Language, If-Match, If-None-Match, Idempotency-Key or an X-* API header")
+        _header_value(value, index, name)
+
+
+def _header_value(value, index, name):
+    # The message names the header, never the value: it may be a credential.
+    if (not isinstance(value, str) or len(value) > _HEADER_VALUE_CHARS
+            or any(ord(character) < 32 or ord(character) > 126 for character in value)):
+        raise ValueError(f"request {index}: header {name} must be printable ASCII text of at most "
+                         f"{_HEADER_VALUE_CHARS} characters")
+    return value
+
+
+def _sensitive_header(name):
+    return not isinstance(name, str) or any(part in name.lower() for part in _SENSITIVE_PARTS)
+
+
+def redact_headers(headers):
+    """``headers`` with credential-bearing values (Authorization, X-API-Key, ...) hidden."""
+    if not isinstance(headers, dict):
+        return headers
+    return {name: _REDACTED if _sensitive_header(name) else value for name, value in headers.items()}
+
+
+def redact_scenario_headers(requests):
+    """A copy of ``requests`` safe to show or log: header values hidden."""
+    if not isinstance(requests, list):
+        return requests
+    return [dict(request, headers=redact_headers(request["headers"]))
+            if isinstance(request, dict) and "headers" in request else request
+            for request in requests]
+
+
+def _scrub(value, secrets):
+    if isinstance(value, str):
+        for secret in secrets:
+            value = value.replace(secret, _REDACTED)
+        return value
+    if isinstance(value, list):
+        return [_scrub(item, secrets) for item in value]
+    if isinstance(value, dict):
+        return {key: _scrub(item, secrets) for key, item in value.items()}
+    return value
+
+
 def _validate_requests(requests):
     if not isinstance(requests, list) or not 1 <= len(requests) <= _MAX_REQUESTS:
         raise ValueError(f"requests must contain 1 to {_MAX_REQUESTS} request objects")
@@ -57,11 +131,13 @@ def _validate_requests(requests):
     if len(serialized.encode("utf-8")) > _MAX_INPUT_BYTES:
         raise ValueError(f"scenario exceeds {_MAX_INPUT_BYTES} bytes")
     for index, request in enumerate(requests):
-        if not isinstance(request, dict) or set(request) - {"method", "path", "json", "expected_status", "expected_fields"}:
+        if not isinstance(request, dict) or set(request) - {"method", "path", "json", "headers", "expected_status", "expected_fields"}:
             raise ValueError(f"request {index} has an invalid shape or unsupported keys")
         if request.get("method") not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
             raise ValueError(f"request {index}: method must be GET, POST, PUT, PATCH or DELETE")
         _local_path(request.get("path"))
+        if "headers" in request:
+            _validate_headers(request["headers"], index)
         if "expected_status" in request:
             statuses = request["expected_status"]
             statuses = statuses if isinstance(statuses, list) else [statuses]
@@ -88,7 +164,7 @@ def _json_path(body, path):
     return current
 
 
-def _resolve_references(value, previous, *, in_path=False):
+def _resolve_references(value, previous, *, in_path=False, in_header=False):
     if isinstance(value, dict):
         return {key: _resolve_references(item, previous) for key, item in value.items()}
     if isinstance(value, list):
@@ -103,7 +179,7 @@ def _resolve_references(value, previous, *, in_path=False):
         return _json_path(previous[index], match.group(2) or "")
 
     match = _REFERENCE.fullmatch(value)
-    if match and not in_path:
+    if match and not (in_path or in_header):
         return copy.deepcopy(resolve(match))
 
     def substitute(match):
@@ -231,7 +307,7 @@ def probe_api_scenario(output_dir: str, requests: list[dict], *, backend: str | 
                     timeout=min(_PROBE_TIMEOUT_SECONDS, 60),
                 )
             except SandboxUnavailable as exc:
-                return _error(f"the sandbox is unavailable: {exc}", "probe_error", backend=relative)
+                return _error(str(exc), "probe_error", backend=relative)
             except subprocess.TimeoutExpired:
                 return _error(f"API scenario timed out after {min(_PROBE_TIMEOUT_SECONDS, 60)}s", "timeout", backend=relative)
             for line in reversed((result.stdout or "").splitlines()):
@@ -292,7 +368,7 @@ def _install_guards(scratch):
 async def _run_requests(app, requests):
     import httpx
 
-    previous, responses, failures = [], [], []
+    previous, responses, failures, secrets = [], [], [], set()
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=True)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=transport, base_url="http://besser-probe.invalid", follow_redirects=False) as client:
@@ -303,6 +379,18 @@ async def _run_requests(app, requests):
                     path = _local_path(_resolve_references(request["path"], previous, in_path=True))
                     item["path"] = path
                     kwargs = {"json": _resolve_references(request["json"], previous)} if "json" in request else {}
+                    if request.get("headers"):
+                        headers = {}
+                        for name, raw in request["headers"].items():
+                            value = _header_value(_resolve_references(raw, previous, in_header=True), index, name)
+                            headers[name] = value
+                            if _sensitive_header(name):
+                                # The whole value and its credential part, e.g.
+                                # the token after "Bearer ", wherever echoed.
+                                secrets.update(part for part in (value, value.split(" ", 1)[-1].strip())
+                                               if len(part) >= 8)
+                        kwargs["headers"] = headers
+                        item["headers"] = sorted(headers)
                     try:
                         response = await client.request(request["method"], path, **kwargs)
                     except Exception as exc:
@@ -346,8 +434,9 @@ async def _run_requests(app, requests):
                     item["omitted_failures"] = count - _MAX_REPORTED_FAILURES
                 failures.extend({"index": index, "message": message} for message in item["failures"])
                 responses.append(item)
-    return {"status": "failed" if failures else "passed", "boot": "ok", "responses": responses,
-            "assertion_failures": failures, "scope": _SCOPE}
+    ordered = sorted(secrets, key=len, reverse=True)
+    return {"status": "failed" if failures else "passed", "boot": "ok", "responses": _scrub(responses, ordered),
+            "assertion_failures": _scrub(failures, ordered), "scope": _SCOPE}
 
 
 def _worker():

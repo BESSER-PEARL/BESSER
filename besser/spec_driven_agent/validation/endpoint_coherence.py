@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from besser.spec_driven_agent.agent.prompt_builder import build_endpoint_manifest
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 
 _FRONTEND_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx")
@@ -168,7 +169,7 @@ def collect_endpoint_coherence_issues(
         return []
 
     calls: list[FrontendCall] = []
-    for root, dirs, files in os.walk(output_dir):
+    for root, dirs, files in walk_plain(output_dir):
         dirs[:] = [directory for directory in dirs if directory not in _SKIP_DIRS]
         for filename in files:
             if not filename.endswith(_FRONTEND_EXTENSIONS):

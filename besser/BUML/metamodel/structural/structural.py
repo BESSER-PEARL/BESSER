@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any, Union, List, TYPE_CHECKING, Literal
 import keyword
 import logging
-import time
+import threading
 
 if TYPE_CHECKING:
     from besser.BUML.metamodel.state_machine import StateMachine
@@ -13,6 +13,24 @@ if TYPE_CHECKING:
 
 # constant
 UNLIMITED_MAX_MULTIPLICITY = 9999
+
+_last_timestamp = datetime.min
+_timestamp_lock = threading.Lock()
+
+
+def _next_timestamp() -> datetime:
+    """Current time, bumped so each call is strictly later than the previous one.
+
+    The clock often returns the same value for objects created back to back, and
+    generators order members by timestamp, so ties made declaration order unstable.
+    """
+    global _last_timestamp
+    with _timestamp_lock:
+        now = datetime.now()
+        if now <= _last_timestamp:
+            now = _last_timestamp + timedelta(microseconds=1)
+        _last_timestamp = now
+        return now
 
 class Element(ABC):
     """Element is the Superclass of all structural model elements.
@@ -29,8 +47,7 @@ class Element(ABC):
     """
 
     def __init__(self, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0):
-        self.timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
-                         timedelta(microseconds=(time.perf_counter_ns() % 1_000_000) / 1000)
+        self.timestamp: datetime = timestamp if timestamp is not None else _next_timestamp()
         self.is_derived: bool = is_derived
         self.uncertainty: float = uncertainty
 
@@ -1174,7 +1191,11 @@ def _stem_role_name(role_name: str) -> tuple[str, str]:
 def _pluralize(word: str) -> str:
     """Regular English plural of ``word`` (``box`` -> ``boxes``, ``city`` -> ``cities``)."""
     lower = word.lower()
-    if lower.endswith(("ss", "us", "is", "as", "os", "sh", "ch", "x", "z")):
+    if lower.endswith("is") and len(word) > 2:
+        return word[:-2] + "es"  # analysis -> analyses
+    if lower.endswith("z") and len(word) > 1 and lower[-2] in "aeiou":
+        return word + "zes"  # quiz -> quizzes
+    if lower.endswith(("ss", "us", "as", "os", "sh", "ch", "x", "z")):
         return word + "es"
     if lower.endswith("s"):
         # Already plural (``Settings``).
@@ -1223,6 +1244,8 @@ def _role_name_matches_class(role_name: str, class_name: str) -> tuple[bool, str
     for stem, suffix_tag in _stem_candidates(role_name):
         if stem.lower() == class_name.lower():
             return True, suffix_tag
+    if role_name.lower() == _pluralize(class_name).lower():
+        return True, "s"  # plurals the stems miss: quizzes, analyses
     return False, ""
 
 
@@ -1312,7 +1335,9 @@ class Class(Type):
                 taken = {e.name for e in association.ends if e is not end}
                 for other in association.ends:
                     if other is not end and isinstance(other.type, Class):
-                        taken |= {e.name for e in other.type.all_association_ends() if e is not end}
+                        # Subclasses inherit the end, so their own ends count too.
+                        for cls in {other.type} | other.type.all_specializations():
+                            taken |= {e.name for e in cls.all_association_ends() if e is not end}
                 if new_role in taken:
                     continue
                 end.name = new_role

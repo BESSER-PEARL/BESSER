@@ -312,8 +312,9 @@ def test_a_sandbox_that_fails_to_start_is_a_refusal_not_a_check_result(tmp_path,
     monkeypatch.setattr(
         sandbox_mod, "run_bounded",
         lambda argv, **k: subprocess.CompletedProcess(argv, 1, "", "bwrap: No permissions to create new namespace"))
-    with pytest.raises(SandboxUnavailable, match="bwrap: No permissions"):
+    with pytest.raises(SandboxUnavailable) as exc:
         run_confined(["python"], workspace=str(tmp_path), cwd=str(tmp_path), timeout=5)
+    assert "bwrap: No permissions" in exc.value.detail
 
 
 def test_a_platform_without_namespaces_runs_the_check_with_a_warning(tmp_path, monkeypatch):
@@ -501,3 +502,99 @@ def test_the_pip_dependency_check_is_skipped_with_a_reason_without_a_sandbox(tmp
     assert len(findings) == 1, findings
     assert findings[0].severity == "warning"
     assert "sandbox is unavailable" in findings[0].message and "SKIPPED" in findings[0].message
+
+
+# --------------------------------------------------------------------------- #
+# The model never sees the operator override
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def real_refusal(monkeypatch, no_plain_subprocess):
+    """The real sandbox refusal: bwrap missing, or present and unable to start.
+    Both carry the operator hint to set BESSER_LLM_SHELL_SANDBOX=off."""
+    monkeypatch.setenv(SANDBOX_POLICY_ENV, "auto")
+    monkeypatch.setattr(sandbox_mod, "sandbox_supported_platform", lambda: True)
+    monkeypatch.setattr(sandbox_mod, "_selftest", lambda _bwrap: (False, "bwrap: No permissions"))
+    monkeypatch.setattr(sandbox_mod, "run_bounded", lambda *a, **k: pytest.fail("ran without a sandbox"))
+
+
+def _smoke(root, monkeypatch):
+    from besser.spec_driven_agent.validation.python_imports import _import_smoke_issues
+    _orm_backend(root)
+    return _import_smoke_issues(str(root))
+
+
+def _construct(root, monkeypatch):
+    from besser.spec_driven_agent.validation.constructibility import collect_constructibility_report
+    _orm_backend(root)
+    return collect_constructibility_report(str(root))["issues"]
+
+
+def _probe(root, monkeypatch):
+    from besser.spec_driven_agent.validation import api_probe
+    _orm_backend(root)
+    return [api_probe.probe_api_scenario(str(root), [{"method": "GET", "path": "/"}])["error"]]
+
+
+def _tsc(root, monkeypatch):
+    _tsc_project(root)
+    monkeypatch.setattr("shutil.which", lambda n: "/usr/bin/tsc" if n == "tsc" else None)
+    return tc._collect_tsc_issues(str(root), False, True, set())
+
+
+def _cargo(root, monkeypatch):
+    _crate(root)
+    monkeypatch.setattr("shutil.which", lambda n: "/usr/bin/cargo" if n == "cargo" else None)
+    return tc._collect_cargo_issues(str(root))
+
+
+def _build(root, monkeypatch):
+    _frontend(root)
+    monkeypatch.setattr("shutil.which", lambda n: "/usr/bin/" + n)
+    return _frontend_issues(root)
+
+
+def _pip(root, monkeypatch):
+    return [i.message for i in _dependency_orch(root, monkeypatch)._collect_validation_issues()
+            if "requirements.txt" in i.message]
+
+
+@pytest.mark.parametrize("check", [_smoke, _construct, _probe, _tsc, _cargo, _build, _pip])
+def test_a_sandbox_refusal_never_shows_the_model_the_override(
+        check, tmp_path, monkeypatch, real_refusal, caplog):
+    """Run d3a33f95: a refusal quoting "set BESSER_LLM_SHELL_SANDBOX=off" was
+    followed by the model running ``BESSER_LLM_SHELL_SANDBOX=off python -m pip``.
+    Findings and tool results reach the model; only the server log may name it."""
+    with caplog.at_level("ERROR"):
+        texts = check(tmp_path, monkeypatch)
+
+    assert any("sandbox is unavailable" in t for t in texts), texts
+    assert not any(SANDBOX_POLICY_ENV in t for t in texts), texts
+    assert SANDBOX_POLICY_ENV in caplog.text
+
+
+def test_run_confined_never_inherits_worker_secrets(monkeypatch, tmp_path):
+    # A caller that forgets env= must not hand the worker's keys to generated code.
+    from besser.spec_driven_agent.execution import sandbox as sandbox_mod
+
+    monkeypatch.setenv("BESSER_FREE_LLM_TOKEN", "sk-canary-should-not-leak-0123456789")
+    seen = {}
+
+    def fake_run_bounded(argv, *, timeout, cwd, env, shell, input):
+        seen["env"] = env
+        import subprocess
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(sandbox_mod, "run_bounded", fake_run_bounded)
+    sandbox_mod.run_confined(["true"], workspace=str(tmp_path), cwd=str(tmp_path), timeout=5)
+    assert seen["env"] is not None
+    assert "BESSER_FREE_LLM_TOKEN" not in seen["env"]
+
+
+def test_incident_log_is_masked_from_runs(fake_root, monkeypatch):
+    # The incident log names other runs, and a run id is enough to fetch
+    # that run's output.
+    monkeypatch.delenv("BESSER_INCIDENT_LOG_DIR", raising=False)
+    args = sandbox_mod._mount_args("/workspace/runs/besser_llm_a_1")
+    tmpfs = [args[i + 1] for i, a in enumerate(args) if a == "--tmpfs"]
+    assert "/app/incidents" in tmpfs
+    assert args.index("/app/incidents") > args.index("/app")

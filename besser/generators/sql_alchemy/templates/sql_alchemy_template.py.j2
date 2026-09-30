@@ -69,7 +69,7 @@ class Base(DeclarativeBase):
 {% if enumerations %}# Definitions of Enumerations{% endif %}
 {%- for enum in enumerations|sort(attribute='name') %}
 class {{ enum.name }}(enum.Enum):
-    {%- for literal in enum.literals|sort(attribute='name') %}
+    {%- for literal in sort(enum.literals) %}
     {{ literal.name }} = "{{ literal.name }}"
     {%- endfor %}
 {% endfor %}

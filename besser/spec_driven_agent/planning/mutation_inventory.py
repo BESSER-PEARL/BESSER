@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import ast
 import json
-import os
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
 from besser.spec_driven_agent.parsed_source import parse_source
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 
 _SKIP = {"node_modules", "venv", "env", "dist", "build", "__pycache__", "tests", "test", "fixtures", "verification"}
@@ -55,7 +55,7 @@ def _type_names(annotation, depth=0):
 
 def _source_files(root):
     parsed, unknown = {}, []
-    for directory, dirs, files in os.walk(root, followlinks=False):
+    for directory, dirs, files in walk_plain(root):
         dirs[:] = sorted(name for name in dirs if name not in _SKIP and not name.startswith("."))
         for name in list(dirs):
             child = Path(directory, name)

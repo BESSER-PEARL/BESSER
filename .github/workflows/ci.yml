@@ -67,4 +67,4 @@ jobs:
           pip install -r docs/requirements.txt
           pip install -r requirements.txt
       - name: Build docs and gate on new warnings
-        run: bash docs/check-docs-warnings.sh
+        run: python docs/check_docs.py

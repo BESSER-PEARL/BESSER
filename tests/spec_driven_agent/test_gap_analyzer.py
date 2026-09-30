@@ -435,7 +435,8 @@ def test_resume_seeds_prior_cost(tmp_path, monkeypatch):
 def test_gap_sanitizer_drops_scaffold_demolition_and_rival_framework():
     """Devstral A/B live finding: the planner proposed deleting the react
     scaffold and installing Flask. The sanitizer must drop those, keep
-    honest tasks, and respect a USER-requested rival framework."""
+    honest tasks, and drop a rival even when the user named it: Phase 2 keeps
+    the scaffold's stack, so a checklist item for the rival contradicts it."""
     from besser.spec_driven_agent.planning.gap_analyzer import _sanitize_tasks
 
     tasks = [
@@ -444,23 +445,32 @@ def test_gap_sanitizer_drops_scaffold_demolition_and_rival_framework():
         "create book model class that implements Book concept",
         "add login route to the main application",
     ]
-    kept = _sanitize_tasks(tasks, "generate_web_app", "Build a library web app")
+    kept = _sanitize_tasks(tasks, "generate_web_app")
     assert kept == [
         "create book model class that implements Book concept",
         "add login route to the main application",
     ]
 
-    # User explicitly asked for flask -> rival mention is legitimate.
+    # The user asking for flask does not switch a FastAPI scaffold.
     kept2 = _sanitize_tasks(
-        ["create flask blueprint for API endpoints"],
+        ["create flask blueprint for API endpoints", "add a borrow endpoint"],
         "generate_fastapi_backend",
-        "build me a flask backend",
     )
-    assert kept2 == ["create flask blueprint for API endpoints"]
+    assert kept2 == ["add a borrow endpoint"]
 
     # From-scratch runs (no scaffold) keep everything non-demolition.
-    kept3 = _sanitize_tasks(["use flask for the app"], None, "make an app")
+    kept3 = _sanitize_tasks(["use flask for the app"], None)
     assert kept3 == ["use flask for the app"]
+
+
+def test_planner_prompt_does_not_tell_tasks_to_follow_a_user_named_stack():
+    """Phase 2 is told to keep the scaffold's stack whatever the user named;
+    the planner was told every task must respect the user's framework."""
+    from besser.spec_driven_agent.planning.gap_analyzer import _SYSTEM_PROMPT
+
+    assert "every task must respect it" not in _SYSTEM_PROMPT
+    assert "different stack than the scaffold" not in _SYSTEM_PROMPT
+    assert "even when the user named a different framework" in _SYSTEM_PROMPT
 
 
 # ==========================================================================

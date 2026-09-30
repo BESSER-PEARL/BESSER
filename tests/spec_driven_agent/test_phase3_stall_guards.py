@@ -76,7 +76,7 @@ class _MutableUsage:
 
 
 def _drive(orchestrator, rounds, entry_blockers=6, after_round=None,
-           rejected_edits=0, calls=None):
+           rejected_edits=0, calls=None, entry=None):
     """Run the real Phase 3 cycle over a scripted sequence of rounds.
 
     Each round is ``(edits, wrote_source, discharged_obligations,
@@ -112,7 +112,7 @@ def _drive(orchestrator, rounds, entry_blockers=6, after_round=None,
 
     def collect():
         if state["attempt"] == 0:
-            return _blockers(entry_blockers)
+            return entry if entry is not None else _blockers(entry_blockers)
         return rounds[min(state["attempt"] - 1, len(rounds) - 1)][3]
 
     with patch.object(orchestrator, "_collect_validation_issues", side_effect=collect), \
@@ -329,6 +329,54 @@ def test_an_interrupted_fix_loop_says_what_interrupted_it(orch, monkeypatch):
     assert "unexpected stop_reason" in (orch._phase3_stop_requested() or "")
 
 
+def test_one_truncated_fix_turn_asks_for_less_instead_of_ending_phase3(orch, monkeypatch):
+    """A single max_tokens stop set the sticky interrupt flag, which ends every
+    remaining Phase 3 attempt. Phase 2 recovers from the same stop by asking
+    for a smaller turn; the fix loop now does too."""
+    responses = [{"stop_reason": "max_tokens", "content": []},
+                 {"stop_reason": "tool_use", "content": []}]
+    seen: list[list[dict]] = []
+
+    def chat(**kwargs):
+        seen.append(list(kwargs["messages"]))
+        return responses.pop(0)
+
+    def executed(blocks, turn):
+        orch.tool_calls_log.append(
+            {"turn": turn, "tool": "modify_file", "input": {}, "success": True})
+        return []
+
+    monkeypatch.setattr(orch.client, "chat", chat)
+    monkeypatch.setattr(orch, "_execute_tool_blocks", executed)
+    monkeypatch.setattr(orch, "_apply_edit_loop_guards", lambda messages, where: True)
+    monkeypatch.setattr(orch, "_save_phase3_checkpoint", lambda: None)
+
+    assert orch._invoke_phase3_fix_loop(_blockers(2), is_first_attempt=True) == 1
+    assert not orch._phase3_interrupted
+    assert "CUT OFF" in str(seen[1][-1]["content"])
+
+
+def test_the_fix_loop_compacts_its_history_like_phase2(orch, monkeypatch):
+    """Phase 3 never compacted, so a long repair attempt on a small-context
+    model could overflow where Phase 2 would have summarized."""
+    compacted = [{"role": "user", "content": [{"type": "text", "text": "COMPACTED"}]}]
+    seen: list[list[dict]] = []
+
+    def chat(**kwargs):
+        seen.append(kwargs["messages"])
+        return {"stop_reason": "tool_use", "content": []}
+
+    monkeypatch.setattr(orch, "_maybe_compact", lambda messages: compacted)
+    monkeypatch.setattr(orch.client, "chat", chat)
+    monkeypatch.setattr(orch, "_execute_tool_blocks", lambda blocks, turn: [])
+    monkeypatch.setattr(orch, "_apply_edit_loop_guards", lambda messages, where: True)
+    monkeypatch.setattr(orch, "_save_phase3_checkpoint", lambda: None)
+
+    orch._invoke_phase3_fix_loop(_blockers(2), is_first_attempt=True)
+
+    assert seen == [compacted]
+
+
 def test_an_invalid_api_key_in_the_fix_loop_propagates(orch, monkeypatch):
     """Phase 2 re-raises ``InvalidApiKeyError`` so the runner can report
     INVALID_KEY. The fix loop's blanket ``except Exception`` swallowed it and
@@ -472,3 +520,17 @@ def test_reminting_a_scenario_under_a_new_id_is_not_new_evidence(orch):
     assert orch._repair_obligations_revision() != before, (
         "a genuinely new workflow must still count"
     )
+
+
+def test_an_obligation_that_discharges_no_blocker_is_not_progress(orch):
+    """Run d3a33f95 (Kimi-K2.7-Code, "I want a todo app"): the only blockers
+    were two unverified UI requirements on a backend-only tree. Attempt 1
+    wrote nothing and left both standing, but its test_api/task_list calls
+    moved the obligations hash, which read as progress, so attempt 2 ran the
+    same round again (15 calls, zero edits, ~$0.42 across both)."""
+    unverified = [ValidationIssue("blocker", f"requirement unverified: R{i} — ui")
+                  for i in (7, 8)]
+    attempts = _drive(orch, [(0, False, True, unverified)] * 4,
+                      entry=unverified, calls=[[("test_api", True), ("read_file", True)]])
+
+    assert attempts == 1

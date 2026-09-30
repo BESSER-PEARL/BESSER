@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response as StarletteResponse
 
+from besser.utilities.provenance import get_besser_version, get_build_sha
 from besser.utilities.web_modeling_editor.backend.middleware import setup_middleware
 
 # Backend constants (no circular dependency risk)
@@ -338,6 +339,8 @@ def get_api_root():
     return {
         "message": "BESSER Backend API",
         "version": API_VERSION,
+        "besser_version": get_besser_version(),
+        "besser_build": get_build_sha(),
         "supported_generators": list(SUPPORTED_GENERATORS.keys()),
         "endpoints": {
             "generate": "/besser_api/generate-output",

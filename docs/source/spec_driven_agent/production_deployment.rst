@@ -117,15 +117,31 @@ Sandbox and network
 -------------------
 
 - ``run_command`` wraps every model-authored command in bubblewrap, which
-  needs an unprivileged user namespace. Keep both ``security_opt`` entries
-  (``seccomp=unconfined``, ``apparmor=unconfined``); no capability is added.
-  Without them, or on a kernel that forbids unprivileged user namespaces, the
-  worker fails closed and refuses every command.
+  needs an unprivileged user namespace. The worker carries four
+  ``security_opt`` entries and no added capability:
+
+  - ``seccomp=unconfined`` -- Docker's default seccomp profile blocks the
+    namespace and mount calls bubblewrap makes.
+  - ``apparmor=unconfined`` -- the default AppArmor profile denies ``mount``.
+  - ``systempaths=unconfined`` -- Docker masks parts of ``/proc``, and on
+    stock kernels such as Amazon Linux's the kernel then refuses the private
+    ``/proc`` that bubblewrap mounts for each command.
+  - ``no-new-privileges:true`` -- no process in the container can gain
+    privileges through a setuid binary.
+
+  Without the first three the worker fails closed and refuses every command,
+  as it does on a kernel that forbids unprivileged user namespaces. The
+  trade-off is plain: ``systempaths=unconfined`` unmasks ``/proc`` for the
+  worker's own root process. Generated code never runs as that process; it
+  runs inside bubblewrap's user namespace. Running the worker as a non-root
+  user would narrow the exposure further.
 - The validators that execute generated code run in the same sandbox, with
   the network cut: the import check after each file write, the import smoke
   check, the startup, create and API probes, and the ``tsc``, ``cargo check``
   and ``npm run build`` checks. When the worker cannot start the sandbox they
-  are skipped and reported as unverified, never run unconfined.
+  are skipped and reported as unverified, never run unconfined. Tool results
+  and findings then say only that the shell sandbox is unavailable; look in
+  the worker's log for the cause.
 - Two steps need the network and get it, but are sandboxed all the same, so
   package install scripts see read-only ``/usr/local``, no other runs and a
   stripped environment: the Phase 1 ``npm install`` of a scaffolded frontend
@@ -134,8 +150,10 @@ Sandbox and network
   check then reports the frontend's dependencies as not installed.
 - Each run gets its own writable ``$HOME`` beside its workspace
   (``<run dir>.sandbox-home``), where installs and the npm / cargo caches go;
-  ``/usr/local`` and ``/root`` are read-only. The telemetry folder is masked
-  from every run.
+  ``/usr/local`` and ``/root`` are read-only. The telemetry folder and the
+  incident log folder (``BESSER_INCIDENT_LOG_DIR``, default
+  ``/app/incidents``, which names other runs) are masked from every run.
+  Deleting a run removes its sandbox ``$HOME`` along with its workspace.
 - ``cargo check`` has no network, so only crates that the run already fetched
   through ``run_command`` resolve. Otherwise the check is reported as
   "dependencies could not be fetched", a skipped check rather than a compile

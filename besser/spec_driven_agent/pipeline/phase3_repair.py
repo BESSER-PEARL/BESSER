@@ -68,6 +68,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _build_toolchain_reminder,
     _toolchain_commands_for,
 )
+from besser.spec_driven_agent.execution.workspace_fs import copytree_plain, is_plain_entry, walk_plain
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,8 @@ class Phase3RepairMixin:
             reason = "runtime budget exhausted"
         elif self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
             reason = "cost budget exhausted"
+        elif self._phase2_quota_exhausted:
+            reason = "provider quota exhausted in Phase 2"
         elif check_turn_budget and self.total_turns >= self.max_turns:
             # No further edit turn, but final verification of the last accepted
             # tool batch may still run. Do not poison that check as cancelled.
@@ -434,8 +437,13 @@ class Phase3RepairMixin:
             # round often writes source and cuts blockers. Those get a second
             # round; granting it to every barren round would cost far more.
             replay = edits == 0 and not source_changed and attempted_writes == 0
+            # A moved obligation is progress only if it discharged a blocker: a
+            # new test_api scenario or checklist edit that leaves every blocker
+            # standing otherwise buys a second identical round.
+            discharged = obligations_changed and (
+                {i.message for i in blockers_after} != {i.message for i in current_blockers})
             if not improved and (
-                (not source_changed and not obligations_changed)
+                (not source_changed and not discharged)
                 or state in seen_states
             ):
                 no_progress_streak += 1
@@ -934,12 +942,23 @@ class Phase3RepairMixin:
             "Do NOT touch anything unrelated."
         )
 
-        # When the blockers include toolchain errors, instruct the LLM
-        # to drive the toolchain itself with run_command — that's the
+        # When the blockers include toolchain errors and shell tools are on,
+        # instruct the LLM to drive the toolchain itself with run_command — that's the
         # only way to know whether a fix actually compiles. We do this
         # as additional text in the same user turn (vs. a separate
         # message) so the LLM sees the request as part of the brief.
-        if toolchain_blockers:
+        if toolchain_blockers and not self.allow_shell_tools:
+            cmds = self._toolchain_commands_for(toolchain_blockers)
+            prompt_parts.append("")
+            prompt_parts.append(
+                "Shell tools are unavailable in this run, so do not call run_command; "
+                "the harness re-runs these checks when this attempt ends:"
+            )
+            prompt_parts.append("\n".join(f"  - {c}" for c in cmds))
+            prompt_parts.append(
+                "Fix every reported compile / type error before ending the attempt."
+            )
+        elif toolchain_blockers:
             cmds = self._toolchain_commands_for(toolchain_blockers)
             cmd_lines = "\n".join(f"  - {c}" for c in cmds)
             prompt_parts.append("")
@@ -981,6 +1000,7 @@ class Phase3RepairMixin:
 
         edits = 0                 # successful write-tool calls this attempt
         nudged = False            # the one re-prompt an edit-less attempt gets
+        truncations = 0           # "emit less" retries after a max_tokens stop
         force_next: str | None = None
         turn_cap = _PHASE3_FIX_TURNS
         turn = 0
@@ -1006,6 +1026,8 @@ class Phase3RepairMixin:
             # strategy again after the executor requested a fresh read/range edit.
             force = self._force_tool_next or force_next
             self._force_tool_next, force_next = None, None
+            # Same compaction as Phase 2; the blockers ride in its work state.
+            messages = self._maybe_compact(messages)
             request_messages = without_rejected_edit_drafts(messages)
             try:
                 if force and self._client_supports_structured_chat():
@@ -1054,6 +1076,14 @@ class Phase3RepairMixin:
                     "role": "user",
                     "content": [{"type": "text", "text": _PHASE3_NO_EDIT_REMINDER}],
                 })
+                continue
+            if (response["stop_reason"] in ("max_tokens", "length")
+                    and truncations < self._MAX_TRUNCATION_RETRIES):
+                # Recoverable, as in Phase 2: drop the cut-off turn, ask for less.
+                truncations += 1
+                logger.warning("Phase 3: output truncated on fix turn %d; retry %d/%d",
+                               turn, truncations, self._MAX_TRUNCATION_RETRIES)
+                messages.append(self._truncation_retry_prompt())
                 continue
             if response["stop_reason"] != "tool_use":
                 # Without this the loop appends nothing and re-sends an
@@ -1136,7 +1166,7 @@ class Phase3RepairMixin:
 
     def _build_toolchain_reminder(self, toolchain_blockers: list[ValidationIssue]) -> str:
         """Delegate to the toolchain module."""
-        return _build_toolchain_reminder(toolchain_blockers)
+        return _build_toolchain_reminder(toolchain_blockers, shell_tools=self.allow_shell_tools)
 
     @staticmethod
     def _repair_priority(issue: ValidationIssue) -> tuple[int, str]:
@@ -1176,13 +1206,13 @@ class Phase3RepairMixin:
             # Copy everything except the snapshot dir and the run bookkeeping
             # a rollback must never revert (see _ROLLBACK_PRESERVED).
             for item in os.listdir(self.output_dir):
-                if item in _ROLLBACK_PRESERVED:
-                    continue
                 src = os.path.join(self.output_dir, item)
+                # A planted link would be copied as its target's contents.
+                if item in _ROLLBACK_PRESERVED or not is_plain_entry(src):
+                    continue
                 dst = os.path.join(staging_path, item)
                 if os.path.isdir(src):
-                    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(
-                        *_SNAPSHOT_IGNORED_DIRS))
+                    copytree_plain(src, dst, _SNAPSHOT_IGNORED_DIRS)
                 else:
                     os.makedirs(os.path.dirname(dst), exist_ok=True)
                     shutil.copy2(src, dst)
@@ -1232,8 +1262,10 @@ class Phase3RepairMixin:
             for item in os.listdir(snapshot_path):
                 src = os.path.join(snapshot_path, item)
                 dst = os.path.join(self.output_dir, item)
+                if not is_plain_entry(src):
+                    continue
                 if os.path.isdir(src):
-                    shutil.copytree(src, dst)
+                    copytree_plain(src, dst)
                 else:
                     shutil.copy2(src, dst)
         except Exception as e:
@@ -1272,7 +1304,7 @@ class Phase3RepairMixin:
         validation reports missing dependencies. Only restored into a
         directory that still exists; failures are logged, never raised.
         """
-        for root, dirs, _files in os.walk(discard_path):
+        for root, dirs, _files in walk_plain(discard_path):
             for name in [d for d in dirs if d in _SNAPSHOT_IGNORED_DIRS]:
                 dirs.remove(name)
                 rel = os.path.relpath(os.path.join(root, name), discard_path)

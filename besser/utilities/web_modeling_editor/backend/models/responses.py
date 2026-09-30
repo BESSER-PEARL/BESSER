@@ -35,6 +35,8 @@ class ApiInfoResponse(BaseModel):
     """Response for the API root endpoint."""
     message: str
     version: str
+    besser_version: str
+    besser_build: Optional[str] = None
     supported_generators: List[str]
     endpoints: Dict[str, str]
 

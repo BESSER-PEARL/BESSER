@@ -11,11 +11,11 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 import json
-import os
 from pathlib import Path
 import re
 from besser.spec_driven_agent.parsed_source import parse_source
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
+from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 
 _FRONTEND_SUFFIXES = {".js", ".jsx", ".ts", ".tsx"}
@@ -46,7 +46,7 @@ def _sources(workspace, changed_path=None, content=None):
         candidate = (root / changed_path).resolve()
         if candidate.is_relative_to(root):
             overlay = candidate
-    for parent, dirs, files in os.walk(root):
+    for parent, dirs, files in walk_plain(root):
         dirs[:] = sorted(d for d in dirs if d not in WORKSPACE_SKIP_DIRS
                          and not d.startswith(".besser")
                          and not (Path(parent) / d).is_symlink())

@@ -35,7 +35,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
-from besser.spec_driven_agent.execution.process import run_bounded
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env, run_bounded
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,9 @@ _VIRTUAL_TOPLEVEL = frozenset({"/proc", "/dev", "/tmp", "/run"})
 # read-only, so an empty tmpfs is mounted over it. Same default as telemetry.py.
 _TELEMETRY_DIR_ENV = "BESSER_TELEMETRY_DIR"
 _TELEMETRY_DIR_DEFAULT = "/app/telemetry"
+# Same for the incident log: it names other runs, and a run id fetches output.
+_INCIDENT_DIR_ENV = "BESSER_INCIDENT_LOG_DIR"
+_INCIDENT_DIR_DEFAULT = "/app/incidents"
 
 _SANDBOX_TIMEOUT = 30
 
@@ -68,7 +71,17 @@ _unconfined_warned = False
 
 
 class SandboxUnavailable(RuntimeError):
-    """The sandbox could not be prepared. The command must NOT be run."""
+    """The sandbox could not be prepared. The command must NOT be run.
+
+    ``str()`` is model-safe: it reaches findings and tool results the model
+    reads. The cause, including the operator override, is ``detail`` and is
+    logged here once; the model tried to set the override when it saw it.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__("the shell sandbox is unavailable on this server")
+        self.detail = detail
+        logger.error("Shell sandbox unavailable: %s", detail)
 
 
 @dataclass(frozen=True)
@@ -172,10 +185,11 @@ def _mount_args(workspace: str, writable: "list[str] | None" = None) -> list[str
     args += ["--proc", "/proc", "--dev", "/dev"]
     for path in _TMPFS_PATHS:
         args += ["--tmpfs", path]
-    telemetry = os.path.realpath(
-        os.environ.get(_TELEMETRY_DIR_ENV) or _TELEMETRY_DIR_DEFAULT)
-    if os.path.isdir(telemetry) and not any(_within(telemetry, h) for h in hidden):
-        args += ["--tmpfs", telemetry]
+    for env_name, default in ((_TELEMETRY_DIR_ENV, _TELEMETRY_DIR_DEFAULT),
+                              (_INCIDENT_DIR_ENV, _INCIDENT_DIR_DEFAULT)):
+        masked = os.path.realpath(os.environ.get(env_name) or default)
+        if os.path.isdir(masked) and not any(_within(masked, h) for h in hidden):
+            args += ["--tmpfs", masked]
     home = sandbox_home(workspace)
     args += ["--bind", home, home, "--setenv", "HOME", home]
     # rustup finds its toolchains under $HOME/.rustup; keep the image's
@@ -320,6 +334,9 @@ def run_confined(
     """
     plan = sandboxed_command(argv, workspace=workspace, cwd=cwd,
                              network=network, writable=writable)
+    # Never inherit the worker's environment (provider keys, tokens).
+    if env is None:
+        env = _safe_subprocess_env()
     result = run_bounded(plan.argv, timeout=timeout, cwd=cwd, env=env,
                          shell=plan.use_shell, input=input)
     startup_error = plan.startup_error(result.returncode, result.stderr)

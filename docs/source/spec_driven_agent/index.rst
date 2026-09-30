@@ -21,9 +21,9 @@ stack BESSER has no built-in generator for (Rails, Rust/Axum, Kotlin/Spring,
 Next.js, …).
 
 The key idea: generation is **hybrid**, and the model remains the source of
-truth. The LLM never starts from a blank page — it edits a correct,
-model-faithful baseline, which keeps the output anchored to your diagram
-instead of drifting into invention.
+truth. Where a BESSER generator fits, the LLM edits its scaffold. For a stack
+without a built-in generator, it writes the application from stack metadata
+and the model's contract.
 
 .. toctree::
    :maxdepth: 1
@@ -84,11 +84,12 @@ Limitations
   run's files forward, but hand-written edits made outside BESSER are not
   re-derivable from the model and are not carried across a from-scratch
   re-generation. Closing this gap is the most significant planned improvement.
-- **Validation is static, not a build.** :doc:`Phase 3 <validation>` checks
-  syntax, imports, contracts and lint, and optionally the project's own
-  compiler — but it does not build a container or run the app. Blockers that
-  only appear at runtime can still get through. Treat the output as a strong,
-  checked starting point, not a guaranteed-working deployment.
+- **Validation has a defined scope.** :doc:`Phase 3 <validation>` checks
+  syntax, imports, contracts and lint. Authorised sandboxed checks can also
+  boot a supported backend, create records, compile code, and build a frontend.
+  Checks that cannot run are reported as unverified. It does not build a
+  deployment container or prove every business requirement; inspect the
+  findings and test the application in your target environment.
 - **Fixes land in generated code.** The auto-fix loop repairs the generated
   files, not the model. A later from-scratch regeneration starts from the model
   again and will not carry those repairs.

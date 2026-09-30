@@ -37,6 +37,8 @@ import threading
 from collections import Counter
 from typing import Any, Iterable, Optional
 
+from besser.utilities.provenance import PROVENANCE_FILENAME
+
 logger = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
@@ -230,6 +232,8 @@ def compute_file_split(
                 rel = os.path.relpath(
                     os.path.join(root, name), output_dir
                 ).replace("\\", "/")
+                if rel == PROVENANCE_FILENAME:
+                    continue
                 split["total"] += 1
                 if rel in generator_set:
                     if rel in touched_set:

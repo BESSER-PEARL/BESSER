@@ -43,6 +43,7 @@ import sys
 from typing import Any
 
 from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
+from besser.spec_driven_agent.execution.workspace_fs import open_plain
 
 # orchestrator.py defines this alongside ``.besser_recipe.json`` but is a
 # heavy module (provider SDK imports); this report has to stay usable
@@ -67,7 +68,7 @@ def _read_json(path: str) -> tuple[Any, str | None]:
     if not os.path.isfile(path):
         return None, "not found"
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        with open_plain(path, "r", encoding="utf-8", errors="replace") as fh:
             return json.load(fh), None
     except Exception as exc:
         return None, f"{type(exc).__name__}: {exc}"
@@ -82,7 +83,7 @@ def _read_jsonl(path: str) -> tuple[list[dict], int, str | None]:
     if not os.path.isfile(path):
         return [], 0, "not found"
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        with open_plain(path, "r", encoding="utf-8", errors="replace") as fh:
             raw_lines = fh.readlines()
     except Exception as exc:
         return [], 0, f"{type(exc).__name__}: {exc}"

@@ -88,7 +88,7 @@ def test_secrets_are_still_stripped_alongside_the_ca_bundle(monkeypatch, tmp_pat
 # --------------------------------------------------------------------------- #
 # The finding
 # --------------------------------------------------------------------------- #
-def _dependency_findings(model, tmp_path, monkeypatch, stderr):
+def _dependency_findings(model, tmp_path, monkeypatch, stderr, raises=None):
     """Run the real Phase 3 collector with pip answering ``stderr``."""
     backend = tmp_path / "web_app" / "backend"
     backend.mkdir(parents=True)
@@ -116,6 +116,8 @@ def _dependency_findings(model, tmp_path, monkeypatch, stderr):
 
     def pip(command, *args, **kwargs):
         if "pip" in command:
+            if raises is not None:
+                raise raises
             return subprocess.CompletedProcess(command, 1, "", stderr)
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -161,3 +163,16 @@ def test_the_network_finding_classifies_as_a_warning_on_its_own():
     message = dependency_check_issue("backend/requirements.txt", PIP_STDERR)
 
     assert _classify_issue(message).severity == "warning"
+
+
+def test_a_pip_timeout_is_reported_as_not_checked(
+        simple_library_book_model, tmp_path, monkeypatch):
+    """The timeout was swallowed, so a check that never finished read as a
+    clean dependency set."""
+    findings = _dependency_findings(simple_library_book_model, tmp_path, monkeypatch, "",
+                                    raises=subprocess.TimeoutExpired("pip", 30))
+
+    assert len(findings) == 1, findings
+    assert findings[0].severity == "warning"
+    assert "dependency check for web_app/backend/requirements.txt did not run" in findings[0].message
+    assert "timed out" in findings[0].message

@@ -181,7 +181,7 @@ Shell tools
 what lets the agent close its own loop — run ``pytest``, run ``npm run build``,
 read the failures and fix them — and they are the single largest capability
 difference between a run with them and a run without. They are also arbitrary
-code execution in the backend process, so who is allowed to switch them on is a
+code execution on the host that serves generation, so who is allowed to switch them on is a
 deployment decision, never a per-request one.
 
 Before it installs, ``install_dependencies`` pins the known-incompatible
@@ -246,12 +246,25 @@ What it does:
 - **Refusal, not concealment.** The gate is enforced when the tool is called,
   not by leaving it out of the advertised list — a model that names a tool it
   was never offered is refused too.
+- **One shell per run, like a terminal.** The directory a command ends in
+  (``cd``) and the variables it exports (``export``, ``source
+  .venv/bin/activate``) carry over to the next command, and on Linux a
+  process started in the background (``python app.py > app.log 2>&1 &``)
+  keeps running after its command returns, so a server started in one
+  command answers ``curl`` in the next. ``working_dir`` runs one command in
+  another directory without moving the shell; ``install_dependencies`` runs
+  in the same shell and leaves its directory and environment as they were.
+  What a background process prints after its command returned is discarded.
+  A command that ends outside the workspace does not move the shell there:
+  the next command starts in the workspace root, and the result says so.
 - **Working directory inside the run workspace.** ``working_dir`` is resolved
   against the workspace and a path that escapes it is rejected.
-- **A 120-second timeout** per command; the spawned shell is killed when it
-  expires. A cold ``npm install`` can exceed it. Under the sandbox a process
-  the command detached does not outlive the command: the sandbox's PID
-  namespace goes with it.
+- **A per-command timeout**: 120 seconds by default. A command may set
+  ``timeout`` up to 600 seconds for a slow build, and ``install_dependencies``
+  gets 300; no command runs past the run's remaining runtime. A command still
+  running then is killed together with everything it started (its process
+  group); the session and the processes earlier commands left running are
+  untouched.
 - **A stripped environment.** The child process gets an allowlist (``PATH``,
   ``HOME``, locale, temp dirs, a few Python/Node variables) with anything
   name-matching a secret removed, so provider API keys, OAuth secrets and SMTP
@@ -263,14 +276,23 @@ What it does:
   captured: past that the command's process tree is killed, and the head and
   tail are kept with a marker for the dropped middle.
 
-- **A bubblewrap sandbox on Linux.** Each command runs in its own user, PID
-  and mount namespaces. The container filesystem is visible read-only, other
+- **A bubblewrap sandbox on Linux, one per run.** A run's shell is a single
+  sandbox, started at its first ``run_command`` or ``install_dependencies``,
+  with its own user, PID and mount namespaces; no other run's processes or
+  files are visible in it. The container filesystem is visible read-only, other
   runs' workspaces, the telemetry folder and the incident log folder
   (``BESSER_INCIDENT_LOG_DIR``) are hidden, and only the run
   workspace and a per-run ``$HOME`` (``<run dir>.sandbox-home``) are writable.
   ``/usr/local`` and ``/root`` stay read-only, so ``install_dependencies``
   (``pip install``, ``npm install``) installs into that per-run ``$HOME``
-  rather than into the worker or into later runs. The per-run ``$HOME`` sits
+  rather than into the worker or into later runs. Where the worker has
+  ``pasta`` (passt) and ``/dev/net/tun``, the session also gets a network
+  namespace of its own (``BESSER_LLM_SHELL_NETWORK``): its ``localhost``
+  belongs to that run, so any port is free, the worker's own API and other
+  runs' servers cannot be reached, and outbound traffic (package installs)
+  goes out through pasta, which forwards no port in either direction. Without
+  them, in the default ``auto`` mode, runs on one worker share ``localhost``
+  and a warning is logged; ``private`` refuses every command instead. The per-run ``$HOME`` sits
   outside the workspace, so it is never packaged or pushed; it is removed
   with the run, and by the 24-hour temp cleanup. If the sandbox cannot start, every command is
   refused; ``BESSER_LLM_SHELL_SANDBOX=off`` lifts that on a single-tenant
@@ -278,12 +300,35 @@ What it does:
   and any validation finding, sees only "the shell sandbox is unavailable on
   this server"; the cause and the override are written to the server log
   only.
+- **The session ends with the run.** Every process in it is killed when the
+  run finishes, fails, is cancelled or times out, when its run folder is
+  removed, and when the worker process exits or restarts (the session's
+  control channel is a pipe to the worker, and bubblewrap's init takes the
+  whole PID namespace with it). A session with no command for
+  ``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` (900; ``0`` never) is closed too,
+  and the next command starts a fresh one; the directory and environment
+  survive that, since the worker keeps them, and the result's ``notes`` tell
+  the model its background processes are gone. At most
+  ``BESSER_LLM_SHELL_SESSION_MAX`` (10) sessions live per worker; past that a
+  command runs in a one-off sandbox with the same confinement, whose
+  processes stop when it returns (``0`` gives every command its own sandbox).
+- **Checks do not run in the session.** The validators and probes that
+  execute generated code (import checks, the startup and API probes,
+  ``tsc``, ``cargo check``, the frontend build, the ``pip`` dry-run) each get
+  a fresh sandbox of their own, so nothing a command left behind can steer a
+  check. Before each Phase 3 validation sweep the session's processes are
+  stopped as well, so a dev server or file watcher the agent left running
+  cannot write to the workspace while it is checked; the directory and
+  environment carry over to the next command, whose notes say so.
 
 What it does not:
 
 - **No sandbox on Windows or macOS.** There is no namespace sandbox on those
   platforms, so commands run unconfined, as the backend user, and a warning
   is logged. The same applies on Linux with ``BESSER_LLM_SHELL_SANDBOX=off``.
+  Each command is then its own process: the directory and environment still
+  carry over, but the worker does not track what a command left running, so
+  ending the run does not stop it.
 - **It does not cut the network for commands.** ``run_command`` keeps
   outbound network access so that installs work, as do the Phase 1
   ``npm install`` and the ``pip install --dry-run`` check, which are
@@ -299,13 +344,14 @@ Phase 2's system prompt gains a *runtime verification* runbook, and a probe
 script, ``.besser_probe.py``, is written to the workspace root. Its
 subcommands (``up``, ``routes``, ``req``, ``log``, ``down``) boot the server
 detached, list its routes and send requests, so the agent can run the app
-rather than only read it. Because each sandboxed command has its own PID
-namespace, ``routes`` and ``req`` start their own server when none is
-answering; the SQLite file keeps records between commands. ``req`` sends
+rather than only read it. The server ``up`` starts keeps running in the run's
+shell session, so ``routes`` and ``req`` reach that same server; when the
+session was restarted in between, they start their own, and the SQLite file
+keeps records either way. ``req`` sends
 extra headers with ``-H "Name: value"`` (e.g. a bearer token from a login) and
 prints only their names. ``down`` stops a process only when its command line
-identifies it as the probe's own server, since a recorded PID from another
-namespace can name an unrelated process. Several ``run_command`` (and
+identifies it as the probe's own server, since a recorded PID from a previous
+session can name an unrelated process. Several ``run_command`` (and
 ``install_dependencies``) calls in one turn run one after another, in order.
 ``BESSER_LLM_SHELL_RUNBOOK=0`` leaves the runbook out.
 
@@ -332,7 +378,9 @@ stream is itself capped at 2 MB — far above anything a build log needs, and
 only there so a runaway command cannot fill the disk.
 
 .. note::
-   Adding a tool is a two-line change in
-   ``besser/spec_driven_agent/tools.py`` — the declaration *and* an entry in
-   ``_TOOL_MODEL_REQUIREMENTS``, so the tool is only offered when the models it
-   needs are present. See :doc:`../contributor_guide`.
+   Adding a tool takes three edits: its declaration in
+   ``besser/spec_driven_agent/agent/tools.py``, an entry in
+   ``_TOOL_MODEL_REQUIREMENTS`` in the same file (so the tool is only offered
+   when the models it needs are present), and a handler in
+   ``ToolExecutor._handlers`` (``agent/tool_executor.py``). See
+   :doc:`../contributor_guide`.

@@ -21,7 +21,7 @@ values are exposed by ``GET /besser_api/spec-driven/config``.
      - 5.0
      - 5.0
    * - ``max_runtime_seconds``
-     - 1200
+     - 2400
      - 2400
    * - ``max_turns``
      - 120

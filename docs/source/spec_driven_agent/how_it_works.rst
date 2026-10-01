@@ -42,7 +42,11 @@ The three phases
    system prompt adapts to the run: the rule that asks for a complete CRUD
    frontend applies only when the run has or needs a frontend, and when shell
    tools are on and a FastAPI backend is present it gains a runtime
-   verification runbook (see :ref:`spec-driven-shell-tools`).
+   verification runbook (see :ref:`spec-driven-shell-tools`). The shell is
+   one session for the whole run, like a terminal: ``cd`` and exported
+   variables carry over between commands, and on Linux, where the run has a
+   sandbox, a server started in one command answers requests in the next,
+   until the run ends.
 
 **Phase 3 — validation and bounded auto-fix.**
    The workspace is snapshotted, then swept by a set of static validators.

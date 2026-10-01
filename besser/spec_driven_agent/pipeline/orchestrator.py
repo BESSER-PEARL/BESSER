@@ -101,7 +101,7 @@ from besser.spec_driven_agent.planning.stack_metadata import (
     pre_generate_metadata,
     stack_label,
 )
-from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 from besser.spec_driven_agent.validation.docker_context import (
@@ -342,6 +342,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             allow_shell=allow_shell_tools,
         )
         self.executor.app_validator = self._validate_app
+        self.executor.time_left = self._time_left
         self.executor.api_tester = self._test_api
         self._app_validation_cache: tuple[str, dict] | None = None
         self._api_scenarios: dict[str, dict] = {}
@@ -649,6 +650,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Main entry point
     # ==================================================================
 
+    @ends_shell_session
     def run(self, instructions: str) -> str:
         """Run the three-phase generation. Returns path to output directory."""
         if not instructions or not instructions.strip():
@@ -777,6 +779,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Resume entry point
     # ==================================================================
 
+    @ends_shell_session
     def resume(self, instructions: str) -> str:
         """Resume a previously-crashed run from its checkpoint.
 
@@ -957,6 +960,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # ==================================================================
     # Phase 1: Deterministic generation (no LLM)
     # ==================================================================
+
+    def _time_left(self) -> float | None:
+        """Seconds left in the run's runtime budget; None before it starts."""
+        if self._start_time is None:
+            return None
+        return self.max_runtime_seconds - (time.monotonic() - self._start_time)
 
     def _run_phase1(self, instructions: str) -> None:
         """Select and run the best generator, then inventory the output."""
@@ -2871,6 +2880,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         Phase 3 fix loop only acts on ``blocker`` items when
         ``auto_fix_issues`` is enabled.
         """
+        # The checks run in fresh sandboxes, but they read and build this
+        # workspace: nothing the model left running may write to it meanwhile.
+        self.executor.stop_shell_processes()
         # Repair the build configuration BEFORE looking for defects in it.
         # The class-only path never asks the model for a Vite config: across
         # 192 recorded class-only runs, 192 had none and 96 also had a JSX

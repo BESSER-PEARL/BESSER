@@ -83,6 +83,12 @@ services:
       # itself is not, so a compromise still reaches the LLM tokens.
       - BESSER_LLM_ENABLE_SHELL_TOOLS=true
       - BESSER_LLM_ALLOW_CUSTOM_BASE_URL=false
+      # Each run's shell gets its own network namespace (pasta, /dev/net/tun
+      # below): no shared localhost, no reaching this worker's own API.
+      # private refuses commands when that cannot be set up.
+      - BESSER_LLM_SHELL_NETWORK=${BESSER_LLM_SHELL_NETWORK:-private}
+      - BESSER_LLM_SHELL_SESSION_IDLE_SECONDS=${BESSER_LLM_SHELL_SESSION_IDLE_SECONDS:-900}
+      - BESSER_LLM_SHELL_SESSION_MAX=${BESSER_LLM_SHELL_SESSION_MAX:-10}
       # Shared (read-only) with the backend, which serves push-to-github.
       - BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs
       - BESSER_LLM_RUN_STORE_PATH=/workspace/runs/run_store.sqlite3
@@ -130,6 +136,11 @@ services:
       # bwrap's private /proc mount (measured on experimental 2026-09-29).
       - systempaths=unconfined
       - no-new-privileges:true
+    # pasta's tap device for each shell session's private network.
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    # Reaps orphans (exited bwrap monitors), which python as PID 1 does not.
+    init: true
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     restart: unless-stopped
     # NOT on besser_network: generation has no reason to reach the backend, the

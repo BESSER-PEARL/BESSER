@@ -21,7 +21,8 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
 - ``BESSER_FREE_LLM_ALT_MODELS`` -- Comma-separated extra model ids served by
   that *same* endpoint and token. They are offered as alternative free choices
   and used as the first step of the fallback chain.
-- ``BESSER_FREE_LLM_FALLBACK_BASE_URL`` / ``_MODEL`` / ``_TOKEN`` -- A second,
+- ``BESSER_FREE_LLM_FALLBACK_BASE_URL`` / ``BESSER_FREE_LLM_FALLBACK_MODEL`` /
+  ``BESSER_FREE_LLM_FALLBACK_TOKEN`` -- A second,
   independently credentialed endpoint used as the last resort in the fallback
   chain.
 - ``BESSER_SPONSORED_LLM_BASE_URL`` / ``BESSER_SPONSORED_LLM_TOKEN`` /
@@ -65,7 +66,7 @@ See :doc:`runs` for how the caps are enforced.
   (2400), ``BESSER_LLM_MAX_TURNS_HARD_CAP`` (150) -- Server-side ceilings a
   client request can never exceed.
 - ``BESSER_LLM_DEFAULT_MAX_COST_USD`` (5.0), ``BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS``
-  (1200), ``BESSER_LLM_DEFAULT_MAX_TURNS`` (120) -- Defaults when the request
+  (2400), ``BESSER_LLM_DEFAULT_MAX_TURNS`` (120) -- Defaults when the request
   omits a cap. Each is clamped to its hard cap.
 - ``BESSER_LLM_MAX_CONCURRENT_RUNS`` (10) -- Runs in flight before new requests
   get a ``429``. Starting or resuming a run that is already in flight answers
@@ -92,9 +93,34 @@ Feature flags
   request field for it: it is read from the environment at start-up, and the
   config endpoint reports the resulting value as ``features.shell_tools_enabled``
   so a deploy can be verified from outside the process. Read
-  :ref:`spec-driven-shell-tools` before enabling it -- the local path has a
-  timeout, a workspace-confined working directory, a stripped environment and a
-  denylist, but it is not an operating-system sandbox.
+  :ref:`spec-driven-shell-tools` before enabling it. On Linux every command
+  runs in the run's bubblewrap sandbox; on Windows and macOS, or with
+  ``BESSER_LLM_SHELL_SANDBOX=off``, commands run unconfined as the backend user.
+- ``BESSER_LLM_SHELL_SANDBOX`` (**auto**) -- ``auto`` confines shell commands
+  and the checks that execute generated code wherever the platform provides
+  bubblewrap; when the sandbox cannot start, commands are refused and checks are
+  reported as unverified. ``off`` runs them
+  unconfined; use it only on a single-tenant Linux host whose kernel forbids
+  unprivileged user namespaces.
+- ``BESSER_LLM_SHELL_RUNBOOK`` (**on**) -- With shell tools enabled, add the
+  boot-and-verify procedure and its ``.besser_probe.py`` helper to the prompt.
+  ``0`` keeps the shell without the procedure.
+- ``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` (**900**) -- Close a run's shell
+  session after this many seconds without a command; its processes stop and
+  the next command starts a new session. ``0`` never closes it early; it
+  still ends with the run.
+- ``BESSER_LLM_SHELL_SESSION_MAX`` (**10**) -- Live shell sessions per worker
+  process. Past the cap a command runs in a one-off sandbox, so what it
+  starts in the background stops when it returns; ``0`` gives every command
+  its own sandbox. See :ref:`spec-driven-shell-tools`.
+- ``BESSER_LLM_SHELL_NETWORK`` (**auto**) -- The network of a run's shell
+  session. ``private``: a network namespace per session through ``pasta``
+  (passt), with outbound access only, so ``localhost`` is the run's own and
+  the worker's ports and other runs are unreachable; when ``pasta`` or
+  ``/dev/net/tun`` is missing, every command is refused. ``shared``: the
+  worker's own network namespace. ``auto``: ``private`` when a start-up
+  selftest passes, otherwise ``shared`` with one logged warning.
+  ``docker-compose.prod.yml`` sets ``private`` (see :doc:`production_deployment`).
 - ``BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION`` (**off**) -- Run ``tsc`` /
   ``cargo`` / ``kotlinc`` in Phase 3. Costly on non-Python stacks. The cheap
   in-process checks (syntax, Dockerfile references, contracts, ``ruff``) run
@@ -138,11 +164,10 @@ Feature flags
   the run, so once the model has edited a file the copy is stale and quoting
   from it makes ``modify_file`` miss. With it off, file text reaches the model
   only through ``read_file`` (always current; several reads batch in one turn).
-- ``BESSER_LLM_ROLLING_CACHE`` (**off**; set to ``1`` to enable) -- Add a
+- ``BESSER_LLM_ROLLING_CACHE`` (**on**; ``0`` disables it) -- Add a
   rolling prompt-cache breakpoint on the growing conversation, so the prior
   prefix is served from cache instead of re-billed each turn. Anthropic path
-  only — the OpenAI-compatible path caches by prefix automatically. Off by
-  default because it changes the request shape on the paid path.
+  only — the OpenAI-compatible path caches by prefix automatically.
 
 Context and token budgets
 -------------------------

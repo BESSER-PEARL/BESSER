@@ -5,6 +5,12 @@ BESSER keeps a model of your system and generates source code from it. You
 can work on the same model through the visual editor, textual imports, or
 the Python library.
 
+.. toctree::
+   :hidden:
+
+   ../buml_language
+   ../spec_driven_agent/index
+
 The workflow
 ------------
 
@@ -49,8 +55,5 @@ and changes application files.
 Learn more
 ----------
 
-.. toctree::
-   :maxdepth: 1
-
-   ../buml_language
-   ../spec_driven_agent/index
+* :doc:`../buml_language`
+* :doc:`../spec_driven_agent/index`

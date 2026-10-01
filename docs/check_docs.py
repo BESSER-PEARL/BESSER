@@ -13,6 +13,16 @@ import sys
 
 from sphinx.application import Sphinx
 
+# An outage at docs.python.org or sphinx-doc.org is not a defect in these docs;
+# cross-references to those inventories then render as plain text.
+_INVENTORY_UNREACHABLE = "failed to reach any of the inventories"
+
+
+def unexpected_warnings(text: str) -> list[str]:
+    """Warning and error lines that fail the build."""
+    return [line for line in text.splitlines()
+            if re.search(r"WARNING|ERROR", line) and _INVENTORY_UNREACHABLE not in line]
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -47,7 +57,9 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     text = re.sub(r"\x1b\[[0-9;]*m", "", text)
     (output.parent / "warnings.log").write_text(text, encoding="utf-8")
-    unexpected = [line for line in text.splitlines() if re.search(r"WARNING|ERROR", line)]
+    unexpected = unexpected_warnings(text)
+    if _INVENTORY_UNREACHABLE in text:
+        print("Note: an external intersphinx inventory was unreachable; its links render as text.")
     if app.statuscode or unexpected:
         print("\n".join(unexpected[:25]) or text, file=sys.stderr)
         if len(unexpected) > 25:

@@ -106,10 +106,10 @@ Request body
        is ignored and the run pins to the primary rather than erroring.
    * - ``max_cost_usd``
      - float
-     - Soft spend cap, clamped to the server hard cap (default 1.0, max 5.0).
+     - Soft spend cap, clamped to the server hard cap (default 5.0, max 5.0).
    * - ``max_runtime_seconds``
      - int
-     - Soft runtime cap, clamped to the server hard cap (default 1200, max 2400).
+     - Soft runtime cap, clamped to the server hard cap (default 2400, max 2400).
    * - ``max_turns``
      - int
      - Soft cap on LLM turns, clamped to the server hard cap (default 80,

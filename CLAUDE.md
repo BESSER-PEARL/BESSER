@@ -50,10 +50,10 @@ ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741 \
 ### Documentation
 ```bash
 cd docs && make html                # output in docs/build/html/
-bash docs/check-docs-warnings.sh    # what CI gates on
+python docs/check_docs.py           # what CI runs (check-docs-warnings.sh is a wrapper)
 ```
-The docs gate is an **allowlist**, not a warning count: only `duplicate object description` and
-`more than one target found for cross-reference` are tolerated. Any other warning fails CI.
+The docs gate fails on **any** Sphinx warning or error, except an unreachable external intersphinx inventory
+(an outage at docs.python.org is not a docs defect). Pass `--offline` to skip fetching them.
 
 ### Running locally
 ```bash
@@ -138,8 +138,9 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
   `secret_redaction.py` (every SSE frame + the workspace before packaging).
 
 Invariants and rules:
-- **A new agent tool needs two edits**: `agent/tools.py` *and* `_TOOL_MODEL_REQUIREMENTS` in the same file,
-  or it is offered on projects that cannot satisfy it. `tests/spec_driven_agent/test_added_generator_tools.py`
+- **A new agent tool needs three edits**: `agent/tools.py`, `_TOOL_MODEL_REQUIREMENTS` in the same file, and a
+  handler in `ToolExecutor._handlers` (`agent/tool_executor.py`); without the requirements entry it is
+  offered on projects that cannot satisfy it. `tests/spec_driven_agent/test_added_generator_tools.py`
   asserts every generator tool has an entry.
 - **New validator findings need a stable message prefix** classified in `_classify_issue` — the classifier
   keys on prefixes, not on which validator produced them. Severities: `blocker` (drives the auto-fix loop),
@@ -238,10 +239,10 @@ and note the merge order.
 
 ## Documentation Sync
 Keep `docs/source/` in step with code:
-- `buml_language.rst` — metamodel additions (and the notation-support matrix)
+- `buml_language.rst` — metamodel additions
 - `generators.rst` + `generators/<name>.rst` — generators (toctree **and** choosing table)
 - `spec_driven_agent/` — pipeline, tools, severities, caps, config
-- `web_editor.rst` — editor workflows and the spec-driven API contract
+- `web_editor.rst` — editor workflows; `spec_driven_agent/api.rst` — the spec-driven API contract
 - `web_editor_backend.rst` — endpoint and environment-variable tables
 - `utilities.rst`, `utilities/` — utilities (incl. `buml_code_builder.rst`, `agent_simulator.rst`)
 - `contributor_guide.rst`, `ai_assistant_guide.rst` — workflow changes

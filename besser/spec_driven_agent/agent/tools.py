@@ -458,16 +458,27 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
     {
         "name": "run_command",
         "description": (
-            "Run a shell command in the workspace directory and return stdout + stderr. "
-            "Use it to test code, run linters and verify builds. Runs in the workspace "
-            "root (or working_dir) with a 120-second timeout; a server started in the "
-            "foreground blocks for the full timeout. Destructive or exfiltrating commands "
+            "Run a shell command in this run's shell and return stdout + stderr. Use it to "
+            "test code, run linters and verify builds. The shell is one session for the "
+            "whole run, like a terminal: `cd` and exported variables (`export X=1`, "
+            "`source .venv/bin/activate`) carry over to the next command, and a process "
+            "started in the background (`python app.py > app.log 2>&1 &`) keeps running "
+            "after its command returns, so a server started in one command can be tested "
+            "with curl in the next. What a background process prints after its command "
+            "returned is discarded: redirect it to a file. Each command has a 120-second "
+            "timeout unless it sets `timeout` (up to 600 s, for a long build or first "
+            "install); a command still running then is killed with everything it started, "
+            "while the session and earlier background processes keep running, so a server "
+            "started in the foreground blocks for the full timeout: start servers in the "
+            "background instead. When a result's notes "
+            "say the session was restarted or the command ran in a one-off sandbox, earlier "
+            "background processes are gone. A result's cwd field is the shell's directory "
+            "when it is not the workspace root. Destructive or exfiltrating commands "
             "are refused with an error. stdout/stderr are truncated (~15k chars total); "
             "when cut, full_output_path names a file holding the complete log. A command "
             "whose runtime is not installed returns success=true, skipped=true: treat it "
             "as not checked, not as passing. Several run_command calls in one turn run "
-            "one after another in the order given. Do not rely on a server started by an "
-            "earlier command: it does not outlive the command that started it."
+            "one after another in the order given."
         ),
         "input_schema": {
             "type": "object",
@@ -478,8 +489,19 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
                 },
                 "working_dir": {
                     "type": "string",
-                    "description": "Subdirectory to run in (relative to workspace). Default: workspace root.",
-                    "default": ".",
+                    "description": (
+                        "Directory for this command only, relative to the workspace root; "
+                        "the shell's own directory does not move. Default: the shell's "
+                        "current directory (the workspace root until a command cd's elsewhere)."
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": (
+                        "Seconds before this command is killed. Default 120, max 600, and "
+                        "never past the run's remaining time. Raise it only for a command "
+                        "known to be slow (cargo build, gradle, a first npm install)."
+                    ),
                 },
             },
             "required": ["command"],
@@ -493,7 +515,8 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "if package.json exists, runs npm install (both, when both exist). "
             "Returns an error when neither file is found. A custom command runs through "
             "run_command instead of auto-detection. Every install shares run_command's "
-            "120-second timeout and sandbox."
+            "120-second timeout and shell session, and leaves the shell's directory and "
+            "environment as they were."
         ),
         "input_schema": {
             "type": "object",
@@ -961,6 +984,23 @@ def get_tools_for(
         requirements = _TOOL_MODEL_REQUIREMENTS.get(tool["name"], frozenset())
         return requirements.issubset(available)
 
-    return [
-        tool for tool in get_all_tools_including_generators() if _keep(tool)
-    ]
+    tools = [tool for tool in get_all_tools_including_generators() if _keep(tool)]
+    return [_with_network_note(tool) if tool["name"] == "run_command" else tool
+            for tool in tools]
+
+
+_PRIVATE_NETWORK_NOTE = (
+    " The shell has a private network: localhost is this run's alone, so any port is "
+    "free, and the server's own services and other runs cannot be reached from it; "
+    "outbound internet (package installs) works.")
+_SHARED_NETWORK_NOTE = (
+    " The shell shares localhost with other runs on this server: when a port is "
+    "already in use, pick another one.")
+
+
+def _with_network_note(tool: dict[str, Any]) -> dict[str, Any]:
+    """run_command's text states the network the sessions actually get here."""
+    from besser.spec_driven_agent.execution.sandbox import shell_network_is_private
+
+    note = _PRIVATE_NETWORK_NOTE if shell_network_is_private() else _SHARED_NETWORK_NOTE
+    return {**tool, "description": tool["description"] + note}

@@ -17,12 +17,12 @@ recipe manifest.
 from __future__ import annotations
 
 import os
-import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
+from besser.spec_driven_agent.execution.shell_session import ShellResult
 from besser.spec_driven_agent.agent.tool_executor import (
     MAX_OUTPUT_SIZE,
     MAX_SPILL_SIZE,
@@ -36,12 +36,9 @@ def _executor(tmp_path) -> ToolExecutor:
     return ToolExecutor(workspace=str(tmp_path), allow_shell=True)
 
 
-def _completed(returncode: int, stdout: str = "", stderr: str = "") -> MagicMock:
-    mock = MagicMock(spec=subprocess.CompletedProcess)
-    mock.returncode = returncode
-    mock.stdout = stdout
-    mock.stderr = stderr
-    return mock
+def _completed(returncode: int, stdout: str = "", stderr: str = "") -> ShellResult:
+    """What the run's shell session hands back for one command."""
+    return ShellResult(returncode, stdout, stderr)
 
 
 def _failing_build_log() -> str:
@@ -63,7 +60,7 @@ def _failing_build_log() -> str:
 
 def _run(ex: ToolExecutor, command: str, stdout: str = "", stderr: str = "") -> dict:
     completed = _completed(1 if stderr else 0, stdout=stdout, stderr=stderr)
-    with patch("besser.spec_driven_agent.agent.tool_executor.run_bounded", return_value=completed):
+    with patch("besser.spec_driven_agent.execution.shell_session.ShellSession.run", return_value=completed):
         return ex._run_command({"command": command})
 
 

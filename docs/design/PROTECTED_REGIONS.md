@@ -27,13 +27,13 @@ Concrete evidence:
   but that code lives in the **model**, not in the generated file.
   Editing the rendered Python and regenerating discards the edit.
 - The LLM orchestrator
-  (`besser/spec_driven_agent/orchestrator.py::_phase1_generate`, around
-  line 558) calls the deterministic generator into `self.output_dir`
-  and then runs the gap-analyzer / Phase 2 LLM loop on top.
-  Snapshot/rollback (`_create_snapshot`, `_restore_snapshot`,
-  `.besser_snapshot/`) exists only for *within-run* recovery if Phase
-  3 auto-fix regresses the build — it is deleted at run end (line
-  ~431, 529). Nothing survives across two independent `generate()`
+  (`besser/spec_driven_agent/pipeline/orchestrator.py::_run_phase1`)
+  calls the deterministic generator into `self.output_dir` and then
+  runs the gap-analyzer / Phase 2 LLM loop on top.
+  Snapshot/rollback (`pipeline/phase3_repair.py`: `_create_snapshot`,
+  `_restore_snapshot`, `.besser_snapshot/`) exists only for *within-run*
+  recovery if Phase 3 auto-fix regresses the build — it is deleted at
+  run end. Nothing survives across two independent `generate()`
   invocations.
 
 A model-evolution benchmark quantifies the consequence: across a

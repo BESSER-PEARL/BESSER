@@ -32,15 +32,17 @@ def parse_method(method_str, domain_model=None, type_lookup=None):
     parameters = []
     return_type = None
 
-    # Check if this is actually a method (contains parentheses)
-    if '(' not in method_str:
-        return visibility, method_str, parameters, return_type
-
     # Extract visibility if present
     method_str = method_str.strip()
     if method_str.startswith(tuple(VISIBILITY_MAP.keys())):
         visibility = VISIBILITY_MAP.get(method_str[0], "public")
         method_str = method_str[1:].lstrip()
+
+    # No parentheses: a bare name, or "name: returnType" as the editor saves
+    # a method renamed in its popup.
+    if '(' not in method_str:
+        name, _, declared = method_str.partition(':')
+        return visibility, name.strip(), parameters, declared.strip() or None
 
     # Parse method by finding the first '(' and the last ')' to handle
     # parenthesized default values like method(x: str = "a(b)")

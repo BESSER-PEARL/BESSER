@@ -107,6 +107,9 @@ def test_phase1_npm_install_honours_its_timeout(tmp_path, monkeypatch):
     orch.allow_shell_tools = True
     monkeypatch.setattr("shutil.which", lambda name: npm if name.startswith("npm") else None)
     monkeypatch.setattr(orchestrator_module, "_SCAFFOLD_INSTALL_TIMEOUT_SECONDS", TIMEOUT)
+    # The sandbox is not what is under test, and the patched which() hides
+    # bwrap too: where a sandbox can start, the install was refused instead.
+    monkeypatch.setenv("BESSER_LLM_SHELL_SANDBOX", "off")
 
     started = time.monotonic()
     orch._install_scaffold_frontend_dependencies()
@@ -119,12 +122,13 @@ def test_phase1_npm_install_honours_its_timeout(tmp_path, monkeypatch):
 def test_run_command_honours_its_timeout(tmp_path, monkeypatch):
     """The model's own ``npm install`` goes through run_command."""
     from besser.spec_driven_agent.agent import tool_executor as te
+    from besser.spec_driven_agent.execution import shell_session
 
     heartbeat = tmp_path / "beat"
     npm = _fake_npm(tmp_path, heartbeat)
     monkeypatch.setattr(te, "COMMAND_TIMEOUT", TIMEOUT)
     # The sandbox is not what is under test; run the command as the shell would.
-    monkeypatch.setattr(te, "sandboxed_command",
+    monkeypatch.setattr(shell_session, "sandboxed_command",
                         lambda command, **_: SandboxedCommand(command, True, "test"))
 
     executor = te.ToolExecutor(workspace=str(tmp_path), allow_shell=True)

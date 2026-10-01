@@ -80,7 +80,7 @@ html_theme_options = {
     ],
     "repo_url": "https://github.com/BESSER-PEARL/BESSER",
     "repo_name": "Source",
-    "globaltoc_collapse": True,
+    "globaltoc_collapse": False,
     "toc_title": "On this page",
 }
 html_show_sourcelink = False

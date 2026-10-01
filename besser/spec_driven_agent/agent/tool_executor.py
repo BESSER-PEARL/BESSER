@@ -27,7 +27,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from itertools import count
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 from uuid import uuid4
 
 from besser.BUML.metamodel.structural import DomainModel
@@ -124,8 +124,11 @@ class ToolExecutionResult:
     def to_json(self) -> str:
         return json.dumps(self.payload, default=str)
 
-# Maximum time a shell command can run (seconds)
+# Default time a shell command can run (seconds); the model may ask for up to
+# MAX_COMMAND_TIMEOUT for a long build. install_dependencies gets INSTALL_TIMEOUT.
 COMMAND_TIMEOUT = 120
+MAX_COMMAND_TIMEOUT = 600
+INSTALL_TIMEOUT = 300
 
 # What the model sees when run_command cannot be confined. The cause and the
 # operator override go to the server log only: named here, the model tried to
@@ -504,6 +507,8 @@ class ToolExecutor:
         # The run's one shell: cwd, exported env and background processes
         # carry over between run_command calls. No process until first use.
         self._shell = ShellSession(self.workspace)
+        # Seconds left in the run, set by the orchestrator; caps every command.
+        self.time_left: Callable[[], float | None] | None = None
         # Serial number for spilled command logs (see _spill_command_output).
         self._command_log_count = 0
         self.domain_model = domain_model
@@ -3003,6 +3008,21 @@ class ToolExecutor:
             return None
         return rel
 
+    def _command_timeout(self, requested: Any) -> int:
+        """The requested timeout within [1, MAX_COMMAND_TIMEOUT], or the default,
+        and never past the run's deadline."""
+        timeout = COMMAND_TIMEOUT
+        if requested is not None and not isinstance(requested, bool):
+            try:
+                timeout = int(float(requested))
+            except (TypeError, ValueError):
+                pass
+        timeout = max(1, min(timeout, MAX_COMMAND_TIMEOUT))
+        left = self.time_left() if self.time_left else None
+        if left is not None:
+            timeout = max(1, min(timeout, int(left)))
+        return timeout
+
     def _run_command(self, args: dict, *, adopt_state: bool = True) -> dict:
         """
         Run a shell command in the run's shell session.
@@ -3023,6 +3043,7 @@ class ToolExecutor:
         command = args["command"]
         working_dir = args.get("working_dir")
         start_dir = self._safe_cwd(working_dir) if working_dir else None
+        timeout = self._command_timeout(args.get("timeout"))
 
         # Refuse obviously-destructive or exfil commands before we hand
         # them to the shell. Returned as a normal tool error so the LLM
@@ -3043,7 +3064,7 @@ class ToolExecutor:
             # Falling back to an unconfined shell would silently restore both
             # holes the sandbox exists to close.
             result = self._shell.run(command, working_dir=start_dir,
-                                     timeout=COMMAND_TIMEOUT, adopt_state=adopt_state)
+                                     timeout=timeout, adopt_state=adopt_state)
         except SandboxUnavailable as exc:
             logger.error("run_command refused, sandbox unavailable: %s", exc)
             return {
@@ -3068,7 +3089,7 @@ class ToolExecutor:
             survivors = (" The shell session and processes earlier commands left "
                          "running are unaffected." if result.persistent else "")
             return {
-                "error": f"Command timed out after {COMMAND_TIMEOUT} seconds and was killed, "
+                "error": f"Command timed out after {timeout} seconds and was killed, "
                          f"with everything it started.{survivors}",
                 "command": command,
                 "stdout": self._truncate(result.stdout, MAX_OUTPUT_SIZE // 2),
@@ -3151,7 +3172,7 @@ class ToolExecutor:
 
     def _install_detected(self, args: dict, working_dir: str, custom_command, requirements_txt: str) -> dict:
         if custom_command:
-            return self._run_command({"command": custom_command, "working_dir": args.get("working_dir", ".")},
+            return self._run_command({"command": custom_command, "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
                                      adopt_state=False)
 
         # Auto-detect
@@ -3161,12 +3182,12 @@ class ToolExecutor:
 
         if os.path.isfile(requirements_txt):
             pip_cmd = f"{sys.executable} -m pip install -r requirements.txt --quiet"
-            pip_result = self._run_command({"command": pip_cmd, "working_dir": args.get("working_dir", ".")},
+            pip_result = self._run_command({"command": pip_cmd, "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
                                            adopt_state=False)
             results.append({"type": "pip", "result": pip_result})
 
         if os.path.isfile(package_json):
-            npm_result = self._run_command({"command": "npm install --quiet", "working_dir": args.get("working_dir", ".")},
+            npm_result = self._run_command({"command": "npm install --quiet", "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
                                            adopt_state=False)
             results.append({"type": "npm", "result": npm_result})
 

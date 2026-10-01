@@ -466,9 +466,11 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "after its command returns, so a server started in one command can be tested "
             "with curl in the next. What a background process prints after its command "
             "returned is discarded: redirect it to a file. Each command has a 120-second "
-            "timeout; a command still running then is killed with everything it started, "
+            "timeout unless it sets `timeout` (up to 600 s, for a long build or first "
+            "install); a command still running then is killed with everything it started, "
             "while the session and earlier background processes keep running, so a server "
-            "started in the foreground blocks for the full timeout. When a result's notes "
+            "started in the foreground blocks for the full timeout: start servers in the "
+            "background instead. When a result's notes "
             "say the session was restarted or the command ran in a one-off sandbox, earlier "
             "background processes are gone. A result's cwd field is the shell's directory "
             "when it is not the workspace root. Destructive or exfiltrating commands "
@@ -491,6 +493,14 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
                         "Directory for this command only, relative to the workspace root; "
                         "the shell's own directory does not move. Default: the shell's "
                         "current directory (the workspace root until a command cd's elsewhere)."
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": (
+                        "Seconds before this command is killed. Default 120, max 600, and "
+                        "never past the run's remaining time. Raise it only for a command "
+                        "known to be slow (cargo build, gradle, a first npm install)."
                     ),
                 },
             },

@@ -54,7 +54,7 @@ in `ToolExecutor.execute_typed`, not only by filtering the advertised tool list.
 A local or on-prem install sets the variable and gets the generate-test-fix
 loop. `GET /besser_api/spec-driven/config` reports the live value as
 `features.shell_tools_enabled` so a deploy can be checked from outside the
-process. The local path already has a 120s per-command timeout, a
+process. The local path already has a per-command timeout (120 s default, up to 600 s on request), a
 workspace-confined working directory (`_safe_cwd`), the stripped subprocess
 environment from `execution/process.py`, an output cap and a denylist for the
 obvious catastrophes. On Linux every command also runs in the run's bubblewrap

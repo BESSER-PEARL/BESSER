@@ -342,6 +342,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             allow_shell=allow_shell_tools,
         )
         self.executor.app_validator = self._validate_app
+        self.executor.time_left = self._time_left
         self.executor.api_tester = self._test_api
         self._app_validation_cache: tuple[str, dict] | None = None
         self._api_scenarios: dict[str, dict] = {}
@@ -959,6 +960,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # ==================================================================
     # Phase 1: Deterministic generation (no LLM)
     # ==================================================================
+
+    def _time_left(self) -> float | None:
+        """Seconds left in the run's runtime budget; None before it starts."""
+        if self._start_time is None:
+            return None
+        return self.max_runtime_seconds - (time.monotonic() - self._start_time)
 
     def _run_phase1(self, instructions: str) -> None:
         """Select and run the best generator, then inventory the output."""

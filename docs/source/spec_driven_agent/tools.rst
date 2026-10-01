@@ -259,10 +259,12 @@ What it does:
   the next command starts in the workspace root, and the result says so.
 - **Working directory inside the run workspace.** ``working_dir`` is resolved
   against the workspace and a path that escapes it is rejected.
-- **A 120-second timeout** per command. A command still running then is
-  killed together with everything it started (its process group); the
-  session and the processes earlier commands left running are untouched. A
-  cold ``npm install`` can exceed it.
+- **A per-command timeout**: 120 seconds by default. A command may set
+  ``timeout`` up to 600 seconds for a slow build, and ``install_dependencies``
+  gets 300; no command runs past the run's remaining runtime. A command still
+  running then is killed together with everything it started (its process
+  group); the session and the processes earlier commands left running are
+  untouched.
 - **A stripped environment.** The child process gets an allowlist (``PATH``,
   ``HOME``, locale, temp dirs, a few Python/Node variables) with anything
   name-matching a secret removed, so provider API keys, OAuth secrets and SMTP

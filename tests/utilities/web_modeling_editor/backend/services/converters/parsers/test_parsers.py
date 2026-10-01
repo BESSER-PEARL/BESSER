@@ -224,6 +224,17 @@ class TestParseMethod:
         assert params == []
         assert ret is None
 
+    @pytest.mark.parametrize("method_str, expected", [
+        # What the editor saved after a method was renamed in its popup.
+        ("+ tesr: str", ("public", "tesr", "str")),
+        ("- helper", ("private", "helper", None)),
+        ("# compute:int", ("protected", "compute", "int")),
+    ])
+    def test_no_parens_signature_is_still_split(self, method_str, expected):
+        vis, name, params, ret = parse_method(method_str)
+        assert (vis, name, ret) == expected
+        assert params == []
+
     # --- Return types (parametrized) ------------------------------------------
 
     @pytest.mark.parametrize("method_str, expected_ret", [

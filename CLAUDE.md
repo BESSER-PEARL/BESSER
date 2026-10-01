@@ -52,8 +52,8 @@ ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741 \
 cd docs && make html                # output in docs/build/html/
 python docs/check_docs.py           # what CI runs (check-docs-warnings.sh is a wrapper)
 ```
-The docs gate fails on **any** Sphinx warning or error. Pass `--offline` without network access
-(intersphinx inventories are fetched online).
+The docs gate fails on **any** Sphinx warning or error, except an unreachable external intersphinx inventory
+(an outage at docs.python.org is not a docs defect). Pass `--offline` to skip fetching them.
 
 ### Running locally
 ```bash

@@ -96,8 +96,8 @@ Frontend production builds are distinct from typechecking. A discovered app's
 configured ``npm run build`` is checked only when both toolchain validation and
 shell tools are explicitly enabled and its dependencies are already installed.
 Validation never installs packages or enables shell access. Configured checks
-execute generated build scripts under that explicit permission; this is not an
-operating-system sandbox. Source is checked before and after execution. Results
+execute generated build scripts under that explicit permission, inside a fresh
+bubblewrap sandbox with no network. Source is checked before and after execution. Results
 are reused only for unchanged source and dependency-install markers during the
 same run; source changes during a build invalidate its result. With shell tools
 disabled, a separate external build can verify the output, but raw generation

@@ -52,7 +52,7 @@ Branching and PR Workflow
 8. Respond to review feedback — reviews are collaborative.
 
 CI will automatically run tests on Python 3.11 and 3.12, Ruff linting, and a
-docs build gated on new Sphinx warnings.
+docs build that fails on any Sphinx warning.
 
 .. toctree::
    :maxdepth: 1

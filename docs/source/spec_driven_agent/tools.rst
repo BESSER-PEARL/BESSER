@@ -181,7 +181,7 @@ Shell tools
 what lets the agent close its own loop — run ``pytest``, run ``npm run build``,
 read the failures and fix them — and they are the single largest capability
 difference between a run with them and a run without. They are also arbitrary
-code execution in the backend process, so who is allowed to switch them on is a
+code execution on the host that serves generation, so who is allowed to switch them on is a
 deployment decision, never a per-request one.
 
 Before it installs, ``install_dependencies`` pins the known-incompatible
@@ -372,7 +372,9 @@ stream is itself capped at 2 MB — far above anything a build log needs, and
 only there so a runaway command cannot fill the disk.
 
 .. note::
-   Adding a tool is a two-line change in
-   ``besser/spec_driven_agent/tools.py`` — the declaration *and* an entry in
-   ``_TOOL_MODEL_REQUIREMENTS``, so the tool is only offered when the models it
-   needs are present. See :doc:`../contributor_guide`.
+   Adding a tool takes three edits: its declaration in
+   ``besser/spec_driven_agent/agent/tools.py``, an entry in
+   ``_TOOL_MODEL_REQUIREMENTS`` in the same file (so the tool is only offered
+   when the models it needs are present), and a handler in
+   ``ToolExecutor._handlers`` (``agent/tool_executor.py``). See
+   :doc:`../contributor_guide`.

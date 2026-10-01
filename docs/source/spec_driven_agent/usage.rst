@@ -67,7 +67,7 @@ to do:
 .. note::
    The library defaults are **not** the hosted-editor defaults. ``LLMGenerator``
    ships ``max_cost_usd=5.0`` and ``max_runtime_seconds=1200``, against the
-   editor's 1.0 / 600; and the underlying ``LLMOrchestrator`` defaults
+   editor backend's 5.0 / 2400; and the underlying ``LLMOrchestrator`` defaults
    ``auto_fix_issues=False``, so a library run **reports** Phase 3 findings
    rather than spending turns repairing them. Pass ``auto_fix_issues=True`` to
    ``LLMOrchestrator`` directly if you want the repair loop. See
@@ -84,8 +84,9 @@ to do:
        LLMGenerator(model=model, instructions=...,
                     allow_shell_tools=True, enable_toolchain_validation=True)
 
-   The hosted backend keeps both off via ``BESSER_LLM_ENABLE_SHELL_TOOLS``.
-   See :doc:`tools`.
+   On the hosted editor only the isolated ``besser-wme-smartgen`` worker
+   enables them, through its own environment; see :doc:`production_deployment`
+   and :doc:`tools`.
 
 Troubleshooting a run
 ---------------------

@@ -57,8 +57,9 @@ loop. `GET /besser_api/spec-driven/config` reports the live value as
 process. The local path already has a 120s per-command timeout, a
 workspace-confined working directory (`_safe_cwd`), the stripped subprocess
 environment from `execution/process.py`, an output cap and a denylist for the
-obvious catastrophes. None of that is an OS sandbox: the command runs as the
-backend user and may `cd` out of the workspace. `docs/source/spec_driven_agent/tools.rst`
+obvious catastrophes. On Linux every command also runs in the run's bubblewrap
+sandbox, and a `cd` outside the workspace is reset to the workspace root; on
+Windows and macOS commands run unconfined as the backend user. `docs/source/spec_driven_agent/tools.rst`
 states the guarantees and the non-guarantees.
 
 When a stream overruns the cap, the untruncated output is spilled to

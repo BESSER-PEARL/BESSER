@@ -43,9 +43,9 @@ def fake_bwrap(monkeypatch):
     started = []
 
     class _Counted(shell_session._SessionProcess):
-        def __init__(self, argv, cwd):
+        def __init__(self, argv, cwd, **kwargs):
             started.append(argv)
-            super().__init__(argv, cwd)
+            super().__init__(argv, cwd, **kwargs)
 
     monkeypatch.setattr(shell_session, "sandboxed_command",
                         lambda argv, **_: SandboxedCommand(argv, False, "bwrap"))
@@ -403,12 +403,13 @@ def test_no_bwrap_on_linux_refuses_without_starting_anything(tmp_path, monkeypat
 @linux_only
 def test_the_session_is_the_same_sandbox_a_command_used_to_get(tmp_path, monkeypatch):
     monkeypatch.setenv(SANDBOX_POLICY_ENV, "auto")
+    monkeypatch.setenv(sandbox_mod.SHELL_NETWORK_ENV, "shared")
     monkeypatch.setattr(sandbox_mod.shutil, "which",
                         lambda name: "/usr/bin/bwrap" if name == "bwrap" else "/bin/bash")
     monkeypatch.setattr(sandbox_mod, "_selftest", lambda _b: (True, ""))
     seen = []
 
-    def _capture(argv, cwd):
+    def _capture(argv, cwd, **_):
         seen.append(argv)
         raise SandboxUnavailable("stop here")
 
@@ -423,7 +424,7 @@ def test_the_session_is_the_same_sandbox_a_command_used_to_get(tmp_path, monkeyp
     split = argv.index("--")
     assert argv[:split] == per_command[:per_command.index("--")], \
         "same isolation flags, mount plan, masks and HOME as a per-command sandbox"
-    assert "--unshare-net" not in argv, "run_command keeps its network"
+    assert "--unshare-net" not in argv, "a shared-network session keeps the worker's network"
     for flag in ("--unshare-pid", "--unshare-user", "--die-with-parent", "--new-session"):
         assert flag in argv
     assert argv[split + 1:split + 5] == [sys.executable, "-I", "-S", "-c"]

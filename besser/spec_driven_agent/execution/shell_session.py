@@ -30,6 +30,10 @@ init takes every remaining process in the PID namespace with it. At most
 :data:`MAX_ENV` sessions live per worker; past that a command runs in a
 one-off sandbox with the same confinement, as before this module.
 
+With a private network (``BESSER_LLM_SHELL_NETWORK``, see :mod:`.sandbox`)
+the sandbox has its own network namespace, and a ``pasta`` process, a child of
+this worker, gives it outbound NAT; the session ends if pasta does.
+
 Without a sandbox (Windows, macOS, ``BESSER_LLM_SHELL_SANDBOX=off``) each
 command is a plain subprocess as before; only the directory and environment
 carry over.
@@ -58,7 +62,15 @@ from besser.spec_driven_agent.execution.process import (
     decode_output,
     run_bounded,
 )
-from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, sandboxed_command
+from besser.spec_driven_agent.execution.sandbox import (
+    NETWORK_WAIT_SECONDS,
+    NETWORK_WAIT_SOURCE,
+    SandboxUnavailable,
+    read_child_pid,
+    sandboxed_command,
+    start_pasta,
+    stop_process,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +103,7 @@ BASH_PRELUDE = (
 
 SUPERVISOR_SOURCE = r'''
 import base64, json, os, selectors, signal, struct, subprocess, sys, tempfile, time
+''' + NETWORK_WAIT_SOURCE + r'''
 
 MAX_FRAME = 4 << 20
 STATE_LIMIT = 1 << 20
@@ -183,6 +196,8 @@ class Job:
 
 def main():
     workspace, prelude, bash = sys.argv[1], sys.argv[2], sys.argv[3]
+    # A private network: wait up to argv[4] seconds for pasta to configure it.
+    net = wait_for_network(float(sys.argv[4])) if len(sys.argv) > 4 else None
     harden()
     chan_in, chan_out = os.dup(0), os.dup(1)
     null = os.open(os.devnull, os.O_RDWR)
@@ -215,7 +230,7 @@ def main():
             if len(buf) > job.cap:
                 job.flooded = True
 
-    send(chan_out, {"ready": True})
+    send(chan_out, {"ready": True, "net": net})
     while True:
         wait = None
         if job is not None:
@@ -355,19 +370,43 @@ def _spawn(factory):
 
 
 class _SessionProcess:
-    """One bubblewrap sandbox running the supervisor, and its channel."""
+    """One bubblewrap sandbox running the supervisor, its channel, and the
+    pasta process giving it a private network (``private_network``)."""
 
-    def __init__(self, argv: list[str], cwd: str):
+    def __init__(self, argv: list[str], cwd: str, private_network: bool = False):
         self._stderr = tempfile.TemporaryFile()
+        self.pasta: subprocess.Popen | None = None
+        info_r = info_w = None
+        if private_network:
+            info_r, info_w = os.pipe()
+            # The supervisor's argv ends the plan; its extra arg is the network wait.
+            argv = [argv[0], "--info-fd", str(info_w), *argv[1:], str(NETWORK_WAIT_SECONDS)]
         try:
             self.proc = _spawn(lambda: subprocess.Popen(
                 argv, cwd=cwd, env=_safe_subprocess_env(), stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE, stderr=self._stderr, start_new_session=True,
+                pass_fds=() if info_w is None else (info_w,),
             ))
         except OSError as exc:
             self._stderr.close()
+            if info_r is not None:
+                os.close(info_r)
             raise SandboxUnavailable(f"bwrap could not be executed: {exc}") from None
+        finally:
+            if info_w is not None:
+                os.close(info_w)
         self._serial = 0
+        if private_network:
+            try:
+                pid = read_child_pid(info_r, _START_TIMEOUT)
+                # Also from the spawner thread; pasta is waited on by close().
+                self.pasta = _spawn(lambda: start_pasta(pid, self._stderr))
+            except SandboxUnavailable as exc:
+                self.close()
+                raise SandboxUnavailable(f"the shell session's network did not start: "
+                                         f"{exc.detail}") from None
+            finally:
+                os.close(info_r)
         try:
             hello = self._exchange(None, _START_TIMEOUT)
         except _SessionDied:
@@ -376,6 +415,14 @@ class _SessionProcess:
             detail = self._startup_detail()
             self.close()
             raise SandboxUnavailable(f"the shell session did not start: {detail}")
+        # Fail closed: never a session without the network it was planned with.
+        if private_network and (hello.get("net") is not True or not self.network_alive()):
+            detail = (f"pasta exited with status {self.pasta.returncode}"
+                      if not self.network_alive()
+                      else f"no interface after {NETWORK_WAIT_SECONDS} s")
+            self.close()
+            raise SandboxUnavailable(
+                f"the shell session's private network did not come up ({detail})")
 
     def _startup_detail(self) -> str:
         try:
@@ -389,6 +436,9 @@ class _SessionProcess:
 
     def alive(self) -> bool:
         return self.proc.poll() is None
+
+    def network_alive(self) -> bool:
+        return self.pasta is None or self.pasta.poll() is None
 
     def _read(self, size: int) -> bytes:
         data = self.proc.stdout.read(size)
@@ -436,13 +486,16 @@ class _SessionProcess:
         return reply
 
     def kill(self) -> None:
-        try:
-            self.proc.kill()
-        except OSError:
-            pass
+        for proc in (self.proc, self.pasta):
+            try:
+                if proc is not None:
+                    proc.kill()
+            except OSError:
+                pass
 
     def close(self) -> None:
-        """EOF on the channel ends the supervisor, and bwrap's init with it."""
+        """EOF on the channel ends the supervisor, and bwrap's init with it;
+        pasta is then stopped and reaped."""
         try:
             self.proc.stdin.close()
         except OSError:
@@ -456,6 +509,7 @@ class _SessionProcess:
                 self.proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 logger.error("shell session pid %s did not exit", self.proc.pid)
+        stop_process(self.pasta)
         for stream in (self.proc.stdout, self._stderr):
             try:
                 stream.close()
@@ -608,9 +662,9 @@ class ShellSession:
                 notes.append(f"{start} no longer exists; the command ran in the workspace root.")
                 start = self.cwd = self.workspace
             plan = sandboxed_command(self._supervisor_argv(), workspace=self.workspace,
-                                     cwd=self.workspace)
+                                     cwd=self.workspace, shell_network=True)
             if plan.sandboxed:
-                result, cwd, env = self._run_sandboxed(plan.argv, command, start, timeout, notes)
+                result, cwd, env = self._run_sandboxed(plan, command, start, timeout, notes)
             else:
                 result, cwd, env = self._run_unconfined(command, start, timeout)
             if adopt_state:
@@ -624,12 +678,13 @@ class ShellSession:
         return [sys.executable, "-I", "-S", "-c", SUPERVISOR_SOURCE,
                 self.workspace, BASH_PRELUDE, bash]
 
-    def _run_sandboxed(self, argv, command, cwd, timeout, notes):
+    def _run_sandboxed(self, plan, command, cwd, timeout, notes):
         dead = None
         with self._state_lock:
             proc = self._proc
-            if proc is not None and not proc.alive():
-                dead = self._detach("the shell session stopped; processes it was running "
+            if proc is not None and not (proc.alive() and proc.network_alive()):
+                what = "stopped" if not proc.alive() else "lost its network"
+                dead = self._detach(f"the shell session {what}; processes it was running "
                                     "were stopped. This command started a new session.")
                 proc = None
             if self._pending_note:
@@ -642,7 +697,8 @@ class ShellSession:
         try:
             if proc is None:
                 try:
-                    proc = _SessionProcess(argv, self.workspace)
+                    proc = _SessionProcess(plan.argv, self.workspace,
+                                           private_network=plan.private_network)
                 except BaseException:
                     if persistent:
                         _release_slot(self)

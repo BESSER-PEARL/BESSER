@@ -23,6 +23,10 @@ services:
       # Local stack only: lets the PIA and Local (e.g. Ollama) providers send
       # their own base URL. Off in code and in docker-compose.prod.yml (SSRF).
       - BESSER_LLM_ALLOW_CUSTOM_BASE_URL=${BESSER_LLM_ALLOW_CUSTOM_BASE_URL:-true}
+      # auto: shell sessions share this container's network unless it has
+      # /dev/net/tun (add `devices: [/dev/net/tun:/dev/net/tun]` for a private
+      # network per session, as in docker-compose.prod.yml).
+      - BESSER_LLM_SHELL_NETWORK=${BESSER_LLM_SHELL_NETWORK:-auto}
     # Same as besser-wme-smartgen in docker-compose.prod.yml: bubblewrap, which
     # confines run_command when shell tools are enabled, needs these; without
     # them every run_command is refused.

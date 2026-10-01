@@ -113,6 +113,14 @@ Feature flags
   process. Past the cap a command runs in a one-off sandbox, so what it
   starts in the background stops when it returns; ``0`` gives every command
   its own sandbox. See :ref:`spec-driven-shell-tools`.
+- ``BESSER_LLM_SHELL_NETWORK`` (**auto**) -- The network of a run's shell
+  session. ``private``: a network namespace per session through ``pasta``
+  (passt), with outbound access only, so ``localhost`` is the run's own and
+  the worker's ports and other runs are unreachable; when ``pasta`` or
+  ``/dev/net/tun`` is missing, every command is refused. ``shared``: the
+  worker's own network namespace. ``auto``: ``private`` when a start-up
+  selftest passes, otherwise ``shared`` with one logged warning.
+  ``docker-compose.prod.yml`` sets ``private`` (see :doc:`production_deployment`).
 - ``BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION`` (**off**) -- Run ``tsc`` /
   ``cargo`` / ``kotlinc`` in Phase 3. Costly on non-Python stacks. The cheap
   in-process checks (syntax, Dockerfile references, contracts, ``ruff``) run

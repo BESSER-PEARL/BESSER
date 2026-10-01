@@ -29,6 +29,7 @@ from besser.spec_driven_agent.agent.runbook import PROBE_FILENAME, install_probe
 from besser.spec_driven_agent.execution import shell_session
 from besser.spec_driven_agent.execution.sandbox import (
     SANDBOX_POLICY_ENV,
+    SHELL_NETWORK_ENV,
     run_confined,
     sandbox_selftest_error,
 )
@@ -43,6 +44,9 @@ _MARKER = "BESSER_TEST_FAKE_TOKEN_SESSION_Q4"
 @pytest.fixture(autouse=True)
 def _sandbox_on(monkeypatch):
     monkeypatch.setenv(SANDBOX_POLICY_ENV, "auto")
+    # These watch a session's servers from the worker, which a private network
+    # forbids; private sessions are covered in test_shell_session_private_net.py.
+    monkeypatch.setenv(SHELL_NETWORK_ENV, "shared")
 
 
 def _free_port() -> int:

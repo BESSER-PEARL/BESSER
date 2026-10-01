@@ -72,7 +72,8 @@ FROM python-deps AS smartgen-worker
 #
 # bubblewrap confines run_command's model-authored shell to its own run
 # directory. The worker fails closed without it, and needs
-# seccomp=unconfined to use it (see docker-compose.prod.yml).
+# seccomp=unconfined to use it (see docker-compose.prod.yml). passt (pasta)
+# gives each shell session a private network; it needs /dev/net/tun.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
@@ -80,6 +81,7 @@ RUN apt-get update \
         unzip \
         build-essential \
         bubblewrap \
+        passt \
         openjdk-21-jdk-headless \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \

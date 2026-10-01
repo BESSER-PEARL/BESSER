@@ -974,6 +974,23 @@ def get_tools_for(
         requirements = _TOOL_MODEL_REQUIREMENTS.get(tool["name"], frozenset())
         return requirements.issubset(available)
 
-    return [
-        tool for tool in get_all_tools_including_generators() if _keep(tool)
-    ]
+    tools = [tool for tool in get_all_tools_including_generators() if _keep(tool)]
+    return [_with_network_note(tool) if tool["name"] == "run_command" else tool
+            for tool in tools]
+
+
+_PRIVATE_NETWORK_NOTE = (
+    " The shell has a private network: localhost is this run's alone, so any port is "
+    "free, and the server's own services and other runs cannot be reached from it; "
+    "outbound internet (package installs) works.")
+_SHARED_NETWORK_NOTE = (
+    " The shell shares localhost with other runs on this server: when a port is "
+    "already in use, pick another one.")
+
+
+def _with_network_note(tool: dict[str, Any]) -> dict[str, Any]:
+    """run_command's text states the network the sessions actually get here."""
+    from besser.spec_driven_agent.execution.sandbox import shell_network_is_private
+
+    note = _PRIVATE_NETWORK_NOTE if shell_network_is_private() else _SHARED_NETWORK_NOTE
+    return {**tool, "description": tool["description"] + note}

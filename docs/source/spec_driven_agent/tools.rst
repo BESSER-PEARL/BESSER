@@ -283,10 +283,14 @@ What it does:
   workspace and a per-run ``$HOME`` (``<run dir>.sandbox-home``) are writable.
   ``/usr/local`` and ``/root`` stay read-only, so ``install_dependencies``
   (``pip install``, ``npm install``) installs into that per-run ``$HOME``
-  rather than into the worker or into later runs. The network namespace is
-  not unshared (package installs need it), so runs on one worker share
-  ``localhost``: a server a run leaves listening can collide with, or be
-  reached by, another concurrent run on the same port. The per-run ``$HOME`` sits
+  rather than into the worker or into later runs. Where the worker has
+  ``pasta`` (passt) and ``/dev/net/tun``, the session also gets a network
+  namespace of its own (``BESSER_LLM_SHELL_NETWORK``): its ``localhost``
+  belongs to that run, so any port is free, the worker's own API and other
+  runs' servers cannot be reached, and outbound traffic (package installs)
+  goes out through pasta, which forwards no port in either direction. Without
+  them, in the default ``auto`` mode, runs on one worker share ``localhost``
+  and a warning is logged; ``private`` refuses every command instead. The per-run ``$HOME`` sits
   outside the workspace, so it is never packaged or pushed; it is removed
   with the run, and by the 24-hour temp cleanup. If the sandbox cannot start, every command is
   refused; ``BESSER_LLM_SHELL_SANDBOX=off`` lifts that on a single-tenant

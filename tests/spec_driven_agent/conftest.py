@@ -33,6 +33,15 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def _no_shell_session_outlives_its_test():
+    """A test that ran a shell command without closing its executor would leave
+    that run's session (and its processes) up until the idle timeout."""
+    yield
+    from besser.spec_driven_agent.execution import shell_session
+    shell_session._close_all()
+
+
+@pytest.fixture(autouse=True)
 def _no_model_catalog(monkeypatch):
     """Never resolve a context window from the network in tests.
 

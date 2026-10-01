@@ -139,7 +139,8 @@ Choosing a Generator
 None of the above a fit? If you need a customised codebase — extra features
 (auth, JWT, Docker, tests) or a stack with no built-in generator (Rails, Rust,
 Kotlin, Next.js) — use the :doc:`Spec-Driven Agent <spec_driven_agent/index>`
-instead. It runs keyless on the free tier, or with your own API key.
+instead. It runs keyless on the free tier where the deployment offers one, or with your
+own API key.
 
 Web Application
 ---------------

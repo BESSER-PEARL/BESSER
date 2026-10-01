@@ -54,11 +54,12 @@ in `ToolExecutor.execute_typed`, not only by filtering the advertised tool list.
 A local or on-prem install sets the variable and gets the generate-test-fix
 loop. `GET /besser_api/spec-driven/config` reports the live value as
 `features.shell_tools_enabled` so a deploy can be checked from outside the
-process. The local path already has a 120s per-command timeout, a
+process. The local path already has a per-command timeout (120 s default, up to 600 s on request), a
 workspace-confined working directory (`_safe_cwd`), the stripped subprocess
 environment from `execution/process.py`, an output cap and a denylist for the
-obvious catastrophes. None of that is an OS sandbox: the command runs as the
-backend user and may `cd` out of the workspace. `docs/source/spec_driven_agent/tools.rst`
+obvious catastrophes. On Linux every command also runs in the run's bubblewrap
+sandbox, and a `cd` outside the workspace is reset to the workspace root; on
+Windows and macOS commands run unconfined as the backend user. `docs/source/spec_driven_agent/tools.rst`
 states the guarantees and the non-guarantees.
 
 When a stream overruns the cap, the untruncated output is spilled to
@@ -78,7 +79,7 @@ is capped at `MAX_SPILL_SIZE` so a runaway command cannot fill the disk.
 | Planning, prompts, discovery | `planning/gap_analyzer.py`, `planning/action_inventory.py`, `planning/mutation_inventory.py`, `planning/stack_metadata.py`, `agent/prompt_builder.py`, `agent/runbook.py`, `model_serializer.py` |
 | Authoritative request | `planning/specification.py`, `planning/user_request.py` |
 | Tool contracts and execution | `agent/tools.py`, `agent/tool_executor.py`, `agent/edit_apply.py` |
-| Subprocess environment and sandbox | `execution/process.py`, `execution/sandbox.py` |
+| Subprocess environment, sandbox and the per-run shell session | `execution/process.py`, `execution/sandbox.py`, `execution/shell_session.py` |
 | Shared findings and source contracts | `parsed_source.py`, `validation/issues.py`, `validation/python_source.py`, `validation/python_imports.py`, `validation/frontend_schema.py`, `validation/frontend_source.py`, `validation/frontend_resolution.py`, `validation/frontend_build.py`, `validation/frontend_contract.py`, `validation/toolchain.py` |
 | Immediate source/model contracts | `validation/write_diagnostics.py`, `validation/contract_checks.py`, `validation/frontend_bindings.py`, `validation/endpoint_coherence.py` |
 | Deterministic repair (no model, no LLM) | `repair/import_repair.py`, `repair/scaffold_repair.py` |

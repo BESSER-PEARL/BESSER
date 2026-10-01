@@ -32,7 +32,7 @@ Then install the library:
 
    python -m pip install besser
 
-If you are checking out an unreleased v8 build, use the
+To work from an unreleased development build, use the
 :doc:`source installation <../installation>` instead.
 
 Define the model and generate code

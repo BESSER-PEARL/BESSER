@@ -31,7 +31,7 @@ stamped with the commit they were built from (``BESSER_BUILD_SHA``).
      - ``artefacts.list.lu/besser/web_modeling_editor/smartgen_worker:latest``
        (``smartgen-worker``)
      - Everything in the backend image, plus Node.js 20 with ``tsc``, JDK 21,
-       Rust (``cargo``), ``kotlinc``, ``build-essential`` and bubblewrap.
+       Rust (``cargo``), ``kotlinc``, ``build-essential``, bubblewrap and passt.
 
 The ``Dockerfile`` requires BuildKit (the default builder in current Docker
 releases; set ``DOCKER_BUILDKIT=1`` on older ones): the proxy certificates are
@@ -135,7 +135,32 @@ Sandbox and network
   worker's own root process. Generated code never runs as that process; it
   runs inside bubblewrap's user namespace. Running the worker as a non-root
   user would narrow the exposure further.
-- The validators that execute generated code run in the same sandbox, with
+- Each shell session has a network namespace of its own, which a ``pasta``
+  process (the image's ``passt`` package) connects to the internet with no
+  port forwarded either way: concurrent runs can all use the same port, and
+  none can reach another's server or the worker's own API on ``127.0.0.1``.
+  pasta needs the tun device, hence ``devices: /dev/net/tun`` on the worker.
+  ``BESSER_LLM_SHELL_NETWORK`` is ``private`` there, so a worker without the
+  device refuses every command rather than share its network; ``auto`` (the
+  code default) falls back to the shared namespace with a warning, and
+  ``shared`` keeps it. ``init: true`` reaps the processes bubblewrap leaves
+  behind as they exit, which the Python server as PID 1 does not.
+  ``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` and ``BESSER_LLM_SHELL_SESSION_MAX``
+  are passed through the same ``environment`` block.
+- A run's commands share one long-lived sandbox, its shell session, so a
+  server the agent starts in one command is still up for the next. It is torn
+  down when the run ends in any way, when its folder is deleted, and when the
+  worker exits (the session's control channel is a pipe to the worker
+  process). Two settings bound what sessions hold:
+  ``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` (900) closes a session that has
+  had no command for that long, and ``BESSER_LLM_SHELL_SESSION_MAX`` (10)
+  caps live sessions per worker; past it a command gets a one-off sandbox as
+  before. A session costs a bubblewrap process and a small Python supervisor
+  plus whatever the run left running, so size the worker's memory for
+  ``BESSER_LLM_SHELL_SESSION_MAX`` running apps rather than for one command
+  at a time.
+- The validators that execute generated code run in sandboxes of the same
+  kind, each fresh and never the run's shell session, with
   the network cut: the import check after each file write, the import smoke
   check, the startup, create and API probes, and the ``tsc``, ``cargo check``
   and ``npm run build`` checks. When the worker cannot start the sandbox they
@@ -195,6 +220,8 @@ Run these on the host, in the directory of its compose file:
      'node --version && tsc -v && cargo --version && kotlinc -version && bwrap --version && ruff --version'
    docker compose exec -T besser-wme-smartgen python -c \
      "from besser.spec_driven_agent.execution.sandbox import sandbox_selftest_error as e; print(e() or 'sandbox OK')"
+   docker compose exec -T besser-wme-smartgen python -c \
+     "from besser.spec_driven_agent.execution.sandbox import shell_network_is_private as p; print('private network' if p() else 'SHARED network')"
 
    # Shell tools and toolchain validation are on in the worker ...
    curl -s http://127.0.0.1:9001/besser_api/spec-driven/config | python3 -m json.tool | grep -E 'shell_tools_enabled|toolchain_validation_enabled'
@@ -205,5 +232,5 @@ Run these on the host, in the directory of its compose file:
    # The API answers through the public URL
    curl -s -o /dev/null -w '%{http_code}\n' https://<editor-host>/besser_api/
 
-Expected: the same commit twice, the tool versions, ``sandbox OK``, both
+Expected: the same commit twice, the tool versions, ``sandbox OK``, ``private network``, both
 features ``true`` in the worker, ``False False`` in the backend, and ``200``.

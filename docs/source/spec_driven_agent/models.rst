@@ -18,8 +18,8 @@ backend config endpoint reports it as ``free_tier: {available, model, models}``.
 
 The user pays nothing for a free-tier run, and the run card says "No cost".
 Internally, a free-tier model that draws on the deployment's provider credits
-(for example ``moonshotai/Kimi-K3``) is still priced at its list rate, so the
-per-run cost cap bounds it; a run that reaches the cap reports "Free tier
+(for example ``moonshotai/Kimi-K3``) is priced at the gateway's published
+rate, including its cached-input rate, so the per-run cost cap bounds it; a run that reaches the cap reports "Free tier
 per-run usage limit reached". Models with an explicit free marker
 (``:free`` / ``-free``) and a self-hosted fallback are priced at $0.
 
@@ -153,7 +153,8 @@ the run with that reason and its category rather than an opaque provider
 error.
 
 Every model above has a price, so ``max_cost_usd`` counts its real spend.
-Prices come first from a vendored copy of litellm's published price table.
+Prices come first from a per-gateway table of published rates (currently
+Command Code's), then from a vendored copy of litellm's published price table.
 A route to a paid vendor API (Anthropic, the official OpenAI endpoint,
 Mistral, Nebius) is always billed: the name-based open-weight test that prices
 self-hosted models at zero is skipped there. A paid model id found in no table

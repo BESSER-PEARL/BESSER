@@ -668,6 +668,10 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     frontend forms wired to working backend auth endpoints. "Login" implies
     the user can also CREATE AN ACCOUNT unless they say otherwise. No auth
     stubs — a user must be able to register, then log in, end to end.
+    Never weaken authentication, password hashing, crypto, authorisation or
+    input validation to make a check or test pass: when one fails on a
+    security path, find the cause (dependency, configuration, test input)
+    and fix that.
 {crud_rule}{design_system}
 {idiom_section}{model_tools_section}"""
 

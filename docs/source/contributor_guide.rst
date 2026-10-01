@@ -250,14 +250,16 @@ Working in core packages
 * **Spec-Driven Agent** (``besser/spec_driven_agent/`` plus
   ``.../backend/services/spec_driven/``) — the hybrid generation pipeline:
   a deterministic generator, then an LLM customization loop, then validation
-  with a bounded auto-fix loop. ``orchestrator.py`` owns the three phases and
-  the severity classification; ``tools.py`` declares the LLM's tool surface
+  with a bounded auto-fix loop. ``pipeline/orchestrator.py`` owns Phases 1
+  and 2, ``pipeline/phase3_repair.py`` owns validation and repair, and
+  ``validation/issues.py`` classifies severity; ``agent/tools.py`` declares the LLM's tool surface
   and ``tool_executor.py`` implements it; ``llm_client.py`` holds the provider
   clients, pricing, and the keyless-tier fallback chain. On the service side,
   ``runner.py`` drives a run and emits SSE, and ``run_manager.py`` gives runs
-  durable ownership and event replay. If you add a tool, add it to
-  ``tools.py`` *and* to ``_TOOL_MODEL_REQUIREMENTS`` in the same file, so it is
-  only offered when the models it needs are present. See
+  durable ownership and event replay. A new tool needs its declaration in
+  ``agent/tools.py``, an entry in ``_TOOL_MODEL_REQUIREMENTS`` in the same file
+  (so it is only offered when the models it needs are present), and a handler
+  in ``ToolExecutor._handlers``. See
   :doc:`spec_driven_agent/index`.
 * **Bidirectional converters** — if you support a feature in
   ``json_to_buml/``, add the symmetric path in ``buml_to_json/``. Round-trips
@@ -457,7 +459,7 @@ Step-by-step
 
       python -m pytest tests/         # tests
       ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741         --ignore E501 --exclude "*/BESSERActionLanguageParser.py"   # lint, as CI runs it
-      bash docs/check-docs-warnings.sh                              # if you touched the docs
+      python docs/check_docs.py                                     # if you touched the docs
 
 4. **Push your branch:**
 
@@ -580,8 +582,8 @@ Review and merging
 ~~~~~~~~~~~~~~~~~~
 
 * All PRs must pass automated checks. The CI workflow runs three jobs — tests
-  on Python 3.11 and 3.12, the Ruff lint above, and a docs build gated on new
-  Sphinx warnings (``docs/check-docs-warnings.sh``) — plus CodeQL from the
+  on Python 3.11 and 3.12, the Ruff lint above, and a docs build that fails on
+  any Sphinx warning (``python docs/check_docs.py``) — plus CodeQL from the
   security workflow.
 * At least one maintainer review is required, per the
   `governance rules <https://github.com/BESSER-PEARL/BESSER/blob/master/GOVERNANCE.md>`_.

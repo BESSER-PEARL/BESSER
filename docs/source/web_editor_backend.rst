@@ -113,8 +113,8 @@ Four middlewares wrap every request, outermost first:
 - **CORS** -- origins come from ``CORS_ORIGINS`` (comma-separated) or the
   built-in ``DEFAULT_CORS_ORIGINS``. Credentials are allowed; methods are
   ``GET``/``POST``/``PUT``/``DELETE``/``OPTIONS``; the allowed request headers
-  are ``Content-Type``, ``X-GitHub-Session``, ``Content-Disposition`` and
-  ``Authorization``, and ``Content-Disposition`` plus ``X-BESSER-Run-Id`` are
+  are ``Content-Type``, ``X-GitHub-Session``, ``Content-Disposition``,
+  ``Authorization`` and ``Idempotency-Key``, and ``Content-Disposition`` plus ``X-BESSER-Run-Id`` are
   exposed to the browser.
 - **Request size limit** -- bodies over **50 MB** are rejected with ``413``,
   checked both from ``Content-Length`` and from the read body so the header

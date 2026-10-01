@@ -22,7 +22,7 @@ def _executor(tmp_path, results):
     (tmp_path / "package.json").write_text('{"name": "app"}', encoding="utf-8")
     ex = ToolExecutor(workspace=str(tmp_path), allow_shell=True)
     calls = iter(results)
-    ex._run_command = lambda args: next(calls)
+    ex._run_command = lambda args, **_: next(calls)
     return ex
 
 

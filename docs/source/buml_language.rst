@@ -27,8 +27,12 @@ Choose a model type
      - :doc:`State machine <buml_language/model_types/state_machine>`
    * - Conversational behaviour
      - :doc:`Agent <buml_language/model_types/agent>`
-   * - Processes and workflows
+   * - Processes and workflows (traditional or agentic)
      - :doc:`BPMN <buml_language/model_types/bpmn>`
+   * - Components, interfaces, and agent dependencies
+     - :doc:`UML Component <buml_language/model_types/uml_component>`
+   * - Runtime nodes and deployed artifacts
+     - :doc:`UML Deployment <buml_language/model_types/uml_deployment>`
    * - Users and personalisation
      - :doc:`User diagram <buml_language/model_types/user_diagram>`
    * - Infrastructure

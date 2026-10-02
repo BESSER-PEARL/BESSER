@@ -1,8 +1,8 @@
 """BPMN metamodel for B-UML.
 
 A first-class B-UML model for BPMN diagrams, alongside ``structural`` / ``state_machine`` /
-``gui``. Implements the design in ``.claude/bpmn/01-bpmn-metamodel-design.md`` (reviewed and
-locked) following the build plan in ``.claude/bpmn/02-bpmn-metamodel-implementation-guide.md``.
+``gui``. The implementation keeps BPMN identity object-based while preserving WME ids
+in opaque layout metadata for round-trips.
 
 Hierarchy::
 
@@ -11,8 +11,8 @@ Hierarchy::
                                                Collaboration, Process}
     NamedElement -> Model -> BPMNModel
 
-Growth path (01-... §3.5) -- constructs designed but intentionally NOT implemented yet.
-Each becomes a plain attribute when pulled into scope; no restructuring is needed:
+Growth path -- constructs designed but intentionally NOT implemented yet. Each becomes
+a plain attribute when pulled into scope; no restructuring is needed:
 
 * ``SubProcess.is_expanded`` / ``is_event_subprocess`` / ``is_ad_hoc`` / ``triggered_by_event``
 * ``Transaction.method`` ; ``CallActivity.called_element``
@@ -20,8 +20,7 @@ Each becomes a plain attribute when pulled into scope; no restructuring is neede
 * ``Group.category_value`` ; ``SequenceFlow.condition_expression``
 * multiple ``EventDefinition`` s / parallel-multiple events
 
-Note: ``Process`` and ``SubProcess`` both expose ``flow_nodes`` / ``sequence_flows`` (rather
-than the ``children_*`` names sketched in 01-... §2.2), so the two are duck-type compatible
+Note: ``Process`` and ``SubProcess`` both expose ``flow_nodes`` / ``sequence_flows``, so the two are duck-type compatible
 as flow-element containers -- ``FlowNode.outgoing()`` / ``incoming()`` and ``BPMNModel``'s
 accessors stay free of attribute-name branching. Containment semantics are unchanged.
 """
@@ -34,7 +33,7 @@ from besser.BUML.metamodel.structural import Model, NamedElement
 
 
 # ---------------------------------------------------------------------------
-# Enumerations (decision D7 -- plain enum.Enum; .value strings match the WME enums)
+# Enumerations (plain enum.Enum; .value strings match the WME enums)
 # ---------------------------------------------------------------------------
 
 class TaskType(Enum):
@@ -87,7 +86,7 @@ class EventDefinitionType(Enum):
 
 
 # (EventClassName, EventDirection) -> frozenset of legal EventDefinitionType.
-# Derived from the WME event enums (01-... §3.2) -- WME-subset (decision D1).
+# Derived from the WME event enums; this is the supported WME subset.
 _LEGAL_EVENT_DEFINITIONS = {
     ("StartEvent", EventDirection.CATCH): frozenset({
         EventDefinitionType.NONE, EventDefinitionType.MESSAGE, EventDefinitionType.TIMER,
@@ -164,9 +163,9 @@ def _default_outgoing_flow(node):
 class BPMNElement(NamedElement):
     """Base class for every BPMN abstract-syntax element.
 
-    Relaxes ``NamedElement.name`` (decision D5): a BPMN label is free text and is very often
+    Relaxes ``NamedElement.name``: a BPMN label is free text and is very often
     empty (gateways, events, flows). Also carries ``layout`` -- an opaque diagram-interchange
-    passthrough the metamodel never interprets (decision D8); only the converters read it.
+    passthrough the metamodel never interprets; only the converters read it.
 
     Args:
         name (str): The element label. Empty allowed; ``None`` is coerced to ``""``.
@@ -490,7 +489,7 @@ class CallActivity(Activity):
 class Event(FlowNode):
     """Abstract base for BPMN Events (BPMN 2.0.2 §10.4).
 
-    Orthogonal model (decision D2): an event is described by a ``direction`` (catch / throw)
+    Orthogonal model: an event is described by a ``direction`` (catch / throw)
     and an ``event_definition`` (message / timer / ...), instead of WME's flat string enum.
     The legal ``(class, direction) -> event_definition`` combinations are enforced
     construction-time against ``_LEGAL_EVENT_DEFINITIONS``.
@@ -749,7 +748,7 @@ class DataStore(DataElement):
 
 
 # ---------------------------------------------------------------------------
-# Connecting objects (decision D6 -- four classes under one base)
+# Connecting objects (four classes under one base)
 # ---------------------------------------------------------------------------
 
 class BPMNConnectingObject(BPMNElement):

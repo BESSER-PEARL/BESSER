@@ -14,6 +14,7 @@ from fastapi import HTTPException
 
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
+    GovernanceDslValidationError,
     ValidationError,
     GenerationError,
 )
@@ -34,6 +35,7 @@ def handle_endpoint_errors(endpoint_name: str):
 
     Exception mapping:
         * ``ConversionError``  -> HTTP 400
+        * ``GovernanceDslValidationError`` -> HTTP 422
         * ``ValidationError``  -> HTTP 400
         * ``GenerationError``  -> HTTP 500
         * ``HTTPException``    -> re-raised as-is
@@ -56,6 +58,9 @@ def handle_endpoint_errors(endpoint_name: str):
             except ConversionError as exc:
                 logger.warning("Conversion error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except GovernanceDslValidationError as exc:
+                logger.warning("Governance DSL validation error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except ValidationError as exc:
                 logger.warning("Validation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -80,6 +85,9 @@ def handle_endpoint_errors(endpoint_name: str):
             except ConversionError as exc:
                 logger.warning("Conversion error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except GovernanceDslValidationError as exc:
+                logger.warning("Governance DSL validation error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except ValidationError as exc:
                 logger.warning("Validation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc

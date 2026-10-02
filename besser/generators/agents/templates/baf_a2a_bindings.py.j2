@@ -1,0 +1,409 @@
+# A2A extends the authored graph. No additional Agent or initial state is created.
+from baf.core.transition.condition import Condition
+from types import SimpleNamespace
+from uuid import uuid4
+
+_A2A_OUTBOUND = {{ a2a.get('outbound_edges', []) | python_repr }}
+_A2A_INBOUND = {{ a2a.get('inbound_edges', []) | python_repr }}
+_A2A_SENDS = {{ a2a.get('merge_sends', []) | python_repr }}
+_A2A_TASK_NAMES = [
+{% for state in agent.states %}
+{% set task_state = namespace(value=is_class(state, 'ReasoningState')) %}
+{% for action in (state.body.actions if state.body else []) %}
+{% if is_class(action, 'LLMReply') or is_class(action, 'RAGReply') %}
+{% set task_state.value = true %}
+{% endif %}
+{% endfor %}
+{% if task_state.value %}
+    {{ state.name | tojson }},
+{% endif %}
+{% endfor %}
+]
+_A2A_STATES = {
+{% for state in agent.states %}
+    {{ state.name | tojson }}: {{ state.name }},
+{% endfor %}
+}
+_A2A_PROFILES = {}
+_A2A_FALLBACK_STATES = set()
+{% if has_personalization %}
+{% for mapping in personalization_mapping %}
+{% set profile_suffix = (mapping.name if mapping.name is defined else 'variant_' ~ loop.index) | replace(' ', '_') | replace('-', '_') %}
+{% set profile_agent = mapping.agent_model if mapping.agent_model is defined else mapping.model %}
+{% if profile_agent and profile_agent.states %}
+_A2A_PROFILES[{{ mapping.name | tojson }}] = {
+{% for state in profile_agent.states %}
+    {{ state.name | tojson }}: {{ state.name }}_{{ profile_suffix }},
+{% endfor %}
+}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+
+class _A2APlatformProxy:
+    """Delegate human replies to the authored platform and collect RPC replies."""
+
+    def __init__(self, human_platform):
+        self.human_platform = human_platform
+
+    def __getattr__(self, name):
+        if not name.startswith('reply'):
+            return getattr(self.human_platform, name)
+
+        def send(session, *args, **kwargs):
+            if name == 'reply' and args:
+                session.set('_a2a_last_reply', str(args[0]))
+            if isinstance(session, _A2ARequestSession):
+                if name == 'reply':
+                    session.replies.append(str(args[0]))
+                else:
+                    # RPC cannot display a GUI, but its action remains observable.
+                    session.actions.append({'action': name, 'value': str(args[0]) if args else ''})
+                return
+            return getattr(self.human_platform, name)(session, *args, **kwargs)
+
+        return send
+
+
+platform = _A2APlatformProxy(platform)
+
+
+class _A2ARequestSession(Session):
+    """One synchronous graph turn, without BAF's background event timer."""
+
+    def __init__(self, params):
+        super().__init__(str(uuid4()), agent, platform)
+        self.params = params
+        self.merge_dispatch = None
+        self.result = {}
+        self.replies = []
+        self.actions = []
+        self.moves = 0
+        self.set('_a2a_leaf', bool(params.get('leaf')))
+        self.set('user_profile', params.get('user_profile'))
+        self.event = ReceiveTextEvent(params.get('message', ''), self.id, human=False)
+
+    def call_manage_transition(self):
+        pass
+
+    def move(self, transition):
+        self.moves += 1
+        if self.moves > 100:
+            raise RuntimeError('A2A authored graph exceeded 100 transitions in one request')
+        self._current_state = transition.dest
+        # Call the body directly so an RPC reports execution errors instead of
+        # BAF State.run logging and suppressing them.
+        self.current_state._body(self)
+
+
+def _a2a_sync(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    box = {}
+
+    def run():
+        try:
+            box['result'] = asyncio.run(coro)
+        except Exception as exc:
+            box['error'] = exc
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join()
+    if 'error' in box:
+        raise box['error']
+    return box['result']
+
+
+def _a2a_queue_reply(session, service, message, flow=None):
+    if session is None:
+        return
+    states = _A2A_PROFILES.get(session.get('user_profile'), _A2A_STATES)
+    source_name = next((name for name, state in states.items() if state is session.current_state), None)
+    routes = [edge for edge in _A2A_INBOUND if edge.get('service') == service.split('#', 1)[0]
+              and edge.get('target_state') in states
+              and (edge.get('source_state') == source_name or (
+                  not edge.get('source_state') and any(t.dest is states[edge['target_state']]
+                                                       for t in session.current_state.transitions)))]
+    if len(routes) > 1 and flow:
+        routes = [edge for edge in routes if edge.get('flow') == flow]
+    if len(routes) != 1:
+        return
+    route = routes[0]
+    transition = next((t for t in session.current_state.transitions
+                       if t.dest is states[route['target_state']]), None)
+    intent_name = route.get('intent', '')
+    if not intent_name:
+        # Legacy boundaries infer their receive intent from the existing transition.
+        condition = getattr(transition, '_a2a_original_condition', getattr(transition, 'condition', None))
+        intent = getattr(condition, '_intent', None)
+        intent_name = intent.name if intent is not None else ''
+    elif session.get('user_profile') in _A2A_PROFILES:
+        intent_name += '_' + session.get('user_profile').replace(' ', '_').replace('-', '_')
+    event = ReceiveTextEvent(message, session.id, human=False)
+    event.predicted_intent = SimpleNamespace(intent=SimpleNamespace(name=intent_name),
+                                             state=session.current_state.name, matched_parameters=[])
+    if transition is not None and not transition.is_event():
+        session.event = event
+    else:
+        session.events.appendleft(event)
+
+
+def _a2a_send_edges(task, edges, session=None):
+    if edges is None:
+        return _run_fanout(task)
+
+    async def send():
+        calls, labels = [], []
+        for edge in edges:
+            frame, label = _KIND_FRAME[edge.get('kind') or 'plain']
+            urls = _peer_replica_urls(edge['service'])
+            for i, url in enumerate(urls):
+                kwargs = {'leaf': False}
+                if edge.get('target_gateway') or edge.get('flow'):
+                    kwargs['flow'] = edge.get('target_gateway') or edge['flow']
+                calls.append(asyncio.to_thread(_a2a_call, url, edge['service'],
+                                               frame.format(task=task), **kwargs))
+                sid = edge['service'] + (f'#{i + 1}' if len(urls) > 1 else '')
+                labels.append((sid, label, edge))
+        replies = await asyncio.gather(*calls, return_exceptions=True)
+        parts = []
+        for (sid, label, edge), reply in zip(labels, replies):
+            if isinstance(reply, Exception):
+                logging.warning('A2A boundary: peer %s raised %s', sid, reply)
+            else:
+                parts.append((sid, label, reply))
+                _a2a_queue_reply(session, sid, reply, edge.get('flow'))
+        return parts
+
+    return _a2a_sync(send())
+
+
+def _a2a_finalize_pending(session, pending, message):
+    if pending.get('is_voting') is False:
+        return reply_llm.predict(
+            message='Candidate: ' + pending['task'] + '\n\nHuman decision: ' + message,
+            session=session, system_message=SYSTEM_PROMPT + '\n\n' + pending['instruction'],
+            parameters=MERGE_PARAMS)
+    ids = [c['id'] for c in pending['candidates']]
+    ballot = {'voter': 'human', 'source': 'human', 'weight': 1.0, 'raw': message,
+              'vote': parse_ballot(message, ids) or parse_ballot('BALLOT: ' + message.strip(), ids)}
+    decision = tally(pending['policy_type'], pending['ratio'], pending['candidates'],
+                     pending['ballots'] + [ballot])
+    logging.info('[governance] %s', json.dumps(decision))
+    winner = pending['cand_text'].get(decision['outcome']) or next(iter(pending['cand_text'].values()), '')
+    return winner + _fm_footer(decision)
+
+
+def _a2a_wrap(state, edges, sends, merge_cfg=None, fallback=False):
+    original = state._body
+
+    def execute(session):
+        pending = session.get('_a2a_pending_state')
+        if not pending:
+            session.delete('_a2a_last_reply')
+            original(session)
+        if not getattr(session.event, 'message', None):
+            return
+        if session.get('_a2a_leaf'):
+            if fallback and not session.get('_a2a_last_reply'):
+                session.reply(reply_llm.predict(message=session.event.message, session=session,
+                                               system_message=SYSTEM_PROMPT))
+            return
+        task = session.event.message if pending else (
+            session.get('_a2a_last_reply') or session.get('a2a_result') or session.event.message)
+        session.set('_a2a_task', task)
+        session.set('_a2a_edges', edges if not fallback else None)
+        session.set('_a2a_merge_stages', [(e['service'], e['target_gateway']) for e in sends])
+        cfg = merge_cfg or (getattr(session, 'merge_dispatch', None) if fallback else None)
+        merge_pending = session.get('_a2a_merge_pending')
+        if merge_pending:
+            session.delete('_a2a_merge_pending')
+            session.reply(_a2a_finalize_pending(session, merge_pending, session.event.message))
+        elif cfg is not None:
+            params = getattr(session, 'params', {})
+            result = _a2a_sync(_run_merge(cfg, session.event.message, params))
+            session.reply(result['reply'])
+            if isinstance(session, _A2ARequestSession):
+                session.result = result
+            if result.get('gov_pending'):
+                session.set('_a2a_merge_pending', result['gov_pending'])
+                if not isinstance(session, _A2ARequestSession):
+                    session.reply('Reply with the candidate ID you choose, or your decision.')
+        elif sends or fallback or 'GOVERNANCE_INSTRUCTION' in globals():
+            _a2a_work(session)
+        else:
+            parts = _a2a_send_edges(task, edges, session=session)
+            context = '\n\n'.join(f'[{name} · {label}]\n{text}' for name, label, text in parts)
+            session.reply(reply_llm.predict(message=f'Task: {task}\n\nTeam results:\n{context}',
+                                            session=session, system_message=SYSTEM_PROMPT))
+        waiting = bool(session.get('gov_pending') or session.get('pipeline_pending')
+                       or session.get('_a2a_merge_pending'))
+        session.set('_a2a_pending_state', state.name if waiting else None)
+        session.set('a2a_result', session.get('_a2a_last_reply'))
+        if sends and not waiting:
+            _a2a_queue_reply(session, sends[-1]['service'], session.get('a2a_result'),
+                             sends[-1].get('flow'))
+
+    def body(session: Session):
+        # Framework-created human sessions hold the concrete UI platform,
+        # rather than the generated variable named platform. Capture their
+        # authored replies as well, then restore their platform after the turn.
+        previous_platform = session._platform
+        session._platform = _A2APlatformProxy(previous_platform)
+        try:
+            execute(session)
+        finally:
+            session._platform = previous_platform
+
+    state.set_body(body)
+
+    # A pending human decision must hold the graph at the same authored state.
+    # Preserve each original condition inside the additional pause guard.
+    for transition in state.transitions:
+        condition = transition.condition
+        transition._a2a_original_condition = condition
+
+        def guard(session, original_condition=condition):
+            return not session.get('_a2a_pending_state') and (
+                original_condition is None or original_condition(session))
+
+        transition.condition = Condition(guard)
+
+
+def _a2a_bind_graph(states):
+    bound = False
+    for name, state in states.items():
+        edges = [e for e in _A2A_OUTBOUND if e.get('state') == name]
+        sends = [e for e in _A2A_SENDS if e.get('state') == name]
+        merge_cfg = next((cfg for cfg in globals().get('_MERGES', {}).values()
+                          if cfg['state'] == name), None)
+        if edges or sends or merge_cfg:
+            _a2a_wrap(state, edges, sends, merge_cfg)
+            bound = True
+    if not bound and ({{ 'True' if a2a.peers or a2a.merge_sends or a2a.governance else 'False' }}
+                      or all(s._body.__name__ == 'default_body' for s in states.values())):
+        # Minimal/legacy topology-only models have no usable state binding.
+        # Extend their first non-initial state (or existing initial), retaining
+        # every authored body and transition. No greetings/work/idle graph.
+        state = next((s for s in states.values() if not s.initial), next(iter(states.values())))
+        _a2a_wrap(state, [], [], fallback=True)
+        _A2A_FALLBACK_STATES.add(state.name)
+        if not state.transitions:
+            state.when_no_intent_matched().go_to(state)
+
+
+_a2a_bind_graph(_A2A_STATES)
+for _profile_states in _A2A_PROFILES.values():
+    _a2a_bind_graph(_profile_states)
+
+# Resume a pending human policy decision before the authored graph advances.
+_authored_receive_event = agent.receive_event
+
+
+def _a2a_receive_event(event):
+    session = agent._sessions.get(event.session_id)
+    if session is not None and session.get('_a2a_pending_state') and isinstance(event, ReceiveTextEvent):
+        session.event = event
+        session.current_state._body(session)
+        session.call_manage_transition()
+        return
+    return _authored_receive_event(event)
+
+
+agent.receive_event = _a2a_receive_event
+
+{% if a2a.a2a_server %}
+a2a_platform = agent.use_a2a_platform()
+
+
+async def handle(**params):
+    # Each RPC is isolated from human and other RPC sessions. Tagged flow/peer
+    # bindings enter their authored destination; unbound requests enter the
+    # authored initial state and consume one ordinary BAF message event.
+    session = _A2ARequestSession(params)
+    states = _A2A_PROFILES.get(params.get('user_profile'), _A2A_STATES)
+    profile = params.get('user_profile')
+    if profile in _A2A_PROFILES:
+        # Direct inbound dispatch can bypass the profile's initial body.
+        slug = profile.replace(' ', '_').replace('-', '_')
+        reply_llm.add_user_context(session=session, context=context_prompts.get(slug),
+                                   context_name='agent_configuration')
+        if slug in profile_prompts:
+            reply_llm.add_user_context(session=session, context=profile_prompts[slug],
+                                       context_name='user_profile')
+    routes = _A2A_INBOUND
+    flow, peer = params.get('flow'), params.get('from')
+    matches = [e for e in routes if (not flow or e.get('flow') == flow)
+               and (not peer or peer in (e.get('service'), e.get('peer')))]
+    targets = {e.get('target_state') for e in matches if e.get('target_state') in states}
+    _cfg = globals().get('_MERGES', {}).get(params.get("flow"))
+    if _cfg is not None:
+        session.merge_dispatch = _cfg
+    if params.get('leaf') and (_cfg is not None or len(targets) > 1):
+        # Governance ballots are local answers, never another governed PUSH.
+        local_task = next((states[name] for name in _A2A_TASK_NAMES if name in states), None)
+        if local_task is None:
+            return {'reply': reply_llm.predict(message=params.get('message', ''), session=session,
+                                               system_message=SYSTEM_PROMPT)}
+        target = local_task
+    elif _cfg is not None and _cfg['state'] in states:
+        target = states[_cfg['state']]
+    elif len(targets) == 1:
+        target = states[next(iter(targets))]
+    elif len(targets) > 1 and not params.get('leaf'):
+        raise ValueError('Ambiguous A2A inbound binding; supply flow and from')
+    else:
+        target = next((s for s in states.values() if s.initial), next(iter(states.values())))
+    if not params.get('leaf'):
+        route = next((e for e in matches if e.get('target_state') in states
+                      and states[e['target_state']] is target and e.get('source_state') in states), None)
+        if route is not None:
+            source = states[route['source_state']]
+            transitions = [t for t in source.transitions if t.dest is target
+                           and (not t.is_event() or isinstance(t.event, ReceiveMessageEvent))]
+            if transitions:
+                session._current_state = source
+                # The transport tag identifies the intent deterministically;
+                # every additional authored condition still has to succeed.
+                intent_name = route.get('intent', '')
+                if profile in _A2A_PROFILES:
+                    intent_name += '_' + profile.replace(' ', '_').replace('-', '_')
+                session.event.predicted_intent = SimpleNamespace(
+                    intent=SimpleNamespace(name=intent_name), state=source.name, matched_parameters=[])
+                if not any(t.is_condition_true(session) if not t.is_event()
+                           else t.evaluate(session, session.event) for t in transitions):
+                    raise ValueError('Authored A2A inbound transition conditions were not satisfied')
+    session._current_state = target
+    target._body(session)
+    if not targets and _cfg is None and target.name not in _A2A_FALLBACK_STATES and not session.events:
+        session.events.appendleft(session.event)
+        target.check_transitions(session)
+    # Run eventless authored transitions until the graph waits. The request
+    # event is consumed once; it is never replayed through a text self-loop.
+    for _ in range(100):
+        if session.events:
+            previous_moves = session.moves
+            session.current_state.check_transitions(session)
+            if session.moves == previous_moves:
+                break
+            continue
+        transition = next((t for t in session.current_state.transitions
+                           if not t.is_event() and t.is_condition_true(session)), None)
+        if transition is None:
+            break
+        session.move(transition)
+    else:
+        raise RuntimeError('A2A authored graph did not reach a waiting state')
+    result = dict(session.result)
+    result['reply'] = '\n\n'.join(session.replies)
+    if session.actions:
+        result['actions'] = session.actions
+    return result
+
+
+a2a_platform.router.register("handle", handle)
+{% endif %}

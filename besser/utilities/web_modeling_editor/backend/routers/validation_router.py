@@ -23,6 +23,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
     process_object_diagram,
     process_nn_diagram,
+    process_component_diagram,
+    process_deployment_diagram,
     process_bpmn_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -190,6 +192,31 @@ async def validate_diagram(input_data: DiagramInput):
                 "errors": [],
                 "warnings": []
             }
+
+        elif diagram_type == "ComponentDiagram":
+            try:
+                component_model = process_component_diagram(input_data.model_dump())
+            except ValueError as e:
+                validation_errors.extend(str(e).splitlines())
+            else:
+                if component_model is not None:
+                    cm_validation = component_model.validate(raise_exception=False)
+                    validation_errors.extend(cm_validation["errors"])
+                    validation_warnings.extend(cm_validation["warnings"])
+
+        elif diagram_type == "DeploymentDiagram":
+            try:
+                deployment_model = process_deployment_diagram(input_data.model_dump())
+            except ValueError as e:
+                validation_errors.extend(str(e).splitlines())
+            else:
+                if deployment_model is not None:
+                    dm_validation = deployment_model.validate(raise_exception=False)
+                    validation_errors.extend(dm_validation["errors"])
+                    validation_warnings.extend(dm_validation["warnings"])
+
+        elif diagram_type == "BPMNDiagram":
+            process_bpmn_diagram(input_data.model_dump())
 
         else:
             return {

@@ -1,6 +1,6 @@
 """Tests for the BPMN metamodel (``besser.BUML.metamodel.bpmn``).
 
-Five groups, following ``.claude/bpmn/02-bpmn-metamodel-implementation-guide.md`` §10:
+Five groups cover the metamodel behavior:
     1. Construction validation -- setters raise on bad input; free-text names are accepted.
     2. Invariants -- the derived ``default_flow``.
     3. ``BPMNModel.validate()`` -- rules E1-E11 and warnings W1-W4.
@@ -26,7 +26,7 @@ from besser.BUML.metamodel.structural import Model
 # ---------------------------------------------------------------------------
 
 def test_free_text_names_are_accepted():
-    """BPMN labels are free text: spaces, empty, and None (-> "") must not raise (D5)."""
+    """BPMN labels are free text: spaces, empty, and None (-> "") must not raise."""
     assert Task("Place Order").name == "Place Order"
     assert Task("Review & approve").name == "Review & approve"
     assert Task("").name == ""

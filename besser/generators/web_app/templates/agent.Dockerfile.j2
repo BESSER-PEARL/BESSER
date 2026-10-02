@@ -27,6 +27,10 @@ RUN python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('p
 # Copy agent files
 COPY . .
 
+# Bind the websocket and Streamlit servers to all interfaces: a server bound to
+# localhost inside the container is unreachable through the published ports.
+RUN python -c "import yaml; p = 'config.yaml'; c = yaml.safe_load(open(p)) or {}; pf = c['platforms'] = c.get('platforms') or {}; ws = pf['websocket'] = pf.get('websocket') or {}; ws['host'] = '0.0.0.0'; st = ws['streamlit'] = ws.get('streamlit') or {}; st['host'] = '0.0.0.0'; yaml.safe_dump(c, open(p, 'w'), sort_keys=False)"
+
 # Expose ports
 EXPOSE 8765 5000
 

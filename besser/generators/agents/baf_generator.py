@@ -75,6 +75,15 @@ def _config_has_personalization_content(config) -> bool:
     return False
 
 
+def json_literal(value, indent: int = 2) -> str:
+    r"""JSON for a ``json.loads(r'''...''')`` literal in generated code.
+
+    Unlike Jinja's ``tojson`` it keeps ``<``, ``>`` and ``&`` readable (``age > 65``,
+    not ``age \u003e 65``); only ``'`` is escaped, so the raw string cannot close early.
+    """
+    return json.dumps(value, indent=indent, ensure_ascii=False).replace("'", r"\u0027")
+
+
 def extract_braced_vars(template: str) -> list[str]:
     """Return the unique ``{identifier}`` placeholders of *template*, in order of first appearance.
 
@@ -333,6 +342,7 @@ class BAFGenerator(GeneratorInterface):
         env.globals['safe_var_name'] = safe_var_name
         env.globals['resolve_rag_var_name'] = resolve_rag_var_name
         env.globals['extract_braced_vars'] = extract_braced_vars
+        env.filters['json_literal'] = json_literal
         agent_template = env.get_template('baf_agent_template.py.j2')
         gui_modules = collect_gui_modules(self.model)
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")

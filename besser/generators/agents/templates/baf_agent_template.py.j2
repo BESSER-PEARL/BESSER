@@ -130,8 +130,8 @@ profile_prompts = {}
 {% set profile_name = entry.get("name", "variant_" ~ loop.index) %}
 {% set profile_slug = profile_name | replace(' ', '_') | replace('-', '_') %}
 profile_names.append('{{ profile_name }}')
-agent_configurations['{{ profile_slug }}'] = json.loads(r'''{{ entry.get("configuration", {}) | tojson(indent=2) }}''')
-user_profiles['{{ profile_slug }}'] = json.loads(r'''{{ entry.get("user_profile", {}) | tojson(indent=2) }}''')
+agent_configurations['{{ profile_slug }}'] = json.loads(r'''{{ entry.get("configuration", {}) | json_literal }}''')
+user_profiles['{{ profile_slug }}'] = json.loads(r'''{{ entry.get("user_profile", {}) | json_literal }}''')
 context_prompts['{{ profile_slug }}'] = build_agent_configuration_prompt(agent_configurations['{{ profile_slug }}'])
 {% set personalization_config = entry.get("configuration", {}) %}
 {% if personalization_config.get("adaptContentToUserProfile") and personalization_config.get("userProfileName") == profile_name %}
@@ -141,9 +141,9 @@ profile_prompts['{{ profile_slug }}'] = build_user_profile_prompt(user_profiles[
 agent.set_agent_configurations(agent_configurations)
 {% endif %}
 {% if personalized_messages is defined and personalized_messages %}
-personalized_messages = json.loads(r'''{{ personalized_messages | tojson(indent=2) }}''')
+personalized_messages = json.loads(r'''{{ personalized_messages | json_literal }}''')
 # load the personalization rules from the generator context into a Python variable called `rules`
-rules = json.loads(r'''{{ config['personalizationrules'] | tojson(indent=2) }}''')
+rules = json.loads(r'''{{ config['personalizationrules'] | json_literal }}''')
 {% endif %}
 {% set speech_flags = namespace(
     input=config and config.inputModalities and ('speech' in (config.inputModalities | map('lower'))),

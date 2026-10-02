@@ -27,6 +27,9 @@ import logging
 import uuid
 
 from besser.BUML.metamodel.bpmn import (
+    AgentRole,
+    GatewayRole,
+    ReflectionMode,
     Activity,
     AgenticGateway,
     AgenticLane,
@@ -574,6 +577,12 @@ def bpmn_buml_to_json(content: str) -> dict:
         "TextAnnotation": TextAnnotation,
         "set": set,
         "Project": lambda *args, **kwargs: None,
+        "AgenticTask": AgenticTask,
+        "AgenticGateway": AgenticGateway,
+        "AgenticLane": AgenticLane,
+        "ReflectionMode": ReflectionMode,
+        "GatewayRole": GatewayRole,
+        "AgentRole": AgentRole,
     }
 
     cleaned_lines = []

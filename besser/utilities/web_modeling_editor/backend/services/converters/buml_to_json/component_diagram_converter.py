@@ -11,20 +11,35 @@ import uuid
 from typing import Optional
 
 from besser.BUML.metamodel.uml_component import (
+    AgentCategory,
+    AgenticComponent,
+    AgenticComponentModel,
     AgenticEdge,
+    AgenticEdgeKind,
     Component,
     ComponentDependency,
     ComponentModel,
+    Database,
     Interface,
     InterfaceProvided,
     InterfaceRequired,
+    LLM,
+    Locality,
+    Permission,
+    RAG,
+    Skill,
     Subsystem,
+    Tool,
 )
 from besser.utilities.utils import sort_by_timestamp
 from besser.utilities.web_modeling_editor.backend.services.converters.stereotype_tokens import (
     format_agentic_edge_stereotype,
     format_component_stereotype,
     format_component_subtype_stereotype,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
+    strip_buml_imports,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
@@ -226,21 +241,42 @@ def _compute_size(elements: dict) -> dict:
 
 
 def component_buml_to_json(content: str) -> dict:
-    """Convert a Component BUML ``.py`` file's source text into a WME
-    Component diagram (JSON).
+    """Convert Component BUML source into a WME Component diagram (JSON).
 
-    Execs ``content`` in a fresh namespace, finds the resulting
-    ``ComponentModel``, and delegates to ``component_object_to_json``.
-    Wraps the four expected exec failure modes (``SyntaxError``,
-    ``NameError``, ``TypeError``, ``ValueError``) into ``ConversionError``
-    so ``@handle_endpoint_errors`` maps them to a 400. Other exception
-    types propagate as 500s — that's the load-bearing distinction
-    between bad-upload and backend-broken (see 03-... §7 / BPMN 04- §5
-    for the full reasoning).
+    Strip generated imports, then load the source with the restricted BUML
+    loader and an explicit allowlist of Component metamodel names. Find the
+    resulting ``ComponentModel`` and delegate to ``component_object_to_json``.
+
+    Syntax, name, type, and value errors, including rejected AST constructs,
+    become ``ConversionError``. Unexpected exceptions propagate to the
+    endpoint's error handler.
     """
-    namespace: dict = {}
+    allowed_names = {
+        "AgentCategory": AgentCategory,
+        "AgenticComponent": AgenticComponent,
+        "AgenticComponentModel": AgenticComponentModel,
+        "AgenticEdge": AgenticEdge,
+        "AgenticEdgeKind": AgenticEdgeKind,
+        "Component": Component,
+        "ComponentDependency": ComponentDependency,
+        "ComponentModel": ComponentModel,
+        "Database": Database,
+        "Interface": Interface,
+        "InterfaceProvided": InterfaceProvided,
+        "InterfaceRequired": InterfaceRequired,
+        "LLM": LLM,
+        "Locality": Locality,
+        "Permission": Permission,
+        "RAG": RAG,
+        "Skill": Skill,
+        "Subsystem": Subsystem,
+        "Tool": Tool,
+    }
     try:
-        exec(content, namespace)
+        namespace = safe_load_buml(
+            strip_buml_imports(content),
+            allowed_names,
+        )
     except (SyntaxError, NameError, TypeError, ValueError) as exc:
         raise ConversionError(
             f"Component BUML file failed to execute: {exc}"

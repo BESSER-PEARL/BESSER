@@ -465,8 +465,8 @@ class TestDeploymentBumlToJson:
         result = deployment_buml_to_json(source)
         assert result["type"] == "DeploymentDiagram"
 
-    def test_runtime_error_propagates(self):
-        with pytest.raises(RuntimeError):
+    def test_executable_statement_is_rejected(self):
+        with pytest.raises(ConversionError, match="Top-level statement not allowed: Raise"):
             deployment_buml_to_json("raise RuntimeError('boom')")
 
     def test_multiplicity_survives_full_pipeline(self, multiplicity_deployment_diagram):

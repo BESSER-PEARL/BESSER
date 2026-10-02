@@ -11,6 +11,7 @@ Covers:
   - state_machine_builder.py: state_machine_to_code (smoke + roundtrip)
 """
 
+import ast
 import os
 import tempfile
 import textwrap
@@ -1163,6 +1164,8 @@ from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.object import (
     Object, AttributeLink, DataValue, ObjectModel,
 )
+from besser.BUML.metamodel.uml_component import ComponentModel
+from besser.BUML.metamodel.uml_deployment import DeploymentModel
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 
 
@@ -1298,6 +1301,33 @@ class TestProjectBuilder:
         # With multiple domain models, variable names get numeric suffixes
         assert "domain_model_1" in code
         assert "domain_model_2" in code
+
+    @pytest.mark.parametrize(
+        ("model_class", "heading"),
+        [
+            (ComponentModel, "COMPONENT"),
+            (DeploymentModel, "DEPLOYMENT"),
+        ],
+    )
+    def test_multiline_diagram_names_keep_project_python_valid(
+        self, tmp_path, model_class, heading
+    ):
+        project = Project(
+            name="MultilineProject",
+            models=[
+                model_class(name="First\nline"),
+                model_class(name="Second"),
+            ],
+            metadata=Metadata(description=""),
+        )
+        path = tmp_path / f"{heading.lower()}_project.py"
+
+        project_to_code(project, str(path))
+        source = path.read_text(encoding="utf-8")
+
+        ast.parse(source)
+        assert f'# {heading} MODEL 1: "First line" #' in source
+        assert f'# {heading} MODEL 2: "Second" #' in source
 
     def test_project_with_state_machine(self, tmp_path):
         """Project containing a StateMachine generates state machine code."""

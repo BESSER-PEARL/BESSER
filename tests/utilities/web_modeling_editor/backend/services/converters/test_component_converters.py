@@ -476,11 +476,8 @@ class TestComponentBumlToJson:
         result = component_buml_to_json(source)
         assert result["type"] == "ComponentDiagram"
 
-    def test_runtime_error_propagates_as_500(self):
-        # RuntimeError is NOT in the four-tuple — it surfaces as a 500
-        # via @handle_endpoint_errors, not a ConversionError 400.
-        # The test here just verifies the exception is not caught.
-        with pytest.raises(RuntimeError):
+    def test_executable_statement_is_rejected(self):
+        with pytest.raises(ConversionError, match="Top-level statement not allowed: Raise"):
             component_buml_to_json("raise RuntimeError('boom')")
 
 

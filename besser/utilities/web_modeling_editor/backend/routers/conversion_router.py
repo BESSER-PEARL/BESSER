@@ -294,6 +294,10 @@ router = APIRouter(prefix="/besser_api", tags=["conversion"])
 async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     buml_project = json_to_buml_project(input_data)
 
+    errors = buml_project._cross_diagram_errors["errors"]
+    if errors:
+        raise ConversionError("Cannot export project: " + "; ".join(errors))
+
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         output_file_path = os.path.join(temp_dir, "project.py")
         project_to_code(project=buml_project, file_path=output_file_path)

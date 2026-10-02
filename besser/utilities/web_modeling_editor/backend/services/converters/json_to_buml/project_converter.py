@@ -346,39 +346,20 @@ def json_to_buml_project(project):
 
     # ── Process ALL BPMNDiagrams ──────────────────────────────────────
     for bpmn_diag in diagrams.get("BPMN", []):
-        try:
-            bpmn_model = process_bpmn_diagram(bpmn_diag.model_dump())
-            model_list.append(bpmn_model)
-            # Index by diagram UUID so a Component's processModelRefs resolves.
-            if getattr(bpmn_diag, "id", None):
-                diagram_index[bpmn_diag.id] = bpmn_model
-        except Exception as e:
-            logger.warning(
-                "BPMNDiagram '%s' could not be processed: %s",
-                getattr(bpmn_diag, "title", "unknown"), e,
-            )
+        bpmn_model = process_bpmn_diagram(bpmn_diag.model_dump())
+        model_list.append(bpmn_model)
+        if getattr(bpmn_diag, "id", None):
+            diagram_index[bpmn_diag.id] = bpmn_model
 
     # ── Process ALL ComponentDiagrams ────────────────────────────────
     for comp_diag in diagrams.get("ComponentDiagram", []):
-        try:
-            comp_model = process_component_diagram(comp_diag.model_dump())
-            model_list.append(comp_model)
-        except Exception as e:
-            logger.warning(
-                "ComponentDiagram '%s' could not be processed: %s",
-                getattr(comp_diag, "title", "unknown"), e,
-            )
+        comp_model = process_component_diagram(comp_diag.model_dump())
+        model_list.append(comp_model)
 
     # ── Process ALL DeploymentDiagrams ───────────────────────────────
     for dep_diag in diagrams.get("DeploymentDiagram", []):
-        try:
-            dep_model = process_deployment_diagram(dep_diag.model_dump())
-            model_list.append(dep_model)
-        except Exception as e:
-            logger.warning(
-                "DeploymentDiagram '%s' could not be processed: %s",
-                getattr(dep_diag, "title", "unknown"), e,
-            )
+        dep_model = process_deployment_diagram(dep_diag.model_dump())
+        model_list.append(dep_model)
             
     # Ensure ALL processed ClassDiagrams are in model_list.
     # Object/GUI diagrams may reference ClassDiagrams that were not in the

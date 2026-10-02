@@ -11,6 +11,10 @@ import logging
 import uuid
 from typing import Optional
 
+from besser.BUML.metamodel.structural import (
+    Multiplicity,
+    UNLIMITED_MAX_MULTIPLICITY,
+)
 from besser.BUML.metamodel.uml_deployment import (
     Artifact,
     CommunicationPath,
@@ -20,7 +24,9 @@ from besser.BUML.metamodel.uml_deployment import (
     Interface,
     InterfaceProvided,
     InterfaceRequired,
+    Locality,
     Node,
+    NodeKind,
 )
 from besser.utilities.utils import sort_by_timestamp
 from besser.utilities.web_modeling_editor.backend.services.converters.multiplicity_format import (
@@ -29,6 +35,10 @@ from besser.utilities.web_modeling_editor.backend.services.converters.multiplici
 from besser.utilities.web_modeling_editor.backend.services.converters.stereotype_tokens import (
     format_artifact_stereotype,
     format_node_stereotype,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
+    strip_buml_imports,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
@@ -298,17 +308,36 @@ def _compute_size(elements: dict) -> dict:
 
 
 def deployment_buml_to_json(content: str) -> dict:
-    """Convert a Deployment BUML ``.py`` file's source text into a WME
-    Deployment diagram (JSON).
+    """Convert Deployment BUML source into a WME Deployment diagram (JSON).
 
-    Same posture as ``component_buml_to_json`` — exec in a fresh
-    namespace, locate the ``DeploymentModel``, delegate to
-    ``deployment_object_to_json``. Wraps the four expected exec failure
-    modes into ``ConversionError``; everything else propagates.
+    Strip generated imports, then load the source with the restricted BUML
+    loader and an explicit allowlist of Deployment metamodel names. Find the
+    resulting ``DeploymentModel`` and delegate to ``deployment_object_to_json``.
+
+    Syntax, name, type, and value errors, including rejected AST constructs,
+    become ``ConversionError``. Unexpected exceptions propagate to the
+    endpoint's error handler.
     """
-    namespace: dict = {}
+    allowed_names = {
+        "Artifact": Artifact,
+        "CommunicationPath": CommunicationPath,
+        "DeploymentDependency": DeploymentDependency,
+        "DeploymentModel": DeploymentModel,
+        "DeploymentRelation": DeploymentRelation,
+        "Interface": Interface,
+        "InterfaceProvided": InterfaceProvided,
+        "InterfaceRequired": InterfaceRequired,
+        "Locality": Locality,
+        "Multiplicity": Multiplicity,
+        "Node": Node,
+        "NodeKind": NodeKind,
+        "UNLIMITED_MAX_MULTIPLICITY": UNLIMITED_MAX_MULTIPLICITY,
+    }
     try:
-        exec(content, namespace)
+        namespace = safe_load_buml(
+            strip_buml_imports(content),
+            allowed_names,
+        )
     except (SyntaxError, NameError, TypeError, ValueError) as exc:
         raise ConversionError(
             f"Deployment BUML file failed to execute: {exc}"

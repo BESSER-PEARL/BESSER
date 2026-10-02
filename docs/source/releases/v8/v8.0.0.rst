@@ -73,4 +73,4 @@ Related documentation
 * :doc:`/start/index` — new user paths.
 * :doc:`/spec_driven_agent/index` — pipeline, configuration, and API.
 * `Editor v8 release notes <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/releases/v8.0.0.html>`_.
-* `Modeling Agent v8 release notes <https://github.com/BESSER-PEARL/modeling-agent/blob/develop/docs/source/releases/v8.0.0.rst>`_.
+* `Modeling Agent v8 release notes <https://modeling-agent.readthedocs.io/en/latest/releases/v8.0.0.html>`_.

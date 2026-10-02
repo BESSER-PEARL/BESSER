@@ -259,3 +259,35 @@ def test_baf_generator_plain_rag_has_no_hybrid_import(multi_rag_agent_model, tmp
     assert "from baf.nlp.rag.rag import RAG\n" in code
     assert "HybridRAG" not in code
     assert "bm25_weight" not in code
+
+
+# Saved by editor builds that wrote ``database:`` for sqlite; BAF requires ``file:``
+# ("Missing required DB properties for 'db1' (dialect=sqlite): file").
+_LEGACY_SQL_YAML = """db:
+  sql:
+    - db1:
+        dialect: sqlite
+        database: shop.db
+    - db2:
+        dialect: postgresql
+        database: crm
+        host: localhost
+        port: 5432
+        username: u
+        password: p
+    - db3:
+        dialect: sqlite
+        file: kept.db
+"""
+
+
+def test_config_yaml_sqlite_database_written_as_file(agent_model, tmpdir):
+    yaml = pytest.importorskip("yaml")
+    output_dir = tmpdir.mkdir("output")
+    BAFGenerator(model=agent_model, output_dir=str(output_dir), config_yaml=_LEGACY_SQL_YAML).generate()
+
+    with open(os.path.join(str(output_dir), "config.yaml"), encoding="utf-8") as f:
+        sql = {name: cfg for entry in yaml.safe_load(f)["db"]["sql"] for name, cfg in entry.items()}
+    assert sql["db1"] == {"dialect": "sqlite", "file": "shop.db"}
+    assert sql["db2"]["database"] == "crm" and "file" not in sql["db2"]
+    assert sql["db3"] == {"dialect": "sqlite", "file": "kept.db"}

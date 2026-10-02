@@ -282,8 +282,8 @@ def test_backend_generator_full_uml_and_implem(tmpdir):
     # router module (Manager updating itself), so no cross-router import is
     # needed and the call site text is unchanged from the old monolith.
     assert "inst_to_update = _manager_object" in manager_methods_code
-    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = inst_to_update.level, name = inst_to_update.name, role = inst_to_update.role, salary = (1.1 * _manager_object.salary), department = inst_to_update.department, projects = inst_to_update.projects), database)" in manager_methods_code
-    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = (_manager_object.level + 1), name = inst_to_update.name, role = inst_to_update.role, salary = inst_to_update.salary, department = inst_to_update.department, projects = inst_to_update.projects), database)" in manager_methods_code
+    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = inst_to_update.level, name = inst_to_update.name, role = inst_to_update.role, salary = (1.1 * _manager_object.salary), department = (inst_to_update.department.id if inst_to_update.department is not None else None), projects = [x.id for x in inst_to_update.projects]), database)" in manager_methods_code
+    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = (_manager_object.level + 1), name = inst_to_update.name, role = inst_to_update.role, salary = inst_to_update.salary, department = (inst_to_update.department.id if inst_to_update.department is not None else None), projects = [x.id for x in inst_to_update.projects]), database)" in manager_methods_code
 
 
 def test_backend_generator_one_to_one_optional_field(tmpdir):

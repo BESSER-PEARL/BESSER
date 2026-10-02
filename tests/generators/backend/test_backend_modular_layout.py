@@ -135,11 +135,11 @@ def test_search_endpoint_covers_inherited_attributes(tmp_path):
 # imports, which could deadlock on circular router references).
 # ---------------------------------------------------------------------------
 
-def test_cross_router_calls_ignores_same_class_calls():
-    """A method's own class's endpoint functions are already in scope in its
-    own router module, so no import should be generated for them."""
+def test_cross_router_calls_imports_same_class_crud():
+    """Method endpoints live in ``<class>_methods``, so the class's own CRUD
+    functions (``routers.<class>``) need an import there too."""
     code = "inst_to_update = _manager_object\nawait update_manager(inst_to_update.id, ManagerCreate(x=1), database)"
-    assert cross_router_calls(code, "Manager", ["Manager", "Department"]) == []
+    assert cross_router_calls(code, "Manager", ["Manager", "Department"]) == [("manager", "update_manager")]
 
 
 def test_cross_router_calls_detects_other_class_functions():
@@ -162,7 +162,7 @@ def test_cross_router_calls_detects_method_and_relationship_helpers():
         "y = (await get_employees_of_department(inst_to_update.id, database))['employees']\n"
     )
     result = cross_router_calls(code, "Employee", ["Employee", "Department"])
-    assert ("department", "execute_department_close") in result
+    assert ("department_methods", "execute_department_close") in result
     assert ("department", "get_employees_of_department") in result
 
 

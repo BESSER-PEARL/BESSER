@@ -172,6 +172,8 @@ class BAFGenerator(GeneratorInterface):
             - GenerationMode.FULL (default): personalization (if config) + templated code.
             - GenerationMode.PERSONALIZED_ONLY: run personalization JSON/model export only.
             - GenerationMode.CODE_ONLY: skip personalization helpers, render templates immediately.
+        a2a_descriptor (dict, optional): Resolved deployment topology and governance.
+            Extends the authored agent graph when peers or an A2A server are present.
     """
     def __init__(
         self,
@@ -183,12 +185,19 @@ class BAFGenerator(GeneratorInterface):
         generation_mode: GenerationMode | str = GenerationMode.FULL,
         config_yaml: Optional[str] = None,
         test_mode: bool = False,
+        a2a_descriptor: Optional[dict] = None,
     ):
         super().__init__(model, output_dir)
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
         self.config_yaml = config_yaml
         self.openai_api_key = openai_api_key
         self.test_mode = test_mode
+        self.a2a_descriptor = (
+            a2a_descriptor if a2a_descriptor and
+            (a2a_descriptor.get('to_peers') or a2a_descriptor.get('a2a_server')) else None
+        )
+        if self.a2a_descriptor and sum(bool(state.initial) for state in model.states) != 1:
+            raise ValueError('A2A generation requires exactly one authored initial state')
         if isinstance(generation_mode, GenerationMode):
             self.generation_mode = generation_mode
         elif isinstance(generation_mode, str):
@@ -301,6 +310,7 @@ class BAFGenerator(GeneratorInterface):
         env.globals['safe_var_name'] = safe_var_name
         env.globals['resolve_rag_var_name'] = resolve_rag_var_name
         env.globals['extract_braced_vars'] = extract_braced_vars
+        env.filters['python_repr'] = repr
         agent_template = env.get_template('baf_agent_template.py.j2')
         gui_modules = collect_gui_modules(self.model)
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
@@ -369,6 +379,7 @@ class BAFGenerator(GeneratorInterface):
                     personalization_mapping=config_for_personalization['personalizationMapping'],
                     test_mode=self.test_mode,
                     gui_modules=list(gui_modules),
+                    a2a=self.a2a_descriptor,
                 )
                 f.write(generated_code)
         else:
@@ -379,6 +390,7 @@ class BAFGenerator(GeneratorInterface):
                     config=self.config,
                     test_mode=self.test_mode,
                     gui_modules=list(gui_modules),
+                    a2a=self.a2a_descriptor,
                 )
                 f.write(generated_code)
             logger.info("Agent script generated at %s", agent_path)

@@ -21,6 +21,10 @@ Optional constructor parameters:
   instead of the template-rendered default.
 - ``openai_api_key``: OpenAI API key for LLM-powered agent features.
 - ``generation_mode``: See `Generation Modes`_ below.
+- ``a2a_descriptor``: Optional resolved A2A topology and governance, normally
+  supplied by the Docker Compose generator. It extends the same agent's
+  authored states, actions, transitions, and personalization. Descriptors with
+  no outbound peers and no A2A server use the ordinary render.
 - ``test_mode``: When ``True``, the agent is generated to be driven headlessly
   in an isolated test environment such as the Agent Simulator:
 
@@ -47,6 +51,32 @@ The generated files land in the ``<<current_directory>>/output`` folder:
   personalization config is supplied and the mode is not ``CODE_ONLY``.
 
 Check out the BAF documentation for more details on how to use the generated agent: `BESSER Agentic Framework Documentation <https://besser-agentic-framework.readthedocs.io/latest/>`_.
+
+
+A2A and authored behavior
+------------------------
+
+A2A generation requires exactly one authored initial state. Human-facing agents
+keep their configured platform; headless workers expose only the A2A server,
+and hybrid agents expose both. Outbound tagged or legacy boundary states run
+their authored body before contacting peers. Repeated edges to the same peer
+at different states remain distinct, including governed merge stages.
+Peer replies feed applicable authored receive transitions and are available as
+``session.get('a2a_result')``. Ordinary tagged sends carry the flow and sender
+service as well as the message.
+
+Inbound requests use an isolated BAF session. Resolved ``flow`` and ``from``
+bindings select the authored destination and honor applicable inbound transition
+conditions. Automatic and conditional transitions continue until the graph
+waits for another event, with a limit of 100 transitions per request. Ambiguous
+bindings require a ``flow`` or ``from`` value. RPC GUI actions are returned as
+action notices; human sessions render the authored GUI on their platform.
+An RPC session lasts one request, so interactive GUI conversations use the human
+platform. Governance ``leaf`` requests suppress further peer calls.
+
+For topology-only models without usable state bindings, the generated runtime
+extends an existing state with the legacy swarm behavior. It never replaces the
+authored graph with a separate greetings/work/idle graph.
 
 
 Generation Modes

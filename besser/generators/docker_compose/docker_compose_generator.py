@@ -327,8 +327,9 @@ def _union_merge_state_peers(descriptor: dict) -> None:
     descriptor['to_peers'] = [p['service'] for p in peers]
 
 
-def _prefer_ui_single_merge_governance(descriptor: dict, explicit_human_facing: bool) -> None:
-    """Prefer the UI/work_body governance path for the explicit human-facing voting owner."""
+def _prefer_ui_single_merge_governance(descriptor: dict, explicit_human_facing: bool,
+                                       agent=None) -> None:
+    """Use topology-only UI governance when no authored merge state can be bound."""
     states = descriptor.get('states') or []
     governance = descriptor.get('governance') or {}
     if not explicit_human_facing:
@@ -338,6 +339,8 @@ def _prefer_ui_single_merge_governance(descriptor: dict, explicit_human_facing: 
     if len(states) != 1:
         return
     if not governance.get('is_voting'):
+        return
+    if agent is not None and any(st.name == states[0]['name'] for st in agent.states):
         return
     descriptor['states'] = []
 
@@ -388,7 +391,7 @@ def _a2a_descriptor(agent, service_names: set, self_service: str = None) -> dict
         'role': role,
         'human_facing': human_facing,
         'a2a_server': a2a_server,
-        'agent_id': _safe_service_name(name),
+        'agent_id': self_id,
         'to_peers': sorted_peers,
         # `peers` shim so the kind-aware template is single-path. The legacy
         # convention has no `kind`, so every peer renders as a plain channel (kind=None),
@@ -396,6 +399,16 @@ def _a2a_descriptor(agent, service_names: set, self_service: str = None) -> dict
         'peers': [{'service': p, 'kind': None, 'order': i, 'state': ''}
                   for i, p in enumerate(sorted_peers)],
         'source': 'convention',
+        'outbound_edges': [
+            {'service': _safe_service_name(st.name[3:]), 'state': st.name, 'kind': None}
+            for st in agent.states if st.name.startswith('to_')
+            and _safe_service_name(st.name[3:]) in sorted_peers
+        ],
+        'inbound_edges': [
+            {'service': _safe_service_name(st.name[5:]), 'target_state': st.name}
+            for st in agent.states if st.name.startswith('from_')
+            and _safe_service_name(st.name[5:]) in from_peers
+        ],
         'prompt': prompt or _default_prompt(name, role),
         'governance': _governance_for(agent),
         'greeting': f"Hi! I'm {name}. Give me a task for the team.",
@@ -412,7 +425,7 @@ def _a2a_descriptor(agent, service_names: set, self_service: str = None) -> dict
     # Ordered pipeline of governed-merge sends (un-deduped). Drives the
     # entry/initiator un-flatten: thread the task through each merge in turn. [] for legacy.
     descriptor['merge_sends'] = _merge_sends_for(agent, service_names, self_id)
-    _prefer_ui_single_merge_governance(descriptor, getattr(agent, '_human_facing', None) is True)
+    _prefer_ui_single_merge_governance(descriptor, getattr(agent, '_human_facing', None) is True, agent)
     # Bake the frozen tally engine once for any agent that OWNS a governed merge
     # (each merge in _MERGES shares it) OR INITIATES a pipeline (finalizes a human-approved
     # stage at the entry, O1). Absent for legacy agents → no bake → byte-identical.
@@ -459,6 +472,7 @@ def _a2a_descriptor_from_tags(agent, service_names: set, self_service: str = Non
             peers.append({'service': svc, 'kind': edge.get('kind'),
                           'order': edge.get('order', 9999),
                           'state': edge.get('state', ''),
+                          'flow': edge.get('flow'),
                           # The governed gateway this outbound edge feeds (set
                           # by _attach_governance_to_agents from the BPMN flow→gateway map);
                           # the producer tags its PUSH message with it so the owner routes
@@ -483,11 +497,19 @@ def _a2a_descriptor_from_tags(agent, service_names: set, self_service: str = Non
         'role': role,
         'human_facing': human_facing,
         'a2a_server': a2a_server,
-        'agent_id': _safe_service_name(name),
+        'agent_id': self_id,
         'to_peers': [p['service'] for p in peers],     # back-compat (existing template/tests)
         'peers': peers,                                # NEW: per-kind, ordered
         'inbound': sorted(inbound_peers),              # NEW
         'source': 'tags',                              # provenance (vs 'convention')
+        # Keep every authored edge: the service-deduped topology list cannot
+        # represent two sends to the same peer at different states.
+        'outbound_edges': [dict(e, service=_resolve_peer_service(e, service_names))
+                           for e in tags.get('outbound', [])
+                           if _resolve_peer_service(e, service_names) not in (None, self_id)],
+        'inbound_edges': [dict(e, service=_resolve_peer_service(e, service_names))
+                          for e in tags.get('inbound', [])
+                          if _resolve_peer_service(e, service_names) not in (None, self_id)],
         'prompt': prompt or _default_prompt(name, role),
         'governance': _governance_for(agent),
         'greeting': f"Hi! I'm {name}. Give me a task for the team.",
@@ -504,7 +526,7 @@ def _a2a_descriptor_from_tags(agent, service_names: set, self_service: str = Non
     # Ordered pipeline of governed-merge sends (un-deduped). Drives the
     # entry/initiator un-flatten: thread the task through each merge in turn. [] for legacy.
     descriptor['merge_sends'] = _merge_sends_for(agent, service_names, self_id)
-    _prefer_ui_single_merge_governance(descriptor, getattr(agent, '_human_facing', None) is True)
+    _prefer_ui_single_merge_governance(descriptor, getattr(agent, '_human_facing', None) is True, agent)
     # Bake the frozen tally engine once for any agent that OWNS a governed merge
     # (each merge in _MERGES shares it) OR INITIATES a pipeline (finalizes a human-approved
     # stage at the entry, O1). Absent for legacy agents → no bake → byte-identical.
@@ -593,18 +615,6 @@ class DockerComposeGenerator(GeneratorInterface):
             and getattr(a, "agent_model_ref", None)
             and self.agent_models_by_id.get(a.agent_model_ref) is not None
         }
-        # The A2A agent template lives next to the generic BAF template
-        # (agents/templates), not in this generator's templates dir, so it needs
-        # its own loader rather than the docker_compose `env` above.
-        agent_tpl_dir = os.path.join(
-            os.path.dirname(inspect.getfile(BAFGenerator)), "templates"
-        )
-        a2a_env = Environment(
-            loader=FileSystemLoader(agent_tpl_dir),
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
-        a2a_tpl = a2a_env.get_template("baf_a2a_agent_template.py.j2")
 
         for art in self.model.all_artifacts():
             if art.locality != Locality.LOCAL:
@@ -621,11 +631,8 @@ class DockerComposeGenerator(GeneratorInterface):
             svc_name = _safe_service_name(art.name)
             ctx_dir = os.path.join(base_dir, svc_name)
             os.makedirs(ctx_dir, exist_ok=True)
-            # BAF agent.py + config.yaml into the build context.
-            BAFGenerator(agent, output_dir=ctx_dir).generate()
 
-            # v2 A2A — if this agent has boundary states (it participates in the
-            # swarm topology), OVERWRITE the generic agent.py with the A2A render.
+            # Extend the normal BAF render with the resolved A2A topology.
             # pass THIS service's name so a `from_<self>` boundary can't
             # demote the entry to a worker (the agent_id and the service line up via
             # _safe_service_name, but pass it explicitly to be robust).
@@ -649,11 +656,16 @@ class DockerComposeGenerator(GeneratorInterface):
                                        if p.get('service') not in no_server]
                 descriptor['to_peers'] = [s for s in descriptor.get('to_peers', [])
                                           if s not in no_server]
+                for key in ('outbound_edges', 'merge_sends'):
+                    descriptor[key] = [e for e in descriptor.get(key, [])
+                                       if e.get('service') not in no_server]
             has_boundaries = bool(descriptor['to_peers']) or descriptor['a2a_server']
+            BAFGenerator(
+                agent,
+                output_dir=ctx_dir,
+                a2a_descriptor=descriptor if has_boundaries else None,
+            ).generate()
             if has_boundaries:
-                with open(os.path.join(ctx_dir, f"{agent.name}.py"),
-                          mode="w", encoding="utf-8") as f:
-                    f.write(a2a_tpl.render(agent=agent, a2a=descriptor))
                 print(f"[docker_compose] A2A-wired ({descriptor['role']}): {svc_name} "
                       f"-> to_peers={descriptor['to_peers']}")
 

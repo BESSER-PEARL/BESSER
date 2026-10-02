@@ -722,14 +722,13 @@ def test_human_facing_single_merge_owner_uses_ui_governance_path(tmp_path):
     assert "GOVERNANCE_POLICY_TYPE" in owner_py
     assert "def _run_fanout(task, only=None, leaf=False):" in owner_py
     assert "_MERGES = {" not in owner_py
-    assert '_cfg = _MERGES.get(params.get("flow"))' not in owner_py
     assert "_run_fanout(task, only=set(GOVERNANCE_PRODUCERS), leaf=True)" in owner_py
     assert "_run_fanout(cand_block + BALLOT_INSTRUCTION, only=_voters, leaf=True)" in owner_py
 
     assert "async def handle(" in prod_py
-    assert 'if _leaf:' in prod_py
-    assert 'return {"reply": reply}' in prod_py
-    assert 'return {"reply": _run_merge_pipeline(task)}' in prod_py
+    assert "if session.get('_a2a_leaf'):" in prod_py
+    assert 'session.replies' in prod_py
+    assert '_a2a_work(session)' in prod_py
 
 
 # ---------------------------------------------------------------------------
@@ -737,14 +736,9 @@ def test_human_facing_single_merge_owner_uses_ui_governance_path(tmp_path):
 # but the drop is now VISIBLE (warning) rather than silent.
 # ---------------------------------------------------------------------------
 
-def test_legacy_single_gateway_render_is_byte_identical(tmp_path):
-    """Byte-identity gate: an agent WITHOUT per-state governance binding
-    (``_governance_by_state``) must render via EXACTLY today's synthesized path. This
-    golden locks the verified single-gateway governed render byte-for-byte, so the
-    per-state machinery cannot perturb it.
-
-    After an INTENTIONAL render change, regenerate the golden by re-running this test
-    once with ``BESSER_REGEN_GOLDEN=1`` set (it rewrites the fixture, then passes).
+def test_legacy_single_gateway_governance_extends_authored_graph(tmp_path):
+    """The combined render preserves the legacy governance algorithm and the
+    authored graph; the obsolete purpose-built source golden is no longer the contract.
     """
     model = _two_agent_swarm_model()
     supervisor = _agent_with_a2a("AgentSupervisor", outbound=[
@@ -765,13 +759,16 @@ def test_legacy_single_gateway_render_is_byte_identical(tmp_path):
 
     rendered = (tmp_path / "agent_supervisor" / "AgentSupervisor.py").read_text(
         encoding="utf-8")            # text mode → universal-newline normalized
-    golden_path = os.path.join(os.path.dirname(__file__), "golden",
-                               "legacy_single_gateway_supervisor.py")
-    if os.environ.get("BESSER_REGEN_GOLDEN"):
-        with open(golden_path, "w", encoding="utf-8", newline="") as f:
-            f.write(rendered)
-    golden = open(golden_path, encoding="utf-8").read()
-    assert rendered == golden, "legacy single-gateway render drifted from the golden"
+    import ast
+    ast.parse(rendered)
+    assert "agent.new_state('initial', initial=True)" in rendered
+    assert rendered.count("agent = Agent(") == 1
+    assert rendered.count("agent.load_properties(") == 1
+    assert rendered.count("initial=True") == 1
+    assert "GOVERNANCE_POLICY_TYPE" in rendered
+    assert "def tally" in rendered and "def parse_ballot" in rendered
+    assert "_gov_owner_ballot(session, cand_block, _ids)" in rendered
+
 
 
 def test_multiple_governed_gateways_warns_and_wires_first(tmp_path, caplog):
@@ -871,7 +868,7 @@ def test_faithful_owner_renders_per_merge_dispatch(tmp_path, caplog):
     assert "_MERGES = {" in owner_py
     assert '"gw1":' in owner_py and '"gw2":' in owner_py   # one config per gateway
     assert "async def _run_merge(cfg, task, params):" in owner_py
-    assert '_cfg = _MERGES.get(params.get("flow"))' in owner_py   # PUSH dispatch
+    assert "_cfg = globals().get('_MERGES', {}).get(params.get(\"flow\"))" in owner_py   # PUSH dispatch
     assert "def _run_fanout(task, only=None, leaf=False):" in owner_py
     assert "def tally" in owner_py and "def parse_ballot" in owner_py  # engine baked once
     assert "_run_fanout(cand_block + BALLOT_INSTRUCTION, only=_voters, leaf=True)" in owner_py
@@ -940,7 +937,7 @@ def test_unflatten_producer_threads_both_merges_sequentially(tmp_path):
     assert ns["_MERGE_PIPELINE"] == [("owner", "gw1"), ("owner", "gw2")]
     # the entry work_body drives the pipeline (Producer has no inbound → entry/work_body):
     # The entry inlines the stage loop so it can pause/resume for human approval mid-pipeline.
-    assert "_result, _stages = task, list(_MERGE_PIPELINE)" in prod_py
+    assert 'list(session.get("_a2a_merge_stages") or _MERGE_PIPELINE)' in prod_py
     assert "_result, _pending = _merge_send(_result, _service, _flow)" in prod_py
 
 
@@ -956,8 +953,8 @@ def test_unflatten_worker_initiator_threads_pipeline(tmp_path):
     prod_py = (tmp_path / "producer" / "Producer.py").read_text(encoding="utf-8")
     ast.parse(prod_py)
     assert "a2a_platform = agent.use_a2a_platform()" in prod_py     # worker server
-    assert 'if _leaf:' in prod_py
-    assert "return {\"reply\": _run_merge_pipeline(task)}" in prod_py  # handle() initiator path
+    assert "if session.get('_a2a_leaf'):" in prod_py
+    assert "_a2a_work(session)" in prod_py  # handle() initiator path
 
 
 def test_o1_entry_renders_hitl_pause_resume(tmp_path):
@@ -977,8 +974,8 @@ def test_o1_entry_renders_hitl_pause_resume(tmp_path):
     # the resume path reads it back, drops it, and finalizes with the human ballot via the frozen engine
     assert '_resume = session.get("pipeline_pending")' in prod_py
     assert 'session.delete("pipeline_pending")' in prod_py
-    assert '"voter": "human"' in prod_py
-    assert "_decision = tally(" in prod_py                          # final tally over agent + human ballots
+    assert "'voter': 'human'" in prod_py
+    assert "decision = tally(" in prod_py                          # final tally over agent + human ballots
     assert "def tally" in prod_py and "def parse_ballot" in prod_py  # frozen engine baked into the entry
     # _merge_send returns (text, pending) so the loop can detect a paused owner
     assert "def _merge_send(message, service, flow):" in prod_py
@@ -1034,14 +1031,13 @@ def test_human_facing_merge_owner_is_hybrid(tmp_path):
     assert "_MERGES = {" in owner_py
     assert '"gw1":' in owner_py and '"gw2":' in owner_py
     assert 'async def handle(' in owner_py
-    assert '_cfg = _MERGES.get(params.get("flow"))' in owner_py
+    assert "_cfg = globals().get('_MERGES', {}).get(params.get(\"flow\"))" in owner_py
     assert "def tally" in owner_py and "def parse_ballot" in owner_py
-    # UI side: the websocket flow provides the single initial state; the worker's idle stub is
-    # NOT emitted (it would be a second initial state), so exactly one initial state exists.
-    assert "agent.new_state('greetings', initial=True)" in owner_py
+    # The authored graph supplies the single initial state to both platforms.
+    assert "agent.new_state('initial', initial=True)" in owner_py
     assert "agent.new_state('idle', initial=True)" not in owner_py
     assert owner_py.count("initial=True") == 1
-    assert "def work_body(" in owner_py
+    assert "def _a2a_work(" in owner_py
     # The hybrid owner's UI must NOT reference the legacy single-merge GOVERNANCE_* constants
     # (gated out when states are present) — its voting runs in handle()/_run_merge instead.
     assert "GOVERNANCE_POLICY_TYPE" not in owner_py

@@ -108,7 +108,7 @@ When the generator is invoked through the ``/generate-output-from-project``
 endpoint (i.e. as part of a full project that includes one or more
 ``AgentDiagram`` entries), each LOCAL ``Artifact`` whose ``agentModelRef`` field
 resolves to an ``AgentDiagram`` in the project receives a fully baked build
-context: ``<svc>/agent.py`` + ``<svc>/config.yaml`` (via the BAF generator) and
+context: ``<svc>/<AgentName>.py`` + ``<svc>/config.yaml`` (via the BAF generator) and
 a ``<svc>/Dockerfile`` that installs ``besser-agentic-framework[all]`` and runs
 the agent script.  The service name and the build-context directory are both
 derived from ``_safe_service_name(artifact.name)``, so ``build: ./<svc>`` in
@@ -137,6 +137,12 @@ modeled edges (one ``a2a:out``/``a2a:in`` pair per round), so the generated code
 stays one request/response per edge. For older diagrams with no ``a2a:`` tags,
 the bake can still fall back to the previous ``to_<peer>`` / ``from_<peer>``
 state-name convention.
+
+Each build context is rendered once by the BAF generator. A2A transport and
+governance extend the authored agent rather than overwriting its script, so
+states, transitions, GUI assets, and personalization remain available. Pure
+entries retain their human platform, workers run the A2A server, and hybrid
+agents run both. Peers without an A2A server are removed before generation.
 
 Governed merge runtime
 ~~~~~~~~~~~~~~~~~~~~~~

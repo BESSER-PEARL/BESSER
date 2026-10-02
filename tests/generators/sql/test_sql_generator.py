@@ -374,3 +374,35 @@ def test_oracle_nullable_enum_check_constraint(tmpdir):
     # (the priority column specifically should be nullable)
     assert "VARCHAR" in generated_code or "VARCHAR2" in generated_code
 
+
+
+@pytest.mark.parametrize("dialect", ["sqlite", "mysql", "mssql", "mariadb"])
+def test_create_type_enum_is_postgresql_only(domain_model_with_enums, tmpdir, dialect):
+    """CREATE TYPE ... AS ENUM is PostgreSQL syntax; other dialects inline the enum column type."""
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=domain_model_with_enums, output_dir=str(output_dir), sql_dialect=dialect).generate()
+
+    with open(os.path.join(str(output_dir), f"tables_{dialect}.sql"), "r", encoding="utf-8") as f:
+        generated_code = f.read()
+
+    assert "CREATE TYPE" not in generated_code
+    assert "CREATE TABLE author" in generated_code
+
+
+def test_sqlite_ddl_executes(domain_model_with_enums, tmpdir):
+    """The generated SQLite DDL must be accepted by sqlite3 (it used to fail on CREATE TYPE)."""
+    import sqlite3
+
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=domain_model_with_enums, output_dir=str(output_dir), sql_dialect="sqlite").generate()
+
+    with open(os.path.join(str(output_dir), "tables_sqlite.sql"), "r", encoding="utf-8") as f:
+        ddl = f.read()
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.executescript(ddl)
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    finally:
+        conn.close()
+    assert {"author", "book", "library"} <= tables

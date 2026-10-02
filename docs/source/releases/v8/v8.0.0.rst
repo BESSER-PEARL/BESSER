@@ -1,0 +1,76 @@
+Version 8.0.0
+=============
+
+This release adds the experimental **Spec-Driven Agent**: generate an
+application from a reviewed model and written requirements, then validate
+and repair the generated files within a budget. It also improves generated
+GUIs, backend data contracts, model imports, and assistant reconnects.
+
+.. important::
+
+   Existing users should read :doc:`migration` before upgrading. Hosted
+   deployments need a separate generation worker and reverse-proxy routes
+   before rolling out the v8 backend.
+
+What's new
+----------
+
+* **Application generation with AI.** The Spec-Driven Agent customises a
+  deterministic BESSER scaffold when one fits, or authors a project for
+  another stack. The editor shows progress, cost, findings, and downloadable
+  output. Runs support cancellation, recovery, and modification of an
+  earlier result. Start with :doc:`/guides/build-with-ai`.
+* **Generated screens preserve more of the design.** Shared GUI stylesheets,
+  class-bound forms, create/update/delete buttons, and chart aggregations
+  reach the React and full web app output.
+* **More consistent generated backends.** Create schemas omit server-owned
+  fields, links use the declared primary-key types, and entity creation is
+  atomic. Generated code handles mandatory foreign-key cycles and
+  associations targeting association classes.
+* **Provider options.** Configured free and sponsored tiers, user-supplied
+  keys, GPT-6 and Claude 5.x models, and authorised local OpenAI-compatible
+  endpoints are supported. See :doc:`/spec_driven_agent/models`.
+* **Version provenance.** Generated archives include
+  ``BESSER_GENERATION.md``. Code and model exports record the BESSER version
+  where supported, and editor JSON exports include version metadata.
+
+Reliability and security
+------------------------
+
+* Uploaded B-UML is loaded through an AST allowlist. Default values and
+  user-provided strings are escaped when emitted into generated source.
+* Authorised shell tools and checks that execute generated code run in a
+  bubblewrap sandbox. Unavailable checks are reported as unverified.
+  Completion is not a guarantee that every check ran; review the findings.
+* Downloads, workspace copies, and GitHub pushes skip links and exclude
+  runtime artefacts. Run credentials are redacted from delivered files
+  and streamed events.
+* Assistant replies carry turn identifiers so reconnect replay can be
+  deduplicated. Partially applied model edits are surfaced to the user.
+* Generated declaration order is stable. Fixes also cover object-diagram
+  parsing, GUI re-import, quantum exports, and Django self-associations.
+
+Upgrade and deployment
+----------------------
+
+The coordinated release comprises BESSER, the Web Modeling Editor, and the
+Modeling Agent. Deploy compatible versions together. Production uses separate
+``backend`` and ``smartgen-worker`` Docker targets; the worker needs its
+documented sandbox settings, shared workspace, and proxy routes.
+
+Follow :doc:`/spec_driven_agent/production_deployment` for the service
+definitions and checks. After deployment, verify that the worker sandbox
+starts, the public API answers, and a small editor generation run completes.
+
+.. toctree::
+   :maxdepth: 1
+
+   migration
+
+Related documentation
+---------------------
+
+* :doc:`/start/index` — new user paths.
+* :doc:`/spec_driven_agent/index` — pipeline, configuration, and API.
+* `Editor v8 release notes <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/releases/v8.0.0.html>`_.
+* `Modeling Agent v8 release notes <https://github.com/BESSER-PEARL/modeling-agent/blob/develop/docs/source/releases/v8.0.0.rst>`_.

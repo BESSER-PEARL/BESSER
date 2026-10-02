@@ -1,0 +1,81 @@
+Version 8.0.1
+=============
+
+Patch release: **a terminal-like shell for the Spec-Driven Agent, and
+editor and pricing fixes**. The agent's shell now lasts for the whole run and
+can be given a private network per run; class methods are displayed and
+stored as signatures; free-tier runs are priced at the gateway's published
+rates. There are no metamodel or request-contract changes.
+
+Spec-Driven Agent
+-----------------
+
+* **One shell for the whole run.** ``run_command`` used to start a fresh
+  sandbox for every command, so a server started in one command was gone
+  before the next could test it, and ``cd`` or ``export`` did not carry over.
+  Each run now gets one long-lived bubblewrap session: the directory,
+  exported variables and background processes persist between commands, a
+  timeout kills only the command that hung, and every process in the
+  session ends with the run. See :doc:`/spec_driven_agent/tools`.
+* **A private network per shell session.** With ``passt`` in the worker
+  image and ``/dev/net/tun`` in the container, each session gets its own
+  network namespace with outbound access only: runs no longer share
+  ``localhost``, cannot collide on ports, and cannot reach the worker's own
+  API or another run's server. ``BESSER_LLM_SHELL_NETWORK`` selects
+  ``auto`` (the default: private when available, otherwise the previous
+  shared namespace with a logged warning), ``private`` (commands are refused
+  when it cannot start) or ``shared``.
+* **Longer timeouts on request.** ``run_command`` accepts an optional
+  ``timeout`` of up to 600 seconds for slow builds; the default stays 120.
+  ``install_dependencies`` gets 300 seconds, and no command runs past the
+  run's remaining runtime.
+* **Free-tier pricing.** Models served through Command Code are priced at
+  its published rates, including the cached-input rate, instead of a
+  list-price fallback that overstated the cost of cache-heavy runs.
+* **Known dependency conflicts are pinned early.** ``passlib`` with
+  ``bcrypt`` 4.1 or later fails at runtime; the scaffold repair, the
+  install step and Phase 3 now pin ``bcrypt==4.0.1`` before the first
+  install rather than after a failed boot.
+* **Checks can authenticate.** ``test_api`` requests may carry headers,
+  including a token captured from an earlier request in the same workflow,
+  so endpoints behind authentication are verified instead of reported as
+  failing. Header values are redacted in traces.
+* **Clearer diagnostics.** Generated FastAPI error handlers log the
+  underlying exception, tool-call trace events carry a redacted excerpt of
+  the result, and the prompt forbids weakening security to make a check pass.
+
+Editor and converters
+---------------------
+
+* **Class methods are signatures.** A method was rendered like an attribute
+  (``+ name: str``, without parentheses), and editing it in the class popup
+  saved that text as the method's name, which validation then rejected
+  ("Name cannot contain spaces"). Methods now render as
+  ``+ name(params): returnType``, and a method typed without parentheses is
+  stored with them. The backend also splits visibility and return type from
+  a signature saved without parentheses, so affected projects load and
+  validate again.
+
+Documentation
+-------------
+
+* The configuration, runs and API pages now state the shipped defaults (a
+  2400-second runtime and $5.0 cost default on the editor backend; rolling
+  prompt cache on), the shell and validation pages describe the sandbox as
+  shipped, and adding an agent tool is documented as three edits.
+
+Upgrade and deployment
+----------------------
+
+No action is required: without ``/dev/net/tun`` the worker keeps the
+previous shared network and logs a warning. To enable the private network,
+give the ``besser-wme-smartgen`` service ``devices: ["/dev/net/tun:/dev/net/tun"]``,
+``init: true`` and ``BESSER_LLM_SHELL_NETWORK=private``, as in
+``docker-compose.prod.yml``; ``init`` also reaps exited sandbox processes.
+The worker does not read ``./.env``, so set
+``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` and ``BESSER_LLM_SHELL_SESSION_MAX``
+in its ``environment:`` block when changing them. See
+:doc:`/spec_driven_agent/production_deployment`.
+
+The Web Modeling Editor ships the method fix in this release; the Modeling
+Agent is unchanged.

@@ -27,6 +27,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
+)
 
 
 def _format_multiplicity_label(multiplicity):
@@ -52,28 +55,9 @@ def parse_buml_content(content: str) -> DomainModel:
         if isinstance(content, DomainModel):
             return content
 
-        # Create a safe environment for eval without any generators.
-        # __name__ is set to a sentinel (not "__main__") so any
-        # ``if __name__ == "__main__":`` guarded blocks in user files are
-        # skipped during import — matching normal Python import semantics.
-        safe_globals = {
-            "__name__": "besser_buml_import",
-            "__builtins__": {
-                "set": set,
-                "list": list,
-                "dict": dict,
-                "tuple": tuple,
-                "str": str,
-                "int": int,
-                "float": float,
-                "bool": bool,
-                "len": len,
-                "range": range,
-                "True": True,
-                "False": False,
-                "None": None,
-                "print": lambda *a, **kw: None,  # no-op to prevent info leakage
-            },
+        # Allowlist of names that may appear in the BUML source. Everything
+        # else is rejected by the safe loader.
+        allowed_names = {
             "Class": Class,
             "Property": Property,
             "Method": Method,
@@ -91,6 +75,9 @@ def parse_buml_content(content: str) -> DomainModel:
             "Metadata": Metadata,
             "MethodImplementationType": MethodImplementationType,
             "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
             "StringType": PrimitiveDataType("str"),
             "IntegerType": PrimitiveDataType("int"),
             "FloatType": PrimitiveDataType("float"),
@@ -138,9 +125,8 @@ def parse_buml_content(content: str) -> DomainModel:
             cleaned_lines.append(line)
         cleaned_content = "\n".join(cleaned_lines)
 
-        # Execute the cleaned B-UML content
-        local_vars = {}
-        exec(cleaned_content, safe_globals, local_vars)
+        # Execute the cleaned B-UML content through the safe AST-based loader.
+        local_vars = safe_load_buml(cleaned_content, allowed_names)
 
         domain_name = "Imported_Domain_Model"
         for var_name, var_value in local_vars.items():
@@ -176,7 +162,7 @@ def class_buml_to_json(domain_model):
     elements = {}
     relationships = {}
     # Retrieve method diagram reference mapping (populated by json_to_buml round-trip).
-    # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ...}
+    # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ..., "neuralNetworkId": ...}
     method_diagram_refs = getattr(domain_model, 'method_diagram_refs', {})
     # Retrieve saved layout positions for round-trip fidelity (populated by json_to_buml).
     # Keyed by element name (classes/enums) or composite key (relationships).
@@ -354,6 +340,7 @@ def class_buml_to_json(domain_model):
                             MethodImplementationType.BAL: "bal",
                             MethodImplementationType.STATE_MACHINE: "state_machine",
                             MethodImplementationType.QUANTUM_CIRCUIT: "quantum_circuit",
+                            MethodImplementationType.NEURAL_NETWORK: "neural_network",
                         }
                         impl_type_str_map = {
                             "none": "none",
@@ -361,6 +348,7 @@ def class_buml_to_json(domain_model):
                             "bal": "bal",
                             "state_machine": "state_machine",
                             "quantum_circuit": "quantum_circuit",
+                            "neural_network": "neural_network",
                         }
                         impl_type = method.implementation_type
                         if isinstance(impl_type, str):
@@ -390,6 +378,13 @@ def class_buml_to_json(domain_model):
                         quantum_circuit_id = method.quantum_circuit.name
                     if quantum_circuit_id:
                         method_element["quantumCircuitId"] = quantum_circuit_id
+
+                    neural_network_id = refs.get("neuralNetworkId") or None
+                    if not neural_network_id and getattr(method, "neural_network", None):
+                        # If we have an actual neural network object, use its name as ID
+                        neural_network_id = method.neural_network.name
+                    if neural_network_id:
+                        method_element["neuralNetworkId"] = neural_network_id
 
                     elements[method_id] = method_element
                     method_ids.append(method_id)
@@ -489,45 +484,42 @@ def class_buml_to_json(domain_model):
         try:
             rel_id = str(uuid.uuid4())
             name = association.name if association.name else ""
-            # Sort ends by name for deterministic source/target assignment
-            # before applying the swap logic below.
+            # Sort ends by name for deterministic source/target assignment.
             ends = sorted(association.ends, key=lambda e: e.name)
             if len(ends) == 2:
                 source_prop, target_prop = ends
+                saved_rel = layout_positions.get(f"rel_{name}")
 
-                # Check navigability and composition, swap if needed
+                # Keep the orientation the diagram was drawn with (recorded by
+                # the JSON -> BUML processor), so the saved endpoint layout is
+                # applied to the right classes. Navigability does not affect the
+                # orientation: it is emitted explicitly per end below.
+                if saved_rel and saved_rel.get("source_role") == target_prop.name:
+                    source_prop, target_prop = target_prop, source_prop
+
+                # The composite (whole) end of a composition is always the target.
                 if source_prop.is_composite and not target_prop.is_composite:
                     source_prop, target_prop = target_prop, source_prop
-                elif not source_prop.is_composite and not target_prop.is_composite:
-                    if not source_prop.is_navigable and target_prop.is_navigable:
-                        pass
-                    elif source_prop.is_navigable and not target_prop.is_navigable:
-                        source_prop, target_prop = target_prop, source_prop
-                    elif not source_prop.is_navigable and not target_prop.is_navigable:
-                        logger.warning("Both ends of association %s are not navigable. Skipping this association.", name)
-                        continue
 
                 source_class = source_prop.type
                 target_class = target_prop.type
 
                 if source_class in class_id_map and target_class in class_id_map:
-                    # Determine relationship type.
+                    # Determine relationship type. Plain associations are always
+                    # emitted as ClassBidirectional; which ends are navigable is
+                    # carried by the explicit per-end "navigable" flags.
                     # NOTE: ClassAggregation cannot be reconstructed here because the
                     # B-UML metamodel does not carry an aggregation flag on Property.
                     # Aggregation associations are round-tripped as ClassBidirectional.
                     rel_type = (
                         RELATIONSHIP_TYPES["composition"]
                         if target_prop.is_composite
-                        else (
-                            RELATIONSHIP_TYPES["bidirectional"]
-                            if source_prop.is_navigable and target_prop.is_navigable
-                            else RELATIONSHIP_TYPES["unidirectional"]
-                        )
+                        else RELATIONSHIP_TYPES["bidirectional"]
                     )
 
-                    # Check for saved layout positions from a previous round-trip
-                    saved_rel = layout_positions.get(f"rel_{name}")
-                    if saved_rel:
+                    # Restore saved layout positions from a previous round-trip
+                    # ("source_role" alone is orientation, not layout).
+                    if saved_rel and any(key != "source_role" for key in saved_rel):
                         # Restore saved layout
                         rel_bounds = saved_rel.get("bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
                         path_points = saved_rel.get("path", [{"x": 0, "y": 0}, {"x": 0, "y": 0}])
@@ -576,6 +568,7 @@ def class_buml_to_json(domain_model):
                             "element": class_id_map[source_class],
                             "multiplicity": _format_multiplicity_label(source_prop.multiplicity),
                             "role": source_prop.name,
+                            "navigable": source_prop.is_navigable,
                             "direction": source_dir,
                             "bounds": source_bounds,
                         },
@@ -583,6 +576,7 @@ def class_buml_to_json(domain_model):
                             "element": class_id_map[target_class],
                             "multiplicity": _format_multiplicity_label(target_prop.multiplicity),
                             "role": target_prop.name,
+                            "navigable": target_prop.is_navigable,
                             "direction": target_dir,
                             "bounds": target_bounds,
                         },
@@ -821,6 +815,7 @@ def class_buml_to_json(domain_model):
             elem.pop("implementationType", None)
             elem.pop("stateMachineId", None)
             elem.pop("quantumCircuitId", None)
+            elem.pop("neuralNetworkId", None)
         if elem.get("type") == "ClassMethod":
             if not elem.get("implementationType"):
                 elem.pop("implementationType", None)
@@ -828,6 +823,8 @@ def class_buml_to_json(domain_model):
                 elem.pop("stateMachineId", None)
             if not elem.get("quantumCircuitId"):
                 elem.pop("quantumCircuitId", None)
+            if not elem.get("neuralNetworkId"):
+                elem.pop("neuralNetworkId", None)
 
     result = {
         "version": "3.0.0",

@@ -1,0 +1,3 @@
+# Keeps this dir in git so the Dockerfile COPY always has a source.
+# Drop corporate proxy CA certs here as *.crt to build behind TLS inspection.
+# The *.crt files are gitignored (they are site-internal); this file is not.

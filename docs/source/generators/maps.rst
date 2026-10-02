@@ -244,35 +244,39 @@ model produces a React application with ``MapBlock.tsx`` that:
 Generated ``MapBlock.tsx`` structure
 -------------------------------------
 
-The generated ``MapBlock.tsx`` is structured around a **layers loop** with
-section-comment banners so you can extend individual renderers without reading BESSER
-documentation:
+The generated ``MapBlock.tsx`` drives **Leaflet directly** — there is no
+``react-leaflet`` wrapper. The map instance lives in a ref, layers are plain
+Leaflet layer groups, and popup text is always HTML-escaped. Each layer type
+has its own section-comment banner so you can extend an individual renderer
+without reading BESSER documentation:
 
 .. code-block:: text
 
    MapBlock.tsx
    ├── Types: LayerConfig, MapConfig, MapBlockProps
    ├── fetchRows()          — robust fetch + row normaliser
+   ├── escapeHtml()         — every dynamic value in a popup goes through this
    ├── choroplethColor()    — 5-step sequential white→red scale
    │
    ├── // ===== POINTS LAYER =====
-   │   PointsLayer          — fetches rows, renders <Marker>/<Popup>
+   │   renderPointsLayer()     — fetches rows, L.marker + bindPopup
    │
    ├── // ===== GEOJSON LAYER =====
-   │   GeoJsonLayer         — fetches rows, renders <GeoJSON>
+   │   renderGeoJsonLayer()    — fetches rows, L.geoJSON
    │
    ├── // ===== CHOROPLETH LAYER =====
-   │   ChoroplethLayer      — <GeoJSON> + style fn + ChoroplethLegend
-   │   ChoroplethLegend     — Leaflet control injected via useMap()
+   │   renderChoroplethLayer() — L.geoJSON + style fn + a legend added as
+   │                             a new L.Control({position:"bottomright"})
    │
    ├── // ===== HEATMAP LAYER =====
-   │   HeatLayer            — dynamic import("leaflet.heat") + L.heatLayer()
+   │   renderHeatLayer()       — dynamic import("leaflet.heat") + L.heatLayer()
    │
-   ├── LayerRenderer        — dispatches to the correct renderer by layer.type
-   │                          falls back to PointsLayer with console.warn
+   ├── renderLayer()        — switch on layer.type, dispatching to the above;
+   │                          falls back to the points renderer with a console.warn
    └── MapBlock (export)    — loops layers, static fallback when layers empty
-       └── // ===== EXTENSION: CUSTOM ICONS / IMAGE POPUPS =====
-           └── commented-out examples: L.icon(), <img> inside Popup
+       └── // ===== EXTENSION: CUSTOM MARKER ICONS / IMAGE POPUPS =====
+           └── commented-out examples: L.icon(), an <img> in bindPopup(),
+               and a per-layer colour override via L.divIcon()
 
 Extending the generated ``MapBlock.tsx``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -280,36 +284,46 @@ Extending the generated ``MapBlock.tsx``
 Because section banners and commented extension blocks are inlined, you can make
 most common customisations without touching any BESSER source:
 
-**Custom marker icons** — uncomment and fill in the ``L.icon`` block inside
-``PointsLayer``:
+**Custom marker icons** — uncomment and fill in the ``L.icon`` block in the
+extension section at the bottom of the file, then swap it into the
+``L.marker(...)`` call inside ``renderPointsLayer``:
 
 .. code-block:: tsx
 
-   const icon = L.icon({
-     iconUrl: '/icons/store-pin.png',
+   const myIcon = L.icon({
+     iconUrl: customIconPng,
      iconSize: [32, 32],
      iconAnchor: [16, 32],
      popupAnchor: [0, -32],
    });
-   // Pass icon={icon} to each <Marker>
+   // then, inside renderPointsLayer, replace
+   //   L.marker([lat, lng], { icon: defaultIcon })
+   // with
+   //   L.marker([lat, lng], { icon: myIcon })
+
+The default pin is an ``L.divIcon`` built from an inline SVG, so recolouring
+markers per layer needs no image asset at all — the extension section shows
+that variant too.
 
 **Per-choropleth colour scale** — replace ``choroplethColor()`` with your own
 palette or a ``d3-scale`` interpolator.
 
-**Image popups** — the commented ``<img>`` block inside the ``Popup`` component shows
-how to display a thumbnail from a URL field.
+**Image popups** — the commented ``bindPopup`` example in the extension section
+shows how to display a thumbnail from a URL field. Run every dynamic value
+through ``escapeHtml`` first: popups render HTML.
 
-**Additional layer type** — add a new ``if (layer.type === 'mytype')`` branch inside
-``LayerRenderer`` and a corresponding renderer component above it.
+**Additional layer type** — add a new ``case 'mytype':`` to the ``switch`` in
+``renderLayer()`` and a corresponding ``renderMytypeLayer()`` function above it.
 
 Graceful degradation
 ~~~~~~~~~~~~~~~~~~~~
 
 - A ``choropleth`` layer with no ``valueField`` automatically falls back to
   plain GeoJSON rendering and logs a ``console.warn``.
-- Any layer with a misconfigured ``type`` falls back to ``PointsLayer`` with a
-  ``console.warn``.
-- Parse errors in the geometry column are caught per-row and skipped silently.
+- Any layer with a misconfigured ``type`` falls back to ``renderPointsLayer``
+  with a ``console.warn``.
+- Parse errors in the geometry column are caught per-row and logged with a
+  ``console.warn``, then skipped.
 - No layer configuration → a static centre marker is shown.
 
 npm Dependencies

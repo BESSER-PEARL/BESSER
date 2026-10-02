@@ -34,6 +34,7 @@ from besser.BUML.metamodel.bpmn import (
 from besser.utilities.buml_code_builder.common import (
     _comment_safe,
     _escape_python_string,
+    buml_header,
     safe_var_name,
 )
 from besser.utilities.utils import sort_by_timestamp
@@ -444,6 +445,7 @@ def bpmn_model_to_code(model: BPMNModel, file_path: Optional[str] = None,
     # ---- Assemble: header → imports → body
     import_lines = _format_imports(needed)
     pieces = [
+        buml_header().rstrip("\n"),
         _BANNER,
         "",
         import_lines,

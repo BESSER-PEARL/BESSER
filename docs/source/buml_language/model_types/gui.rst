@@ -95,6 +95,17 @@ Forms
 ``show_cancel`` / ``cancel_label`` (optional cancel button), and ``columns`` (1–4
 uniform grid layout, default ``1``). All have backward-compatible defaults.
 
+A form that creates records of a class carries a ``data_binding``
+(``DataBinding(domain_concept=<Class>)``), and each of its ``InputField``\ s a
+``DataBinding`` whose ``data_field`` is the attribute it edits. When the
+editor's form is processed, the class comes from the form's ``data-source``
+(class id or name) or, without one, from the input names when they are all
+attributes of exactly one class and supply every attribute a new record of it
+requires (so a lookup form is not bound); a ``<label>`` becomes its input's ``label``
+and the first submit button's text the ``submit_label``. The React generator
+renders a bound form as a ``FormBlock`` that POSTs to ``/<class>/`` (see
+:doc:`../../generators/react`).
+
 Alert
 -----
 
@@ -122,6 +133,15 @@ For data visualization and dashboard-style interfaces, the metamodel includes:
 
 - **AgentComponent**: A component that integrates a BESSER Agent Framework (BAF) agent
   into the user interface, enabling conversational or AI-driven interactions.
+
+A ``MetricCard``'s or a chart ``Series``' ``DataBinding`` may carry an optional
+``aggregation`` (a ``DataAggregation``: ``SUM``, ``AVG``, ``COUNT``, ``MIN``,
+``MAX``, ``MEDIAN``, ``FIRST``, ``LAST``; the names ``"sum"``, ``"avg"``,
+``"count"``, ``"min"``, ``"max"`` are accepted too). A metric card shows the
+aggregation of its ``data_field`` over all records; a chart series groups the
+records by its ``label_field`` and aggregates each group. In the editor JSON it
+is the ``aggregation`` attribute of the metric card, of a chart series, or of
+the chart (for all its series).
 
 Map Component
 -------------
@@ -282,6 +302,22 @@ The metamodel provides fine-grained control over how components are arranged and
   ``absolute``, ``fixed``).
 - **Style**: A dedicated class for visual customization that allows setting properties such as
   colors, fonts, borders, padding, and margins on any view component.
+- **Stylesheet**: ``GUIModel.stylesheet`` (``str``, default ``""``) holds raw CSS shared by the
+  whole GUI: class and compound-selector rules, ``:root`` design tokens (CSS custom
+  properties), ``@media`` blocks and state rules such as ``:hover``. Components opt in
+  through their ``css_classes``. When a GUI diagram is imported from the web editor,
+  every rule not tied to a single element id is kept here in its original order, while
+  element-id rules still become that component's ``Styling``.
+
+  .. code-block:: python
+
+      gui_model = GUIModel(
+          name="Shop", package="", versionCode="1", versionName="1.0",
+          modules={module}, description="",
+          stylesheet=":root{--ds-primary:#15293d}\n"
+                     ".app-btn{background:var(--ds-primary)}\n"
+                     "@media (max-width:850px){.app-btn{width:100%}}\n",
+      )
 
 Python Code Example
 -------------------

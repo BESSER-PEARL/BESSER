@@ -4,9 +4,9 @@ Agent diagram processing for converting JSON to BUML format.
 
 import logging
 import operator
+
 from deep_translator import GoogleTranslator
 
-logger = logging.getLogger(__name__)
 from besser.BUML.metamodel.state_machine.state_machine import (
     Body,
     Condition,
@@ -40,9 +40,21 @@ from besser.BUML.metamodel.state_machine.agent import (
     WebSocketReplyPlotly,
     RAGVectorStore,
     RAGTextSplitter,
+    GUIReplyAction,
+    GUIEvent,
 )
-from besser.BUML.metamodel.structural import Metadata
+from besser.BUML.metamodel.structural import DomainModel, Metadata
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_diagram_processor import (
+    process_gui_diagram,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text
+from besser.utilities.web_modeling_editor.backend.services.validators.python_code_validator import (
+    validate_custom_code_action,
+)
+
+logger = logging.getLogger(__name__)
+
+_DEFAULT_INPUT_PROMPT_MODE = "last_user_message"
 
 
 # Maps old informal "replyType" values to new metamodel class names used in "actionType".
@@ -63,6 +75,7 @@ _REPLY_TYPE_TO_ACTION_TYPE = {
     "ws_image": "WebSocketReplyImageAction",
     "ws_dataframe": "WebSocketReplyDataframeAction",
     "ws_plotly": "WebSocketReplyPlotlyAction",
+    "gui_reply": "GUIReplyAction",
 }
 
 
@@ -78,9 +91,18 @@ def _resolve_action_type(element: dict) -> str:
     return _REPLY_TYPE_TO_ACTION_TYPE.get(reply_type, "")
 
 
+def _input_prompt_kwargs(element: dict) -> dict:
+    """Return the ``input_prompt_mode`` / ``custom_input_prompt*`` kwargs of an action element."""
+    return {
+        "input_prompt_mode": sanitize_text(element.get("inputPromptMode")) or _DEFAULT_INPUT_PROMPT_MODE,
+        "custom_input_prompt": element.get("customInputPrompt") or None,
+        "custom_input_prompt_use_session_vars": bool(element.get("customInputPromptUseSessionVars", False)),
+    }
+
+
 def _build_body_from_action_elements(body_name, action_element_ids, elements,
                                      language, source_language, translate_text,
-                                     build_db_reply_fn=None):
+                                     build_db_reply_fn=None, gui_defs_by_id=None):
     """
     Build a Body object from an ordered list of action element IDs using per-element dispatch.
 
@@ -96,6 +118,7 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
         source_language: Source language for translation (or None).
         translate_text: Translation function.
         build_db_reply_fn: Optional callable to build a DBReply from an element dict.
+        gui_defs_by_id: AgentGUI definitions (persist/width/is_form) keyed by gui id.
 
     Returns:
         A Body object with one action per element, or None if no actions were added.
@@ -118,7 +141,8 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             msg = sanitize_text(content)
             if language:
                 msg = translate_text(msg, language, source_language)
-            body.add_action(AgentReply(message=msg))
+            use_session_vars = bool(element.get("useSessionVars", False))
+            body.add_action(AgentReply(message=msg, use_session_vars=use_session_vars))
             action_added = True
 
         elif action_type == "LLMReplyAction":
@@ -129,7 +153,17 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             # Support "llmName" (new schema key) and "llm_name" (legacy key)
             llm_name_raw = element.get("llm_name") or element.get("llmName") or ""
             llm_name = sanitize_text(llm_name_raw) or None
-            body.add_action(LLMReply(prompt=prompt, llm_name=llm_name))
+            system_prompt_use_session_vars = bool(element.get("systemPromptUseSessionVars", False))
+            store_in_session = sanitize_text(element.get("storeInSession", "")) or None
+            send_reply = bool(element.get("sendReply", True))
+            body.add_action(LLMReply(
+                prompt=prompt,
+                llm_name=llm_name,
+                **_input_prompt_kwargs(element),
+                system_prompt_use_session_vars=system_prompt_use_session_vars,
+                store_in_session=store_in_session,
+                send_reply=send_reply,
+            ))
             action_added = True
 
         elif action_type == "LLMChatAction":
@@ -138,7 +172,16 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             prompt = sanitize_text(prompt_raw) or None
             llm_name_raw = element.get("llm_name") or element.get("llmName") or ""
             llm_name = sanitize_text(llm_name_raw) or None
-            body.add_action(LLMChatReply(prompt=prompt, llm_name=llm_name))
+            system_prompt_use_session_vars = bool(element.get("systemPromptUseSessionVars", False))
+            store_in_session = sanitize_text(element.get("storeInSession", "")) or None
+            send_reply = bool(element.get("sendReply", True))
+            body.add_action(LLMChatReply(
+                prompt=prompt,
+                llm_name=llm_name,
+                system_prompt_use_session_vars=system_prompt_use_session_vars,
+                store_in_session=store_in_session,
+                send_reply=send_reply,
+            ))
             action_added = True
 
         elif action_type == "RAGReplyAction":
@@ -147,8 +190,18 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
                 rag_name = sanitize_text(content)
             rag_prompt_raw = element.get("prompt") or ""
             rag_prompt = sanitize_text(rag_prompt_raw) or None
+            prompt_use_session_vars = bool(element.get("promptUseSessionVars", False))
+            store_in_session = sanitize_text(element.get("storeInSession", "")) or None
+            send_reply = bool(element.get("sendReply", True))
             if rag_name:
-                body.add_action(RAGReply(rag_db_name=rag_name, prompt=rag_prompt))
+                body.add_action(RAGReply(
+                    rag_db_name=rag_name,
+                    prompt=rag_prompt,
+                    **_input_prompt_kwargs(element),
+                    prompt_use_session_vars=prompt_use_session_vars,
+                    store_in_session=store_in_session,
+                    send_reply=send_reply,
+                ))
                 action_added = True
 
         elif action_type == "DBAction":
@@ -179,8 +232,12 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             )
             system_message_prefix_raw = element.get("system_message_prefix") or ""
             system_message_prefix = sanitize_text(system_message_prefix_raw) or None
+            system_message_prefix_use_session_vars = bool(element.get("systemMessagePrefixUseSessionVars", False))
             llm_name_raw = element.get("llm_name") or ""
             llm_name = sanitize_text(llm_name_raw) or None
+            store_in_session_raw = element.get("storeInSession") or ""
+            store_in_session = sanitize_text(store_in_session_raw) or None
+            send_reply = bool(element.get("sendReply", True))
             if initial_url:
                 body.add_action(WebCrawlLLMReply(
                     initial_url=initial_url,
@@ -192,17 +249,22 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
                     no_crawl_error_message=no_crawl_error_message,
                     system_message_prefix=system_message_prefix,
                     llm_name=llm_name,
+                    system_message_prefix_use_session_vars=system_message_prefix_use_session_vars,
+                    store_in_session=store_in_session,
+                    send_reply=send_reply,
                 ))
                 action_added = True
 
         elif action_type == "WebSocketReplyMarkdownAction":
             msg = sanitize_text(element.get("ws_message", ""))
-            body.add_action(WebSocketReplyMarkdown(message=msg))
+            use_session_vars = bool(element.get("useSessionVars", False))
+            body.add_action(WebSocketReplyMarkdown(message=msg, use_session_vars=use_session_vars))
             action_added = True
 
         elif action_type == "WebSocketReplyHTMLAction":
             msg = sanitize_text(element.get("ws_message", ""))
-            body.add_action(WebSocketReplyHTML(message=msg))
+            use_session_vars = bool(element.get("useSessionVars", False))
+            body.add_action(WebSocketReplyHTML(message=msg, use_session_vars=use_session_vars))
             action_added = True
 
         elif action_type == "WebSocketReplySpeechAction":
@@ -212,7 +274,10 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
                 audio_speed = float(speed_raw) if speed_raw not in (None, "") else None
             except (TypeError, ValueError):
                 audio_speed = None
-            body.add_action(WebSocketReplySpeech(message=msg, audio_speed=audio_speed))
+            use_session_vars = bool(element.get("useSessionVars", False))
+            body.add_action(WebSocketReplySpeech(
+                message=msg, audio_speed=audio_speed, use_session_vars=use_session_vars,
+            ))
             action_added = True
 
         elif action_type == "WebSocketReplyOptionsAction":
@@ -249,9 +314,30 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
             body.add_action(WebSocketReplyPlotly())
             action_added = True
 
+        elif action_type == "GUIReplyAction":
+            gui_id = sanitize_text(element.get("guiId", "") or element.get("gui_id", "")) or None
+            # width/persist/is_form live on the AgentGUI component definition, not on the
+            # action element itself (the action only carries guiId). Look up the definition
+            # and fall back to element-level values for backward compatibility. A guiId
+            # without AgentGUI definition is reported by Agent.validate().
+            gui_def = (gui_defs_by_id or {}).get(gui_id, {}) if gui_id else {}
+            persist = gui_def.get("persist", bool(element.get("persist", True)))
+            width = gui_def.get("width") or sanitize_text(element.get("width", "")) or None
+            is_form = gui_def.get("is_form", bool(element.get("is_form", False)))
+            if gui_id:
+                body.add_action(GUIReplyAction(
+                    gui_id=gui_id,
+                    persist=persist,
+                    width=width,
+                    is_form=is_form,
+                ))
+                action_added = True
+
         elif action_type == "CustomCodeAction":
-            # Raw source code must not be sanitized — sanitize_text escapes single quotes
-            # which would corrupt string literals inside the user's Python function.
+            # Raw source code is kept verbatim (no unicode normalization or control-char
+            # stripping). Structural and semantic validation is enforced by
+            # validate_custom_code_action().
+            validate_custom_code_action(content)
             body.add_action(CustomCodeAction(source=content))
             action_added = True
 
@@ -299,6 +385,9 @@ def process_agent_diagram(json_data):
             db_operation=sanitize_text(element.get("dbOperation", "any")) or "any",
             db_sql_query=element.get("dbSqlQuery") or None,
             llm_name=sanitize_text(element.get("llm_name", "")) or None,
+            **_input_prompt_kwargs(element),
+            store_in_session=sanitize_text(element.get("storeInSession", "")) or None,
+            send_reply=bool(element.get("sendReply", True)),
         )
 
     """Process Agent Diagram specific elements and return an Agent model."""
@@ -313,12 +402,22 @@ def process_agent_diagram(json_data):
     model_data = json_data.get('model') or {}
     elements = model_data.get('elements') or {}
     relationships = model_data.get('relationships') or {}
+    # Agent components (LLMs, intents, tools, skills, workspaces, RAGs) may be stored in:
+    #   - model.components  (new schema – preferred)
+    #   - top-level agentComponents (legacy schema)
+    #   - model.elements itself (old template / backward-compat format)
+    # Merge all sources; model.components wins over agentComponents for duplicate keys.
+    legacy_agent_components = json_data.get('agentComponents') or {}
+    model_components = model_data.get('components') or {}
+    all_components = {**legacy_agent_components, **model_components}
+    elements = {**elements, **all_components}
 
     # Track states and bodies for later reference
     states_by_id = {}
     intents_by_id = {}
     rag_dbs_by_id = {}
     rag_dbs_by_name = {}
+    gui_defs_by_id = {}  # gui_id -> {persist, width, is_form} of its AgentGUI component
 
     # Store comments for later processing
     comment_elements = {}  # {comment_id: comment_text}
@@ -407,8 +506,10 @@ def process_agent_diagram(json_data):
             intent_name = element.get("name")
             training_sentences = []
             intent_description = element.get("intent_description", None)
-            # Collect training sentences — AgentIntent still uses "bodies" for sentence IDs.
-            for body_id in element.get("bodies", []):
+            # Collect training sentences — IDs stored under "bodies" (canonical) or
+            # "ownedElements" (legacy: diagrams saved by an older panel version).
+            body_id_list = element.get("bodies") or element.get("ownedElements") or []
+            for body_id in body_id_list:
                 body_element = elements.get(body_id)
                 if body_element:
                     training_sentence = sanitize_text(body_element.get("name", ""))
@@ -422,6 +523,23 @@ def process_agent_diagram(json_data):
             agent.add_intent(intent)
             intents_by_id[element_id] = intent
             intent_count += 1
+        elif element_type == "AgentGUI":
+            resolved_gui_id = sanitize_text(element.get("gui_id", "").strip())
+            if not resolved_gui_id:
+                continue
+            gui_defs_by_id[resolved_gui_id] = {
+                "persist": bool(element.get("persist", True)),
+                "width": sanitize_text(element.get("width", "")) or None,
+                "is_form": bool(element.get("is_form", False)),
+            }
+            # The GrapesJS design becomes a B-UML GUIModel. Agent GUIs are not bound to a
+            # class diagram, hence the empty domain model. A GUI that has not been designed
+            # yet (guiModel null) becomes an empty GUIModel so replies referencing it resolve.
+            agent.add_gui_model(
+                resolved_gui_id,
+                process_gui_diagram(element.get("guiModel") or {}, None, DomainModel("AgentGUIDomain")),
+            )
+            continue
         elif element_type == "AgentRagElement":
             rag_name = sanitize_text((element.get("name") or "").strip())
             if not rag_name:
@@ -450,7 +568,8 @@ def process_agent_diagram(json_data):
                 chunk_overlap=100,
             )
             rag_llm_name = sanitize_text((element.get("llm_name") or element.get("llm") or "").strip()) or ""
-            rag_llm_prompt = sanitize_text((element.get("llm_prompt") or element.get("llmPrompt") or "").strip()) or None
+            rag_llm_prompt_raw = element.get("llm_prompt") or element.get("llmPrompt") or ""
+            rag_llm_prompt = sanitize_text(rag_llm_prompt_raw.strip()) or None
 
             raw_k = element.get("k")
             try:
@@ -564,6 +683,7 @@ def process_agent_diagram(json_data):
             f"{state_name}_body", action_ids, elements,
             language, source_language, translate_text,
             build_db_reply_fn=build_db_reply,
+            gui_defs_by_id=gui_defs_by_id,
         )
         if body:
             agent_state.set_body(body)
@@ -576,6 +696,7 @@ def process_agent_diagram(json_data):
                 f"{state_name}_fallback_body", fallback_ids, elements,
                 language, source_language, translate_text,
                 build_db_reply_fn=build_db_reply,
+                gui_defs_by_id=gui_defs_by_id,
             )
             if fallback_body:
                 agent_state.set_fallback_body(fallback_body)
@@ -688,6 +809,13 @@ def process_agent_diagram(json_data):
                         "event": normalized_event,
                         "conditions": custom_conditions if isinstance(custom_conditions, list) else [],
                     }
+                    # Carry GUIEvent.message_id through so GUIEvent round-trips correctly.
+                    _gui_mid = (
+                        custom_block.get("guiEventGuiId")
+                        or relationship.get("guiEventGuiId")
+                    )
+                    if _gui_mid:
+                        transition_payload["guiEventGuiId"] = _gui_mid
                 else:
                     condition_name = (
                         predefined_block.get("predefinedType")
@@ -773,7 +901,8 @@ def process_agent_diagram(json_data):
                                 transition_count += 1
                             else:
                                 logger.warning(
-                                    "Unknown operator '%s' for variable operation transition from '%s' to '%s'. Skipping.",
+                                    "Unknown operator '%s' for variable operation transition "
+                                    "from '%s' to '%s'. Skipping.",
                                     operator_value, source_state.name, target_state.name,
                                 )
                     else:
@@ -786,27 +915,43 @@ def process_agent_diagram(json_data):
                         source_state.when_no_intent_matched().go_to(target_state)
                         transition_count += 1
 
+                elif condition_name == "when_form_submitted":
+                    form_gui_id = (
+                        predefined_block.get("formGuiId")
+                        or relationship.get("formGuiId")
+                        or ""
+                    )
+                    form_id = form_gui_id if form_gui_id else None
+                    source_state.when_form_submitted(form_id=form_id).go_to(target_state)
+                    transition_count += 1
+
                 elif condition_name == "when_file_received":
-                    mime_types = {
-                        "PDF": "application/pdf",
-                        "TXT": "text/plain",
-                        "JSON": "application/json"
+                    _mime_map = {
+                        "pdf": "application/pdf",
+                        "txt": "text/plain",
+                        "json": "application/json",
+                        "csv": "text/csv",
+                        "xml": "text/xml",
+                        "png": "image/png",
+                        "jpg": "image/jpeg",
+                        "jpeg": "image/jpeg",
+                        "gif": "image/gif",
+                        "mp3": "audio/mpeg",
+                        "mp4": "video/mp4",
                     }
-                    if isinstance(transition_payload, str) and "/" in transition_payload:
-                        file_type = transition_payload
+                    if isinstance(transition_payload, str) and transition_payload.strip():
+                        tokens = [t.strip() for t in transition_payload.split(",") if t.strip()]
+                        resolved = [
+                            token if "/" in token else _mime_map.get(token.lower(), token)
+                            for token in tokens
+                        ]
+                        if len(resolved) == 1:
+                            source_state.when_file_received(resolved[0]).go_to(target_state)
+                        else:
+                            source_state.when_file_received(resolved).go_to(target_state)
                     else:
-                        file_type = mime_types.get(transition_payload)
-                    if file_type:
-                        source_state.when_file_received(file_type).go_to(target_state)
-                        transition_count += 1
-                    else:
-                        logger.warning(
-                            "Unknown file type '%s' for when_file_received transition from '%s' to '%s'. "
-                            "Falling back to when_file_received() without type filter.",
-                            transition_payload, source_state.name, target_state.name,
-                        )
                         source_state.when_file_received().go_to(target_state)
-                        transition_count += 1
+                    transition_count += 1
 
                 elif condition_name == "auto":
                     source_state.go_to(target_state)
@@ -836,6 +981,10 @@ def process_agent_diagram(json_data):
                             event_instance = DummyEvent()
                         elif selected_event == "WildcardEvent":
                             event_instance = WildcardEvent()
+                        elif selected_event == "GUIEvent":
+                            gui_event_gui_id = transition_payload.get("guiEventGuiId", "")
+                            message_id = gui_event_gui_id if gui_event_gui_id else None
+                            event_instance = GUIEvent(message_id=message_id)
                         elif selected_event == "None":
                             event_instance = None
 
@@ -888,7 +1037,9 @@ def process_agent_diagram(json_data):
                     else:
                         # Append to existing description
                         existing_desc = state.metadata.description or ""
-                        state.metadata.description = f"{existing_desc}\n{comment_text}" if existing_desc else comment_text
+                        state.metadata.description = (
+                            f"{existing_desc}\n{comment_text}" if existing_desc else comment_text
+                        )
         else:
             # Unlinked comment - add to Agent metadata
             if agent.metadata is None:

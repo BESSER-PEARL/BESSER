@@ -3,14 +3,14 @@ package {{ package_name }};
 {% endif %}
 {% import "java_fields.py.j2" as java_fields %}
 {% set attribs = [] %}
-{% for attr in class_obj.attributes %}
+{% for attr in sort_by_timestamp(class_obj.attributes) %}
     {% do attribs.append(java_fields.get_field(attr.type.name)) %}
     {% do attribs.append(attr.name) %}
 {% endfor %}
 {% set generals = namespace(names=[]) %}
 {% set parent_attribs = [] %}
-{% for parent in class_obj.parents() %}
-    {% for attr in parent.attributes %}
+{% for parent in class_obj.parents()|sort(attribute='name') %}
+    {% for attr in sort_by_timestamp(parent.attributes) %}
         {% do parent_attribs.append(java_fields.get_field(attr.type.name)) %}
         {% do parent_attribs.append(attr.name) %}
     {% endfor %}
@@ -44,9 +44,9 @@ public class {{ class_obj.name }} {{ extends }}{
 {% for i in range(0, attribs|length, 2) %}
     private {{ attribs[i] }} {{ attribs[i+1] }};
 {% endfor %}
-{% for association in class_obj.associations %}
+{% for association in class_obj.associations|sort(attribute='name') %}
     {% if association.ends|length == 2 and association.name not in processed_associations %}
-        {% set ends_list = association.ends | list %}
+        {% set ends_list = association.ends | sort(attribute='name') | list %}
         {% set is_self_assoc = (ends_list[0].type.name == ends_list[1].type.name) %}
         {% if is_self_assoc %}
             {% for end in ends_list %}
@@ -227,7 +227,7 @@ public class {{ class_obj.name }} {{ extends }}{
    void, so anything else fails the whole file with "missing return statement";
    throwing also keeps a missing implementation from passing for a real answer,
    the way `return null` would. #}
-{% for method in class_obj.methods %}
+{% for method in sort_by_timestamp(class_obj.methods) %}
     {% if method.name not in generated_assoc_methods %}
         {% set ns = namespace(return_type="void") %}
         {% if method.type %}
@@ -235,7 +235,7 @@ public class {{ class_obj.name }} {{ extends }}{
         {% endif %}
 
     {{ method.visibility }} {{ ns.return_type }} {{ method.name }}(
-        {%- for param in method.parameters -%}
+        {%- for param in sort_by_timestamp(method.parameters) -%}
             {{ java_fields.get_field(param.type.name) | trim }} {{ param.name }}{% if not loop.last %}, {% endif %}
         {%- endfor -%}
     ) {

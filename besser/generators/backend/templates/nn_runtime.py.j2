@@ -1,0 +1,72 @@
+"""Runtime for the methods implemented by a neural network.
+
+Each network lives in ``{{ package }}/<module>.py`` (a PyTorch ``NeuralNetwork``
+class) and is loaded once, on first call, with the trained weights from
+``{{ package }}/weights/<module>.pt``.
+"""
+
+import importlib
+import os
+import threading
+
+from fastapi import HTTPException
+
+WEIGHTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "{{ package }}", "weights")
+
+_networks = {}
+_lock = threading.Lock()
+
+
+def _load_network(module_name: str):
+    with _lock:
+        if module_name in _networks:
+            return _networks[module_name]
+
+        weights_path = os.path.join(WEIGHTS_DIR, f"{module_name}.pt")
+        if not os.path.isfile(weights_path):
+            # Not cached: dropping the weights file in makes the next call work.
+            raise HTTPException(
+                status_code=503,
+                detail=f"Neural network '{module_name}' is not trained yet: "
+                       f"add its weights at {{ package }}/weights/{module_name}.pt",
+            )
+        try:
+            import torch
+        except ImportError:
+            raise HTTPException(status_code=503, detail="PyTorch is not installed: pip install torch")
+
+        module = importlib.import_module(f"{{ package }}.{module_name}")
+        network = module.NeuralNetwork()
+        network.load_state_dict(torch.load(weights_path, map_location="cpu"))
+        network.eval()
+        _networks[module_name] = network
+        return network
+
+
+def run_network(module_name: str, inputs: list) -> dict:
+    """Run a network on the method's parameters.
+
+    The parameters, in their declared order, form one input sample. A single
+    list parameter is used as the whole sample (e.g. an image as nested lists).
+    The batch dimension is added here and removed from the output.
+    """
+    network = _load_network(module_name)
+    import torch
+
+    sample = inputs[0] if len(inputs) == 1 and isinstance(inputs[0], (list, tuple)) else inputs
+    try:
+        x = torch.tensor(sample, dtype=torch.float32).unsqueeze(0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Inputs of neural network '{module_name}' must be numbers or nested lists of numbers: {exc}",
+        )
+    try:
+        with torch.no_grad():
+            output = network(x)
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Inputs do not match the shape expected by neural network '{module_name}': {exc}",
+        )
+    return {"network": module_name, "output": output.squeeze(0).tolist()}

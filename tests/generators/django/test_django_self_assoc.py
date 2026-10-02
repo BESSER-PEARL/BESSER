@@ -338,16 +338,6 @@ class TestSelfAssociationTemplateRendering:
             "to avoid reverse accessor clashes"
         )
 
-    @pytest.mark.xfail(
-        reason=(
-            "Known bug: models.py.j2 template iterates association_ends() which "
-            "returns BOTH ends for self-associations (since both point to the same "
-            "class). The template condition 'class_obj.name == fkeys.get(end.owner.name)' "
-            "matches for both ends, producing a duplicate field. The template or "
-            "classification logic needs to track which specific end owns the field."
-        ),
-        strict=True,
-    )
     def test_self_fk_no_duplicate_fields(self, employee_fk_model):
         """Self-referential FK should produce exactly one ForeignKey field, not two."""
         model, employee, assoc = employee_fk_model
@@ -410,3 +400,35 @@ class TestSelfAssociationTemplateRendering:
             f"but found {o2o_count}. This may indicate the template renders the field "
             f"for both ends instead of just the owning side."
         )
+
+
+_DJANGO_CHECK = """
+import django
+from django.conf import settings
+settings.configure(INSTALLED_APPS=["test_app"], DATABASES={},
+                   DEFAULT_AUTO_FIELD="django.db.models.AutoField")
+django.setup()
+from django.core.management import call_command
+call_command("check")
+"""
+
+
+def test_self_fk_passes_django_system_check(employee_fk_model, tmp_path):
+    """Both ends used to become ForeignKeys whose related_names clashed (fields.E302/E303)."""
+    pytest.importorskip("django")
+    import subprocess
+    import sys
+
+    model, _, _ = employee_fk_model
+    gen = DjangoGenerator(model=model, project_name="test_project", app_name="test_app",
+                          output_dir=str(tmp_path))
+    os.makedirs(gen._app_dir(), exist_ok=True)
+    gen.generate_models()
+    app_dir = gen._app_dir()
+    open(os.path.join(app_dir, "__init__.py"), "w").close()
+    models_py = open(os.path.join(app_dir, "models.py"), encoding="utf-8").read()
+    assert "manager = models.ForeignKey(\n        'Employee', related_name='subordinates'" in models_py
+
+    result = subprocess.run([sys.executable, "-c", _DJANGO_CHECK], cwd=os.path.dirname(app_dir),
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr[-2000:]

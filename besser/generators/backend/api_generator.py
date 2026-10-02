@@ -40,8 +40,16 @@ from jinja2 import Environment, FileSystemLoader
 
 from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
+from besser.generators.default_literals import register_default_literals
 from besser.generators.action_language.RESTGenerator import bal_to_rest
-from besser.generators.structural_utils import get_foreign_keys, get_pk_py_types, normalize_method_code
+from besser.generators.backend.nn_methods import collect_nn_modules, nn_method_code
+from besser.generators.structural_utils import (
+    get_deferred_fk_associations,
+    get_foreign_keys,
+    get_pk_py_types,
+    is_server_owned_attribute,
+    normalize_method_code,
+)
 from besser.utilities.utils import sort_by_timestamp
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
@@ -118,8 +126,10 @@ def get_association_classes(model: DomainModel) -> Dict[str, dict]:
                 {
                     "name": attribute.name,
                     "is_enum": attribute.type.__class__.__name__ == "Enumeration",
+                    "is_id": attribute.is_id,
                 }
                 for attribute in sort_by_timestamp(cls.attributes)
+                if not is_server_owned_attribute(attribute)
             ],
         }
     return assoc_classes
@@ -177,7 +187,18 @@ def _make_env() -> Environment:
     )
     env.filters['clean_method_name'] = clean_method_name
     env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest,
-                       normalize_code=normalize_method_code)
+                       normalize_code=normalize_method_code,
+                       # router.py.j2's _client_supplied used to re-implement
+                       # this and its own comment said it MUST mirror the
+                       # pydantic template's copy. Three copies of one rule is
+                       # how they drift: when the schema learned to exclude
+                       # derived attributes, a stale copy here would have read
+                       # them off the payload and returned 500 on every create.
+                       is_server_owned_attribute=is_server_owned_attribute)
+    # Method-parameter defaults are unvalidated request JSON rendered into a
+    # FastAPI app that /besser_api/deploy-app runs. Same sink the SQLAlchemy
+    # template had: emit literals, never expressions.
+    register_default_literals(env)
     return env
 
 
@@ -200,6 +221,7 @@ def generate_modular_api(
     classes = model.classes_sorted_by_inheritance()
     class_names = [cls.name for cls in classes]
     fkeys: Dict[str, List[str]] = get_foreign_keys(model)
+    deferred_fks = get_deferred_fk_associations(model)
     # Class name -> python type of its primary key (default 'int'). Path
     # params and FK payload fields must use the model's declared id type —
     # a `guest_id: int` param for a String PK 404s on every real id. Shared
@@ -223,6 +245,9 @@ def generate_modular_api(
     # `pk` returns the primary-key attribute name of a class, so routers query
     # and join by the real PK (e.g. Seat.code) instead of a hardcoded `.id`.
     env.filters['pk'] = lambda class_name: pk_names.get(str(class_name), "id")
+    # NEURAL_NETWORK methods get a generated body calling nn_runtime.run_network.
+    nn_modules = collect_nn_modules(model)
+    env.globals['nn_method_code'] = lambda method: nn_method_code(method, nn_modules)
 
     routers_dir = os.path.join(output_dir, "routers")
     os.makedirs(routers_dir, exist_ok=True)
@@ -242,6 +267,7 @@ def generate_modular_api(
 
     # One router module per class.
     router_template = env.get_template("router.py.j2")
+    methods_template = env.get_template("router_methods.py.j2")
     for cls in classes:
         router_code = router_template.render(
             **{
@@ -250,6 +276,7 @@ def generate_modular_api(
                 "http_methods": http_methods,
                 "nested_creations": nested_creations,
                 "fkeys": fkeys,
+                "deferred_fks": deferred_fks,
                 "model": model,
                 "pk_types": pk_types,
                 "assoc_classes": assoc_classes,
@@ -259,6 +286,30 @@ def generate_modular_api(
         router_path = os.path.join(routers_dir, f"{cls.name.lower()}.py")
         with open(router_path, mode="w", encoding="utf-8") as f:
             f.write(router_code)
+
+        # Modeled-method endpoints live in their own module: they are the
+        # hand-written half of the generation gap, and keeping them out of
+        # the CRUD file keeps the LLM's edit target small enough to read.
+        if getattr(cls, "methods", None):
+            methods_code = methods_template.render(
+                {
+                    "class": cls,
+                    "classes": classes,
+                    "http_methods": http_methods,
+                    "nested_creations": nested_creations,
+                    "fkeys": fkeys,
+                    "deferred_fks": deferred_fks,
+                    "model": model,
+                    "pk_types": pk_types,
+                    "assoc_classes": assoc_classes,
+                    "assoc_by_association": assoc_by_association,
+                }
+            )
+            methods_path = os.path.join(
+                routers_dir, f"{cls.name.lower()}_methods.py"
+            )
+            with open(methods_path, mode="w", encoding="utf-8") as f:
+                f.write(methods_code)
 
     # main_api.py: slim app setup + router includes (keeps its historical
     # filename so `uvicorn main_api:app` / Docker / deployment tooling that

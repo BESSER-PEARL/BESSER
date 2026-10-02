@@ -246,6 +246,13 @@ def test_backend_generator_full_uml_and_implem(tmpdir):
         sqlalchemy_code = f.read()
     with open(manager_router_file, "r", encoding="utf-8") as f:
         manager_router_code = f.read()
+    # Modeled-method bodies now live in their own module so the LLM's edit
+    # target stays inside its file-read limit; the routes are unchanged.
+    manager_methods_file = os.path.join(
+        os.path.dirname(manager_router_file), "manager_methods.py"
+    )
+    with open(manager_methods_file, "r", encoding="utf-8") as f:
+        manager_methods_code = f.read()
 
     # Pydantic: enums and inheritance
     assert "class Role(Enum):" in pydantic_code
@@ -274,9 +281,9 @@ def test_backend_generator_full_uml_and_implem(tmpdir):
     # REST API: Methods implementation. update_manager is defined in the same
     # router module (Manager updating itself), so no cross-router import is
     # needed and the call site text is unchanged from the old monolith.
-    assert "inst_to_update = _manager_object" in manager_router_code
-    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = inst_to_update.level, name = inst_to_update.name, role = inst_to_update.role, salary = (1.1 * _manager_object.salary), department = inst_to_update.department, projects = inst_to_update.projects), database)" in manager_router_code
-    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = (_manager_object.level + 1), name = inst_to_update.name, role = inst_to_update.role, salary = inst_to_update.salary, department = inst_to_update.department, projects = inst_to_update.projects), database)" in manager_router_code
+    assert "inst_to_update = _manager_object" in manager_methods_code
+    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = inst_to_update.level, name = inst_to_update.name, role = inst_to_update.role, salary = (1.1 * _manager_object.salary), department = inst_to_update.department, projects = inst_to_update.projects), database)" in manager_methods_code
+    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = (_manager_object.level + 1), name = inst_to_update.name, role = inst_to_update.role, salary = inst_to_update.salary, department = inst_to_update.department, projects = inst_to_update.projects), database)" in manager_methods_code
 
 
 def test_backend_generator_one_to_one_optional_field(tmpdir):
@@ -323,9 +330,15 @@ def test_backend_generator_one_to_one_optional_field(tmpdir):
     assert "class ADeviceCreate(BaseModel):" in pydantic_code
     assert "serial: int  # 1:1 Relationship (mandatory)" in pydantic_code
 
-    # Non-FK side (BSerial) should still have the relationship field (optional)
+    # Non-FK side (BSerial) must NOT carry the relationship field: the
+    # generated create_bserial endpoint neither validates nor assigns it,
+    # so it was a field the API accepted and threw away. When both ends of
+    # a 1:1 are required, emitting it on both sides made neither entity
+    # creatable.
     assert "class BSerialCreate(BaseModel):" in pydantic_code
-    assert "device: Optional[int] = None  # 1:1 Relationship (optional)" in pydantic_code
+    bserial_create = pydantic_code.split("class BSerialCreate(BaseModel):")[1]
+    bserial_create = bserial_create.split("class ")[0]
+    assert "device" not in bserial_create, bserial_create
 
 
 def test_backend_generator_nested_creations_nm(tmpdir):

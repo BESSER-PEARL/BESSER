@@ -35,7 +35,7 @@ def reasoning_agent_model() -> Agent:
     agent = Agent("reasoning_demo")
     agent.platforms.append(WebSocketPlatform())
 
-    llm = LLMOpenAI(agent=agent, name="gpt-4o-mini", parameters={})
+    LLMOpenAI(agent=agent, name="gpt-4o-mini", parameters={})
 
     agent.new_tool(
         name="ping",
@@ -71,6 +71,17 @@ def _generate(agent: Agent, output_dir: str) -> str:
         model=agent,
         output_dir=output_dir,
         generation_mode=GenerationMode.CODE_ONLY,
+    ).generate()
+    return os.path.join(output_dir, f"{agent.name}.py")
+
+
+def _generate_test_mode(agent: Agent, output_dir: str) -> str:
+    """Run BAFGenerator in test mode and return the generated agent path."""
+    BAFGenerator(
+        model=agent,
+        output_dir=output_dir,
+        generation_mode=GenerationMode.CODE_ONLY,
+        test_mode=True,
     ).generate()
     return os.path.join(output_dir, f"{agent.name}.py")
 
@@ -168,3 +179,17 @@ class TestBAFGeneratorReasoning:
         assert "agent.load_tools(" not in code
         assert "agent.load_skills(" not in code
         assert "agent.new_workspace(" not in code
+
+    def test_test_mode_still_generates_reasoning_assets(self, reasoning_agent_model, tmp_path):
+        """Test-mode generation must include tools/skills and workspace dirs."""
+        _generate_test_mode(reasoning_agent_model, str(tmp_path))
+
+        tools_path = os.path.join(str(tmp_path), "tools.py")
+        assert os.path.isfile(tools_path)
+
+        skills_path = os.path.join(str(tmp_path), "skills", "GreetByName.md")
+        assert os.path.isfile(skills_path)
+
+        workspace_dir = os.path.join(str(tmp_path), "tmp", "cinema")
+        assert os.path.isdir(workspace_dir)
+

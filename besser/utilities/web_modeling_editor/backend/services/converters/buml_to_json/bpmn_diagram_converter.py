@@ -4,8 +4,8 @@ Two entry points:
 
 * ``bpmn_object_to_json(model: BPMNModel) -> dict`` — converts a metamodel object
   directly. Mirror of ``json_to_buml.bpmn_diagram_processor.process_bpmn_diagram``.
-* ``bpmn_buml_to_json(content: str) -> dict`` — execs a BPMN BUML ``.py`` source string
-  in a fresh namespace, finds the resulting ``BPMNModel``, and delegates to
+* ``bpmn_buml_to_json(content: str) -> dict`` — loads a BPMN BUML ``.py`` source string
+  through the safe AST-allowlist loader, finds the resulting ``BPMNModel``, and delegates to
   ``bpmn_object_to_json``. The ``.py`` files emitted by
   ``besser.utilities.buml_code_builder.bpmn_model_builder.bpmn_model_to_code`` are
   exactly what this wrapper expects.
@@ -67,6 +67,9 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event_mapping import (
     serialise_event_type,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 from besser.utilities.web_modeling_editor.backend.services.utils import (
@@ -527,7 +530,7 @@ class _GridLayout:
 def bpmn_buml_to_json(content: str) -> dict:
     """Convert a BPMN BUML ``.py`` source string into a WME BPMN diagram JSON dict.
 
-    Execs ``content`` in a fresh namespace, locates the resulting ``BPMNModel``, and
+    Loads ``content`` through ``safe_load_buml`` (AST allowlist), locates the resulting ``BPMNModel``, and
     delegates to :func:`bpmn_object_to_json`. The ``.py`` files emitted by
     ``besser.utilities.buml_code_builder.bpmn_model_builder.bpmn_model_to_code`` are
     exactly what this wrapper expects.
@@ -542,15 +545,7 @@ def bpmn_buml_to_json(content: str) -> dict:
         ConversionError: if the source fails to parse / execute, or if no
             ``BPMNModel`` instance is produced.
     """
-    safe_globals = {
-        "__name__": "besser_buml_import",
-        "__builtins__": {
-            "set": set, "list": list, "dict": dict, "tuple": tuple,
-            "str": str, "int": int, "float": float, "bool": bool,
-            "len": len, "range": range,
-            "True": True, "False": False, "None": None,
-            "print": lambda *a, **kw: None,
-        },
+    allowed_names = {
         "BPMNModel": BPMNModel,
         "Process": Process,
         "Collaboration": Collaboration,
@@ -598,9 +593,8 @@ def bpmn_buml_to_json(content: str) -> dict:
         cleaned_lines.append(line)
     cleaned_content = "\n".join(cleaned_lines)
 
-    local_vars: dict = {}
     try:
-        exec(cleaned_content, safe_globals, local_vars)
+        local_vars = safe_load_buml(cleaned_content, allowed_names)
     except (SyntaxError, NameError, TypeError, ValueError) as exc:
         raise ConversionError(f"BPMN BUML file failed to execute: {exc}") from exc
 

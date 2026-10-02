@@ -151,8 +151,11 @@ The BPMN converters live alongside the others under
     ``BPMNModel`` → WME BPMN JSON.
 
 ``bpmn_buml_to_json(content)``
-    B-UML ``.py`` source string → WME BPMN JSON (executes the source and
-    delegates to ``bpmn_object_to_json``).
+    B-UML ``.py`` source string → WME BPMN JSON. The source is first checked
+    against the safe B-UML loader's AST allowlist, which admits only the BPMN
+    metamodel classes and ``set``; it is executed only if it passes, and the
+    resulting model is handed to ``bpmn_object_to_json``. A rejected source
+    raises ``ConversionError``.
 
 ``bpmn_model_to_code(model)``
     ``BPMNModel`` → executable Python that reconstructs the model when

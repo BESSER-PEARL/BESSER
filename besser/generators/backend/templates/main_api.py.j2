@@ -10,6 +10,8 @@ from sql_alchemy import *
 from database import get_db
 {% for class in classes %}
 from routers import {{ class.name | lower }} as {{ class.name | lower }}_router
+{% if class.methods %}from routers import {{ class.name | lower }}_methods as {{ class.name | lower }}_methods_router
+{% endif %}
 {% endfor %}
 
 # Configure logging
@@ -80,6 +82,8 @@ async def add_process_time_header(request: Request, call_next):
 @app.exception_handler(ValueError)
 async def value_error_handler(request: Request, exc: ValueError):
     """Handle ValueError exceptions."""
+    # The client sees a 400; the server log keeps the traceback of the real cause.
+    logger.exception("ValueError on %s %s", request.method, request.url.path, exc_info=exc)
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
         content={
@@ -111,7 +115,7 @@ async def integrity_error_handler(request: Request, exc: IntegrityError):
 @app.exception_handler(SQLAlchemyError)
 async def sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError):
     """Handle general SQLAlchemy errors."""
-    logger.error(f"Database error: {exc}")
+    logger.exception(f"Database error: {exc}", exc_info=exc)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
@@ -146,6 +150,8 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 
 {% for class in classes %}
 app.include_router({{ class.name | lower }}_router.router)
+{% if class.methods %}app.include_router({{ class.name | lower }}_methods_router.router)
+{% endif %}
 {% endfor %}
 
 ############################################

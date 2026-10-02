@@ -8,6 +8,7 @@ export interface TableBlockProps {
   options?: Record<string, any>;
   dataBinding?: Record<string, any>;
   styles?: CSSProperties;
+  className?: string;
 }
 
 const isNestedField = (field?: string): boolean => !!field && field.includes(".");
@@ -18,6 +19,7 @@ export const TableBlock: React.FC<TableBlockProps> = ({
   options,
   dataBinding,
   styles,
+  className,
 }) => {
   const [tableData, setTableData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -75,8 +77,8 @@ export const TableBlock: React.FC<TableBlockProps> = ({
       .finally(() => setLoading(false));
   }, [dataBinding?.endpoint, dataBinding?.label_field, dataBinding?.data_field, options?.columns]);
 
-  if (loading) return <div id={id}>Loading data...</div>;
-  if (error) return <div id={id}>{error}</div>;
+  if (loading) return <div id={id} className={className}>Loading data...</div>;
+  if (error) return <div id={id} className={className}>{error}</div>;
 
   return (
     <TableComponent
@@ -85,6 +87,7 @@ export const TableBlock: React.FC<TableBlockProps> = ({
       data={tableData}
       options={options || {}}
       styles={styles}
+      className={className}
       dataBinding={dataBinding}
     />
   );

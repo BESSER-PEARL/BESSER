@@ -80,7 +80,7 @@ class PageBuilderMixin:
             )
 
             file_path = os.path.join(pages_dir, f"{component_name}.tsx")
-            with open(file_path, "w", encoding="utf-8") as f:
+            with open(file_path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(file_contents)
 
             page_infos.append(
@@ -129,6 +129,10 @@ class PageBuilderMixin:
             imports.append("import { AgentComponent } from \"../components/AgentComponent\";")
         if "MethodButton" in context.imports:
             imports.append("import { MethodButton } from \"../components/MethodButton\";")
+        if "FormBlock" in context.imports:
+            imports.append("import { FormBlock } from \"../components/runtime/FormBlock\";")
+        if "CrudButton" in context.imports:
+            imports.append("import { CrudButton } from \"../components/runtime/CrudButton\";")
 
         # Specialized input / alert components
         all_input_components: List[str] = sorted(context.input_components)
@@ -214,6 +218,8 @@ class PageBuilderMixin:
         )
 
         indent_str = " " * indent
+        # Continuation lines of a multi-line prop align under this component.
+        self._prop_indent = indent
 
         # Containers
         if comp_type in {"container", "wrapper", "component"}:
@@ -300,18 +306,46 @@ class PageBuilderMixin:
 
         # Form
         if comp_type == "form":
+            inputs = node.get("inputs") or []
+            submit_label = node.get("submit_label") or "Submit"
+            binding = node.get("data_binding") or {}
+            # A form bound to a class posts the inputs bound to its attributes
+            fields = [
+                {"name": field["id"], "field": field["field"], "type": field.get("field_type") or "str"}
+                for field in inputs
+                if field.get("field") and field.get("id")
+            ]
+            bound = bool(binding.get("endpoint") and fields)
+            input_lines = []
+            for field in inputs:
+                input_lines.append(self._render_form_field(field, indent_str + "  ", named=bound))
+            inner = "\n".join(input_lines) if input_lines else ""
+            if bound:
+                context.imports.add("FormBlock")
+                props = self._build_component_props(
+                    component_id=component_id,
+                    class_list=class_list,
+                    style=style,
+                    extra_props={
+                        "endpoint": binding.get("endpoint"),
+                        "entity": binding.get("entity"),
+                        "fields": fields,
+                        "submitLabel": submit_label,
+                    },
+                )
+                return (
+                    f"{indent_str}<FormBlock{props}>\n"
+                    + inner
+                    + f"\n{indent_str}</FormBlock>"
+                )
             on_submit_expr = "(e) => { e.preventDefault(); }"
             props = self._build_element_props(component_id, class_list, style, attributes, None)
             props += " onSubmit={" + on_submit_expr + "}"
-            inputs = node.get("inputs") or []
-            input_lines = []
-            for field in inputs:
-                input_lines.append(self._render_form_field(field, indent_str + "  "))
-            inner = "\n".join(input_lines) if input_lines else ""
+            submit_expr = f"{{{json.dumps(submit_label, ensure_ascii=False)}}}"
             return (
                 f"{indent_str}<form{props}>\n"
                 + inner
-                + f"\n{indent_str}  <button type=\"submit\">Submit</button>\n"
+                + f"\n{indent_str}  <button type=\"submit\">{submit_expr}</button>\n"
                 + f"{indent_str}</form>"
             )
 
@@ -398,7 +432,6 @@ class PageBuilderMixin:
                     "dataBinding": node.get("data_binding"),
                 },
                 style_prop_name="styles",
-                include_class_name=False,
             )
             return f"{indent_str}<ChartBlock{props} />"
 
@@ -415,7 +448,6 @@ class PageBuilderMixin:
                     "dataBinding": node.get("data_binding"),
                 },
                 style_prop_name="styles",
-                include_class_name=False,
             )
             return f"{indent_str}<TableBlock{props} />"
 
@@ -431,7 +463,6 @@ class PageBuilderMixin:
                     "dataBinding": node.get("data_binding"),
                 },
                 style_prop_name="styles",
-                include_class_name=False,
             )
             return f"{indent_str}<MetricCardBlock{props} />"
 
@@ -735,9 +766,15 @@ class PageBuilderMixin:
                 req_sty = self._format_prop("style", {"color": "#ef4444", "marginLeft": 2})
                 req_span = f'<span {req_sty}>*</span>'
             lbl_text = f"{{{json.dumps(label)}}}{req_span}" if label else ""
+            # One `name` only: a second one from the attributes spread is TS2783
+            checkbox_attrs = {k: v for k, v in base_attrs.items() if k != "name"}
             inner_props = self._build_element_props(
-                component_id, class_list, {}, base_attrs, None,
-                extra_props=ep(name=component_id or None, required=required or None, defaultChecked=checked or None),
+                component_id, class_list, {}, checkbox_attrs, None,
+                extra_props=ep(
+                    name=base_attrs.get("name") or component_id or None,
+                    required=required or None,
+                    defaultChecked=checked or None,
+                ),
             )
             return (
                 f'{indent_str}<div>\n'
@@ -828,7 +865,7 @@ class PageBuilderMixin:
         inner = f'{indent_str}<input type={json.dumps(html_type)}{props} />'
         return with_label(inner) if label else inner
 
-    def _render_form_field(self, field: Dict[str, Any], indent_str: str) -> str:
+    def _render_form_field(self, field: Dict[str, Any], indent_str: str, named: bool = False) -> str:
         field_id = field.get("id") or ""
         label = field.get("label") or field_id
         field_type = field.get("type") or "Text"
@@ -862,7 +899,9 @@ class PageBuilderMixin:
             "multiple": multiple,
             "default_value": default_value,
         }
-        input_jsx = self._render_input(field_node, field_id, [], {}, {}, indent_str)
+        # A submitting form reads each control by its name (the field id)
+        field_attrs = {"name": field_id} if named and field_id else {}
+        input_jsx = self._render_input(field_node, field_id, [], {}, field_attrs, indent_str)
 
         return (
             f"{indent_str}<div {wrapper_style}>\n"
@@ -882,6 +921,25 @@ class PageBuilderMixin:
         indent_str: str,
     ) -> str:
         action_type = node.get("action_type")
+        crud = node.get("crud")
+        if crud:
+            # Create/update/delete: run through the bound table's dialog/endpoint
+            context.imports.add("CrudButton")
+            props = self._build_component_props(
+                component_id=component_id,
+                class_list=class_list,
+                style=style,
+                extra_props={
+                    "label": attributes.get("button-label") or node.get("label") or node.get("name"),
+                    "action": crud.get("action"),
+                    "tableId": crud.get("tableId"),
+                    "entity": crud.get("entity"),
+                    "targetPath": crud.get("targetPath"),
+                    "confirmMessage": crud.get("confirmMessage"),
+                },
+            )
+            return f"{indent_str}<CrudButton{props} />"
+
         if action_type == "run-method" or "endpoint" in attributes:
             context.imports.add("MethodButton")
             endpoint = attributes.get("endpoint")
@@ -1028,14 +1086,26 @@ class PageBuilderMixin:
 
         return "".join(props)
 
-    @staticmethod
-    def _format_prop(name: str, value: Any) -> str:
+    # A structured prop longer than this is written across lines. A single
+    # multi-thousand-character line (e.g. a whole table options dict) cannot
+    # be edited reliably by the agent; one key per line can. The contract
+    # checker scans braces and uses json.raw_decode, both newline-tolerant,
+    # so it reads either form.
+    _MAX_INLINE_PROP_CHARS = 160
+
+    def _format_prop(self, name: str, value: Any) -> str:
         if isinstance(value, bool):
             return f"{name}={{{str(value).lower()}}}"
         if isinstance(value, (int, float)):
             return f"{name}={{{value}}}"
         if isinstance(value, (list, dict)):
-            return f"{name}={{{json.dumps(value, ensure_ascii=False)}}}"
+            compact = json.dumps(value, ensure_ascii=False)
+            if len(compact) <= self._MAX_INLINE_PROP_CHARS:
+                return f"{name}={{{compact}}}"
+            pad = " " * (getattr(self, "_prop_indent", 0) + 2)
+            body = ("\n" + pad).join(
+                json.dumps(value, ensure_ascii=False, indent=2).splitlines())
+            return f"{name}={{{body}}}"
         return f"{name}={json.dumps(value, ensure_ascii=False)}"
 
     # ------------------------------------------------------------------ #
@@ -1215,7 +1285,7 @@ class PageBuilderMixin:
         )
 
         app_path = self.build_generation_path("src/App.tsx")
-        with open(app_path, "w", encoding="utf-8") as f:
+        with open(app_path, "w", encoding="utf-8", newline="\n") as f:
             f.write(app_contents)
     # --------------------------------------------------------------------- #
     # Context builders

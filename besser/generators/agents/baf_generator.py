@@ -90,6 +90,38 @@ def extract_braced_vars(template: str) -> list[str]:
     return list(dict.fromkeys(re.findall(r'\{(\w+)\}', template or '')))
 
 
+_SQL_ITEM_HEADER = re.compile(r'^(\s*)-\s+[\w-]+\s*:\s*$')
+_SQLITE_DIALECT = re.compile(r'^\s*dialect\s*:\s*["\']?sqlite')
+_FILE_KEY = re.compile(r'^\s*file\s*:')
+_DATABASE_KEY = re.compile(r'^(\s*)database(\s*:)')
+
+
+def sqlite_database_to_file(config_yaml: str) -> str:
+    """Rename ``database:`` to ``file:`` in sqlite ``db.sql`` entries of *config_yaml*.
+
+    BAF reads a sqlite path from ``file``; older editor builds wrote ``database``.
+    """
+    lines = config_yaml.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        header = _SQL_ITEM_HEADER.match(lines[i])
+        i += 1
+        if not header:
+            continue
+        start = i
+        while i < len(lines) and (not lines[i].strip() or
+                                  len(lines[i]) - len(lines[i].lstrip()) > len(header.group(1))):
+            i += 1
+        block = range(start, i)
+        if (any(_SQLITE_DIALECT.match(lines[j]) for j in block)
+                and not any(_FILE_KEY.match(lines[j]) for j in block)):
+            for j in block:
+                if _DATABASE_KEY.match(lines[j]):
+                    lines[j] = _DATABASE_KEY.sub(r'\1file\2', lines[j], count=1)
+                    break
+    return ''.join(lines)
+
+
 def workspace_rel_dir(path: str, name: str) -> str:
     """Return the directory of a workspace relative to the generated agent's folder.
 
@@ -386,7 +418,7 @@ class BAFGenerator(GeneratorInterface):
             config_path = self.build_generation_path(file_name="config.yaml")
             with open(config_path, mode="w", encoding="utf-8") as f:
                 if self.config_yaml is not None:
-                    f.write(self.config_yaml)
+                    f.write(sqlite_database_to_file(self.config_yaml))
                 else:
                     config_template = env.get_template('baf_config_template.py.j2')
                     properties = sorted(self.model.properties, key=lambda prop: prop.section)

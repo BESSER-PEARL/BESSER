@@ -18,7 +18,8 @@ Optional constructor parameters:
   ``json.load``, so a YAML file will fail to parse.
 - ``config``: Configuration dictionary (alternative to ``config_path``).
 - ``config_yaml``: Raw YAML text to write out as the agent's ``config.yaml``
-  instead of the template-rendered default.
+  instead of the template-rendered default. A sqlite ``db.sql`` entry that names its file
+  under ``database`` is rewritten to ``file``, the key BAF reads.
 - ``openai_api_key``: OpenAI API key for LLM-powered agent features.
 - ``generation_mode``: See `Generation Modes`_ below.
 - ``test_mode``: When ``True``, the agent is generated to be driven headlessly

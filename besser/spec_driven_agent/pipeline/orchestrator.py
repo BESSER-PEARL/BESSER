@@ -3113,6 +3113,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             collect_frontend_resolution_issues,
         )
         raw_issues.extend(collect_frontend_resolution_issues(self.output_dir))
+        # The probes above never render a page, so a UI whose create forms
+        # cannot save still passes them. Static, milliseconds.
+        try:
+            from besser.spec_driven_agent.validation.frontend_forms import (
+                collect_frontend_form_issues,
+            )
+            raw_issues.extend(collect_frontend_form_issues(self.output_dir))
+        except Exception as exc:
+            logger.warning("Frontend form validation failed", exc_info=True)
+            raw_issues.append(_check_did_not_run(
+                "the frontend form check", f"it crashed: {type(exc).__name__}"))
 
         from besser.spec_driven_agent.validation.frontend_build import collect_frontend_build_issues
         build_cache = getattr(self, "_successful_frontend_builds", {})

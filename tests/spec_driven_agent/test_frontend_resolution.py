@@ -101,11 +101,34 @@ def test_the_automatic_runtime_carve_out_keeps_a_working_app_quiet(tmp_path):
         tmp_path,
         manifest={"dependencies": _MANIFEST["dependencies"],
                   "devDependencies": {"@vitejs/plugin-react": "^4.0.0"}},
-        vite_config="import react from '@vitejs/plugin-react';\nexport default {};\n",
+        vite_config="import react from '@vitejs/plugin-react';\n"
+                    "export default { plugins: [react()] };\n",
         files={"src/App.jsx": "export default function App() { return <div>hi</div>; }\n"},
     )
 
     assert collect_frontend_resolution_issues(workspace) == []
+
+
+def test_a_react_plugin_that_is_declared_but_not_registered_is_still_a_blocker(tmp_path):
+    """baseline p11-permits rep1: the model dropped ``plugins: [react()]`` from
+    the scaffold's vite.config but kept its comment naming
+    ``@vitejs/plugin-react``, and package.json still declared it. Both used to
+    count as an automatic runtime; every page died with 'React is not
+    defined'."""
+    workspace = _frontend(
+        tmp_path,
+        manifest={"dependencies": dict(_MANIFEST["dependencies"], **{"@vitejs/plugin-react": "^4.3.4"})},
+        vite_config=("import { defineConfig } from 'vite';\n"
+                     "// @vitejs/plugin-react enables the automatic JSX runtime.\n"
+                     "export default defineConfig({ server: { port: 3000 } });\n"),
+        files={"src/pages/AgentList.jsx":
+               "export default function AgentList(){return <div>agents</div>}\n"},
+    )
+
+    [issue] = [i for i in collect_frontend_resolution_issues(workspace)
+               if i.startswith("frontend contract:")]
+
+    assert "AgentList.jsx" in issue and "plugins" in issue
 
 
 def test_an_undeclared_package_is_reported_but_does_not_drive_the_loop(tmp_path):

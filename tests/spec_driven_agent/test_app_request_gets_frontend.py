@@ -151,6 +151,21 @@ def test_phase2_prompt_orders_the_frontend_for_an_app():
     assert RULE_15 not in prompt("add a due date to the app", modify_mode=True)
 
 
+# Live evidence: in 10 of 20 eval runs no UI form produced a 2xx create - every
+# field a text box (422 on number/date/id/email), a raw-JSON textarea, `?edit=new`
+# sent as PUT /<entity>/new/, a "New" link to an undeclared route,
+# `${BASE}${path}` without the slash, a vite.config without the React plugin.
+def test_phase2_prompt_names_the_create_form_failures():
+    app = build_system_prompt(_todo_model(), None, None, "", TODO_APP, 10)
+    for phrase in ('`<input type="number">`', "raw-JSON textarea",
+                   "Create MUST POST to the collection route",
+                   "the router does not declare", "`${base}${path}`",
+                   "plugins: [react()]"):
+        assert phrase in app
+    headless = build_system_prompt(_todo_model(), None, None, "", REST_API, 10)
+    assert "raw-JSON textarea" not in headless
+
+
 def test_phase1_says_the_frontend_will_be_authored(tmp_path, monkeypatch):
     details = []
     orch = _orch(tmp_path, TODO_APP,

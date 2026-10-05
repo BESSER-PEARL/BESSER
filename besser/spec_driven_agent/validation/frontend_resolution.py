@@ -132,12 +132,24 @@ def _has_path_aliases(project_dir: str) -> bool:
     return False
 
 
+def _registers_vite_react_plugin(config: str) -> bool:
+    """The React plugin is imported AND called inside ``plugins: [...]``.
+
+    Declaring ``@vitejs/plugin-react`` in package.json, or naming it in a
+    comment, leaves Vite on esbuild's classic transform.
+    """
+    for binding in re.findall(
+            r"""import\s+(\w+)\s+from\s+['"](?:@vitejs/plugin-react(?:-swc)?|@preact/preset-vite)['"]""",
+            config):
+        if re.search(rf"\bplugins\s*:\s*\[[^\]]*\b{binding}\s*\(", config):
+            return True
+    return False
+
+
 def _automatic_jsx_runtime(project_dir: str, manifest: dict) -> bool:
     """True when JSX compiles without React in lexical scope."""
     declared = _declared_packages(manifest)
-    if declared & {"@vitejs/plugin-react", "@vitejs/plugin-react-swc",
-                   "react-scripts", "next", "@preact/preset-vite",
-                   "@babel/preset-react", "@rsbuild/plugin-react"}:
+    if declared & {"react-scripts", "next", "@babel/preset-react", "@rsbuild/plugin-react"}:
         return True
     for name in ("tsconfig.json", "jsconfig.json"):
         text = _read(os.path.join(project_dir, name))
@@ -148,8 +160,11 @@ def _automatic_jsx_runtime(project_dir: str, manifest: dict) -> bool:
             if not name.startswith(("vite.config", "babel.config", "webpack.config",
                                     "rsbuild.config", "esbuild")) and name != ".babelrc":
                 continue
-            text = _read(os.path.join(folder, name))
-            if "plugin-react" in text or "preset-react" in text:
+            text = _strip_comments(_read(os.path.join(folder, name)))
+            if name.startswith("vite.config"):
+                if _registers_vite_react_plugin(text):
+                    return True
+            elif "plugin-react" in text or "preset-react" in text:
                 return True
             if re.search(r"jsx\s*:\s*['\"]automatic['\"]", text):
                 return True
@@ -239,10 +254,12 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
         for rel_file in sorted(set(jsx_without_react)):
             issues.append(
                 f"frontend contract: {prefix}{rel_file} contains JSX but does not import "
-                f"React, and this project configures no automatic JSX runtime (no "
-                f"@vitejs/plugin-react, no \"jsx\": \"react-jsx\"). The classic transform "
-                f"emits React.createElement and the page dies with 'React is not defined'. "
-                f"Add 'import React from \"react\"' or configure the automatic runtime.")
+                f"React, and this project configures no automatic JSX runtime (react() is not "
+                f"registered in vite.config's plugins: [...] - declaring @vitejs/plugin-react "
+                f"or mentioning it in a comment does not enable it - and no \"jsx\": "
+                f"\"react-jsx\"). The classic transform emits React.createElement and every "
+                f"page dies with 'React is not defined'. Import the plugin and add react() "
+                f"to plugins, or add 'import React from \"react\"' to the file.")
 
     return issues
 

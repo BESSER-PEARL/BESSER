@@ -105,6 +105,8 @@ def _summarize_policy(policy) -> dict:
             "confidence": getattr(p, "confidence", None),
             "roles": sorted(r.name for r in (getattr(p, "roles", None) or [])),
         })
+    # GovernanceDSL participants are a set; normalize once for all downstream consumers.
+    participants.sort(key=lambda participant: (participant["name"], participant["kind"]))
     return {
         "policy_type": ptype,
         "ratio": getattr(policy, "ratio", None),

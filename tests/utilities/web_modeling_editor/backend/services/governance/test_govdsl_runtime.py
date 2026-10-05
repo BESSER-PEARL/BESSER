@@ -1,8 +1,16 @@
 """Tests for published GovernanceDSL parsing in the WME backend."""
 from importlib import import_module
 from importlib.metadata import version
+import json
+from types import SimpleNamespace
 
 import pytest
+
+from besser.generators.docker_compose.docker_compose_generator import (
+    _a2a_descriptor,
+    _a2a_descriptor_from_tags,
+)
+from besser.utilities.web_modeling_editor.backend.services.governance import govdsl_runtime
 
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     GovernanceDslValidationError,
@@ -79,3 +87,78 @@ def test_invalid_ratio_raises_validation_error():
 
     with pytest.raises(GovernanceDslValidationError, match="ratio"):
         summarize_governance(invalid_dsl)
+
+class _OrderedParticipants(set):
+    """Supply a chosen iteration order for the same GovernanceDSL participant set."""
+
+    def __init__(self, participants):
+        self._ordered = tuple(participants)
+        super().__init__(self._ordered)
+
+    def __iter__(self):
+        return iter(self._ordered)
+
+
+def test_policy_summary_preserves_metadata_in_canonical_order():
+    from governancedsl.metamodel.governance import Agent, Human, Role
+
+    policy = govdsl_runtime._parse_policies(govdsl_runtime._strip_comments(_VOTING_DSL))[0]
+    roles = {Role("ZRole"), Role("ARole")}
+    participants = [
+        Role("Shared"),
+        Human("Shared", roles=roles),
+        Agent("Shared", confidence=0.8, roles=roles),
+        Agent("Reviewer", confidence=0.6),
+    ]
+    expected = {
+        "policy_type": "MajorityPolicy",
+        "ratio": 0.5,
+        "decision_type": "BooleanDecision",
+        "requires_human": True,
+        "participants": [
+            {"name": "Reviewer", "kind": "agent", "confidence": 0.6, "roles": []},
+            {"name": "Shared", "kind": "agent", "confidence": 0.8, "roles": ["ARole", "ZRole"]},
+            {"name": "Shared", "kind": "human", "confidence": None, "roles": ["ARole", "ZRole"]},
+            {"name": "Shared", "kind": "role", "confidence": None, "roles": []},
+        ],
+    }
+    for order in (participants, list(reversed(participants))):
+        original = _OrderedParticipants(order)
+        policy.participants = original
+        assert govdsl_runtime._summarize_policy(policy) == expected
+        assert policy.participants is original
+        assert list(policy.participants) == order
+
+
+@pytest.mark.parametrize("tagged", [False, True], ids=["legacy", "tagged"])
+def test_governance_descriptor_has_canonical_order(monkeypatch, tagged):
+    policy = govdsl_runtime._parse_policies(govdsl_runtime._strip_comments(_VOTING_DSL))[0]
+    participants = sorted(policy.participants, key=lambda participant: participant.name)
+    monkeypatch.setattr(govdsl_runtime, "_parse_policies", lambda text: [policy])
+    summaries, descriptors = [], []
+    for order in (participants, list(reversed(participants))):
+        original = _OrderedParticipants(order)
+        policy.participants = original
+        summary = summarize_governance(_VOTING_DSL)
+        summaries.append(summary)
+        owner = SimpleNamespace(name="Reviewer", states=[], _governance=[{
+            **summary, "producers": ["Coder"],
+        }])
+        builder = _a2a_descriptor
+        if tagged:
+            owner._a2a = {"outbound": [], "inbound": [{"peer": "Coder", "flow": "merge"}]}
+            builder = _a2a_descriptor_from_tags
+        descriptor = builder(owner, {"coder", "reviewer"}, self_service="reviewer")
+        descriptors.append(descriptor)
+        governance = descriptor["governance"]
+        assert governance["weights"] == {"coder": 0.8, "reviewer": 0.6}
+        assert governance["producer_services"] == ["coder"]
+        assert governance["owner_votes"] is True
+        assert governance["owner_produces"] is False
+        assert governance["requires_human"] is False
+        assert policy.participants is original
+        assert list(policy.participants) == order
+    assert summaries[0] == summaries[1]
+    # Preserve mapping insertion order in this comparison, as the template does.
+    assert json.dumps(descriptors[0]) == json.dumps(descriptors[1])
+    assert list(descriptors[0]["governance"]["weights"]) == ["coder", "reviewer"]

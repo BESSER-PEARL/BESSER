@@ -16,6 +16,7 @@ import tempfile
 import importlib.util
 import asyncio
 import json
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -1044,22 +1045,29 @@ async def _handle_deployment_project_generation(
         # (== the Artifact.agent_model_ref UUID), NOT by agent name — duplicate
         # agent names are legal, which is why 6b chose ID over name (memo 07 §8).
         agent_models_by_id: dict = {}
+        agent_configs_by_id: dict = {}
+        agent_config_yamls_by_id: dict = {}
         for entry in input_data.diagrams.get("AgentDiagram", []):
-            entry_dict = entry.model_dump() if hasattr(entry, "model_dump") else entry
+            entry_dict = deepcopy(entry.model_dump() if hasattr(entry, "model_dump") else entry)
             if not isinstance(entry_dict, dict):
                 continue
             diagram_id = entry_dict.get("id")
             model = entry_dict.get("model")
             if not diagram_id or not (isinstance(model, dict) and model.get("elements")):
                 continue
+            agent_config = entry_dict.get("config")
+            if isinstance(agent_config, dict) and isinstance(agent_config.get("personalizationMapping"), list):
+                normalize_personalization_mapping(agent_config, entry_dict, _generate_user_profile_document)
             agent_model = process_agent_diagram(entry_dict)
             if agent_model is not None:
-                # Item 10 — stash the A2A wire tags (a2a:in/a2a:out) parsed from the
+                # Stash the A2A wire tags (a2a:in/a2a:out) parsed from the
                 # raw AgentDiagram JSON onto agent._a2a, so the docker_compose bake can
                 # prefer them over the legacy to_/from_ state-name convention. No-op when
                 # the diagram carries no a2a: tag (legacy agents stay byte-identical).
                 annotate_agent_with_a2a(agent_model, entry_dict)
                 agent_models_by_id[diagram_id] = agent_model
+                agent_configs_by_id[diagram_id] = agent_config
+                agent_config_yamls_by_id[diagram_id] = entry_dict.get("configYaml")
 
         # Governance DSL → runtime. A merging gateway's governanceDsl is
         # authored in the BPMN diagram and round-trips on AgenticGateway, but the
@@ -1078,6 +1086,8 @@ async def _handle_deployment_project_generation(
         generator_instance = generator_class(
             deployment_model, output_dir=temp_dir,
             agent_models_by_id=agent_models_by_id,
+            agent_configs_by_id=agent_configs_by_id,
+            agent_config_yamls_by_id=agent_config_yamls_by_id,
         )
         await asyncio.to_thread(generator_instance.generate)
 

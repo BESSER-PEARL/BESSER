@@ -76,7 +76,12 @@ def _gov_owner_ballot(session, cand_block, ids):
 
 {% if a2a.peers or a2a.states or a2a.merge_sends or a2a.governance %}
 # -- A2A client: fan out to every replica of each downstream peer --
-def _peer_replica_urls(service, port=8000):
+_A2A_PEER_PORTS = {{ (a2a.peer_ports or {}) | python_repr }}
+
+
+def _peer_replica_urls(service, port=None):
+    if port is None:
+        port = _A2A_PEER_PORTS.get(service, 8000)
     # Docker DNS can return one address per running replica. Fall back to the
     # service VIP if only one address resolves.
     try:

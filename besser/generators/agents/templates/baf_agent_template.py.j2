@@ -442,6 +442,9 @@ ic_config = LLMIntentClassifierConfiguration(
 agent.set_default_ic_config(ic_config)
 {% endif %}
 
+{% if deployment_component_bindings %}
+{% include 'baf_deployment_components.py.j2' %}
+{% else %}
 {% if agent.tools and agent.tools|length > 0 %}
 ##############################
 # TOOLS
@@ -454,6 +457,7 @@ agent.load_tools(os.path.join(_HERE, "tools.py"))
 # SKILLS
 ##############################
 agent.load_skills(os.path.join(_HERE, "skills"))
+{% endif %}
 {% endif %}
 
 {% if agent.workspaces and agent.workspaces|length > 0 %}

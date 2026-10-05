@@ -204,7 +204,7 @@ def _a2a_wrap(state, edges, sends, merge_cfg=None, fallback=False):
     def execute(session):
         pending = session.get('_a2a_pending_state')
         if not pending:
-            session.delete('_a2a_last_reply')
+            session.set('_a2a_last_reply', None)
             original(session)
         if not getattr(session.event, 'message', None):
             return

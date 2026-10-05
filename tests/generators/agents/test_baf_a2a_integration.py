@@ -514,3 +514,157 @@ def test_a2a_requires_an_authored_initial_state(tmp_path):
     agent = Agent('MissingInitial')
     with pytest.raises(ValueError, match='exactly one authored initial state'):
         BAFGenerator(agent, str(tmp_path), a2a_descriptor={'to_peers': ['peer']})
+
+@pytest.mark.parametrize('a2a_enabled', [False, True])
+def test_deployment_metadata_registers_distinct_tools_and_skill_once(tmp_path, load_runtime, a2a_enabled):
+    from baf.core.agent import Agent as RuntimeAgent
+    assert hasattr(RuntimeAgent, 'new_tool') and hasattr(RuntimeAgent, 'new_skill'), 'Use BAF 4.5.2 for this test'
+    agent = _model()
+    agent.new_tool('test', description='First\nquoted "description"',
+                   code="def tool_name(session):\n    return 'first'\n")
+    agent.new_tool('name_for_testing', description='Second tool',
+                   code="def tool_name(session):\n    return 'second'\n")
+    agent.new_skill('product_lkno', description='fefe\nmore detail', content='# Skill\nActual skill body')
+    descriptor = None
+    if a2a_enabled:
+        agent._a2a = {'outbound': [], 'inbound': [{'peer': 'Peer', 'target_state': 'receive'}]}
+        descriptor = _a2a_descriptor_from_tags(agent, {'authored', 'peer'})
+    BAFGenerator(agent, str(tmp_path), generation_mode=GenerationMode.CODE_ONLY, test_mode=True,
+                 a2a_descriptor=descriptor, deployment_component_metadata=True).generate()
+    code = (tmp_path / 'Authored.py').read_text(encoding='utf-8')
+    _singleton_checks(code)
+    assert 'agent.load_tools(' not in code and 'agent.load_skills(' not in code
+    assert not (tmp_path / 'tools.py').exists()
+    assert len(list((tmp_path / 'declared_tools').glob('*.py'))) == 2
+    assert len(list((tmp_path / 'skills').glob('*.md'))) == 1
+    ns = load_runtime(code, tmp_path)
+    tools = ns['agent']._tools
+    skills = ns['agent']._skills
+    assert set(tools) == {'test', 'name_for_testing'}
+    assert tools['test'].call({'session': 'offline'}) == 'first'
+    assert tools['name_for_testing'].call({'session': 'offline'}) == 'second'
+    assert tools['test'].description == 'First\nquoted "description"'
+    assert set(skills) == {'product_lkno'}
+    assert skills['product_lkno'].description == 'fefe\nmore detail'
+    assert skills['product_lkno'].content == '# Skill\nActual skill body'
+    session = ns['Session']('human', ns['agent'], getattr(ns['agent'], 'ui', None))
+    if a2a_enabled:
+        reply = asyncio.run(ns['handle'](message='task'))
+        assert reply['reply'] == 'Received task\n\nauthored answer: task'
+        assert reply['actions'] == [{'action': 'reply_gui', 'value': 'order_gui'}]
+    else:
+        ns['ask']._body(session)
+        assert ns['agent'].ui.sent == [('reply', 'Welcome'), ('gui', 'order_gui')]
+        assert ns['ask'].transitions[0].event.message_id == 'order-form'
+        session.event = ns['ReceiveTextEvent']('task')
+        ns['compute']._body(session)
+        assert session.get('answer') == 'authored answer: task'
+
+
+def test_deployment_metadata_rejects_ambiguous_tool_entrypoint(tmp_path):
+    agent = _model()
+    agent.new_tool('public_label', code='def first(session):\n    pass\ndef second(session):\n    pass\n')
+    with pytest.raises(ValueError, match='one public top-level function'):
+        BAFGenerator(agent, str(tmp_path), generation_mode=GenerationMode.CODE_ONLY,
+                     deployment_component_metadata=True).generate()
+
+
+def test_deployment_metadata_accepts_named_entrypoint_and_private_helpers(tmp_path, load_runtime):
+    agent = _model()
+    agent.new_tool('selected', description='Authored', code=(
+        'def _helper():\n    return 7\n'
+        'def other(session):\n    return 0\n'
+        'def selected(session):\n    return _helper()\n'))
+    BAFGenerator(agent, str(tmp_path), generation_mode=GenerationMode.CODE_ONLY,
+                 deployment_component_metadata=True).generate()
+    ns = load_runtime((tmp_path / 'Authored.py').read_text(encoding='utf-8'), tmp_path)
+    assert set(ns['agent']._tools) == {'selected'}
+    assert ns['agent']._tools['selected'].fn(None) == 7
+
+
+def test_ordinary_metadata_opt_in_default_keeps_legacy_output(tmp_path):
+    agent = _model()
+    agent.new_tool('declared', code='def callable_name(session):\n    return 1\n')
+    agent.new_skill('declared_skill', content='# Different title')
+    normal = _generate(agent, tmp_path / 'normal')
+    BAFGenerator(agent, str(tmp_path / 'explicit_default'), generation_mode=GenerationMode.CODE_ONLY,
+                 test_mode=True, deployment_component_metadata=False).generate()
+    explicit = (tmp_path / 'explicit_default' / 'Authored.py').read_text(encoding='utf-8')
+    assert normal == explicit
+    assert 'agent.load_tools(os.path.join(_HERE, "tools.py"))' in normal
+    assert 'agent.load_skills(os.path.join(_HERE, "skills"))' in normal
+    assert (tmp_path / 'normal' / 'tools.py').is_file()
+    assert (tmp_path / 'normal' / 'skills' / 'declared_skill.md').is_file()
+
+
+def test_a2a_peer_url_uses_map_defaults_and_explicit_override(tmp_path, load_runtime, monkeypatch):
+    agent = _model()
+    agent._a2a = {'inbound': [{'peer': 'Peer', 'target_state': 'receive'}], 'outbound': [
+        {'peer': 'Peer', 'state': 'compute', 'kind': 'delegates'}]}
+    descriptor = _a2a_descriptor_from_tags(agent, {'authored', 'peer'})
+    descriptor['peer_ports'] = {'peer': 9123}
+    ns = load_runtime(_generate(agent, tmp_path, descriptor), tmp_path)
+    ports = []
+
+    def dns(service, port, **kwargs):
+        ports.append(port)
+        return []
+
+    monkeypatch.setattr(ns['socket'], 'getaddrinfo', dns)
+    assert ns['_peer_replica_urls']('peer') == ['http://peer:9123']
+    assert ns['_peer_replica_urls']('other') == ['http://other:8000']
+    assert ns['_peer_replica_urls']('peer', 4321) == ['http://peer:4321']
+    assert ports == [9123, 8000, 4321]
+
+
+def test_first_and_later_a2a_turns_clear_stale_replies_without_errors(tmp_path, load_runtime, caplog):
+    agent = _model()
+    agent._human_facing = True
+    agent._a2a = {'inbound': [{'peer': 'Peer', 'target_state': 'receive'}], 'outbound': [
+        {'peer': 'Peer', 'state': 'compute', 'kind': 'delegates'}]}
+    ns = load_runtime(_generate(agent, tmp_path, _a2a_descriptor_from_tags(agent, {'authored', 'peer'})), tmp_path)
+    session = ns['Session']('human', ns['agent'], ns['agent'].ui)
+    session.call_manage_transition = lambda: None
+    tasks = []
+    ns['_a2a_send_edges'] = lambda task, edges, session=None: tasks.append(task) or []
+    ns['compute']._body = lambda session: None  # A state may author no text reply on this turn.
+    ns['_a2a_wrap'](ns['compute'], [{'service': 'peer', 'label': 'Peer', 'kind': 'delegates'}], [])
+    import logging
+    with caplog.at_level(logging.ERROR):
+        session.event = ns['ReceiveTextEvent']('first')
+        ns['compute']._body(session)
+        session.set('_a2a_last_reply', 'stale captured reply')
+        session.set('a2a_result', None)  # There is no intentional stored result in this scenario.
+        session.event = ns['ReceiveTextEvent']('second')
+        ns['compute']._body(session)
+    assert tasks == ['first', 'second']
+    assert not caplog.records
+
+
+@pytest.mark.parametrize('a2a_enabled', [False, True])
+def test_deployment_metadata_survives_personalization_render(tmp_path, load_runtime, a2a_enabled):
+    agent = _model()
+    profile = _model('Profile')
+    profile.states[1].set_body(Body('receive_body', actions=[AgentReply('Personalized receipt')]))
+    agent.new_tool('declared', description='Tool metadata', code='def internal_name(session):\n    return 1\n')
+    agent.new_skill('product_lkno', description='Skill metadata', content='# Different heading')
+    config = {'personalizationMapping': [{'name': 'Reader', 'configuration': {},
+                                         'user_profile': {}, 'agent_model': profile}]}
+    descriptor = None
+    if a2a_enabled:
+        agent._a2a = {'outbound': [], 'inbound': [{'peer': 'Peer', 'target_state': 'receive'}]}
+        descriptor = _a2a_descriptor_from_tags(agent, {'authored', 'peer'})
+    BAFGenerator(agent, str(tmp_path), config=config, generation_mode=GenerationMode.CODE_ONLY,
+                 test_mode=True, a2a_descriptor=descriptor, deployment_component_metadata=True).generate()
+    code = (tmp_path / 'Authored.py').read_text(encoding='utf-8')
+    _singleton_checks(code)
+    assert 'receive_Reader' in code and 'platform.reply_gui(session, order_form)' in code
+    ns = load_runtime(code, tmp_path)
+    assert set(ns['agent']._tools) == {'declared'}
+    assert ns['agent']._tools['declared'].description == 'Tool metadata'
+    assert set(ns['agent']._skills) == {'product_lkno'}
+    assert ns['agent']._skills['product_lkno'].description == 'Skill metadata'
+    if a2a_enabled:
+        result = asyncio.run(ns['handle'](message='profile task', user_profile='Reader'))
+        assert result['reply'] == 'Personalized receipt\n\nauthored answer: profile task'
+        assert ns['default_llm'].calls[0][1].current_state.name == 'wait_Reader'

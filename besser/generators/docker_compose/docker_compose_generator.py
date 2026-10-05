@@ -3,6 +3,7 @@ import inspect
 import logging
 import os
 import re
+from copy import deepcopy
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -16,6 +17,7 @@ from besser.BUML.metamodel.uml_deployment import (
 )
 from besser.generators import GeneratorInterface
 from besser.generators.agents.baf_generator import BAFGenerator
+from besser.generators.docker_compose.runtime_config import human_listener_ports, resolve_runtime_yaml
 # Tested tally engine; its source is baked into governed agents.
 from besser.generators.agents import governance_engine as _gov_engine
 from besser.utilities import sort_by_timestamp
@@ -558,12 +560,17 @@ class DockerComposeGenerator(GeneratorInterface):
     """
 
     def __init__(self, model: DeploymentModel, output_dir: str = None,
-                 agent_models_by_id: dict = None):
+                 agent_models_by_id: dict = None,
+                 agent_configs_by_id: dict = None,
+                 agent_config_yamls_by_id: dict = None):
         super().__init__(model, output_dir)
         # {AgentDiagram-uuid → BUML Agent model}, supplied by the
         # project-level router handler. Empty on the single-diagram path, in
         # which case no build contexts are baked (compose-only behavior).
         self.agent_models_by_id = agent_models_by_id or {}
+        self.agent_configs_by_id = deepcopy(agent_configs_by_id or {})
+        self.agent_config_yamls_by_id = dict(agent_config_yamls_by_id or {})
+        self._runtime_by_service = {}
 
     def generate(self):
         file_path = self.build_generation_path(file_name="docker-compose.yml")
@@ -579,6 +586,7 @@ class DockerComposeGenerator(GeneratorInterface):
         # a2a_servers — the set whose service runs the A2A server (≥1 inbound peer). The two
         # are decoupled: a hybrid (a human-facing merge owner) is in BOTH.
         human_facing_services, a2a_server_services = self._compute_service_flags()
+        self._prepare_runtime_configs(human_facing_services)
         services, networks = self._build_view(self.model, human_facing_services)
         template = env.get_template("docker-compose.yml.j2")
         with open(file_path, mode="w", encoding="utf-8") as f:
@@ -586,6 +594,33 @@ class DockerComposeGenerator(GeneratorInterface):
         print("Code generated in the location: " + file_path)
         # Bake a BAF build context per resolvable agentic LOCAL artifact.
         self._bake_agent_contexts(env, human_facing_services, a2a_server_services)
+
+    def _prepare_runtime_configs(self, entry_services: set) -> None:
+        """Resolve per-service settings and allocate distinct human-facing host ports."""
+        self._runtime_by_service = {}
+        used_host_ports = set()
+        for art in sort_by_timestamp(self.model.all_artifacts()):
+            ref = getattr(art, 'agent_model_ref', None)
+            agent = self.agent_models_by_id.get(ref)
+            if art.locality != Locality.LOCAL or agent is None or art.manifests:
+                continue
+            service = _safe_service_name(art.name)
+            config = deepcopy(self.agent_configs_by_id.get(ref))
+            config_yaml, ports = resolve_runtime_yaml(self.agent_config_yamls_by_id.get(ref))
+            published = []
+            if service in entry_services:
+                for preferred_host, container_port in human_listener_ports(agent, config, ports):
+                    host = preferred_host
+                    while host in used_host_ports:
+                        host += 1
+                    if host > 65535:
+                        raise ValueError('No available generated host port for agent UI')
+                    used_host_ports.add(host)
+                    published.append(f'{host}:{container_port}')
+            self._runtime_by_service[service] = {
+                'config': config, 'config_yaml': config_yaml,
+                'a2a_port': ports['a2a'], 'published_ports': published,
+            }
 
     def _bake_agent_contexts(self, env: Environment, entry_services: set = None,
                              a2a_server_services: set = None) -> None:
@@ -660,10 +695,18 @@ class DockerComposeGenerator(GeneratorInterface):
                     descriptor[key] = [e for e in descriptor.get(key, [])
                                        if e.get('service') not in no_server]
             has_boundaries = bool(descriptor['to_peers']) or descriptor['a2a_server']
+            descriptor['peer_ports'] = {
+                service: runtime['a2a_port']
+                for service, runtime in sorted(self._runtime_by_service.items())
+            }
+            runtime = self._runtime_by_service[svc_name]
             BAFGenerator(
                 agent,
                 output_dir=ctx_dir,
+                config=runtime['config'],
+                config_yaml=runtime['config_yaml'],
                 a2a_descriptor=descriptor if has_boundaries else None,
+                deployment_component_metadata=True,
             ).generate()
             if has_boundaries:
                 print(f"[docker_compose] A2A-wired ({descriptor['role']}): {svc_name} "
@@ -872,7 +915,9 @@ class DockerComposeGenerator(GeneratorInterface):
                 'networks': art_nets.get(art_key, []),
                 'replicas': art_replicas.get(art_key),
                 'depends_on': art_depends.get(art_key, []),
-                'ports': ['5001:5000', '8765:8765'] if svc_name in _entry else [],
+                'ports': (self._runtime_by_service[svc_name]['published_ports']
+                          if svc_name in self._runtime_by_service else
+                          (['5001:5000', '8765:8765'] if svc_name in _entry else [])),
                 'stereotypes': ', '.join(art.stereotypes) if art.stereotypes else None,
                 'manifests': ', '.join(art.manifests) if art.manifests else None,
             })

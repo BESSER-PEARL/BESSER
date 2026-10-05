@@ -13,6 +13,7 @@ from besser.BUML.metamodel.structural import Method
 from besser.generators import GeneratorInterface
 
 from besser.generators.agents.agent_personalization import configure_agent, flatten_agent_config_structure
+from besser.generators.agents.deployment_components import materialize_deployment_components
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
@@ -186,12 +187,14 @@ class BAFGenerator(GeneratorInterface):
         config_yaml: Optional[str] = None,
         test_mode: bool = False,
         a2a_descriptor: Optional[dict] = None,
+        deployment_component_metadata: bool = False,
     ):
         super().__init__(model, output_dir)
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
         self.config_yaml = config_yaml
         self.openai_api_key = openai_api_key
         self.test_mode = test_mode
+        self.deployment_component_metadata = deployment_component_metadata
         self.a2a_descriptor = (
             a2a_descriptor if a2a_descriptor and
             (a2a_descriptor.get('to_peers') or a2a_descriptor.get('a2a_server')) else None
@@ -370,6 +373,11 @@ class BAFGenerator(GeneratorInterface):
             if not generate_code_assets:
                 return
 
+        deployment_component_bindings = None
+        if self.deployment_component_metadata and generate_code_assets:
+            deployment_component_bindings = materialize_deployment_components(
+                self.model, self.build_generation_dir())
+
         if config_for_personalization and 'personalizationMapping' in config_for_personalization:
             logger.info("Generating agent with personalization mappings")
             with open(agent_path, mode="w", encoding="utf-8") as f:
@@ -380,6 +388,7 @@ class BAFGenerator(GeneratorInterface):
                     test_mode=self.test_mode,
                     gui_modules=list(gui_modules),
                     a2a=self.a2a_descriptor,
+                    deployment_component_bindings=deployment_component_bindings,
                 )
                 f.write(generated_code)
         else:
@@ -391,6 +400,7 @@ class BAFGenerator(GeneratorInterface):
                     test_mode=self.test_mode,
                     gui_modules=list(gui_modules),
                     a2a=self.a2a_descriptor,
+                    deployment_component_bindings=deployment_component_bindings,
                 )
                 f.write(generated_code)
             logger.info("Agent script generated at %s", agent_path)
@@ -414,7 +424,7 @@ class BAFGenerator(GeneratorInterface):
 
             # Generate tools.py — one file containing all tool function definitions
             tools = getattr(self.model, 'tools', []) or []
-            if tools:
+            if tools and not self.deployment_component_metadata:
                 tools_path = self.build_generation_path(file_name="tools.py")
                 with open(tools_path, mode="w", encoding="utf-8") as f:
                     f.write("# Auto-generated tool definitions\n\n")
@@ -427,7 +437,7 @@ class BAFGenerator(GeneratorInterface):
 
             # Generate skills/ directory — one .md file per skill
             skills = getattr(self.model, 'skills', []) or []
-            if skills:
+            if skills and not self.deployment_component_metadata:
                 skills_dir = os.path.join(self.build_generation_dir(), "skills")
                 os.makedirs(skills_dir, exist_ok=True)
                 for skill in skills:

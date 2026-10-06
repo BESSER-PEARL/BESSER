@@ -17,6 +17,7 @@ from besser.BUML.metamodel.uml_deployment import (
 )
 from besser.generators import GeneratorInterface
 from besser.generators.agents.baf_generator import BAFGenerator
+from besser.generators.docker_compose.agent_dependencies import baf_dependency_extras
 from besser.generators.docker_compose.runtime_config import human_listener_ports, resolve_runtime_yaml
 # Tested tally engine; its source is baked into governed agents.
 from besser.generators.agents import governance_engine as _gov_engine
@@ -714,9 +715,11 @@ class DockerComposeGenerator(GeneratorInterface):
 
             # Dockerfile referencing the agent script (name unchanged).
             agent_script = f"{agent.name}.py"
+            with open(os.path.join(ctx_dir, agent_script), encoding="utf-8") as f:
+                dependency_extras = baf_dependency_extras(f.read())
             with open(os.path.join(ctx_dir, "Dockerfile"),
                       mode="w", encoding="utf-8") as f:
-                f.write(dockerfile_tpl.render(agent_script=agent_script))
+                f.write(dockerfile_tpl.render(agent_script=agent_script, dependency_extras=dependency_extras))
             print(f"[docker_compose] baked build context: {ctx_dir}")
 
     def _compute_service_flags(self) -> tuple:

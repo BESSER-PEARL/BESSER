@@ -109,7 +109,7 @@ endpoint (i.e. as part of a full project that includes one or more
 ``AgentDiagram`` entries), each LOCAL ``Artifact`` whose ``agentModelRef`` field
 resolves to an ``AgentDiagram`` in the project receives a fully baked build
 context: ``<svc>/<AgentName>.py`` + ``<svc>/config.yaml`` (via the BAF generator) and
-a ``<svc>/Dockerfile`` that installs ``besser-agentic-framework[all]`` and runs
+a ``<svc>/Dockerfile`` that installs the selected BAF dependency groups and runs
 the agent script.  The service name and the build-context directory are both
 derived from ``_safe_service_name(artifact.name)``, so ``build: ./<svc>`` in
 the compose file points at the correct directory automatically.  The
@@ -118,6 +118,35 @@ agent to *N* instances, so ``docker compose up --build`` launches a swarm of
 exactly the size authored on the BPMN lane.  LOCAL artifacts with no
 ``agentModelRef`` (hand-drawn or unlinked) keep ``build: ./<svc>`` with no
 Dockerfile baked — the user supplies their own build context.
+
+Agent image dependencies
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Generated Dockerfiles install ``besser-agentic-framework[extras,llms]`` by
+default. These groups retain API LLM providers, RAG and the framework's optional
+speech, visualization and database functionality without installing every local
+machine-learning backend. The same selection applies to ordinary and A2A agents.
+
+The generator inspects the rendered agent's constructor calls before writing its
+Dockerfile, so it follows configuration overrides, state-specific classifiers
+and personalized graphs emitted by the BAF template:
+
+* A local ``LLMHuggingFace`` adds ``torch``. ``LLMHuggingFaceAPI`` and
+  ``LLMOllama`` use remote inference and do not add a local backend.
+* ``SimpleIntentClassifierConfiguration`` adds ``torch`` for the default or
+  explicit ``pytorch`` framework, or ``tensorflow`` for that explicit framework.
+  Multiple emitted configurations retain the union of their dependency groups.
+* A dynamic classifier framework or unpacked constructor arguments conservatively
+  include both backends. Provider imports, comments and strings alone do not
+  cause local backends to be installed.
+
+Thus ``extras,llms`` covers API-based agents, including A2A/governance and
+LLM-based intent classification, but it is not sufficient for all local-model
+or classical-classifier configurations. Local PyTorch installations can still
+be large, including GPU libraries selected by pip. Arbitrary third-party
+libraries used in authored tools/custom code must be added to the Dockerfile by
+the user. GUI packaging requirements and external model/database services remain
+separate deployment concerns. The BAF package version remains unpinned.
 
 Tag-driven A2A wiring
 ~~~~~~~~~~~~~~~~~~~~~~~

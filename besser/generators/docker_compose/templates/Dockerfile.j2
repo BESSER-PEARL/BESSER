@@ -3,8 +3,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# BESSER Agentic Framework + all optional extras (LLM/RAG/DB connectors).
-RUN pip install --no-cache-dir "besser-agentic-framework[all]"
+# BAF API/RAG dependencies plus local ML backends used by the generated agent.
+RUN pip install --no-cache-dir "besser-agentic-framework[{{ dependency_extras | join(',') }}]"
 
 # The generated agent script + its config land in this build context.
 COPY . .

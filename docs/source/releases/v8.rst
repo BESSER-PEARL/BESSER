@@ -4,5 +4,6 @@ Version 8
 .. toctree::
    :maxdepth: 1
 
+   v8/v8.0.2
    v8/v8.0.1
    v8/v8.0.0

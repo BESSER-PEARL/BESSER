@@ -90,7 +90,7 @@ The web editor frontend has been completely rewritten with a modern tech stack, 
 
 **AI Modeling Assistant -- Major Upgrade** (`modeling-agent <https://github.com/BESSER-PEARL/modeling-agent>`_)
 
-The modeling agent (previously supporting Class, Object, State Machine, and Agent diagrams with basic creation in v1.0.0) has been significantly enhanced with new diagram types, new capabilities, and a complete architecture overhaul. See the `modeling-agent v2.0.0 release notes <https://github.com/BESSER-PEARL/modeling-agent>`_ for full details.
+The modeling agent (previously supporting Class, Object, State Machine, and Agent diagrams with basic creation in v1.0.0) has been significantly enhanced with new diagram types, new capabilities, and a complete architecture overhaul. See the `modeling-agent v2.0.0 release notes <https://modeling-agent.readthedocs.io/en/latest/releases/v2.0.0.html>`_ for full details.
 
 *New diagram types:*
 

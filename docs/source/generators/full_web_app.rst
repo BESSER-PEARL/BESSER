@@ -82,7 +82,9 @@ WebSocket services.
   fallback for single-agent back-compat.
 * **Local docker-compose** — one service block per agent with port offsets
   (``8765``, ``8766``, ...) and a build-time ``VITE_AGENT_URLS`` argument injected into the
-  frontend image.
+  frontend image. Each agent's Dockerfile rewrites the websocket and Streamlit ``host`` in
+  its ``config.yaml`` to ``0.0.0.0`` so the published ports reach it; the ``config.yaml`` in
+  the output keeps ``localhost`` for running the agent outside Docker.
 * **Render deployment** — the GitHub-deployment pipeline emits one ``type: web`` block per
   agent in ``render.yaml`` and a ``frontend/.env.production`` with the same ``VITE_AGENT_URLS``
   JSON map pointing at each service's ``*.onrender.com`` URL.

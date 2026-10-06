@@ -10,12 +10,74 @@ stays consistent with the spec at
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import math
+import re
+from typing import Any, Iterable, Optional
 
 # Default values applied when callers omit them. They mirror the spec
 # defaults documented in uml-v4-shape.md.
 _DEFAULT_NODE_WIDTH = 160
 _DEFAULT_NODE_HEIGHT = 100
+
+
+# v3 ``Direction`` -> v4 ``HandleId``; mirrors the frontend's
+# ``convertV3HandleToV4`` (packages/library/lib/utils/versionConverter.ts).
+_V3_HANDLE_TO_V4 = {
+    "Up": "top", "Right": "right", "Down": "bottom", "Left": "left",
+    "Upright": "right-top", "Upleft": "left-top",
+    "Downright": "right-bottom", "Downleft": "left-bottom",
+    "RightTop": "top-right", "RightBottom": "bottom-right",
+    "LeftTop": "top-left", "LeftBottom": "bottom-left",
+}
+_V3_CORNER_HANDLE = re.compile(r"^(top|bottom|left|right)(top|bottom|left|right)$", re.IGNORECASE)
+
+
+def normalize_handle(handle: Optional[str]) -> Optional[str]:
+    """Return the v4 handle id (``right``, ``top-left``...) for a stored handle.
+
+    Older exports carry v3 directions (``Right``, ``Up``, ``Topleft``); React
+    Flow cannot resolve those against the editor's lowercase handles and
+    drops the edge.
+    """
+    if not handle:
+        return handle
+    if handle in _V3_HANDLE_TO_V4:
+        return _V3_HANDLE_TO_V4[handle]
+    corner = _V3_CORNER_HANDLE.match(handle)
+    if corner:
+        return f"{corner.group(1).lower()}-{corner.group(2).lower()}"
+    return handle.lower()
+
+
+def snap_up(value: float, step: int = 10) -> int:
+    """Round up to the editor's 10px extension grid (``calculateMinWidth/Height``)."""
+    return int(math.ceil(value / step) * step)
+
+
+def grid_layout(
+    nodes: Iterable[dict],
+    origin: tuple = (0, 0),
+    columns: int = 3,
+    gap_x: int = 140,
+    gap_y: int = 100,
+) -> None:
+    """Place ``nodes`` row by row on a grid sized from their own width/height.
+
+    Column width is the widest node in that column and row height the
+    tallest node in that row, so nodes never overlap whatever their size.
+    """
+    nodes = list(nodes)
+    col_widths = [0] * columns
+    row_heights = [0] * (len(nodes) // columns + 1)
+    for i, node in enumerate(nodes):
+        col_widths[i % columns] = max(col_widths[i % columns], node["width"])
+        row_heights[i // columns] = max(row_heights[i // columns], node["height"])
+    for i, node in enumerate(nodes):
+        col, row = i % columns, i // columns
+        node["position"] = {
+            "x": origin[0] + sum(col_widths[:col]) + col * gap_x,
+            "y": origin[1] + sum(row_heights[:row]) + row * gap_y,
+        }
 
 
 def make_node(
@@ -68,16 +130,19 @@ def make_edge(
     target: str,
     type_: str,
     data: Optional[dict] = None,
-    source_handle: str = "Right",
-    target_handle: str = "Left",
+    source_handle: str = "right",
+    target_handle: str = "left",
     **extra: Any,
 ) -> dict:
     """Build a v4 React-Flow edge.
 
     ``data`` is the per-edge payload (always normalised to include a
-    ``points`` list, even if empty). ``source_handle`` / ``target_handle``
-    encode v3's ``source.direction`` / ``target.direction`` strings.
+    ``points`` list, even if empty). Handles are normalised to v4 ids, except
+    on ``ClassLinkRel``, whose edge-anchored ``Center`` / ``Up`` pair is canonical.
     """
+    if type_ != "ClassLinkRel":
+        source_handle = normalize_handle(source_handle)
+        target_handle = normalize_handle(target_handle)
     edge_data: dict = dict(data or {})
     edge_data.setdefault("points", [])
     edge: dict = {

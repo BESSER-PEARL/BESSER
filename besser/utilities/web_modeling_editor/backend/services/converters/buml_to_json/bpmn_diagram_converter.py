@@ -323,6 +323,17 @@ def _emit_node(obj, parent_id, id_for, grid: "_GridLayout"):
     )
 
 
+def _points_from_path(layout: dict) -> list:
+    """Absolute v4 points from a v3 flow layout (``path`` relative to ``bounds``),
+    as stored by ``.py`` files exported before the v4 migration."""
+    path = layout.get("path") or []
+    bounds = layout.get("bounds") or {}
+    return [
+        {"x": p.get("x", 0) + bounds.get("x", 0), "y": p.get("y", 0) + bounds.get("y", 0)}
+        for p in path
+    ]
+
+
 def _emit_flow(flow: "BPMNConnectingObject", edges: list, id_for, emitted_ids: set) -> None:
     edge_type = _EDGE_TYPE_FOR_FLOW_CLASS.get(type(flow))
     if edge_type is None:
@@ -342,7 +353,7 @@ def _emit_flow(flow: "BPMNConnectingObject", edges: list, id_for, emitted_ids: s
     edge_data: dict = {
         "name": flow.name,
         "label": flow.name,  # BPMNDiagramEdge.tsx reads data.label
-        "points": layout.get("points") or [],
+        "points": layout.get("points") or _points_from_path(layout),
         "isManuallyLayouted": layout.get("isManuallyLayouted", False),
     }
     if isinstance(flow, SequenceFlow) and flow.is_default:
@@ -351,8 +362,8 @@ def _emit_flow(flow: "BPMNConnectingObject", edges: list, id_for, emitted_ids: s
     edges.append(make_edge(
         edge_id=id_for(flow), source=source_id, target=target_id,
         type_=edge_type, data=edge_data,
-        source_handle=layout.get("source_direction") or "Right",
-        target_handle=layout.get("target_direction") or "Left",
+        source_handle=layout.get("source_direction") or "right",
+        target_handle=layout.get("target_direction") or "left",
     ))
 
 

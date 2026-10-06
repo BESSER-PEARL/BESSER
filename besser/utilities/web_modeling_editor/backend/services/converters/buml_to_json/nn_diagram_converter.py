@@ -577,8 +577,8 @@ def _emit_container_link(rel_type: str, source_id: str, target_id: str, edges: l
         target=target_id,
         type_=rel_type,
         data={"points": []},
-        source_handle="Up",
-        target_handle="Down",
+        source_handle="top",
+        target_handle="bottom",
     ))
 
 

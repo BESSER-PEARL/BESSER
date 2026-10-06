@@ -1101,10 +1101,10 @@ class TestAssociationNavigabilityRoundtrip:
         assert edge["_source_class"] == "Book"
         assert edge_data["sourceRole"] == "book"
         assert edge_data["sourceNavigable"] is True
-        assert edge["sourceHandle"] == "Left"
+        assert edge["sourceHandle"] == "left"  # legacy capitalised handle comes back as the v4 id
         assert edge["_target_class"] == "Author"
         assert edge_data["targetNavigable"] is False
-        assert edge["targetHandle"] == "Right"
+        assert edge["targetHandle"] == "right"
         assert edge_data["points"] == [{"x": 0, "y": 0}, {"x": 140, "y": 0}]
 
     def test_no_navigable_end_is_corrected_with_warning(self, minimal_class_diagram_json):

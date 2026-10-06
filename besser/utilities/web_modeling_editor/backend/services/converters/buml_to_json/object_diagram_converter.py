@@ -10,7 +10,7 @@ import uuid
 from typing import Dict, Any
 
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._node_builders import (
-    make_node, make_edge,
+    make_node, make_edge, grid_layout,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,20 +72,6 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
     """Convert object model Python source to a v4 ``{nodes, edges}`` payload."""
     nodes: list = []
     edges: list = []
-
-    grid_size = {"x_spacing": 250, "y_spacing": 180, "max_columns": 4}
-    current_column = 0
-    current_row = 0
-
-    def get_position():
-        nonlocal current_column, current_row
-        x = -460 + (current_column * grid_size["x_spacing"])
-        y = -300 + (current_row * grid_size["y_spacing"])
-        current_column += 1
-        if current_column >= grid_size["max_columns"]:
-            current_column = 0
-            current_row += 1
-        return x, y
 
     try:
         reference_diagram_json = domain_json or {}
@@ -181,8 +167,8 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
 
         # Emit object nodes.
         object_var_to_node_id: dict = {}
+        object_nodes: list = []
         for obj_name, obj_info in objects_by_name.items():
-            x, y = get_position()
             object_id = str(uuid.uuid4())
             class_id = obj_info["class_id"]
             class_attributes = class_id_to_attributes.get(class_id, {})
@@ -197,11 +183,15 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                 # v4 object rows keep the attribute name and runtime value
                 # in separate fields (``ObjectNodeAttribute.value``); the
                 # frontend renders "name = value" from the split fields.
+                # ``visibility`` + ``attributeType`` together keep the
+                # frontend's v3 round-trip from re-parsing the row and
+                # dropping the type.
                 row: dict = {
                     "id": str(uuid.uuid4()),
                     "name": attr_name,
                     "value": formatted_value,
                     "attributeType": attr_type,
+                    "visibility": (class_attr_info or {}).get("visibility") or "public",
                 }
                 if class_attr_info and class_attr_info.get("id"):
                     row["attributeId"] = class_attr_info["id"]
@@ -209,7 +199,7 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                     row["defaultValue"] = class_attr_info["defaultValue"]
                 attribute_rows.append(row)
             object_height = max(70, 40 + len(attribute_rows) * 30)
-            nodes.append(make_node(
+            object_nodes.append(make_node(
                 node_id=object_id,
                 type_="objectName",
                 data={
@@ -218,11 +208,13 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                     "attributes": attribute_rows,
                     "methods": [],
                 },
-                position={"x": x, "y": y},
+                position={"x": 0, "y": 0},
                 width=200,
                 height=object_height,
             ))
             object_var_to_node_id[obj_name] = object_id
+        grid_layout(object_nodes, origin=(-460, -300), columns=4, gap_x=50, gap_y=80)
+        nodes.extend(object_nodes)
 
         # Object links.
         association_id_map = _resolve_association_index(reference_diagram_json)
@@ -254,8 +246,8 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                                             "associationId": assoc_id,
                                             "points": [],
                                         },
-                                        source_handle="Right",
-                                        target_handle="Topleft",
+                                        source_handle="right",
+                                        target_handle="top-left",
                                     ))
 
         # Comments (``comment`` nodes + ``CommentLink`` edges — the types

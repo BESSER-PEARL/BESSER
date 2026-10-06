@@ -18,15 +18,25 @@ from besser.BUML.metamodel.structural import (
 )
 
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._node_builders import (
-    make_node, make_edge,
+    make_node, make_edge, grid_layout, snap_up,
 )
 
 # Layout constants for auto-grid positioning
 LAYOUT_GRID_WIDTH = 1200
 LAYOUT_GRID_HEIGHT = 800
-LAYOUT_X_SPACING = 300
-LAYOUT_Y_SPACING = 200
+LAYOUT_ORIGIN = (-600, -300)
 LAYOUT_MAX_COLUMNS = 3
+LAYOUT_GAP_Y = 100
+
+# Mirrors the editor's class node metrics (``LAYOUT`` in the library's
+# constants.ts and ``calculateMinWidth`` / ``calculateMinHeight``).
+CLASS_HEADER_HEIGHT = 40
+CLASS_HEADER_HEIGHT_WITH_STEREOTYPE = 50
+CLASS_ROW_HEIGHT = 30
+CLASS_PADDING = 10
+CLASS_MIN_WIDTH = 160
+CHAR_WIDTH_PX = 9  # rough average glyph width of the editor's 16px Inter
+_VISIBILITY_SYMBOLS = {"public": "+", "private": "-", "protected": "#", "package": "~"}
 
 logger = logging.getLogger(__name__)
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
@@ -279,6 +289,34 @@ def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> d
     return row
 
 
+def _member_label(row: dict, is_method: bool, stereotype) -> str:
+    """Approximate the canvas label of a member row (``formatDisplayName``)."""
+    if stereotype == "Enumeration":
+        return row.get("name", "")
+    vis = _VISIBILITY_SYMBOLS.get(row.get("visibility") or "public", "+")
+    if is_method:
+        params = ", ".join(f"{p['name']}: {p.get('parameterType', '')}" for p in row.get("parameters") or [])
+        return f"{vis} {row.get('name', '')}({params}): {row.get('returnType', '')}"
+    label = f"{vis} {row.get('name', '')}: {row.get('attributeType', '')}"
+    if row.get("defaultValue") not in (None, ""):
+        label += f" = {row['defaultValue']}"
+    if row.get("isId"):
+        label += " {id}"
+    return label
+
+
+def _class_node_size(name: str, stereotype, attribute_rows: list, method_rows: list) -> tuple:
+    """Content-based (width, height) of a class node, as the editor sizes it."""
+    header = CLASS_HEADER_HEIGHT_WITH_STEREOTYPE if stereotype else CLASS_HEADER_HEIGHT
+    labels = [name, f"\u00ab{stereotype}\u00bb" if stereotype else ""]
+    labels += [_member_label(r, False, stereotype) for r in attribute_rows]
+    labels += [_member_label(r, True, stereotype) for r in method_rows]
+    text_width = max(len(label) for label in labels) * CHAR_WIDTH_PX
+    width = max(CLASS_MIN_WIDTH, snap_up(text_width + 2 * CLASS_PADDING))
+    height = snap_up(header + CLASS_ROW_HEIGHT * (len(attribute_rows) + len(method_rows)))
+    return width, height
+
+
 def class_buml_to_json(domain_model):
     """Convert a B-UML DomainModel to the v4 ``{nodes, edges}`` wire shape."""
     nodes: list = []
@@ -286,24 +324,9 @@ def class_buml_to_json(domain_model):
     method_diagram_refs = getattr(domain_model, 'method_diagram_refs', {})
     layout_positions = getattr(domain_model, '_layout_positions', {})
 
-    grid_size = {
-        "x_spacing": LAYOUT_X_SPACING,
-        "y_spacing": LAYOUT_Y_SPACING,
-        "max_columns": LAYOUT_MAX_COLUMNS,
-    }
-    current_column = 0
-    current_row = 0
     comments_to_create: list = []  # [(text, linked_class_node_id)]
-
-    def get_position():
-        nonlocal current_column, current_row
-        x = -600 + (current_column * grid_size["x_spacing"])
-        y = -300 + (current_row * grid_size["y_spacing"])
-        current_column += 1
-        if current_column >= grid_size["max_columns"]:
-            current_column = 0
-            current_row += 1
-        return x, y
+    # Nodes without a saved position; placed on a size-aware grid at the end.
+    auto_placed: list = []
 
     class_id_map: dict = {}  # type_obj -> node id
 
@@ -316,15 +339,6 @@ def class_buml_to_json(domain_model):
         class_id_map[type_obj] = node_id
 
         saved_bounds = layout_positions.get(type_obj.name)
-        if saved_bounds:
-            x = saved_bounds["x"]
-            y = saved_bounds["y"]
-            saved_width = saved_bounds.get("width", 160)
-            saved_height = saved_bounds.get("height", 100)
-        else:
-            x, y = get_position()
-            saved_width = None
-            saved_height = None
 
         attribute_rows: list = []
         method_rows: list = []
@@ -368,16 +382,24 @@ def class_buml_to_json(domain_model):
             if md.icon:
                 data["icon"] = md.icon
 
-        computed_height = max(100, 30 * (len(attribute_rows) + len(method_rows) + 1))
+        width, height = _class_node_size(type_obj.name, stereotype, attribute_rows, method_rows)
+        if saved_bounds:
+            position = {"x": saved_bounds["x"], "y": saved_bounds["y"]}
+            width = saved_bounds.get("width", width)
+            height = saved_bounds.get("height", height)
+        else:
+            position = {"x": 0, "y": 0}
         node = make_node(
             node_id=node_id,
             type_="class",
             data=data,
-            position={"x": x, "y": y},
-            width=saved_width if saved_width is not None else 160,
-            height=saved_height if saved_height is not None else computed_height,
+            position=position,
+            width=width,
+            height=height,
         )
         nodes.append(node)
+        if not saved_bounds:
+            auto_placed.append(node)
 
     # OCL constraints — every constraint is emitted as its own
     # ``ClassOCLConstraint`` node (the sticky-note shape the frontend
@@ -388,7 +410,6 @@ def class_buml_to_json(domain_model):
     # ``data.expression`` so the ingest side re-derives the context class
     # from the text itself (the link is purely visual).
     def _emit_constraint_node(c, anchor_class) -> None:
-        x, y = get_position()
         node_id = str(uuid.uuid4())
         data = {
             "name": c.name,
@@ -396,14 +417,16 @@ def class_buml_to_json(domain_model):
         }
         if getattr(c, "description", None):
             data["description"] = c.description
-        nodes.append(make_node(
+        node = make_node(
             node_id=node_id,
             type_="ClassOCLConstraint",
             data=data,
-            position={"x": x, "y": y},
+            position={"x": 0, "y": 0},
             width=210,
             height=90,
-        ))
+        )
+        nodes.append(node)
+        auto_placed.append(node)
         if anchor_class is not None and anchor_class in class_id_map:
             edges.append(make_edge(
                 edge_id=str(uuid.uuid4()),
@@ -487,8 +510,8 @@ def class_buml_to_json(domain_model):
                 target=class_id_map[target_class],
                 type_=rel_type,
                 data=edge_data,
-                source_handle=saved_rel.get("source_direction", "Right"),
-                target_handle=saved_rel.get("target_direction", "Left"),
+                source_handle=saved_rel.get("source_direction", "right"),
+                target_handle=saved_rel.get("target_direction", "left"),
             )
             edges.append(edge)
         except Exception as e:
@@ -545,16 +568,17 @@ def class_buml_to_json(domain_model):
     # Comments (top-level ``comment`` nodes + ``CommentLink`` edges — the
     # node / edge types the React Flow frontend registers).
     for comment_text, linked_class_id in comments_to_create:
-        x, y = get_position()
         comment_id = str(uuid.uuid4())
-        nodes.append(make_node(
+        node = make_node(
             node_id=comment_id,
             type_="comment",
             data={"name": comment_text},
-            position={"x": x, "y": y},
+            position={"x": 0, "y": 0},
             width=160,
             height=100,
-        ))
+        )
+        nodes.append(node)
+        auto_placed.append(node)
         edges.append(make_edge(
             edge_id=str(uuid.uuid4()),
             source=comment_id,
@@ -564,15 +588,27 @@ def class_buml_to_json(domain_model):
         ))
 
     if hasattr(domain_model, 'metadata') and domain_model.metadata and domain_model.metadata.description:
-        x, y = get_position()
-        nodes.append(make_node(
+        node = make_node(
             node_id=str(uuid.uuid4()),
             type_="comment",
             data={"name": domain_model.metadata.description},
-            position={"x": x, "y": y},
+            position={"x": 0, "y": 0},
             width=160,
             height=100,
-        ))
+        )
+        nodes.append(node)
+        auto_placed.append(node)
+
+    # Auto-placed nodes go on the grid, below any nodes with a saved position.
+    auto_ids = {n["id"] for n in auto_placed}
+    placed = [n for n in nodes if n["id"] not in auto_ids]
+    origin = LAYOUT_ORIGIN
+    if placed:
+        origin = (
+            min(n["position"]["x"] for n in placed),
+            max(n["position"]["y"] + n["height"] for n in placed) + LAYOUT_GAP_Y,
+        )
+    grid_layout(auto_placed, origin=origin, columns=LAYOUT_MAX_COLUMNS, gap_y=LAYOUT_GAP_Y)
 
     default_size = {"width": LAYOUT_GRID_WIDTH, "height": LAYOUT_GRID_HEIGHT}
     return {

@@ -2310,8 +2310,8 @@ def _flat_to_v4(flat: Dict[str, Any]) -> Dict[str, Any]:
         source_id = source.get("element")
         target_id = target.get("element")
         handles = {
-            "source_handle": source.get("direction") or "Right",
-            "target_handle": target.get("direction") or "Left",
+            "source_handle": source.get("direction") or "right",
+            "target_handle": target.get("direction") or "left",
         }
         if rel_type == "AgentStateTransition" and source_id not in initial_marker_ids:
             transition_type = rel.get("transitionType") or "predefined"

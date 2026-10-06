@@ -61,7 +61,14 @@ class _A2APlatformProxy:
                     # RPC cannot display a GUI, but its action remains observable.
                     session.actions.append({'action': name, 'value': str(args[0]) if args else ''})
                 return
-            return getattr(self.human_platform, name)(session, *args, **kwargs)
+            # BAF reply methods check that the session belongs to their concrete
+            # platform. Keep capture on the adapter but delegate with that identity.
+            previous_platform = session._platform
+            session._platform = self.human_platform
+            try:
+                return getattr(self.human_platform, name)(session, *args, **kwargs)
+            finally:
+                session._platform = previous_platform
 
         return send
 
@@ -320,7 +327,7 @@ agent.receive_event = _a2a_receive_event
 a2a_platform = agent.use_a2a_platform()
 
 
-async def handle(**params):
+def _a2a_handle_sync(**params):
     # Each RPC is isolated from human and other RPC sessions. Tagged flow/peer
     # bindings enter their authored destination; unbound requests enter the
     # authored initial state and consume one ordinary BAF message event.
@@ -403,6 +410,12 @@ async def handle(**params):
     if session.actions:
         result['actions'] = session.actions
     return result
+
+
+async def handle(**params):
+    # An outbound merge may call back to this same HTTP server for a leaf ballot.
+    # Run the synchronous graph off the server loop so it can serve that callback.
+    return await asyncio.to_thread(_a2a_handle_sync, **params)
 
 
 a2a_platform.router.register("handle", handle)

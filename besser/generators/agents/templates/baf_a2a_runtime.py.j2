@@ -15,11 +15,9 @@ GOVERNANCE_INSTRUCTION = {{ a2a.governance.instruction | tojson }}
 GOVERNANCE_SUMMARY = {{ a2a.governance.summary | tojson }}
 # tojson would emit JS-style `true`/`false`; render a Python bool literal instead.
 GOVERNANCE_REQUIRES_HUMAN = {{ 'True' if a2a.governance.requires_human else 'False' }}
-# Merge-path completions (candidate / ballot / synthesis) are decision-bearing, not chat:
-# run them at temperature 0 so the same inputs yield the same answer and a ballot reliably
-# carries its `BALLOT:` line. Default-temperature peer replies are unaffected (each peer
-# runs its own LLM); this only pins the owner's own merge-path predicts.
-MERGE_PARAMS = {"temperature": 0}
+# Let BAF resolve the selected LLM's configured parameters for every merge call.
+# A transport adapter must not impose model-specific sampling parameters.
+MERGE_PARAMS = None
 {% endif %}
 {% if a2a.governance and a2a.governance.is_voting and not a2a.states %}
 # Voting governance uses a two-round candidate-selection flow, counted
@@ -56,9 +54,8 @@ def _gov_footer(decision):
     return _line
 
 def _gov_owner_ballot(session, cand_block, ids):
-    # The owner's own ballot must carry a parseable `BALLOT: C<k>` line. At temperature 0
-    # one completion is usually enough, but validate the structured output actually
-    # appeared and re-prompt once (more emphatic) before recording the owner as an abstain
+    # The owner's own ballot must carry a parseable `BALLOT: C<k>` line. Validate
+    # the structured output and re-prompt once before recording the owner as an abstain
     # — so a single stray completion can't silently drop the owner's vote.
     _msg = cand_block + BALLOT_INSTRUCTION
     _txt = ""
@@ -90,6 +87,17 @@ def _peer_replica_urls(service, port=None):
         ips = []
     return [f"http://{ip}:{port}" for ip in ips] or [f"http://{service}:{port}"]
 
+def _a2a_result(data):
+    # HTTP 200 can still carry a JSON-RPC failure. Do not accept it as a reply.
+    if not isinstance(data, dict):
+        raise RuntimeError("Invalid A2A response envelope")
+    if "error" in data:
+        raise RuntimeError(f"A2A RPC failed: {data['error']}")
+    result = data.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("Invalid A2A result envelope")
+    return result
+
 def _a2a_call(base_url, agent_id, message, flow=None, leaf=False):
     # When this edge feeds a governed merging gateway, tag the message with the
     # target gateway id (`flow`) so the owner dispatches it to the right merge
@@ -105,7 +113,7 @@ def _a2a_call(base_url, agent_id, message, flow=None, leaf=False):
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as r:
         data = json.loads(r.read())
-    return (data.get("result") or {}).get("reply", "")
+    return _a2a_result(data).get("reply", "")
 
 # Per-kind framing: how the requester frames the task for each peer kind, and
 # the label its reply folds under. Transport is unchanged (`_a2a_call`); kind
@@ -198,21 +206,26 @@ def _a2a_call_full(base_url, agent_id, message, flow):
     req = urllib.request.Request(f"{base_url}/a2a", data=body,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as r:
-        return json.loads(r.read()).get("result") or {}
+        return _a2a_result(json.loads(r.read()))
 
 def _merge_send(message, service, flow):
     # One pipeline stage: PUSH to the merge owner; return (merged_text, gov_pending|None).
     _text, _pending = message, None
+    _succeeded, _last_error = False, None
     for _url in _peer_replica_urls(service):
         try:
             _res = _a2a_call_full(_url, service, message, flow)
         except Exception as _e:                       # peer down / call failed → skip replica
             logging.warning("_merge_send: %s (%s) raised %s", service, flow, _e)
+            _last_error = _e
             continue
+        _succeeded = True
         if _res.get("reply"):
             _text = _res["reply"]
         if _res.get("gov_pending"):                   # owner paused for human approval
             _pending = _res["gov_pending"]
+    if not _succeeded:
+        raise RuntimeError(f"No successful governed merge from {service} ({flow})") from _last_error
     return _text, _pending
 
 def _run_merge_pipeline(task):
@@ -232,7 +245,8 @@ def _run_merge_pipeline(task):
 # Included for any agent that owns a governed merge or initiates a
 # governed-merge pipeline. Producers and voters stay decoupled; the tally
 # engine is shared and each merge is just a new caller.
-MERGE_PARAMS = {"temperature": 0}
+# None delegates parameter selection to the configured BAF LLM.
+MERGE_PARAMS = None
 BALLOT_INSTRUCTION = ("\n\nYou are voting under a governance policy. Review ALL the candidate "
                       "outputs above and choose the single best one. End your reply with exactly "
                       "one line `BALLOT: C<k>` (e.g. `BALLOT: C2`), then one sentence of rationale.")
@@ -265,7 +279,7 @@ _MERGES = {
 
 def _fm_owner_ballot(cand_block, ids):
     # The owner's own ballot must carry a parseable `BALLOT: C<k>` line; validate + re-prompt
-    # once at temperature 0 before recording it as an abstain (mirrors the single-merge path).
+    # once before recording it as an abstain (mirrors the single-merge path).
     _msg = cand_block + BALLOT_INSTRUCTION
     _txt = ""
     for _attempt in range(2):

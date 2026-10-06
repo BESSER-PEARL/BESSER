@@ -2,6 +2,8 @@
 
 import ast
 import asyncio
+import json
+import socket
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -314,7 +316,7 @@ def test_governed_rpc_dispatches_each_merge_and_continues_authored_graph(tmp_pat
     assert calls == [({'peer'}, True)]
     assert second['reply'].startswith('Authored merge_b\n\nauthored answer: Candidate to finalize:')
     assert second['reply'].endswith('Finished')
-    assert ns['default_llm'].calls[-1][2]['parameters'] == {'temperature': 0}
+    assert ns['default_llm'].calls[-1][2]['parameters'] is None
     with pytest.raises(ValueError, match='Ambiguous'):
         asyncio.run(ns['handle'](message='unrouted candidate'))
     leaf = asyncio.run(ns['handle'](message='vote locally', leaf=True))
@@ -668,3 +670,199 @@ def test_deployment_metadata_survives_personalization_render(tmp_path, load_runt
         result = asyncio.run(ns['handle'](message='profile task', user_profile='Reader'))
         assert result['reply'] == 'Personalized receipt\n\nauthored answer: profile task'
         assert ns['default_llm'].calls[0][1].current_state.name == 'wait_Reader'
+
+
+@pytest.mark.parametrize('peer_fails', [False, True])
+def test_wrapped_human_reply_uses_real_baf_platform_identity(tmp_path, load_runtime, peer_fails):
+    from baf.platforms.websocket.websocket_platform import WebSocketPlatform as BAFWebSocketPlatform
+
+    agent = _model()
+    agent._human_facing = True
+    agent._a2a = {'inbound': [], 'outbound': [{'peer': 'Peer', 'state': 'receive'}]}
+    ns = load_runtime(_generate(agent, tmp_path, _a2a_descriptor_from_tags(agent, {'authored', 'peer'})), tmp_path)
+    platform = BAFWebSocketPlatform(ns['agent'], use_ui=False)
+    ns['platform'].human_platform = platform
+    session = ns['Session']('human', ns['agent'], platform)
+    session.call_manage_transition = lambda: None
+    session._current_state = ns['receive']
+    session.event = ns['ReceiveTextEvent']('order', session.id, human=True)
+    payloads, tasks = [], []
+    platform._connections[session.id] = SimpleNamespace(send=lambda data: payloads.append(json.loads(data)))
+
+    def send(task, edges, session=None):
+        tasks.append(task)
+        if peer_fails:
+            raise RuntimeError('peer failed')
+        return [('peer', 'reply', 'remote output')]
+
+    ns['_a2a_send_edges'] = send
+    if peer_fails:
+        with pytest.raises(RuntimeError, match='peer failed'):
+            ns['receive']._body(session)
+    else:
+        ns['receive']._body(session)
+        assert 'remote output' in payloads[-1]['message']
+    assert payloads[0]['message'] == 'Received order'
+    assert tasks == ['Received order']
+    assert session.platform is platform
+
+
+@pytest.mark.parametrize('parameters', [
+    {'reasoning_effort': 'none', 'max_completion_tokens': 500},
+    {'temperature': 0.3, 'top_p': 0.8},
+])
+@pytest.mark.parametrize('legacy', [False, True])
+def test_governance_uses_real_baf_llm_configured_parameters(tmp_path, load_runtime, parameters, legacy):
+    from baf.nlp.llm.llm_openai_api import LLMOpenAI as BAFOpenAI
+
+    agent = _governed_agent()
+    if legacy:
+        agent = Agent('Owner')
+        agent.new_state('initial', initial=True)
+        agent._a2a = {'outbound': [{'peer': 'Peer', 'state': 'missing'}], 'inbound': [{'peer': 'Peer'}]}
+        agent._governance = [{'policy_type': 'VotingPolicy', 'ratio': 0.5, 'requires_human': False,
+                             'participants': [{'name': 'Peer', 'confidence': 1.0}], 'producers': ['Peer'],
+                             'instruction': 'Vote', 'summary': 'Policy facts'}]
+    agent.new_llm(name='configured_model', provider='openai', parameters=dict(parameters))
+    ns = load_runtime(_generate(agent, tmp_path, _a2a_descriptor_from_tags(agent, {'owner', 'peer'})), tmp_path)
+    llm = BAFOpenAI(agent=ns['agent'], name='configured_model', parameters=dict(parameters))
+    requests = []
+
+    def completion(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='BALLOT: C1'))])
+
+    llm.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=completion)))
+    ns['reply_llm'] = llm
+    if legacy:
+        assert ns['_gov_owner_ballot'](None, '[C1] candidate', ['C1']) == 'BALLOT: C1'
+    else:
+        assert ns['_fm_owner_ballot']('[C1] candidate', ['C1']) == 'BALLOT: C1'
+    assert len(requests) == 1
+    assert {k: v for k, v in requests[0].items() if k not in {'model', 'messages'}} == parameters
+    assert llm.parameters == parameters
+
+
+@pytest.mark.parametrize('owner_fails', [False, True])
+def test_governed_http_round_trip_serves_ballots_on_initiating_replica(
+        tmp_path, load_runtime, monkeypatch, owner_fails):
+    from aiohttp import ClientSession, ClientTimeout, web
+    from baf.platforms.a2a.message_router import A2ARouter
+    from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
+    import urllib.request
+
+    peer = Agent('Peer')
+    peer.new_state('initial', initial=True)
+    work = peer.new_state('work')
+    work.set_body(Body('work_body', actions=[CustomCodeAction(source="""
+def work_body(session: Session) -> None:
+    session.reply('BALLOT: C1' if '[C1]' in session.event.message else 'CANDIDATE_OK')
+""")]))
+    peer._a2a = {'inbound': [{'peer': 'Owner', 'target_state': 'work', 'flow': 'work'}],
+                 'outbound': [{'peer': 'Owner', 'state': 'work', 'target_gateway': 'gw1'}]}
+    code = _generate(peer, tmp_path / 'peer', _a2a_descriptor_from_tags(peer, {'peer', 'owner'}))
+    peers = [load_runtime(code, tmp_path / f'peer_{index}') for index in range(2)]
+    owner_model = _governed_agent()
+    owner = load_runtime(_generate(owner_model, tmp_path / 'owner',
+                                  _a2a_descriptor_from_tags(owner_model, {'owner', 'peer'})), tmp_path / 'owner')
+    if owner_fails:
+        def fail_merge(*args, **kwargs):
+            raise RuntimeError('owner merge failed')
+
+        owner['_run_fanout'] = fail_merge
+    original_open = urllib.request.urlopen
+    # A broken generated dispatcher must fail promptly instead of waiting 120 seconds.
+    monkeypatch.setattr(urllib.request, 'urlopen', lambda request, timeout=120:
+                        original_open(request, timeout=min(timeout, 2)))
+
+    async def scenario():
+        runners, ballots = [], []
+
+        async def serve(ns, replica):
+            router = A2ARouter()
+
+            async def handle(**params):
+                result = await ns['handle'](**params)
+                if params.get('leaf'):
+                    ballots.append(replica)
+                return result
+
+            router.register('handle', handle)
+            app = web.Application()
+            app.router.add_post('/a2a', router.aiohttp_handler)
+            runner = web.AppRunner(app)
+            await runner.setup()
+            runners.append(runner)
+            listener = socket.socket()
+            listener.bind(('127.0.0.1', 0))
+            listener.setblocking(False)
+            port = listener.getsockname()[1]
+            await web.SockSite(runner, listener).start()
+            return f'http://127.0.0.1:{port}'
+
+        try:
+            urls = [await serve(ns, index) for index, ns in enumerate(peers)]
+            owner_url = await serve(owner, 'owner')
+            for ns in peers:
+                ns['_peer_replica_urls'] = lambda service: [owner_url]
+            owner['_peer_replica_urls'] = lambda service: urls
+            async with ClientSession(timeout=ClientTimeout(total=8)) as client:
+                response = await client.post(urls[0] + '/a2a', json={
+                    'jsonrpc': '2.0', 'method': 'handle', 'id': 1,
+                    'params': {'message': 'work', 'from': 'owner', 'flow': 'work'},
+                })
+                envelope = await response.json()
+            if owner_fails:
+                assert 'error' in envelope, envelope
+                assert 'result' not in envelope
+                return
+            assert 'error' not in envelope, envelope
+            assert 'CANDIDATE_OK' in envelope['result']['reply']
+            assert 'winner C1' in envelope['result']['reply']
+            assert 'votes [C1=2]' in envelope['result']['reply']
+            assert sorted(ballots) == [0, 1]
+        finally:
+            for runner in reversed(runners):
+                await runner.cleanup()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('full_result', [False, True])
+def test_a2a_client_rejects_json_rpc_error_envelopes(tmp_path, load_runtime, monkeypatch, full_result):
+    import io
+    import urllib.request
+
+    agent = _model()
+    agent._a2a = {'inbound': [], 'outbound': [
+        {'peer': 'Peer', 'state': 'receive', 'target_gateway': 'gw1'},
+    ]}
+    ns = load_runtime(_generate(agent, tmp_path, _a2a_descriptor_from_tags(agent, {'authored', 'peer'})), tmp_path)
+    envelope = {'jsonrpc': '2.0', 'id': 1, 'error': {'code': -32603, 'message': 'owner failed'}}
+    monkeypatch.setattr(urllib.request, 'urlopen', lambda *args, **kwargs:
+                        io.BytesIO(json.dumps(envelope).encode()))
+    call = ns['_a2a_call_full' if full_result else '_a2a_call']
+    with pytest.raises(RuntimeError, match='owner failed'):
+        call('http://peer', 'peer', 'candidate', 'gw1')
+
+
+@pytest.mark.parametrize('healthy_replica', [False, True])
+def test_merge_send_requires_a_successful_owner_replica(tmp_path, load_runtime, healthy_replica):
+    agent = _model()
+    agent._a2a = {'inbound': [], 'outbound': [
+        {'peer': 'Peer', 'state': 'receive', 'target_gateway': 'gw1'},
+    ]}
+    ns = load_runtime(_generate(agent, tmp_path, _a2a_descriptor_from_tags(agent, {'authored', 'peer'})), tmp_path)
+    ns['_peer_replica_urls'] = lambda service: ['http://failed', 'http://other']
+
+    def call(url, *args):
+        if url == 'http://other' and healthy_replica:
+            return {'reply': 'governed output'}
+        raise RuntimeError('owner failed')
+
+    ns['_a2a_call_full'] = call
+    if healthy_replica:
+        assert ns['_merge_send']('local candidate', 'peer', 'gw1') == ('governed output', None)
+    else:
+        with pytest.raises(RuntimeError, match='No successful governed merge'):
+            ns['_merge_send']('local candidate', 'peer', 'gw1')

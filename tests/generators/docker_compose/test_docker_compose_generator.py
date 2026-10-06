@@ -661,7 +661,7 @@ def test_convention_bake_unchanged_back_compat(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Merge-path completions run at temperature 0, and the owner's own
+# Merge-path completions use the configured BAF LLM parameters, and the owner's own
 # ballot is validated (re-prompt) rather than trusted from a single completion.
 # ---------------------------------------------------------------------------
 
@@ -675,7 +675,7 @@ def _p(name, confidence=0.8):
     return {"name": name, "kind": "agent", "confidence": confidence, "roles": []}
 
 
-def test_governed_voting_bake_uses_low_temp_and_validates_owner_ballot(tmp_path):
+def test_governed_voting_bake_uses_configured_params_and_validates_owner_ballot(tmp_path):
     import ast
     model = _two_agent_swarm_model()
     supervisor = _agent_with_a2a("AgentSupervisor", outbound=[
@@ -695,8 +695,8 @@ def test_governed_voting_bake_uses_low_temp_and_validates_owner_ballot(tmp_path)
 
     sup_py = (tmp_path / "agent_supervisor" / "AgentSupervisor.py").read_text(encoding="utf-8")
     ast.parse(sup_py)                                   # emitted code must compile
-    assert 'MERGE_PARAMS = {"temperature": 0}' in sup_py
-    assert "parameters=MERGE_PARAMS" in sup_py          # merge-path predicts pinned
+    assert 'MERGE_PARAMS = None' in sup_py
+    assert "parameters=MERGE_PARAMS" in sup_py          # BAF resolves configured parameters
     # the owner ballot goes through the validate/re-prompt helper, not a bare predict
     assert "_gov_owner_ballot(session, cand_block, _ids)" in sup_py
     assert "did NOT end with the" in sup_py             # the emphatic re-prompt text

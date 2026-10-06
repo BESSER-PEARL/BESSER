@@ -1081,8 +1081,8 @@ type NNEdgeData = {
 Model `type` on the wire is **`"BPMNDiagram"`** (`UMLDiagramType.BPMN`);
 readers also accept the legacy `"BPMN"`. The project-envelope bucket key is
 `project.diagrams.BPMN` (not the model type). Backend constants:
-`BPMN_DIAGRAM_TYPE`, `BPMN_DIAGRAM_TYPES`, `BPMN_PROJECT_DIAGRAM_KEY`,
-`BPMN_FLOW_EDGE_TYPES` in `backend/constants/constants.py`.
+`BPMN_DIAGRAM_TYPE`, `BPMN_DIAGRAM_TYPES`, `BPMN_PROJECT_DIAGRAM_KEY` in
+`backend/constants/constants.py`.
 
 ### v4 node types (BPMNDiagram)
 

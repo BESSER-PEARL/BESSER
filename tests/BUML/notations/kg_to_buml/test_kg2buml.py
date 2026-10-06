@@ -161,21 +161,20 @@ def test_convert_spec_json_to_buml_creates_valid_structure():
     # Verify top-level structure
     assert "title" in result
     assert "model" in result
-    assert "elements" in result["model"]
-    assert "relationships" in result["model"]
+    assert "nodes" in result["model"]
+    assert "edges" in result["model"]
     
     # Verify classes are created
-    elements = result["model"]["elements"]
-    class_elements = {k: v for k, v in elements.items() if v.get("type") == "Class"}
-    assert len(class_elements) >= 2  # Person and Car
+    class_nodes = [n for n in result["model"]["nodes"] if n.get("type") == "class"]
+    assert len(class_nodes) >= 2  # Person and Car
     
     # Verify attributes are created
-    attr_elements = {k: v for k, v in elements.items() if v.get("type") == "ClassAttribute"}
-    assert len(attr_elements) >= 4  # name, age for Person; model, year for Car
+    attributes = [a for n in class_nodes for a in n["data"]["attributes"]]
+    assert len(attributes) >= 4  # name, age for Person; model, year for Car
     
     # Verify methods are created
-    method_elements = {k: v for k, v in elements.items() if v.get("type") == "ClassMethod"}
-    assert len(method_elements) >= 1  # getName for Person
+    methods = [m for n in class_nodes for m in n["data"]["methods"]]
+    assert len(methods) >= 1  # getName for Person
 
 
 def test_convert_spec_json_to_buml_handles_void_return_type():
@@ -200,13 +199,12 @@ def test_convert_spec_json_to_buml_handles_void_return_type():
     }
     
     result = convert_spec_json_to_buml(system_spec)
-    elements = result["model"]["elements"]
     
-    # Find the method element
-    method_elements = {k: v for k, v in elements.items() if v.get("type") == "ClassMethod"}
-    assert len(method_elements) == 1
+    # Find the method row
+    methods = [m for n in result["model"]["nodes"] for m in n["data"]["methods"]]
+    assert len(methods) == 1
     
-    method = list(method_elements.values())[0]
+    method = methods[0]
     # Void return type should result in empty string at the end
     assert method["name"].endswith(": ")
 
@@ -216,16 +214,16 @@ def test_convert_spec_json_to_buml_creates_relationships():
     system_spec = _mock_system_spec()
     result = convert_spec_json_to_buml(system_spec)
     
-    relationships = result["model"]["relationships"]
-    assert len(relationships) >= 1
+    edges = result["model"]["edges"]
+    assert len(edges) >= 1
     
     # Check first relationship structure
-    rel = list(relationships.values())[0]
+    rel = edges[0]
     assert "id" in rel
     assert "type" in rel
     assert "source" in rel
     assert "target" in rel
-    assert rel["name"] == "owns"
+    assert rel["data"]["name"] == "owns"
 
 
 def test_convert_spec_json_to_buml_handles_custom_title():
@@ -234,6 +232,29 @@ def test_convert_spec_json_to_buml_handles_custom_title():
     result = convert_spec_json_to_buml(system_spec, title="My Custom Diagram")
     
     assert result["title"] == "My_Custom_Diagram"
+
+
+def test_convert_spec_json_to_buml_output_converts_to_full_domain_model():
+    """The converted JSON must be accepted by the class diagram processor
+    (regression: v3-shaped output produced an empty domain model)."""
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
+        process_class_diagram,
+    )
+    domain_model = process_class_diagram(convert_spec_json_to_buml(_mock_system_spec()))
+
+    assert sorted(c.name for c in domain_model.get_classes()) == ["Car", "Person"]
+    person = domain_model.get_class_by_name("Person")
+    assert sorted((a.name, a.type.name, a.visibility) for a in person.attributes) == [
+        ("age", "int", "private"), ("name", "str", "private"),
+    ]
+    assert [(m.name, m.type.name) for m in person.methods] == [("getName", "str")]
+
+    assert len(domain_model.associations) == 1
+    owns = next(iter(domain_model.associations))
+    assert owns.name == "owns"
+    ends = {e.type.name: e for e in owns.ends}
+    assert ends["Person"].multiplicity.max == 1
+    assert ends["Car"].multiplicity.max == 9999
 
 # --- Tests for kg_to_plantuml ---
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')

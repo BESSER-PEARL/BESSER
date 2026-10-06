@@ -16,7 +16,7 @@ RECOMMENDATION_ALLOWED_VALUES = {
     "font": ["sans", "serif", "monospace", "neutral", "grotesque", "condensed"],
     "alignment": ["left", "center", "justify"],
     "color": [
-        "var(--besser-primary-contrast)",
+        "var(--apollon-primary-contrast)",
         "#000000",
         "#ffffff",
         "#1a73e8",
@@ -81,7 +81,7 @@ def load_default_agent_recommendation_config() -> Dict[str, Any]:
                 "font": "sans",
                 "lineSpacing": 1.5,
                 "alignment": "left",
-                "color": "var(--besser-primary-contrast)",
+                "color": "var(--apollon-primary-contrast)",
                 "contrast": "medium",
             },
             "voiceStyle": {

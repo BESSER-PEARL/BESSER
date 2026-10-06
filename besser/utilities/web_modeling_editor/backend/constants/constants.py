@@ -267,14 +267,6 @@ BPMN_DIAGRAM_TYPES = ("BPMNDiagram", "BPMN")
 # Key of the BPMN bucket in the project envelope (``project.diagrams.BPMN``,
 # ``SupportedDiagramType`` in the webapp) — NOT the model ``type`` above.
 BPMN_PROJECT_DIAGRAM_KEY = "BPMN"
-# The four concrete v4 BPMN flow-edge ``type`` strings (replacing v3's single
-# "BPMNFlow" type + ``data.flowType`` discriminator).
-BPMN_FLOW_EDGE_TYPES = (
-    "BPMNSequenceFlow",
-    "BPMNMessageFlow",
-    "BPMNAssociationFlow",
-    "BPMNDataAssociationFlow",
-)
 
 
 # ---------------------------------------------------------------------------

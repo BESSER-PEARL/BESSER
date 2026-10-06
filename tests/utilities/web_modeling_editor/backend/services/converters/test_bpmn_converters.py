@@ -713,3 +713,72 @@ class TestPortedBumlWrapper:
     def test_syntax_error_raises_conversion_error(self):
         with pytest.raises(ConversionError, match="failed to execute"):
             bpmn_buml_to_json("def broken(:\n    pass\n")
+
+
+# ---------------------------------------------------------------------------
+# Diagram interchange: the .bpmn export must carry the editor's geometry the
+# way development's v3 converter did (regression: BPMNEdge DI was dropped and
+# shapes inside a pool were placed parent-relative).
+# ---------------------------------------------------------------------------
+
+def _positioned_pool_fixture():
+    def at(node, x, y):
+        node["position"] = {"x": x, "y": y}
+        return node
+
+    return {
+        "title": "Positioned",
+        "model": {
+            "type": "BPMNDiagram",
+            "nodes": [
+                at(_node("pool1", "bpmnPool", "Customer"), 100, 50),
+                at(_node("lane1", "bpmnSwimlane", "Agent", parent_id="pool1"), 30, 0),
+                at(_node("t1", "bpmnTask", "Call", parent_id="lane1", taskType="default", marker="none"), 40, 20),
+                at(_node("e1", "bpmnEndEvent", "Hang up", parent_id="lane1", eventType="default"), 200, 20),
+            ],
+            "edges": [
+                _edge("sf1", "BPMNSequenceFlow", "t1", "e1",
+                      points=[{"x": 270, "y": 120}, {"x": 400, "y": 120}, {"x": 400, "y": 140}]),
+            ],
+        },
+    }
+
+
+def _generated_bpmn_root(tmp_path):
+    import xml.etree.ElementTree as ET
+    from besser.generators.bpmn.bpmn_generator import BPMNGenerator
+
+    BPMNGenerator(process_bpmn_diagram(_positioned_pool_fixture()), output_dir=str(tmp_path)).generate()
+    (bpmn_file,) = tmp_path.glob("*.bpmn")
+    return ET.parse(bpmn_file).getroot()
+
+
+_DI = "{http://www.omg.org/spec/BPMN/20100524/DI}"
+_DC = "{http://www.omg.org/spec/DD/20100524/DC}"
+_DD_DI = "{http://www.omg.org/spec/DD/20100524/DI}"
+
+
+class TestDiagramInterchange:
+    def test_generated_bpmn_keeps_edge_waypoints(self, tmp_path):
+        root = _generated_bpmn_root(tmp_path)
+        (edge,) = root.iter(f"{_DI}BPMNEdge")
+        waypoints = [(float(w.get("x")), float(w.get("y"))) for w in edge.iter(f"{_DD_DI}waypoint")]
+        # v3 ``path`` shape: the points relative to their bounding box.
+        assert waypoints == [(0, 0), (130, 0), (130, 20)]
+
+    def test_generated_bpmn_shape_bounds_are_absolute(self, tmp_path):
+        root = _generated_bpmn_root(tmp_path)
+        bounds = {}
+        for shape in root.iter(f"{_DI}BPMNShape"):
+            b = shape.find(f"{_DC}Bounds")
+            bounds[shape.get("bpmnElement")] = (float(b.get("x")), float(b.get("y")))
+        assert bounds["pool1"] == (100, 50)
+        assert bounds["lane1"] == (130, 50)
+        assert bounds["t1"] == (170, 70)
+
+    def test_round_trip_keeps_relative_positions_and_points(self):
+        fixture = _positioned_pool_fixture()
+        out = bpmn_object_to_json(process_bpmn_diagram(fixture))
+        expected = {n["id"]: (n["position"], n.get("parentId")) for n in _nodes(fixture)}
+        assert {n["id"]: (n["position"], n.get("parentId")) for n in _nodes(out)} == expected
+        assert _edges(out)[0]["data"]["points"] == _edges(fixture)[0]["data"]["points"]

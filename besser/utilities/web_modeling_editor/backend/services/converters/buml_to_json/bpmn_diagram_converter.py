@@ -197,6 +197,8 @@ def bpmn_object_to_json(model: BPMNModel) -> dict:
         if node:
             nodes.append(node)
 
+    _make_positions_parent_relative(nodes, id_map)
+
     emitted_ids = {node["id"] for node in nodes}
     for process in sort_by_timestamp(model.processes):
         for flow in sort_by_timestamp(process.sequence_flows):
@@ -225,6 +227,26 @@ def bpmn_object_to_json(model: BPMNModel) -> dict:
         "interactive": {"elements": {}, "relationships": {}},
         "assessments": {},
     }
+
+
+def _make_positions_parent_relative(nodes: list, id_map: dict) -> None:
+    """``layout["bounds"]`` are absolute; a v4 ``position`` is relative to its
+    ``parentId`` node. Only applied when both bounds came from a layout (grid
+    fallback positions are already relative)."""
+    obj_for_id = {node_id: obj for obj, node_id in id_map.items()}
+
+    def has_bounds(node_id) -> bool:
+        obj = obj_for_id.get(node_id)
+        return bool((getattr(obj, "layout", None) or {}).get("bounds"))
+
+    absolute = {node["id"]: dict(node["position"]) for node in nodes}
+    for node in nodes:
+        parent_id = node.get("parentId")
+        if parent_id in absolute and has_bounds(node["id"]) and has_bounds(parent_id):
+            node["position"] = {
+                "x": absolute[node["id"]]["x"] - absolute[parent_id]["x"],
+                "y": absolute[node["id"]]["y"] - absolute[parent_id]["y"],
+            }
 
 
 def _emit_pool(participant: Participant, nodes: list, id_for, grid: "_GridLayout") -> None:

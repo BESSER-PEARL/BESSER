@@ -92,9 +92,13 @@ async def validate_diagram(input_data: DiagramInput):
                     "message": "\u274c Validation failed"
                 }
 
-            # Process the reference class diagram first
+            # Process the reference class diagram first. v4 models always
+            # carry ``title``; migrated ones may leave it empty.
+            reference_title = reference_data.get("title")
+            if not (reference_title or "").strip():
+                reference_title = "Reference Classes"
             reference_json = {
-                "title": reference_data.get("title", "Reference Classes"),
+                "title": reference_title,
                 "model": {
                     "nodes": reference_data.get("nodes", []),
                     "edges": reference_data.get("edges", []),

@@ -145,6 +145,13 @@ def process_object_diagram(json_data, domain_model):
 
     reference_data = model_data.get('referenceDiagramData', {}) or {}
 
+    # If nodes is empty, try the nested structure some exporters use
+    if not nodes and isinstance(model_data.get('model'), dict):
+        nested_model = model_data.get('model')
+        nodes = nested_model.get('nodes') or []
+        edges = nested_model.get('edges') or []
+        reference_data = nested_model.get('referenceDiagramData', reference_data)
+
     # Track objects by node id for link creation.
     objects_by_id = {}
 

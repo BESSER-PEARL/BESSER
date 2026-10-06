@@ -97,37 +97,6 @@ def make_edge(
     return edge
 
 
-def compute_bounds(nodes: list[dict]) -> dict:
-    """Return a ``{x, y, width, height}`` bounding box for the given nodes.
-
-    Used to populate the optional v4 ``size`` field on a model.
-    """
-    if not nodes:
-        return {"x": 0, "y": 0, "width": 0, "height": 0}
-    xs = []
-    ys = []
-    rights = []
-    bottoms = []
-    for node in nodes:
-        pos = node.get("position") or {}
-        x = pos.get("x", 0)
-        y = pos.get("y", 0)
-        w = node.get("width", 0) or (node.get("measured") or {}).get("width", 0)
-        h = node.get("height", 0) or (node.get("measured") or {}).get("height", 0)
-        xs.append(x)
-        ys.append(y)
-        rights.append(x + w)
-        bottoms.append(y + h)
-    x_min = min(xs)
-    y_min = min(ys)
-    return {
-        "x": x_min,
-        "y": y_min,
-        "width": max(rights) - x_min,
-        "height": max(bottoms) - y_min,
-    }
-
-
 def empty_model(diagram_type: str, title: str = "") -> dict:
     """Return an empty v4 model envelope of the given diagram type.
 

@@ -94,12 +94,25 @@ _FLOW_CLASS_FOR_EDGE_TYPE = {
 }
 
 
-def _layout_dict(node: dict) -> dict:
-    """Opaque layout passthrough for a node: id + parentId + bounds + style keys."""
+def _layout_dict(node: dict, raw_by_id: dict) -> dict:
+    """Opaque layout passthrough for a node: id + parentId + bounds + style keys.
+
+    ``bounds`` are absolute (as in v3 and BPMN DI); a v4 ``position`` is
+    relative to the ``parentId`` node, so the ancestors' positions are added.
+    """
+    bounds = node_bounds(node)
+    seen = {node.get("id")}
+    parent = raw_by_id.get(node.get("parentId"))
+    while parent is not None and parent.get("id") not in seen:
+        seen.add(parent.get("id"))
+        position = parent.get("position") or {}
+        bounds["x"] += position.get("x", 0)
+        bounds["y"] += position.get("y", 0)
+        parent = raw_by_id.get(parent.get("parentId"))
     layout = {
         "id": node.get("id"),
         "parentId": node.get("parentId"),
-        "bounds": node_bounds(node),
+        "bounds": bounds,
     }
     data = node_data(node)
     for style_key in ("fillColor", "strokeColor", "textColor", "highlight"):
@@ -111,9 +124,18 @@ def _layout_dict(node: dict) -> dict:
 def _flow_layout_dict(edge: dict) -> dict:
     """Opaque layout passthrough for an edge (flow)."""
     edge_data = edge.get("data") or {}
+    points = edge_data.get("points") or []
+    # ``path`` (read by the BPMN generator for BPMNEdge DI) is the v3 shape:
+    # the absolute v4 points made relative to their bounding box.
+    path = None
+    if points:
+        min_x = min(p.get("x", 0) for p in points)
+        min_y = min(p.get("y", 0) for p in points)
+        path = [{"x": p.get("x", 0) - min_x, "y": p.get("y", 0) - min_y} for p in points]
     return {
         "id": edge.get("id"),
-        "points": edge_data.get("points") or [],
+        "points": points,
+        "path": path,
         "source_direction": edge.get("sourceHandle"),
         "target_direction": edge.get("targetHandle"),
         "isManuallyLayouted": edge_data.get("isManuallyLayouted", False),
@@ -262,7 +284,7 @@ def process_bpmn_diagram(json_data: dict) -> BPMNModel:
         if obj is None:
             logger.warning("BPMN node '%s' has unknown type '%s'; skipping.", node_id, node.get("type"))
             continue
-        obj.layout = _layout_dict(node)
+        obj.layout = _layout_dict(node, raw_by_id)
         obj_by_id[node_id] = obj
         if isinstance(obj, Participant):
             pools.append((node_id, obj))

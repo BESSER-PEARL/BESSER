@@ -586,6 +586,26 @@ class TestValidateDiagram:
         assert data["isValid"] is False
         assert len(data["errors"]) > 0
 
+    @pytest.mark.parametrize("reference_title", ["", "   ", None])
+    def test_validate_object_diagram_with_untitled_reference(self, reference_title):
+        """Migrated projects carry an empty reference ``title``; validation must
+        fall back to a default name instead of failing "Name cannot be empty"."""
+        fixture_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "fixtures", "v4", "object_diagram_basic.json",
+        )
+        with open(fixture_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        reference = payload["model"]["referenceDiagramData"]
+        if reference_title is None:
+            reference.pop("title", None)
+        else:
+            reference["title"] = reference_title
+        response = client.post("/besser_api/validate-diagram", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["errors"] == []
+        assert data["isValid"] is True
+
     def test_validate_unsupported_diagram_type(self):
         """Unsupported diagram type returns isValid=False."""
         payload = {

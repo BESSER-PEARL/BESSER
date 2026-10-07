@@ -730,6 +730,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
         reply_text = str(db_result)
     {% endif %}
     {% endif %}
+    {% if a2a %}
+    _a2a_record_result(session, reply_text)
+    {% endif %}
     {% if action.store_in_session %}
     session.set({{ action.store_in_session | string | tojson }}, reply_text)
     {% endif %}
@@ -777,6 +780,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     {% else %}
     message = {{ llm_ns.name }}.predict(message={{ input_ns.expr }}, session=session)
     {% endif %}
+    {% if a2a %}
+    _a2a_record_result(session, message)
+    {% endif %}
     {% if action.store_in_session %}
     session.set({{ action.store_in_session | string | tojson }}, message)
     {% endif %}
@@ -797,6 +803,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     {% endif %}
     {% else %}
     message = {{ llm_ns.name }}.chat(session=session)
+    {% endif %}
+    {% if a2a %}
+    _a2a_record_result(session, message)
     {% endif %}
     {% if action.store_in_session %}
     session.set({{ action.store_in_session | string | tojson }}, message)
@@ -837,6 +846,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     rag_message = session.run_rag({{ rag_input_ns.expr }})
     {% endif %}
     {% endif %}
+    {% if a2a %}
+    _a2a_record_result(session, rag_message)
+    {% endif %}
     {% if action.store_in_session %}
     session.set({{ action.store_in_session | string | tojson }}, rag_message)
     {% endif %}
@@ -874,6 +886,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     system_message = 'Use the following webpage content to answer the question:\n' + str(webpages)
     {% endif %}
     message = {{ web_crawl_llm_ns.name }}.predict(message=session.event.message, session=session, system_message=system_message)
+    {% if a2a %}
+    _a2a_record_result(session, message)
+    {% endif %}
     {% if action.store_in_session %}
     session.set({{ action.store_in_session | string | tojson }}, message)
     {% endif %}

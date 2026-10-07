@@ -65,6 +65,13 @@ Peer replies feed applicable authored receive transitions and are available as
 ``session.get('a2a_result')``. Ordinary tagged sends carry the flow and sender
 service as well as the message.
 
+Computed primitive-action results are captured independently of ``send_reply``
+and ``store_in_session``. The last result-producing action in a body supplies
+its local A2A result, even when it is hidden from the human chat. Each invocation
+has a fresh capture, so previous session results are not reused accidentally.
+Results are logged at INFO level. An empty computed A2A result raises an error;
+a body without a computed result retains authored-reply or legacy input behavior.
+
 Inbound requests use an isolated BAF session. Resolved ``flow`` and ``from``
 bindings select the authored destination and honor applicable inbound transition
 conditions. Automatic and conditional transitions continue until the graph
@@ -72,7 +79,8 @@ waits for another event, with a limit of 100 transitions per request. Ambiguous
 bindings require a ``flow`` or ``from`` value. RPC GUI actions are returned as
 action notices; human sessions render the authored GUI on their platform.
 An RPC session lasts one request, so interactive GUI conversations use the human
-platform. Governance ``leaf`` requests suppress further peer calls.
+platform. Governance ``leaf`` requests execute one selected local body and return
+its result without following later automatic transitions or calling peers.
 
 For topology-only models without usable state bindings, the generated runtime
 extends an existing state with the legacy swarm behavior. It never replaces the

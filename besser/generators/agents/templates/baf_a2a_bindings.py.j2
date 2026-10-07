@@ -10,11 +10,11 @@ _A2A_TASK_NAMES = [
 {% for state in agent.states %}
 {% set task_state = namespace(value=is_class(state, 'ReasoningState')) %}
 {% for action in (state.body.actions if state.body else []) %}
-{% if is_class(action, 'LLMReply') or is_class(action, 'RAGReply') %}
+{% if is_class(action, 'LLMReply') or is_class(action, 'LLMChatReply') or is_class(action, 'RAGReply') or is_class(action, 'DBReply') or is_class(action, 'WebCrawlLLMReply') %}
 {% set task_state.value = true %}
 {% endif %}
 {% endfor %}
-{% if task_state.value %}
+{% if task_state.value and not state.initial %}
     {{ state.name | tojson }},
 {% endif %}
 {% endfor %}
@@ -41,6 +41,59 @@ _A2A_PROFILES[{{ mapping.name | tojson }}] = {
 {% endif %}
 
 
+def _a2a_capture_body(state, original):
+    def captured(session: Session):
+        previous = getattr(session, '_a2a_active_capture', None)
+        capture = {
+            'invocation': str(uuid4()),
+            'state': state.name,
+            'produced': False,
+            'value': None,
+            'reply': None,
+        }
+        session._a2a_active_capture = capture
+        try:
+            return original(session)
+        finally:
+            session._a2a_last_body_capture = capture
+            session._a2a_active_capture = previous
+
+    captured.__name__ = original.__name__
+    return captured
+
+
+def _a2a_record_result(session, value):
+    capture = getattr(session, '_a2a_active_capture', None)
+    if capture is None:
+        raise RuntimeError('A2A result produced outside a body invocation')
+
+    text = '' if value is None else str(value)
+    capture['produced'] = True
+    capture['value'] = text
+
+    logger.info(
+        '[a2a-result] session=%s state=%s invocation=%s result=%s',
+        session.id,
+        capture['state'],
+        capture['invocation'],
+        text,
+    )
+
+
+def _a2a_body_result(capture):
+    if capture is None:
+        return None
+
+    if capture['produced']:
+        if not capture['value'].strip():
+            raise ValueError(
+                'Empty A2A result from state ' + capture['state']
+            )
+        return capture['value']
+
+    return capture['reply']
+
+
 class _A2APlatformProxy:
     """Delegate human replies to the authored platform and collect RPC replies."""
 
@@ -54,6 +107,9 @@ class _A2APlatformProxy:
         def send(session, *args, **kwargs):
             if name == 'reply' and args:
                 session.set('_a2a_last_reply', str(args[0]))
+                capture = getattr(session, '_a2a_active_capture', None)
+                if capture is not None:
+                    capture['reply'] = str(args[0])
             if isinstance(session, _A2ARequestSession):
                 if name == 'reply':
                     session.replies.append(str(args[0]))
@@ -215,13 +271,17 @@ def _a2a_wrap(state, edges, sends, merge_cfg=None, fallback=False):
             original(session)
         if not getattr(session.event, 'message', None):
             return
+        local_result = _a2a_body_result(getattr(session, '_a2a_active_capture', None))
+        if local_result is None:
+            # Preserve authored/custom replies, cleared before this body.
+            local_result = session.get('_a2a_last_reply')
         if session.get('_a2a_leaf'):
-            if fallback and not session.get('_a2a_last_reply'):
+            if fallback and local_result is None:
                 session.reply(reply_llm.predict(message=session.event.message, session=session,
                                                system_message=SYSTEM_PROMPT))
             return
         task = session.event.message if pending else (
-            session.get('_a2a_last_reply') or session.get('a2a_result') or session.event.message)
+            local_result if local_result is not None else session.event.message)
         session.set('_a2a_task', task)
         session.set('_a2a_edges', edges if not fallback else None)
         session.set('_a2a_merge_stages', [(e['service'], e['target_gateway']) for e in sends])
@@ -302,6 +362,11 @@ def _a2a_bind_graph(states):
         if not state.transitions:
             state.when_no_intent_matched().go_to(state)
 
+    # Install after binding and legacy default-body detection.
+    for state in states.values():
+        state.set_body(_a2a_capture_body(state, state._body))
+        state.set_fallback_body(_a2a_capture_body(state, state._fallback_body))
+
 
 _a2a_bind_graph(_A2A_STATES)
 for _profile_states in _A2A_PROFILES.values():
@@ -350,9 +415,13 @@ def _a2a_handle_sync(**params):
     _cfg = globals().get('_MERGES', {}).get(params.get("flow"))
     if _cfg is not None:
         session.merge_dispatch = _cfg
-    if params.get('leaf') and (_cfg is not None or len(targets) > 1):
-        # Governance ballots are local answers, never another governed PUSH.
-        local_task = next((states[name] for name in _A2A_TASK_NAMES if name in states), None)
+    if params.get('leaf') and (_cfg is not None or len(targets) != 1):
+        # Governance and untagged leaf calls execute one local task.
+        local_task = next((states[name] for name in _A2A_TASK_NAMES
+                           if name in states and not states[name].initial), None)
+        if local_task is None:
+            local_task = next((state for state in states.values()
+                               if state.name in _A2A_FALLBACK_STATES), None)
         if local_task is None:
             return {'reply': reply_llm.predict(message=params.get('message', ''), session=session,
                                                system_message=SYSTEM_PROMPT)}
@@ -386,6 +455,15 @@ def _a2a_handle_sync(**params):
                     raise ValueError('Authored A2A inbound transition conditions were not satisfied')
     session._current_state = target
     target._body(session)
+    if params.get('leaf'):
+        capture = getattr(session, '_a2a_last_body_capture', None)
+        local_result = _a2a_body_result(capture)
+        result = dict(session.result)
+        result['reply'] = (local_result if capture and capture['produced']
+                           else '\n\n'.join(session.replies))
+        if session.actions:
+            result['actions'] = session.actions
+        return result
     if not targets and _cfg is None and target.name not in _A2A_FALLBACK_STATES and not session.events:
         session.events.appendleft(session.event)
         target.check_transitions(session)

@@ -233,7 +233,7 @@ def test_outbound_calls_happen_at_each_authored_state_with_its_kind(tmp_path, lo
     calls.clear()
     leaf = asyncio.run(ns['handle'](message='ballot', leaf=True))
     assert calls == []
-    assert leaf['reply'] == 'Received ballot\n\nauthored answer: ballot'
+    assert leaf['reply'] == 'Received ballot'
 
 
 def test_personalization_render_keeps_a2a_and_profile_graph(tmp_path, load_runtime):
@@ -744,8 +744,9 @@ def test_governance_uses_real_baf_llm_configured_parameters(tmp_path, load_runti
 
 
 @pytest.mark.parametrize('owner_fails', [False, True])
+@pytest.mark.parametrize('silent_peer', [False, True])
 def test_governed_http_round_trip_serves_ballots_on_initiating_replica(
-        tmp_path, load_runtime, monkeypatch, owner_fails):
+        tmp_path, load_runtime, monkeypatch, owner_fails, silent_peer):
     from aiohttp import ClientSession, ClientTimeout, web
     from baf.platforms.a2a.message_router import A2ARouter
     from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
@@ -758,10 +759,21 @@ def test_governed_http_round_trip_serves_ballots_on_initiating_replica(
 def work_body(session: Session) -> None:
     session.reply('BALLOT: C1' if '[C1]' in session.event.message else 'CANDIDATE_OK')
 """)]))
+    if silent_peer:
+        peer.new_llm(name='authored_model', provider='openai', parameters={})
+        work.set_body(Body('work_body', actions=[
+            LLMReply(send_reply=False, store_in_session='local_result'),
+        ]))
     peer._a2a = {'inbound': [{'peer': 'Owner', 'target_state': 'work', 'flow': 'work'}],
                  'outbound': [{'peer': 'Owner', 'state': 'work', 'target_gateway': 'gw1'}]}
     code = _generate(peer, tmp_path / 'peer', _a2a_descriptor_from_tags(peer, {'peer', 'owner'}))
     peers = [load_runtime(code, tmp_path / f'peer_{index}') for index in range(2)]
+    if silent_peer:
+        for ns in peers:
+            ns['default_llm'].predict = (
+                lambda message, session=None, **kwargs:
+                'BALLOT: C1' if '[C1]' in message else 'CANDIDATE_OK'
+            )
     owner_model = _governed_agent()
     owner = load_runtime(_generate(owner_model, tmp_path / 'owner',
                                   _a2a_descriptor_from_tags(owner_model, {'owner', 'peer'})), tmp_path / 'owner')
@@ -820,6 +832,7 @@ def work_body(session: Session) -> None:
             assert 'CANDIDATE_OK' in envelope['result']['reply']
             assert 'winner C1' in envelope['result']['reply']
             assert 'votes [C1=2]' in envelope['result']['reply']
+            assert 'abstain 0' in envelope['result']['reply']
             assert sorted(ballots) == [0, 1]
         finally:
             for runner in reversed(runners):
@@ -866,3 +879,131 @@ def test_merge_send_requires_a_successful_owner_replica(tmp_path, load_runtime, 
     else:
         with pytest.raises(RuntimeError, match='No successful governed merge'):
             ns['_merge_send']('local candidate', 'peer', 'gw1')
+
+def _capture_model(send_reply=False, store=None):
+    model = Agent('Silent')
+    model.platforms.append(WebSocketPlatform())
+    model.new_llm(name='authored_model', provider='openai', parameters={})
+    welcome = model.new_state('welcome', initial=True)
+    work = model.new_state('work')
+    after = model.new_state('after')
+    welcome.set_body(Body('welcome_body', actions=[AgentReply('Welcome')]))
+    work.set_body(Body('work_body', actions=[
+        LLMReply(prompt='Assess', send_reply=send_reply, store_in_session=store),
+    ]))
+    after.set_body(Body('after_body', actions=[
+        LLMReply(prompt='This later task must not run during a leaf call'),
+    ]))
+    work.go_to(after)
+    model._human_facing = True
+    model._a2a = {
+        'inbound': [{'peer': 'Peer', 'target_state': 'work', 'flow': 'work'}],
+        'outbound': [{'peer': 'Peer', 'state': 'work', 'kind': 'delegates'}],
+    }
+    return model
+
+
+@pytest.mark.parametrize('send_reply', [False, True])
+@pytest.mark.parametrize('store', [None, 'answer'])
+def test_fresh_result_forwarding_preserves_visibility(
+        tmp_path, load_runtime, caplog, send_reply, store):
+    import logging
+
+    model = _capture_model(send_reply, store)
+    descriptor = _a2a_descriptor_from_tags(model, {'silent', 'peer'})
+    ns = load_runtime(_generate(model, tmp_path, descriptor), tmp_path)
+    tasks = []
+    ns['_a2a_send_edges'] = lambda task, edges, session=None: tasks.append(task) or []
+    ns['default_llm'].predict = (
+        lambda message, session=None, **kwargs:
+        'final response' if message.startswith('Task:') else 'same local assessment'
+    )
+    session = ns['Session']('human', ns['agent'], ns['agent'].ui)
+    session.call_manage_transition = lambda: None
+    session.set('_a2a_last_reply', 'stale reply')
+    session.set('a2a_result', 'stale final')
+    session.set('answer', 'stale stored value')
+    with caplog.at_level(logging.INFO):
+        for incoming in ['first', 'second']:
+            session._current_state = ns['work']
+            session.event = ns['ReceiveTextEvent'](incoming)
+            ns['work']._body(session)
+
+    # The second turn stores an identical value; it is still newly produced.
+    assert tasks == ['same local assessment', 'same local assessment']
+    messages = [value for kind, value in ns['agent'].ui.sent if kind == 'reply']
+    if send_reply:
+        assert messages == [
+            'same local assessment', 'final response',
+            'same local assessment', 'final response',
+        ]
+    else:
+        assert messages == ['final response', 'final response']
+    if store:
+        assert session.get(store) == 'same local assessment'
+    assert sum('[a2a-result]' in record.getMessage() for record in caplog.records) == 2
+    assert session._a2a_active_capture is None
+
+
+@pytest.mark.parametrize('bound', [False, True])
+def test_silent_leaf_stops_and_concurrent_results_are_isolated(
+        tmp_path, load_runtime, bound):
+    model = _capture_model(store='answer')
+    if not bound:
+        model._a2a['outbound'] = []
+    descriptor = _a2a_descriptor_from_tags(model, {'silent', 'peer'})
+    ns = load_runtime(_generate(model, tmp_path, descriptor), tmp_path)
+
+    def unexpected_peer_call(*args, **kwargs):
+        raise AssertionError('Leaf request attempted outbound A2A')
+
+    ns['_a2a_send_edges'] = unexpected_peer_call
+    result = asyncio.run(ns['handle'](message='ballot', flow='work', leaf=True))
+    assert result['reply'] == 'authored answer: ballot'
+    assert len(ns['default_llm'].calls) == 1
+    assert ns['agent'].ui.sent == []
+    ns['default_llm'].calls.clear()
+
+    async def concurrent():
+        return await asyncio.gather(
+            ns['handle'](message='one', flow='work', leaf=True),
+            ns['handle'](message='two', flow='work', leaf=True),
+        )
+
+    results = asyncio.run(concurrent())
+    assert [result['reply'] for result in results] == [
+        'authored answer: one', 'authored answer: two',
+    ]
+    assert len(ns['default_llm'].calls) == 2
+    assert len({call[1].id for call in ns['default_llm'].calls}) == 2
+
+
+def test_empty_computed_leaf_result_is_an_error(tmp_path, load_runtime):
+    model = _capture_model()
+    descriptor = _a2a_descriptor_from_tags(model, {'silent', 'peer'})
+    ns = load_runtime(_generate(model, tmp_path, descriptor), tmp_path)
+    ns['default_llm'].predict = lambda **kwargs: ''
+    with pytest.raises(ValueError, match='Empty A2A result'):
+        asyncio.run(ns['handle'](
+            message='input must not substitute for an empty result',
+            flow='work', leaf=True,
+        ))
+
+
+@pytest.mark.parametrize('send_reply', [False, True])
+def test_ordinary_agent_reply_flags_remain_unchanged(
+        tmp_path, load_runtime, send_reply):
+    model = _capture_model(send_reply=send_reply, store='answer')
+    del model._a2a
+    code = _generate(model, tmp_path)
+    assert '_a2a_record_result' not in code
+    ns = load_runtime(code, tmp_path)
+    session = ns['Session']('human', ns['agent'], ns['agent'].ui)
+    session.call_manage_transition = lambda: None
+    session._current_state = ns['work']
+    session.event = ns['ReceiveTextEvent']('ordinary input')
+    ns['work']._body(session)
+    assert session.get('answer') == 'authored answer: ordinary input'
+    assert ns['agent'].ui.sent == (
+        [('reply', 'authored answer: ordinary input')] if send_reply else []
+    )

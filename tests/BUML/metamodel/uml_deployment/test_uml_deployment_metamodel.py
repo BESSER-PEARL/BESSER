@@ -440,3 +440,43 @@ def test_repr_for_relationships_includes_endpoints():
     assert "DeploymentRelation" in repr(rel)
     assert "'a'" in repr(rel)
     assert "'n'" in repr(rel)
+
+
+# ---------------------------------------------------------------------------
+# Containment cycles and DeploymentComponent
+# ---------------------------------------------------------------------------
+
+def test_nesting_a_node_inside_its_descendant_is_rejected():
+    a, b, c = Node("A"), Node("B"), Node("C")
+    a.add_nested_node(b)
+    b.add_nested_node(c)
+    with pytest.raises(ValueError):
+        b.add_nested_node(a)
+    with pytest.raises(ValueError):
+        c.nested_nodes = {a}
+    with pytest.raises(ValueError):
+        a.parent = c
+    assert a.parent is None and a not in c.nested_nodes
+
+
+def test_validate_collects_a_cycle_wired_through_private_slots():
+    a, b = Node("A", stereotypes=["vm"]), Node("B", stereotypes=["vm"])
+    a.add_nested_node(b)
+    b._Node__nested_nodes.add(a)
+    model = DeploymentModel("m", nodes={a})
+    assert model.all_nodes() == {a, b}
+    result = model.validate(raise_exception=False)
+    assert not result["success"]
+    assert any("nested inside itself" in error for error in result["errors"])
+
+
+def test_deployment_component_is_a_view_artifact_without_w2_warning():
+    from besser.BUML.metamodel.uml_deployment import DeploymentComponent
+
+    node = Node("Host", stereotypes=["vm"])
+    projection = DeploymentComponent("Coder")
+    node.add_artifact(projection)
+    model = DeploymentModel("m", nodes={node})
+    assert isinstance(projection, Artifact)
+    warnings = model.validate(raise_exception=False)["warnings"]
+    assert not any("manifests no Component" in w for w in warnings)

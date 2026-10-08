@@ -1,16 +1,32 @@
 """UML Deployment metamodel for B-UML.
 
-A first-class B-UML model for UML Deployment diagrams, alongside ``structural``
-/ ``state_machine`` / ``gui`` / ``bpmn`` / ``uml_component``. Implements the
-design in ``.claude/component-deployment/01-component-deployment-design.md``
-(reviewed and locked 2026-05-18).
+A first-class B-UML model for UML 2.5 Deployment diagrams, alongside
+``structural`` / ``state_machine`` / ``gui`` / ``bpmn`` / ``uml_component``.
 
-Distinct from the existing ``besser/BUML/metamodel/deployment/`` package which
-models cloud-infrastructure concepts (K8s ``Cluster``, ``Deployment``,
-``Node`` with public/private IPs, ``Region``, …) and feeds the Terraform
-generator. That package stays untouched; this one models UML 2.5 Deployment
-notation (``Node``, ``Artifact``, ``DeploymentRelation``, ``CommunicationPath``)
-with an agentic stereotype profile aligned with ``uml_component``.
+Why a second deployment metamodel
+---------------------------------
+BESSER already ships ``besser.BUML.metamodel.deployment``, an *infrastructure*
+metamodel (Kubernetes ``Cluster`` / ``Deployment`` / ``Service``, cloud
+``Region`` / ``Zone``, ``Node`` with IP ranges and resources) that feeds the
+Terraform generator. This package models the *UML notation* instead: what a
+UML Deployment diagram shows (``Node``, ``Artifact``, ``DeploymentRelation``,
+``CommunicationPath``, interfaces) and what the web editor's Deployment diagram
+serialises. The two answer different questions -- "which cloud resources do I
+provision" versus "which artifact runs on which execution node" -- so neither
+is folded into the other, and the Docker Compose generator reads this one.
+
+Both packages define classes named ``Node`` and ``DeploymentModel``. They are
+different types, so:
+
+* always import them through their own package path
+  (``from besser.BUML.metamodel.uml_deployment import Node``);
+* never star-import both packages into one namespace (the second import would
+  silently shadow the first). BESSER's own code imports at most one of them per
+  module.
+
+UML 2.5 calls the artifact-on-node relationship ``Deployment``; it is named
+``DeploymentRelation`` here because ``deployment.Deployment`` already denotes a
+Kubernetes Deployment.
 
 Hierarchy::
 
@@ -18,52 +34,35 @@ Hierarchy::
                                                      DeploymentRelationship}
                             -> Model -> DeploymentModel
 
+    Artifact <|-- DeploymentComponent  # a Component shown on the diagram
+
     DeploymentRelationship <|-- DeploymentRelation     # Artifact -> Node
                           <|-- CommunicationPath      # Node <-> Node
                           <|-- DeploymentDependency
                           <|-- InterfaceProvided
                           <|-- InterfaceRequired
 
-Naming-clash notes (recorded in 00- §8):
+Elements carry typed discriminators (``NodeKind``, ``Locality``) plus a
+free-form ``stereotypes: List[str]`` passthrough. ``Artifact.manifests`` holds
+the ids of the ``uml_component.Component`` elements the artifact manifests;
+cross-diagram links are plain string ids, never Python references, so each
+metamodel stays independently usable. ``DeploymentRelation`` reuses
+``structural.Multiplicity`` for ``[3]`` / ``[1..*]`` artifact counts on a node.
 
-* UML 2.5 ``Node`` collides with ``besser.BUML.metamodel.deployment.Node``
-  (a compute node with public/private IPs). Same class name, different
-  packages -- Python namespacing resolves cleanly; reader-facing
-  ambiguity bounded.
-* UML 2.5 calls the artifact-on-node relationship ``Deployment``. The
-  existing cloud-infra package already has a class named ``Deployment``
-  (a K8s Deployment object), so this metamodel uses ``DeploymentRelation``
-  to disambiguate without losing meaning.
-
-The agentic stereotype profile (D3 hybrid) carries swarm intent via typed
-discriminator attributes (``NodeKind``, ``Locality``) plus a free-form
-``stereotypes: List[str]`` passthrough on every element. ``Artifact.manifests:
-List[str]`` is the cross-diagram link to ``uml_component.Component`` IDs
-(D2: artifact manifests component; D13 stable-ID cross-ref).
-
-Cross-diagram links to ``uml_component.Component`` are *not* a Python
-import (decision D13 -- string IDs only). This metamodel reuses
-``structural.Multiplicity`` on ``DeploymentRelation`` for ``[3]`` / ``[1..*]``
-artifact counts on a node (R-06, R-20).
-
-Growth path (01- §3.5):
-
-* UML ``Manifestation`` as a distinct relationship class -- currently
-  absorbed into ``Artifact.manifests``.
-* UML ``DeploymentSpecification`` -- not modelled.
-* ``«autoscale»`` policy attributes on ``DeploymentRelation``.
-* AgentGroup as a resource grouping (NR-6) -- via the Component-side
-  ``Subsystem`` plus an Artifact that manifests it.
+Not modelled yet: UML ``Manifestation`` as a relationship class (absorbed into
+``Artifact.manifests``), ``DeploymentSpecification``, and autoscaling policies
+on ``DeploymentRelation``.
 """
 
 from enum import Enum
 from typing import List, Optional
 
+from besser.BUML.metamodel._checks import checked_set, checked_str_list
 from besser.BUML.metamodel.structural import Model, Multiplicity, NamedElement
 
 
 # ---------------------------------------------------------------------------
-# Enumerations (decisions D4 / D5 -- plain enum.Enum; .value strings match the
+# Enumerations (plain enum.Enum; .value strings match the
 # WME / UML 2.5 well-known stereotype strings so converters can map by value)
 # ---------------------------------------------------------------------------
 
@@ -82,7 +81,7 @@ class NodeKind(Enum):
 class Locality(Enum):
     """Where a Node / Artifact is hosted.
 
-    A BESSER **general profile addition** (NR-5 of the requirements review) --
+    A BESSER **general profile addition** --
     *not* part of UML 2.5.1: the spec defines no ``«external»`` standard
     stereotype and no locality concept (verified against uml-2-5-1-formal-
     17-12-05 -- Clause 22 Standard Profile, Clause 19 Deployments). UML 2.5.1
@@ -104,43 +103,16 @@ class Locality(Enum):
 
 
 # ---------------------------------------------------------------------------
-# Module-private helpers
-# ---------------------------------------------------------------------------
-
-def _checked_set(values, expected_type, label: str) -> set:
-    """Coerce ``values`` to a set, raising TypeError if any element is not ``expected_type``."""
-    result = set(values)
-    for value in result:
-        if not isinstance(value, expected_type):
-            raise TypeError(
-                f"{label} must contain {expected_type.__name__} instances, "
-                f"got {type(value).__name__}"
-            )
-    return result
-
-
-def _checked_str_list(values, label: str) -> List[str]:
-    """Coerce ``values`` to a list of str, raising TypeError on a non-str entry."""
-    result = list(values)
-    for value in result:
-        if not isinstance(value, str):
-            raise TypeError(
-                f"{label} must contain str entries, got {type(value).__name__}"
-            )
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Base element (decisions D9 / D10 -- relaxed name, opaque layout passthrough)
+# Base element (relaxed name, opaque layout passthrough)
 # ---------------------------------------------------------------------------
 
 class DeploymentElement(NamedElement):
     """Base class for every UML Deployment-diagram abstract-syntax element.
 
-    Relaxes ``NamedElement.name`` (decision D9): a Deployment label is free
+    Relaxes ``NamedElement.name``: a Deployment label is free
     text and may contain spaces (``"UNP sandbox VM"``), colons, brackets
     (``"Code Tester [3]"``), or be empty. Carries ``layout`` -- the opaque
-    diagram-interchange passthrough the metamodel never interprets (D10).
+    diagram-interchange passthrough the metamodel never interprets.
 
     Args:
         name (str): The element label. Empty allowed; ``None`` -> ``""``.
@@ -190,7 +162,7 @@ class DeploymentElement(NamedElement):
         Raises:
             TypeError: if not a list of str.
         """
-        self.__stereotypes = _checked_str_list(stereotypes, "stereotypes")
+        self.__stereotypes = checked_str_list(stereotypes, "stereotypes")
 
     @property
     def layout(self) -> Optional[dict]:
@@ -213,14 +185,14 @@ class DeploymentElement(NamedElement):
 
 
 # ---------------------------------------------------------------------------
-# Nodes and Artifacts (decision D12)
+# Nodes and Artifacts
 # ---------------------------------------------------------------------------
 
 class Node(DeploymentElement):
     """A UML Node -- a deployment target (UML 2.5 §19.2).
 
     Apollon emits a single ``DeploymentNode`` element with a free-form
-    ``stereotype`` string. We map the WME stereotype to ``NodeKind`` (D4):
+    ``stereotype`` string. We map the WME stereotype to ``NodeKind``:
     ``«device»`` / ``«executionEnvironment»`` / fall-through to ``GENERIC``.
 
     Args:
@@ -347,7 +319,8 @@ class Node(DeploymentElement):
 
         Raises:
             TypeError: if any element is not a Node.
-            ValueError: if self is in the children (self-containment).
+            ValueError: if a child is self or one of its ancestors
+                (containment cycle).
         """
         nested_nodes = set(nested_nodes)
         for child in nested_nodes:
@@ -356,8 +329,7 @@ class Node(DeploymentElement):
                     f"nested_nodes must contain Node instances, "
                     f"got {type(child).__name__}"
                 )
-            if child is self:
-                raise ValueError("A Node cannot be nested in itself.")
+            self._check_nestable(child)
         for existing in self.__nested_nodes:
             if existing.parent is self:
                 existing.parent = None
@@ -370,12 +342,12 @@ class Node(DeploymentElement):
 
         Raises:
             TypeError: if node is not a Node.
-            ValueError: if node is self.
+            ValueError: if node is self or one of its ancestors (containment
+                cycle).
         """
         if not isinstance(node, Node):
             raise TypeError(f"node must be a Node, got {type(node).__name__}")
-        if node is self:
-            raise ValueError("A Node cannot be nested in itself.")
+        self._check_nestable(node)
         node.parent = self
         self.__nested_nodes.add(node)
 
@@ -402,20 +374,62 @@ class Node(DeploymentElement):
             raise TypeError(
                 f"parent must be a Node or None, got {type(parent).__name__}"
             )
+        if parent is self or (parent is not None and self in parent.ancestors()):
+            raise ValueError(
+                f"Node '{self.name}' cannot be nested inside its own descendant "
+                f"'{parent.name}'."
+            )
         self.__parent = parent
+
+    def ancestors(self) -> list:
+        """list[Node]: The containing nodes, innermost first.
+
+        Stops at the first repeated node, so a containment cycle wired through
+        the private slots cannot loop forever.
+        """
+        result: list = []
+        cursor = self.__parent
+        while cursor is not None and cursor is not self and cursor not in result:
+            result.append(cursor)
+            cursor = cursor.parent
+        return result
+
+    def descendant_nodes(self) -> set:
+        """set[Node]: Every node nested below this one, at any depth (cycle-safe)."""
+        result: set = set()
+        pending = list(self.__nested_nodes)
+        while pending:
+            node = pending.pop()
+            if node in result:
+                continue
+            result.add(node)
+            pending.extend(node.nested_nodes)
+        return result
+
+    def _check_nestable(self, node: "Node"):
+        """Raise ValueError if nesting ``node`` here would create a containment cycle."""
+        if node is self:
+            raise ValueError("A Node cannot be nested in itself.")
+        if self in node.descendant_nodes():
+            raise ValueError(
+                f"Node '{node.name}' cannot be nested inside its own descendant "
+                f"'{self.name}'."
+            )
 
 
 class Artifact(DeploymentElement):
     """A UML Artifact -- the deployable unit (UML 2.5 §19.2).
 
-    Manifests one or more ``uml_component.Component`` s (D2 / D13: cross-diagram
-    link by stable Component IDs).
+    Manifests one or more ``uml_component.Component`` s, referenced by their
+    stable cross-diagram ids.
 
     Args:
         name (str): The artifact label.
         locality (Locality): Where the artifact is hosted. Defaults to ``LOCAL``.
         manifests (List[str]): Cross-diagram IDs of Components this artifact
             manifests. Default ``[]``.
+        agent_model_ref (str | None): Id of the Agent diagram this artifact
+            deploys, or None.
         stereotypes, layout, metadata, timestamp: Inherited.
 
     Attributes:
@@ -433,9 +447,9 @@ class Artifact(DeploymentElement):
                          metadata=metadata, timestamp=timestamp)
         self.locality = locality if locality is not None else Locality.LOCAL
         self.manifests = manifests if manifests is not None else []
-        # 6b-2 — UUID of the Agent diagram this artifact deploys (WME wire key
-        # `agentModelRef`; the Agent diagram's id). Drives BAF agent baking in
-        # the docker_compose generator. None when the artifact is not an agent.
+        # Id of the Agent diagram this artifact deploys (web-editor key
+        # ``agentModelRef``). Drives BAF agent baking in the Docker Compose
+        # generator; None when the artifact is not an agent.
         self.agent_model_ref = agent_model_ref
         self.__parent: Optional[Node] = None
 
@@ -467,7 +481,7 @@ class Artifact(DeploymentElement):
         Raises:
             TypeError: if not a list of str.
         """
-        self.__manifests = _checked_str_list(manifests, "manifests")
+        self.__manifests = checked_str_list(manifests, "manifests")
 
     @property
     def agent_model_ref(self) -> Optional[str]:
@@ -504,17 +518,32 @@ class Artifact(DeploymentElement):
         self.__parent = parent
 
 
+class DeploymentComponent(Artifact):
+    """A Component shown on a Deployment diagram.
+
+    The web editor's Deployment diagram can display the logical Component an
+    Artifact manifests (the Artifact points at it with a dependency arrow).
+    It is a view element, not a deployable unit: generators never turn it into
+    a service. It subclasses ``Artifact`` so it can sit on a Node and be the
+    endpoint of the same relationships an Artifact can.
+
+    Args:
+        name, locality, manifests, agent_model_ref, stereotypes, layout,
+        metadata, timestamp: Inherited from ``Artifact``.
+    """
+
+
 class Interface(DeploymentElement):
     """A UML Interface provided / required on a Node or Artifact (UML 2.5).
 
     Mirrors ``uml_component.Interface`` shape; kept as a separate class so
-    each metamodel is independently usable (decision D11 / Q10=a).
+    each metamodel is independently usable.
     """
 
 
 # ---------------------------------------------------------------------------
-# Relationships (decision D11 -- abstract base + endpoint type-check seam;
-# D6 -- Multiplicity reused on DeploymentRelation)
+# Relationships (abstract base + per-subclass endpoint type checks;
+# DeploymentRelation reuses structural.Multiplicity)
 # ---------------------------------------------------------------------------
 
 class DeploymentRelationship(DeploymentElement):
@@ -598,8 +627,8 @@ class DeploymentRelation(DeploymentRelationship):
     Renamed from UML's ``Deployment`` to avoid clash with the cloud-infra
     ``besser.BUML.metamodel.deployment.Deployment`` (a K8s Deployment object).
     Carries the multiplicity of the artifact-instance count on this node
-    (decision D6: reuse ``structural.Multiplicity``; placement on the
-    relation, not on the artifact, matches conventional UML).
+    (``structural.Multiplicity``; placed on the relation, not on the
+    artifact, as in conventional UML).
 
     Endpoint rule: ``source`` is ``Artifact``, ``target`` is ``Node``.
 
@@ -733,10 +762,10 @@ class DeploymentModel(Model):
     Like ``BPMNModel`` / ``ComponentModel``, this does not populate the
     inherited ``Model.elements`` set; it exposes its own typed accessors.
 
-    Note: shares the bare class name ``DeploymentModel`` with the cloud-infra
-    ``besser.BUML.metamodel.deployment.DeploymentModel``. Python namespacing
-    resolves cleanly via the qualified import path; reader-facing collision is
-    accepted (00- §8 #1).
+    Note: ``besser.BUML.metamodel.deployment.DeploymentModel`` is a different
+    type (the infrastructure metamodel feeding the Terraform generator). Import
+    this class through ``besser.BUML.metamodel.uml_deployment`` and never
+    star-import both packages into one namespace; see the module docstring.
 
     Args:
         name (str): The model name (free text; relaxed like ``DeploymentElement``).
@@ -793,7 +822,7 @@ class DeploymentModel(Model):
         Raises:
             TypeError: if any element is not a Node.
         """
-        self.__nodes = _checked_set(nodes, Node, "nodes")
+        self.__nodes = checked_set(nodes, Node, "nodes")
 
     def add_node(self, node: "Node"):
         """Add a node.
@@ -821,7 +850,7 @@ class DeploymentModel(Model):
         Raises:
             TypeError: if any element is not an Artifact.
         """
-        self.__artifacts = _checked_set(artifacts, Artifact, "artifacts")
+        self.__artifacts = checked_set(artifacts, Artifact, "artifacts")
 
     def add_artifact(self, artifact: "Artifact"):
         """Add a root-level artifact.
@@ -851,7 +880,7 @@ class DeploymentModel(Model):
         Raises:
             TypeError: if any element is not an Interface.
         """
-        self.__interfaces = _checked_set(interfaces, Interface, "interfaces")
+        self.__interfaces = checked_set(interfaces, Interface, "interfaces")
 
     def add_interface(self, interface: "Interface"):
         """Add an interface.
@@ -881,7 +910,7 @@ class DeploymentModel(Model):
         Raises:
             TypeError: if any element is not a DeploymentRelationship.
         """
-        self.__relationships = _checked_set(
+        self.__relationships = checked_set(
             relationships, DeploymentRelationship, "relationships"
         )
 
@@ -905,16 +934,19 @@ class DeploymentModel(Model):
     # --- derived accessors -------------------------------------------------
 
     def all_nodes(self) -> set:
-        """set[Node]: Every node, expanded through ``Node.nested_nodes``."""
+        """set[Node]: Every node, expanded through ``Node.nested_nodes``.
+
+        Iterative and visit-once, so a containment cycle wired through the
+        private slots cannot recurse forever (``validate()`` reports it).
+        """
         result: set = set()
-
-        def _collect(node: Node):
+        pending = list(self.__nodes)
+        while pending:
+            node = pending.pop()
+            if node in result:
+                continue
             result.add(node)
-            for child in node.nested_nodes:
-                _collect(child)
-
-        for node in self.__nodes:
-            _collect(node)
+            pending.extend(node.nested_nodes)
         return result
 
     def all_artifacts(self) -> set:
@@ -943,6 +975,7 @@ class DeploymentModel(Model):
         self._validate_multiplicity_bounds(errors)
         self._validate_parent_membership(errors)
         self._validate_unique_node_names(errors)
+        self._validate_acyclic_containment(errors)
         self._warn_structural_smells(warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
@@ -1035,6 +1068,16 @@ class DeploymentModel(Model):
                     f"'{parent.name}' which is not in the model."
                 )
 
+    def _validate_acyclic_containment(self, errors: list):
+        """E9: no Node is nested (directly or transitively) inside itself.
+
+        The setters reject cycles; this catches one wired through the private
+        slots.
+        """
+        for node in self.all_nodes():
+            if node in node.descendant_nodes():
+                errors.append(f"Node '{node.name}' is nested inside itself.")
+
     def _validate_unique_node_names(self, errors: list):
         """E8: Node names within a model are unique (skipping empty names)."""
         seen: dict = {}
@@ -1071,9 +1114,10 @@ class DeploymentModel(Model):
                     f"consider DEVICE or EXECUTION_ENVIRONMENT."
                 )
 
-        # W2 -- artifact with empty `manifests`.
+        # W2 -- artifact with empty `manifests` (a DeploymentComponent is the
+        # manifested element itself, not an artifact that manifests one).
         for artifact in self.all_artifacts():
-            if not artifact.manifests:
+            if not artifact.manifests and not isinstance(artifact, DeploymentComponent):
                 warnings.append(
                     f"Artifact '{artifact.name}' has empty manifests "
                     f"(manifests no Component)."

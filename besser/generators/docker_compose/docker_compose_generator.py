@@ -8,6 +8,7 @@ from copy import deepcopy
 from jinja2 import Environment, FileSystemLoader
 
 from besser.BUML.metamodel.structural import UNLIMITED_MAX_MULTIPLICITY
+from besser.BUML.metamodel.uml_component import AgentCategory
 from besser.BUML.metamodel.uml_deployment import (
     Artifact,
     CommunicationPath,
@@ -566,7 +567,8 @@ class DockerComposeGenerator(GeneratorInterface):
 
     Raises:
         ValueError: (from ``generate``) when two artifacts normalise to the same
-            Compose service name.
+            Compose service name, or, when agent models are supplied, when an
+            agent artifact has no Agent diagram to bake its build context from.
     """
 
     def __init__(self, model: DeploymentModel, output_dir: str = None,
@@ -575,8 +577,9 @@ class DockerComposeGenerator(GeneratorInterface):
                  agent_config_yamls_by_id: dict = None):
         super().__init__(model, output_dir)
         # {AgentDiagram id → BUML Agent model}, supplied by the project-level
-        # router handler. Empty on the single-diagram path, in which case no
+        # router handler. None on the single-diagram path, in which case no
         # build contexts are baked (compose-only behavior).
+        self.bakes_agents = agent_models_by_id is not None
         self.agent_models_by_id = agent_models_by_id or {}
         self.agent_configs_by_id = deepcopy(agent_configs_by_id or {})
         self.agent_config_yamls_by_id = dict(agent_config_yamls_by_id or {})
@@ -595,6 +598,7 @@ class DockerComposeGenerator(GeneratorInterface):
         # entry/human-facing — the set whose service publishes host ports + runs the UI;
         # a2a_servers — the set whose service runs the A2A server (≥1 inbound peer). The two
         # are decoupled: a hybrid (a human-facing merge owner) is in BOTH.
+        self._check_agent_build_contexts()
         human_facing_services, a2a_server_services = self._compute_service_flags()
         self._prepare_runtime_configs(human_facing_services)
         services, networks = self._build_view(self.model, human_facing_services)
@@ -604,6 +608,41 @@ class DockerComposeGenerator(GeneratorInterface):
         logger.info("docker-compose.yml generated at %s", file_path)
         # Bake a BAF build context per resolvable agentic LOCAL artifact.
         self._bake_agent_contexts(env, human_facing_services, a2a_server_services)
+
+    def _check_agent_build_contexts(self) -> None:
+        """Reject agent artifacts whose ``build:`` context could not be baked.
+
+        A LOCAL agent artifact is emitted as ``build: ./<service>``. When agent
+        models are supplied, that folder is baked from the artifact's Agent
+        diagram; without one the compose file would point at a missing folder.
+        An artifact is an agent when it carries ``agent_model_ref`` or manifests
+        a ``DeploymentComponent`` with an agent-category stereotype.
+        """
+        if not self.bakes_agents:
+            return
+        agent_tokens = {c.value for c in AgentCategory if c is not AgentCategory.NONE}
+        agentic = {
+            id(rel.source)
+            for rel in self.model.relationships
+            if isinstance(rel, DeploymentDependency)
+            and isinstance(rel.source, Artifact)
+            and isinstance(rel.target, DeploymentComponent)
+            and agent_tokens.intersection(rel.target.stereotypes)
+        }
+        missing = [
+            art.name
+            for art in sort_by_timestamp(self.model.all_artifacts())
+            if art.locality == Locality.LOCAL
+            and not isinstance(art, DeploymentComponent)
+            and (art.agent_model_ref or id(art) in agentic)
+            and art.agent_model_ref not in self.agent_models_by_id
+        ]
+        if missing:
+            names = ", ".join(f"'{name}'" for name in missing)
+            raise ValueError(
+                f"No Agent diagram found for {names}. Open the agent's lane in the BPMN "
+                f"diagram and use 'Define agent behavior' before generating Docker Compose."
+            )
 
     def _agent_artifacts(self) -> list:
         """``(artifact, ref, agent)`` for every artifact that gets a baked BAF agent.

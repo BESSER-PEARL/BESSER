@@ -17,6 +17,7 @@ from besser.BUML.metamodel.structural import Multiplicity
 from besser.BUML.metamodel.uml_deployment import (
     Artifact,
     CommunicationPath,
+    DeploymentComponent,
     DeploymentDependency,
     DeploymentModel,
     DeploymentRelation,
@@ -477,8 +478,9 @@ def test_baking_no_op_when_no_agent_models_arg(tmp_path):
     assert subdirs == [], f"Expected no subdirs, got {subdirs}"
 
 
-def test_baking_skips_unresolvable_ref(tmp_path):
-    """Artifact whose agent_model_ref has no match is skipped (no crash)."""
+def test_baking_rejects_unresolvable_ref(tmp_path):
+    """An agent artifact whose Agent diagram is missing would get ``build:`` for a
+    folder that is never baked, so generation stops with a readable error."""
     node = Node("Host", kind=NodeKind.DEVICE)
     art = Artifact("ghost", locality=Locality.LOCAL)
     art.agent_model_ref = "no-such-uuid"
@@ -489,10 +491,40 @@ def test_baking_skips_unresolvable_ref(tmp_path):
         model, output_dir=str(tmp_path),
         agent_models_by_id={"other-uuid": None},
     )
-    gen.generate()
+    with pytest.raises(ValueError, match="No Agent diagram found for 'ghost'"):
+        gen.generate()
 
-    assert (tmp_path / "docker-compose.yml").exists()
-    assert not (tmp_path / "ghost" / "Dockerfile").exists()
+
+def test_baking_rejects_agent_artifact_without_ref(tmp_path):
+    """An artifact manifesting an agent-category Component is an agent even
+    before its lane has an Agent diagram; it must not be emitted without one."""
+    node = Node("Host", kind=NodeKind.DEVICE)
+    coder = Artifact("AgentCoder", locality=Locality.LOCAL)
+    coder_component = DeploymentComponent("AgentCoder", stereotypes=["solution"])
+    model = DeploymentModel(
+        "m", nodes={node}, artifacts={coder, coder_component},
+        relationships={DeploymentRelation(coder, node),
+                       DeploymentDependency(coder, coder_component)},
+    )
+
+    gen = DockerComposeGenerator(model, output_dir=str(tmp_path), agent_models_by_id={})
+    with pytest.raises(ValueError, match="No Agent diagram found for 'AgentCoder'"):
+        gen.generate()
+
+
+def test_compose_only_path_keeps_agent_artifact_without_ref(tmp_path):
+    """The single-diagram path bakes nothing, so a missing Agent diagram is not an error."""
+    node = Node("Host", kind=NodeKind.DEVICE)
+    coder = Artifact("AgentCoder", locality=Locality.LOCAL)
+    coder_component = DeploymentComponent("AgentCoder", stereotypes=["solution"])
+    model = DeploymentModel(
+        "m", nodes={node}, artifacts={coder, coder_component},
+        relationships={DeploymentRelation(coder, node),
+                       DeploymentDependency(coder, coder_component)},
+    )
+
+    compose = _parse(_generate(model, tmp_path))
+    assert compose["services"]["agent_coder"]["build"] == "./agent_coder"
 
 
 # ---------------------------------------------------------------------------

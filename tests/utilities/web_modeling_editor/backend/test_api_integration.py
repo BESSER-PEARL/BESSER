@@ -854,6 +854,46 @@ class TestGetJsonModel:
         response = self._upload_buml_content("", "empty.py")
         assert response.status_code == 400
 
+    def test_component_buml_with_relationships_round_trips(self):
+        from besser.BUML.metamodel.uml_component import (
+            Component, ComponentDependency, ComponentModel, Interface, InterfaceProvided,
+        )
+        from besser.utilities.buml_code_builder.component_model_builder import (
+            component_model_to_code,
+        )
+
+        frontend, backend, api = Component("Frontend"), Component("Backend"), Interface("Api")
+        model = ComponentModel("Shop", components={frontend, backend}, interfaces={api},
+                               relationships={ComponentDependency(frontend, backend),
+                                              InterfaceProvided(backend, api)})
+        response = self._upload_buml_content(component_model_to_code(model), "shop.py")
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["diagramType"] == "ComponentDiagram"
+        assert {r["type"] for r in data["model"]["relationships"].values()} == {
+            "ComponentDependency", "ComponentInterfaceProvided"}
+
+    def test_deployment_buml_with_relationships_round_trips(self):
+        from besser.BUML.metamodel.uml_deployment import (
+            Artifact, CommunicationPath, DeploymentDependency, DeploymentModel, Node,
+        )
+        from besser.utilities.buml_code_builder.deployment_model_builder import (
+            deployment_model_to_code,
+        )
+
+        web, db = Node("Web"), Node("Db")
+        app, lib = Artifact("App", manifests=["c1"]), Artifact("Lib")
+        web.add_artifact(app)
+        model = DeploymentModel("Infra", nodes={web, db}, artifacts={lib},
+                                relationships={CommunicationPath(web, db),
+                                               DeploymentDependency(app, lib)})
+        response = self._upload_buml_content(deployment_model_to_code(model), "infra.py")
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["diagramType"] == "DeploymentDiagram"
+        assert {r["type"] for r in data["model"]["relationships"].values()} == {
+            "DeploymentAssociation", "DeploymentDependency"}
+
 
 # ---------------------------------------------------------------------------
 # Middleware & Request Validation

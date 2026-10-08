@@ -480,3 +480,19 @@ def test_deployment_component_is_a_view_artifact_without_w2_warning():
     assert isinstance(projection, Artifact)
     warnings = model.validate(raise_exception=False)["warnings"]
     assert not any("manifests no Component" in w for w in warnings)
+
+
+def test_no_module_star_imports_both_deployment_metamodels():
+    """``Node`` / ``DeploymentModel`` exist in both deployment packages; a module that
+    star-imports both would silently shadow one with the other."""
+    import pathlib
+
+    import besser
+
+    infra = "from besser.BUML.metamodel.deployment import *"
+    uml = "from besser.BUML.metamodel.uml_deployment import *"
+    root = pathlib.Path(besser.__file__).resolve().parent
+    offenders = [str(path.relative_to(root)) for path in root.rglob("*.py")
+                 if infra in (text := path.read_text(encoding="utf-8")) and uml in text]
+    assert offenders == []
+    assert DeploymentModel.__module__ == "besser.BUML.metamodel.uml_deployment.uml_deployment"

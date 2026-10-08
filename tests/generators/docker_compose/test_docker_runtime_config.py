@@ -169,3 +169,21 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
     assert captured['agent_config_yamls_by_id'] == {e['id']: e['configYaml'] for e in entries}
     assert normalized == ['second']
     assert entries == saved
+
+
+def test_default_config_binds_all_interfaces_only_inside_containers(tmp_path):
+    """Without saved YAML the Compose build context binds 0.0.0.0; a standalone agent keeps localhost."""
+    from besser.generators.agents.baf_generator import BAFGenerator
+
+    agent = Agent('Solo')
+    agent.new_state('initial', initial=True)
+    DockerComposeGenerator(_deployment([('Solo', 'uuid-solo')]), str(tmp_path / 'compose'),
+                           {'uuid-solo': agent}).generate()
+    container = yaml.safe_load((tmp_path / 'compose' / 'solo' / 'config.yaml').read_text(encoding='utf-8'))
+    assert container['platforms']['websocket']['host'] == '0.0.0.0'
+    assert container['platforms']['websocket']['streamlit']['host'] == '0.0.0.0'
+
+    BAFGenerator(agent, output_dir=str(tmp_path / 'standalone')).generate()
+    standalone = yaml.safe_load((tmp_path / 'standalone' / 'config.yaml').read_text(encoding='utf-8'))
+    assert standalone['platforms']['websocket']['host'] == 'localhost'
+    assert standalone['platforms']['websocket']['streamlit']['host'] == 'localhost'

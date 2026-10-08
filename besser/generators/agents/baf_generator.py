@@ -216,6 +216,11 @@ class BAFGenerator(GeneratorInterface):
             - GenerationMode.CODE_ONLY: skip personalization helpers, render templates immediately.
         a2a_descriptor (dict, optional): Resolved deployment topology and governance.
             Extends the authored agent graph when peers or an A2A server are present.
+        bind_host (str, optional): Interface the websocket and Streamlit servers bind to in
+            the default ``config.yaml``. Defaults to ``"localhost"`` so a standalone agent is
+            not exposed on the network; container builds (e.g. ``DockerComposeGenerator``)
+            pass ``"0.0.0.0"`` so the published ports reach the servers. A supplied
+            ``config_yaml`` is written as-is.
     """
     def __init__(
         self,
@@ -229,8 +234,10 @@ class BAFGenerator(GeneratorInterface):
         test_mode: bool = False,
         a2a_descriptor: Optional[dict] = None,
         deployment_component_metadata: bool = False,
+        bind_host: str = "localhost",
     ):
         super().__init__(model, output_dir)
+        self.bind_host = bind_host
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
         self.config_yaml = config_yaml
         self.openai_api_key = openai_api_key
@@ -454,7 +461,8 @@ class BAFGenerator(GeneratorInterface):
                 else:
                     config_template = env.get_template('baf_config_template.py.j2')
                     properties = sorted(self.model.properties, key=lambda prop: prop.section)
-                    f.write(config_template.render(properties=properties, agent=self.model))
+                    f.write(config_template.render(properties=properties, agent=self.model,
+                                                   bind_host=self.bind_host))
             logger.info("Agent config file generated at %s", config_path)
             # Generate readme.txt using the Jinja2 template
             readme_template = env.get_template('readme.txt.j2')

@@ -18,7 +18,11 @@ from besser.BUML.metamodel.uml_deployment import (
 from besser.generators import GeneratorInterface
 from besser.generators.agents.baf_generator import BAFGenerator
 from besser.generators.docker_compose.agent_dependencies import baf_dependency_extras
-from besser.generators.docker_compose.runtime_config import human_listener_ports, resolve_runtime_yaml
+from besser.generators.docker_compose.runtime_config import (
+    CONTAINER_BIND_HOST,
+    human_listener_ports,
+    resolve_runtime_yaml,
+)
 # Tested tally engine; its source is baked into governed agents.
 from besser.generators.agents import governance_engine as _gov_engine
 from besser.utilities import sort_by_timestamp
@@ -708,6 +712,7 @@ class DockerComposeGenerator(GeneratorInterface):
                 config_yaml=runtime['config_yaml'],
                 a2a_descriptor=descriptor if has_boundaries else None,
                 deployment_component_metadata=True,
+                bind_host=CONTAINER_BIND_HOST,
             ).generate()
             if has_boundaries:
                 print(f"[docker_compose] A2A-wired ({descriptor['role']}): {svc_name} "

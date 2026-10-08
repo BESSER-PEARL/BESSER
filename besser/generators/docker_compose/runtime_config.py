@@ -6,6 +6,10 @@ import yaml
 
 from besser.generators.agents.agent_personalization import flatten_agent_config_structure
 
+# Servers inside a container must listen on every interface: a server bound to
+# localhost is unreachable through the ports Compose publishes.
+CONTAINER_BIND_HOST = '0.0.0.0'
+
 
 def _mapping(parent: dict, key: str) -> dict:
     value = parent.setdefault(key, {})
@@ -49,8 +53,8 @@ def resolve_runtime_yaml(source: Optional[str]) -> tuple:
         'websocket': _port(websocket, 8765, 'WebSocket'),
         'streamlit': _port(streamlit, 5000, 'Streamlit'),
     }
-    websocket['host'] = '0.0.0.0'
-    streamlit['host'] = '0.0.0.0'
+    websocket['host'] = CONTAINER_BIND_HOST
+    streamlit['host'] = CONTAINER_BIND_HOST
     return yaml.safe_dump(config, sort_keys=False, allow_unicode=True), ports
 
 

@@ -13,7 +13,9 @@ import asyncio
 from fastapi import HTTPException
 
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConfigurationError,
     ConversionError,
+    GovernanceDslValidationError,
     ValidationError,
     GenerationError,
 )
@@ -34,8 +36,11 @@ def handle_endpoint_errors(endpoint_name: str):
 
     Exception mapping:
         * ``ConversionError``  -> HTTP 400
+        * ``GovernanceDslValidationError`` -> HTTP 422
         * ``ValidationError``  -> HTTP 400
         * ``GenerationError``  -> HTTP 500
+        * ``ConfigurationError`` -> HTTP 500 (server set-up, e.g. a missing
+          optional dependency), with its message
         * ``HTTPException``    -> re-raised as-is
         * ``Exception``        -> HTTP 500 with generic message
 
@@ -56,11 +61,17 @@ def handle_endpoint_errors(endpoint_name: str):
             except ConversionError as exc:
                 logger.warning("Conversion error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except GovernanceDslValidationError as exc:
+                logger.warning("Governance DSL validation error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except ValidationError as exc:
                 logger.warning("Validation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except GenerationError as exc:
                 logger.error("Generation error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except ConfigurationError as exc:
+                logger.error("Configuration error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             except ValueError as exc:
                 logger.warning("Value error in %s: %s", endpoint_name, exc)
@@ -80,11 +91,17 @@ def handle_endpoint_errors(endpoint_name: str):
             except ConversionError as exc:
                 logger.warning("Conversion error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except GovernanceDslValidationError as exc:
+                logger.warning("Governance DSL validation error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except ValidationError as exc:
                 logger.warning("Validation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except GenerationError as exc:
                 logger.error("Generation error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except ConfigurationError as exc:
+                logger.error("Configuration error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             except ValueError as exc:
                 logger.warning("Value error in %s: %s", endpoint_name, exc)

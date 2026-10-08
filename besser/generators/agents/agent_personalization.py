@@ -66,6 +66,7 @@ def flatten_agent_config_structure(raw_config):
         },
         "system": {
             "agentPlatform": "agentPlatform",
+            "agentPlatformUseStreamlit": "agentPlatformUseStreamlit",
             "intentRecognitionTechnology": "intentRecognitionTechnology",
             "llm": "llm",
         },
@@ -79,6 +80,13 @@ def flatten_agent_config_structure(raw_config):
             if source_key in section_data:
                 flattened[target_key] = section_data[source_key]
         flattened.pop(section_name, None)
+    
+    # Resolve WME's WebSocket UI checkbox for code generation and Docker ports.
+    if (
+        flattened.get("agentPlatform") == "websocket"
+        and flattened.get("agentPlatformUseStreamlit") is True
+    ):
+        flattened["agentPlatform"] = "streamlit"
 
     return flattened
 

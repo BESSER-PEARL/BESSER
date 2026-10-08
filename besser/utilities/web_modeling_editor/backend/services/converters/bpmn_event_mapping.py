@@ -2,17 +2,14 @@
 
 WME flattens BPMN events into a single string per element ("default", "message-catch",
 "timer", "terminate", …). The B-UML BPMN metamodel splits an event along two orthogonal
-axes (decision D2 in ``.claude/bpmn/01-bpmn-metamodel-design.md``):
+axes:
 
 * ``EventDirection`` — ``CATCH`` or ``THROW``
 * ``EventDefinitionType`` — ``NONE`` / ``MESSAGE`` / ``TIMER`` / …
 
 This module is the *single* source of truth for that translation. Both the
 ``json_to_buml`` processor and the ``buml_to_json`` converter import from here so the two
-directions stay symmetric (per the §7 round-trip guarantee).
-
-The full mapping table lives in Appendix A of
-``.claude/bpmn/03-bpmn-converters-guide.md``.
+directions stay symmetric for round-trips.
 """
 
 from besser.BUML.metamodel.bpmn import (

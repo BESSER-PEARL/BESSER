@@ -135,6 +135,11 @@ Choosing a Generator
      - BPMN
      - .bpmn (XML)
      - You need vendor-neutral BPMN 2.0 XML readable by every BPMN-aware tool
+   * - **Docker Compose**
+     - Deployment / project
+     - ZIP (docker-compose.yml)
+     - You need Docker Compose output for a Deployment diagram, or a project ZIP
+       with baked BAF agents for a multi-agent system runtime
 
 None of the above a fit? If you need a customised codebase — extra features
 (auth, JWT, Docker, tests) or a stack with no built-in generator (Rails, Rust,
@@ -230,6 +235,17 @@ Generate BPMN 2.0 XML for any BPMN-aware engine or modeller:
 
    generators/bpmn
 
+Deployment
+----------
+
+Generate Docker Compose output from UML Deployment models, including
+project-level build contexts for multi-agent systems:
+
+.. toctree::
+   :maxdepth: 1
+
+   generators/docker_compose
+
 Build Your Own
 --------------
 
@@ -239,5 +255,3 @@ Create custom code generators:
    :maxdepth: 1
 
    generators/build_generator
-
-

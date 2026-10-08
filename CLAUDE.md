@@ -39,6 +39,9 @@ python tests/BUML/metamodel/structural/library/library.py           # standalone
   an error, not a test failure. It ships in the backend requirements file.
 - `torch` / `tensorflow` are not needed: `tests/generators/nn/` passes without them (CI still ignores it).
 - CI installs `bubblewrap`; without it the shell-sandbox tests skip and shell tests run unconfined.
+- `governancedsl` (backend requirements, pinned `==0.1.1`) parses the Governance DSL of governed BPMN
+  gateways; without it the governance tests skip. It depends on `besser`, so install it after `pip install -e .`
+  or pip pulls `besser` from PyPI.
 
 ### Linting
 ```bash

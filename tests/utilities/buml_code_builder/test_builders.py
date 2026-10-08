@@ -11,6 +11,7 @@ Covers:
   - state_machine_builder.py: state_machine_to_code (smoke + roundtrip)
 """
 
+import ast
 import os
 import tempfile
 import textwrap
@@ -1181,11 +1182,43 @@ from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.object import (
     Object, AttributeLink, DataValue, ObjectModel,
 )
+from besser.BUML.metamodel.uml_component import ComponentModel
+from besser.BUML.metamodel.uml_deployment import DeploymentModel
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 
 
 class TestProjectBuilder:
     """Tests for project_to_code."""
+
+    def test_two_component_and_two_deployment_models_with_relationships_exec(self, tmp_path):
+        """Each diagram's relationships attach to its own suffixed model variable."""
+        from besser.BUML.metamodel.uml_component import Component, ComponentDependency
+        from besser.BUML.metamodel.uml_deployment import Artifact, DeploymentRelation, Node
+
+        def component_model(label):
+            a, b = Component(name=f"{label}A"), Component(name=f"{label}B")
+            return ComponentModel(name=label, components={a, b},
+                                  relationships={ComponentDependency(source=a, target=b)})
+
+        def deployment_model(label):
+            node, artifact = Node(name=f"{label}Host"), Artifact(name=f"{label}App")
+            return DeploymentModel(name=label, nodes={node}, artifacts={artifact},
+                                   relationships={DeploymentRelation(source=artifact, target=node)})
+
+        project = Project(
+            name="Multi",
+            models=[component_model("C1"), component_model("C2"),
+                    deployment_model("D1"), deployment_model("D2")],
+            owner="tester", metadata=Metadata(description="d"),
+        )
+        file_path = str(tmp_path / "project.py")
+        project_to_code(project, file_path)
+        with open(file_path, encoding="utf-8") as f:
+            namespace: dict = {}
+            exec(f.read(), namespace)
+        for var in ("component_model_1", "component_model_2",
+                    "deployment_model_1", "deployment_model_2"):
+            assert len(namespace[var].relationships) == 1, var
 
     @staticmethod
     def _build_simple_project():
@@ -1316,6 +1349,33 @@ class TestProjectBuilder:
         # With multiple domain models, variable names get numeric suffixes
         assert "domain_model_1" in code
         assert "domain_model_2" in code
+
+    @pytest.mark.parametrize(
+        ("model_class", "heading"),
+        [
+            (ComponentModel, "COMPONENT"),
+            (DeploymentModel, "DEPLOYMENT"),
+        ],
+    )
+    def test_multiline_diagram_names_keep_project_python_valid(
+        self, tmp_path, model_class, heading
+    ):
+        project = Project(
+            name="MultilineProject",
+            models=[
+                model_class(name="First\nline"),
+                model_class(name="Second"),
+            ],
+            metadata=Metadata(description=""),
+        )
+        path = tmp_path / f"{heading.lower()}_project.py"
+
+        project_to_code(project, str(path))
+        source = path.read_text(encoding="utf-8")
+
+        ast.parse(source)
+        assert f'# {heading} MODEL 1: "First line" #' in source
+        assert f'# {heading} MODEL 2: "Second" #' in source
 
     def test_project_with_state_machine(self, tmp_path):
         """Project containing a StateMachine generates state machine code."""

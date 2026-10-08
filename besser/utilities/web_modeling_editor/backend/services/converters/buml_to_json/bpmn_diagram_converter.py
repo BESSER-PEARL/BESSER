@@ -13,8 +13,8 @@ Two entry points:
 Design points (mirror of the processor):
 
 * **Stable round-trip ids.** ``id_for(obj)`` reuses the original WME id stashed in
-  ``obj.layout["id"]`` when present, falling back to a fresh uuid. This is the §6 / D5-Q4
-  mechanism — the metamodel stays id-free; ``layout`` is the per-element side-channel.
+  ``obj.layout["id"]`` when present, falling back to a fresh uuid. The metamodel
+  stays id-free; ``layout`` is the per-element side-channel.
 * **Layout fallback.** When ``layout`` is missing / partial (a freshly-built model, or
   one loaded from BUML code that didn't emit layout), a deterministic grid layout fills
   the gaps; flow paths reuse ``services.utils.layout_calculator``.
@@ -27,7 +27,13 @@ import logging
 import uuid
 
 from besser.BUML.metamodel.bpmn import (
+    AgentRole,
+    GatewayRole,
+    ReflectionMode,
     Activity,
+    AgenticGateway,
+    AgenticLane,
+    AgenticTask,
     Association,
     BPMNConnectingObject,
     BPMNModel,
@@ -67,6 +73,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
+    strip_buml_imports,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 from besser.utilities.web_modeling_editor.backend.services.utils import (
@@ -78,7 +85,6 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
 
 logger = logging.getLogger(__name__)
 
-
 # ---------------------------------------------------------------------------
 # WME element-type and default-bounds tables
 # ---------------------------------------------------------------------------
@@ -89,17 +95,20 @@ logger = logging.getLogger(__name__)
 # (a SubProcess subclass); ``CallActivity`` is resolved separately in ``_wme_type_for``.
 _TYPE_FOR_CLASS = {
     Task: "BPMNTask",
+    AgenticTask: "BPMNTask",
     Transaction: "BPMNTransaction",
     SubProcess: "BPMNSubprocess",
     StartEvent: "BPMNStartEvent",
     IntermediateEvent: "BPMNIntermediateEvent",
     EndEvent: "BPMNEndEvent",
     Gateway: "BPMNGateway",
+    AgenticGateway: "BPMNGateway",
     DataObject: "BPMNDataObject",
     DataStore: "BPMNDataStore",
     TextAnnotation: "BPMNAnnotation",
     Group: "BPMNGroup",
     Lane: "BPMNSwimlane",
+    AgenticLane: "BPMNSwimlane",
     Participant: "BPMNPool",
 }
 
@@ -128,6 +137,28 @@ _FLOW_TYPE_FOR_CLASS = {
     DataAssociation: "data association",
 }
 
+# WME's BPMNTask / BPMNGateway / BPMNSwimlane always serialise these agentic
+# fields with hard defaults when the element is not agentic. Mirror exactly so
+# BESSER-emitted JSON matches WME's own JSON byte-for-byte on non-agentic
+# elements. The values are taken from WME's `dev/bpmn`
+# packages/editor/.../bpmn-{task,gateway,swimlane}.ts ``default*`` statics.
+_WME_TASK_DEFAULTS = {
+    "isAgentic": False,
+    "reflectionMode": "none",
+    "trustScore": 0,
+}
+_WME_GATEWAY_DEFAULTS = {
+    "isAgentic": False,
+    "gatewayRole": "diverging",
+    "trustScore": 0,
+}
+_WME_LANE_DEFAULTS = {
+    "isAgentic": False,
+    "role": "solution",
+    "trustScore": 0,
+    "multiplicity": 1,
+}
+
 
 def _wme_type_for(obj) -> str:
     """Return the WME ``type`` string for a metamodel object."""
@@ -136,10 +167,10 @@ def _wme_type_for(obj) -> str:
         return "BPMNCallActivity"
     return _TYPE_FOR_CLASS.get(cls, "")
 
-
 # ---------------------------------------------------------------------------
 # bpmn_object_to_json
 # ---------------------------------------------------------------------------
+
 
 def bpmn_object_to_json(model: BPMNModel) -> dict:
     """Convert a ``BPMNModel`` into a WME BPMN diagram JSON dict.
@@ -232,10 +263,10 @@ def bpmn_object_to_json(model: BPMNModel) -> dict:
         "assessments": {},
     }
 
-
 # ---------------------------------------------------------------------------
 # Element emission helpers
 # ---------------------------------------------------------------------------
+
 
 def _emit_pool(participant: Participant, elements: dict, id_for, grid: "_GridLayout") -> None:
     """Emit a pool (``BPMNPool``) and its lanes (``BPMNSwimlane``)."""
@@ -326,12 +357,42 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
     if isinstance(obj, Gateway):
         entry["gatewayType"] = obj.gateway_type.value
 
-    return entry
+    if isinstance(obj, Task):
+        entry.update(_WME_TASK_DEFAULTS)
+        if isinstance(obj, AgenticTask):
+            entry["isAgentic"] = True
+            entry["reflectionMode"] = obj.reflection_mode.value
+            entry["trustScore"] = obj.trust_score
+            if obj.agent_diagram_ref is not None:
+                entry["agentDiagramRef"] = obj.agent_diagram_ref
+            if obj.reflection_reviewer_lane_id is not None:
+                entry["reflectionReviewerLaneId"] = obj.reflection_reviewer_lane_id
 
+    if isinstance(obj, Gateway):
+        entry.update(_WME_GATEWAY_DEFAULTS)
+        if isinstance(obj, AgenticGateway):
+            entry["isAgentic"] = True
+            entry["gatewayRole"] = obj.gateway_role.value
+            entry["trustScore"] = obj.trust_score
+            if obj.governance_dsl is not None:
+                entry["governanceDsl"] = obj.governance_dsl
+
+    if isinstance(obj, Lane):
+        entry.update(_WME_LANE_DEFAULTS)
+        if isinstance(obj, AgenticLane):
+            entry["isAgentic"] = True
+            entry["role"] = obj.role.value
+            entry["trustScore"] = obj.trust_score
+            entry["multiplicity"] = obj.swarm_size
+            if obj.agent_diagram_ref is not None:
+                entry["agentDiagramRef"] = obj.agent_diagram_ref
+
+    return entry
 
 # ---------------------------------------------------------------------------
 # Flow emission helpers
 # ---------------------------------------------------------------------------
+
 
 def _emit_flow(flow: BPMNConnectingObject, relationships: dict,
                elements: dict, id_for) -> None:
@@ -402,10 +463,10 @@ def _resolve_directions(layout: dict, source_entry: dict, target_entry: dict):
         return source_dir, target_dir
     return determine_connection_direction(source_entry["bounds"], target_entry["bounds"])
 
-
 # ---------------------------------------------------------------------------
 # Misc helpers
 # ---------------------------------------------------------------------------
+
 
 def _walk_subprocesses(model: BPMNModel):
     """Yield every ``SubProcess`` (including nested ones) in the model."""
@@ -435,10 +496,10 @@ def _compute_envelope_size(elements: dict) -> dict:
             max_y = bottom
     return {"width": max(int(max_x) + 40, 800), "height": max(int(max_y) + 40, 600)}
 
-
 # ---------------------------------------------------------------------------
 # Grid layout (deterministic fallback when layout is missing)
 # ---------------------------------------------------------------------------
+
 
 class _GridLayout:
     """Deterministic per-class grid placement used only when ``layout["bounds"]`` is
@@ -473,10 +534,10 @@ class _GridLayout:
         self._x_for_row[row] = x + size["width"] + 40
         return {"x": x, "y": y, "width": size["width"], "height": size["height"]}
 
-
 # ---------------------------------------------------------------------------
 # bpmn_buml_to_json — BUML .py source string → WME JSON
 # ---------------------------------------------------------------------------
+
 
 def bpmn_buml_to_json(content: str) -> dict:
     """Convert a BPMN BUML ``.py`` source string into a WME BPMN diagram JSON dict.
@@ -525,24 +586,19 @@ def bpmn_buml_to_json(content: str) -> dict:
         "TextAnnotation": TextAnnotation,
         "set": set,
         "Project": lambda *args, **kwargs: None,
+        "AgenticTask": AgenticTask,
+        "AgenticGateway": AgenticGateway,
+        "AgenticLane": AgenticLane,
+        "ReflectionMode": ReflectionMode,
+        "GatewayRole": GatewayRole,
+        "AgentRole": AgentRole,
     }
 
-    cleaned_lines = []
-    in_import_block = False
-    for line in content.splitlines():
-        stripped = line.lstrip()
-        if in_import_block:
-            if ")" in line:
-                in_import_block = False
-            continue
-        if stripped.startswith(("import ", "from ")):
-            if "(" in line and ")" not in line:
-                in_import_block = True
-            continue
-        if any(gen in line for gen in ["Generator(", ".generate("]):
-            continue
-        cleaned_lines.append(line)
-    cleaned_content = "\n".join(cleaned_lines)
+    # A BPMN file may end with a generator run; only the model is loaded.
+    cleaned_content = "\n".join(
+        line for line in strip_buml_imports(content).splitlines()
+        if not any(gen in line for gen in ("Generator(", ".generate("))
+    )
 
     try:
         local_vars = safe_load_buml(cleaned_content, allowed_names)

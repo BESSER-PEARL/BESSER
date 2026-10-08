@@ -15,6 +15,7 @@ from besser.BUML.metamodel.structural import (
 from besser.BUML.metamodel.uml_deployment import (
     Artifact,
     CommunicationPath,
+    DeploymentDependency,
     DeploymentModel,
     DeploymentRelation,
     Interface,
@@ -218,3 +219,28 @@ class TestDeploymentModelBuilder:
     def test_rejects_non_deployment_model(self):
         with pytest.raises(TypeError):
             deployment_model_to_code("not a model")
+
+
+class TestDeploymentBuilderReferences:
+    def test_custom_model_var_name_is_used_for_relationships(self):
+        node, artifact = Node(name="Host"), Artifact(name="App")
+        model = DeploymentModel(name="M", nodes={node}, artifacts={artifact},
+                                relationships={DeploymentRelation(source=artifact, target=node)})
+        source = deployment_model_to_code(model, model_var_name="deployment_model_2")
+        namespace: dict = {}
+        exec(source, namespace)
+        assert "deployment_model" not in namespace
+        assert len(namespace["deployment_model_2"].relationships) == 1
+
+    def test_agent_model_ref_and_deployment_component_round_trip(self):
+        from besser.BUML.metamodel.uml_deployment import DeploymentComponent
+
+        artifact = Artifact(name="Coder", manifests=["cmp-1"], agent_model_ref="agent-uuid")
+        projection = DeploymentComponent(name="Coder")
+        model = DeploymentModel(name="M", artifacts={artifact, projection},
+                                relationships={DeploymentDependency(source=artifact, target=projection)})
+        rebuilt = _exec_and_get_model(deployment_model_to_code(model))
+        by_type = {type(a).__name__: a for a in rebuilt.artifacts}
+        assert by_type["Artifact"].agent_model_ref == "agent-uuid"
+        assert by_type["Artifact"].manifests == ["cmp-1"]
+        assert by_type["DeploymentComponent"].agent_model_ref is None

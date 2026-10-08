@@ -1,15 +1,17 @@
 """Component model code builder.
 
 Generates a self-contained Python module from a ``ComponentModel`` that
-re-creates the model on ``exec()``. Implements 03-... §2 / §4.1 / §5
-(option-b emission, sort_by_timestamp determinism, layout passthrough,
-cross-diagram-ref dot-assignment per Q1=a).
+re-creates the model on ``exec()``: elements are constructed first and wired
+with ``add_*`` calls afterwards, ordered by ``sort_by_timestamp`` so the output
+is deterministic. Layouts pass through verbatim and cross-diagram references
+are emitted as attribute assignments.
 """
 
 from typing import Optional
 
 from besser.BUML.metamodel.uml_component import (
     AgenticComponent,
+    AgenticComponentModel,
     AgenticEdge,
     Component,
     ComponentDependency,
@@ -26,8 +28,9 @@ from besser.BUML.metamodel.uml_component import (
     Tool,
 )
 from besser.utilities.buml_code_builder.common import (
+    NameDispenser,
     _escape_python_string,
-    safe_var_name,
+    emit_layout_line,
 )
 from besser.utilities.utils import sort_by_timestamp
 
@@ -36,52 +39,12 @@ from besser.utilities.utils import sort_by_timestamp
 # Helpers
 # ---------------------------------------------------------------------------
 
-class _NameDispenser:
-    """Mint unique Python variable names keyed by metamodel object identity.
-
-    Repro of the BPMN-04- pattern: keep one map per ``component_model_to_code``
-    call, so collisions stay local and `<prefix>_<safe-name>` is reused
-    across the call (essential for ``add_*`` references to resolve).
-    """
-
-    def __init__(self):
-        self._used: set = set()
-        self._for_obj: dict = {}
-
-    def name_for(self, obj) -> str:
-        if obj in self._for_obj:
-            return self._for_obj[obj]
-        prefix = type(obj).__name__.lower()
-        base = safe_var_name(obj.name, lowercase=True) or prefix
-        candidate = f"{prefix}_{base}" if base != prefix else prefix
-        suffix = 1
-        while candidate in self._used:
-            candidate = f"{prefix}_{base}_{suffix}"
-            suffix += 1
-        self._used.add(candidate)
-        self._for_obj[obj] = candidate
-        return candidate
-
-
 def _emit_str_list(values) -> str:
     """Emit a Python list of strings, each escaped for safe interpolation."""
     if not values:
         return "[]"
     parts = [f"'{_escape_python_string(v)}'" for v in values]
     return f"[{', '.join(parts)}]"
-
-
-def _emit_layout_line(var_name: str, layout: Optional[dict]) -> Optional[str]:
-    """Emit a ``<var>.layout = {...}`` line, or ``None`` to skip.
-
-    Layout dicts arrive opaque from the converter side; ``repr()`` is the
-    natural emission (dicts of primitives + nested dicts). When a value is
-    a str, ``repr`` already escapes via Python's default repr — sufficient
-    for the round-trip contract.
-    """
-    if not layout:
-        return None
-    return f"{var_name}.layout = {layout!r}"
 
 
 def _collect_imports(model: ComponentModel) -> list:
@@ -96,7 +59,7 @@ def _collect_imports(model: ComponentModel) -> list:
     has_locality_nondefault = False
     has_agentic_edge_kind = False
 
-    for c in model.components:
+    for c in model.all_components():
         if isinstance(c, Subsystem):
             needed.add("Subsystem")
         elif isinstance(c, Skill):
@@ -120,7 +83,7 @@ def _collect_imports(model: ComponentModel) -> list:
 
     if model.interfaces:
         needed.add("Interface")
-    if getattr(model, "permissions", None):
+    if isinstance(model, AgenticComponentModel) and model.permissions:
         needed.add("Permission")
 
     for rel in model.relationships:
@@ -160,7 +123,7 @@ def _collect_imports(model: ComponentModel) -> list:
 # Component constructor emission
 # ---------------------------------------------------------------------------
 
-def _emit_component(component: Component, var_name: str, dispenser: _NameDispenser) -> list:
+def _emit_component(component: Component, var_name: str, dispenser: NameDispenser) -> list:
     """Emit the constructor + post-construction assignment lines for a
     Component / Subsystem / Skill / Tool. Returns a list of source lines.
     """
@@ -178,16 +141,21 @@ def _emit_component(component: Component, var_name: str, dispenser: _NameDispens
         args.append(f"stereotypes={_emit_str_list(component.stereotypes)}")
     lines.append(f"{var_name} = {class_name}({', '.join(args)})")
 
-    # Cross-diagram refs (Q1=a — dot-assignment, omitted when empty).
+    # Cross-diagram refs: attribute assignments, omitted when empty.
     if component.realizes:
         lines.append(f"{var_name}.realizes = {_emit_str_list(component.realizes)}")
-    if isinstance(component, AgenticComponent) and component.process_model_refs:
+    if component.process_model_refs:
         lines.append(
             f"{var_name}.process_model_refs = "
             f"{_emit_str_list(component.process_model_refs)}"
         )
+    if component.agent_model_ref is not None:
+        lines.append(
+            f"{var_name}.agent_model_ref = "
+            f"'{_escape_python_string(component.agent_model_ref)}'"
+        )
 
-    layout_line = _emit_layout_line(var_name, component.layout)
+    layout_line = emit_layout_line(var_name, component.layout)
     if layout_line is not None:
         lines.append(layout_line)
     return lines
@@ -201,7 +169,7 @@ def _emit_permission(permission: Permission, var_name: str) -> list:
     if permission.stereotypes:
         args.append(f"stereotypes={_emit_str_list(permission.stereotypes)}")
     lines.append(f"{var_name} = Permission({', '.join(args)})")
-    layout_line = _emit_layout_line(var_name, permission.layout)
+    layout_line = emit_layout_line(var_name, permission.layout)
     if layout_line is not None:
         lines.append(layout_line)
     return lines
@@ -214,16 +182,16 @@ def _emit_interface(interface: Interface, var_name: str) -> list:
     if interface.stereotypes:
         args.append(f"stereotypes={_emit_str_list(interface.stereotypes)}")
     lines.append(f"{var_name} = Interface({', '.join(args)})")
-    layout_line = _emit_layout_line(var_name, interface.layout)
+    layout_line = emit_layout_line(var_name, interface.layout)
     if layout_line is not None:
         lines.append(layout_line)
     return lines
 
 
-def _emit_relationship(rel, dispenser: _NameDispenser) -> list:
+def _emit_relationship(rel, dispenser: NameDispenser, model_var_name: str) -> list:
     """Emit a relationship — inline or via a temp variable when it has a
-    layout to round-trip. Returns the source lines (the
-    ``component_model.add_relationship(...)`` line is the caller's job)."""
+    layout to round-trip. Returns the source lines, including the
+    ``<model_var_name>.add_relationship(...)`` call."""
     rel_class = type(rel).__name__
     source_var = dispenser.name_for(rel.source)
     target_var = dispenser.name_for(rel.target)
@@ -247,10 +215,10 @@ def _emit_relationship(rel, dispenser: _NameDispenser) -> list:
         rel_var = dispenser.name_for(rel)
         return [
             f"{rel_var} = {constructor}",
-            _emit_layout_line(rel_var, rel.layout),
-            f"component_model.add_relationship({rel_var})",
+            emit_layout_line(rel_var, rel.layout),
+            f"{model_var_name}.add_relationship({rel_var})",
         ]
-    return [f"component_model.add_relationship({constructor})"]
+    return [f"{model_var_name}.add_relationship({constructor})"]
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +244,7 @@ def component_model_to_code(model: ComponentModel,
             f"got {type(model).__name__}."
         )
 
-    dispenser = _NameDispenser()
+    dispenser = NameDispenser(reserved={model_var_name})
     lines: list = []
 
     # ----- Header banner + imports -----
@@ -308,17 +276,20 @@ def component_model_to_code(model: ComponentModel,
     )
     lines.append("")
 
-    # ----- Components (Step 3) — sorted by Element.timestamp for determinism.
-    components_sorted = sort_by_timestamp(model.components)
+    # ----- Components — every component, including those reachable only
+    # through Subsystem nesting, sorted by Element.timestamp for determinism.
+    # Only the model's own root set is added with add_component.
+    components_sorted = sort_by_timestamp(model.all_components())
     if components_sorted:
         lines.append("# --- Components ---")
         for component in components_sorted:
             var = dispenser.name_for(component)
             lines.extend(_emit_component(component, var, dispenser))
-            lines.append(f"{model_var_name}.add_component({var})")
+            if component in model.components:
+                lines.append(f"{model_var_name}.add_component({var})")
             lines.append("")
 
-    # ----- Subsystem.children (Step 4) — deferred; all components exist now.
+    # ----- Subsystem.children — deferred; all components exist now.
     subsystems = [c for c in components_sorted if isinstance(c, Subsystem)]
     has_children = any(s.children for s in subsystems)
     if has_children:
@@ -332,7 +303,7 @@ def component_model_to_code(model: ComponentModel,
                 lines.append(f"{s_var}.add_child({c_var})")
         lines.append("")
 
-    # ----- Interfaces (Step 5).
+    # ----- Interfaces.
     interfaces_sorted = sort_by_timestamp(model.interfaces)
     if interfaces_sorted:
         lines.append("# --- Interfaces ---")
@@ -342,8 +313,9 @@ def component_model_to_code(model: ComponentModel,
             lines.append(f"{model_var_name}.add_interface({var})")
             lines.append("")
 
-    # ----- Permissions (Step 6) -- AgenticComponentModel only.
-    permissions_sorted = sort_by_timestamp(getattr(model, "permissions", set()))
+    # ----- Permissions -- AgenticComponentModel only.
+    permissions_sorted = (sort_by_timestamp(model.permissions)
+                          if isinstance(model, AgenticComponentModel) else [])
     if permissions_sorted:
         lines.append("# --- Permissions ---")
         for permission in permissions_sorted:
@@ -352,12 +324,12 @@ def component_model_to_code(model: ComponentModel,
             lines.append(f"{model_var_name}.add_permission({var})")
             lines.append("")
 
-    # ----- Relationships (Step 7).
+    # ----- Relationships.
     relationships_sorted = sort_by_timestamp(model.relationships)
     if relationships_sorted:
         lines.append("# --- Relationships ---")
         for rel in relationships_sorted:
-            lines.extend(_emit_relationship(rel, dispenser))
+            lines.extend(_emit_relationship(rel, dispenser, model_var_name))
             lines.append("")
 
     source = "\n".join(line for line in lines if line is not None) + "\n"

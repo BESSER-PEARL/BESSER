@@ -78,7 +78,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event
     serialise_event_type,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._node_builders import (
-    make_node, make_edge,
+    envelope_size, make_edge, make_node, make_positions_parent_relative, points_from_layout,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
@@ -227,7 +227,10 @@ def bpmn_object_to_json(model: BPMNModel) -> dict:
         if node:
             nodes.append(node)
 
-    _make_positions_parent_relative(nodes, id_map)
+    # Stashed bounds are absolute; grid-fallback positions are already relative.
+    make_positions_parent_relative(
+        nodes, {node_id for obj, node_id in id_map.items() if (getattr(obj, "layout", None) or {}).get("bounds")},
+    )
 
     emitted_ids = {node["id"] for node in nodes}
     for process in sort_by_timestamp(model.processes):
@@ -251,32 +254,12 @@ def bpmn_object_to_json(model: BPMNModel) -> dict:
         "version": "4.0.0",
         "type": BPMN_DIAGRAM_TYPE,
         "title": getattr(model, "name", "") or "",
-        "size": _compute_envelope_size(nodes),
+        "size": envelope_size(nodes),
         "nodes": nodes,
         "edges": edges,
         "interactive": {"elements": {}, "relationships": {}},
         "assessments": {},
     }
-
-
-def _make_positions_parent_relative(nodes: list, id_map: dict) -> None:
-    """``layout["bounds"]`` are absolute; a v4 ``position`` is relative to its
-    ``parentId`` node. Only applied when both bounds came from a layout (grid
-    fallback positions are already relative)."""
-    obj_for_id = {node_id: obj for obj, node_id in id_map.items()}
-
-    def has_bounds(node_id) -> bool:
-        obj = obj_for_id.get(node_id)
-        return bool((getattr(obj, "layout", None) or {}).get("bounds"))
-
-    absolute = {node["id"]: dict(node["position"]) for node in nodes}
-    for node in nodes:
-        parent_id = node.get("parentId")
-        if parent_id in absolute and has_bounds(node["id"]) and has_bounds(parent_id):
-            node["position"] = {
-                "x": absolute[node["id"]]["x"] - absolute[parent_id]["x"],
-                "y": absolute[node["id"]]["y"] - absolute[parent_id]["y"],
-            }
 
 
 def _emit_pool(participant: Participant, nodes: list, id_for, grid: "_GridLayout") -> None:
@@ -383,17 +366,6 @@ def _emit_node(obj, parent_id, id_for, grid: "_GridLayout"):
     )
 
 
-def _points_from_path(layout: dict) -> list:
-    """Absolute v4 points from a v3 flow layout (``path`` relative to ``bounds``),
-    as stored by ``.py`` files exported before the v4 migration."""
-    path = layout.get("path") or []
-    bounds = layout.get("bounds") or {}
-    return [
-        {"x": p.get("x", 0) + bounds.get("x", 0), "y": p.get("y", 0) + bounds.get("y", 0)}
-        for p in path
-    ]
-
-
 def _emit_flow(flow: "BPMNConnectingObject", edges: list, id_for, emitted_ids: set) -> None:
     edge_type = _EDGE_TYPE_FOR_FLOW_CLASS.get(type(flow))
     if edge_type is None:
@@ -413,7 +385,7 @@ def _emit_flow(flow: "BPMNConnectingObject", edges: list, id_for, emitted_ids: s
     edge_data: dict = {
         "name": flow.name,
         "label": flow.name,  # BPMNDiagramEdge.tsx reads data.label
-        "points": layout.get("points") or _points_from_path(layout),
+        "points": points_from_layout(layout),
         "isManuallyLayouted": layout.get("isManuallyLayouted", False),
     }
     if isinstance(flow, SequenceFlow) and flow.is_default:
@@ -436,21 +408,6 @@ def _walk_subprocesses(model: BPMNModel):
                 yield from _recurse(node)
     for process in model.processes:
         yield from _recurse(process)
-
-
-def _compute_envelope_size(nodes: list) -> dict:
-    """Bounding box of all top-level node bounds, with a sensible minimum."""
-    max_x = 0
-    max_y = 0
-    for node in nodes:
-        if node.get("parentId"):
-            continue  # child positions are relative to their parent
-        position = node.get("position") or {}
-        right = (position.get("x") or 0) + (node.get("width") or 0)
-        bottom = (position.get("y") or 0) + (node.get("height") or 0)
-        max_x = max(max_x, right)
-        max_y = max(max_y, bottom)
-    return {"width": max(int(max_x) + 40, 800), "height": max(int(max_y) + 40, 600)}
 
 
 def bpmn_buml_to_json(content: str) -> dict:

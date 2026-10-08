@@ -274,6 +274,20 @@ BPMN_PROJECT_DIAGRAM_KEY = "BPMN"
 # UML Deployment diagram type (the Docker Compose generator's input).
 DEPLOYMENT_DIAGRAM_TYPE = "DeploymentDiagram"
 
+# v4 required-interface edge types per diagram. The socket variants differ only
+# in how much of the socket is drawn; all read as InterfaceRequired, and the
+# converters keep the drawn variant in the relationship layout.
+COMPONENT_REQUIRED_INTERFACE_EDGE_TYPES = frozenset({
+    "ComponentRequiredInterface",
+    "ComponentRequiredQuarterInterface",
+    "ComponentRequiredThreeQuarterInterface",
+})
+DEPLOYMENT_REQUIRED_INTERFACE_EDGE_TYPES = frozenset({
+    "DeploymentRequiredInterface",
+    "DeploymentRequiredQuarterInterface",
+    "DeploymentRequiredThreeQuarterInterface",
+})
+
 # ---------------------------------------------------------------------------
 # UML Component / Deployment stereotype tokens
 # Lower-cased stereotype tokens the converters map to typed metamodel slots;

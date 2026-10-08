@@ -70,7 +70,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event
     parse_event_type,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
-    node_data, node_bounds,
+    absolute_bounds, edge_layout, node_data,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
@@ -101,24 +101,11 @@ _FLOW_CLASS_FOR_EDGE_TYPE = {
 
 
 def _layout_dict(node: dict, raw_by_id: dict) -> dict:
-    """Opaque layout passthrough for a node: id + parentId + bounds + style keys.
-
-    ``bounds`` are absolute (as in v3 and BPMN DI); a v4 ``position`` is
-    relative to the ``parentId`` node, so the ancestors' positions are added.
-    """
-    bounds = node_bounds(node)
-    seen = {node.get("id")}
-    parent = raw_by_id.get(node.get("parentId"))
-    while parent is not None and parent.get("id") not in seen:
-        seen.add(parent.get("id"))
-        position = parent.get("position") or {}
-        bounds["x"] += position.get("x", 0)
-        bounds["y"] += position.get("y", 0)
-        parent = raw_by_id.get(parent.get("parentId"))
+    """Opaque layout passthrough for a node: id + parentId + absolute bounds + style keys."""
     layout = {
         "id": node.get("id"),
         "parentId": node.get("parentId"),
-        "bounds": bounds,
+        "bounds": absolute_bounds(node, raw_by_id),
     }
     data = node_data(node)
     for style_key in ("fillColor", "strokeColor", "textColor", "highlight"):
@@ -129,8 +116,8 @@ def _layout_dict(node: dict, raw_by_id: dict) -> dict:
 
 def _flow_layout_dict(edge: dict) -> dict:
     """Opaque layout passthrough for an edge (flow)."""
-    edge_data = edge.get("data") or {}
-    points = edge_data.get("points") or []
+    layout = edge_layout(edge)
+    points = layout["points"]
     # ``path`` (read by the BPMN generator for BPMNEdge DI) is the v3 shape:
     # the absolute v4 points made relative to their bounding box.
     path = None
@@ -138,14 +125,8 @@ def _flow_layout_dict(edge: dict) -> dict:
         min_x = min(p.get("x", 0) for p in points)
         min_y = min(p.get("y", 0) for p in points)
         path = [{"x": p.get("x", 0) - min_x, "y": p.get("y", 0) - min_y} for p in points]
-    return {
-        "id": edge.get("id"),
-        "points": points,
-        "path": path,
-        "source_direction": edge.get("sourceHandle"),
-        "target_direction": edge.get("targetHandle"),
-        "isManuallyLayouted": edge_data.get("isManuallyLayouted", False),
-    }
+    layout["path"] = path
+    return layout
 
 
 _AGENT_ROLE_ALIASES = {"worker": "solution", "manager": "supervision"}

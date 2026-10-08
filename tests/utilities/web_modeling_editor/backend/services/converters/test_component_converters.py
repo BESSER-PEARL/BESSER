@@ -1,9 +1,9 @@
-"""Tests for the Component diagram converters.
+"""Tests for the Component diagram converters (v4 ``{nodes, edges}`` wire shape).
 
 Covers:
   * JSON -> ``ComponentModel`` (``process_component_diagram``).
   * ``ComponentModel`` -> JSON (``component_object_to_json``).
-  * Round-trip identity for the load-bearing fields (ids, types, ownership,
+  * Round-trip identity for the load-bearing fields (ids, types, parents,
     stereotypes-after-token-resolution, agentic-edge dispatch).
   * Stereotype helpers: empty-stereotype guard, consumed-default tokens,
     typed-slot resolution, AgenticEdge permission suffix.
@@ -21,6 +21,7 @@ from besser.BUML.metamodel.uml_component import (
     Component,
     ComponentModel,
     Database,
+    InterfaceRequired,
     LLM,
     Locality,
     Permission,
@@ -51,157 +52,126 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 
 
 # ---------------------------------------------------------------------------
+# v4 fixture builders
+# ---------------------------------------------------------------------------
+
+def _node(node_id, node_type, x, y, width, height, data, parent=None):
+    node = {
+        "id": node_id, "type": node_type,
+        "position": {"x": x, "y": y},
+        "width": width, "height": height,
+        "measured": {"width": width, "height": height},
+        "data": data,
+    }
+    if parent is not None:
+        node["parentId"] = parent
+    return node
+
+
+def _edge(edge_id, edge_type, source, target, points, stereotype=None,
+          source_handle="right", target_handle="left"):
+    data = {"name": "", "label": "", "points": points, "isManuallyLayouted": False}
+    if stereotype is not None:
+        data["stereotype"] = stereotype
+    return {
+        "id": edge_id, "source": source, "target": target, "type": edge_type,
+        "sourceHandle": source_handle, "targetHandle": target_handle, "data": data,
+    }
+
+
+def _diagram(title, nodes, edges):
+    return {
+        "title": title,
+        "model": {
+            "version": "4.0.0", "type": "ComponentDiagram", "title": title,
+            "nodes": nodes, "edges": edges,
+            "interactive": {"elements": {}, "relationships": {}},
+            "assessments": {},
+        },
+    }
+
+
+def _nodes_by_id(payload):
+    return {n["id"]: n for n in payload["nodes"]}
+
+
+def _edges_by_id(payload):
+    return {e["id"]: e for e in payload["edges"]}
+
+
+# ---------------------------------------------------------------------------
 # Fixtures (mirror the editor's real Component-diagram export and a
 # hand-built agentic diagram)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
 def real_component_diagram():
-    """A base-Apollon Component diagram (real-export style: compact field
-    omission, no `stereotype` key on bare Component)."""
-    return {
-        "title": "Component Diagram",
-        "model": {
-            "version": "3.0.0",
-            "type": "ComponentDiagram",
-            "size": {"width": 920, "height": 560},
-            "elements": {
-                "c1": {
-                    "id": "c1", "name": "Frontend", "type": "Component",
-                    "owner": None,
-                    "bounds": {"x": -440, "y": -240, "width": 160, "height": 100},
-                    "displayStereotype": True,
-                },
-                "c2": {
-                    "id": "c2", "name": "Backend", "type": "Component",
-                    "owner": None,
-                    "bounds": {"x": 90, "y": -260, "width": 160, "height": 100},
-                    "displayStereotype": True,
-                },
-                "s1": {
-                    "id": "s1", "name": "ServiceLayer", "type": "Subsystem",
-                    "owner": None,
-                    "bounds": {"x": -350, "y": -40, "width": 160, "height": 100},
-                    "stereotype": "subsystem", "displayStereotype": True,
-                },
-                "i1": {
-                    "id": "i1", "name": "Api", "type": "ComponentInterface",
-                    "owner": None,
-                    "bounds": {"x": 0, "y": -50, "width": 20, "height": 20},
-                },
-            },
-            "relationships": {
-                "r1": {
-                    "id": "r1", "name": "", "type": "ComponentDependency",
-                    "owner": None,
-                    "bounds": {"x": -280, "y": -200, "width": 370, "height": 1},
-                    "path": [{"x": 0, "y": 0}, {"x": 370, "y": 0}],
-                    "source": {"direction": "Right", "element": "c1"},
-                    "target": {"direction": "Left", "element": "c2"},
-                    "isManuallyLayouted": False,
-                },
-                "r2": {
-                    "id": "r2", "name": "", "type": "ComponentInterfaceProvided",
-                    "owner": None,
-                    "bounds": {"x": 15, "y": -160, "width": 155, "height": 170},
-                    "path": [{"x": 155, "y": 0}, {"x": 0, "y": 130}],
-                    "source": {"direction": "Down", "element": "c2"},
-                    "target": {"direction": "Bottomright", "element": "i1"},
-                    "isManuallyLayouted": False,
-                },
-            },
-            "interactive": {"elements": {}, "relationships": {}},
-            "assessments": {},
-        },
-    }
+    """A plain UML Component diagram (bare Components carry an empty stereotype)."""
+    return _diagram(
+        "Component Diagram",
+        [
+            _node("c1", "component", -440, -240, 160, 100,
+                  {"name": "Frontend", "stereotype": "", "isComponentHeaderShown": True}),
+            _node("c2", "component", 90, -260, 160, 100,
+                  {"name": "Backend", "stereotype": "", "isComponentHeaderShown": True}),
+            _node("s1", "componentSubsystem", -350, -40, 160, 100,
+                  {"name": "ServiceLayer", "stereotype": "subsystem",
+                   "isComponentSubsystemHeaderShown": True}),
+            _node("i1", "componentInterface", 0, -50, 20, 20, {"name": "Api"}),
+        ],
+        [
+            _edge("r1", "ComponentDependency", "c1", "c2",
+                  [{"x": -280, "y": -200}, {"x": 90, "y": -200}]),
+            _edge("r2", "ComponentProvidedInterface", "c2", "i1",
+                  [{"x": 170, "y": -160}, {"x": 15, "y": -30}],
+                  source_handle="bottom", target_handle="right-bottom"),
+        ],
+    )
 
 
 @pytest.fixture
 def agentic_component_diagram():
-    """Hand-built style: Subsystem holding two Components with `solution`
-    stereotype, a `delegates`-stereotyped AgenticEdge."""
-    return {
-        "title": "Component Diagram",
-        "model": {
-            "version": "3.0.0",
-            "type": "ComponentDiagram",
-            "size": {"width": 1400, "height": 740},
-            "elements": {
-                "elem-consensus-group": {
-                    "id": "elem-consensus-group",
-                    "name": "ConsensusGroup", "type": "Subsystem",
-                    "owner": None,
-                    "bounds": {"x": 100, "y": 100, "width": 520, "height": 280},
-                    "stereotype": "subsystem", "displayStereotype": True,
-                },
-                "elem-orchestrator-agent": {
-                    "id": "elem-orchestrator-agent",
-                    "name": "OrchestratorAgent", "type": "Component",
-                    "owner": "elem-consensus-group",
-                    "bounds": {"x": 140, "y": 180, "width": 160, "height": 80},
-                    "stereotype": "solution", "displayStereotype": True,
-                },
-                "elem-worker-agent": {
-                    "id": "elem-worker-agent",
-                    "name": "WorkerAgent", "type": "Component",
-                    "owner": "elem-consensus-group",
-                    "bounds": {"x": 420, "y": 180, "width": 160, "height": 80},
-                    "stereotype": "collaboration", "displayStereotype": True,
-                },
-            },
-            "relationships": {
-                "rel-delegates": {
-                    "id": "rel-delegates",
-                    "name": "", "type": "ComponentDependency",
-                    "owner": None,
-                    "bounds": {"x": 300, "y": 220, "width": 120, "height": 1},
-                    "path": [{"x": 0, "y": 0}, {"x": 120, "y": 0}],
-                    "source": {
-                        "element": "elem-orchestrator-agent", "direction": "Right",
-                    },
-                    "target": {
-                        "element": "elem-worker-agent", "direction": "Left",
-                    },
-                    "isManuallyLayouted": False,
-                    "stereotype": "delegates {permission: repo:merge:approve, repo:write}",
-                },
-            },
-            "interactive": {"elements": {}, "relationships": {}},
-            "assessments": {},
-        },
-    }
+    """Hand-built style: Subsystem holding two Components with agent
+    stereotypes, a `delegates`-stereotyped AgenticEdge."""
+    return _diagram(
+        "Component Diagram",
+        [
+            _node("elem-consensus-group", "componentSubsystem", 100, 100, 520, 280,
+                  {"name": "ConsensusGroup", "stereotype": "subsystem",
+                   "isComponentSubsystemHeaderShown": True}),
+            _node("elem-orchestrator-agent", "component", 40, 80, 160, 80,
+                  {"name": "OrchestratorAgent", "stereotype": "solution",
+                   "isComponentHeaderShown": True},
+                  parent="elem-consensus-group"),
+            _node("elem-worker-agent", "component", 320, 80, 160, 80,
+                  {"name": "WorkerAgent", "stereotype": "collaboration",
+                   "isComponentHeaderShown": True},
+                  parent="elem-consensus-group"),
+        ],
+        [
+            _edge("rel-delegates", "ComponentDependency",
+                  "elem-orchestrator-agent", "elem-worker-agent",
+                  [{"x": 300, "y": 220}, {"x": 420, "y": 220}],
+                  stereotype="delegates {permission: repo:merge:approve, repo:write}"),
+        ],
+    )
 
 
 @pytest.fixture
 def skill_component_diagram():
     """Component with `stereotype: "skill"` should promote to Skill subclass."""
-    return {
-        "title": "Skill Diagram",
-        "model": {
-            "version": "3.0.0",
-            "type": "ComponentDiagram",
-            "size": {"width": 800, "height": 600},
-            "elements": {
-                "c-skill": {
-                    "id": "c-skill", "name": "WebSearch", "type": "Component",
-                    "owner": None,
-                    "bounds": {"x": 0, "y": 0, "width": 160, "height": 80},
-                    "stereotype": "skill external",
-                    "displayStereotype": True,
-                },
-                "c-tool": {
-                    "id": "c-tool", "name": "Calculator", "type": "Component",
-                    "owner": None,
-                    "bounds": {"x": 200, "y": 0, "width": 160, "height": 80},
-                    "stereotype": "tool",
-                    "displayStereotype": True,
-                },
-            },
-            "relationships": {},
-            "interactive": {"elements": {}, "relationships": {}},
-            "assessments": {},
-        },
-    }
+    return _diagram(
+        "Skill Diagram",
+        [
+            _node("c-skill", "component", 0, 0, 160, 80,
+                  {"name": "WebSearch", "stereotype": "skill external",
+                   "isComponentHeaderShown": True}),
+            _node("c-tool", "component", 200, 0, 160, 80,
+                  {"name": "Calculator", "stereotype": "tool",
+                   "isComponentHeaderShown": True}),
+        ],
+        [],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +183,7 @@ class TestProcessComponentDiagram:
         model = process_component_diagram(real_component_diagram)
         assert isinstance(model, ComponentModel)
         assert model.name == "Component Diagram"
-        # 4 elements: 3 components (Frontend, Backend, ServiceLayer-subsystem) + 1 interface
+        # 4 nodes: 3 components (Frontend, Backend, ServiceLayer-subsystem) + 1 interface
         assert len(model.components) == 3
         assert len(model.interfaces) == 1
         # Subsystem is in components since Subsystem extends Component
@@ -229,6 +199,13 @@ class TestProcessComponentDiagram:
             assert component.layout is not None
             assert "id" in component.layout
             assert "bounds" in component.layout
+
+    def test_layout_bounds_are_absolute(self, agentic_component_diagram):
+        """A child's parent-relative v4 position is stashed as absolute bounds."""
+        model = process_component_diagram(agentic_component_diagram)
+        orchestrator = next(c for c in model.components if c.name == "OrchestratorAgent")
+        assert orchestrator.layout["parentId"] == "elem-consensus-group"
+        assert orchestrator.layout["bounds"] == {"x": 140, "y": 180, "width": 160, "height": 80}
 
     def test_agentic_edge_with_permissions(self, agentic_component_diagram):
         model = process_component_diagram(agentic_component_diagram)
@@ -283,10 +260,11 @@ class TestComponentObjectToJson:
         model = ComponentModel(name="Empty")
         out = component_object_to_json(model)
         assert out["type"] == "ComponentDiagram"
-        assert out["version"] == "3.0.0"
+        assert out["version"] == "4.0.0"
+        assert out["title"] == "Empty"
         assert "size" in out
-        assert out["elements"] == {}
-        assert out["relationships"] == {}
+        assert out["nodes"] == []
+        assert out["edges"] == []
         assert out["interactive"] == {"elements": {}, "relationships": {}}
         assert out["assessments"] == {}
 
@@ -298,11 +276,10 @@ class TestComponentObjectToJson:
         )
         model = AgenticComponentModel(name="m", components={component})
         out = component_object_to_json(model)
-        # Find the emitted Component entry.
-        entries = [e for e in out["elements"].values()
-                   if e["type"] == "Component"]
+        # Find the emitted component node.
+        entries = [n for n in out["nodes"] if n["type"] == "component"]
         assert len(entries) == 1
-        stereotype = entries[0].get("stereotype", "")
+        stereotype = entries[0]["data"].get("stereotype", "")
         # "solution external" — agent_category first, locality second.
         assert "solution" in stereotype.split()
         assert "external" in stereotype.split()
@@ -320,13 +297,46 @@ class TestComponentObjectToJson:
             permissions={p}, relationships={edge},
         )
         out = component_object_to_json(model)
-        edge_entries = [r for r in out["relationships"].values()]
-        assert len(edge_entries) == 1
+        assert len(out["edges"]) == 1
         # AgenticEdge is wire-typed as ComponentDependency.
-        assert edge_entries[0]["type"] == "ComponentDependency"
-        stereotype = edge_entries[0]["stereotype"]
+        assert out["edges"][0]["type"] == "ComponentDependency"
+        stereotype = out["edges"][0]["data"]["stereotype"]
         assert stereotype.startswith("delegates")
         assert "{permission: r1}" in stereotype
+
+    def test_model_without_layout_gets_non_overlapping_positions(self):
+        """A model built in Python has no editor layout: children are placed
+        inside their Subsystem and no two siblings overlap."""
+        child_a = Component(name="A")
+        child_b = Component(name="B")
+        group = Subsystem(name="Group")
+        group.add_child(child_a)
+        group.add_child(child_b)
+        loose = Component(name="Loose")
+        model = ComponentModel(name="m", components={group, child_a, child_b, loose})
+        out = component_object_to_json(model)
+        nodes = {n["data"]["name"]: n for n in out["nodes"]}
+        group_node = nodes["Group"]
+
+        # Parents precede their children (React Flow requirement).
+        order = [n["data"]["name"] for n in out["nodes"]]
+        assert order.index("Group") < order.index("A")
+        assert order.index("Group") < order.index("B")
+
+        for name in ("A", "B"):
+            child = nodes[name]
+            assert child["parentId"] == group_node["id"]
+            # Parent-relative position fully inside the parent.
+            assert child["position"]["x"] >= 0 and child["position"]["y"] >= 0
+            assert child["position"]["x"] + child["width"] <= group_node["width"]
+            assert child["position"]["y"] + child["height"] <= group_node["height"]
+
+        def overlaps(n1, n2):
+            (x1, y1), (x2, y2) = (n1["position"]["x"], n1["position"]["y"]), (n2["position"]["x"], n2["position"]["y"])
+            return x1 < x2 + n2["width"] and x2 < x1 + n1["width"] and y1 < y2 + n2["height"] and y2 < y1 + n1["height"]
+
+        assert not overlaps(nodes["A"], nodes["B"])
+        assert not overlaps(group_node, nodes["Loose"])
 
 
 # ---------------------------------------------------------------------------
@@ -334,39 +344,26 @@ class TestComponentObjectToJson:
 # ---------------------------------------------------------------------------
 
 class TestRoundTrip:
-    def _ids(self, json_dict, key):
-        """Return the sorted set of element ids from elements or relationships."""
-        return sorted((json_dict.get(key) or {}).keys())
-
     def test_real_diagram_ids_survive(self, real_component_diagram):
         model = process_component_diagram(real_component_diagram)
         out = component_object_to_json(model)
-        in_elements = self._ids(real_component_diagram["model"], "elements")
-        out_elements = self._ids(out, "elements")
-        assert in_elements == out_elements
-        in_rels = self._ids(real_component_diagram["model"], "relationships")
-        out_rels = self._ids(out, "relationships")
-        assert in_rels == out_rels
+        assert sorted(_nodes_by_id(out)) == sorted(_nodes_by_id(real_component_diagram["model"]))
+        assert sorted(_edges_by_id(out)) == sorted(_edges_by_id(real_component_diagram["model"]))
 
     def test_real_diagram_types_survive(self, real_component_diagram):
         model = process_component_diagram(real_component_diagram)
         out = component_object_to_json(model)
-        for elem_id, original in (
-            real_component_diagram["model"]["elements"].items()
-        ):
-            assert out["elements"][elem_id]["type"] == original["type"]
-        for rel_id, original in (
-            real_component_diagram["model"]["relationships"].items()
-        ):
-            assert out["relationships"][rel_id]["type"] == original["type"]
+        out_nodes, out_edges = _nodes_by_id(out), _edges_by_id(out)
+        for node_id, original in _nodes_by_id(real_component_diagram["model"]).items():
+            assert out_nodes[node_id]["type"] == original["type"]
+        for edge_id, original in _edges_by_id(real_component_diagram["model"]).items():
+            assert out_edges[edge_id]["type"] == original["type"]
 
-    def test_real_diagram_owner_chains_survive(self, real_component_diagram):
+    def test_real_diagram_parent_chains_survive(self, real_component_diagram):
         model = process_component_diagram(real_component_diagram)
-        out = component_object_to_json(model)
-        for elem_id, original in (
-            real_component_diagram["model"]["elements"].items()
-        ):
-            assert out["elements"][elem_id].get("owner") == original.get("owner")
+        out_nodes = _nodes_by_id(component_object_to_json(model))
+        for node_id, original in _nodes_by_id(real_component_diagram["model"]).items():
+            assert out_nodes[node_id].get("parentId") == original.get("parentId")
 
     def test_agentic_diagram_stereotype_resolves_and_re_emits(
         self, agentic_component_diagram,
@@ -374,20 +371,45 @@ class TestRoundTrip:
         model = process_component_diagram(agentic_component_diagram)
         out = component_object_to_json(model)
         # The AgenticEdge re-emits with kind + sorted permission suffix.
-        rel = out["relationships"]["rel-delegates"]
+        rel = _edges_by_id(out)["rel-delegates"]
         assert rel["type"] == "ComponentDependency"
-        assert rel["stereotype"].startswith("delegates")
-        assert "{permission: repo:merge:approve, repo:write}" in rel["stereotype"]
+        assert rel["data"]["stereotype"].startswith("delegates")
+        assert "{permission: repo:merge:approve, repo:write}" in rel["data"]["stereotype"]
         # The OrchestratorAgent emits with `solution`.
-        orchestrator = out["elements"]["elem-orchestrator-agent"]
-        assert "solution" in orchestrator["stereotype"].split()
+        orchestrator = _nodes_by_id(out)["elem-orchestrator-agent"]
+        assert "solution" in orchestrator["data"]["stereotype"].split()
 
     def test_agentic_subsystem_children_survive(self, agentic_component_diagram):
         model = process_component_diagram(agentic_component_diagram)
-        out = component_object_to_json(model)
-        # The two child components must keep `owner: "elem-consensus-group"`.
+        out_nodes = _nodes_by_id(component_object_to_json(model))
+        # The two child components keep `parentId: "elem-consensus-group"` and
+        # their parent-relative positions.
         for child_id in ("elem-orchestrator-agent", "elem-worker-agent"):
-            assert out["elements"][child_id]["owner"] == "elem-consensus-group"
+            assert out_nodes[child_id]["parentId"] == "elem-consensus-group"
+        assert out_nodes["elem-orchestrator-agent"]["position"] == {"x": 40, "y": 80}
+
+    def test_required_interface_socket_variant_survives(self):
+        """A ComponentRequiredQuarterInterface edge reads as InterfaceRequired and
+        comes back with its drawn socket variant, also through a BUML file."""
+        payload = _diagram(
+            "Sockets",
+            [
+                _node("c", "component", 0, 0, 160, 100,
+                      {"name": "Client", "stereotype": "", "isComponentHeaderShown": True}),
+                _node("i", "componentInterface", 300, 40, 20, 20, {"name": "Port"}),
+            ],
+            [_edge("req", "ComponentRequiredQuarterInterface", "c", "i",
+                   [{"x": 160, "y": 50}, {"x": 300, "y": 50}])],
+        )
+        model = process_component_diagram(payload)
+        (rel,) = model.relationships
+        assert isinstance(rel, InterfaceRequired)
+
+        direct = _edges_by_id(component_object_to_json(model))["req"]
+        assert direct["type"] == "ComponentRequiredQuarterInterface"
+        via_file = _edges_by_id(component_buml_to_json(component_model_to_code(model)))["req"]
+        assert via_file["type"] == "ComponentRequiredQuarterInterface"
+        assert via_file["data"]["points"] == [{"x": 160, "y": 50}, {"x": 300, "y": 50}]
 
 
 # ---------------------------------------------------------------------------
@@ -454,11 +476,10 @@ class TestComponentBumlToJson:
         source = component_model_to_code(model)
         result = component_buml_to_json(source)
         assert result["type"] == "ComponentDiagram"
+        assert result["version"] == "4.0.0"
         # ids survive because component_object_to_json reuses layout["id"]
         # (which the builder emits in .layout = {...} round-trip).
-        in_ids = sorted(real_component_diagram["model"]["elements"].keys())
-        out_ids = sorted(result["elements"].keys())
-        assert in_ids == out_ids
+        assert sorted(_nodes_by_id(result)) == sorted(_nodes_by_id(real_component_diagram["model"]))
 
     def test_exec_failure_raises_conversion_error(self):
         with pytest.raises(ConversionError):
@@ -483,6 +504,31 @@ class TestComponentBumlToJson:
         with pytest.raises(ConversionError, match="Top-level statement not allowed: Raise"):
             component_buml_to_json("raise RuntimeError('boom')")
 
+    def test_v3_layout_stash_from_older_exports_still_loads(self):
+        """`.py` files exported before the v4 migration carry the v3 layout stash
+        (``owner``, ``path`` relative to ``bounds``); they still convert, with the
+        edge points made absolute."""
+        source = (
+            "c1 = Component(name='A')\n"
+            "c1.layout = {'id': 'a', 'owner': None, 'bounds': {'x': 0, 'y': 0, 'width': 160, 'height': 100},"
+            " 'displayStereotype': True, 'wme_type': 'Component'}\n"
+            "c2 = Component(name='B')\n"
+            "c2.layout = {'id': 'b', 'owner': None, 'bounds': {'x': 300, 'y': 0, 'width': 160, 'height': 100},"
+            " 'displayStereotype': True, 'wme_type': 'Component'}\n"
+            "component_model = ComponentModel(name='M', components={c1, c2})\n"
+            "r = ComponentDependency(source=c1, target=c2)\n"
+            "r.layout = {'id': 'r', 'bounds': {'x': 160, 'y': 50, 'width': 140, 'height': 1},"
+            " 'path': [{'x': 0, 'y': 0}, {'x': 140, 'y': 0}], 'source_direction': 'Right',"
+            " 'target_direction': 'Left', 'isManuallyLayouted': False,"
+            " 'wme_type': 'ComponentDependency'}\n"
+            "component_model.add_relationship(r)\n"
+        )
+        result = component_buml_to_json(source)
+        edge = _edges_by_id(result)["r"]
+        assert edge["sourceHandle"] == "right" and edge["targetHandle"] == "left"
+        assert edge["data"]["points"] == [{"x": 160, "y": 50}, {"x": 300, "y": 50}]
+        assert sorted(_nodes_by_id(result)) == ["a", "b"]
+
 
 # ---------------------------------------------------------------------------
 # LLM / Database / RAG round-trip
@@ -490,79 +536,32 @@ class TestComponentBumlToJson:
 
 @pytest.fixture
 def llm_db_rag_component_diagram():
-    """WME diagram with llm/db/rag Components + uses edges from an agent.
+    """Diagram with llm/db/rag Components + uses edges from an agent.
 
-    Mirrors the WME BPMN→Component derivation output for an agent that calls
-    an LLM, queries a DB, and reads a RAG store.
+    Mirrors the editor's BPMN→Component derivation output for an agent that
+    calls an LLM, queries a DB, and reads a RAG store.
     """
-    return {
-        "title": "LLM DB RAG Diagram",
-        "model": {
-            "version": "3.0.0",
-            "type": "ComponentDiagram",
-            "size": {"width": 1200, "height": 600},
-            "elements": {
-                "agent-1": {
-                    "id": "agent-1", "name": "ResearchAgent", "type": "Component",
-                    "owner": None,
-                    "bounds": {"x": 100, "y": 200, "width": 160, "height": 80},
-                    "stereotype": "solution", "displayStereotype": True,
-                },
-                "llm-1": {
-                    "id": "llm-1", "name": "GPT4", "type": "Component",
-                    "owner": None,
-                    "bounds": {"x": 400, "y": 80, "width": 160, "height": 80},
-                    "stereotype": "llm", "displayStereotype": True,
-                },
-                "db-1": {
-                    "id": "db-1", "name": "OrdersDB", "type": "Component",
-                    "owner": None,
-                    "bounds": {"x": 400, "y": 200, "width": 160, "height": 80},
-                    "stereotype": "db", "displayStereotype": True,
-                },
-                "rag-1": {
-                    "id": "rag-1", "name": "KnowledgeBase", "type": "Component",
-                    "owner": None,
-                    "bounds": {"x": 400, "y": 320, "width": 160, "height": 80},
-                    "stereotype": "rag", "displayStereotype": True,
-                },
-            },
-            "relationships": {
-                "uses-llm": {
-                    "id": "uses-llm", "name": "", "type": "ComponentDependency",
-                    "owner": None,
-                    "bounds": {"x": 260, "y": 120, "width": 140, "height": 1},
-                    "path": [{"x": 0, "y": 0}, {"x": 140, "y": 0}],
-                    "source": {"element": "agent-1", "direction": "Right"},
-                    "target": {"element": "llm-1", "direction": "Left"},
-                    "isManuallyLayouted": False,
-                    "stereotype": "uses",
-                },
-                "uses-db": {
-                    "id": "uses-db", "name": "", "type": "ComponentDependency",
-                    "owner": None,
-                    "bounds": {"x": 260, "y": 240, "width": 140, "height": 1},
-                    "path": [{"x": 0, "y": 0}, {"x": 140, "y": 0}],
-                    "source": {"element": "agent-1", "direction": "Right"},
-                    "target": {"element": "db-1", "direction": "Left"},
-                    "isManuallyLayouted": False,
-                    "stereotype": "uses",
-                },
-                "uses-rag": {
-                    "id": "uses-rag", "name": "", "type": "ComponentDependency",
-                    "owner": None,
-                    "bounds": {"x": 260, "y": 360, "width": 140, "height": 1},
-                    "path": [{"x": 0, "y": 0}, {"x": 140, "y": 0}],
-                    "source": {"element": "agent-1", "direction": "Right"},
-                    "target": {"element": "rag-1", "direction": "Left"},
-                    "isManuallyLayouted": False,
-                    "stereotype": "uses",
-                },
-            },
-            "interactive": {"elements": {}, "relationships": {}},
-            "assessments": {},
-        },
-    }
+    def uses(edge_id, target, y):
+        return _edge(edge_id, "ComponentDependency", "agent-1", target,
+                     [{"x": 260, "y": y}, {"x": 400, "y": y}], stereotype="uses")
+
+    return _diagram(
+        "LLM DB RAG Diagram",
+        [
+            _node("agent-1", "component", 100, 200, 160, 80,
+                  {"name": "ResearchAgent", "stereotype": "solution",
+                   "isComponentHeaderShown": True}),
+            _node("llm-1", "component", 400, 80, 160, 80,
+                  {"name": "GPT4", "stereotype": "llm", "isComponentHeaderShown": True}),
+            _node("db-1", "component", 400, 200, 160, 80,
+                  {"name": "OrdersDB", "stereotype": "db", "isComponentHeaderShown": True}),
+            _node("rag-1", "component", 400, 320, 160, 80,
+                  {"name": "KnowledgeBase", "stereotype": "rag",
+                   "isComponentHeaderShown": True}),
+        ],
+        [uses("uses-llm", "llm-1", 120), uses("uses-db", "db-1", 240),
+         uses("uses-rag", "rag-1", 360)],
+    )
 
 
 class TestLLMDBRAGRoundTrip:
@@ -581,7 +580,7 @@ class TestLLMDBRAGRoundTrip:
         assert type(components_by_id["rag-1"]) is RAG
 
     def test_uses_edges_survive_not_silently_dropped(self, llm_db_rag_component_diagram):
-        """Regression guard: before 04a the uses edges were silently dropped."""
+        """Regression guard: the uses edges were once silently dropped."""
         model = process_component_diagram(llm_db_rag_component_diagram)
         agentic_edges = [r for r in model.relationships
                          if isinstance(r, AgenticEdge)]
@@ -592,14 +591,14 @@ class TestLLMDBRAGRoundTrip:
     def test_export_emits_correct_subtype_tokens(self, llm_db_rag_component_diagram):
         """Round-trip: import then export must emit llm/db/rag, never 'tool'."""
         model = process_component_diagram(llm_db_rag_component_diagram)
-        out = component_object_to_json(model)
-        llm_elem = out["elements"]["llm-1"]
-        db_elem = out["elements"]["db-1"]
-        rag_elem = out["elements"]["rag-1"]
-        assert "llm" in llm_elem["stereotype"].split()
-        assert "db" in db_elem["stereotype"].split()
-        assert "rag" in rag_elem["stereotype"].split()
+        out_nodes = _nodes_by_id(component_object_to_json(model))
+        llm_tokens = out_nodes["llm-1"]["data"]["stereotype"].split()
+        db_tokens = out_nodes["db-1"]["data"]["stereotype"].split()
+        rag_tokens = out_nodes["rag-1"]["data"]["stereotype"].split()
+        assert "llm" in llm_tokens
+        assert "db" in db_tokens
+        assert "rag" in rag_tokens
         # Most-derived-first: none of these should emit as plain 'tool'.
-        assert "tool" not in llm_elem["stereotype"].split()
-        assert "tool" not in db_elem["stereotype"].split()
-        assert "tool" not in rag_elem["stereotype"].split()
+        assert "tool" not in llm_tokens
+        assert "tool" not in db_tokens
+        assert "tool" not in rag_tokens

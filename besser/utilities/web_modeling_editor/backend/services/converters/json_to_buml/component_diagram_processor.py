@@ -1,8 +1,9 @@
-"""Component diagram processing: WME JSON -> ComponentModel.
+"""Component diagram processing: v4 WME JSON (``{nodes, edges}``) -> ComponentModel.
 
-Three-pass walk (nodes, containment, relationships) with a layout side
+Three-pass walk (nodes, containment via ``parentId``, edges) with a layout side
 channel, agentic-profile token resolution, and ``AgenticEdge`` dispatch on the
-``ComponentDependency`` wire type.
+``ComponentDependency`` edge type. Wire shape: ``docs/source/migrations/uml-v4-shape.md``
+(ComponentDiagram).
 
 Element or relationship data the metamodel rejects raises ``ConversionError``;
 unknown element types and dangling relationship endpoints are logged and
@@ -32,6 +33,14 @@ from besser.BUML.metamodel.uml_component import (
     Subsystem,
     Tool,
 )
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    COMPONENT_REQUIRED_INTERFACE_EDGE_TYPES,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    edge_layout,
+    node_data,
+    node_layout,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.stereotype_tokens import (
     agentic_edge_extra_tokens,
     apply_component_stereotype_tokens,
@@ -57,18 +66,20 @@ _COMPONENT_SUBTYPE_CLASSES = {
 }
 
 
+
 def process_component_diagram(json_data: dict) -> ComponentModel:
-    """Convert a WME Component diagram (JSON) into a ``ComponentModel``.
+    """Convert a v4 WME Component diagram into a ``ComponentModel``.
 
     Args:
-        json_data: ``{"title": <str>, "model": {...}}`` envelope.
+        json_data: ``{"title": <str>, "model": {"nodes": [...], "edges": [...]}}``.
 
     Returns:
-        ComponentModel: assembled metamodel instance.
+        ComponentModel: an ``AgenticComponentModel`` when the diagram carries any
+        agentic element, a plain ``ComponentModel`` otherwise.
 
     Raises:
-        ConversionError: structural failures (missing ``model``, unrecoverable
-            element shape).
+        ConversionError: structural failures (missing ``model``, an element or
+            edge the metamodel rejects, a containment cycle).
     """
     if not isinstance(json_data, dict):
         raise ConversionError(
@@ -78,25 +89,21 @@ def process_component_diagram(json_data: dict) -> ComponentModel:
     model_data = json_data.get("model")
     if not isinstance(model_data, dict):
         raise ConversionError("Component diagram JSON is missing the 'model' key.")
-    elements = model_data.get("elements") or {}
-    relationships = model_data.get("relationships") or {}
+    nodes = [n for n in (model_data.get("nodes") or []) if isinstance(n, dict)]
+    edges = [e for e in (model_data.get("edges") or []) if isinstance(e, dict)]
     name = json_data.get("title") or "Generated_Component_Model"
 
     permissions_by_scope: dict = {}
-    nodes_by_id: dict = _build_nodes(elements)
-    _reconstruct_containment(elements, nodes_by_id)
-    relationship_objects = _build_relationships(
-        relationships, nodes_by_id, permissions_by_scope,
-    )
+    objects_by_id = _build_nodes(nodes)
+    _reconstruct_containment(nodes, objects_by_id)
+    relationship_objects = _build_relationships(edges, objects_by_id, permissions_by_scope)
 
-    components = {obj for obj in nodes_by_id.values() if isinstance(obj, Component)}
-    interfaces = {obj for obj in nodes_by_id.values() if isinstance(obj, Interface)}
+    components = {obj for obj in objects_by_id.values() if isinstance(obj, Component)}
+    interfaces = {obj for obj in objects_by_id.values() if isinstance(obj, Interface)}
     permissions = set(permissions_by_scope.values())
     relationships_set = set(relationship_objects)
 
-    # A diagram carrying any agentic element yields an AgenticComponentModel;
-    # a pure-UML diagram yields a plain ComponentModel. Skill / Tool count as
-    # agentic-notation vocabulary.
+    # Skill / Tool count as agentic-notation vocabulary.
     is_agentic = (
         bool(permissions)
         or any(isinstance(c, (AgenticComponent, Skill, Tool)) for c in components)
@@ -118,61 +125,48 @@ def process_component_diagram(json_data: dict) -> ComponentModel:
     )
 
 
-def _build_nodes(elements: dict) -> dict:
-    """Pass 1 — create every element object, indexed by WME id."""
-    nodes_by_id: dict = {}
-    for elem_id, elem in elements.items():
-        if not isinstance(elem, dict):
-            raise ConversionError(
-                f"Component element '{elem_id}' must be an object, "
-                f"got {type(elem).__name__}."
-            )
+def _build_nodes(nodes: list) -> dict:
+    """Pass 1 — create every element object, indexed by node id."""
+    nodes_by_id = {n.get("id"): n for n in nodes if n.get("id")}
+    objects_by_id: dict = {}
+    for node in nodes:
+        node_id = node.get("id")
         try:
-            obj = _build_component_node(elem_id, elem)
+            obj = _build_component_node(node_id, node.get("type"), node_data(node))
         except (TypeError, ValueError) as exc:
             raise ConversionError(
-                f"Could not build Component element '{elem_id}': {exc}"
+                f"Could not build Component element '{node_id}': {exc}"
             ) from exc
         if obj is None:
             continue
-        # Stash the layout side channel (opaque to the metamodel).
-        obj.layout = {
-            "id": elem_id,
-            "owner": elem.get("owner"),
-            "bounds": elem.get("bounds"),
-            "displayStereotype": elem.get("displayStereotype", True),
-            "wme_type": elem.get("type"),
-        }
-        nodes_by_id[elem_id] = obj
-    return nodes_by_id
+        obj.layout = node_layout(node, nodes_by_id)
+        objects_by_id[node_id] = obj
+    return objects_by_id
 
 
-def _build_component_node(elem_id: str, elem: dict) -> Optional[ComponentElement]:
-    """Build a single Component / Subsystem / Skill / Tool / Interface from
-    a WME element dict.
+def _build_component_node(node_id: str, node_type: str, data: dict) -> Optional[ComponentElement]:
+    """Build a Component / Subsystem / Skill / Tool / Interface from a v4 node.
 
-    Returns ``None`` when the element type is unknown (logs a warning).
+    Returns ``None`` when the node type is unknown (logs a warning).
     """
-    elem_type = elem.get("type")
-    name = elem.get("name") or ""
-    stereotype = elem.get("stereotype") or ""
+    name = data.get("name") or ""
+    stereotype = data.get("stereotype") or ""
 
-    if elem_type == "ComponentInterface":
+    if node_type == "componentInterface":
         return Interface(name=name)
 
-    if elem_type == "Subsystem":
+    if node_type == "componentSubsystem":
         subsystem = Subsystem(name=name)
         apply_component_stereotype_tokens(subsystem, stereotype)
         return subsystem
 
-    if elem_type == "Component":
+    if node_type == "component":
         subtype = parse_component_node_subtype(stereotype)
         if subtype is not None:
             # skill/tool/llm/db/rag → the matching Component subclass.
             obj = _COMPONENT_SUBTYPE_CLASSES[subtype](name=name)
         elif stereotype_has_agentic_tokens(stereotype):
-            # An agent-category token promotes a bare Component to
-            # AgenticComponent.
+            # An agent-category token promotes a bare Component to AgenticComponent.
             obj = AgenticComponent(name=name)
         else:
             obj = Component(name=name)
@@ -180,137 +174,115 @@ def _build_component_node(elem_id: str, elem: dict) -> Optional[ComponentElement
         # Cross-diagram refs, read as the editor wrote them: realizes -> Class
         # ids, processModelRefs -> BPMN diagram ids, agentModelRef -> the Agent
         # diagram id. Resolved at project level.
-        obj.realizes = elem.get("realizes") or []
-        obj.process_model_refs = elem.get("processModelRefs") or []
-        obj.agent_model_ref = elem.get("agentModelRef")
+        obj.realizes = data.get("realizes") or []
+        obj.process_model_refs = data.get("processModelRefs") or []
+        obj.agent_model_ref = data.get("agentModelRef") or None
         return obj
 
     logger.warning(
-        "Component element %s has unknown type %r; skipping.", elem_id, elem_type,
+        "Component element %s has unknown type %r; skipping.", node_id, node_type,
     )
     return None
 
 
-def _reconstruct_containment(elements: dict, nodes_by_id: dict) -> None:
-    """Pass 2 — turn WME ``owner`` pointers into ``Subsystem.add_child`` calls.
+def _reconstruct_containment(nodes: list, objects_by_id: dict) -> None:
+    """Pass 2 — turn ``parentId`` pointers into ``Subsystem.add_child`` calls.
 
-    A WME element's ``owner`` references another element's id. For
-    Component-diagram nodes, valid containment is *child -> Subsystem*; any
-    other shape (component pointing to interface, dangling owner) is logged
-    and the node stays top-level. A containment cycle raises
-    ``ConversionError``.
+    Valid containment is *Component -> Subsystem*; any other shape (an
+    Interface drawn inside a Subsystem, a dangling parent) is logged and the
+    element stays top-level. A containment cycle raises ``ConversionError``.
     """
-    for elem_id, elem in elements.items():
-        child = nodes_by_id.get(elem_id)
-        if child is None:
+    for node in nodes:
+        node_id = node.get("id")
+        child = objects_by_id.get(node_id)
+        parent_id = node.get("parentId")
+        if child is None or not parent_id:
             continue
-        owner_id = elem.get("owner")
-        if not owner_id:
-            continue
-        parent = nodes_by_id.get(owner_id)
+        parent = objects_by_id.get(parent_id)
         if parent is None:
             logger.warning(
-                "Component element %s references unknown owner %s; treating as root.",
-                elem_id, owner_id,
+                "Component element %s references unknown parent %s; treating as root.",
+                node_id, parent_id,
             )
             continue
         if not isinstance(parent, Subsystem):
             logger.warning(
-                "Component element %s owner %s is %s, not Subsystem; "
-                "treating as root.",
-                elem_id, owner_id, type(parent).__name__,
+                "Component element %s parent %s is %s, not Subsystem; treating as root.",
+                node_id, parent_id, type(parent).__name__,
             )
             continue
         if not isinstance(child, Component):
-            # Interfaces inside a Subsystem are not modelled (the metamodel
-            # places Interfaces on the model root). Drop the containment
-            # link; the Interface stays at root level.
+            # The metamodel places Interfaces on the model root; the drawn
+            # parent survives in the layout only.
             logger.warning(
                 "Component element %s of type %s cannot be a child of "
                 "Subsystem %s; staying at root.",
-                elem_id, type(child).__name__, owner_id,
+                node_id, type(child).__name__, parent_id,
             )
             continue
         try:
             parent.add_child(child)
         except ValueError as exc:
             raise ConversionError(
-                f"Component element '{elem_id}' cannot be nested in '{owner_id}': {exc}"
+                f"Component element '{node_id}' cannot be nested in '{parent_id}': {exc}"
             ) from exc
 
 
-def _build_relationships(relationships: dict, nodes_by_id: dict,
-                         permissions_by_scope: dict) -> list:
-    """Pass 3 — build relationship objects from the ``relationships`` map.
+def _build_relationships(edges: list, objects_by_id: dict, permissions_by_scope: dict) -> list:
+    """Pass 3 — build relationship objects from the ``edges`` list.
 
-    AgenticEdge dispatch and permission-suffix parsing happen here. Returns
-    a list of relationship objects (in iteration order); the caller wraps
-    them into the model's relationship set.
+    AgenticEdge dispatch and permission-suffix parsing happen here.
     """
     out: list = []
-    for rel_id, rel in relationships.items():
-        if not isinstance(rel, dict):
-            raise ConversionError(
-                f"Component relationship '{rel_id}' must be an object, "
-                f"got {type(rel).__name__}."
-            )
-        source_id = (rel.get("source") or {}).get("element")
-        target_id = (rel.get("target") or {}).get("element")
-        source = nodes_by_id.get(source_id)
-        target = nodes_by_id.get(target_id)
+    for edge in edges:
+        edge_id = edge.get("id")
+        source = objects_by_id.get(edge.get("source"))
+        target = objects_by_id.get(edge.get("target"))
         if source is None or target is None:
             logger.warning(
                 "Component relationship %s has dangling endpoint(s) "
                 "(source=%s, target=%s); skipping.",
-                rel_id, source_id, target_id,
+                edge_id, edge.get("source"), edge.get("target"),
             )
             continue
         try:
-            obj = _build_component_relationship(
-                rel_id, rel, source, target, permissions_by_scope,
-            )
+            obj = _build_component_relationship(edge, source, target, permissions_by_scope)
         except (TypeError, ValueError) as exc:
             raise ConversionError(
-                f"Could not build Component relationship '{rel_id}': {exc}"
+                f"Could not build Component relationship '{edge_id}': {exc}"
             ) from exc
         if obj is None:
             continue
-        obj.layout = {
-            "id": rel_id,
-            "owner": rel.get("owner"),
-            "bounds": rel.get("bounds"),
-            "path": rel.get("path"),
-            "source_direction": (rel.get("source") or {}).get("direction"),
-            "target_direction": (rel.get("target") or {}).get("direction"),
-            "isManuallyLayouted": rel.get("isManuallyLayouted", False),
-            "wme_type": rel.get("type"),
-        }
+        layout = edge_layout(edge)
+        layout["type"] = edge.get("type")
+        obj.layout = layout
         out.append(obj)
     return out
 
 
 def _build_component_relationship(
-    rel_id: str, rel: dict, source, target, permissions_by_scope: dict,
+    edge: dict, source, target, permissions_by_scope: dict,
 ) -> Optional[ComponentRelationship]:
-    """Build one relationship object from a WME edge dict.
+    """Build one relationship object from a v4 edge.
 
-    Branches on ``rel["type"]`` and (for ``ComponentDependency``) on the
-    agentic-edge kind extracted from the stereotype. A plain relationship keeps
-    its stereotype (e.g. «use») verbatim in ``stereotypes``; an AgenticEdge
-    keeps the tokens besides its kind and permission suffix.
+    Branches on the edge ``type`` and (for ``ComponentDependency``) on the
+    agentic-edge kind in ``data.stereotype``. A plain relationship keeps its
+    stereotype (e.g. «use») verbatim in ``stereotypes``; an AgenticEdge keeps
+    the tokens besides its kind and permission suffix.
     """
-    rel_type = rel.get("type")
-    name = rel.get("name") or ""
-    stereotype = rel.get("stereotype") or ""
+    edge_type = edge.get("type")
+    data = edge.get("data") if isinstance(edge.get("data"), dict) else {}
+    name = data.get("name") or data.get("label") or ""
+    stereotype = data.get("stereotype") or ""
     free_form = stereotype.split()
 
-    if rel_type == "ComponentInterfaceProvided":
+    if edge_type == "ComponentProvidedInterface":
         return InterfaceProvided(source=source, target=target, name=name,
                                  stereotypes=free_form)
-    if rel_type == "ComponentInterfaceRequired":
+    if edge_type in COMPONENT_REQUIRED_INTERFACE_EDGE_TYPES:
         return InterfaceRequired(source=source, target=target, name=name,
                                  stereotypes=free_form)
-    if rel_type == "ComponentDependency":
+    if edge_type == "ComponentDependency":
         kind = parse_agentic_edge_kind(stereotype)
         if kind is None:
             return ComponentDependency(source=source, target=target, name=name,
@@ -324,7 +296,7 @@ def _build_component_relationship(
 
     logger.warning(
         "Component relationship %s has unknown type %r; skipping.",
-        rel_id, rel_type,
+        edge.get("id"), edge_type,
     )
     return None
 

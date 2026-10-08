@@ -80,6 +80,89 @@ def grid_layout(
         }
 
 
+def points_from_layout(layout: dict) -> list:
+    """Absolute v4 edge points from an edge ``layout`` stash.
+
+    v4 stashes keep ``points``; ``.py`` files exported before the v4 migration
+    carry the v3 ``path`` (relative to the edge ``bounds``) instead.
+    """
+    if layout.get("points"):
+        return layout["points"]
+    path = layout.get("path") or []
+    bounds = layout.get("bounds") or {}
+    return [
+        {"x": p.get("x", 0) + bounds.get("x", 0), "y": p.get("y", 0) + bounds.get("y", 0)}
+        for p in path
+    ]
+
+
+def make_positions_parent_relative(nodes: list, absolute_ids: set) -> None:
+    """Turn absolute positions into ``parentId``-relative ones, in place.
+
+    Only nodes whose position and parent position are both absolute (ids in
+    ``absolute_ids``, typically the nodes placed from a stashed ``bounds``) are
+    shifted; fallback positions are already relative.
+    """
+    absolute = {node["id"]: dict(node["position"]) for node in nodes}
+    for node in nodes:
+        parent_id = node.get("parentId")
+        if parent_id in absolute and node["id"] in absolute_ids and parent_id in absolute_ids:
+            node["position"] = {
+                "x": absolute[node["id"]]["x"] - absolute[parent_id]["x"],
+                "y": absolute[node["id"]]["y"] - absolute[parent_id]["y"],
+            }
+
+
+def layout_unplaced_nodes(nodes: list, placed_ids: set, padding: int = 20, header: int = 40) -> None:
+    """Give every node not in ``placed_ids`` a non-overlapping position, in place.
+
+    Children of a container are put in a row inside it (below a ``header``
+    strip), and an unplaced container grows to enclose them; unplaced roots go
+    on a grid. Used when a model built in Python carries no editor layout.
+    """
+    children: dict = {}
+    for node in nodes:
+        children.setdefault(node.get("parentId"), []).append(node)
+
+    def fit(node: dict) -> None:
+        kids = children.get(node["id"], [])
+        for kid in kids:
+            fit(kid)
+        unplaced = [kid for kid in kids if kid["id"] not in placed_ids]
+        x = padding
+        for kid in unplaced:
+            kid["position"] = {"x": x, "y": header}
+            x += kid["width"] + padding
+        if node["id"] not in placed_ids and kids:
+            right = max(k["position"]["x"] + k["width"] for k in kids) + padding
+            bottom = max(k["position"]["y"] + k["height"] for k in kids) + padding
+            node["width"] = max(node["width"], right)
+            node["height"] = max(node["height"], bottom)
+            node["measured"] = {"width": node["width"], "height": node["height"]}
+
+    roots = children.get(None, [])
+    for root in roots:
+        fit(root)
+    placed_roots = [root for root in roots if root["id"] in placed_ids]
+    origin_x = max((r["position"]["x"] + r["width"] for r in placed_roots), default=-140) + 140
+    grid_layout([root for root in roots if root["id"] not in placed_ids], origin=(origin_x, 0))
+
+
+def envelope_size(nodes: list) -> dict:
+    """Bounding box of all top-level node bounds, with a sensible minimum."""
+    max_x = 0
+    max_y = 0
+    for node in nodes:
+        if node.get("parentId"):
+            continue  # child positions are relative to their parent
+        position = node.get("position") or {}
+        right = (position.get("x") or 0) + (node.get("width") or 0)
+        bottom = (position.get("y") or 0) + (node.get("height") or 0)
+        max_x = max(max_x, right)
+        max_y = max(max_y, bottom)
+    return {"width": max(int(max_x) + 40, 800), "height": max(int(max_y) + 40, 600)}
+
+
 def make_node(
     node_id: str,
     type_: str,
@@ -178,3 +261,61 @@ def empty_model(diagram_type: str, title: str = "") -> dict:
         "interactive": {"elements": {}, "relationships": {}},
         "assessments": {},
     }
+
+
+def parents_first(nodes: list) -> list:
+    """Order ``nodes`` so every parent precedes its children (React Flow requires it)."""
+    by_id = {node["id"]: node for node in nodes}
+    ordered: list = []
+    seen: set = set()
+
+    def visit(node: dict) -> None:
+        if node["id"] in seen:
+            return
+        seen.add(node["id"])
+        parent = by_id.get(node.get("parentId"))
+        if parent is not None:
+            visit(parent)
+        ordered.append(node)
+
+    for node in nodes:
+        visit(node)
+    return ordered
+
+
+def node_from_layout(obj, node_id: str, node_type: str, data: dict, parent_id, default_size: tuple) -> dict:
+    """``make_node`` from the element's stashed absolute bounds (else ``default_size``
+    at the origin) and stashed colours. Positions are made parent-relative later
+    (``make_positions_parent_relative``)."""
+    layout = obj.layout or {}
+    for style_key in ("fillColor", "strokeColor", "textColor", "highlight"):
+        if style_key in layout:
+            data[style_key] = layout[style_key]
+    width, height = default_size
+    bounds = layout.get("bounds") or {"x": 0, "y": 0, "width": width, "height": height}
+    return make_node(
+        node_id=node_id, type_=node_type, data=data,
+        position={"x": bounds.get("x", 0), "y": bounds.get("y", 0)},
+        parent_id=parent_id,
+        width=bounds.get("width") or width, height=bounds.get("height") or height,
+    )
+
+
+def stereotyped_edge(rel, id_for, edge_type: str, stereotype: str) -> dict:
+    """``make_edge`` for a Component / Deployment relationship (``name``, ``label``,
+    optional ``stereotype``), routed from its layout stash."""
+    layout = rel.layout or {}
+    data = {
+        "name": rel.name or "",
+        "label": rel.name or "",
+        "points": points_from_layout(layout),
+        "isManuallyLayouted": bool(layout.get("isManuallyLayouted", False)),
+    }
+    if stereotype:
+        data["stereotype"] = stereotype
+    return make_edge(
+        edge_id=id_for(rel), source=id_for(rel.source), target=id_for(rel.target),
+        type_=edge_type, data=data,
+        source_handle=layout.get("source_direction") or "right",
+        target_handle=layout.get("target_direction") or "left",
+    )

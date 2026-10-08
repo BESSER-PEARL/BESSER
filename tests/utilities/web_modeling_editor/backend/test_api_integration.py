@@ -924,8 +924,8 @@ class TestGetJsonModel:
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["diagramType"] == "ComponentDiagram"
-        assert {r["type"] for r in data["model"]["relationships"].values()} == {
-            "ComponentDependency", "ComponentInterfaceProvided"}
+        assert {e["type"] for e in data["model"]["edges"]} == {
+            "ComponentDependency", "ComponentProvidedInterface"}
 
     def test_deployment_buml_with_relationships_round_trips(self):
         from besser.BUML.metamodel.uml_deployment import (
@@ -945,7 +945,7 @@ class TestGetJsonModel:
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["diagramType"] == "DeploymentDiagram"
-        assert {r["type"] for r in data["model"]["relationships"].values()} == {
+        assert {e["type"] for e in data["model"]["edges"]} == {
             "DeploymentAssociation", "DeploymentDependency"}
 
 
@@ -1396,9 +1396,10 @@ class TestDockerComposeRouting:
         result = _run(router.generate_code_output(DiagramInput(
             title="Deployment",
             model={
+                "version": "4.0.0",
                 "type": "DeploymentDiagram",
-                "elements": {},
-                "relationships": {},
+                "nodes": [],
+                "edges": [],
             },
             generator="docker_compose",
         )))
@@ -1450,9 +1451,10 @@ class TestDockerComposeRouting:
             "docker_compose",
             "DeploymentDiagram",
             {
+                "version": "4.0.0",
                 "type": "DeploymentDiagram",
-                "elements": {},
-                "relationships": {},
+                "nodes": [],
+                "edges": [],
             },
         )
 
@@ -1485,9 +1487,10 @@ class TestDockerComposeRouting:
             "docker_compose",
             "DeploymentDiagram",
             {
+                "version": "4.0.0",
                 "type": "DeploymentDiagram",
-                "elements": {},
-                "relationships": {},
+                "nodes": [],
+                "edges": [],
             },
         )
 
@@ -1528,6 +1531,22 @@ class TestDockerComposeRouting:
         assert result == "master-fallback"
 
     _DEPLOYMENT = {
+        "version": "4.0.0",
+        "type": "DeploymentDiagram",
+        "nodes": [
+            {"id": "host", "type": "deploymentNode", "position": {"x": 0, "y": 0},
+             "width": 300, "height": 200,
+             "data": {"name": "Host", "stereotype": "node", "isComponentHeaderShown": True}},
+            {"id": "app", "type": "deploymentArtifact", "parentId": "host",
+             "position": {"x": 10, "y": 40}, "width": 160, "height": 40,
+             "data": {"name": "App", "manifests": []}},
+        ],
+        "edges": [],
+    }
+
+    # The same deployment in the legacy v3 editor shape, rejected with HTTP 400.
+    _DEPLOYMENT_V3 = {
+        "version": "3.0.0",
         "type": "DeploymentDiagram",
         "elements": {
             "host": {"id": "host", "name": "Host", "type": "DeploymentNode", "owner": None,
@@ -1562,15 +1581,54 @@ class TestDockerComposeRouting:
 
     def test_project_docker_compose_reports_an_invalid_deployment_as_400(self):
         model = copy.deepcopy(self._DEPLOYMENT)
-        model["relationships"]["bad"] = {
-            "id": "bad", "name": "", "type": "DeploymentAssociation", "owner": None,
-            "source": {"element": "host"}, "target": {"element": "app"},
-        }
+        model["edges"].append({
+            "id": "bad", "type": "DeploymentAssociation", "source": "host", "target": "app",
+            "sourceHandle": "right", "targetHandle": "left", "data": {"points": []},
+        })
         project = self._project_input("docker_compose", "DeploymentDiagram", model)
         response = client.post("/besser_api/generate-output-from-project",
                                json=project.model_dump(mode="json"))
         assert response.status_code == 400
         assert "bad" in response.json()["detail"]
+
+    def test_single_docker_compose_rejects_a_legacy_v3_deployment(self):
+        response = client.post("/besser_api/generate-output", json={
+            "title": "Deployment", "model": self._DEPLOYMENT_V3, "generator": "docker_compose",
+        })
+        assert response.status_code == 400
+        assert "legacy v3 editor format" in response.json()["detail"]
+
+    def test_project_docker_compose_rejects_a_legacy_v3_deployment(self):
+        project = self._project_input("docker_compose", "DeploymentDiagram", self._DEPLOYMENT)
+        payload = project.model_dump(mode="json")
+        payload["diagrams"]["DeploymentDiagram"][0]["model"] = self._DEPLOYMENT_V3
+        response = client.post("/besser_api/generate-output-from-project", json=payload)
+        assert response.status_code == 400
+        assert "legacy v3 editor format" in response.json()["detail"]
+
+    @pytest.mark.parametrize("diagram_type, element_type", [
+        ("ComponentDiagram", "Component"),
+        ("DeploymentDiagram", "DeploymentNode"),
+    ])
+    def test_validate_rejects_legacy_v3_component_and_deployment(self, diagram_type, element_type):
+        response = client.post("/besser_api/validate-diagram", json={
+            "title": "Legacy",
+            "model": {
+                "version": "3.0.0", "type": diagram_type,
+                "elements": {"x": {"id": "x", "name": "X", "type": element_type, "owner": None,
+                                   "bounds": {"x": 0, "y": 0, "width": 160, "height": 100}}},
+                "relationships": {},
+            },
+        })
+        assert response.status_code == 400
+        assert "legacy v3 editor format" in response.json()["detail"]
+
+    def test_validate_reads_a_v4_deployment(self):
+        response = client.post("/besser_api/validate-diagram", json={
+            "title": "Deployment", "model": self._DEPLOYMENT,
+        })
+        assert response.status_code == 200, response.text
+        assert response.json()["isValid"] is True, response.json()
 
     def test_configuration_error_maps_to_500_with_its_message(self):
         from fastapi import HTTPException

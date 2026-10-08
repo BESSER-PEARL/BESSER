@@ -1081,3 +1081,42 @@ def test_no_human_facing_agent_warns(tmp_path, caplog):
     with caplog.at_level(logging.WARNING):
         gen.generate()
     assert any("no entry/human-facing agent derived" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# DeploymentComponent, service-name collisions, comment safety
+# ---------------------------------------------------------------------------
+
+def test_deployment_component_with_agent_ref_is_neither_service_nor_bake(tmp_path):
+    from besser.BUML.metamodel.state_machine.agent import Agent
+    from besser.BUML.metamodel.uml_deployment import DeploymentComponent
+
+    agent = Agent("Coder")
+    agent.new_state("initial", initial=True)
+    host = Node("Host", stereotypes=["vm"])
+    projection = DeploymentComponent("Coder", agent_model_ref="agent-1")
+    host.add_artifact(projection)
+    model = DeploymentModel("m", nodes={host})
+    DockerComposeGenerator(model, str(tmp_path), {"agent-1": agent}).generate()
+    parsed = _parse((tmp_path / "docker-compose.yml").read_text(encoding="utf-8"))
+    assert parsed["services"] is None
+    assert not (tmp_path / "coder").exists()
+
+
+def test_artifact_manifesting_a_component_is_still_a_service(tmp_path):
+    model = DeploymentModel("m", artifacts={Artifact("Coder", manifests=["component-1"])})
+    parsed = _parse(_generate(model, tmp_path))
+    assert list(parsed["services"]) == ["coder"]
+
+
+def test_artifacts_normalising_to_one_service_name_raise(tmp_path):
+    model = DeploymentModel("m", artifacts={Artifact("Code Tester"), Artifact("CodeTester")})
+    with pytest.raises(ValueError, match="code_tester"):
+        _generate(model, tmp_path)
+
+
+def test_line_breaks_in_stereotypes_stay_inside_the_comment(tmp_path):
+    artifact = Artifact("App", stereotypes=["web\nevil: true", "x\r\ny"])
+    parsed = _parse(_generate(DeploymentModel("m", artifacts={artifact}), tmp_path))
+    assert set(parsed["services"]["app"]) == {"build"}
+    assert "evil" not in parsed

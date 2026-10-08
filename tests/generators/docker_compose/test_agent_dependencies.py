@@ -13,6 +13,7 @@ from besser.BUML.metamodel.uml_deployment import (
 )
 from besser.generators.docker_compose import DockerComposeGenerator
 from besser.generators.docker_compose.agent_dependencies import baf_dependency_extras
+from besser.generators.docker_compose.docker_compose_generator import BAF_VERSION
 
 
 BASE_EXTRAS = ('extras', 'llms')
@@ -57,7 +58,8 @@ def _bake(tmp_path, agent, config=None, a2a=False):
 
 
 def _assert_install(dockerfile, extras):
-    assert f'RUN pip install --no-cache-dir "besser-agentic-framework[{",".join(extras)}]"' in dockerfile
+    assert (f'RUN pip install --no-cache-dir '
+            f'"besser-agentic-framework[{",".join(extras)}]=={BAF_VERSION}"') in dockerfile
     assert '[all]' not in dockerfile
     assert 'CMD ["python", "Worker.py"]' in dockerfile
 

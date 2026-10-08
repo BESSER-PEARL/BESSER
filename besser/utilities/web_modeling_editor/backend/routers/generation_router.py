@@ -809,7 +809,7 @@ async def _handle_deployment_project_generation(
         for entry in input_data.diagrams.get("AgentDiagram", []):
             entry_dict = entry.model_dump()
             model = entry_dict.get("model")
-            if not entry_dict.get("id") or not (isinstance(model, dict) and model.get("elements")):
+            if not entry_dict.get("id") or not (isinstance(model, dict) and model.get("nodes")):
                 continue
             agent_config = entry_dict.get("config")
             if isinstance(agent_config, dict) and isinstance(agent_config.get("personalizationMapping"), list):

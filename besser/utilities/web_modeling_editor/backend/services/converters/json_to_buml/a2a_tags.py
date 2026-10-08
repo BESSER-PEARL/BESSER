@@ -10,7 +10,7 @@ NOT touched):
 
        a2a:<dir>;peer=<name>;ref=<uuid|>;flow=<id>;[order=<n>;]kind=<...>
 
-2. `annotate_agent_with_a2a` — a re-walk of the raw AgentDiagram JSON that stashes
+2. `annotate_agent_with_a2a` — a re-walk of the raw v4 AgentDiagram JSON that stashes
    the parsed in/out edges on `agent._a2a` (a side-map, no metamodel change). It is a
    no-op (sets no attribute) when the diagram carries no `a2a:` tag, so legacy agents
    stay byte-identical and the generator's `getattr(agent, "_a2a", None)` is falsy.
@@ -87,45 +87,48 @@ def parse_a2a_out_block(description: Optional[str]) -> list:
 
 
 def annotate_agent_with_a2a(agent, agent_diagram_json: dict):
-    """Attach `agent._a2a = {outbound, inbound}` parsed from the AgentDiagram JSON.
+    """Attach `agent._a2a = {outbound, inbound}` parsed from the v4 AgentDiagram JSON.
 
     Standalone: does NOT touch process_agent_diagram. Call it right after the agent
     is built. No-op (no attribute set) when the diagram carries no a2a: tag, so
     legacy agents stay byte-identical and the generator's getattr(agent,'_a2a',None) is
     falsy. Reads only strings (peer/state/intent names), so it never needs the built
     State/Transition objects — fully decoupled from the metamodel.
+
+    Tags ride on ``AgentState`` node ``data.description`` (``a2a:out`` lines) and on
+    transition edge ``data.name`` (``a2a:in``), the intent on
+    ``data.predefined.intentName``.
     """
     if not isinstance(agent_diagram_json, dict):
         return agent
     model = agent_diagram_json.get("model") or agent_diagram_json
-    elements = model.get("elements", {}) or {}
-    relationships = model.get("relationships", {}) or {}
+    nodes = [n for n in (model.get("nodes") or []) if isinstance(n, dict)]
+    edges = [e for e in (model.get("edges") or []) if isinstance(e, dict)]
+    states = {n.get("id"): n.get("data") or {} for n in nodes if n.get("type") == "AgentState"}
 
-    def _state_name(elem_id):
-        el = elements.get(elem_id, {})
-        return el.get("name", "") if el.get("type") == "AgentState" else ""
+    def _state_name(node_id):
+        return (states.get(node_id) or {}).get("name", "")
 
-    # ── outbound: a2a:out lines on each AgentState.description ──
+    # ── outbound: a2a:out lines on each AgentState description ──
     outbound = []
-    for el in elements.values():
-        if el.get("type") != "AgentState":
-            continue
-        for edge in parse_a2a_out_block(el.get("description")):
-            edge["state"] = el.get("name", "")
+    for data in states.values():
+        for edge in parse_a2a_out_block(data.get("description")):
+            edge["state"] = data.get("name", "")
             outbound.append(edge)
 
     # ── inbound: a2a:in on a when_intent_matched transition's `name` ──
     inbound = []
-    for rel in relationships.values():
-        if rel.get("type") not in ("AgentStateTransition", "AgentStateTransitionInit"):
+    for edge in edges:
+        if edge.get("type") not in ("AgentStateTransition", "AgentStateTransitionInit"):
             continue
-        parsed = parse_a2a_line(rel.get("name", ""))
+        data = edge.get("data") or {}
+        parsed = parse_a2a_line(data.get("name", ""))
         if not (parsed and parsed["dir"] == "in" and parsed["peer"]):
             continue
-        predefined = rel.get("predefined") or {}
-        parsed["intent"] = predefined.get("intentName") or rel.get("intentName") or ""
-        parsed["source_state"] = _state_name((rel.get("source") or {}).get("element"))
-        parsed["target_state"] = _state_name((rel.get("target") or {}).get("element"))
+        predefined = data.get("predefined") or {}
+        parsed["intent"] = predefined.get("intentName") or data.get("intentName") or ""
+        parsed["source_state"] = _state_name(edge.get("source"))
+        parsed["target_state"] = _state_name(edge.get("target"))
         inbound.append(parsed)
 
     if outbound or inbound:

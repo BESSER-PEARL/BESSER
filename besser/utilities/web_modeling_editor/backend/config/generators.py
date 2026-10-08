@@ -23,7 +23,10 @@ from besser.generators.flutter import FlutterGenerator
 from besser.generators.terraform import TerraformGenerator
 from besser.generators.testgen import TestCaseGenerator
 from besser.generators.bpmn import BPMNGenerator
-from besser.utilities.web_modeling_editor.backend.constants.constants import BPMN_DIAGRAM_TYPE
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    BPMN_DIAGRAM_TYPE,
+    DEPLOYMENT_DIAGRAM_TYPE,
+)
 from besser.generators.docker_compose import DockerComposeGenerator
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
@@ -229,14 +232,15 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         required_diagram_type=BPMN_DIAGRAM_TYPE,
     ),
 
-    # Docker Compose generator (deployment model based) - AgenticSwarm
+    # Docker Compose generator (UML Deployment diagram based). A ZIP holding
+    # docker-compose.yml plus one baked BAF build context per linked agent.
     "docker_compose": GeneratorInfo(
         generator_class=DockerComposeGenerator,
-        output_type="file",
-        file_extension=".yml",
+        output_type="zip",
+        file_extension=".zip",
         category="deployment",
         requires_class_diagram=False,
-        required_diagram_type="DeploymentDiagram",
+        required_diagram_type=DEPLOYMENT_DIAGRAM_TYPE,
     ),
 }
 
@@ -325,7 +329,7 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
     elif generator_type == "bpmn":
         return "bpmn_diagram.bpmn"
     elif generator_type == "docker_compose":
-        return "docker-compose.yml"
+        return "docker_compose.zip"
     else:
         return f"{generator_type}_output{info.file_extension}"
 

@@ -28,17 +28,29 @@ def parse_ballot(text, candidate_ids):
     return None
 
 
+# Policies whose rule is "MORE than the ratio" (a strict majority). VotingPolicy's
+# rule is "reaches the ratio threshold".
+_STRICT_POLICIES = ("MajorityPolicy", "AbsoluteMajorityPolicy")
+
+
 def tally(policy_type, ratio, candidates, ballots):
     """Count candidate-selection votes deterministically. Returns an audit record.
 
     candidates: [{"id": "C1", "producer": "agent_x#1"}, ...]
     ballots:    [{"voter","source","vote": "C2"|None,"weight": float}, ...]
                 vote == None is an abstain.
+
     Weighting: VotingPolicy uses each ballot's `weight` (participant confidence);
-    Majority/AbsoluteMajority use weight 1 per ballot. Winner = the candidate with the
-    greatest (weighted) support; `met_ratio` records whether its share cleared `ratio`.
-    AbsoluteMajority ratios over ALL ballots (abstentions in the denominator); the
-    others over the ballots that actually voted.
+    Majority/AbsoluteMajority use weight 1 per ballot. The leading candidate's
+    share is its support over the denominator: the weight actually cast
+    (VotingPolicy), every ballot including abstentions (AbsoluteMajority), or the
+    ballots that voted (Majority).
+
+    Decision rule: a candidate wins only if it is the UNIQUE leader and its share
+    meets the ratio (default 0.5) -- strictly above it for Majority and
+    AbsoluteMajority ("more than half" at the default), at or above it for
+    VotingPolicy. A tie for the lead or a share below the ratio decides nothing:
+    `outcome` is None and the merge escalates instead of picking a candidate.
     """
     ids = [c["id"] for c in candidates]
     weighted = policy_type == "VotingPolicy"
@@ -51,22 +63,18 @@ def tally(policy_type, ratio, candidates, ballots):
             cast += 1
         else:
             abstain += 1
-    # Denominator for the winning candidate's share (same units as `scores`):
-    #   VotingPolicy            → total weight actually cast (confidence-weighted)
-    #   AbsoluteMajorityPolicy  → every ballot, abstentions included (the "all eligible" rule)
-    #   MajorityPolicy / other  → the ballots that actually voted
     if weighted:
         denom = sum(scores.values())
     elif policy_type == "AbsoluteMajorityPolicy":
         denom = float(cast + abstain)
     else:
         denom = float(cast)
-    outcome, top = None, -1.0
-    for cid in ids:                       # deterministic: first id wins ties by order
-        if scores[cid] > top:
-            top, outcome = scores[cid], cid
+    top = max(scores.values()) if scores else 0.0
+    leaders = [cid for cid in ids if scores[cid] == top] if cast else []
     share = (top / denom) if denom > 0 else 0.0
     thr = ratio if isinstance(ratio, (int, float)) else 0.5
+    met_ratio = share > thr if policy_type in _STRICT_POLICIES else share >= thr
+    outcome = leaders[0] if len(leaders) == 1 and met_ratio else None
     return {
         "policy": policy_type,
         "ratio": thr,
@@ -76,7 +84,33 @@ def tally(policy_type, ratio, candidates, ballots):
         "scores": scores,
         "cast": cast,
         "abstain": abstain,
+        "leaders": leaders,
         "outcome": outcome,
         "share": round(share, 4),
-        "met_ratio": share >= thr,
+        "met_ratio": met_ratio,
     }
+
+
+def decision_footer(decision):
+    """The audit line appended to a governed merge's reply."""
+    votes = ", ".join(f"{k}={v:g}" for k, v in decision["scores"].items())
+    if decision["outcome"] is not None:
+        result = f"winner {decision['outcome']} (share {decision['share']:g}, met ratio)"
+    elif len(decision["leaders"]) > 1:
+        result = f"no decision: tie between {', '.join(decision['leaders'])}"
+    else:
+        result = f"no decision: best share {decision['share']:g} below ratio"
+    return ("\n\n— governance —\n"
+            f"policy {decision['policy']} (ratio {decision['ratio']}); {result}; "
+            f"votes [{votes}]; abstain {decision['abstain']}")
+
+
+def decision_reply(decision, cand_text):
+    """The merge result: the winning candidate verbatim, or -- when the policy
+    decided nothing -- an escalation that lists every candidate and selects none."""
+    if decision["outcome"] is not None:
+        return cand_text[decision["outcome"]] + decision_footer(decision)
+    slate = "\n\n".join(f"[{c['id']}] (from {c['producer']})\n{cand_text.get(c['id'], '')}"
+                         for c in decision["candidates"])
+    return ("The governance policy reached no decision, so no candidate was selected; "
+            "a human must decide.\n\nCandidate outputs:\n" + slate + decision_footer(decision))

@@ -2,7 +2,7 @@
 
 - `parse_a2a_line` / `parse_a2a_out_block` are pure (no backend deps, base-runnable).
 - `annotate_agent_with_a2a` over a real `process_agent_diagram(json)` agent needs the
-  converter import (besser env), and proves the legacy-tolerant contract (§10): a
+  converter import (besser env), and proves the legacy-tolerant contract: a
   diagram with no `a2a:` tag yields an agent with NO `_a2a` attribute.
 """
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.a2a_tags import (
@@ -13,7 +13,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 
 
 # ---------------------------------------------------------------------------
-# parse_a2a_line — §4 acceptance
+# parse_a2a_line
 # ---------------------------------------------------------------------------
 
 def test_parse_inbound_line():
@@ -89,7 +89,7 @@ class _FakeAgent:
 
 
 def _tagged_diagram_json():
-    """A minimal AgentDiagram JSON shaped like the frozen wire contract (§1):
+    """A minimal AgentDiagram JSON shaped like the frozen wire contract:
     an AgentState carrying two a2a:out lines on `description`, and a
     when_intent_matched transition carrying a2a:in on its `name`."""
     return {
@@ -146,7 +146,7 @@ def test_annotate_populates_outbound_and_inbound():
 
 
 def test_annotate_legacy_diagram_sets_no_attribute():
-    """Legacy guard (§10): a diagram with no a2a: tag anywhere → no _a2a attribute."""
+    """Legacy guard: a diagram with no a2a: tag anywhere → no _a2a attribute."""
     legacy = {
         "id": "d",
         "model": {

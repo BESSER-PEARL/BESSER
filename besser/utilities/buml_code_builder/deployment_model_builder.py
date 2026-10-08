@@ -1,10 +1,11 @@
 """Deployment model code builder.
 
 Generates a self-contained Python module from a ``DeploymentModel`` that
-re-creates the model on ``exec()``. Implements 03-... §3 / §4.2 / §5
-(option-b emission, sort_by_timestamp determinism, layout passthrough,
-manifests dot-assignment per Q1=a, ``Multiplicity`` emission with
-conditional ``UNLIMITED_MAX_MULTIPLICITY`` import).
+re-creates the model on ``exec()``: elements are constructed first and wired
+with ``add_*`` calls afterwards, ordered by ``sort_by_timestamp`` so the output
+is deterministic. Layouts pass through verbatim, cross-diagram references
+(``manifests``, ``agent_model_ref``) are emitted as attribute assignments, and
+``Multiplicity`` imports ``UNLIMITED_MAX_MULTIPLICITY`` only when needed.
 """
 
 from typing import Optional
@@ -22,49 +23,22 @@ from besser.BUML.metamodel.uml_deployment import (
     Node,
 )
 from besser.utilities.buml_code_builder.common import (
+    NameDispenser,
     _escape_python_string,
-    safe_var_name,
+    emit_layout_line,
 )
 from besser.utilities.utils import sort_by_timestamp
 
 
 # ---------------------------------------------------------------------------
-# Helpers (mirror the Component builder; kept private per-module)
+# Helpers
 # ---------------------------------------------------------------------------
-
-class _NameDispenser:
-    """Mint unique Python variable names keyed by metamodel object identity."""
-
-    def __init__(self):
-        self._used: set = set()
-        self._for_obj: dict = {}
-
-    def name_for(self, obj) -> str:
-        if obj in self._for_obj:
-            return self._for_obj[obj]
-        prefix = type(obj).__name__.lower()
-        base = safe_var_name(obj.name, lowercase=True) or prefix
-        candidate = f"{prefix}_{base}" if base != prefix else prefix
-        suffix = 1
-        while candidate in self._used:
-            candidate = f"{prefix}_{base}_{suffix}"
-            suffix += 1
-        self._used.add(candidate)
-        self._for_obj[obj] = candidate
-        return candidate
-
 
 def _emit_str_list(values) -> str:
     if not values:
         return "[]"
     parts = [f"'{_escape_python_string(v)}'" for v in values]
     return f"[{', '.join(parts)}]"
-
-
-def _emit_layout_line(var_name: str, layout: Optional[dict]) -> Optional[str]:
-    if not layout:
-        return None
-    return f"{var_name}.layout = {layout!r}"
 
 
 def _emit_multiplicity(multiplicity) -> str:
@@ -127,8 +101,8 @@ def _collect_imports(model: DeploymentModel) -> tuple:
     if all_nodes:
         needed.add("Node")
         has_node = True
-    if all_artifacts:
-        needed.add("Artifact")
+    for artifact in all_artifacts:
+        needed.add(type(artifact).__name__)
     if model.interfaces:
         needed.add("Interface")
 
@@ -163,7 +137,8 @@ def _collect_imports(model: DeploymentModel) -> tuple:
 
     ordered_meta = [
         c for c in (
-            "DeploymentModel", "Node", "Artifact", "Interface",
+            "DeploymentModel", "Node", "Artifact", "DeploymentComponent",
+            "Interface",
             "DeploymentRelation", "CommunicationPath",
             "DeploymentDependency",
             "InterfaceProvided", "InterfaceRequired",
@@ -195,17 +170,18 @@ def _emit_node(node: Node, var_name: str) -> list:
     if node.stereotypes:
         args.append(f"stereotypes={_emit_str_list(node.stereotypes)}")
     lines.append(f"{var_name} = Node({', '.join(args)})")
-    layout_line = _emit_layout_line(var_name, node.layout)
+    layout_line = emit_layout_line(var_name, node.layout)
     if layout_line is not None:
         lines.append(layout_line)
     return lines
 
 
 def _emit_artifact(artifact: Artifact, var_name: str) -> list:
-    """Emit an Artifact constructor + post-construction lines.
+    """Emit an Artifact (or DeploymentComponent) constructor + post-construction lines.
 
-    ``manifests`` round-trips via dot-assignment (Q1=a), kept off the
-    constructor for symmetry with the Component side.
+    The cross-diagram references ``manifests`` and ``agent_model_ref`` are
+    attribute assignments, kept off the constructor for symmetry with the
+    Component side.
     """
     lines = []
     args = [f"name='{_escape_python_string(artifact.name)}'"]
@@ -213,10 +189,15 @@ def _emit_artifact(artifact: Artifact, var_name: str) -> list:
         args.append(f"locality=Locality.{artifact.locality.name}")
     if artifact.stereotypes:
         args.append(f"stereotypes={_emit_str_list(artifact.stereotypes)}")
-    lines.append(f"{var_name} = Artifact({', '.join(args)})")
+    lines.append(f"{var_name} = {type(artifact).__name__}({', '.join(args)})")
     if artifact.manifests:
         lines.append(f"{var_name}.manifests = {_emit_str_list(artifact.manifests)}")
-    layout_line = _emit_layout_line(var_name, artifact.layout)
+    if artifact.agent_model_ref is not None:
+        lines.append(
+            f"{var_name}.agent_model_ref = "
+            f"'{_escape_python_string(artifact.agent_model_ref)}'"
+        )
+    layout_line = emit_layout_line(var_name, artifact.layout)
     if layout_line is not None:
         lines.append(layout_line)
     return lines
@@ -229,16 +210,16 @@ def _emit_interface(interface: Interface, var_name: str) -> list:
     if interface.stereotypes:
         args.append(f"stereotypes={_emit_str_list(interface.stereotypes)}")
     lines.append(f"{var_name} = Interface({', '.join(args)})")
-    layout_line = _emit_layout_line(var_name, interface.layout)
+    layout_line = emit_layout_line(var_name, interface.layout)
     if layout_line is not None:
         lines.append(layout_line)
     return lines
 
 
-def _emit_relationship(rel, dispenser: _NameDispenser) -> list:
+def _emit_relationship(rel, dispenser: NameDispenser, model_var_name: str) -> list:
     """Emit a relationship — inline or via a temp variable when it has a
     layout. Returns the source lines including the
-    ``deployment_model.add_relationship(...)`` call."""
+    ``<model_var_name>.add_relationship(...)`` call."""
     rel_class = type(rel).__name__
     source_var = dispenser.name_for(rel.source)
     target_var = dispenser.name_for(rel.target)
@@ -261,10 +242,10 @@ def _emit_relationship(rel, dispenser: _NameDispenser) -> list:
         rel_var = dispenser.name_for(rel)
         return [
             f"{rel_var} = {constructor}",
-            _emit_layout_line(rel_var, rel.layout),
-            f"deployment_model.add_relationship({rel_var})",
+            emit_layout_line(rel_var, rel.layout),
+            f"{model_var_name}.add_relationship({rel_var})",
         ]
-    return [f"deployment_model.add_relationship({constructor})"]
+    return [f"{model_var_name}.add_relationship({constructor})"]
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +271,7 @@ def deployment_model_to_code(model: DeploymentModel,
             f"got {type(model).__name__}."
         )
 
-    dispenser = _NameDispenser()
+    dispenser = NameDispenser(reserved={model_var_name})
     lines: list = []
 
     # ----- Header banner + imports -----
@@ -370,7 +351,7 @@ def deployment_model_to_code(model: DeploymentModel,
     if relationships_sorted:
         lines.append("# --- Relationships ---")
         for rel in relationships_sorted:
-            lines.extend(_emit_relationship(rel, dispenser))
+            lines.extend(_emit_relationship(rel, dispenser, model_var_name))
             lines.append("")
 
     source = "\n".join(line for line in lines if line is not None) + "\n"

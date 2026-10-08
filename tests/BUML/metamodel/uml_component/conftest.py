@@ -2,9 +2,8 @@
 
 Three reusable, well-formed models. ``minimal_component_model`` and
 ``subsystem_model`` are pure-UML ``ComponentModel``s; ``agent_swarm_model`` is
-an ``AgenticComponentModel`` -- intentionally complete enough to round-trip the
-UNP-style worked example from the thesis milestone (agents in agent
-categories, skills, tools, a permission, agentic edges).
+an ``AgenticComponentModel`` -- complete enough to cover a realistic agent
+swarm (agents in agent categories, skills, tools, a permission, agentic edges).
 """
 
 import pytest

@@ -1,10 +1,16 @@
 """Deployment diagram processing: WME JSON -> DeploymentModel.
 
-Implements 02-... §6. Three-pass walk (nodes / artifacts, containment via
-``owner`` chain, relationships) with the synthetic-Artifact mapping for
-Apollon's ``DeploymentComponent`` (D12), multiplicity parsing from the
-artifact name, and ``DeploymentAssociation`` discrimination on endpoint
-types.
+Three-pass walk: build nodes / artifacts / interfaces, rebuild containment from
+the ``owner`` chain, then build relationships. The editor's
+``DeploymentComponent`` element becomes a ``DeploymentComponent`` (an
+``Artifact`` subclass the generators never deploy), the multiplicity is parsed
+from the artifact name (``"Coder [3]"``), and ``DeploymentAssociation`` is
+discriminated on its endpoint types (Artifact -> Node is a
+``DeploymentRelation``, Node <-> Node a ``CommunicationPath``).
+
+Element or relationship data the metamodel rejects raises ``ConversionError``;
+unknown element types and dangling relationship endpoints are logged and
+skipped, as in the BPMN processor.
 """
 
 import logging
@@ -13,6 +19,7 @@ from typing import Optional
 from besser.BUML.metamodel.uml_deployment import (
     Artifact,
     CommunicationPath,
+    DeploymentComponent,
     DeploymentDependency,
     DeploymentModel,
     DeploymentRelation,
@@ -46,7 +53,8 @@ def process_deployment_diagram(json_data: dict) -> DeploymentModel:
         DeploymentModel: assembled metamodel instance.
 
     Raises:
-        ConversionError: structural failures.
+        ConversionError: structural failures (missing ``model``, an element or
+            relationship the metamodel rejects, a containment cycle).
     """
     if not isinstance(json_data, dict):
         raise ConversionError(
@@ -66,9 +74,9 @@ def process_deployment_diagram(json_data: dict) -> DeploymentModel:
         relationships, nodes_by_id, parsed_multiplicities, owner_links,
     )
 
-    root_nodes = {obj for nid, obj in nodes_by_id.items()
+    root_nodes = {obj for obj in nodes_by_id.values()
                   if isinstance(obj, Node) and obj.parent is None}
-    root_artifacts = {obj for nid, obj in nodes_by_id.items()
+    root_artifacts = {obj for obj in nodes_by_id.values()
                       if isinstance(obj, Artifact) and obj.parent is None}
     interfaces = {obj for obj in nodes_by_id.values() if isinstance(obj, Interface)}
 
@@ -92,12 +100,16 @@ def _build_nodes(elements: dict) -> tuple:
     parsed_multiplicities: dict = {}
     for elem_id, elem in elements.items():
         if not isinstance(elem, dict):
-            logger.warning(
-                "Deployment element %s is not a dict (got %s); skipping.",
-                elem_id, type(elem).__name__,
+            raise ConversionError(
+                f"Deployment element '{elem_id}' must be an object, "
+                f"got {type(elem).__name__}."
             )
-            continue
-        obj, parsed_mult = _build_deployment_node(elem_id, elem)
+        try:
+            obj, parsed_mult = _build_deployment_node(elem_id, elem)
+        except (TypeError, ValueError) as exc:
+            raise ConversionError(
+                f"Could not build Deployment element '{elem_id}': {exc}"
+            ) from exc
         if obj is None:
             continue
         if parsed_mult is not None:
@@ -109,8 +121,8 @@ def _build_nodes(elements: dict) -> tuple:
             "displayStereotype": elem.get("displayStereotype", True),
             "wme_type": elem.get("type"),
         }
-        # Stash the raw name so the emitter can restore exact pre-import string
-        # when multiplicity is the default — Q4 belt-and-suspenders.
+        # Keep the raw name so the converter restores the exact string when
+        # the parsed multiplicity is the default (e.g. "Coder [1]").
         raw_name = elem.get("name") or ""
         if parsed_mult is not None and raw_name != obj.name:
             layout["original_name"] = raw_name
@@ -120,11 +132,11 @@ def _build_nodes(elements: dict) -> tuple:
 
 
 def _build_deployment_node(elem_id: str, elem: dict) -> tuple:
-    """Build a single Node / Artifact / Interface from a WME element dict.
+    """Build a single Node / Artifact / DeploymentComponent / Interface.
 
-    Returns ``(obj, parsed_multiplicity)``. ``DeploymentComponent`` becomes
-    a synthetic ``Artifact`` per D12; its WME id rides in ``manifests`` so
-    the cross-diagram reference round-trips.
+    Returns ``(obj, parsed_multiplicity)``. ``manifests`` (ids of the
+    Components an Artifact manifests) and ``agentModelRef`` (the Agent diagram
+    an Artifact deploys) are read from the element as the editor wrote them.
     """
     elem_type = elem.get("type")
     raw_name = elem.get("name") or ""
@@ -138,22 +150,14 @@ def _build_deployment_node(elem_id: str, elem: dict) -> tuple:
     if elem_type == "DeploymentInterface":
         return Interface(name=raw_name), None
 
-    if elem_type == "DeploymentArtifact":
+    if elem_type in ("DeploymentArtifact", "DeploymentComponent"):
+        artifact_class = Artifact if elem_type == "DeploymentArtifact" else DeploymentComponent
         clean_name, mult = parse_from_name(raw_name)
-        # 6b-2 — WME stamps the Agent-diagram UUID as `agentModelRef`
-        # (guide 33 / full-via-Artifact). Absent on non-agent artifacts.
-        agent_model_ref = elem.get("agentModelRef")
-        artifact = Artifact(name=clean_name, agent_model_ref=agent_model_ref)
-        apply_artifact_stereotype_tokens(artifact, stereotype)
-        return artifact, mult
-
-    if elem_type == "DeploymentComponent":
-        # D12: synthetic Artifact representing the Component, the
-        # original Component id lives in manifests (the cross-diagram link).
-        clean_name, mult = parse_from_name(raw_name)
-        agent_model_ref = elem.get("agentModelRef")
-        artifact = Artifact(name=clean_name, manifests=[elem_id],
-                            agent_model_ref=agent_model_ref)
+        artifact = artifact_class(
+            name=clean_name,
+            manifests=elem.get("manifests") or [],
+            agent_model_ref=elem.get("agentModelRef"),
+        )
         apply_artifact_stereotype_tokens(artifact, stereotype)
         return artifact, mult
 
@@ -168,13 +172,11 @@ def _reconstruct_containment(elements: dict, nodes_by_id: dict) -> dict:
 
     Returns ``{artifact_id: node_id}`` for every artifact-on-node owner link,
     so Pass 3 can deduplicate against explicit ``DeploymentAssociation``
-    edges (Appendix B.2 rule: owner-link and explicit edge express the
-    same deployment; emit only one ``DeploymentRelation``).
+    edges (an owner link and an explicit edge express the same deployment;
+    only one ``DeploymentRelation`` is emitted).
     """
     owner_links: dict = {}
     for elem_id, elem in elements.items():
-        if not isinstance(elem, dict):
-            continue
         child = nodes_by_id.get(elem_id)
         if child is None:
             continue
@@ -193,16 +195,15 @@ def _reconstruct_containment(elements: dict, nodes_by_id: dict) -> dict:
             parent.add_artifact(child)
             owner_links[elem_id] = owner_id
         elif isinstance(child, Node) and isinstance(parent, Node):
-            if child is parent:
-                logger.warning(
-                    "Deployment node %s claims itself as owner; treating as root.",
-                    elem_id,
-                )
-                continue
-            parent.add_nested_node(child)
+            try:
+                parent.add_nested_node(child)
+            except ValueError as exc:
+                raise ConversionError(
+                    f"Deployment node '{elem_id}' cannot be nested in '{owner_id}': {exc}"
+                ) from exc
         elif isinstance(child, Interface):
-            # Interfaces are model-root in the metamodel — drop the
-            # containment link silently.
+            # Interfaces live on the model root; the drawn owner is layout only
+            # (kept in ``layout["owner"]``).
             continue
         else:
             logger.warning(
@@ -217,17 +218,17 @@ def _build_relationships(relationships: dict, nodes_by_id: dict,
                          parsed_multiplicities: dict, owner_links: dict) -> list:
     """Pass 3 — build relationship objects, discriminating
     ``DeploymentAssociation`` by endpoint type, applying parsed multiplicity
-    on ``DeploymentRelation``, and dedup'ing against owner-link synthesis.
+    on ``DeploymentRelation``, and deduplicating against owner links.
     """
     out: list = []
     explicit_artifact_on_node: set = set()  # (artifact_id, node_id) pairs
 
     for rel_id, rel in relationships.items():
         if not isinstance(rel, dict):
-            logger.warning(
-                "Deployment relationship %s is not a dict; skipping.", rel_id,
+            raise ConversionError(
+                f"Deployment relationship '{rel_id}' must be an object, "
+                f"got {type(rel).__name__}."
             )
-            continue
         source_id = (rel.get("source") or {}).get("element")
         target_id = (rel.get("target") or {}).get("element")
         source = nodes_by_id.get(source_id)
@@ -241,15 +242,12 @@ def _build_relationships(relationships: dict, nodes_by_id: dict,
             continue
         try:
             obj = _build_deployment_relationship(
-                rel_id, rel, source, target, source_id, target_id,
-                parsed_multiplicities,
+                rel_id, rel, source, target, source_id, parsed_multiplicities,
             )
         except (TypeError, ValueError) as exc:
-            logger.warning(
-                "Deployment relationship %s failed to construct (%s); skipping.",
-                rel_id, exc,
-            )
-            continue
+            raise ConversionError(
+                f"Could not build Deployment relationship '{rel_id}': {exc}"
+            ) from exc
         if obj is None:
             continue
         if isinstance(obj, DeploymentRelation):
@@ -272,22 +270,10 @@ def _build_relationships(relationships: dict, nodes_by_id: dict,
     for artifact_id, node_id in owner_links.items():
         if (artifact_id, node_id) in explicit_artifact_on_node:
             continue
-        artifact = nodes_by_id.get(artifact_id)
-        node = nodes_by_id.get(node_id)
-        if not isinstance(artifact, Artifact) or not isinstance(node, Node):
-            continue
-        mult = parsed_multiplicities.get(artifact_id)
-        try:
-            rel = DeploymentRelation(
-                source=artifact, target=node, multiplicity=mult,
-            )
-        except (TypeError, ValueError) as exc:
-            logger.warning(
-                "Synthesised DeploymentRelation for artifact %s on node %s "
-                "failed (%s); skipping.",
-                artifact_id, node_id, exc,
-            )
-            continue
+        rel = DeploymentRelation(
+            source=nodes_by_id[artifact_id], target=nodes_by_id[node_id],
+            multiplicity=parsed_multiplicities.get(artifact_id),
+        )
         rel.layout = {"wme_origin": "owner"}
         out.append(rel)
 
@@ -296,36 +282,40 @@ def _build_relationships(relationships: dict, nodes_by_id: dict,
 
 def _build_deployment_relationship(
     rel_id: str, rel: dict, source, target,
-    source_id: str, target_id: str, parsed_multiplicities: dict,
+    source_id: str, parsed_multiplicities: dict,
 ) -> Optional[DeploymentRelationship]:
     """Build one relationship object from a WME edge dict.
 
-    Branches on ``rel["type"]`` and (for ``DeploymentAssociation``) on the
-    endpoint types per §3.6.1.
+    Branches on ``rel["type"]`` and, for ``DeploymentAssociation``, on the
+    endpoint types. The free-form ``stereotype`` string is kept as the
+    relationship's ``stereotypes`` (whitespace-separated) so it round-trips.
     """
     rel_type = rel.get("type")
     name = rel.get("name") or ""
+    stereotypes = (rel.get("stereotype") or "").split()
 
     if rel_type == "DeploymentDependency":
-        return DeploymentDependency(source=source, target=target, name=name)
+        return DeploymentDependency(source=source, target=target, name=name,
+                                    stereotypes=stereotypes)
     if rel_type == "DeploymentInterfaceProvided":
-        return InterfaceProvided(source=source, target=target, name=name)
+        return InterfaceProvided(source=source, target=target, name=name,
+                                 stereotypes=stereotypes)
     if rel_type == "DeploymentInterfaceRequired":
-        return InterfaceRequired(source=source, target=target, name=name)
+        return InterfaceRequired(source=source, target=target, name=name,
+                                 stereotypes=stereotypes)
     if rel_type == "DeploymentAssociation":
         if isinstance(source, Artifact) and isinstance(target, Node):
-            mult = parsed_multiplicities.get(source_id)
             return DeploymentRelation(
-                source=source, target=target, multiplicity=mult, name=name,
+                source=source, target=target, name=name, stereotypes=stereotypes,
+                multiplicity=parsed_multiplicities.get(source_id),
             )
         if isinstance(source, Node) and isinstance(target, Node):
-            return CommunicationPath(source=source, target=target, name=name)
-        logger.warning(
-            "DeploymentAssociation %s has unsupported endpoint types: "
-            "%s -> %s; skipping.",
-            rel_id, type(source).__name__, type(target).__name__,
+            return CommunicationPath(source=source, target=target, name=name,
+                                     stereotypes=stereotypes)
+        raise ConversionError(
+            f"DeploymentAssociation '{rel_id}' must connect Artifact -> Node or "
+            f"Node -> Node, got {type(source).__name__} -> {type(target).__name__}."
         )
-        return None
 
     logger.warning(
         "Deployment relationship %s has unknown type %r; skipping.",

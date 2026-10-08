@@ -1172,6 +1172,36 @@ from besser.utilities.buml_code_builder.project_builder import project_to_code
 class TestProjectBuilder:
     """Tests for project_to_code."""
 
+    def test_two_component_and_two_deployment_models_with_relationships_exec(self, tmp_path):
+        """Each diagram's relationships attach to its own suffixed model variable."""
+        from besser.BUML.metamodel.uml_component import Component, ComponentDependency
+        from besser.BUML.metamodel.uml_deployment import Artifact, DeploymentRelation, Node
+
+        def component_model(label):
+            a, b = Component(name=f"{label}A"), Component(name=f"{label}B")
+            return ComponentModel(name=label, components={a, b},
+                                  relationships={ComponentDependency(source=a, target=b)})
+
+        def deployment_model(label):
+            node, artifact = Node(name=f"{label}Host"), Artifact(name=f"{label}App")
+            return DeploymentModel(name=label, nodes={node}, artifacts={artifact},
+                                   relationships={DeploymentRelation(source=artifact, target=node)})
+
+        project = Project(
+            name="Multi",
+            models=[component_model("C1"), component_model("C2"),
+                    deployment_model("D1"), deployment_model("D2")],
+            owner="tester", metadata=Metadata(description="d"),
+        )
+        file_path = str(tmp_path / "project.py")
+        project_to_code(project, file_path)
+        with open(file_path, encoding="utf-8") as f:
+            namespace: dict = {}
+            exec(f.read(), namespace)
+        for var in ("component_model_1", "component_model_2",
+                    "deployment_model_1", "deployment_model_2"):
+            assert len(namespace[var].relationships) == 1, var
+
     @staticmethod
     def _build_simple_project():
         """Build a minimal project with one domain model."""

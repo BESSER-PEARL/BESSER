@@ -52,6 +52,19 @@ Find what you need
    Start with :doc:`the release notes <releases/v8/v8.0.0>` and
    :doc:`the migration guide <releases/v8/migration>`.
 
+Related documentation
+---------------------
+
+This site is one of three BESSER documentation sites. The other two are:
+
+* `Web Modeling Editor docs
+  <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/>`__:
+  using the browser editor, from projects and diagrams to the AI assistant and
+  code generation.
+* `Modeling Agent docs <https://modeling-agent.readthedocs.io/en/latest/>`__:
+  running, configuring, and extending the service behind the editor's AI
+  assistant.
+
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -72,3 +85,10 @@ Find what you need
    contributing/index
    releases
    about
+
+.. toctree::
+   :hidden:
+   :caption: Related documentation
+
+   Web Modeling Editor docs <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/>
+   Modeling Agent docs <https://modeling-agent.readthedocs.io/en/latest/>

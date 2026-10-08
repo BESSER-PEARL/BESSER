@@ -79,7 +79,7 @@ def _isolate_artifacts(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Wire-shape fixtures (mirror the converter unit-test fixtures / D7 exports)
+# Wire-shape fixtures (mirror the converter unit-test fixtures)
 # ---------------------------------------------------------------------------
 
 def _component_diagram() -> dict:

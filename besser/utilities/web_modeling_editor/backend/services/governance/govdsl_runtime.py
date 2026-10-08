@@ -137,8 +137,8 @@ def _build_instruction(summary: dict):
         facts.append(f"Decision type: {summary['decision_type']}.")
     human_summary = "\n".join(facts)
     if summary["policy_type"] in _VOTING_POLICY_TYPES:
-        # Voting policies are normally resolved by the deterministic in-container tally
-        #; this directive only steers the LLM on the degraded fallback path
+        # Voting policies are normally resolved by the deterministic in-container tally;
+        # this directive only steers the LLM on the degraded fallback path
         # (no producer resolved to a service), where an auditable vote narrative is the
         # best available audit trail.
         directive = (
@@ -175,7 +175,7 @@ def summarize_governance(dsl_text):
     policies = _parse_policies(_strip_comments(dsl_text))
     if len(policies) > 1:
         logger.warning(
-            "[governance] %d policies parsed from one gateway's DSL; v1 wires only the first (%s)",
+            "[governance] %d policies parsed from one gateway's DSL; only the first (%s) is wired",
             len(policies),
             type(policies[0]).__name__,
         )

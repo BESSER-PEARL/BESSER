@@ -6,16 +6,12 @@ modified and remains valid vanilla UML 2.5 modelling on its own. This mirrors
 the BPMN track's ``bpmn/bpmn.py`` (base) + ``bpmn/agentic.py`` (extension)
 split.
 
-Implements the design in ``.claude/component-deployment/01-...`` (decision D3,
-the hybrid stereotype profile) as restructured by ``04-...`` (2026-05-20): the
-profile was originally baked into ``uml_component.py``; ``04-`` extracted it
-here so the base is citable as pure UML.
+Keeping the profile here leaves ``uml_component.py`` citable as pure UML.
 
 Adds:
 
 * ``AgenticComponent`` -- a ``Component`` that is an agent (carries an
-  ``agent_category`` role and ``process_model_refs`` cross-diagram links to
-  the BPMN processes it participates in).
+  ``agent_category`` role).
 * ``Skill`` / ``Tool`` -- agent capabilities (plain ``Component`` subclasses;
   agentic-notation vocabulary).
 * ``Permission`` -- an authority carried on an ``AgenticEdge``.
@@ -32,6 +28,7 @@ the JSON converters stay a string-passthrough.
 from enum import Enum
 from typing import List
 
+from besser.BUML.metamodel._checks import checked_set
 from besser.BUML.metamodel.uml_component.uml_component import (
     Component,
     ComponentDependency,
@@ -41,36 +38,8 @@ from besser.BUML.metamodel.uml_component.uml_component import (
 
 
 # ---------------------------------------------------------------------------
-# Module-private helpers (duplicated from uml_component.py so this extension
-# module is self-contained -- mirrors the uml_deployment.py precedent)
-# ---------------------------------------------------------------------------
-
-def _checked_set(values, expected_type, label: str) -> set:
-    """Coerce ``values`` to a set, raising TypeError if any element is not ``expected_type``."""
-    result = set(values)
-    for value in result:
-        if not isinstance(value, expected_type):
-            raise TypeError(
-                f"{label} must contain {expected_type.__name__} instances, "
-                f"got {type(value).__name__}"
-            )
-    return result
-
-
-def _checked_str_list(values, label: str) -> List[str]:
-    """Coerce ``values`` to a list of str, raising TypeError on a non-str entry."""
-    result = list(values)
-    for value in result:
-        if not isinstance(value, str):
-            raise TypeError(
-                f"{label} must contain str entries, got {type(value).__name__}"
-            )
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Enumerations (decision D3 -- plain enum.Enum; .value strings match the WME
-# stereotype strings so converters can map by value)
+# Enumerations (plain enum.Enum; .value strings match the WME stereotype
+# strings so converters can map by value)
 # ---------------------------------------------------------------------------
 
 class AgentCategory(Enum):
@@ -96,7 +65,7 @@ class AgenticEdgeKind(Enum):
     """The kind of an ``AgenticEdge`` -- a typed dependency between agents
     and / or capabilities.
 
-    Agent <-> agent kinds (carry permissions per A-4 of the requirements review)::
+    Agent <-> agent kinds (may carry permissions)::
         DELEGATES, SUPERVISES, REVISES, COLLABORATES
 
     Agent -> capability kinds::
@@ -125,45 +94,44 @@ _AGENT_TO_AGENT_KINDS = frozenset({
 
 
 # ---------------------------------------------------------------------------
-# Agentic components (decision D11, restructured by 04- -- the agent profile
-# is an AgenticComponent subclass rather than fields on the base Component)
+# Agentic components (the agent profile is an AgenticComponent subclass
+# rather than fields on the base Component)
 # ---------------------------------------------------------------------------
 
 class AgenticComponent(Component):
     """An agent in a collaborative-agent swarm.
 
-    A ``Component`` carrying the agentic profile (decision D3 typed-slot
-    carriers). The base ``Component`` is pure UML 2.5; ``AgenticComponent``
-    adds the swarm intent: an agent role and cross-diagram references to the
-    BPMN processes the agent participates in.
+    A ``Component`` carrying the agentic profile as typed slots. The base
+    ``Component`` is pure UML 2.5; ``AgenticComponent`` adds the swarm intent:
+    an agent role. The cross-diagram links (``process_model_refs``,
+    ``agent_model_ref``) are inherited from ``Component``.
 
     Args:
         name (str): The component label.
         agent_category (AgentCategory): The agent's role. ``NONE`` (default)
             means "agent, role not yet specified".
-        process_model_refs (List[str]): Cross-diagram IDs of BPMN ``Process`` es
-            this agent participates in (D3 drill-down). Default ``[]``.
-        locality, realizes, stereotypes, layout, metadata, timestamp: Inherited
-            from ``Component``.
+        process_model_refs (List[str]): Cross-diagram IDs of the BPMN diagrams
+            this agent participates in. Default ``[]``.
+        locality, realizes, agent_model_ref, stereotypes, layout, metadata,
+            timestamp: Inherited from ``Component``.
 
     Attributes:
         agent_category (AgentCategory): The agent role.
-        process_model_refs (List[str]): Cross-diagram BPMN Process IDs.
     """
 
     def __init__(self, name: str = "", agent_category: AgentCategory = None,
                  process_model_refs: List[str] = None,
                  locality=None, realizes: List[str] = None,
                  stereotypes: List[str] = None, layout: dict = None,
-                 metadata=None, timestamp=None):
+                 metadata=None, timestamp=None, agent_model_ref: str = None):
         super().__init__(name=name, locality=locality, realizes=realizes,
                          stereotypes=stereotypes, layout=layout,
-                         metadata=metadata, timestamp=timestamp)
+                         metadata=metadata, timestamp=timestamp,
+                         process_model_refs=process_model_refs,
+                         agent_model_ref=agent_model_ref)
         self.agent_category = (agent_category
                                if agent_category is not None
                                else AgentCategory.NONE)
-        self.process_model_refs = (process_model_refs
-                                   if process_model_refs is not None else [])
 
     @property
     def agent_category(self) -> AgentCategory:
@@ -184,54 +152,38 @@ class AgenticComponent(Component):
             )
         self.__agent_category = agent_category
 
-    @property
-    def process_model_refs(self) -> List[str]:
-        """List[str]: Cross-diagram IDs of BPMN Processes this agent participates in."""
-        return self.__process_model_refs
-
-    @process_model_refs.setter
-    def process_model_refs(self, process_model_refs: List[str]):
-        """List[str]: Set the cross-diagram BPMN Process IDs.
-
-        Raises:
-            TypeError: if not a list of str.
-        """
-        self.__process_model_refs = _checked_str_list(
-            process_model_refs, "process_model_refs"
-        )
-
 
 class Skill(Component):
-    """A capability an agent can exercise (per supervisor directive D1).
+    """A capability an agent can exercise.
 
     A plain ``Component`` (not an agent -- it carries no agentic profile);
-    subclassed for typed ``isinstance`` checks and future generator targeting
-    (NR-4: skill -> workspace artifact at code-gen time). It is part of the
-    agentic-notation vocabulary, hence its home in ``agentic.py``.
+    subclassed for typed ``isinstance`` checks and generator targeting. It is
+    part of the agentic-notation vocabulary, hence its home in ``agentic.py``.
     """
 
 
 class Tool(Component):
-    """A concrete external integration an agent can call (per directive D1).
+    """A concrete external integration an agent can call.
 
     Like ``Skill``, a plain ``Component`` -- a capability, not an agent.
     """
 
 
 class LLM(Tool):
-    """A large-language-model capability an agent calls (meeting 2026-06-08 §5).
+    """A large-language-model capability an agent calls.
 
-    A ``Tool`` subclass: an LLM is "tool-like" (O4) so an agent reaches it by an
-    ``AgenticEdge[USES]`` exactly like any Tool. Derived by the WME BPMN→Component
-    transform from an agent-state body whose ``replyType == 'llm'``. Bare (no model
-    id) -- WME is C-lite; provider selection is future Component-side work.
+    A ``Tool`` subclass: an LLM is tool-like, so an agent reaches it by an
+    ``AgenticEdge[USES]`` exactly like any Tool. Derived by the web editor's
+    BPMN-to-Component transform from an agent-state body whose
+    ``replyType == 'llm'``. It carries no model id; provider selection is not
+    modelled on the Component view.
     """
 
 
 class Database(Tool):
     """A database an agent queries (agent-state body ``replyType == 'db_reply'``).
 
-    A ``Tool`` subclass (O4 "tool-like, edge = uses"). The Component name carries
+    A ``Tool`` subclass (reached by a «uses» edge). The Component name carries
     the DB's custom name (WME ``dbCustomName``); query mode / operation are not
     modelled on the Component view.
     """
@@ -241,18 +193,18 @@ class RAG(Tool):
     """A retrieval-augmented-generation store an agent reads (agent-state body
     ``replyType == 'rag'``).
 
-    A ``Tool`` subclass (O4). The Component name carries the RAG database name
+    A ``Tool`` subclass. The Component name carries the RAG database name
     (WME ``ragDatabaseName``).
     """
 
 
 # ---------------------------------------------------------------------------
-# Permission (per A-4 of the requirements review -- a separate ComponentElement)
+# Permission (a separate ComponentElement)
 # ---------------------------------------------------------------------------
 
 class Permission(ComponentElement):
     """A named permission token -- an authority a Component may carry on an
-    ``AgenticEdge`` (per A-4 of the requirements review).
+    ``AgenticEdge``.
 
     Not a ``Component`` subclass: it never appears as a Component-typed
     endpoint of an ``InterfaceProvided`` / ``InterfaceRequired`` / plain
@@ -299,7 +251,7 @@ class Permission(ComponentElement):
 def _is_agent_endpoint(component) -> bool:
     """True if ``component`` is a valid agent endpoint for an ``AgenticEdge``.
 
-    Post-04- (the base/agentic split): an agent *is* an ``AgenticComponent``.
+    An agent *is* an ``AgenticComponent``.
     """
     return isinstance(component, AgenticComponent)
 
@@ -309,10 +261,9 @@ def _is_agent_endpoint(component) -> bool:
 # ---------------------------------------------------------------------------
 
 class AgenticEdge(ComponentDependency):
-    """A typed agentic dependency between agents and / or capabilities (decision
-    D11 / Q11=c).
+    """A typed agentic dependency between agents and / or capabilities.
 
-    The eight kinds (``AgenticEdgeKind``) cover the supervisor's directive D1
+    The eight kinds (``AgenticEdgeKind``) cover the agent-to-agent
     edge set (``«delegates»``, ``«supervises»``, ``«revises»``, ``«collaborates»``),
     the agent -> capability wiring (``«has»``, ``«uses»``, ``«granted»``) and the
     capability composition (``«implements»``).
@@ -515,7 +466,7 @@ class AgenticComponentModel(ComponentModel):
         Raises:
             TypeError: if any element is not a Permission.
         """
-        self.__permissions = _checked_set(permissions, Permission, "permissions")
+        self.__permissions = checked_set(permissions, Permission, "permissions")
 
     def add_permission(self, permission: "Permission"):
         """Add a permission.
@@ -640,7 +591,7 @@ class AgenticComponentModel(ComponentModel):
 
         W1: AgenticComponent with zero outgoing «has» / «uses» edges.
         W2: AgenticComponent with no process_model_refs.
-        W3: non-agent-to-agent edge carrying non-empty permissions (NR-3).
+        W3: non-agent-to-agent edge carrying non-empty permissions.
         """
         # Build outgoing-by-kind index.
         outgoing_by_kind: dict = {}

@@ -3,7 +3,7 @@
 
 The agentic-extension tests (``AgenticComponent`` / ``Skill`` / ``Tool`` /
 ``Permission`` / ``AgenticEdge`` / ``AgenticComponentModel``) live in
-``test_agentic.py`` after the ``04-`` base/agentic split.
+``test_agentic.py`` after the base/agentic split.
 
 Groups:
 
@@ -28,7 +28,7 @@ from besser.BUML.metamodel.uml_component import (
 # ---------------------------------------------------------------------------
 
 def test_free_text_names_are_accepted():
-    """D9 -- Component labels are free text: spaces, empty, None coerced."""
+    """Component labels are free text: spaces, empty, None coerced."""
     assert Component("Code Tester").name == "Code Tester"
     assert Component("Review & approve").name == "Review & approve"
     assert Component("").name == ""
@@ -55,10 +55,21 @@ def test_subsystem_is_a_component():
 
 
 def test_base_component_has_no_agentic_fields():
-    """04- split: agentic fields live on AgenticComponent, not base Component."""
+    """The agent role lives on AgenticComponent; cross-diagram links live on the base."""
     c = Component("c")
     assert not hasattr(c, "agent_category")
-    assert not hasattr(c, "process_model_refs")
+    assert c.process_model_refs == []
+    assert c.agent_model_ref is None
+
+
+def test_base_component_cross_diagram_refs_are_type_checked():
+    c = Component("c", process_model_refs=["bpmn-1"], agent_model_ref="agent-1")
+    assert c.process_model_refs == ["bpmn-1"]
+    assert c.agent_model_ref == "agent-1"
+    with pytest.raises(TypeError):
+        Component("c", process_model_refs=[1])
+    with pytest.raises(TypeError):
+        Component("c", agent_model_ref=1)
 
 
 def test_locality_is_type_checked():
@@ -292,3 +303,32 @@ def test_named_element_is_compatible_with_component_element():
     assert isinstance(c, ComponentElement)
     assert c.visibility == "public"
     assert c.metadata is None
+
+
+# ---------------------------------------------------------------------------
+# Containment cycles
+# ---------------------------------------------------------------------------
+
+def test_subsystem_cannot_contain_itself_or_an_ancestor():
+    outer, inner = Subsystem("outer"), Subsystem("inner")
+    with pytest.raises(ValueError):
+        outer.add_child(outer)
+    outer.add_child(inner)
+    with pytest.raises(ValueError):
+        inner.add_child(outer)
+    with pytest.raises(ValueError):
+        inner.children = {outer}
+    with pytest.raises(ValueError):
+        outer.parent = inner
+    assert outer.parent is None
+
+
+def test_validate_collects_a_subsystem_cycle_wired_through_private_slots():
+    outer, inner = Subsystem("outer"), Subsystem("inner")
+    outer.add_child(inner)
+    inner._Subsystem__children.add(outer)
+    model = ComponentModel("m", components={outer})
+    assert model.all_components() == {outer, inner}
+    result = model.validate(raise_exception=False)
+    assert not result["success"]
+    assert any("nested inside itself" in error for error in result["errors"])

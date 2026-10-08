@@ -1,4 +1,4 @@
-"""Tests for the Component model code builder (03-... §9.A).
+"""Tests for the Component model code builder.
 
 Covers exec round-trip, AgenticEdge with permissions, Subsystem children,
 Skill/Tool subtype promotion, layout passthrough, cross-diagram-ref
@@ -152,7 +152,7 @@ class TestComponentModelBuilder:
         c = Component(name="X")
         model = ComponentModel(name="m", components={c})
         source = component_model_to_code(model)
-        # Q1=(a) — line is omitted entirely when the list is empty.
+        # line is omitted entirely when the list is empty.
         assert ".realizes = " not in source
         assert ".process_model_refs = " not in source
 
@@ -228,3 +228,37 @@ class TestComponentModelBuilder:
                       if isinstance(r, AgenticEdge)
                       and r.kind is AgenticEdgeKind.USES]
         assert len(uses_edges) == 3
+
+
+class TestComponentBuilderVariableNames:
+    def test_custom_model_var_name_is_used_for_relationships(self):
+        a, b = Component(name="A"), Component(name="B")
+        model = ComponentModel(name="M", components={a, b},
+                               relationships={ComponentDependency(source=a, target=b)})
+        source = component_model_to_code(model, model_var_name="component_model_2")
+        namespace: dict = {}
+        exec(source, namespace)
+        assert "component_model" not in namespace
+        assert len(namespace["component_model_2"].relationships) == 1
+
+    def test_component_named_model_does_not_shadow_the_model_variable(self):
+        model = ComponentModel(name="M", components={Component(name="model")})
+        rebuilt = _exec_and_get_model(component_model_to_code(model))
+        assert isinstance(rebuilt, ComponentModel)
+        assert [c.name for c in rebuilt.components] == ["model"]
+
+    def test_children_reachable_only_through_a_subsystem_are_emitted(self):
+        child = Component(name="Inner")
+        subsystem = Subsystem(name="Outer", children={child})
+        model = ComponentModel(name="M", components={subsystem})
+        rebuilt = _exec_and_get_model(component_model_to_code(model))
+        assert [c.name for c in rebuilt.components] == ["Outer"]
+        (outer,) = rebuilt.components
+        assert [c.name for c in outer.children] == ["Inner"]
+
+    def test_cross_diagram_refs_round_trip_on_plain_components(self):
+        c = Component(name="Human", realizes=["cls-1"],
+                      process_model_refs=["bpmn-1"], agent_model_ref="agent-1")
+        rebuilt = _exec_and_get_model(component_model_to_code(ComponentModel(name="M", components={c})))
+        (r,) = rebuilt.components
+        assert (r.realizes, r.process_model_refs, r.agent_model_ref) == (["cls-1"], ["bpmn-1"], "agent-1")

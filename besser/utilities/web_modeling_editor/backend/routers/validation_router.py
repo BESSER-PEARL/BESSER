@@ -32,6 +32,7 @@ from besser.utilities.web_modeling_editor.backend.constants.user_buml_model impo
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     BPMN_DIAGRAM_TYPE,
+    DEPLOYMENT_DIAGRAM_TYPE,
 )
 
 # Backend services - Validators
@@ -193,30 +194,13 @@ async def validate_diagram(input_data: DiagramInput):
                 "warnings": []
             }
 
-        elif diagram_type == "ComponentDiagram":
-            try:
-                component_model = process_component_diagram(input_data.model_dump())
-            except ValueError as e:
-                validation_errors.extend(str(e).splitlines())
-            else:
-                if component_model is not None:
-                    cm_validation = component_model.validate(raise_exception=False)
-                    validation_errors.extend(cm_validation["errors"])
-                    validation_warnings.extend(cm_validation["warnings"])
-
-        elif diagram_type == "DeploymentDiagram":
-            try:
-                deployment_model = process_deployment_diagram(input_data.model_dump())
-            except ValueError as e:
-                validation_errors.extend(str(e).splitlines())
-            else:
-                if deployment_model is not None:
-                    dm_validation = deployment_model.validate(raise_exception=False)
-                    validation_errors.extend(dm_validation["errors"])
-                    validation_warnings.extend(dm_validation["warnings"])
-
-        elif diagram_type == "BPMNDiagram":
-            process_bpmn_diagram(input_data.model_dump())
+        elif diagram_type in ("ComponentDiagram", DEPLOYMENT_DIAGRAM_TYPE):
+            # Conversion and construction errors are collected by the handlers below.
+            processor = (process_component_diagram if diagram_type == "ComponentDiagram"
+                         else process_deployment_diagram)
+            result = processor(input_data.model_dump()).validate(raise_exception=False)
+            validation_errors.extend(result["errors"])
+            validation_warnings.extend(result["warnings"])
 
         else:
             return {

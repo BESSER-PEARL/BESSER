@@ -32,51 +32,22 @@ from besser.BUML.metamodel.bpmn import (
     Transaction,
 )
 from besser.utilities.buml_code_builder.common import (
+    NameDispenser,
     _comment_safe,
     _escape_python_string,
     buml_header,
-    safe_var_name,
 )
 from besser.utilities.utils import sort_by_timestamp
-
-# ---------------------------------------------------------------------------
-# Variable name dispenser
-# ---------------------------------------------------------------------------
-
-class _NameDispenser:
-    """Mints a unique Python variable name per metamodel object.
-
-    BPMN names can be empty, repeated, or whitespace-only; identity is by object.
-    The dispenser combines the metamodel class name with a sanitised version
-    of ``obj.name`` and a numeric suffix when needed, then caches the result so all
-    later references (e.g. flow endpoints) resolve to the same identifier.
-    """
-
-    def __init__(self):
-        self._used: set = set()
-        self._for_obj: dict = {}
-
-    def name_for(self, obj) -> str:
-        if obj in self._for_obj:
-            return self._for_obj[obj]
-        prefix = type(obj).__name__.lower()
-        base = safe_var_name(obj.name, lowercase=True) or prefix
-        candidate = prefix if base == prefix else f"{prefix}_{base}"
-        suffix = 1
-        while candidate in self._used:
-            candidate = f"{prefix}_{base}_{suffix}"
-            suffix += 1
-        self._used.add(candidate)
-        self._for_obj[obj] = candidate
-        return candidate
 
 # ---------------------------------------------------------------------------
 # Constructor emitters — one per concrete metamodel class
 # ---------------------------------------------------------------------------
 
+
 def _quoted(value: str) -> str:
     """Single-quoted, escape-safe Python string literal for an arbitrary value."""
     return f"'{_escape_python_string(value or '')}'"
+
 
 def _emit_layout_if_present(obj, var: str, body: list) -> None:
     """Emit ``<var>.layout = {...}`` when the object carries a non-empty layout dict.
@@ -89,7 +60,8 @@ def _emit_layout_if_present(obj, var: str, body: list) -> None:
     if getattr(obj, "layout", None):
         body.append(f"{var}.layout = {repr(obj.layout)}")
 
-def _emit_flow_node(node, container_var: str, dispenser: _NameDispenser,
+
+def _emit_flow_node(node, container_var: str, dispenser: NameDispenser,
                     body: list, needed: set) -> str:
     """Emit the constructor + ``add_flow_node`` call for one flow node.
 
@@ -103,6 +75,9 @@ def _emit_flow_node(node, container_var: str, dispenser: _NameDispenser,
         ref_kwarg = ""
         if node.agent_diagram_ref is not None:
             ref_kwarg = f", agent_diagram_ref={_quoted(node.agent_diagram_ref)}"
+        if node.reflection_reviewer_lane_id is not None:
+            ref_kwarg += (f", reflection_reviewer_lane_id="
+                          f"{_quoted(node.reflection_reviewer_lane_id)}")
         body.append(
             f"{var} = AgenticTask(name={_quoted(node.name)}, "
             f"task_type=TaskType.{node.task_type.name}, "
@@ -184,7 +159,8 @@ def _emit_flow_node(node, container_var: str, dispenser: _NameDispenser,
     body.append(f"{container_var}.add_flow_node({var})")
     return var
 
-def _emit_artifact(artifact, process_var: str, dispenser: _NameDispenser,
+
+def _emit_artifact(artifact, process_var: str, dispenser: NameDispenser,
                    body: list, needed: set) -> str:
     var = dispenser.name_for(artifact)
     if isinstance(artifact, TextAnnotation):
@@ -204,7 +180,8 @@ def _emit_artifact(artifact, process_var: str, dispenser: _NameDispenser,
     body.append(f"{process_var}.add_artifact({var})")
     return var
 
-def _emit_data_object(data_object, process_var: str, dispenser: _NameDispenser,
+
+def _emit_data_object(data_object, process_var: str, dispenser: NameDispenser,
                       body: list, needed: set) -> str:
     var = dispenser.name_for(data_object)
     needed.add("DataObject")
@@ -213,7 +190,8 @@ def _emit_data_object(data_object, process_var: str, dispenser: _NameDispenser,
     body.append(f"{process_var}.add_data_object({var})")
     return var
 
-def _emit_lane(lane, process_var: str, dispenser: _NameDispenser,
+
+def _emit_lane(lane, process_var: str, dispenser: NameDispenser,
                body: list, needed: set) -> str:
     """Emit a Lane constructor + ``add_lane`` + an ``add_flow_node`` per member."""
     var = dispenser.name_for(lane)
@@ -241,8 +219,9 @@ def _emit_lane(lane, process_var: str, dispenser: _NameDispenser,
         body.append(f"{var}.add_flow_node({member_var})")
     return var
 
+
 def _emit_sequence_flow(flow: SequenceFlow, container_var: str,
-                        dispenser: _NameDispenser, body: list, needed: set) -> None:
+                        dispenser: NameDispenser, body: list, needed: set) -> None:
     needed.add("SequenceFlow")
     src = dispenser.name_for(flow.source)
     tgt = dispenser.name_for(flow.target)
@@ -254,8 +233,9 @@ def _emit_sequence_flow(flow: SequenceFlow, container_var: str,
     ctor = f"SequenceFlow({', '.join(parts)})"
     _emit_connecting_object(flow, ctor, container_var, "add_sequence_flow", dispenser, body)
 
+
 def _emit_association(flow: Association, process_var: str,
-                      dispenser: _NameDispenser, body: list, needed: set) -> None:
+                      dispenser: NameDispenser, body: list, needed: set) -> None:
     needed.add("Association")
     src = dispenser.name_for(flow.source)
     tgt = dispenser.name_for(flow.target)
@@ -265,8 +245,9 @@ def _emit_association(flow: Association, process_var: str,
     ctor = f"Association({', '.join(parts)})"
     _emit_connecting_object(flow, ctor, process_var, "add_association", dispenser, body)
 
+
 def _emit_data_association(flow: DataAssociation, process_var: str,
-                           dispenser: _NameDispenser, body: list, needed: set) -> None:
+                           dispenser: NameDispenser, body: list, needed: set) -> None:
     needed.add("DataAssociation")
     src = dispenser.name_for(flow.source)
     tgt = dispenser.name_for(flow.target)
@@ -276,7 +257,8 @@ def _emit_data_association(flow: DataAssociation, process_var: str,
     ctor = f"DataAssociation({', '.join(parts)})"
     _emit_connecting_object(flow, ctor, process_var, "add_data_association", dispenser, body)
 
-def _emit_message_flow(flow: MessageFlow, dispenser: _NameDispenser,
+
+def _emit_message_flow(flow: MessageFlow, dispenser: NameDispenser,
                        body: list, needed: set) -> None:
     src = dispenser.name_for(flow.source)
     tgt = dispenser.name_for(flow.target)
@@ -287,8 +269,9 @@ def _emit_message_flow(flow: MessageFlow, dispenser: _NameDispenser,
     ctor = f"MessageFlow({', '.join(parts)})"
     _emit_connecting_object(flow, ctor, "collaboration", "add_message_flow", dispenser, body)
 
+
 def _emit_connecting_object(flow, ctor_expr: str, target_var: str, add_method: str,
-                            dispenser: _NameDispenser, body: list) -> None:
+                            dispenser: NameDispenser, body: list) -> None:
     """Emit a connecting object's construction and its ``add_*`` call.
 
     When the flow carries a non-empty ``layout`` it is materialised under a temporary
@@ -309,7 +292,8 @@ def _emit_connecting_object(flow, ctor_expr: str, target_var: str, add_method: s
 # Container walk
 # ---------------------------------------------------------------------------
 
-def _emit_container(container, container_var: str, dispenser: _NameDispenser,
+
+def _emit_container(container, container_var: str, dispenser: NameDispenser,
                     body: list, needed: set) -> None:
     """Emit the flow nodes (recursing into sub-processes) and sequence flows of a
     Process or SubProcess."""
@@ -331,7 +315,9 @@ def _emit_container(container, container_var: str, dispenser: _NameDispenser,
 # Public API
 # ---------------------------------------------------------------------------
 
+
 _BANNER = "####################\n#    BPMN MODEL    #\n####################"
+
 
 def bpmn_model_to_code(model: BPMNModel, file_path: Optional[str] = None,
                        model_var_name: str = "bpmn_model") -> str:
@@ -348,7 +334,7 @@ def bpmn_model_to_code(model: BPMNModel, file_path: Optional[str] = None,
     """
     body: list = []
     needed: set = {"BPMNModel"}
-    dispenser = _NameDispenser()
+    dispenser = NameDispenser(reserved={model_var_name})
 
     # Empty model + empty processes
     body.append(f"{model_var_name} = BPMNModel(name={_quoted(model.name)})")
@@ -461,6 +447,7 @@ def bpmn_model_to_code(model: BPMNModel, file_path: Optional[str] = None,
             fh.write(result)
 
     return result
+
 
 def _format_imports(needed: set) -> str:
     """Format the ``from besser.BUML.metamodel.bpmn import (...)`` block.

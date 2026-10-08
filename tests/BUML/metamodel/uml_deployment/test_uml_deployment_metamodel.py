@@ -1,13 +1,12 @@
 """Tests for the UML Deployment metamodel (``besser.BUML.metamodel.uml_deployment``).
 
-Groups, following ``.claude/component-deployment/01-component-deployment-design.md``
-§1 / §2.2 / §4.2:
+Groups:
 
 1. Construction validation -- setters raise on bad input; free-text names accepted.
 2. Containment -- Node.nested_artifacts / nested_nodes + parent back-reference.
 3. Relationship endpoint type rules (construction-time TypeError).
 4. ``Multiplicity`` reuse on DeploymentRelation.
-5. ``DeploymentModel.validate()`` -- rules E1..E8.
+5. ``DeploymentModel.validate()`` -- rules E1..E9.
 6. Warnings W1..W4.
 7. Identity -- elements use object identity.
 """
@@ -20,7 +19,7 @@ from besser.BUML.metamodel.structural import (
 from besser.BUML.metamodel.uml_deployment import (
     Artifact, CommunicationPath, DeploymentDependency, DeploymentElement,
     DeploymentModel, DeploymentRelation, DeploymentRelationship, Interface,
-    InterfaceProvided, InterfaceRequired, Locality, Node, NodeKind,
+    InterfaceProvided, InterfaceRequired, Node, NodeKind,
 )
 
 
@@ -29,7 +28,7 @@ from besser.BUML.metamodel.uml_deployment import (
 # ---------------------------------------------------------------------------
 
 def test_free_text_names_are_accepted():
-    """D9 -- Deployment labels are free text."""
+    """Deployment labels are free text."""
     assert Node("UNP sandbox VM").name == "UNP sandbox VM"
     assert Artifact("Code Tester [3]").name == "Code Tester [3]"
     assert Node("").name == ""
@@ -84,24 +83,24 @@ def test_artifact_manifests_must_be_list_of_str():
 
 
 def test_artifact_agent_model_ref_default_none():
-    """6b-2 — agent_model_ref defaults to None."""
+    """agent_model_ref defaults to None."""
     assert Artifact("a").agent_model_ref is None
 
 
 def test_artifact_agent_model_ref_str_accepted():
-    """6b-2 — agent_model_ref accepts a str UUID."""
+    """agent_model_ref accepts a str UUID."""
     a = Artifact("a", agent_model_ref="some-uuid")
     assert a.agent_model_ref == "some-uuid"
 
 
 def test_artifact_agent_model_ref_none_accepted():
-    """6b-2 — agent_model_ref accepts None explicitly."""
+    """agent_model_ref accepts None explicitly."""
     a = Artifact("a", agent_model_ref=None)
     assert a.agent_model_ref is None
 
 
 def test_artifact_agent_model_ref_type_error():
-    """6b-2 — agent_model_ref raises TypeError on non-str, non-None values."""
+    """agent_model_ref raises TypeError on non-str, non-None values."""
     with pytest.raises(TypeError):
         Artifact("a", agent_model_ref=5)
 
@@ -224,7 +223,7 @@ def test_deployment_dependency_accepts_any_deployment_element():
 
 
 # ---------------------------------------------------------------------------
-# Group 4 -- Multiplicity reuse on DeploymentRelation (D6)
+# Group 4 -- Multiplicity reuse on DeploymentRelation
 # ---------------------------------------------------------------------------
 
 def test_deployment_relation_default_multiplicity_is_one_one():
@@ -234,7 +233,7 @@ def test_deployment_relation_default_multiplicity_is_one_one():
 
 
 def test_deployment_relation_carries_three_multiplicity():
-    """R-20: the load-bearing test -- Code Tester [3] in the UNP scenario."""
+    """The load-bearing test -- Code Tester [3] in the UNP scenario."""
     rel = DeploymentRelation(
         Artifact("CodeTester"), Node("CIRunner"),
         multiplicity=Multiplicity(3, 3),
@@ -440,3 +439,59 @@ def test_repr_for_relationships_includes_endpoints():
     assert "DeploymentRelation" in repr(rel)
     assert "'a'" in repr(rel)
     assert "'n'" in repr(rel)
+
+
+# ---------------------------------------------------------------------------
+# Containment cycles and DeploymentComponent
+# ---------------------------------------------------------------------------
+
+def test_nesting_a_node_inside_its_descendant_is_rejected():
+    a, b, c = Node("A"), Node("B"), Node("C")
+    a.add_nested_node(b)
+    b.add_nested_node(c)
+    with pytest.raises(ValueError):
+        b.add_nested_node(a)
+    with pytest.raises(ValueError):
+        c.nested_nodes = {a}
+    with pytest.raises(ValueError):
+        a.parent = c
+    assert a.parent is None and a not in c.nested_nodes
+
+
+def test_validate_collects_a_cycle_wired_through_private_slots():
+    a, b = Node("A", stereotypes=["vm"]), Node("B", stereotypes=["vm"])
+    a.add_nested_node(b)
+    b._Node__nested_nodes.add(a)
+    model = DeploymentModel("m", nodes={a})
+    assert model.all_nodes() == {a, b}
+    result = model.validate(raise_exception=False)
+    assert not result["success"]
+    assert any("nested inside itself" in error for error in result["errors"])
+
+
+def test_deployment_component_is_a_view_artifact_without_w2_warning():
+    from besser.BUML.metamodel.uml_deployment import DeploymentComponent
+
+    node = Node("Host", stereotypes=["vm"])
+    projection = DeploymentComponent("Coder")
+    node.add_artifact(projection)
+    model = DeploymentModel("m", nodes={node})
+    assert isinstance(projection, Artifact)
+    warnings = model.validate(raise_exception=False)["warnings"]
+    assert not any("manifests no Component" in w for w in warnings)
+
+
+def test_no_module_star_imports_both_deployment_metamodels():
+    """``Node`` / ``DeploymentModel`` exist in both deployment packages; a module that
+    star-imports both would silently shadow one with the other."""
+    import pathlib
+
+    import besser
+
+    infra = "from besser.BUML.metamodel.deployment import *"
+    uml = "from besser.BUML.metamodel.uml_deployment import *"
+    root = pathlib.Path(besser.__file__).resolve().parent
+    offenders = [str(path.relative_to(root)) for path in root.rglob("*.py")
+                 if infra in (text := path.read_text(encoding="utf-8")) and uml in text]
+    assert offenders == []
+    assert DeploymentModel.__module__ == "besser.BUML.metamodel.uml_deployment.uml_deployment"

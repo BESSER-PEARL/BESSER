@@ -18,13 +18,19 @@ Optional constructor parameters:
   ``json.load``, so a YAML file will fail to parse.
 - ``config``: Configuration dictionary (alternative to ``config_path``).
 - ``config_yaml``: Raw YAML text to write out as the agent's ``config.yaml``
-  instead of the template-rendered default.
+  instead of the template-rendered default. A sqlite ``db.sql`` entry that names its file
+  under ``database`` is rewritten to ``file``, the key BAF reads.
 - ``openai_api_key``: OpenAI API key for LLM-powered agent features.
 - ``generation_mode``: See `Generation Modes`_ below.
 - ``a2a_descriptor``: Optional resolved A2A topology and governance, normally
   supplied by the Docker Compose generator. It extends the same agent's
   authored states, actions, transitions, and personalization. Descriptors with
   no outbound peers and no A2A server use the ordinary render.
+- ``bind_host``: Interface the websocket and Streamlit servers listen on in the
+  default ``config.yaml`` (default ``"localhost"``, so a standalone agent is not
+  reachable from the network). The Docker Compose generator passes ``"0.0.0.0"``
+  because a server bound to localhost inside a container cannot be reached
+  through the published ports. A supplied ``config_yaml`` is written as-is.
 - ``test_mode``: When ``True``, the agent is generated to be driven headlessly
   in an isolated test environment such as the Agent Simulator:
 
@@ -54,7 +60,7 @@ Check out the BAF documentation for more details on how to use the generated age
 
 
 A2A and authored behavior
-------------------------
+-------------------------
 
 A2A generation requires exactly one authored initial state. Human-facing agents
 keep their configured platform; headless workers expose only the A2A server,
@@ -85,6 +91,37 @@ its result without following later automatic transitions or calling peers.
 For topology-only models without usable state bindings, the generated runtime
 extends an existing state with the legacy swarm behavior. It never replaces the
 authored graph with a separate greetings/work/idle graph.
+
+
+Governed merges
+---------------
+
+A merging ``AgenticGateway`` that carries a Governance DSL policy is run by the
+agent of the lane that owns it. For a voting policy (``VotingPolicy``,
+``MajorityPolicy``, ``AbsoluteMajorityPolicy``) the merge collects one candidate
+output from each producer (the agents on the branches flowing into the gateway),
+then one ballot per policy participant, and counts them in the container with
+the baked ``governance_engine.tally``:
+
+- **Weights** -- ``VotingPolicy`` weighs each ballot by the participant's
+  ``confidence``; the majority policies count one vote per ballot.
+- **Share** -- the leading candidate's support divided by the weight cast
+  (``VotingPolicy``), by every ballot including abstentions
+  (``AbsoluteMajorityPolicy``), or by the ballots that voted (``MajorityPolicy``).
+- **Decision** -- a candidate is selected only if it is the *unique* leader and
+  its share meets the policy ``ratio`` (default ``0.5``): strictly above it for
+  ``MajorityPolicy`` and ``AbsoluteMajorityPolicy`` ("more than half" at the
+  default), at or above it for ``VotingPolicy``. A 1-1 tie is therefore never a
+  majority.
+- **No decision** -- on a tie or a share below the ratio no candidate is
+  picked: the reply lists every candidate output for a human to decide, and the
+  audit footer states why (``no decision: tie between C1, C2`` or ``best share
+  ... below ratio``).
+
+The selected candidate is returned verbatim with an audit footer (policy,
+ratio, winner, scores, abstentions). Participants without a running service
+count as abstentions. Policies with a human participant pause the merge and
+wait for the human's ballot before tallying.
 
 
 Generation Modes

@@ -309,7 +309,8 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
                     "\n".join(repr)
                 ))
 
-        return struct_to_action_type(node.method.type)
+        # struct_to_action_type reads .type, so it takes the method itself; None means nothing
+        return Nothing() if node.method.type is None else struct_to_action_type(node.method)
 
     def visit_StandardLibCall(self, node: StandardLibCall, context: TypeCheckingContext) -> Type:
         receiver = node.receiver.accept(self, context)

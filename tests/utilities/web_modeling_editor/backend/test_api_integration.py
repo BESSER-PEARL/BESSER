@@ -854,6 +854,46 @@ class TestGetJsonModel:
         response = self._upload_buml_content("", "empty.py")
         assert response.status_code == 400
 
+    def test_component_buml_with_relationships_round_trips(self):
+        from besser.BUML.metamodel.uml_component import (
+            Component, ComponentDependency, ComponentModel, Interface, InterfaceProvided,
+        )
+        from besser.utilities.buml_code_builder.component_model_builder import (
+            component_model_to_code,
+        )
+
+        frontend, backend, api = Component("Frontend"), Component("Backend"), Interface("Api")
+        model = ComponentModel("Shop", components={frontend, backend}, interfaces={api},
+                               relationships={ComponentDependency(frontend, backend),
+                                              InterfaceProvided(backend, api)})
+        response = self._upload_buml_content(component_model_to_code(model), "shop.py")
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["diagramType"] == "ComponentDiagram"
+        assert {r["type"] for r in data["model"]["relationships"].values()} == {
+            "ComponentDependency", "ComponentInterfaceProvided"}
+
+    def test_deployment_buml_with_relationships_round_trips(self):
+        from besser.BUML.metamodel.uml_deployment import (
+            Artifact, CommunicationPath, DeploymentDependency, DeploymentModel, Node,
+        )
+        from besser.utilities.buml_code_builder.deployment_model_builder import (
+            deployment_model_to_code,
+        )
+
+        web, db = Node("Web"), Node("Db")
+        app, lib = Artifact("App", manifests=["c1"]), Artifact("Lib")
+        web.add_artifact(app)
+        model = DeploymentModel("Infra", nodes={web, db}, artifacts={lib},
+                                relationships={CommunicationPath(web, db),
+                                               DeploymentDependency(app, lib)})
+        response = self._upload_buml_content(deployment_model_to_code(model), "infra.py")
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["diagramType"] == "DeploymentDiagram"
+        assert {r["type"] for r in data["model"]["relationships"].values()} == {
+            "DeploymentAssociation", "DeploymentDependency"}
+
 
 # ---------------------------------------------------------------------------
 # Middleware & Request Validation
@@ -1397,6 +1437,69 @@ class TestDockerComposeRouting:
         result = _run(router.generate_code_output_from_project(project))
 
         assert result == "master-fallback"
+
+    _DEPLOYMENT = {
+        "type": "DeploymentDiagram",
+        "elements": {
+            "host": {"id": "host", "name": "Host", "type": "DeploymentNode", "owner": None,
+                     "bounds": {"x": 0, "y": 0, "width": 300, "height": 200},
+                     "stereotype": "node", "displayStereotype": True},
+            "app": {"id": "app", "name": "App", "type": "DeploymentArtifact", "owner": "host",
+                    "bounds": {"x": 10, "y": 40, "width": 160, "height": 40},
+                    "manifests": []},
+        },
+        "relationships": {},
+    }
+
+    @staticmethod
+    def _zip_names(response):
+        assert response.status_code == 200, response.text
+        assert "application/zip" in response.headers.get("content-type", "")
+        assert "docker_compose.zip" in response.headers.get("content-disposition", "")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            return set(archive.namelist())
+
+    def test_single_docker_compose_returns_the_registered_zip(self):
+        response = client.post("/besser_api/generate-output", json={
+            "title": "Deployment", "model": self._DEPLOYMENT, "generator": "docker_compose",
+        })
+        assert self._zip_names(response) == {"docker-compose.yml", "BESSER_GENERATION.md"}
+
+    def test_project_docker_compose_returns_zip_with_provenance(self):
+        project = self._project_input("docker_compose", "DeploymentDiagram", self._DEPLOYMENT)
+        response = client.post("/besser_api/generate-output-from-project",
+                               json=project.model_dump(mode="json"))
+        assert self._zip_names(response) == {"docker-compose.yml", "BESSER_GENERATION.md"}
+
+    def test_project_docker_compose_reports_an_invalid_deployment_as_400(self):
+        model = copy.deepcopy(self._DEPLOYMENT)
+        model["relationships"]["bad"] = {
+            "id": "bad", "name": "", "type": "DeploymentAssociation", "owner": None,
+            "source": {"element": "host"}, "target": {"element": "app"},
+        }
+        project = self._project_input("docker_compose", "DeploymentDiagram", model)
+        response = client.post("/besser_api/generate-output-from-project",
+                               json=project.model_dump(mode="json"))
+        assert response.status_code == 400
+        assert "bad" in response.json()["detail"]
+
+    def test_configuration_error_maps_to_500_with_its_message(self):
+        from fastapi import HTTPException
+        from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
+            handle_endpoint_errors,
+        )
+        from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+            ConfigurationError,
+        )
+
+        @handle_endpoint_errors("missing_dependency")
+        async def endpoint():
+            raise ConfigurationError("install governancedsl==0.1.1")
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(endpoint())
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "install governancedsl==0.1.1"
 
 
 class TestRecommendationEndpoints:

@@ -44,7 +44,7 @@ def _make_deployment_model_with_artifact(
 
 def _make_class_model_with_id(class_id: str, name: str = "Book") -> DomainModel:
     """Build a DomainModel holding one Class plus the WME-id side-map the class
-    processor stashes (``_wme_class_index``), so realizes resolves by id (04-... D1)."""
+    processor stashes (``_wme_class_index``), so realizes resolves by id."""
     cls = Class(name=name)
     dm = DomainModel(name="dm_class", types={cls})
     dm._wme_class_index = {class_id: cls}
@@ -98,7 +98,7 @@ class TestValidateCrossDiagramReferences:
 
     def test_valid_component_realizes(self):
         """Class diagram has a Class with WME id 'cls-1';
-        Component.realizes=['cls-1'] → no errors (id-keyed, 04-... D4)."""
+        Component.realizes=['cls-1'] → no errors (id-keyed)."""
         c = Component(name="C")
         c.realizes = ["cls-1"]
         cm = ComponentModel(name="cm", components={c})
@@ -124,7 +124,7 @@ class TestValidateCrossDiagramReferences:
         assert "cls-bogus" in msg
 
     def test_realizes_resolves_by_id_not_name(self):
-        """Collision-safety (04-... D4): a Class named 'Book' lives in two
+        """Collision-safety: a Class named 'Book' lives in two
         diagrams under different WME ids. A Component realizing diagram-A's id
         resolves; the same-named Class in diagram B does NOT satisfy a wrong id."""
         c_ok = Component(name="Realizer")
@@ -188,7 +188,7 @@ class TestValidateCrossDiagramReferences:
         assert "missing-diag" in msg
 
     def test_process_model_refs_no_index_noop(self):
-        """No diagram index (no BPMN/Agent peers) → silently skipped (D5)."""
+        """No diagram index (no BPMN/Agent peers) → silently skipped."""
         comp = AgenticComponent(name="Agent1")
         comp.process_model_refs = ["whatever"]
         cm = ComponentModel(name="cm", components={comp})
@@ -293,11 +293,23 @@ class TestJsonToBumlProjectWireUp:
                             "a1": {
                                 "id": "a1",
                                 "name": "Orphan",
+                                "type": "DeploymentArtifact",
+                                "owner": None,
+                                "bounds": {
+                                    "x": 0, "y": 0, "width": 160, "height": 40,
+                                },
+                                "manifests": ["bogus-component"],
+                            },
+                            "dc1": {
+                                "id": "dc1",
+                                "name": "Frontend",
                                 "type": "DeploymentComponent",
                                 "owner": None,
                                 "bounds": {
-                                    "x": 0, "y": 0, "width": 160, "height": 100,
+                                    "x": 0, "y": 80, "width": 160, "height": 100,
                                 },
+                                "stereotype": "component",
+                                "displayStereotype": True,
                             },
                         },
                         "relationships": {},
@@ -313,12 +325,11 @@ class TestJsonToBumlProjectWireUp:
             },
         })
 
-        # The DeploymentComponent "a1" synthesises as Artifact(manifests=["a1"]).
-        # "a1" is NOT a Component id (the only Component id is "c1") — that's
-        # the dangling cross-ref.
+        # The artifact manifests "bogus-component", which is not a Component id
+        # (the only one is "c1"). The DeploymentComponent manifests nothing and
+        # must not be reported: its own element id is never a manifest.
         project = json_to_buml_project(project_input)
-        assert hasattr(project, "_cross_diagram_errors")
         errors = project._cross_diagram_errors["errors"]
         assert len(errors) == 1
-        assert "a1" in errors[0]
+        assert "bogus-component" in errors[0]
         assert "Orphan" in errors[0]

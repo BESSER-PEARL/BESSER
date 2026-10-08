@@ -44,15 +44,6 @@ def _gov_weight(voter):
     w = GOVERNANCE_WEIGHTS.get(base)
     return float(w) if isinstance(w, (int, float)) else 1.0
 
-def _gov_footer(decision):
-    _t = ", ".join(f"{k}={v:g}" for k, v in decision["scores"].items())
-    _line = ("\n\n— governance —\n"
-             f"policy {decision['policy']} (ratio {decision['ratio']}); "
-             f"winner {decision['outcome']} (share {decision['share']:g}, "
-             f"{'met' if decision['met_ratio'] else 'BELOW'} ratio); "
-             f"votes [{_t}]; abstain {decision['abstain']}")
-    return _line
-
 def _gov_owner_ballot(session, cand_block, ids):
     # The owner's own ballot must carry a parseable `BALLOT: C<k>` line. Validate
     # the structured output and re-prompt once before recording the owner as an abstain
@@ -258,13 +249,6 @@ def _fm_weight(voter, weights):
     w = weights.get(base)
     return float(w) if isinstance(w, (int, float)) else 1.0
 
-def _fm_footer(decision):
-    _t = ", ".join(f"{k}={v:g}" for k, v in decision["scores"].items())
-    return ("\n\n— governance —\n"
-            f"policy {decision['policy']} (ratio {decision['ratio']}); "
-            f"winner {decision['outcome']} (share {decision['share']:g}, "
-            f"{'met' if decision['met_ratio'] else 'BELOW'} ratio); "
-            f"votes [{_t}]; abstain {decision['abstain']}")
 {% endif %}
 {% if a2a.states %}
 
@@ -341,10 +325,9 @@ async def _run_merge(cfg, task, params):
                                 "cand_text": cand_text, "ballots": ballots}}
     _decision = tally(cfg["policy_type"], cfg["ratio"], candidates, ballots)
     logging.info("[governance] %s", json.dumps(_decision))
-    # Present the winner VERBATIM — it is already a complete producer answer; the deterministic
-    # footer is the single source of truth for the tally.
-    _win = cand_text.get(_decision["outcome"]) or next(iter(cand_text.values()), "")
-    return {"reply": _win + _fm_footer(_decision)}
+    # The winner is presented VERBATIM (a complete producer answer); without a decision
+    # the slate is escalated. The deterministic footer is the source of truth for the tally.
+    return {"reply": decision_reply(_decision, cand_text)}
 {% endif %}
 
 def _a2a_work(session: Session):
@@ -389,10 +372,7 @@ def _a2a_work(session: Session):
         _ballots = _pending["ballots"] + [_hb]
         _decision = tally(GOVERNANCE_POLICY_TYPE, GOVERNANCE_RATIO, _pending["candidates"], _ballots)
         logging.info("[governance] %s", json.dumps(_decision))
-        # Present the winning candidate VERBATIM — it is already a complete answer from a real
-        # producer; the deterministic footer is the single source of truth for the tally.
-        _win = _pending["cand_text"].get(_decision["outcome"], "")
-        session.reply(_win + _gov_footer(_decision))
+        session.reply(decision_reply(_decision, _pending["cand_text"]))
         return
 
     # Round 1 — collect one candidate output from each PRODUCER (the BPMN branches that
@@ -442,11 +422,10 @@ def _a2a_work(session: Session):
 
     _decision = tally(GOVERNANCE_POLICY_TYPE, GOVERNANCE_RATIO, candidates, ballots)
     logging.info("[governance] %s", json.dumps(_decision))
-    # Present the winning candidate VERBATIM — it is already a complete answer from a real
-    # producer; re-running it through the LLM only risks mutating it and re-narrating a fake
-    # process. The deterministic footer is the single source of truth for the tally.
-    _win = cand_text.get(_decision["outcome"]) or next(iter(cand_text.values()), "")
-    final = _win + _gov_footer(_decision)
+    # The winning candidate is presented VERBATIM (re-running it through the LLM only risks
+    # mutating it); without a decision the slate is escalated. The deterministic footer is
+    # the single source of truth for the tally.
+    final = decision_reply(_decision, cand_text)
 {% else %}
 {% if a2a.governance and not a2a.states %}
     # Human-in-the-loop phase 2 for non-voting policies: this message is the

@@ -2,8 +2,8 @@
 
 Three reusable, well-formed models. ``minimal_deployment_model`` and
 ``unp_topology_model`` validate cleanly (no errors); ``unp_topology_model``
-models the UNP scenario §6 from the thesis milestone (developer
-workstation, UNP sandbox, CI runner ×3, LLM host external).
+models a realistic swarm topology (developer workstation, sandbox VM,
+CI runner ×3, external LLM host).
 """
 
 import pytest
@@ -30,8 +30,8 @@ def minimal_deployment_model() -> DeploymentModel:
 @pytest.fixture
 def unp_topology_model() -> DeploymentModel:
     """The UNP topology from the worked example: workstation, sandbox VM,
-    CI runner [3], external LLM host. Code Tester [3] is the load-bearing
-    proof of D2's "count belongs on Deployment" directive (R-20)."""
+    CI runner [3], external LLM host. Code Tester [3] checks that the instance
+    count lives on the DeploymentRelation, not on the artifact."""
     # Nodes
     workstation = Node("DeveloperWorkstation", kind=NodeKind.DEVICE)
     sandbox = Node("UNPSandboxVM", kind=NodeKind.DEVICE)
@@ -47,11 +47,11 @@ def unp_topology_model() -> DeploymentModel:
     llm_endpoint = Artifact("LLMEndpoint", locality=Locality.EXTERNAL,
                             manifests=["component_llm_endpoint_id"])
 
-    # Containment (R-08: device / VM placement)
+    # Containment (device / VM placement)
     workstation.add_artifact(ide_plugin)
     sandbox.add_artifact(code_advisor)
 
-    # Deployment relations carry the multiplicity (R-06, R-20)
+    # Deployment relations carry the multiplicity
     deploy_tester = DeploymentRelation(
         code_tester, ci_runner, multiplicity=Multiplicity(3, 3),
         name="ci_runs_three_testers",

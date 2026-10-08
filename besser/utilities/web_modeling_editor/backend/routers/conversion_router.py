@@ -99,6 +99,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     OUTPUT_DIR_NAME,
     AGENT_MODEL_FILENAME,
     BPMN_DIAGRAM_TYPE,
+    DEPLOYMENT_DIAGRAM_TYPE,
 )
 
 # Centralized error handling
@@ -428,7 +429,7 @@ async def export_buml(input_data: DiagramInput):
                 },
             )
 
-        elif elements_data.get("type") == "DeploymentDiagram":
+        elif elements_data.get("type") == DEPLOYMENT_DIAGRAM_TYPE:
             try:
                 deployment_model = process_deployment_diagram(json_data)
             except (KeyError, TypeError, AttributeError) as exc:
@@ -517,17 +518,15 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         'bpmnmodel(', '.add_process(', '.add_flow_node(', '.add_sequence_flow('
     ])
 
-    # UML Component / Deployment markers. Distinct enough not
-    # to collide with cloud-infra `besser.BUML.metamodel.deployment` (which
-    # uses Cluster / K8s Deployment / Node-with-IPs class names).
+    # UML Component / Deployment markers: only calls specific to one of the two
+    # builders (both emit `.add_relationship(`, so it identifies neither).
     is_uml_component = any(keyword in content_lower for keyword in [
-        'componentmodel(', '.add_component(', '.add_relationship(',
-        'agentcategory.', 'agenticedge('
+        'componentmodel(', '.add_component(', 'agenticedge(',
     ])
 
     is_uml_deployment = any(keyword in content_lower for keyword in [
-        'deploymentmodel(', '.add_artifact(', 'deploymentrelation(',
-        'communicationpath(',
+        'deploymentmodel(', 'deploymentrelation(', 'communicationpath(',
+        '.add_nested_node(',
     ])
 
     is_project = 'project(' in content_lower or 'def create_project' in content_lower
@@ -572,7 +571,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             for dtype in (
                 "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
                 "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
-                "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE, "ComponentDiagram", "DeploymentDiagram"
+                "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE, "ComponentDiagram",
+                DEPLOYMENT_DIAGRAM_TYPE,
             ):
                 if dtype not in priority:
                     priority.append(dtype)
@@ -667,28 +667,22 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
 
     elif is_uml_component:
-        try:
-            logger.info("Detected UML Component diagram, parsing...")
-            component_json = component_buml_to_json(buml_content)
-            diagram_data = {
-                "title": diagram_title,
-                "model": component_json,
-            }
-            diagram_type = "ComponentDiagram"
-        except Exception as comp_error:
-            logger.error("Component diagram parsing failed: %s", str(comp_error))
+        # A ConversionError from the converter names the actual problem and is
+        # reported as such (HTTP 400) rather than as "format not recognized".
+        logger.info("Detected UML Component diagram, parsing...")
+        diagram_data = {
+            "title": diagram_title,
+            "model": component_buml_to_json(buml_content),
+        }
+        diagram_type = "ComponentDiagram"
 
     elif is_uml_deployment:
-        try:
-            logger.info("Detected UML Deployment diagram, parsing...")
-            deployment_json = deployment_buml_to_json(buml_content)
-            diagram_data = {
-                "title": diagram_title,
-                "model": deployment_json,
-            }
-            diagram_type = "DeploymentDiagram"
-        except Exception as dep_error:
-            logger.error("Deployment diagram parsing failed: %s", str(dep_error))
+        logger.info("Detected UML Deployment diagram, parsing...")
+        diagram_data = {
+            "title": diagram_title,
+            "model": deployment_buml_to_json(buml_content),
+        }
+        diagram_type = DEPLOYMENT_DIAGRAM_TYPE
 
     # Check if we successfully parsed any diagram
     if diagram_data is None or diagram_type is None:

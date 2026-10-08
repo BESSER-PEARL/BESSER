@@ -49,10 +49,10 @@ nlp:
 
 platforms:
   websocket:
-    host: 0.0.0.0
+    host: {{ bind_host }}
     port: 8765
     streamlit:
-      host: 0.0.0.0
+      host: {{ bind_host }}
       port: 5000
       chat:
         size: 16

@@ -20,10 +20,12 @@ input → None (caller drops it). NEVER raises on user data.
 """
 from typing import Optional
 
+from besser.BUML.metamodel.structural import UNLIMITED_MAX_MULTIPLICITY
+
 _KINDS = {"delegates", "supervises", "revises", "collaborates"}
 
-# Sentinel `order` when a tag omits it — sorts last, mirrors UNLIMITED_MAX_MULTIPLICITY.
-_ORDER_SENTINEL = 9999
+# `order` of a tag that omits it: sorts after every explicit order.
+_ORDER_SENTINEL = UNLIMITED_MAX_MULTIPLICITY
 
 
 def parse_a2a_line(line: str) -> Optional[dict]:
@@ -34,7 +36,7 @@ def parse_a2a_line(line: str) -> Optional[dict]:
       - peer  : str (may be '' if absent — caller decides whether to drop)
       - ref   : str ('' when the peer lane was never linked → name-addressing)
       - flow  : str ('' if absent)
-      - order : int (9999 sentinel when absent — sorts last)
+      - order : int (UNLIMITED_MAX_MULTIPLICITY when absent — sorts last)
       - kind  : str | None (None = plain channel, i.e. no `kind=` field)
     """
     if not isinstance(line, str):

@@ -91,7 +91,7 @@ def test_duplicate_agent_names_keep_uuid_configuration_and_distinct_ports(tmp_pa
     for service, port in [('alpha', 9001), ('beta', 9002)]:
         config = yaml.safe_load((tmp_path / service / 'config.yaml').read_text(encoding='utf-8'))
         assert config['platforms']['a2a']['port'] == port
-        assert config['db']['sql'][0]['fff']['database'] == 'saved.db'
+        assert config['db']['sql'][0]['fff']['file'] == 'saved.db'
         code = (tmp_path / service / 'Duplicate.py').read_text(encoding='utf-8')
         ast.parse(code)
         assert code.count('agent = Agent(') == 1
@@ -126,15 +126,16 @@ def test_tagged_peer_ports_match_the_worker_config(tmp_path):
 
 
 def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeypatch):
+    from besser.utilities.web_modeling_editor.backend.models import DiagramInput
     from besser.utilities.web_modeling_editor.backend.routers import generation_router as route
 
     captured = {}
     normalized = []
-    entries = [{'id': 'first', 'model': {'elements': {'dummy': {}}},
-                'config': {'agentPlatform': 'websocket'}, 'configYaml': _yaml(a2a=9001)},
-               {'id': 'second', 'model': {'elements': {'dummy': {}}},
-                'config': {'personalizationMapping': [{'user_profile': {'raw': True}}]},
-                'configYaml': _yaml(a2a=9002)}]
+    entries = [DiagramInput(id='first', title='First', model={'elements': {'dummy': {}}},
+                            config={'agentPlatform': 'websocket'}, configYaml=_yaml(a2a=9001)),
+               DiagramInput(id='second', title='Second', model={'elements': {'dummy': {}}},
+                            config={'personalizationMapping': [{'user_profile': {'raw': True}}]},
+                            configYaml=_yaml(a2a=9002))]
     saved = deepcopy(entries)
     diagram = SimpleNamespace(model_dump=lambda: {})
     project = SimpleNamespace(name='Example', diagrams={'AgentDiagram': entries},
@@ -142,8 +143,6 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
     monkeypatch.setattr(route, 'process_deployment_diagram', lambda payload: 'deployment')
     monkeypatch.setattr(route, 'process_agent_diagram', lambda payload: Agent('SameName'))
     monkeypatch.setattr(route, 'annotate_agent_with_a2a', lambda *args: None)
-    monkeypatch.setattr(route, '_attach_governance_to_agents', lambda *args: None)
-    monkeypatch.setattr(route, '_attach_entry_role_to_agents', lambda *args: None)
 
     def normalize(config, payload, callback):
         normalized.append(payload['id'])
@@ -160,13 +159,13 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
             Path(self.output_dir, 'docker-compose.yml').write_text('services: {}\n', encoding='utf-8')
 
     response = asyncio.run(route._handle_deployment_project_generation(
-        project, SimpleNamespace(generator_class=CaptureGenerator), {}, 'docker_compose'))
+        project, SimpleNamespace(generator_class=CaptureGenerator), 'docker_compose'))
     assert response.media_type == 'application/zip'
     assert set(captured['agent_models_by_id']) == {'first', 'second'}
-    assert captured['agent_configs_by_id']['first'] == entries[0]['config']
+    assert captured['agent_configs_by_id']['first'] == entries[0].config
     assert captured['agent_configs_by_id']['second']['personalizationMapping'][0]['user_profile'] == {
         'normalized': True}
-    assert captured['agent_config_yamls_by_id'] == {e['id']: e['configYaml'] for e in entries}
+    assert captured['agent_config_yamls_by_id'] == {e.id: e.configYaml for e in entries}
     assert normalized == ['second']
     assert entries == saved
 
@@ -262,3 +261,20 @@ def test_streamlit_checkbox_preserves_explicit_platform(platform):
     }
     assert flatten_agent_config_structure(config)['agentPlatform'] == platform
     
+
+def test_default_config_binds_all_interfaces_only_inside_containers(tmp_path):
+    """Without saved YAML the Compose build context binds 0.0.0.0; a standalone agent keeps localhost."""
+    from besser.generators.agents.baf_generator import BAFGenerator
+
+    agent = Agent('Solo')
+    agent.new_state('initial', initial=True)
+    DockerComposeGenerator(_deployment([('Solo', 'uuid-solo')]), str(tmp_path / 'compose'),
+                           {'uuid-solo': agent}).generate()
+    container = yaml.safe_load((tmp_path / 'compose' / 'solo' / 'config.yaml').read_text(encoding='utf-8'))
+    assert container['platforms']['websocket']['host'] == '0.0.0.0'
+    assert container['platforms']['websocket']['streamlit']['host'] == '0.0.0.0'
+
+    BAFGenerator(agent, output_dir=str(tmp_path / 'standalone')).generate()
+    standalone = yaml.safe_load((tmp_path / 'standalone' / 'config.yaml').read_text(encoding='utf-8'))
+    assert standalone['platforms']['websocket']['host'] == 'localhost'
+    assert standalone['platforms']['websocket']['streamlit']['host'] == 'localhost'

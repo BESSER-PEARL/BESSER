@@ -51,12 +51,11 @@ class GatewayRole(Enum):
 
 
 class AgentRole(Enum):
-    """«AgenticLane» profile role, aligned with WME's BPMNAgentRole.
+    """«AgenticLane» profile role, aligned with the web editor's BPMNAgentRole.
 
-    Four canonical values introduced in WME commit 2afac286.  Legacy files
-    written with the old vocabulary are accepted on parse
-    (worker→solution, manager→supervision) but this enum only carries the
-    new names.
+    The four values replace the earlier ``WORKER`` / ``MANAGER`` members. The
+    JSON importer still accepts the old wire values (worker -> solution,
+    manager -> supervision), but this enum only carries the new names.
     """
     SOLUTION = "solution"
     SUPERVISION = "supervision"
@@ -129,6 +128,9 @@ class AgenticTask(Task):
         agent_diagram_ref (str | None): Opaque id of the AgentDiagram this
             task's agent behavior is defined by. Default None. Pass-through --
             no UUID validation, no resolution. Canonical carrier.
+        reflection_reviewer_lane_id (str | None): Editor id of the lane whose
+            agent reviews this task under cross reflection
+            (``ReflectionMode.CROSS``). Default None (reviewer unspecified).
         task_type (TaskType): Inherited from Task.
         loop_characteristics (LoopCharacteristics): Inherited from Activity.
         layout (dict): Inherited (opaque DI passthrough).
@@ -138,13 +140,15 @@ class AgenticTask(Task):
         reflection_mode (ReflectionMode): The reflection mode.
         trust_score (int): The trust score.
         agent_diagram_ref (str | None): The AgentDiagram reference.
+        reflection_reviewer_lane_id (str | None): The cross-reflection reviewer lane.
     """
 
     def __init__(self, name: str = "", reflection_mode: "ReflectionMode" = None,
                  trust_score: int = 0,
                  agent_diagram_ref: str = None,
                  task_type=None, loop_characteristics=None,
-                 layout: dict = None, metadata=None, timestamp=None):
+                 layout: dict = None, metadata=None, timestamp=None,
+                 reflection_reviewer_lane_id: str = None):
         super().__init__(name=name, task_type=task_type,
                          loop_characteristics=loop_characteristics,
                          layout=layout, metadata=metadata, timestamp=timestamp)
@@ -152,6 +156,7 @@ class AgenticTask(Task):
                                 else ReflectionMode.NONE)
         self.trust_score = trust_score
         self.agent_diagram_ref = agent_diagram_ref
+        self.reflection_reviewer_lane_id = reflection_reviewer_lane_id
 
     @property
     def reflection_mode(self) -> "ReflectionMode":
@@ -208,6 +213,24 @@ class AgenticTask(Task):
                 f"agent_diagram_ref must be a str or None, got {type(value).__name__}"
             )
         self.__agent_diagram_ref = value
+
+    @property
+    def reflection_reviewer_lane_id(self):
+        """str | None: Get the editor id of the cross-reflection reviewer lane."""
+        return self.__reflection_reviewer_lane_id
+
+    @reflection_reviewer_lane_id.setter
+    def reflection_reviewer_lane_id(self, value):
+        """str | None: Set the cross-reflection reviewer lane id (opaque pass-through).
+
+        Raises:
+            TypeError: if not a str or None.
+        """
+        if value is not None and not isinstance(value, str):
+            raise TypeError(
+                f"reflection_reviewer_lane_id must be a str or None, got {type(value).__name__}"
+            )
+        self.__reflection_reviewer_lane_id = value
 
     def __repr__(self):
         return (f"AgenticTask(name='{self.name}', "
@@ -365,7 +388,7 @@ class AgenticLane(Lane):
 
     Args:
         name (str): The lane label (inherited; may be empty).
-        role (AgentRole): The profile role (default WORKER).
+        role (AgentRole): The profile role (default SOLUTION).
         trust_score (int): 0-100 (default 0).
         agent_diagram_ref (str | None): Opaque id of the AgentDiagram this
             lane's agent is defined by. Default None. Pass-through -- no UUID

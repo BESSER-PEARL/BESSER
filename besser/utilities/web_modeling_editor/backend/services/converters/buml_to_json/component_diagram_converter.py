@@ -1,14 +1,12 @@
 """Component diagram conversion: ComponentModel -> WME JSON.
 
-Implements 02-... §5. Pure metamodel-object → JSON walk; the file-import
-``component_buml_to_json(content)`` wrapper is gated on
-``03-component-deployment-code-builders-guide.md`` (which lands the
-``component_model_to_code`` builder this wrapper exec()'s).
+``component_object_to_json`` is a pure metamodel-object -> JSON walk, the
+inverse of ``json_to_buml.component_diagram_processor``.
+``component_buml_to_json(content)`` loads a BUML file produced by
+``component_model_to_code`` and converts the model it defines.
 """
 
-import logging
 import uuid
-from typing import Optional
 
 from besser.BUML.metamodel.uml_component import (
     AgentCategory,
@@ -45,9 +43,6 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
 )
 
-logger = logging.getLogger(__name__)
-
-
 def component_object_to_json(model: ComponentModel) -> dict:
     """Convert a ``ComponentModel`` into a WME Component diagram (JSON dict).
 
@@ -73,44 +68,29 @@ def component_object_to_json(model: ComponentModel) -> dict:
             id_map[obj] = stashed or str(uuid.uuid4())
         return id_map[obj]
 
+    # Every component, including those reachable only through a Subsystem.
+    components = sort_by_timestamp(model.all_components())
+    interfaces = sort_by_timestamp(model.interfaces)
+    model_relationships = sort_by_timestamp(model.relationships)
+
     # Pre-mint ids in deterministic order so element / relationship ordering
     # in the output is stable.
-    for c in sort_by_timestamp(model.components):
+    for c in components:
         id_for(c)
-    for iface in sort_by_timestamp(model.interfaces):
+    for iface in interfaces:
         id_for(iface)
-    for rel in sort_by_timestamp(model.relationships):
+    for rel in model_relationships:
         id_for(rel)
 
-    # Components
-    for component in sort_by_timestamp(model.components):
-        try:
-            entry = _emit_component_entry(component, id_for)
-            elements[id_for(component)] = entry
-        except Exception as exc:
-            logger.error(
-                "Failed to emit Component '%s': %s", component.name, exc,
-            )
+    for component in components:
+        elements[id_for(component)] = _emit_component_entry(component, id_for)
 
     # Interfaces (free-standing — Component-diagram model holds them at root)
-    for interface in sort_by_timestamp(model.interfaces):
-        try:
-            entry = _emit_interface_entry(interface)
-            elements[id_for(interface)] = entry
-        except Exception as exc:
-            logger.error("Failed to emit Interface '%s': %s", interface.name, exc)
+    for interface in interfaces:
+        elements[id_for(interface)] = _emit_interface_entry(interface, id_for)
 
-    # Relationships
-    for rel in sort_by_timestamp(model.relationships):
-        try:
-            entry = _emit_relationship_entry(rel, id_for)
-            if entry is not None:
-                relationships[id_for(rel)] = entry
-        except Exception as exc:
-            logger.error(
-                "Failed to emit Component relationship %s: %s",
-                type(rel).__name__, exc,
-            )
+    for rel in model_relationships:
+        relationships[id_for(rel)] = _emit_relationship_entry(rel, id_for)
 
     size = _compute_size(elements)
 
@@ -140,26 +120,32 @@ def _emit_component_entry(component: Component, id_for) -> dict:
         "owner": id_for(component.parent) if component.parent is not None else None,
         "bounds": bounds,
     }
-    # Subsystem keeps the literal "subsystem" stereotype; Skill/Tool get the
-    # subtype-promotion prefix on the stereotype string.
+    # Skill/Tool/LLM/Database/RAG get the subtype-promotion token in front;
+    # the editor's «subsystem» / «component» defaults ride along as free-form
+    # stereotypes.
     if isinstance(component, Subsystem):
-        base_stereotype = format_component_stereotype(component)
-        stereotype = "subsystem" if not base_stereotype else f"subsystem {base_stereotype}"
+        stereotype = format_component_stereotype(component)
     else:
         stereotype = format_component_subtype_stereotype(component)
     if stereotype:
         entry["stereotype"] = stereotype
         entry["displayStereotype"] = bool(layout.get("displayStereotype", True))
+    if wme_type == "Component":
+        # The editor's Component element carries the cross-diagram links.
+        entry["realizes"] = list(component.realizes)
+        entry["processModelRefs"] = list(component.process_model_refs)
+        if component.agent_model_ref is not None:
+            entry["agentModelRef"] = component.agent_model_ref
     return entry
 
 
-def _emit_interface_entry(interface: Interface) -> dict:
+def _emit_interface_entry(interface: Interface, id_for) -> dict:
     """Emit a ComponentInterface entry."""
     layout = interface.layout or {}
     wme_type = layout.get("wme_type") or "ComponentInterface"
     bounds = layout.get("bounds") or {"x": 0, "y": 0, "width": 20, "height": 20}
     return {
-        "id": (layout.get("id") or str(uuid.uuid4())),
+        "id": id_for(interface),
         "name": interface.name,
         "type": wme_type,
         "owner": layout.get("owner"),
@@ -167,8 +153,12 @@ def _emit_interface_entry(interface: Interface) -> dict:
     }
 
 
-def _emit_relationship_entry(rel, id_for) -> Optional[dict]:
-    """Emit one relationship entry."""
+def _emit_relationship_entry(rel, id_for) -> dict:
+    """Emit one relationship entry.
+
+    Raises:
+        ConversionError: for a relationship class with no editor mapping.
+    """
     layout = rel.layout or {}
     bounds = layout.get("bounds") or {"x": 0, "y": 0, "width": 1, "height": 1}
     path = layout.get("path") or [{"x": 0, "y": 0}, {"x": 1, "y": 0}]
@@ -197,10 +187,9 @@ def _emit_relationship_entry(rel, id_for) -> Optional[dict]:
         wme_type = "ComponentDependency"
         stereotype = " ".join(rel.stereotypes)
     else:
-        logger.warning(
-            "Unknown Component relationship class %s; skipping.", type(rel).__name__,
+        raise ConversionError(
+            f"Component relationship class {type(rel).__name__} has no editor mapping."
         )
-        return None
 
     entry = {
         "id": id_for(rel),

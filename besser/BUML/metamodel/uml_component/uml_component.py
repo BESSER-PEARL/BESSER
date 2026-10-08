@@ -1,16 +1,13 @@
 """UML Component metamodel for B-UML -- vanilla UML 2.5 base.
 
 A first-class B-UML model for UML Component diagrams, alongside ``structural`` /
-``state_machine`` / ``gui`` / ``bpmn``. Implements the design in
-``.claude/component-deployment/01-component-deployment-design.md`` (reviewed and
-locked 2026-05-18; the base/agentic split is ``04-...``, 2026-05-20).
+``state_machine`` / ``gui`` / ``bpmn``.
 
-This module is **pure UML 2.5 Component modelling**. The agentic-swarm
-stereotype profile is a separate extension in ``agentic.py`` (decision D11,
-revised by ``04-``: the profile was originally baked in here; it now lives in
-its own module, mirroring ``bpmn/bpmn.py`` + ``bpmn/agentic.py``). The package
-``__init__.py`` re-exports both, so ``from besser.BUML.metamodel.uml_component
-import *`` is unchanged for downstream callers.
+This module is **pure UML 2.5 Component modelling** plus BESSER's generic
+cross-diagram links. The agentic-swarm stereotype profile is a separate
+extension in ``agentic.py``, mirroring ``bpmn/bpmn.py`` + ``bpmn/agentic.py``.
+The package ``__init__.py`` re-exports both, so
+``from besser.BUML.metamodel.uml_component import *`` exposes everything.
 
 Hierarchy::
 
@@ -24,19 +21,20 @@ Hierarchy::
                           <|-- InterfaceRequired
                           <|-- ComponentDependency
 
-Growth path (01-... §3.5) -- constructs designed but intentionally NOT implemented yet:
+Not modelled yet:
 
 * UML ``Realization`` as a distinct relationship class (currently absorbed into
   ``Component.realizes: List[str]`` of structural ``Class`` IDs).
-* ``«autoscale»`` policy attributes (sibling to NR-6 in the requirements review).
+* ``«autoscale»`` policy attributes.
 
-``Locality`` (below) is a BESSER general profile addition (NR-5) -- see its
+``Locality`` (below) is a BESSER general profile addition -- see its
 docstring. Everything else in this module is vanilla UML 2.5.
 """
 
 from enum import Enum
 from typing import List, Optional
 
+from besser.BUML.metamodel._checks import checked_set, checked_str_list
 from besser.BUML.metamodel.structural import Model, NamedElement
 
 
@@ -47,7 +45,7 @@ from besser.BUML.metamodel.structural import Model, NamedElement
 class Locality(Enum):
     """Where a Component / Artifact / Node is hosted.
 
-    A BESSER **general profile addition** (NR-5 of the requirements review) --
+    A BESSER **general profile addition** --
     *not* part of UML 2.5.1: the spec defines no ``«external»`` standard
     stereotype and no locality concept (verified against uml-2-5-1-formal-
     17-12-05 -- Clause 22 Standard Profile, Clause 19 Deployments). UML 2.5.1
@@ -67,51 +65,24 @@ class Locality(Enum):
 
 
 # ---------------------------------------------------------------------------
-# Module-private helpers
-# ---------------------------------------------------------------------------
-
-def _checked_set(values, expected_type, label: str) -> set:
-    """Coerce ``values`` to a set, raising TypeError if any element is not ``expected_type``."""
-    result = set(values)
-    for value in result:
-        if not isinstance(value, expected_type):
-            raise TypeError(
-                f"{label} must contain {expected_type.__name__} instances, "
-                f"got {type(value).__name__}"
-            )
-    return result
-
-
-def _checked_str_list(values, label: str) -> List[str]:
-    """Coerce ``values`` to a list of str, raising TypeError on a non-str entry."""
-    result = list(values)
-    for value in result:
-        if not isinstance(value, str):
-            raise TypeError(
-                f"{label} must contain str entries, got {type(value).__name__}"
-            )
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Base element (decision D9 -- relaxed name, opaque layout passthrough)
+# Base element (relaxed name, opaque layout passthrough)
 # ---------------------------------------------------------------------------
 
 class ComponentElement(NamedElement):
     """Base class for every UML Component-diagram abstract-syntax element.
 
-    Relaxes ``NamedElement.name`` (decision D9, mirrors BPMN D5): a Component-diagram
+    Relaxes ``NamedElement.name`` (as the BPMN metamodel does): a Component-diagram
     label is free text and may contain spaces (``"Code Tester"``), colons
     (``"merge:approve"``), or be empty (a freshly-dropped element). Also carries
     ``layout`` -- an opaque diagram-interchange passthrough the metamodel never
-    interprets (decision D10); only the converters read it. The opaque ``layout``
+    interprets; only the converters read it. The opaque ``layout``
     dict is also where converters stash the stable WME element ID so cross-diagram
     string-ID references survive round-trips.
 
     Args:
         name (str): The element label. Empty allowed; ``None`` is coerced to ``""``.
-        stereotypes (List[str]): Free-form stereotype strings (decision D3 long
-            tail). Defaults to ``[]``.
+        stereotypes (List[str]): Free-form stereotype strings (the long tail
+            that has no typed slot). Defaults to ``[]``.
         layout (dict): Opaque DI data. Stored untouched.
         metadata (Metadata): Inherited from NamedElement.
         timestamp (datetime): Inherited from NamedElement.
@@ -157,7 +128,7 @@ class ComponentElement(NamedElement):
         Raises:
             TypeError: if not a list of str.
         """
-        self.__stereotypes = _checked_str_list(stereotypes, "stereotypes")
+        self.__stereotypes = checked_str_list(stereotypes, "stereotypes")
 
     @property
     def layout(self) -> Optional[dict]:
@@ -193,15 +164,21 @@ class Component(ComponentElement):
 
     Args:
         name (str): The component label.
-        locality (Locality): Where the component is hosted (NR-5). ``LOCAL`` by
+        locality (Locality): Where the component is hosted. ``LOCAL`` by
             default.
         realizes (List[str]): Cross-diagram IDs of structural ``Class`` es this
             component realizes (UML Realization). Default ``[]``.
+        process_model_refs (List[str]): Cross-diagram IDs of the BPMN diagrams
+            whose process this component takes part in. Default ``[]``.
+        agent_model_ref (str | None): Id of the Agent diagram that implements
+            this component, or None.
         stereotypes, layout, metadata, timestamp: Inherited from ComponentElement.
 
     Attributes:
         locality (Locality): Hosting locality.
         realizes (List[str]): Cross-diagram Class IDs.
+        process_model_refs (List[str]): Cross-diagram BPMN diagram IDs.
+        agent_model_ref (str | None): Cross-diagram Agent diagram ID.
         parent (Subsystem | None): The containing Subsystem (set by the
             ``Subsystem`` container, or None if at model root).
     """
@@ -209,11 +186,16 @@ class Component(ComponentElement):
     def __init__(self, name: str = "", locality: Locality = None,
                  realizes: List[str] = None,
                  stereotypes: List[str] = None, layout: dict = None,
-                 metadata=None, timestamp=None):
+                 metadata=None, timestamp=None,
+                 process_model_refs: List[str] = None,
+                 agent_model_ref: Optional[str] = None):
         super().__init__(name=name, stereotypes=stereotypes, layout=layout,
                          metadata=metadata, timestamp=timestamp)
         self.locality = locality if locality is not None else Locality.LOCAL
         self.realizes = realizes if realizes is not None else []
+        self.process_model_refs = (process_model_refs
+                                   if process_model_refs is not None else [])
+        self.agent_model_ref = agent_model_ref
         self.__parent: Optional["Subsystem"] = None
 
     @property
@@ -244,7 +226,42 @@ class Component(ComponentElement):
         Raises:
             TypeError: if not a list of str.
         """
-        self.__realizes = _checked_str_list(realizes, "realizes")
+        self.__realizes = checked_str_list(realizes, "realizes")
+
+    @property
+    def process_model_refs(self) -> List[str]:
+        """List[str]: Cross-diagram IDs of the BPMN diagrams this component takes part in."""
+        return self.__process_model_refs
+
+    @process_model_refs.setter
+    def process_model_refs(self, process_model_refs: List[str]):
+        """List[str]: Set the cross-diagram BPMN diagram IDs.
+
+        Raises:
+            TypeError: if not a list of str.
+        """
+        self.__process_model_refs = checked_str_list(
+            process_model_refs, "process_model_refs"
+        )
+
+    @property
+    def agent_model_ref(self) -> Optional[str]:
+        """Optional[str]: Id of the Agent diagram that implements this component."""
+        return self.__agent_model_ref
+
+    @agent_model_ref.setter
+    def agent_model_ref(self, agent_model_ref: Optional[str]):
+        """Optional[str]: Set the Agent diagram id.
+
+        Raises:
+            TypeError: if not a str or None.
+        """
+        if agent_model_ref is not None and not isinstance(agent_model_ref, str):
+            raise TypeError(
+                f"agent_model_ref must be a str or None, "
+                f"got {type(agent_model_ref).__name__}"
+            )
+        self.__agent_model_ref = agent_model_ref
 
     @property
     def parent(self) -> Optional["Subsystem"]:
@@ -262,7 +279,25 @@ class Component(ComponentElement):
             raise TypeError(
                 f"parent must be a Subsystem or None, got {type(parent).__name__}"
             )
+        if parent is self or (parent is not None and self in parent.ancestors()):
+            raise ValueError(
+                f"Component '{self.name}' cannot be nested inside its own "
+                f"descendant '{parent.name}'."
+            )
         self.__parent = parent
+
+    def ancestors(self) -> list:
+        """list[Subsystem]: The containing Subsystems, innermost first.
+
+        Stops at the first repeated Subsystem, so a containment cycle wired
+        through the private slots cannot loop forever.
+        """
+        result: list = []
+        cursor = self.__parent
+        while cursor is not None and cursor is not self and cursor not in result:
+            result.append(cursor)
+            cursor = cursor.parent
+        return result
 
 
 class Subsystem(Component):
@@ -300,6 +335,8 @@ class Subsystem(Component):
 
         Raises:
             TypeError: if any element is not a Component.
+            ValueError: if a child is this Subsystem or one of its ancestors
+                (containment cycle).
         """
         children = set(children)
         for child in children:
@@ -308,6 +345,7 @@ class Subsystem(Component):
                     f"children must contain Component instances, "
                     f"got {type(child).__name__}"
                 )
+            self._check_nestable(child)
         for existing in self.__children:
             if existing.parent is self:
                 existing.parent = None
@@ -320,11 +358,37 @@ class Subsystem(Component):
 
         Raises:
             TypeError: if child is not a Component.
+            ValueError: if child is this Subsystem or one of its ancestors
+                (containment cycle).
         """
         if not isinstance(child, Component):
             raise TypeError(f"child must be a Component, got {type(child).__name__}")
+        self._check_nestable(child)
         child.parent = self
         self.__children.add(child)
+
+    def descendants(self) -> set:
+        """set[Component]: Every component nested below this one (cycle-safe)."""
+        result: set = set()
+        pending = list(self.__children)
+        while pending:
+            component = pending.pop()
+            if component in result:
+                continue
+            result.add(component)
+            if isinstance(component, Subsystem):
+                pending.extend(component.children)
+        return result
+
+    def _check_nestable(self, child: "Component"):
+        """Raise ValueError if nesting ``child`` here would create a containment cycle."""
+        if child is self:
+            raise ValueError("A Subsystem cannot contain itself.")
+        if isinstance(child, Subsystem) and self in child.descendants():
+            raise ValueError(
+                f"Subsystem '{child.name}' cannot be nested inside its own "
+                f"descendant '{self.name}'."
+            )
 
     def remove_child(self, child: "Component"):
         """Remove a child component; clears its ``parent``."""
@@ -341,13 +405,13 @@ class Subsystem(Component):
 class Interface(ComponentElement):
     """A UML provided / required Interface -- a standalone named element
     referenced from ``InterfaceProvided`` / ``InterfaceRequired`` relationships
-    (decision D11 -- separate class, not inlined on Component, matching UML 2.5
-    and Apollon's wire shape).
+    (a separate class, not inlined on Component, matching UML 2.5 and the
+    web editor's wire shape).
     """
 
 
 # ---------------------------------------------------------------------------
-# Relationships (decision D11 -- abstract base with endpoint type-check seam)
+# Relationships (abstract base with per-subclass endpoint type checks)
 # ---------------------------------------------------------------------------
 
 class ComponentRelationship(ComponentElement):
@@ -547,7 +611,7 @@ class ComponentModel(Model):
         Raises:
             TypeError: if any element is not a Component.
         """
-        self.__components = _checked_set(components, Component, "components")
+        self.__components = checked_set(components, Component, "components")
 
     def add_component(self, component: "Component"):
         """Add a component.
@@ -577,7 +641,7 @@ class ComponentModel(Model):
         Raises:
             TypeError: if any element is not an Interface.
         """
-        self.__interfaces = _checked_set(interfaces, Interface, "interfaces")
+        self.__interfaces = checked_set(interfaces, Interface, "interfaces")
 
     def add_interface(self, interface: "Interface"):
         """Add an interface.
@@ -607,7 +671,7 @@ class ComponentModel(Model):
         Raises:
             TypeError: if any element is not a ComponentRelationship.
         """
-        self.__relationships = _checked_set(
+        self.__relationships = checked_set(
             relationships, ComponentRelationship, "relationships"
         )
 
@@ -631,17 +695,20 @@ class ComponentModel(Model):
     # --- derived accessors -------------------------------------------------
 
     def all_components(self) -> set:
-        """set[Component]: Every component, expanded through Subsystem nesting."""
-        result: set = set()
+        """set[Component]: Every component, expanded through Subsystem nesting.
 
-        def _collect(component: Component):
+        Iterative and visit-once, so a containment cycle wired through the
+        private slots cannot recurse forever (``validate()`` reports it).
+        """
+        result: set = set()
+        pending = list(self.__components)
+        while pending:
+            component = pending.pop()
+            if component in result:
+                continue
             result.add(component)
             if isinstance(component, Subsystem):
-                for child in component.children:
-                    _collect(child)
-
-        for component in self.__components:
-            _collect(component)
+                pending.extend(component.children)
         return result
 
     # --- validation --------------------------------------------------------
@@ -662,6 +729,7 @@ class ComponentModel(Model):
         self._validate_relationship_endpoint_types(errors)
         self._validate_unique_component_names(errors)
         self._validate_subsystem_membership(errors)
+        self._validate_acyclic_containment(errors)
         self._warn_structural_smells(warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
@@ -749,6 +817,18 @@ class ComponentModel(Model):
                 errors.append(
                     f"Component '{component.name}' has parent Subsystem "
                     f"'{parent.name}' which is not in the model."
+                )
+
+    def _validate_acyclic_containment(self, errors: list):
+        """E14: no Subsystem contains itself, directly or transitively.
+
+        The setters reject cycles; this catches one wired through the private
+        slots.
+        """
+        for component in self.all_components():
+            if isinstance(component, Subsystem) and component in component.descendants():
+                errors.append(
+                    f"Subsystem '{component.name}' is nested inside itself."
                 )
 
     def _warn_structural_smells(self, warnings: list):

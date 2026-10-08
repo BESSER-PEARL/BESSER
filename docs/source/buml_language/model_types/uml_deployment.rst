@@ -6,14 +6,35 @@ software artifacts onto the nodes (hardware or execution environments) that
 run them. It is the deployment-side companion of the
 :doc:`UML Component model <uml_component>`.
 
-.. note::
+Why two deployment metamodels
+-----------------------------
 
-   This is the UML 2.5 Deployment notation (``Node``, ``Artifact``,
-   ``DeploymentRelation``). It is **distinct** from the
-   :doc:`Deployment architecture model <deployment>`, which models
-   cloud-infrastructure concepts (clusters, services, containers) and feeds
-   the Terraform generator. The two metamodels live in separate packages and
-   do not interact.
+BESSER has two metamodels about deployment, answering different questions:
+
+* The :doc:`Deployment architecture model <deployment>`
+  (``besser.BUML.metamodel.deployment``) describes *infrastructure to
+  provision*: Kubernetes clusters, deployments, services and containers, cloud
+  regions and zones, nodes with IP ranges and resources. It feeds the
+  Terraform generator.
+* This UML Deployment model (``besser.BUML.metamodel.uml_deployment``)
+  describes *what a UML 2.5 Deployment diagram shows*: which artifact runs on
+  which execution node, and which Component each artifact manifests. It is
+  what the web editor's Deployment diagram serialises to, and it feeds the
+  Docker Compose generator.
+
+Folding one into the other would force UML notation onto the infrastructure
+model (or Kubernetes concepts onto UML diagrams), so they stay separate and do
+not reference each other.
+
+.. warning::
+
+   Both packages define classes named ``Node`` and ``DeploymentModel``, and
+   they are different types. Import them through their package path
+   (``from besser.BUML.metamodel.uml_deployment import Node``) and **never
+   star-import both packages into one namespace**: the second import would
+   silently shadow the first. UML's artifact-on-node relationship, called
+   ``Deployment`` in UML 2.5, is named ``DeploymentRelation`` here because
+   ``deployment.Deployment`` already denotes a Kubernetes Deployment.
 
 The metamodel lives in
 ``besser.BUML.metamodel.uml_deployment.uml_deployment``.
@@ -29,6 +50,10 @@ Metamodel
   ``manifests`` -- a list of ``Component`` identifiers (a cross-diagram
   reference into a :doc:`UML Component model <uml_component>`) -- and optional
   ``agent_model_ref``, the id of the Agent diagram this artifact deploys.
+* ``DeploymentComponent`` -- an ``Artifact`` subclass for the Component an
+  artifact manifests, drawn on the Deployment diagram (the editor's
+  ``DeploymentComponent`` element). It is a view element: generators never
+  turn it into a deployable service.
 * ``Interface`` — a provided / required interface on a node or artifact.
 * Relationships:
 
@@ -44,6 +69,10 @@ Metamodel
 * ``DeploymentModel`` — the root container (nodes, artifacts, interfaces,
   relationships). ``DeploymentModel.validate()`` returns a
   ``{"success", "errors", "warnings"}`` dictionary.
+
+Node containment cannot form a cycle: nesting a node inside itself or inside
+one of its own descendants raises ``ValueError``, and ``validate()`` reports a
+cycle wired through private attributes as an error instead of recursing.
 
 ``Locality`` (``LOCAL`` / ``EXTERNAL`` / ``HYBRID``) is a BESSER general
 profile addition shared with the

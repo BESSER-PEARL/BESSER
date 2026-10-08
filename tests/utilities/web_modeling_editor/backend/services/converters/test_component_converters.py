@@ -1,4 +1,4 @@
-"""Tests for the Component diagram converters (02-... §12).
+"""Tests for the Component diagram converters.
 
 Covers:
   * JSON -> ``ComponentModel`` (``process_component_diagram``).
@@ -42,6 +42,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 from besser.utilities.web_modeling_editor.backend.services.converters.stereotype_tokens import (
     apply_component_stereotype_tokens,
     extract_permission_scopes,
+    format_component_stereotype,
     tokenise,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
@@ -50,8 +51,8 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 
 
 # ---------------------------------------------------------------------------
-# Fixtures (mirror the real-export wire shape from 02-D7-Component.json
-# and the agentic hand-built snapshot b1-component-snapshot.json)
+# Fixtures (mirror the editor's real Component-diagram export and a
+# hand-built agentic diagram)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -390,7 +391,7 @@ class TestRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# Stereotype-helper unit tests (02-... §3.3 / Appendix B.2)
+# Stereotype-helper unit tests
 # ---------------------------------------------------------------------------
 
 class TestStereotypeHelpers:
@@ -402,13 +403,15 @@ class TestStereotypeHelpers:
         apply_component_stereotype_tokens(c, None)
         assert c.stereotypes == []
 
-    def test_consumed_defaults_dropped(self):
+    def test_editor_defaults_are_kept_so_they_round_trip(self):
         c = Component(name="X")
         apply_component_stereotype_tokens(c, "component")
-        assert c.stereotypes == []
+        assert c.stereotypes == ["component"]
+        assert format_component_stereotype(c) == "component"
         s = Subsystem(name="Y")
         apply_component_stereotype_tokens(s, "subsystem")
-        assert s.stereotypes == []
+        assert s.stereotypes == ["subsystem"]
+        assert format_component_stereotype(s) == "subsystem"
 
     def test_unknown_token_lands_in_stereotypes_list(self):
         c = Component(name="X")
@@ -441,7 +444,7 @@ class TestStereotypeHelpers:
 
 
 # ---------------------------------------------------------------------------
-# component_buml_to_json exec wrapper (03-... §7)
+# component_buml_to_json exec wrapper
 # ---------------------------------------------------------------------------
 
 class TestComponentBumlToJson:
@@ -482,7 +485,7 @@ class TestComponentBumlToJson:
 
 
 # ---------------------------------------------------------------------------
-# LLM / Database / RAG round-trip (04a-component-llm-db-rag-capabilities)
+# LLM / Database / RAG round-trip
 # ---------------------------------------------------------------------------
 
 @pytest.fixture

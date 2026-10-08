@@ -545,6 +545,12 @@ def build_system_prompt(
     - Request/form consistency: when a field becomes server-owned, remove its
       writable controls and client validation too, while keeping its read-only
       display. Update shared entity/form metadata, not only a page's payload.
+    - Create/Edit forms follow the create-request schema: one control per
+      writable field, typed by the field. int/float -> `<input type="number">`
+      sent as a number; bool -> checkbox; date -> `type="date"`; datetime ->
+      `type="datetime-local"`; email -> `type="email"`; enum -> a `<select>` of
+      its literals; a reference to another entity -> a `<select>` filled from
+      that entity's list route, sending the chosen id.
     AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
     - An empty or no-op form submit handler (an onSubmit that does nothing).
       A form's submit MUST call the backend (create -> POST, edit -> PUT)
@@ -555,6 +561,19 @@ def build_system_prompt(
       every entity's list and its "new" page, present on every screen.
     - A list with no Delete control. Each row needs Edit + Delete wired to
       PUT / DELETE.
+    - Every field as an untyped text box, or a raw-JSON textarea as the form.
+      The backend answers 422 to text in a number, date, email or id field,
+      so no record can ever be created from the UI.
+    - Create and Edit sharing one handler keyed on a placeholder (`?edit=new`,
+      an empty id): Create MUST POST to the collection route; only an existing
+      record's id may reach PUT.
+    - A "New"/"Create" link to a path the router does not declare: it renders
+      blank. Put the form on the list page or declare that route.
+    - URLs joined without exactly one "/": every API path starts with "/", so
+      `${{base}}${{path}}` is a valid URL (a missing slash fails before any request).
+    - With Vite and JSX files that do not import React: `vite.config` without
+      `plugins: [react()]` from `@vitejs/plugin-react`. Every page then dies
+      with "React is not defined".
 """ if needs_frontend else ""
     stable_header = f"""\
 You are an expert full-stack developer extending a deterministic scaffold.

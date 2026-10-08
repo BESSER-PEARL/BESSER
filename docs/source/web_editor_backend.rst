@@ -46,10 +46,11 @@ diagrams by ID through the ``references`` field, and the active diagram per type
 is tracked via ``currentDiagramIndices``. Old single-diagram projects are
 auto-converted by a Pydantic model validator for backward compatibility.
 
-Supported diagram types: ``ClassDiagram``, ``ObjectDiagram``,
+Supported diagram types (the project keys): ``ClassDiagram``, ``ObjectDiagram``,
 ``StateMachineDiagram``, ``AgentDiagram``, ``GUINoCodeDiagram``,
-``QuantumCircuitDiagram``, ``NNDiagram``, ``BPMNDiagram``,
-``ComponentDiagram``, and ``DeploymentDiagram``.
+``QuantumCircuitDiagram``, ``UserDiagram``, ``NNDiagram``, ``BPMN``,
+``ComponentDiagram``, and ``DeploymentDiagram``. A single BPMN diagram payload
+has type ``BPMNDiagram``.
 
 
 Neural Network Diagrams
@@ -108,15 +109,22 @@ the BPMN generator emits vendor-neutral BPMN 2.0 XML.
 
 The Agentic extension is represented by ``AgenticTask``, ``AgenticGateway``,
 and ``AgenticLane`` subclasses. The converter consumes the WME ``isAgentic``
-flag and preserves ``reflectionMode``, ``gatewayRole``, ``trustScore``, lane
-``role``, lane ``multiplicity``, ``agentDiagramRef``, and ``governanceDsl``.
-Message flows stay standard BPMN flows in this backend contract.
+flag and preserves ``reflectionMode``, ``reflectionReviewerLaneId``,
+``gatewayRole``, ``trustScore``, lane ``role``, lane ``multiplicity`` (stored as
+``AgenticLane.swarm_size``), ``agentDiagramRef``, and ``governanceDsl``. Flows
+stay standard BPMN flows and carry no agentic fields.
 
 In project-level deployment generation, BPMN provides the process context for
 multi-agent system runtime behavior: lane ``agentDiagramRef`` values resolve gateway
 owners to Agent diagrams, ``governanceDsl`` on merging gateways is attached to
 the owner agent, and BPMN sequence-flow ids are used to route A2A messages into
-the correct governed merge.
+the correct governed merge (``services/governance/swarm_bindings.py``).
+
+An invalid Governance DSL on a merging gateway raises
+``GovernanceDslValidationError``, which the endpoints report as **HTTP 422**
+with the gateway name and the parser message. A missing ``governancedsl``
+package raises ``ConfigurationError`` (**HTTP 500**, naming the package to
+install).
 
 Component and Deployment Diagrams
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -140,7 +148,10 @@ autodetecting the diagram type. ``/validate-diagram`` runs the metamodel
 ``validate()`` for supported diagram types.
 
 **Cross-diagram references.** Within a project, component ``realizes`` and
-deployment artifact ``manifests`` values resolve against peer diagrams.
+deployment artifact ``manifests`` values resolve against peer diagrams;
+``/export-buml`` of a project rejects dangling references. The Deployment
+diagram's ``DeploymentComponent`` element is imported as a
+``DeploymentComponent`` and manifests nothing itself.
 Agentic deployment artifacts can also carry ``agentModelRef``: the Agent
 diagram id that should be baked into that artifact's Docker Compose build
 context.

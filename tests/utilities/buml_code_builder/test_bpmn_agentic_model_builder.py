@@ -4,7 +4,7 @@ Mirrors ``test_bpmn_model_builder.py`` but exercises the
 ``AgenticTask`` / ``AgenticGateway`` / ``AgenticLane`` subclass branches
 of ``_emit_flow_node`` and ``_emit_lane``.
 
-P3' rationalization: CollaborationMode, MergingStrategy, AgenticMessageFlow
+Removed from the agentic profile: CollaborationMode, MergingStrategy, AgenticMessageFlow
 have been removed. Tests updated accordingly.
 """
 
@@ -174,7 +174,7 @@ class TestAgenticTask:
         # The Task class itself is shadowed by AgenticTask -- no plain `Task,` line
         # should appear in the import list.
         assert "Task," not in block.replace("AgenticTask,", "")
-        # CollaborationMode no longer imported (P3').
+        # CollaborationMode no longer imported.
         assert "CollaborationMode" not in block
 
     def test_emit_agentic_task_agent_diagram_ref(self):
@@ -226,7 +226,7 @@ class TestAgenticGateway:
         block = _import_block(source)
         for name in ("AgenticGateway", "GatewayRole", "GatewayType"):
             assert name in block, f"expected {name} in import block, got: {block!r}"
-        # CollaborationMode and MergingStrategy no longer imported (P3').
+        # CollaborationMode and MergingStrategy no longer imported.
         assert "CollaborationMode" not in block
         assert "MergingStrategy" not in block
 
@@ -319,7 +319,7 @@ class TestAgenticLane:
 
 
 # ---------------------------------------------------------------------------
-# Message flows — always emit as MessageFlow (P3' rationalization)
+# Message flows — always emit as MessageFlow
 # ---------------------------------------------------------------------------
 
 class TestMessageFlow:
@@ -427,3 +427,12 @@ class TestDeterminism:
         first = bpmn_model_to_code(model)
         second = bpmn_model_to_code(model)
         assert first == second
+
+
+def test_reflection_reviewer_lane_id_survives_exec_round_trip():
+    task = AgenticTask(name="Draft", reflection_mode=ReflectionMode.CROSS,
+                       reflection_reviewer_lane_id="lane-r")
+    model = BPMNModel(name="M", processes={Process(name="P", flow_nodes={task})})
+    rebuilt = _find_model(_exec_source(bpmn_model_to_code(model)))
+    (node,) = rebuilt.all_flow_nodes()
+    assert node.reflection_reviewer_lane_id == "lane-r"

@@ -169,3 +169,96 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
     assert captured['agent_config_yamls_by_id'] == {e['id']: e['configYaml'] for e in entries}
     assert normalized == ['second']
     assert entries == saved
+
+@pytest.mark.parametrize('structured', [False, True])
+@pytest.mark.parametrize('enabled', [True, False, None])
+def test_compose_honors_streamlit_checkbox(tmp_path, structured, enabled):
+    reviewer, coder = Agent('Reviewer'), Agent('Coder')
+    reviewer.new_state('initial', initial=True)
+    coder.new_state('initial', initial=True)
+    reviewer._human_facing = True
+    coder._human_facing = False
+    reviewer._a2a = {
+        'outbound': [
+            {'peer': 'Coder', 'state': 'initial', 'kind': 'delegates'},
+        ],
+        'inbound': [],
+    }
+    coder._a2a = {
+        'outbound': [],
+        'inbound': [{'peer': 'Reviewer', 'target_state': 'initial'}],
+    }
+
+    runtime = {'agentPlatform': 'websocket'}
+    if enabled is not None:
+        runtime['agentPlatformUseStreamlit'] = enabled
+    configs = {
+        'reviewer-id': {'system': runtime} if structured else runtime,
+        'coder-id': {
+            'agentPlatform': 'websocket',
+            'agentPlatformUseStreamlit': True,
+        },
+    }
+    saved = deepcopy(configs)
+
+    DockerComposeGenerator(
+        _deployment([('Reviewer', 'reviewer-id'), ('Coder', 'coder-id')]),
+        str(tmp_path),
+        {'reviewer-id': reviewer, 'coder-id': coder},
+        agent_configs_by_id=configs,
+        agent_config_yamls_by_id={'reviewer-id': _yaml(streamlit=5100)},
+    ).generate()
+
+    compose = yaml.safe_load(
+        (tmp_path / 'docker-compose.yml').read_text(encoding='utf-8')
+    )
+    expected_ports = (
+        {'5001:5100', '8765:8765'}
+        if enabled is True else {'8765:8765'}
+    )
+    assert set(compose['services']['reviewer']['ports']) == expected_ports
+
+    code = (tmp_path / 'reviewer' / 'Reviewer.py').read_text(encoding='utf-8')
+    expected_ui = 'True' if enabled is True else 'False'
+    assert f'use_websocket_platform(use_ui={expected_ui})' in code
+
+    assert not compose['services']['coder'].get('ports')
+    worker_code = (tmp_path / 'coder' / 'Coder.py').read_text(encoding='utf-8')
+    assert 'agent.use_websocket_platform(' not in worker_code
+    assert configs == saved
+
+
+@pytest.mark.parametrize('test_mode', [False, True])
+def test_streamlit_checkbox_respects_headless_test_mode(tmp_path, test_mode):
+    from besser.generators.agents.baf_generator import BAFGenerator, GenerationMode
+
+    agent = Agent('Reviewer')
+    agent.new_state('initial', initial=True)
+    BAFGenerator(
+        agent,
+        str(tmp_path),
+        generation_mode=GenerationMode.CODE_ONLY,
+        config={
+            'agentPlatform': 'websocket',
+            'agentPlatformUseStreamlit': True,
+        },
+        test_mode=test_mode,
+    ).generate()
+
+    code = (tmp_path / 'Reviewer.py').read_text(encoding='utf-8')
+    expected_ui = 'False' if test_mode else 'True'
+    assert f'use_websocket_platform(use_ui={expected_ui})' in code
+
+
+@pytest.mark.parametrize('platform', ['streamlit', 'telegram'])
+def test_streamlit_checkbox_preserves_explicit_platform(platform):
+    from besser.generators.agents.agent_personalization import (
+        flatten_agent_config_structure,
+    )
+
+    config = {
+        'agentPlatform': platform,
+        'agentPlatformUseStreamlit': True,
+    }
+    assert flatten_agent_config_structure(config)['agentPlatform'] == platform
+    

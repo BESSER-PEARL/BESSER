@@ -178,8 +178,10 @@ sibling module (``besser/BUML/metamodel/bpmn/agentic.py``); the base
 
 - ``AgenticTask(Task)`` -- a Task with a ``reflection_mode``
   (``NONE`` / ``SELF`` / ``CROSS`` / ``HUMAN``), a ``trust_score`` in
-  ``[0, 100]``, and an optional ``agent_diagram_ref`` for task-level links to
-  the Agent diagram that defines the task behaviour.
+  ``[0, 100]``, an optional ``agent_diagram_ref`` for task-level links to
+  the Agent diagram that defines the task behaviour, and an optional
+  ``reflection_reviewer_lane_id`` naming the lane whose agent reviews the task
+  under ``CROSS`` reflection.
 - ``AgenticGateway(Gateway)`` -- a Gateway restricted to ``PARALLEL`` or
   ``INCLUSIVE`` ``gateway_type``; ``EXCLUSIVE`` / ``COMPLEX`` /
   ``EVENT_BASED`` are rejected by the setter override. It carries a
@@ -189,8 +191,17 @@ sibling module (``besser/BUML/metamodel/bpmn/agentic.py``); the base
 - ``AgenticLane(Lane)`` -- a Lane with a ``role`` (``SOLUTION`` /
   ``SUPERVISION`` / ``COLLABORATION`` / ``CONSENSUS``), a ``trust_score``,
   an optional ``agent_diagram_ref`` linking the lane to its Agent diagram,
-  and ``multiplicity``: the number of identical agent instances represented
-  by that lane. ``multiplicity`` is an integer ``>= 1`` and defaults to ``1``.
+  and ``swarm_size``: the number of identical agent instances represented
+  by that lane (the editor's ``multiplicity`` field). ``swarm_size`` is an
+  integer ``>= 1`` and defaults to ``1``.
+
+.. note::
+
+   **Breaking change:** ``AgentRole.WORKER`` and ``AgentRole.MANAGER`` were
+   removed; use ``AgentRole.SOLUTION`` and ``AgentRole.SUPERVISION``. Python
+   code that references the old members must be updated. Editor JSON that
+   still carries ``"worker"`` / ``"manager"`` keeps importing (mapped to the
+   new roles).
 
 Agent-to-agent coordination is represented by ordinary BPMN flow structure, lane/task links
 to Agent diagrams, Governance DSL on merge gateways, and A2A tags in the
@@ -227,7 +238,7 @@ agentic lane:
         name="Reviewers",
         role=AgentRole.SUPERVISION,
         trust_score=85,
-        multiplicity=3,
+        swarm_size=3,
         flow_nodes={review, vote},
     )
     process = Process(
@@ -247,12 +258,13 @@ handle the agentic subclasses transparently -- import dispatches on the
 WME ``isAgentic`` flag to construct the right subclass; export emits the
 WME shape. Trust scores are clamped on import (``max(0, min(100, value))``)
 to bridge WME's tolerant data into the metamodel's strict ``[0, 100]``;
-lane multiplicity is clamped to ``>= 1``. The metamodel itself raises
-``ValueError`` on out-of-range values per B-UML house style. The
-cross-diagram and policy fields round-trip too:
-``AgenticTask.agent_diagram_ref``, ``AgenticLane.agent_diagram_ref``,
-``AgenticLane.multiplicity``, and ``AgenticGateway.governance_dsl`` all
-survive the JSON import / export cycle.
+the lane ``multiplicity`` is clamped to ``>= 1`` into ``swarm_size``. The
+metamodel itself raises ``ValueError`` on out-of-range values per B-UML house
+style. The cross-diagram and policy fields round-trip too:
+``AgenticTask.agent_diagram_ref``, ``AgenticTask.reflection_reviewer_lane_id``,
+``AgenticLane.agent_diagram_ref``, ``AgenticLane.swarm_size``, and
+``AgenticGateway.governance_dsl`` all survive the JSON import / export cycle.
+Flows carry no agentic fields.
 
 The :doc:`../../generators/bpmn` emits the agentic information as
 ``<bpmn:extensionElements>`` / ``<agentic:agentic .../>`` blocks in the

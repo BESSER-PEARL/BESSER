@@ -51,12 +51,11 @@ class GatewayRole(Enum):
 
 
 class AgentRole(Enum):
-    """«AgenticLane» profile role, aligned with WME's BPMNAgentRole.
+    """«AgenticLane» profile role, aligned with the web editor's BPMNAgentRole.
 
-    Four canonical values introduced in WME commit 2afac286.  Legacy files
-    written with the old vocabulary are accepted on parse
-    (worker→solution, manager→supervision) but this enum only carries the
-    new names.
+    The four values replace the earlier ``WORKER`` / ``MANAGER`` members. The
+    JSON importer still accepts the old wire values (worker -> solution,
+    manager -> supervision), but this enum only carries the new names.
     """
     SOLUTION = "solution"
     SUPERVISION = "supervision"
@@ -389,7 +388,7 @@ class AgenticLane(Lane):
 
     Args:
         name (str): The lane label (inherited; may be empty).
-        role (AgentRole): The profile role (default WORKER).
+        role (AgentRole): The profile role (default SOLUTION).
         trust_score (int): 0-100 (default 0).
         agent_diagram_ref (str | None): Opaque id of the AgentDiagram this
             lane's agent is defined by. Default None. Pass-through -- no UUID

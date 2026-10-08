@@ -4,7 +4,7 @@ Mirrors ``test_bpmn_generator.py`` but exercises the new
 ``<bpmn:extensionElements><agentic:agentic .../></bpmn:extensionElements>``
 emission.
 
-P3' rationalization: CollaborationMode, MergingStrategy, AgenticMessageFlow
+Removed from the agentic profile: CollaborationMode, MergingStrategy, AgenticMessageFlow
 have been removed. Tests updated accordingly.
 """
 
@@ -206,7 +206,7 @@ class TestAgenticGatewayEmission:
         attrs = inner[0].attrib
         assert attrs.get("gatewayRole") == "merging"
         assert attrs.get("trustScore") == "85"
-        # collaborationMode and mergingStrategy no longer emitted (P3').
+        # collaborationMode and mergingStrategy no longer emitted.
         for forbidden in ("reflectionMode", "role", "collaborationMode", "mergingStrategy"):
             assert forbidden not in attrs
 

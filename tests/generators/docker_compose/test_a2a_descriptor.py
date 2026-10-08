@@ -292,7 +292,7 @@ def test_unresolved_producer_and_voter_are_recorded():
 
 def test_no_candidates_degrades_to_topology():
     # Voting policy but no producer resolves and the owner is not a producer →
-    # _governance_star returns None → the item-35 single-round topology is kept.
+    # _governance_star returns None → the single-round topology is kept.
     sup = _A('Supervisor', ['coordinate_work', 'to_coder'])
     sup._governance = [_voting_gov(
         participants=[_p("Coder", 0.8)], producers=["Ghost"])]

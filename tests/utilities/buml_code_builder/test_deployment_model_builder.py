@@ -1,4 +1,4 @@
-"""Tests for the Deployment model code builder (03-... §9.C).
+"""Tests for the Deployment model code builder.
 
 Covers exec round-trip, multiplicity emission (including UNLIMITED upper
 bound), DeploymentComponent synthesis preserved via layout, nested-Node

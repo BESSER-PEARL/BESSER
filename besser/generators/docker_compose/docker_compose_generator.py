@@ -105,20 +105,20 @@ def _governance_for(agent):
     """The first governance summary stashed on the agent by the backend handler, or None.
     The generator forwards it verbatim; no parsing here.
 
-    v1 wires exactly ONE governed merge per agent (the agent owns one merge/tally path in
-    its generated BAF state). An agent whose lane owns more than one governed merging
-    gateway is the unsupported case: only the first policy is wired, so emit a visible
-    warning rather than silently dropping the rest (per-gateway BAF states are future
-    work). The summaries are ordered as the gateways were encountered."""
+    Without per-state bindings an agent runs exactly ONE governed merge (one merge/tally
+    path in its generated BAF state). If its lane owns more than one governed merging
+    gateway, only the first policy is wired, with a visible warning rather than silently
+    dropping the rest. The summaries are ordered as the gateways were encountered."""
     blobs = getattr(agent, '_governance', None) or []
     # A per-state-bound agent governs each merge at its own state (`_governance_by_state`
     # → the faithful `_MERGES` dispatch), so nothing is dropped: suppress the legacy
     # "only the first is wired" warning. It still fires for an un-bound multi-gateway agent.
     if len(blobs) > 1 and not getattr(agent, '_governance_by_state', None):
         logger.warning(
-            "[governance] agent %r owns %d governed merging gateways; v1 wires only the "
-            "first (%s). The remaining %d are dropped — split them across lanes/agents to "
-            "govern each separately.",
+            "[governance] agent %r owns %d governed merging gateways but binds none of "
+            "them to a merge state, so only the first (%s) is wired. The remaining %d are "
+            "dropped — bind each to a state (a2a:in;flow=<gateway>) or split them across "
+            "lanes/agents.",
             getattr(agent, 'name', '?'), len(blobs),
             blobs[0].get('policy_type'), len(blobs) - 1)
     return blobs[0] if blobs else None
@@ -206,7 +206,7 @@ def _governance_star_from(gov, service_names: set, self_id: str):
             "service — the vote cannot run, so the merge falls back to a single round. "
             "traced producers=%s | swarm services=%s",
             self_id, gov.get('producers'), sorted(service_names))
-        return None     # no candidates possible -> fall back to the item-35 path
+        return None     # no candidates possible -> fall back to the single-round merge
 
     # The owner must reach producers (round 1) and the other voters (round 2): the peer
     # set is their union, minus the owner (it runs both rounds in-process).
@@ -767,11 +767,6 @@ class DockerComposeGenerator(GeneratorInterface):
                 "[a2a] no entry/human-facing agent derived — the swarm has no user-facing "
                 "trigger; check the BPMN has a start event in an agentic lane")
         return human_facing, a2a_servers
-
-    def _compute_entry_services(self) -> set:
-        """The set of human-facing service names (they publish the host ports). Thin
-        back-compat wrapper over ``_compute_service_flags``."""
-        return self._compute_service_flags()[0]
 
     def _build_view(self, model: DeploymentModel,
                     entry_services: set = None) -> tuple:

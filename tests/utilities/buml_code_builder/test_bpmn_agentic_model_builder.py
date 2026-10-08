@@ -4,7 +4,7 @@ Mirrors ``test_bpmn_model_builder.py`` but exercises the
 ``AgenticTask`` / ``AgenticGateway`` / ``AgenticLane`` subclass branches
 of ``_emit_flow_node`` and ``_emit_lane``.
 
-P3' rationalization: CollaborationMode, MergingStrategy, AgenticMessageFlow
+Removed from the agentic profile: CollaborationMode, MergingStrategy, AgenticMessageFlow
 have been removed. Tests updated accordingly.
 """
 
@@ -174,7 +174,7 @@ class TestAgenticTask:
         # The Task class itself is shadowed by AgenticTask -- no plain `Task,` line
         # should appear in the import list.
         assert "Task," not in block.replace("AgenticTask,", "")
-        # CollaborationMode no longer imported (P3').
+        # CollaborationMode no longer imported.
         assert "CollaborationMode" not in block
 
     def test_emit_agentic_task_agent_diagram_ref(self):
@@ -226,7 +226,7 @@ class TestAgenticGateway:
         block = _import_block(source)
         for name in ("AgenticGateway", "GatewayRole", "GatewayType"):
             assert name in block, f"expected {name} in import block, got: {block!r}"
-        # CollaborationMode and MergingStrategy no longer imported (P3').
+        # CollaborationMode and MergingStrategy no longer imported.
         assert "CollaborationMode" not in block
         assert "MergingStrategy" not in block
 
@@ -319,7 +319,7 @@ class TestAgenticLane:
 
 
 # ---------------------------------------------------------------------------
-# Message flows — always emit as MessageFlow (P3' rationalization)
+# Message flows — always emit as MessageFlow
 # ---------------------------------------------------------------------------
 
 class TestMessageFlow:

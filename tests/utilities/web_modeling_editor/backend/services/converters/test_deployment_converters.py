@@ -1,10 +1,10 @@
-"""Tests for the Deployment diagram converters (02-... §12).
+"""Tests for the Deployment diagram converters.
 
 Covers:
   * JSON -> ``DeploymentModel`` (``process_deployment_diagram``).
   * ``DeploymentModel`` -> JSON (``deployment_object_to_json``).
   * ``DeploymentAssociation`` discrimination (Artifact->Node vs Node<->Node).
-  * ``DeploymentComponent`` synthesis (D12) round-trip.
+  * ``DeploymentComponent`` round-trip.
   * Multiplicity parser / formatter.
   * Owner-link dedup vs explicit ``DeploymentAssociation``.
 """
@@ -41,8 +41,8 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 
 
 # ---------------------------------------------------------------------------
-# Fixtures (mirror 02-D7-Deployment.json shape + the hand-built
-# multiplicity snapshot b2-deployment-snapshot.json)
+# Fixtures (mirror the editor's real Deployment-diagram export and a
+# hand-built multiplicity diagram)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -398,7 +398,7 @@ class TestRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# Multiplicity formatter / parser unit tests (02-... §3.6.2)
+# Multiplicity formatter / parser unit tests
 # ---------------------------------------------------------------------------
 
 class TestMultiplicityFormat:
@@ -439,7 +439,7 @@ class TestMultiplicityFormat:
 
 
 # ---------------------------------------------------------------------------
-# deployment_buml_to_json exec wrapper (03-... §7)
+# deployment_buml_to_json exec wrapper
 # ---------------------------------------------------------------------------
 
 class TestDeploymentBumlToJson:
@@ -487,7 +487,7 @@ class TestDeploymentBumlToJson:
 
 
 # ---------------------------------------------------------------------------
-# 6b-2 — agentModelRef threading (processor reads WME wire key onto field)
+# agentModelRef threading (processor reads WME wire key onto field)
 # ---------------------------------------------------------------------------
 
 class TestAgentModelRefProcessor:
@@ -523,7 +523,7 @@ class TestAgentModelRefProcessor:
         assert artifacts[0].agent_model_ref is None
 
     def test_deployment_component_with_agent_model_ref(self):
-        """DeploymentComponent (synthetic D12) also threads agentModelRef."""
+        """DeploymentComponent  also threads agentModelRef."""
         payload = self._make_payload("DeploymentComponent", agent_model_ref="uuid-xyz")
         model = process_deployment_diagram(payload)
         artifacts = list(model.all_artifacts())

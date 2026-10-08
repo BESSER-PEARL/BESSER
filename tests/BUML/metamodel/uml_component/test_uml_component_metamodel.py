@@ -3,7 +3,7 @@
 
 The agentic-extension tests (``AgenticComponent`` / ``Skill`` / ``Tool`` /
 ``Permission`` / ``AgenticEdge`` / ``AgenticComponentModel``) live in
-``test_agentic.py`` after the ``04-`` base/agentic split.
+``test_agentic.py`` after the base/agentic split.
 
 Groups:
 
@@ -28,7 +28,7 @@ from besser.BUML.metamodel.uml_component import (
 # ---------------------------------------------------------------------------
 
 def test_free_text_names_are_accepted():
-    """D9 -- Component labels are free text: spaces, empty, None coerced."""
+    """Component labels are free text: spaces, empty, None coerced."""
     assert Component("Code Tester").name == "Code Tester"
     assert Component("Review & approve").name == "Review & approve"
     assert Component("").name == ""

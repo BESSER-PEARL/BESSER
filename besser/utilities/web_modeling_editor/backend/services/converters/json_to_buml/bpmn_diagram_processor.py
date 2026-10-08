@@ -242,7 +242,7 @@ def _build_node(elem: dict):
         if elem.get("isAgentic"):
             # SEAA'25 «AgenticLane» (paper §4.1 Fig 3a).
             role_value = elem.get("role", "solution") or "solution"
-            # Accept legacy WME values (pre-2afac286) transparently.
+            # Accept the editor's former role values (worker / manager) transparently.
             _ROLE_ALIASES = {"worker": "solution", "manager": "supervision"}
             role_value = _ROLE_ALIASES.get(role_value, role_value)
             try:

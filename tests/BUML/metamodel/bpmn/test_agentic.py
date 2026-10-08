@@ -4,7 +4,7 @@ Covers enum integrity, AgenticTask construction + setters, AgenticGateway
 construction + eligibility, AgenticLane construction + setters,
 backward compatibility with the BPMN base, and ``__repr__``.
 
-P3' rationalization: CollaborationMode, MergingStrategy, AgenticMessageFlow
+Removed from the agentic profile: CollaborationMode, MergingStrategy, AgenticMessageFlow
 have been removed. Tests that depended on those have been deleted.
 """
 
@@ -49,7 +49,7 @@ def test_gateway_role_values():
 
 
 def test_agent_role_values():
-    """AgentRole .value strings match WME's BPMNAgentRole (post-2afac286)."""
+    """AgentRole .value strings match WME's BPMNAgentRole."""
     assert AgentRole.SOLUTION.value == "solution"
     assert AgentRole.SUPERVISION.value == "supervision"
     assert AgentRole.COLLABORATION.value == "collaboration"
@@ -118,7 +118,7 @@ def test_agentic_task_inherits_task_kwargs():
 
 
 def test_agentic_task_no_collaboration_mode():
-    """AgenticTask has no collaboration_mode attribute (P3' rationalization)."""
+    """AgenticTask has no collaboration_mode attribute."""
     t = AgenticTask(name="t")
     assert not hasattr(t, "collaboration_mode")
 
@@ -189,13 +189,13 @@ def test_gateway_role_type_error():
 
 
 def test_agentic_gateway_no_collaboration_mode():
-    """AgenticGateway has no collaboration_mode attribute (P3' rationalization)."""
+    """AgenticGateway has no collaboration_mode attribute."""
     g = AgenticGateway(name="g")
     assert not hasattr(g, "collaboration_mode")
 
 
 def test_agentic_gateway_no_merging_strategy():
-    """AgenticGateway has no merging_strategy attribute (P3' rationalization)."""
+    """AgenticGateway has no merging_strategy attribute."""
     g = AgenticGateway(name="g")
     assert not hasattr(g, "merging_strategy")
 

@@ -1,4 +1,4 @@
-"""Tests for the Component diagram converters (02-... §12).
+"""Tests for the Component diagram converters.
 
 Covers:
   * JSON -> ``ComponentModel`` (``process_component_diagram``).
@@ -51,8 +51,8 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 
 
 # ---------------------------------------------------------------------------
-# Fixtures (mirror the real-export wire shape from 02-D7-Component.json
-# and the agentic hand-built snapshot b1-component-snapshot.json)
+# Fixtures (mirror the editor's real Component-diagram export and a
+# hand-built agentic diagram)
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -391,7 +391,7 @@ class TestRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# Stereotype-helper unit tests (02-... §3.3 / Appendix B.2)
+# Stereotype-helper unit tests
 # ---------------------------------------------------------------------------
 
 class TestStereotypeHelpers:
@@ -444,7 +444,7 @@ class TestStereotypeHelpers:
 
 
 # ---------------------------------------------------------------------------
-# component_buml_to_json exec wrapper (03-... §7)
+# component_buml_to_json exec wrapper
 # ---------------------------------------------------------------------------
 
 class TestComponentBumlToJson:
@@ -485,7 +485,7 @@ class TestComponentBumlToJson:
 
 
 # ---------------------------------------------------------------------------
-# LLM / Database / RAG round-trip (04a-component-llm-db-rag-capabilities)
+# LLM / Database / RAG round-trip
 # ---------------------------------------------------------------------------
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""Tests for the Component model code builder (03-... §9.A).
+"""Tests for the Component model code builder.
 
 Covers exec round-trip, AgenticEdge with permissions, Subsystem children,
 Skill/Tool subtype promotion, layout passthrough, cross-diagram-ref
@@ -152,7 +152,7 @@ class TestComponentModelBuilder:
         c = Component(name="X")
         model = ComponentModel(name="m", components={c})
         source = component_model_to_code(model)
-        # Q1=(a) — line is omitted entirely when the list is empty.
+        # line is omitted entirely when the list is empty.
         assert ".realizes = " not in source
         assert ".process_model_refs = " not in source
 

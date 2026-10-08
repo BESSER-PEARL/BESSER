@@ -860,8 +860,8 @@ def test_faithful_owner_renders_per_merge_dispatch(tmp_path, caplog):
     gen = DockerComposeGenerator(model, output_dir=str(tmp_path), agent_models_by_id=agents)
     with caplog.at_level(logging.WARNING):
         gen.generate()
-    # the faithful path governs BOTH merges → no "wires only the first" warning
-    assert not any("wires only the" in r.message for r in caplog.records)
+    # the faithful path governs BOTH merges → no "only the first is wired" warning
+    assert not any("governed merging gateways" in r.message for r in caplog.records)
 
     owner_py = (tmp_path / "owner" / "Owner.py").read_text(encoding="utf-8")
     ast.parse(owner_py)                                    # emitted code compiles

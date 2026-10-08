@@ -2,7 +2,7 @@
 (``besser.BUML.metamodel.uml_component.agentic``).
 
 Covers the agentic-swarm profile extracted from the base metamodel by the
-``04-`` split: ``AgenticComponent`` / ``Skill`` / ``Tool`` / ``Permission`` /
+Base/agentic split: ``AgenticComponent`` / ``Skill`` / ``Tool`` / ``Permission`` /
 ``AgenticEdge`` / ``AgenticComponentModel``.
 
 Groups:
@@ -291,7 +291,7 @@ def test_extension_names_are_re_exported():
 
 
 # ---------------------------------------------------------------------------
-# LLM / Database / RAG — Tool subclasses (04a-component-llm-db-rag-capabilities)
+# LLM / Database / RAG — Tool subclasses
 # ---------------------------------------------------------------------------
 
 def test_llm_db_rag_are_tool_subclasses_and_valid_uses_targets():

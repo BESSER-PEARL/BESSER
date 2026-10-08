@@ -31,16 +31,21 @@ WORKDIR /app
 
 # Shared by both targets, so the worker reuses these layers. ruff is one of
 # the backend requirements (Phase 3's undefined-name checks run it).
+# governancedsl is left out here: it depends on besser, which is not installed
+# yet, so pip would fetch besser from PyPI. Each target installs it right
+# after the local besser (governance-requirement.txt).
 COPY requirements.txt ./requirements.txt
 COPY besser/utilities/web_modeling_editor/backend/requirements.txt ./backend-requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt
+RUN grep -v '^governancedsl' backend-requirements.txt > backend-requirements-base.txt \
+    && grep '^governancedsl' backend-requirements.txt > governance-requirement.txt \
+    && pip install --no-cache-dir -r requirements.txt -r backend-requirements-base.txt
 
 
 FROM python-deps AS backend
 
 COPY pyproject.toml setup.cfg README.md ./
 COPY besser/ ./besser/
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e . && pip install --no-cache-dir -r governance-requirement.txt
 
 # A build-time CA must not become runtime trust. Unconditional; the last lines
 # fail the build if a known TLS-inspection CA is still trusted. They read the
@@ -99,7 +104,7 @@ ENV PATH="/root/.cargo/bin:/opt/kotlinc/bin:${PATH}"
 # Same code layers and CA strip as the backend target.
 COPY pyproject.toml setup.cfg README.md ./
 COPY besser/ ./besser/
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e . && pip install --no-cache-dir -r governance-requirement.txt
 
 # The JDK keystore was built while the proxy CA was trusted, and --fresh never
 # removes a cert from it: delete it so the jks-keystore hook rebuilds it from

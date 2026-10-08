@@ -1,0 +1,40 @@
+# Register authored Docker components once through the public BAF APIs.
+{% if deployment_component_bindings.tools %}
+import hashlib as _component_hashlib
+import importlib.util as _component_importlib
+import sys as _component_sys
+
+
+def _load_declared_tool(binding):
+    path = os.path.join(_HERE, binding['path'])
+    digest = _component_hashlib.sha256(path.encode('utf-8')).hexdigest()
+    module_name = 'baf_declared_tool_' + digest
+    spec = _component_importlib.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load declared tool {binding['name']!r}")
+    module = _component_importlib.module_from_spec(spec)
+    _component_sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        _component_sys.modules.pop(module_name, None)
+        raise
+    function = getattr(module, binding['function'])
+    if not callable(function):
+        raise TypeError(f"Declared tool {binding['name']!r} is not callable")
+    return function
+
+
+for _binding in {{ deployment_component_bindings.tools | python_repr }}:
+    _declared_tool = agent.new_tool(
+        _load_declared_tool(_binding), name=_binding['name'], description=_binding['description'])
+    if _binding['description'] is not None:
+        _declared_tool.description = _binding['description']
+{% endif %}
+{% if deployment_component_bindings.skills %}
+for _binding in {{ deployment_component_bindings.skills | python_repr }}:
+    _declared_skill = agent.new_skill(
+        os.path.join(_HERE, _binding['path']), name=_binding['name'], description=_binding['description'])
+    if _binding['description'] is not None:
+        _declared_skill.description = _binding['description']
+{% endif %}

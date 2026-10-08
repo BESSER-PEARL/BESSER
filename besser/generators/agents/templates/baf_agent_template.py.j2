@@ -177,6 +177,7 @@ rules = json.loads(r'''{{ config['personalizationrules'] | json_literal }}''')
 {# Test sessions drive the agent headlessly, so the built-in Streamlit UI is never launched. #}
 {% set ui_flag = "False" if test_mode else "True" %}
 {# Exactly one platform is created: the config override, else the first modelled platform, else WebSocket. #}
+{% if not a2a or a2a.human_facing %}
 {% set platform_name = config['agentPlatform'] if config and 'agentPlatform' in config else None %}
 {% if platform_name == 'websocket' %}
 # Set use_ui=True to launch the built-in Streamlit chat interface automatically on startup.
@@ -203,6 +204,9 @@ platform = agent.use_websocket_platform(use_ui={{ ui_flag }}{% if personalizatio
     {% endfor %}
 {% else %}
 platform = agent.use_websocket_platform(use_ui={{ ui_flag }})
+{% endif %}
+{% else %}
+platform = None
 {% endif %}
 {% set has_default_llm_state = namespace(value=false) %}
 {% set has_db_reply_state = namespace(value=false) %}
@@ -341,7 +345,7 @@ from guis.{{ gui_module }} import gui as {{ gui_module }}
 {% elif config and 'llm' in config and config['llm'] is mapping and config['llm'].get('model') %}
 {% set ic_llm_ns.name = config['llm']['model'] %}
 {% else %}
-{% set ic_llm_ns.name = '' %}
+{% set ic_llm_ns.name = 'gpt-4o-mini' if a2a else '' %}
 {% endif %}
 {% set ic_config_set = namespace(value=false) %}
 {% if config and "intentRecognitionTechnology" in config and config["intentRecognitionTechnology"] == 'llm-based' %}
@@ -404,8 +408,13 @@ default_llm = {{ safe_var_name(default_llm_ns.name) }}
 {% set has_default_llm_state.value = true %}
 {% endif %}
 {% if not has_default_llm_state.value %}
+{% if a2a %}
+# Preserve the historical A2A default only when the model has no authored LLM.
+default_llm = LLMOpenAI(agent=agent, name='gpt-4o-mini', parameters={})
+{% else %}
 # No LLM configured; consumers referencing default_llm will fail loudly at runtime
 default_llm = None
+{% endif %}
 {% set has_default_llm_state.value = true %}
 {% endif %}
 {% set has_default_llm = has_default_llm_state.value %}
@@ -433,6 +442,9 @@ ic_config = LLMIntentClassifierConfiguration(
 agent.set_default_ic_config(ic_config)
 {% endif %}
 
+{% if deployment_component_bindings %}
+{% include 'baf_deployment_components.py.j2' %}
+{% else %}
 {% if agent.tools and agent.tools|length > 0 %}
 ##############################
 # TOOLS
@@ -445,6 +457,7 @@ agent.load_tools(os.path.join(_HERE, "tools.py"))
 # SKILLS
 ##############################
 agent.load_skills(os.path.join(_HERE, "skills"))
+{% endif %}
 {% endif %}
 
 {% if agent.workspaces and agent.workspaces|length > 0 %}
@@ -717,6 +730,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
         reply_text = str(db_result)
     {% endif %}
     {% endif %}
+    {% if a2a %}
+    _a2a_record_result(session, reply_text)
+    {% endif %}
     {% if action.store_in_session %}
     session.set({{ action.store_in_session | string | tojson }}, reply_text)
     {% endif %}
@@ -764,6 +780,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     {% else %}
     message = {{ llm_ns.name }}.predict(message={{ input_ns.expr }}, session=session)
     {% endif %}
+    {% if a2a %}
+    _a2a_record_result(session, message)
+    {% endif %}
     {% if action.store_in_session %}
     session.set({{ action.store_in_session | string | tojson }}, message)
     {% endif %}
@@ -784,6 +803,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     {% endif %}
     {% else %}
     message = {{ llm_ns.name }}.chat(session=session)
+    {% endif %}
+    {% if a2a %}
+    _a2a_record_result(session, message)
     {% endif %}
     {% if action.store_in_session %}
     session.set({{ action.store_in_session | string | tojson }}, message)
@@ -824,6 +846,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     rag_message = session.run_rag({{ rag_input_ns.expr }})
     {% endif %}
     {% endif %}
+    {% if a2a %}
+    _a2a_record_result(session, rag_message)
+    {% endif %}
     {% if action.store_in_session %}
     session.set({{ action.store_in_session | string | tojson }}, rag_message)
     {% endif %}
@@ -861,6 +886,9 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     system_message = 'Use the following webpage content to answer the question:\n' + str(webpages)
     {% endif %}
     message = {{ web_crawl_llm_ns.name }}.predict(message=session.event.message, session=session, system_message=system_message)
+    {% if a2a %}
+    _a2a_record_result(session, message)
+    {% endif %}
     {% if action.store_in_session %}
     session.set({{ action.store_in_session | string | tojson }}, message)
     {% endif %}
@@ -1063,6 +1091,10 @@ def {{ fallback_name }}(session: Session):
 {% endfor %}
 {% endif %}
 
+{% if a2a %}
+{% include 'baf_a2a_runtime.py.j2' %}
+{% include 'baf_a2a_bindings.py.j2' %}
+{% endif %}
 # RUN APPLICATION
 
 if __name__ == '__main__':

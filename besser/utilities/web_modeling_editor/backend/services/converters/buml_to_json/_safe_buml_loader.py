@@ -22,6 +22,30 @@ import ast
 from typing import Any, Dict, Mapping, Set
 
 
+def strip_buml_imports(code: str) -> str:
+    """Remove imports before loading generated BUML with the AST allowlist."""
+    if not isinstance(code, str):
+        raise TypeError(f"Expected BUML source as str, got {type(code).__name__}")
+
+    code = code.removeprefix("\ufeff")
+    cleaned_lines = []
+    in_import_block = False
+
+    for line in code.splitlines():
+        stripped = line.lstrip()
+        if in_import_block:
+            if ")" in line:
+                in_import_block = False
+            continue
+        if stripped.startswith(("import ", "from ")):
+            if "(" in line and ")" not in line:
+                in_import_block = True
+            continue
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines)
+
+
 class SafeBumlLoaderError(ValueError):
     """Raised when the BUML content contains disallowed constructs."""
 

@@ -23,7 +23,11 @@ from besser.generators.flutter import FlutterGenerator
 from besser.generators.terraform import TerraformGenerator
 from besser.generators.testgen import TestCaseGenerator
 from besser.generators.bpmn import BPMNGenerator
-from besser.utilities.web_modeling_editor.backend.constants.constants import BPMN_PROJECT_DIAGRAM_KEY
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    BPMN_PROJECT_DIAGRAM_KEY,
+    DEPLOYMENT_DIAGRAM_TYPE,
+)
+from besser.generators.docker_compose import DockerComposeGenerator
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -228,6 +232,17 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         # Project bucket key ("BPMN"); the model inside has type "BPMNDiagram".
         required_diagram_type=BPMN_PROJECT_DIAGRAM_KEY,
     ),
+
+    # Docker Compose generator (UML Deployment diagram based). A ZIP holding
+    # docker-compose.yml plus one baked BAF build context per linked agent.
+    "docker_compose": GeneratorInfo(
+        generator_class=DockerComposeGenerator,
+        output_type="zip",
+        file_extension=".zip",
+        category="deployment",
+        requires_class_diagram=False,
+        required_diagram_type=DEPLOYMENT_DIAGRAM_TYPE,
+    ),
 }
 
 # Neural network generators are conditionally registered since they
@@ -314,6 +329,8 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "pytorch_nn.py"
     elif generator_type == "tensorflow":
         return "tf_nn.py"
+    elif generator_type == "docker_compose":
+        return "docker_compose.zip"
     else:
         return f"{generator_type}_output{info.file_extension}"
 

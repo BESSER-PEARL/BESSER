@@ -13,6 +13,7 @@ from besser.BUML.metamodel.structural import Method
 from besser.generators import GeneratorInterface
 
 from besser.generators.agents.agent_personalization import configure_agent, flatten_agent_config_structure
+from besser.generators.agents.deployment_components import materialize_deployment_components
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
@@ -213,6 +214,13 @@ class BAFGenerator(GeneratorInterface):
             - GenerationMode.FULL (default): personalization (if config) + templated code.
             - GenerationMode.PERSONALIZED_ONLY: run personalization JSON/model export only.
             - GenerationMode.CODE_ONLY: skip personalization helpers, render templates immediately.
+        a2a_descriptor (dict, optional): Resolved deployment topology and governance.
+            Extends the authored agent graph when peers or an A2A server are present.
+        bind_host (str, optional): Interface the websocket and Streamlit servers bind to in
+            the default ``config.yaml``. Defaults to ``"localhost"`` so a standalone agent is
+            not exposed on the network; container builds (e.g. ``DockerComposeGenerator``)
+            pass ``"0.0.0.0"`` so the published ports reach the servers. A supplied
+            ``config_yaml`` is written as-is.
     """
     def __init__(
         self,
@@ -224,12 +232,23 @@ class BAFGenerator(GeneratorInterface):
         generation_mode: GenerationMode | str = GenerationMode.FULL,
         config_yaml: Optional[str] = None,
         test_mode: bool = False,
+        a2a_descriptor: Optional[dict] = None,
+        deployment_component_metadata: bool = False,
+        bind_host: str = "localhost",
     ):
         super().__init__(model, output_dir)
+        self.bind_host = bind_host
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
         self.config_yaml = config_yaml
         self.openai_api_key = openai_api_key
         self.test_mode = test_mode
+        self.deployment_component_metadata = deployment_component_metadata
+        self.a2a_descriptor = (
+            a2a_descriptor if a2a_descriptor and
+            (a2a_descriptor.get('to_peers') or a2a_descriptor.get('a2a_server')) else None
+        )
+        if self.a2a_descriptor and sum(bool(state.initial) for state in model.states) != 1:
+            raise ValueError('A2A generation requires exactly one authored initial state')
         if isinstance(generation_mode, GenerationMode):
             self.generation_mode = generation_mode
         elif isinstance(generation_mode, str):
@@ -342,6 +361,7 @@ class BAFGenerator(GeneratorInterface):
         env.globals['safe_var_name'] = safe_var_name
         env.globals['resolve_rag_var_name'] = resolve_rag_var_name
         env.globals['extract_braced_vars'] = extract_braced_vars
+        env.filters['python_repr'] = repr
         env.filters['json_literal'] = json_literal
         agent_template = env.get_template('baf_agent_template.py.j2')
         gui_modules = collect_gui_modules(self.model)
@@ -402,6 +422,11 @@ class BAFGenerator(GeneratorInterface):
             if not generate_code_assets:
                 return
 
+        deployment_component_bindings = None
+        if self.deployment_component_metadata and generate_code_assets:
+            deployment_component_bindings = materialize_deployment_components(
+                self.model, self.build_generation_dir())
+
         if config_for_personalization and 'personalizationMapping' in config_for_personalization:
             logger.info("Generating agent with personalization mappings")
             with open(agent_path, mode="w", encoding="utf-8") as f:
@@ -411,6 +436,8 @@ class BAFGenerator(GeneratorInterface):
                     personalization_mapping=config_for_personalization['personalizationMapping'],
                     test_mode=self.test_mode,
                     gui_modules=list(gui_modules),
+                    a2a=self.a2a_descriptor,
+                    deployment_component_bindings=deployment_component_bindings,
                 )
                 f.write(generated_code)
         else:
@@ -421,6 +448,8 @@ class BAFGenerator(GeneratorInterface):
                     config=self.config,
                     test_mode=self.test_mode,
                     gui_modules=list(gui_modules),
+                    a2a=self.a2a_descriptor,
+                    deployment_component_bindings=deployment_component_bindings,
                 )
                 f.write(generated_code)
             logger.info("Agent script generated at %s", agent_path)
@@ -432,7 +461,8 @@ class BAFGenerator(GeneratorInterface):
                 else:
                     config_template = env.get_template('baf_config_template.py.j2')
                     properties = sorted(self.model.properties, key=lambda prop: prop.section)
-                    f.write(config_template.render(properties=properties, agent=self.model))
+                    f.write(config_template.render(properties=properties, agent=self.model,
+                                                   bind_host=self.bind_host))
             logger.info("Agent config file generated at %s", config_path)
             # Generate readme.txt using the Jinja2 template
             readme_template = env.get_template('readme.txt.j2')
@@ -444,7 +474,7 @@ class BAFGenerator(GeneratorInterface):
 
             # Generate tools.py — one file containing all tool function definitions
             tools = getattr(self.model, 'tools', []) or []
-            if tools:
+            if tools and not self.deployment_component_metadata:
                 tools_path = self.build_generation_path(file_name="tools.py")
                 with open(tools_path, mode="w", encoding="utf-8") as f:
                     f.write("# Auto-generated tool definitions\n\n")
@@ -457,7 +487,7 @@ class BAFGenerator(GeneratorInterface):
 
             # Generate skills/ directory — one .md file per skill
             skills = getattr(self.model, 'skills', []) or []
-            if skills:
+            if skills and not self.deployment_component_metadata:
                 skills_dir = os.path.join(self.build_generation_dir(), "skills")
                 os.makedirs(skills_dir, exist_ok=True)
                 for skill in skills:

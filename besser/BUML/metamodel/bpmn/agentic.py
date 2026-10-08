@@ -51,13 +51,16 @@ class GatewayRole(Enum):
 
 
 class AgentRole(Enum):
-    """SEAA'25 «AgenticLane» profile role (paper §4.1).
+    """«AgenticLane» profile role, aligned with the web editor's BPMNAgentRole.
 
-    The paper notes the enum is extensible (e.g. ``"coder"``); kept minimal
-    here for the foundation. Add new members as the paper / WME grow them.
+    The four values replace the earlier ``WORKER`` / ``MANAGER`` members. The
+    JSON importer still accepts the old wire values (worker -> solution,
+    manager -> supervision), but this enum only carries the new names.
     """
-    WORKER = "worker"
-    MANAGER = "manager"
+    SOLUTION = "solution"
+    SUPERVISION = "supervision"
+    COLLABORATION = "collaboration"
+    CONSENSUS = "consensus"
 
 
 # AgenticGateway is restricted to PARALLEL and INCLUSIVE gateway types per
@@ -123,9 +126,11 @@ class AgenticTask(Task):
             meaning «AgenticTask» without a reflective loop).
         trust_score (int): The trust score, 0-100 (default 0).
         agent_diagram_ref (str | None): Opaque id of the AgentDiagram this
-            task's agent behavior is defined by (SEAA'25 cross-diagram link,
-            WME guide 11). Default None. Pass-through -- no UUID validation,
-            no resolution. Canonical carrier.
+            task's agent behavior is defined by. Default None. Pass-through --
+            no UUID validation, no resolution. Canonical carrier.
+        reflection_reviewer_lane_id (str | None): Editor id of the lane whose
+            agent reviews this task under cross reflection
+            (``ReflectionMode.CROSS``). Default None (reviewer unspecified).
         task_type (TaskType): Inherited from Task.
         loop_characteristics (LoopCharacteristics): Inherited from Activity.
         layout (dict): Inherited (opaque DI passthrough).
@@ -135,13 +140,15 @@ class AgenticTask(Task):
         reflection_mode (ReflectionMode): The reflection mode.
         trust_score (int): The trust score.
         agent_diagram_ref (str | None): The AgentDiagram reference.
+        reflection_reviewer_lane_id (str | None): The cross-reflection reviewer lane.
     """
 
     def __init__(self, name: str = "", reflection_mode: "ReflectionMode" = None,
                  trust_score: int = 0,
                  agent_diagram_ref: str = None,
                  task_type=None, loop_characteristics=None,
-                 layout: dict = None, metadata=None, timestamp=None):
+                 layout: dict = None, metadata=None, timestamp=None,
+                 reflection_reviewer_lane_id: str = None):
         super().__init__(name=name, task_type=task_type,
                          loop_characteristics=loop_characteristics,
                          layout=layout, metadata=metadata, timestamp=timestamp)
@@ -149,6 +156,7 @@ class AgenticTask(Task):
                                 else ReflectionMode.NONE)
         self.trust_score = trust_score
         self.agent_diagram_ref = agent_diagram_ref
+        self.reflection_reviewer_lane_id = reflection_reviewer_lane_id
 
     @property
     def reflection_mode(self) -> "ReflectionMode":
@@ -186,8 +194,8 @@ class AgenticTask(Task):
     @property
     def agent_diagram_ref(self):
         """str | None: Get the opaque id of the AgentDiagram this task's agent
-        behavior is defined by (SEAA'25 cross-diagram link, WME guide 11 --
-        canonical carrier). ``None`` when unset."""
+        behavior is defined by. This is the canonical task-to-agent carrier.
+        ``None`` when unset."""
         return self.__agent_diagram_ref
 
     @agent_diagram_ref.setter
@@ -205,6 +213,24 @@ class AgenticTask(Task):
                 f"agent_diagram_ref must be a str or None, got {type(value).__name__}"
             )
         self.__agent_diagram_ref = value
+
+    @property
+    def reflection_reviewer_lane_id(self):
+        """str | None: Get the editor id of the cross-reflection reviewer lane."""
+        return self.__reflection_reviewer_lane_id
+
+    @reflection_reviewer_lane_id.setter
+    def reflection_reviewer_lane_id(self, value):
+        """str | None: Set the cross-reflection reviewer lane id (opaque pass-through).
+
+        Raises:
+            TypeError: if not a str or None.
+        """
+        if value is not None and not isinstance(value, str):
+            raise TypeError(
+                f"reflection_reviewer_lane_id must be a str or None, got {type(value).__name__}"
+            )
+        self.__reflection_reviewer_lane_id = value
 
     def __repr__(self):
         return (f"AgenticTask(name='{self.name}', "
@@ -362,14 +388,14 @@ class AgenticLane(Lane):
 
     Args:
         name (str): The lane label (inherited; may be empty).
-        role (AgentRole): The profile role (default WORKER).
+        role (AgentRole): The profile role (default SOLUTION).
         trust_score (int): 0-100 (default 0).
         agent_diagram_ref (str | None): Opaque id of the AgentDiagram this
-            lane's agent is defined by (SEAA'25 cross-diagram link, WME 08).
-            Default None. Pass-through -- no UUID validation, no resolution.
+            lane's agent is defined by. Default None. Pass-through -- no UUID
+            validation, no resolution.
         swarm_size (int): Swarm size — how many identical copies of this
             lane's agent participate (>= 1, default 1). Flows to the Deployment
-            artifact ``[N]``. WME meeting 2026-06-08 point #3.
+            artifact ``[N]``.
         flow_nodes (set[FlowNode]): Inherited from Lane.
         layout (dict): Inherited.
         metadata, timestamp: Inherited.
@@ -387,14 +413,14 @@ class AgenticLane(Lane):
                  layout: dict = None, metadata=None, timestamp=None):
         super().__init__(name=name, flow_nodes=flow_nodes, layout=layout,
                          metadata=metadata, timestamp=timestamp)
-        self.role = role if role is not None else AgentRole.WORKER
+        self.role = role if role is not None else AgentRole.SOLUTION
         self.trust_score = trust_score
         self.agent_diagram_ref = agent_diagram_ref
         self.swarm_size = swarm_size
 
     @property
     def role(self) -> "AgentRole":
-        """AgentRole: Get the profile role (worker / manager)."""
+        """AgentRole: Get the profile role."""
         return self.__role
 
     @role.setter
@@ -443,11 +469,11 @@ class AgenticLane(Lane):
     @property
     def agent_diagram_ref(self):
         """str | None: Get the opaque id of the AgentDiagram this lane's agent
-        is defined by (SEAA'25 cross-diagram link, WME 08). ``None`` when unset.
+        is defined by. ``None`` when unset.
 
-        **Legacy carrier.** WME guide 11 moved the canonical task->agent link to
+        **Legacy carrier.** The canonical task-to-agent link is
         ``AgenticTask.agent_diagram_ref``; this lane field is retained only for
-        round-tripping legacy projects. New links should be authored on
+        round-tripping older projects. New links should be authored on
         ``AgenticTask``."""
         return self.__agent_diagram_ref
 

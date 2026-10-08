@@ -45,6 +45,9 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.parsers.multiplicity_parser import (
+    format_multiplicity_label,
+)
 
 
 def parse_buml_content(content: str) -> DomainModel:
@@ -147,26 +150,9 @@ def parse_buml_content(content: str) -> DomainModel:
         raise ValueError(f"Failed to parse B-UML content: {str(e)}")
 
 
-def _format_multiplicity_label(multiplicity) -> str:
-    """Render a ``Multiplicity`` as its UML association-end label.
-
-    Collapses an exact multiplicity (``min == max``) to a single value
-    (``1..1`` -> ``1``, ``5..5`` -> ``5``); an unbounded upper bound renders as
-    ``*`` (``0..*``, ``1..*``). The result round-trips through
-    ``parse_multiplicity`` (a bare ``N`` is read back as ``N..N``).
-    """
-    min_val = multiplicity.min
-    max_val = multiplicity.max
-    if max_val == UNLIMITED_MAX_MULTIPLICITY:
-        return f"{min_val}..*"
-    if min_val == max_val:
-        return f"{min_val}"
-    return f"{min_val}..{max_val}"
-
-
 def _multiplicity_str(prop: Property) -> str:
     """Render a property's multiplicity as its UML association-end label."""
-    return _format_multiplicity_label(prop.multiplicity)
+    return format_multiplicity_label(prop.multiplicity)
 
 
 def _json_safe_default(value):

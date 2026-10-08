@@ -24,9 +24,12 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
     process_object_diagram,
     process_nn_diagram,
+    process_component_diagram,
+    process_deployment_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     BPMN_DIAGRAM_TYPES,
+    DEPLOYMENT_DIAGRAM_TYPE,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
@@ -194,6 +197,14 @@ async def validate_diagram(input_data: DiagramInput):
                 "errors": [],
                 "warnings": []
             }
+
+        elif diagram_type in ("ComponentDiagram", DEPLOYMENT_DIAGRAM_TYPE):
+            # Conversion and construction errors are collected by the handlers below.
+            processor = (process_component_diagram if diagram_type == "ComponentDiagram"
+                         else process_deployment_diagram)
+            result = processor(input_data.model_dump()).validate(raise_exception=False)
+            validation_errors.extend(result["errors"])
+            validation_warnings.extend(result["warnings"])
 
         else:
             return {

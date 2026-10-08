@@ -24,6 +24,15 @@ from besser.utilities.buml_code_builder.common import (
 )
 
 
+def _set_literal(items: str) -> str:
+    """Python source for a set of the comma-separated ``items``.
+
+    ``{}`` is an empty dict, not an empty set, so an empty collection is
+    written as ``set()``.
+    """
+    return f"{{{items}}}" if items else "set()"
+
+
 def _method_var_name(method) -> str:
     """Sanitize a method's name for use as a Python identifier.
 
@@ -548,23 +557,18 @@ def domain_model_to_code(
         enum_names = ', '.join(safe_class_name(enum.name) for enum in sort(model.get_enumerations()))
         types_str = (f"{class_names}, {enum_names}" if class_names and enum_names else
                     class_names or enum_names)
-        f.write(f"    types={{{types_str}}},\n")
+        f.write(f"    types={_set_literal(types_str)},\n")
 
         # Include both regular associations and those used in association classes
         all_assoc_names = ', '.join([assoc.name for assoc in regular_associations] +
                                     [ac.association.name for ac in association_classes])
-        if all_assoc_names:
-            f.write(f"    associations={{{all_assoc_names}}},\n")
-        else:
-            f.write("    associations={},\n")
+        f.write(f"    associations={_set_literal(all_assoc_names)},\n")
 
         if hasattr(model, 'constraints') and model.constraints:
             constraints_str = ', '.join(c.name.replace("-", "_") for c in sort(model.constraints))
             f.write(f"    constraints={{{constraints_str}}},\n")
-        if model.generalizations:
-            f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))}}},\n")
-        else:
-            f.write("    generalizations={},\n")
+        gen_names = ', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))
+        f.write(f"    generalizations={_set_literal(gen_names)},\n")
 
         # Add metadata if it exists
         if domain_metadata_var:
@@ -682,7 +686,7 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
     objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
     f.write(f"{object_model_var_name}: ObjectModel = ObjectModel(\n")
     f.write(f"    name=\"{_escape_python_string(objectmodel.name)}\",\n")
-    f.write(f"    objects={{{objects_str}}}")
+    f.write(f"    objects={_set_literal(objects_str)}")
 
     # Add metadata if it exists
     if hasattr(objectmodel, 'metadata') and objectmodel.metadata:

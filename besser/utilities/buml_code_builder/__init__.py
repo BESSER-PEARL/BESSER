@@ -12,6 +12,8 @@ from besser.utilities.buml_code_builder.state_machine_builder import state_machi
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
+from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
+from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
 
 __all__ = [
     '_escape_python_string',
@@ -22,4 +24,6 @@ __all__ = [
     'bpmn_model_to_code',
     'project_to_code',
     'nn_model_to_code',
+    'component_model_to_code',
+    'deployment_model_to_code'
 ]

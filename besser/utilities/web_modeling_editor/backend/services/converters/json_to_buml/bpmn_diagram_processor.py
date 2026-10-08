@@ -56,6 +56,12 @@ from besser.BUML.metamodel.bpmn import (
     TaskType,
     TextAnnotation,
     Transaction,
+    AgenticGateway,
+    AgenticLane,
+    AgenticTask,
+    AgentRole,
+    GatewayRole,
+    ReflectionMode,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     BPMN_DIAGRAM_TYPES,
@@ -142,10 +148,32 @@ def _flow_layout_dict(edge: dict) -> dict:
     }
 
 
+_AGENT_ROLE_ALIASES = {"worker": "solution", "manager": "supervision"}
+
+
+def _clamp_trust_score(value) -> int:
+    """Clamp WME's tolerant trust score to BESSER's strict [0, 100]."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(100, n))
+
+
+def _clamp_swarm_size(value) -> int:
+    """Clamp WME's tolerant multiplicity field to AgenticLane.swarm_size >= 1."""
+    try:
+        n = round(float(value))
+    except (TypeError, ValueError):
+        return 1
+    return max(1, n)
+
+
 def _build_node(node: dict):
     """Construct the metamodel object for one v4 ``nodes[]`` entry, or ``None`` for
     an unknown type. Raises ConversionError for a known type with an unrecognised
-    enum string."""
+    enum string. Agentic variants (``data.isAgentic``) build ``AgenticTask`` /
+    ``AgenticGateway`` / ``AgenticLane``."""
     node_type = node.get("type")
     data = node_data(node)
     name = data.get("name", "") or ""
@@ -165,6 +193,23 @@ def _build_node(node: dict):
                 raise ConversionError(
                     f"Unknown BPMN task type '{data.get('taskType')}' on Task '{name}'."
                 ) from exc
+            if data.get("isAgentic"):
+                reflection_value = data.get("reflectionMode", "none") or "none"
+                try:
+                    reflection = ReflectionMode(reflection_value)
+                except ValueError as exc:
+                    raise ConversionError(
+                        f"Unknown reflectionMode '{reflection_value}' on AgenticTask '{name}'."
+                    ) from exc
+                return AgenticTask(
+                    name=name,
+                    task_type=task_type,
+                    loop_characteristics=loop,
+                    reflection_mode=reflection,
+                    trust_score=_clamp_trust_score(data.get("trustScore", 0)),
+                    agent_diagram_ref=data.get("agentDiagramRef") or None,
+                    reflection_reviewer_lane_id=data.get("reflectionReviewerLaneId") or None,
+                )
             return Task(name=name, task_type=task_type, loop_characteristics=loop)
         return cls(name=name, loop_characteristics=loop)
 
@@ -186,6 +231,29 @@ def _build_node(node: dict):
             raise ConversionError(
                 f"Unknown BPMN gateway type '{data.get('gatewayType')}' on Gateway '{name}'."
             ) from exc
+        if data.get("isAgentic"):
+            try:
+                role = GatewayRole(data.get("gatewayRole", "diverging") or "diverging")
+            except ValueError as exc:
+                raise ConversionError(
+                    f"Unknown gatewayRole '{data.get('gatewayRole')}' "
+                    f"on AgenticGateway '{name}'."
+                ) from exc
+            gov = data.get("governanceDsl")
+            gov = gov if (isinstance(gov, str) and gov.strip() != "") else None
+            try:
+                return AgenticGateway(
+                    name=name,
+                    gateway_type=gateway_type,
+                    gateway_role=role,
+                    trust_score=_clamp_trust_score(data.get("trustScore", 0)),
+                    governance_dsl=gov,
+                )
+            except ValueError as exc:
+                raise ConversionError(
+                    f"Cannot import AgenticGateway '{name}': {exc}"
+                ) from exc
+
         return Gateway(name=name, gateway_type=gateway_type)
 
     if node_type == "bpmnDataObject":
@@ -197,8 +265,28 @@ def _build_node(node: dict):
     if node_type == "bpmnGroup":
         return Group(name=name)
     if node_type == "bpmnSwimlane":
-        # packages/library/lib/nodes/bpmn/BPMNSwimlane.tsx — a lane is a child
+        # packages/library/lib/nodes/bpmn/BPMNSwimlane.tsx â€” a lane is a child
         # (parentId) of its bpmnPool.
+        if data.get("isAgentic"):
+            # Â«AgenticLaneÂ». The editor's former role values (worker / manager)
+            # are accepted as aliases.
+            role_value = data.get("role", "solution") or "solution"
+            role_value = _AGENT_ROLE_ALIASES.get(role_value, role_value)
+            try:
+                role = AgentRole(role_value)
+            except ValueError as exc:
+                raise ConversionError(
+                    f"Unknown role '{role_value}' on AgenticLane '{name}'."
+                ) from exc
+            return AgenticLane(
+                name=name,
+                role=role,
+                trust_score=_clamp_trust_score(data.get("trustScore", 0)),
+                # Opaque AgentDiagram id, passed through verbatim; "" -> None.
+                agent_diagram_ref=data.get("agentDiagramRef") or None,
+                # Swarm size travels as `multiplicity`; absent -> 1 (single agent).
+                swarm_size=_clamp_swarm_size(data.get("multiplicity", 1)),
+            )
         return Lane(name=name)
     if node_type == "bpmnPool":
         return Participant(name=name, process=Process(name=name))

@@ -36,7 +36,13 @@ import logging
 import uuid
 
 from besser.BUML.metamodel.bpmn import (
+    AgentRole,
+    GatewayRole,
+    ReflectionMode,
     Activity,
+    AgenticGateway,
+    AgenticLane,
+    AgenticTask,
     Association,
     BPMNConnectingObject,
     BPMNModel,
@@ -76,25 +82,30 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
+    strip_buml_imports,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 logger = logging.getLogger(__name__)
 
 
+# Lookup is by exact ``type(obj)``, so the agentic subclasses need their own entries.
 _TYPE_FOR_CLASS = {
     Task: "bpmnTask",
+    AgenticTask: "bpmnTask",
     Transaction: "bpmnTransaction",
     SubProcess: "bpmnSubprocess",
     StartEvent: "bpmnStartEvent",
     IntermediateEvent: "bpmnIntermediateEvent",
     EndEvent: "bpmnEndEvent",
     Gateway: "bpmnGateway",
+    AgenticGateway: "bpmnGateway",
     DataObject: "bpmnDataObject",
     DataStore: "bpmnDataStore",
     TextAnnotation: "bpmnAnnotation",
     Group: "bpmnGroup",
     Lane: "bpmnSwimlane",
+    AgenticLane: "bpmnSwimlane",
     Participant: "bpmnPool",
 }
 
@@ -120,6 +131,25 @@ _EDGE_TYPE_FOR_FLOW_CLASS = {
     MessageFlow: "BPMNMessageFlow",
     Association: "BPMNAssociationFlow",
     DataAssociation: "BPMNDataAssociationFlow",
+}
+
+# Agentic fields emitted on every task / gateway / lane node, with these defaults
+# when the element is not agentic (the editor's own defaults for the same fields).
+_TASK_AGENTIC_DEFAULTS = {
+    "isAgentic": False,
+    "reflectionMode": "none",
+    "trustScore": 0,
+}
+_GATEWAY_AGENTIC_DEFAULTS = {
+    "isAgentic": False,
+    "gatewayRole": "diverging",
+    "trustScore": 0,
+}
+_LANE_AGENTIC_DEFAULTS = {
+    "isAgentic": False,
+    "role": "solution",
+    "trustScore": 0,
+    "multiplicity": 1,
 }
 
 
@@ -316,6 +346,36 @@ def _emit_node(obj, parent_id, id_for, grid: "_GridLayout"):
     if isinstance(obj, Gateway):
         data["gatewayType"] = obj.gateway_type.value
 
+    if isinstance(obj, Task):
+        data.update(_TASK_AGENTIC_DEFAULTS)
+        if isinstance(obj, AgenticTask):
+            data["isAgentic"] = True
+            data["reflectionMode"] = obj.reflection_mode.value
+            data["trustScore"] = obj.trust_score
+            if obj.agent_diagram_ref is not None:
+                data["agentDiagramRef"] = obj.agent_diagram_ref
+            if obj.reflection_reviewer_lane_id is not None:
+                data["reflectionReviewerLaneId"] = obj.reflection_reviewer_lane_id
+
+    if isinstance(obj, Gateway):
+        data.update(_GATEWAY_AGENTIC_DEFAULTS)
+        if isinstance(obj, AgenticGateway):
+            data["isAgentic"] = True
+            data["gatewayRole"] = obj.gateway_role.value
+            data["trustScore"] = obj.trust_score
+            if obj.governance_dsl is not None:
+                data["governanceDsl"] = obj.governance_dsl
+
+    if isinstance(obj, Lane):
+        data.update(_LANE_AGENTIC_DEFAULTS)
+        if isinstance(obj, AgenticLane):
+            data["isAgentic"] = True
+            data["role"] = obj.role.value
+            data["trustScore"] = obj.trust_score
+            data["multiplicity"] = obj.swarm_size
+            if obj.agent_diagram_ref is not None:
+                data["agentDiagramRef"] = obj.agent_diagram_ref
+
     return make_node(
         node_id=id_for(obj), type_=wme_type, data=data,
         position={"x": bounds["x"], "y": bounds["y"]},
@@ -415,24 +475,19 @@ def bpmn_buml_to_json(content: str) -> dict:
         "DataObject": DataObject, "DataStore": DataStore, "Lane": Lane, "Group": Group,
         "TextAnnotation": TextAnnotation, "set": set,
         "Project": lambda *args, **kwargs: None,
+        "AgenticTask": AgenticTask,
+        "AgenticGateway": AgenticGateway,
+        "AgenticLane": AgenticLane,
+        "ReflectionMode": ReflectionMode,
+        "GatewayRole": GatewayRole,
+        "AgentRole": AgentRole,
     }
 
-    cleaned_lines = []
-    in_import_block = False
-    for line in content.splitlines():
-        stripped = line.lstrip()
-        if in_import_block:
-            if ")" in line:
-                in_import_block = False
-            continue
-        if stripped.startswith(("import ", "from ")):
-            if "(" in line and ")" not in line:
-                in_import_block = True
-            continue
-        if any(gen in line for gen in ["Generator(", ".generate("]):
-            continue
-        cleaned_lines.append(line)
-    cleaned_content = "\n".join(cleaned_lines)
+    # A BPMN file may end with a generator run; only the model is loaded.
+    cleaned_content = "\n".join(
+        line for line in strip_buml_imports(content).splitlines()
+        if not any(gen in line for gen in ("Generator(", ".generate("))
+    )
 
     try:
         local_vars = safe_load_buml(cleaned_content, allowed_names)

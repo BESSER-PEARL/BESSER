@@ -13,7 +13,9 @@ from besser.BUML.metamodel.structural import (
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
-    _format_multiplicity_label,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.parsers.multiplicity_parser import (
+    format_multiplicity_label,
 )
 
 
@@ -28,8 +30,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
         (0, UNLIMITED_MAX_MULTIPLICITY, "0..*"),
     ],
 )
-def test_format_multiplicity_label(min_val, max_val, expected):
-    assert _format_multiplicity_label(Multiplicity(min_val, max_val)) == expected
+def testformat_multiplicity_label(min_val, max_val, expected):
+    assert format_multiplicity_label(Multiplicity(min_val, max_val)) == expected
 
 
 def test_exact_multiplicity_collapses_in_converter():

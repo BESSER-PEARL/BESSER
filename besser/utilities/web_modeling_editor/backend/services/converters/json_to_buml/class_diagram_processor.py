@@ -1112,7 +1112,9 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     # Keyed by (class_name, method_name) ->
     # {"stateMachineId": ..., "quantumCircuitId": ..., "neuralNetworkId": ...}
     domain_model.method_diagram_refs = method_diagram_refs
-    # WME node-id -> Class side-map for project-level cross-diagram resolution.
+
+    # WME node-id -> Class side-map so project-level cross-diagram resolution can
+    # match Component.realizes against stable WME ids (structural Class has no `layout`).
     domain_model._wme_class_index = dict(class_id_to_class)
     domain_model._layout_positions = layout_positions
 

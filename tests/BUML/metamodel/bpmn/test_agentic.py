@@ -20,8 +20,6 @@ from besser.BUML.metamodel.bpmn import (
     GatewayType,
     Lane,
     LoopCharacteristics,
-    Participant,
-    Process,
     ReflectionMode,
     Task,
     TaskType,
@@ -406,7 +404,6 @@ def test_existing_bpmn_imports_unchanged():
         BPMNModel,
         Gateway,
         Lane,
-        Process,
         SequenceFlow,
         Task,
     )

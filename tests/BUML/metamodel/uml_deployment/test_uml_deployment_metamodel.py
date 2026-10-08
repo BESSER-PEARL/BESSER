@@ -19,7 +19,7 @@ from besser.BUML.metamodel.structural import (
 from besser.BUML.metamodel.uml_deployment import (
     Artifact, CommunicationPath, DeploymentDependency, DeploymentElement,
     DeploymentModel, DeploymentRelation, DeploymentRelationship, Interface,
-    InterfaceProvided, InterfaceRequired, Locality, Node, NodeKind,
+    InterfaceProvided, InterfaceRequired, Node, NodeKind,
 )
 
 

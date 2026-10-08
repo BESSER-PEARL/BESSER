@@ -146,8 +146,8 @@ the BPMN generator emits vendor-neutral BPMN 2.0 XML.
 
 
 The Agentic extension is represented by ``AgenticTask``, ``AgenticGateway``,
-and ``AgenticLane`` subclasses. The converter consumes the WME ``isAgentic``
-flag and preserves ``reflectionMode``, ``reflectionReviewerLaneId``,
+and ``AgenticLane`` subclasses. The converter consumes the ``isAgentic`` flag
+on the node ``data`` and preserves ``reflectionMode``, ``reflectionReviewerLaneId``,
 ``gatewayRole``, ``trustScore``, lane ``role``, lane ``multiplicity`` (stored as
 ``AgenticLane.swarm_size``), ``agentDiagramRef``, and ``governanceDsl``. Flows
 stay standard BPMN flows and carry no agentic fields.
@@ -174,8 +174,12 @@ whole-swarm structural and runtime-allocation views backing the
 They are standalone diagrams for normal import/export, and they also
 participate in project-level multi-agent system generation.
 
+Their v4 node and edge types and ``data`` fields are listed in
+``docs/source/migrations/uml-v4-shape.md``.
+
 **Agentic profile.** The Component diagram's agentic vocabulary is carried in
-the WME ``stereotype`` string. The converter promotes a component to
+the node's ``data.stereotype`` string (an edge's ``data.stereotype`` for
+dependencies). The converter promotes a component to
 ``AgenticComponent`` / ``Skill`` / ``Tool`` (and a dependency to
 ``AgenticEdge``) by matching stereotype tokens; permission scopes ride in a
 ``{permission: ...}`` suffix on agentic-edge stereotypes.

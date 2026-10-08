@@ -804,6 +804,14 @@ migrator must implement identical fallthrough order:
 - `replyType` defaults to `'text'` when missing (or is derived from
   `actionType`).
 - `AgentIntent.intent_description` defaults to `''`.
+- Agent-to-agent (A2A) wiring tags, read by Docker Compose generation
+  (`json_to_buml/a2a_tags.py`): an `AgentState`'s `data.description` may hold
+  `a2a:out;peer=<agent>;ref=<diagram id>;flow=<bpmn id>;order=<n>;kind=<kind>`
+  lines (one per outbound edge, mixed with free text), and an
+  `AgentStateTransition`'s `data.name` an
+  `a2a:in;peer=...;ref=...;flow=...;kind=...` tag, with the intent in
+  `data.predefined.intentName`. v3 -> v4 keeps `AgentState.description` as
+  `data.description` and the transition `name` as `data.name`.
 
 ---
 
@@ -1111,6 +1119,22 @@ goes to the lane under its centre), position made parent-relative, lane header
 strip kept clear. Already-parented nodes are never touched; parents precede
 children in `nodes`.
 
+### Agentic BPMN fields (`node.data`)
+
+The agentic extension rides on the same nodes, with the v3 attribute names:
+
+| Node | Fields | B-UML |
+|------|--------|-------|
+| `bpmnTask` | `isAgentic: boolean`, `reflectionMode` (`none` / `self` / `cross` / `human`), `trustScore: 0..100`, `agentDiagramRef?: string`, `reflectionReviewerLaneId?: string` (a lane node id) | `AgenticTask` when `isAgentic` |
+| `bpmnGateway` | `isAgentic: boolean`, `gatewayRole` (`diverging` / `merging`), `trustScore`, `governanceDsl?: string` (Governance DSL policy text, merging gateways) | `AgenticGateway` when `isAgentic` |
+| `bpmnSwimlane` | `isAgentic: boolean`, `role` (`solution` / `supervision` / `collaboration` / `consensus`; legacy `worker` / `manager` read as `solution` / `supervision`), `trustScore`, `agentDiagramRef?: string` (AgentDiagram project-diagram id), `multiplicity: number` (swarm size, at least 1) | `AgenticLane` when `isAgentic` |
+
+`trustScore` is clamped to 0..100 and `multiplicity` to at least 1 on read.
+The backend emits `isAgentic`, the role field and `trustScore` on every task,
+gateway and lane (`false`, `none` / `diverging` / `solution`, `0`, and lane
+`multiplicity: 1` when not agentic); the optional references only when set.
+Flows carry no agentic fields.
+
 ### v4 edge types (BPMNDiagram)
 
 One edge `type` per flow kind (v3 used a single `BPMNFlow` + `flowType`):
@@ -1149,6 +1173,114 @@ One edge `type` per flow kind (v3 used a single `BPMNFlow` + `flowType`):
 - The backend stashes `id`, `parentId`, geometry and colours in the metamodel's
   opaque `layout` so JSON → B-UML → JSON keeps ids and positions; B-UML `.py`
   import goes through the safe AST-allowlist loader (`safe_load_buml`).
+
+---
+
+## ComponentDiagram
+
+Model `type` on the wire and project bucket key: **`"ComponentDiagram"`**.
+Backed by the UML Component metamodel (`besser/BUML/metamodel/uml_component`);
+converters `json_to_buml/component_diagram_processor.py` and
+`buml_to_json/component_diagram_converter.py`.
+
+### v4 node types (ComponentDiagram)
+
+| v3 `type` | v4 `node.type` | `node.data` fields (besides `name`, colours) |
+|-----------|----------------|-----------------------------------------------|
+| `Component` | `component` | `stereotype: string`, `isComponentHeaderShown: boolean` (v3 `displayStereotype`), `realizes: string[]`, `processModelRefs: string[]`, `agentModelRef?: string` |
+| `Subsystem` | `componentSubsystem` | `stereotype: string`, `isComponentSubsystemHeaderShown: boolean` (v3 `displayStereotype`) |
+| `ComponentInterface` | `componentInterface` | — |
+
+- `stereotype` is the editor's free stereotype string, verbatim (v3
+  `stereotype`; an empty string when absent). The backend tokenises it
+  (`services/converters/stereotype_tokens.py`): `skill` / `tool` / `llm` /
+  `db` / `rag` pick the `Skill` / `Tool` / `LLM` / `Database` / `RAG` class,
+  an agent-category token (`solution`, `supervision`, `collaboration`, `consensus`)
+  makes an `AgenticComponent`, a locality token (`local`, `external`, `hybrid`) sets
+  `locality`; every other token (including the editor defaults `component` /
+  `subsystem`) is kept and re-emitted. The backend always emits
+  `stereotype` on `component` / `componentSubsystem` (empty when none).
+- Cross-diagram references, all opaque ids resolved at project level:
+  `realizes` -> class node ids of a ClassDiagram, `processModelRefs` -> BPMN
+  project-diagram ids, `agentModelRef` -> the AgentDiagram project-diagram id.
+- Containment is `parentId`: a `component` (any subtype) inside a
+  `componentSubsystem`; position relative to the parent. An interface drawn
+  inside a subsystem keeps its `parentId` for layout only (the metamodel keeps
+  interfaces at the model root).
+
+### v4 edge types (ComponentDiagram)
+
+| v3 `type` | v4 `edge.type` | B-UML |
+|-----------|----------------|-------|
+| `ComponentDependency` | `ComponentDependency` | `ComponentDependency`, or `AgenticEdge` when `data.stereotype` carries an agentic-edge kind (`delegates`, `supervises`, `revises`, `collaborates`, `has`, `uses`, `granted`, `implements`) |
+| `ComponentInterfaceProvided` | `ComponentProvidedInterface` | `InterfaceProvided` |
+| `ComponentInterfaceRequired` (+ `Quarter` / `ThreeQuarter`) | `ComponentRequiredInterface` (+ `ComponentRequiredQuarterInterface` / `ComponentRequiredThreeQuarterInterface`) | `InterfaceRequired`; the drawn variant is kept in the layout and re-emitted |
+
+```ts
+// edge.data
+{
+  name?: string;               // backend reads name, falls back to label; emits both
+  label?: string;
+  stereotype?: string;         // v3 relationship `stereotype`, verbatim; e.g. "delegates {permission: repo:write}"
+  isManuallyLayouted?: boolean;
+  points: IPoint[];
+}
+```
+
+An agentic-edge stereotype may end with a `{permission: scope1, scope2}`
+suffix; the backend re-emits the scopes sorted.
+
+## DeploymentDiagram
+
+Model `type` on the wire and project bucket key: **`"DeploymentDiagram"`**
+(`DEPLOYMENT_DIAGRAM_TYPE`). Backed by the UML Deployment metamodel
+(`besser/BUML/metamodel/uml_deployment`); the Docker Compose generator's input.
+
+### v4 node types (DeploymentDiagram)
+
+| v3 `type` | v4 `node.type` | `node.data` fields (besides `name`, colours) |
+|-----------|----------------|-----------------------------------------------|
+| `DeploymentNode` | `deploymentNode` | `stereotype: string` (kind / locality tokens, e.g. `node`, `device`, `executionEnvironment`, `docker host`), `isComponentHeaderShown: boolean` |
+| `DeploymentArtifact` | `deploymentArtifact` | `manifests: string[]` (component node ids), `agentModelRef?: string` (AgentDiagram project-diagram id), `stereotype?: string` |
+| `DeploymentComponent` | `deploymentComponent` | `stereotype: string`, `isComponentHeaderShown: boolean`, `manifests?: string[]`, `agentModelRef?: string` |
+| `DeploymentInterface` | `deploymentInterface` | — |
+
+- An artifact's `name` carries its replica count as a suffix: `"Coder [3]"`
+  is three replicas (the multiplicity of its `DeploymentRelation`).
+- Containment is `parentId`: nested `deploymentNode`s and artifacts on a
+  node. An artifact parented by a node is deployed on it (a
+  `DeploymentRelation`), with or without an explicit `DeploymentAssociation`
+  edge between them.
+- `agentModelRef` on an artifact selects the AgentDiagram whose BAF agent is
+  baked into that artifact's Docker build context.
+
+### v4 edge types (DeploymentDiagram)
+
+| v3 `type` | v4 `edge.type` | B-UML |
+|-----------|----------------|-------|
+| `DeploymentAssociation` | `DeploymentAssociation` | Artifact -> Node: `DeploymentRelation`; Node <-> Node: `CommunicationPath`; anything else is rejected (400) |
+| `DeploymentDependency` | `DeploymentDependency` | `DeploymentDependency` |
+| `DeploymentInterfaceProvided` | `DeploymentProvidedInterface` | `InterfaceProvided` |
+| `DeploymentInterfaceRequired` (+ `Quarter` / `ThreeQuarter`) | `DeploymentRequiredInterface` (+ `DeploymentRequiredQuarterInterface` / `DeploymentRequiredThreeQuarterInterface`) | `InterfaceRequired` |
+
+`edge.data` is the ComponentDiagram one (`name`, `label`, `stereotype?`,
+`isManuallyLayouted`, `points`).
+
+### Mapping rules (ComponentDiagram, DeploymentDiagram)
+
+- v3 -> v4: every element attribute listed above moves into `node.data`
+  under the same name, except `displayStereotype`, which becomes the
+  header flag (`isComponentHeaderShown`, or `isComponentSubsystemHeaderShown`
+  on a subsystem). A relationship's `stereotype` moves into
+  `edge.data.stereotype`. The v3 subsystem element type is `Subsystem`.
+- The backend stashes `id`, `parentId`, absolute `bounds`, the header flag
+  (as `displayStereotype`) and colours in the metamodel's opaque `layout`
+  (edges: `points`, handles, the drawn edge type), so JSON -> B-UML -> JSON
+  keeps ids, positions and the drawn variants. `.py` files exported by v8.1
+  (v3 layout stash: `owner`, relative `path`) still import.
+- A model built in Python without a layout gets non-overlapping positions:
+  children in a row inside their parent, which grows to enclose them, and
+  roots on a grid.
 
 ---
 

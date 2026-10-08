@@ -46,9 +46,11 @@ diagrams by ID through the ``references`` field, and the active diagram per type
 is tracked via ``currentDiagramIndices``. Old single-diagram projects are
 auto-converted by a Pydantic model validator for backward compatibility.
 
-Supported diagram types: ``ClassDiagram``, ``ObjectDiagram``,
+Supported diagram types (the project keys): ``ClassDiagram``, ``ObjectDiagram``,
 ``StateMachineDiagram``, ``AgentDiagram``, ``GUINoCodeDiagram``,
-``QuantumCircuitDiagram``, ``UserDiagram``, ``NNDiagram``, ``BPMN``.
+``QuantumCircuitDiagram``, ``UserDiagram``, ``NNDiagram``, ``BPMN``,
+``ComponentDiagram``, and ``DeploymentDiagram``. A single BPMN diagram payload
+has type ``BPMNDiagram``.
 
 
 Neural Network Diagrams
@@ -97,11 +99,70 @@ thread-local counter via ``uuid.uuid5`` under a fixed namespace.
 BPMN Diagrams
 ^^^^^^^^^^^^^
 
-The backend handles ``BPMN`` as a self-contained diagram type backed by the
-:doc:`BPMN metamodel <buml_language/model_types/bpmn>`. ``/export-buml``
-converts a BPMN diagram JSON to an executable Python BUML file;
-``/get-json-model`` reads it back; ``/validate-diagram`` runs the metamodel
-``validate()``.
+Projects store BPMN entries under ``BPMN``; an individual diagram payload
+has type ``BPMNDiagram``. The backend converts it to ``BPMNModel``, backed by
+the :doc:`BPMN metamodel <buml_language/model_types/bpmn>`.
+``/export-buml`` writes executable BUML Python, ``/get-json-model`` reads
+it back, ``/validate-diagram`` runs the metamodel's ``validate()``, and
+the BPMN generator emits vendor-neutral BPMN 2.0 XML.
+
+
+The Agentic extension is represented by ``AgenticTask``, ``AgenticGateway``,
+and ``AgenticLane`` subclasses. The converter consumes the WME ``isAgentic``
+flag and preserves ``reflectionMode``, ``reflectionReviewerLaneId``,
+``gatewayRole``, ``trustScore``, lane ``role``, lane ``multiplicity`` (stored as
+``AgenticLane.swarm_size``), ``agentDiagramRef``, and ``governanceDsl``. Flows
+stay standard BPMN flows and carry no agentic fields.
+
+In project-level deployment generation, BPMN provides the process context for
+multi-agent system runtime behavior: lane ``agentDiagramRef`` values resolve gateway
+owners to Agent diagrams, ``governanceDsl`` on merging gateways is attached to
+the owner agent, and BPMN sequence-flow ids are used to route A2A messages into
+the correct governed merge (``services/governance/swarm_bindings.py``).
+
+An invalid Governance DSL on a merging gateway raises
+``GovernanceDslValidationError``, which the endpoints report as **HTTP 422**
+with the gateway name and the parser message. A missing ``governancedsl``
+package raises ``ConfigurationError`` (**HTTP 500**, naming the package to
+install).
+
+Component and Deployment Diagrams
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The backend handles ``ComponentDiagram`` and ``DeploymentDiagram`` as the
+whole-swarm structural and runtime-allocation views backing the
+:doc:`UML Component <buml_language/model_types/uml_component>` and
+:doc:`UML Deployment <buml_language/model_types/uml_deployment>` metamodels.
+They are standalone diagrams for normal import/export, and they also
+participate in project-level multi-agent system generation.
+
+**Agentic profile.** The Component diagram's agentic vocabulary is carried in
+the WME ``stereotype`` string. The converter promotes a component to
+``AgenticComponent`` / ``Skill`` / ``Tool`` (and a dependency to
+``AgenticEdge``) by matching stereotype tokens; permission scopes ride in a
+``{permission: ...}`` suffix on agentic-edge stereotypes.
+
+**JSON ↔ BUML.** ``/export-buml`` converts a Component, Deployment, or BPMN
+diagram JSON into a BUML Python file; ``/get-json-model`` reads it back,
+autodetecting the diagram type. ``/validate-diagram`` runs the metamodel
+``validate()`` for supported diagram types.
+
+**Cross-diagram references.** Within a project, component ``realizes`` and
+deployment artifact ``manifests`` values resolve against peer diagrams;
+``/export-buml`` of a project rejects dangling references. The Deployment
+diagram's ``DeploymentComponent`` element is imported as a
+``DeploymentComponent`` and manifests nothing itself.
+Agentic deployment artifacts can also carry ``agentModelRef``: the Agent
+diagram id that should be baked into that artifact's Docker Compose build
+context.
+
+**Project generation.** ``POST /generate-output-from-project`` gives deployment
+generators access to the full project. For ``docker_compose``, the backend
+builds an ``AgentDiagram`` id -> BUML Agent map, annotates each Agent with A2A
+tags from the raw Agent diagram JSON, attaches Governance DSL from the BPMN
+merge gateways, and passes the map to the Docker Compose generator so LOCAL
+artifacts with resolvable ``agentModelRef`` values receive runnable BAF build
+contexts.
 
 Middleware and Request Security
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

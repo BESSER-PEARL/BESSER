@@ -140,6 +140,52 @@ def safe_class_name(name):
         return name
 
 
+class NameDispenser:
+    """Mint one unique Python variable name per metamodel object.
+
+    Element names can be empty, repeated, or contain spaces, so identity is by
+    object: the name combines the lowercased metamodel class name with a
+    sanitised ``obj.name`` and a numeric suffix when needed, and is cached so
+    every later reference (relationship endpoints, containment calls) resolves
+    to the same identifier. ``reserve`` blocks names the caller already uses,
+    such as the model variable itself.
+    """
+
+    def __init__(self, reserved: Iterable[str] = ()):
+        self._used: set = set(reserved)
+        self._for_obj: dict = {}
+
+    def reserve(self, name: str) -> None:
+        """Mark ``name`` as taken so no element is given it."""
+        self._used.add(name)
+
+    def name_for(self, obj) -> str:
+        """Return the variable name for ``obj``, minting it on first use."""
+        if obj in self._for_obj:
+            return self._for_obj[obj]
+        prefix = type(obj).__name__.lower()
+        base = safe_var_name(obj.name, lowercase=True)
+        candidate = prefix if base == prefix else f"{prefix}_{base}"
+        suffix = 1
+        while candidate in self._used:
+            candidate = f"{prefix}_{base}_{suffix}"
+            suffix += 1
+        self._used.add(candidate)
+        self._for_obj[obj] = candidate
+        return candidate
+
+
+def emit_layout_line(var_name: str, layout: Optional[dict]) -> Optional[str]:
+    """Return ``<var>.layout = {...}``, or ``None`` when there is no layout.
+
+    Layouts are opaque diagram-interchange dicts of primitives stashed by the
+    JSON converters; ``repr`` emits them as valid Python literals.
+    """
+    if not layout:
+        return None
+    return f"{var_name}.layout = {layout!r}"
+
+
 def bind_domain_field(domain_model: Optional["DomainModel"], class_name: str,
                       field_name: str) -> Optional["Property"]:
     """Return the ``Property`` named *field_name* on *class_name*, or ``None``.

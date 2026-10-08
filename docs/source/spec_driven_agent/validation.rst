@@ -63,7 +63,30 @@ no automatic JSX runtime, are blockers: both leave a blank page in the browser.
 An undeclared package is reported as a warning, because a bundler can still
 satisfy it. The JSX rule matters even where build verification is enabled:
 ``React is not defined`` is a runtime error in a bundle that builds cleanly, so
-no build check can see it.
+no build check can see it. A Vite project counts as using the automatic runtime
+only when its ``vite.config`` imports ``@vitejs/plugin-react`` and calls it
+inside ``plugins: [...]``. Declaring the package in ``package.json``, or naming
+it in a comment, does not enable it.
+
+Create forms are checked statically against the backend's ``*Create`` Pydantic
+schemas, because the runtime probes drive HTTP and never render a page. Each
+finding names the file, the line and the change to make:
+
+- ``api url:`` (blocker) — the API helper builds URLs as ``BASE + path`` and
+  resource paths are written without a leading ``/``, so requests go to
+  ``http://localhost:8000expense/``.
+- ``form create target:`` (blocker) — Create reuses the edit handler with an id
+  placeholder of ``'new'``, and the handler picks update whenever the id is
+  truthy, so Create sends ``PUT /<entity>/new/``.
+- ``form route:`` (blocker) — a New/Create link points to a path that no
+  ``<Route>`` declares. The rule is skipped when a route path is held in a
+  variable.
+- ``form json textarea:`` (blocker) — the form is a single textarea whose text
+  is passed to ``JSON.parse`` as the record.
+- ``form field type:`` (warning) — a text input for a field the create schema
+  types as a number, date, datetime or boolean. It is reported only when the
+  field-to-schema mapping is unambiguous. It is a warning because a user who
+  types a valid value can still save.
 
 For discovered TypeScript projects and frontend applications, required checks
 that are disabled, unavailable, timed out, or only partially run are recorded as
@@ -139,7 +162,8 @@ Findings are classified into three severities:
        behavior); unresolved checklist work and unimplemented action contracts;
        a method button that takes its row id from a table of another
        entity; frontend-contract and
-       data-contract violations; ``ruff`` **F821** / **F822** / **F823**
+       data-contract violations; create forms that cannot save (``api url:``,
+       ``form create target:``, ``form route:``, ``form json textarea:``); ``ruff`` **F821** / **F822** / **F823**
        (undefined name — the classic "ships green, boots dead" bug) and
        **F811** (redefinition, e.g. an ORM model shadowed by a Pydantic model
        of the same name); per-project toolchain errors from ``tsc`` /
@@ -149,7 +173,7 @@ Findings are classified into three severities:
        variable), ``E501``, whitespace, blank lines, import order.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now), the model-derived acceptance matrix, and ``requirement out of
+       now), ``form field type:``, the model-derived acceptance matrix, and ``requirement out of
        scope:`` — a UI requirement on a run that neither has nor asked for a
        frontend, which a backend-only output has no files to satisfy.
 

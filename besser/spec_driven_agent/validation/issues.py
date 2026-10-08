@@ -195,6 +195,15 @@ def _classify_issue(message: str) -> ValidationIssue:
     # didn't build; we only require that what it DID build actually works.
     if lower.startswith("frontend contract:"):
         return ValidationIssue("blocker", text)
+    # Create-form checks (frontend_forms.py). Blockers: shapes that send every
+    # create to the wrong URL or method, or leave the form unreachable.
+    # ``form field type:`` stays a warning: a text box for a number still saves
+    # when the user types digits, and calibration flagged it on working apps.
+    if lower.startswith(("api url:", "form create target:", "form route:",
+                         "form json textarea:")):
+        return ValidationIssue("blocker", text)
+    if lower.startswith("form field type:"):
+        return ValidationIssue("warning", text)
     # Data contract: the generated code disagrees with the domain model's
     # declared id types / server-owned fields, or fakes success for an
     # unimplemented method. High-precision patterns only (see

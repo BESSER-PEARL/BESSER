@@ -42,15 +42,21 @@ from besser.utilities.web_modeling_editor.backend.models import (
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_class_diagram,
     process_agent_diagram,
+    annotate_agent_with_a2a,
     process_object_diagram,
     process_gui_diagram,
     process_quantum_diagram,
     process_nn_diagram,
     process_bpmn_diagram,
+    process_deployment_diagram,
     link_method_neural_networks,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
+)
+from besser.utilities.web_modeling_editor.backend.services.governance.swarm_bindings import (
+    attach_entry_role_to_agents,
+    attach_governance_to_agents,
 )
 
 # Backend services - Other services
@@ -94,6 +100,7 @@ from besser.utilities.web_modeling_editor.backend.config import (
 
 # Backend constants
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    DEPLOYMENT_DIAGRAM_TYPE,
     TEMP_DIR_PREFIX,
     AGENT_TEMP_DIR_PREFIX,
     OUTPUT_DIR_NAME,
@@ -529,6 +536,13 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     if generator_type == "web_app":
         return await _handle_web_app_project_generation(input_data, generator_info, config)
 
+    # Deployment-diagram generators run at project scope so the AgentDiagrams
+    # (and the BPMN diagram that wires them) are available for baking agents.
+    if generator_info.required_diagram_type == DEPLOYMENT_DIAGRAM_TYPE:
+        return await _handle_deployment_project_generation(
+            input_data, generator_info, generator_type,
+        )
+
     # The backend runs methods implemented by a neural network, so it needs the
     # project's NNDiagrams next to its ClassDiagram.
     if generator_type == "backend":
@@ -647,6 +661,11 @@ async def generate_code_output(input_data: DiagramInput):
                 temp_dir,
             )
 
+        if generator_info.required_diagram_type == DEPLOYMENT_DIAGRAM_TYPE:
+            return await _handle_deployment_diagram_generation(
+                json_data, generator_type, generator_info, temp_dir,
+            )
+
         # Handle class diagram based generators
         return await _handle_class_diagram_generation(
             json_data, generator_type, generator_info, input_data.config, temp_dir
@@ -752,6 +771,72 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
 
         options = {"versions": ", ".join(slug for slug, _ in version_specs)} if multi else None
         return _create_zip_response(temp_dir, "web_app", options)
+
+
+@handle_endpoint_errors("_handle_deployment_project_generation")
+async def _handle_deployment_project_generation(
+    input_data: ProjectInput, generator_info, generator_type: str
+):
+    """Generate Docker Compose output with the project's AgentDiagrams in scope.
+
+    Resolves ``Artifact.agent_model_ref`` values against AgentDiagram ids, so each
+    linked local artifact receives a baked BAF build context, and binds the
+    project's BPMN diagrams onto those agents (governed merges, entry role; see
+    ``services.governance.swarm_bindings``). Returns a ZIP with
+    ``docker-compose.yml`` and the agent build contexts.
+    """
+    deployment_diagram = input_data.get_active_diagram(DEPLOYMENT_DIAGRAM_TYPE)
+    if not deployment_diagram:
+        raise HTTPException(
+            status_code=400,
+            detail="DeploymentDiagram is required for the Docker Compose generator",
+        )
+
+    with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
+        deployment_model = _process_deployment_payload(deployment_diagram.model_dump())
+
+        # AgentDiagram id -> BUML Agent. Keyed by diagram id (the value of
+        # Artifact.agent_model_ref), not by agent name: agent names may repeat.
+        agent_models_by_id: dict = {}
+        agent_configs_by_id: dict = {}
+        agent_config_yamls_by_id: dict = {}
+        for entry in input_data.diagrams.get("AgentDiagram", []):
+            entry_dict = entry.model_dump()
+            model = entry_dict.get("model")
+            if not entry_dict.get("id") or not (isinstance(model, dict) and model.get("elements")):
+                continue
+            agent_config = entry_dict.get("config")
+            if isinstance(agent_config, dict) and isinstance(agent_config.get("personalizationMapping"), list):
+                normalize_personalization_mapping(agent_config, entry_dict, _generate_user_profile_document)
+            agent_model = process_agent_diagram(entry_dict)
+            # The diagram's a2a:in / a2a:out tags become agent._a2a, which the
+            # generator prefers over the to_/from_ state-name convention.
+            annotate_agent_with_a2a(agent_model, entry_dict)
+            agent_models_by_id[entry_dict["id"]] = agent_model
+            agent_configs_by_id[entry_dict["id"]] = agent_config
+            agent_config_yamls_by_id[entry_dict["id"]] = entry_dict.get("configYaml")
+
+        for bpmn_diagram in input_data.diagrams.get("BPMN", []):
+            bpmn_model = process_bpmn_diagram(bpmn_diagram.model_dump())
+            attach_governance_to_agents(bpmn_model, agent_models_by_id)
+            attach_entry_role_to_agents(bpmn_model, agent_models_by_id)
+
+        generator_instance = generator_info.generator_class(
+            deployment_model, output_dir=temp_dir,
+            agent_models_by_id=agent_models_by_id,
+            agent_configs_by_id=agent_configs_by_id,
+            agent_config_yamls_by_id=agent_config_yamls_by_id,
+        )
+        await asyncio.to_thread(generator_instance.generate)
+        return _create_zip_response(temp_dir, generator_type)
+
+
+def _process_deployment_payload(json_data: dict):
+    """``process_deployment_diagram``, with a malformed payload reported as ``ConversionError``."""
+    try:
+        return process_deployment_diagram(json_data)
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ConversionError(f"Malformed Deployment diagram payload: {exc}") from exc
 
 
 def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
@@ -1141,6 +1226,27 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
         )
     else:
         return _create_file_response(temp_dir, "jsonschema")
+
+
+async def _handle_deployment_diagram_generation(
+    json_data: dict,
+    generator_type: str,
+    generator_info,
+    temp_dir: str,
+):
+    """Generate Docker Compose from a single UML DeploymentDiagram.
+
+    Single-diagram generation has no project-level AgentDiagram resolver, so the
+    ZIP holds ``docker-compose.yml`` only. Project generation uses
+    ``_handle_deployment_project_generation`` to also bake linked agent contexts.
+    """
+    deployment_model = _process_deployment_payload(json_data)
+    generator_instance = generator_info.generator_class(deployment_model, output_dir=temp_dir)
+    await asyncio.to_thread(generator_instance.generate)
+
+    if generator_info.output_type == "zip":
+        return _create_zip_response(temp_dir, generator_type)
+    return _create_file_response(temp_dir, generator_type)
 
 
 async def _generate_nn(json_data: dict, generator_type: str, generator_class, config: dict, temp_dir: str):

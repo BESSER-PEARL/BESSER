@@ -37,6 +37,8 @@ from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
+from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
+from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -53,6 +55,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_object_diagram,
     process_nn_diagram,
     process_bpmn_diagram,
+    process_component_diagram,
+    process_deployment_diagram,
     json_to_buml_project,
     # BUML to JSON converters
     class_buml_to_json,
@@ -63,6 +67,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     project_to_json,
     nn_buml_to_json,
     bpmn_buml_to_json,
+    component_buml_to_json,
+    deployment_buml_to_json,
 )
 
 # Backend services - Other services
@@ -93,6 +99,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     OUTPUT_DIR_NAME,
     AGENT_MODEL_FILENAME,
     BPMN_DIAGRAM_TYPE,
+    DEPLOYMENT_DIAGRAM_TYPE,
 )
 
 # Centralized error handling
@@ -288,6 +295,10 @@ router = APIRouter(prefix="/besser_api", tags=["conversion"])
 async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     buml_project = json_to_buml_project(input_data)
 
+    errors = buml_project._cross_diagram_errors["errors"]
+    if errors:
+        raise ConversionError("Cannot export project: " + "; ".join(errors))
+
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         output_file_path = os.path.join(temp_dir, "project.py")
         project_to_code(project=buml_project, file_path=output_file_path)
@@ -398,6 +409,46 @@ async def export_buml(input_data: DiagramInput):
                 headers={"Content-Disposition": 'attachment; filename="nn_model.py"'},
             )
 
+        elif elements_data.get("type") == "ComponentDiagram":
+            try:
+                component_model = process_component_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(
+                    f"Malformed Component diagram payload: {exc}"
+                ) from exc
+            output_file_path = os.path.join(temp_dir, "component_model.py")
+            component_model_to_code(
+                model=component_model, file_path=output_file_path,
+            )
+            file_content = await _read_file(output_file_path, "rb")
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={
+                    "Content-Disposition": 'attachment; filename="component_model.py"',
+                },
+            )
+
+        elif elements_data.get("type") == DEPLOYMENT_DIAGRAM_TYPE:
+            try:
+                deployment_model = process_deployment_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(
+                    f"Malformed Deployment diagram payload: {exc}"
+                ) from exc
+            output_file_path = os.path.join(temp_dir, "deployment_model.py")
+            deployment_model_to_code(
+                model=deployment_model, file_path=output_file_path,
+            )
+            file_content = await _read_file(output_file_path, "rb")
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={
+                    "Content-Disposition": 'attachment; filename="deployment_model.py"',
+                },
+            )
+
         else:
             raise ValueError(
                 f"Unsupported or missing diagram type: {elements_data.get('type')}"
@@ -467,6 +518,17 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         'bpmnmodel(', '.add_process(', '.add_flow_node(', '.add_sequence_flow('
     ])
 
+    # UML Component / Deployment markers: only calls specific to one of the two
+    # builders (both emit `.add_relationship(`, so it identifies neither).
+    is_uml_component = any(keyword in content_lower for keyword in [
+        'componentmodel(', '.add_component(', 'agenticedge(',
+    ])
+
+    is_uml_deployment = any(keyword in content_lower for keyword in [
+        'deploymentmodel(', 'deploymentrelation(', 'communicationpath(',
+        '.add_nested_node(',
+    ])
+
     is_project = 'project(' in content_lower or 'def create_project' in content_lower
 
     # Try to parse based on detected type
@@ -509,7 +571,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             for dtype in (
                 "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
                 "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
-                "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE,
+                "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE, "ComponentDiagram",
+                DEPLOYMENT_DIAGRAM_TYPE,
             ):
                 if dtype not in priority:
                     priority.append(dtype)
@@ -603,12 +666,30 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         except Exception as bpmn_error:
             logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
 
+    elif is_uml_component:
+        # A ConversionError from the converter names the actual problem and is
+        # reported as such (HTTP 400) rather than as "format not recognized".
+        logger.info("Detected UML Component diagram, parsing...")
+        diagram_data = {
+            "title": diagram_title,
+            "model": component_buml_to_json(buml_content),
+        }
+        diagram_type = "ComponentDiagram"
+
+    elif is_uml_deployment:
+        logger.info("Detected UML Deployment diagram, parsing...")
+        diagram_data = {
+            "title": diagram_title,
+            "model": deployment_buml_to_json(buml_content),
+        }
+        diagram_type = DEPLOYMENT_DIAGRAM_TYPE
+
     # Check if we successfully parsed any diagram
     if diagram_data is None or diagram_type is None:
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
             "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, "
-            "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, or Project."
+            "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, ComponentDiagram, DeploymentDiagram, or Project."
         )
 
     # Return the diagram in the format expected by the frontend

@@ -1,0 +1,75 @@
+Version 8.1.0
+=============
+
+Minor release: **multi-agent systems from BPMN to Docker Compose**. It adds an
+Agentic Swarm workflow: a BPMN process with agentic lanes becomes Agent,
+Component and Deployment diagrams, and from there a Docker Compose project
+that runs the agents together. It also improves the Spec-Driven Agent's check
+of generated create forms and brings a round of editor accessibility, layout
+and translation fixes.
+
+Multi-agent systems
+-------------------
+
+* **Agentic BPMN.** Lanes, tasks and gateways can be marked agentic. A lane
+  carries a role (solution or supervision), a trust score and a number of
+  copies; a task can review its own result or have another lane review it; a
+  merging gateway can carry a Governance DSL policy that decides between the
+  copies' answers. See :doc:`/buml_language/model_types/bpmn`.
+* **Component and Deployment diagrams.** Two new UML diagram types and their
+  B-UML metamodels describe the architecture of the agent system and where its
+  parts run. See :doc:`/buml_language/model_types/uml_component` and
+  :doc:`/buml_language/model_types/uml_deployment`.
+* **Derived diagrams.** From an agentic lane the editor creates the lane's
+  Agent diagram ("Define agent behavior"); from the BPMN diagram it generates a
+  Component diagram, and from that a Deployment diagram. Each derived diagram
+  keeps a link to its source and shows when the source has changed since.
+  Anything the derivation could not map is listed in a notice.
+* **Docker Compose generator.** A new ``docker_compose`` generator turns a
+  Deployment diagram into a ``docker-compose.yml`` with one build folder per
+  agent, including the agent code, its configuration and a Dockerfile pinned to
+  the agent framework version BESSER targets. Agents talk to each other over
+  A2A, and governed merges apply their voting policy. A tie, or a share below
+  the policy's ratio, escalates instead of picking a winner. See
+  :doc:`/generators/docker_compose`.
+* **Multi-Agent perspective and template.** A new project perspective shows
+  only the BPMN, Agent, Component and Deployment diagrams, and the
+  "Multi-agent Bug Fixing" template is a complete example to start from.
+
+Spec-Driven Agent
+-----------------
+
+* **Create forms that cannot save are caught.** The validation phase now reads
+  the generated frontend and the backend's create schemas, and reports forms
+  that cannot save a record: create sent as an update on a placeholder id,
+  "New" links to undeclared routes, raw-JSON text areas, URL paths joined
+  without a slash, and text inputs for number, date or boolean fields. The
+  generation prompt asks for typed create forms up front.
+
+Web Modeling Editor
+-------------------
+
+* **Accessibility and layout.** Canvas controls, tabs, menus, the command
+  palette and dialogs work from the keyboard and show focus. Destructive actions
+  ask for confirmation, and dialogs fit phone screens.
+* **Faster editing.** Dragging no longer serializes the whole diagram on every
+  step, and the editor loads a smaller startup bundle.
+* **Translations.** All remaining editor strings are translated into Catalan,
+  German, Spanish, French and Luxembourgish.
+
+Fixes
+-----
+
+* **Re-importing a project with an empty class diagram.** The exported B-UML
+  wrote empty collections as ``{}``, which Python reads as a dictionary, so the
+  project failed to import with ``unsupported operand type(s) for |``. Empty
+  collections are now written as ``set()``.
+
+Upgrade and deployment
+----------------------
+
+* The backend now needs ``governancedsl==0.1.1`` (in the backend requirements
+  file). It depends on ``besser``, so install it after ``pip install -e .``;
+  the Docker image already does this.
+* Deploy the Modeling Agent from its ``develop`` branch alongside this release:
+  it adds Component, Deployment and agentic BPMN support to the AI assistant.

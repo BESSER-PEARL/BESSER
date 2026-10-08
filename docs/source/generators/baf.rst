@@ -22,6 +22,15 @@ Optional constructor parameters:
   under ``database`` is rewritten to ``file``, the key BAF reads.
 - ``openai_api_key``: OpenAI API key for LLM-powered agent features.
 - ``generation_mode``: See `Generation Modes`_ below.
+- ``a2a_descriptor``: Optional resolved A2A topology and governance, normally
+  supplied by the Docker Compose generator. It extends the same agent's
+  authored states, actions, transitions, and personalization. Descriptors with
+  no outbound peers and no A2A server use the ordinary render.
+- ``bind_host``: Interface the websocket and Streamlit servers listen on in the
+  default ``config.yaml`` (default ``"localhost"``, so a standalone agent is not
+  reachable from the network). The Docker Compose generator passes ``"0.0.0.0"``
+  because a server bound to localhost inside a container cannot be reached
+  through the published ports. A supplied ``config_yaml`` is written as-is.
 - ``test_mode``: When ``True``, the agent is generated to be driven headlessly
   in an isolated test environment such as the Agent Simulator:
 
@@ -48,6 +57,71 @@ The generated files land in the ``<<current_directory>>/output`` folder:
   personalization config is supplied and the mode is not ``CODE_ONLY``.
 
 Check out the BAF documentation for more details on how to use the generated agent: `BESSER Agentic Framework Documentation <https://besser-agentic-framework.readthedocs.io/latest/>`_.
+
+
+A2A and authored behavior
+-------------------------
+
+A2A generation requires exactly one authored initial state. Human-facing agents
+keep their configured platform; headless workers expose only the A2A server,
+and hybrid agents expose both. Outbound tagged or legacy boundary states run
+their authored body before contacting peers. Repeated edges to the same peer
+at different states remain distinct, including governed merge stages.
+Peer replies feed applicable authored receive transitions and are available as
+``session.get('a2a_result')``. Ordinary tagged sends carry the flow and sender
+service as well as the message.
+
+Computed primitive-action results are captured independently of ``send_reply``
+and ``store_in_session``. The last result-producing action in a body supplies
+its local A2A result, even when it is hidden from the human chat. Each invocation
+has a fresh capture, so previous session results are not reused accidentally.
+Results are logged at INFO level. An empty computed A2A result raises an error;
+a body without a computed result retains authored-reply or legacy input behavior.
+
+Inbound requests use an isolated BAF session. Resolved ``flow`` and ``from``
+bindings select the authored destination and honor applicable inbound transition
+conditions. Automatic and conditional transitions continue until the graph
+waits for another event, with a limit of 100 transitions per request. Ambiguous
+bindings require a ``flow`` or ``from`` value. RPC GUI actions are returned as
+action notices; human sessions render the authored GUI on their platform.
+An RPC session lasts one request, so interactive GUI conversations use the human
+platform. Governance ``leaf`` requests execute one selected local body and return
+its result without following later automatic transitions or calling peers.
+
+For topology-only models without usable state bindings, the generated runtime
+extends an existing state with the legacy swarm behavior. It never replaces the
+authored graph with a separate greetings/work/idle graph.
+
+
+Governed merges
+---------------
+
+A merging ``AgenticGateway`` that carries a Governance DSL policy is run by the
+agent of the lane that owns it. For a voting policy (``VotingPolicy``,
+``MajorityPolicy``, ``AbsoluteMajorityPolicy``) the merge collects one candidate
+output from each producer (the agents on the branches flowing into the gateway),
+then one ballot per policy participant, and counts them in the container with
+the baked ``governance_engine.tally``:
+
+- **Weights** -- ``VotingPolicy`` weighs each ballot by the participant's
+  ``confidence``; the majority policies count one vote per ballot.
+- **Share** -- the leading candidate's support divided by the weight cast
+  (``VotingPolicy``), by every ballot including abstentions
+  (``AbsoluteMajorityPolicy``), or by the ballots that voted (``MajorityPolicy``).
+- **Decision** -- a candidate is selected only if it is the *unique* leader and
+  its share meets the policy ``ratio`` (default ``0.5``): strictly above it for
+  ``MajorityPolicy`` and ``AbsoluteMajorityPolicy`` ("more than half" at the
+  default), at or above it for ``VotingPolicy``. A 1-1 tie is therefore never a
+  majority.
+- **No decision** -- on a tie or a share below the ratio no candidate is
+  picked: the reply lists every candidate output for a human to decide, and the
+  audit footer states why (``no decision: tie between C1, C2`` or ``best share
+  ... below ratio``).
+
+The selected candidate is returned verbatim with an audit footer (policy,
+ratio, winner, scores, abstentions). Participants without a running service
+count as abstentions. Policies with a human participant pause the merge and
+wait for the human's ballot before tallying.
 
 
 Generation Modes

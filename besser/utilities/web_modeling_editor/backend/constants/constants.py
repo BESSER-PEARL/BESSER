@@ -1,6 +1,9 @@
 import os
 from typing import Optional
 
+from besser.BUML.metamodel.uml_component import AgentCategory, AgenticEdgeKind
+from besser.BUML.metamodel.uml_component import Locality as ComponentLocality
+from besser.BUML.metamodel.uml_deployment import NodeKind
 from besser.generators.spring.spring_backend_generator import (
     DEFAULT_JAVA_VERSION as _SPRING_DEFAULT_JAVA_VERSION,
     DEFAULT_SPRING_APP_NAME as _SPRING_DEFAULT_APP_NAME,
@@ -261,6 +264,42 @@ RELATIONSHIP_TYPES = {
 # ---------------------------------------------------------------------------
 BPMN_DIAGRAM_TYPE = "BPMNDiagram"
 BPMN_RELATIONSHIP_TYPE = "BPMNFlow"
+
+# UML Deployment diagram type (the Docker Compose generator's input).
+DEPLOYMENT_DIAGRAM_TYPE = "DeploymentDiagram"
+
+# ---------------------------------------------------------------------------
+# UML Component / Deployment stereotype tokens
+# Lower-cased stereotype tokens the converters map to typed metamodel slots;
+# every other token is kept verbatim in the element's free-form `stereotypes`.
+# ---------------------------------------------------------------------------
+
+# Stereotype tokens that promote a bare Component to a subclass. `llm`/`db`/`rag`
+# are Tool subclasses -- see uml_component/agentic.py.
+COMPONENT_SUBTYPE_TOKENS = {
+    "skill": "Skill",
+    "tool": "Tool",
+    "llm": "LLM",
+    "db": "Database",
+    "rag": "RAG",
+}
+
+# Locality tokens (shared Component/Deployment side).
+LOCALITY_TOKENS = frozenset(locality.value for locality in ComponentLocality)
+
+# AgentCategory tokens (Component side). NONE has no token: it is the default.
+AGENT_CATEGORY_TOKENS = frozenset(
+    category.value for category in AgentCategory if category is not AgentCategory.NONE
+)
+
+# AgenticEdgeKind tokens (Component side, on ComponentDependency edges).
+AGENTIC_EDGE_KIND_TOKENS = frozenset(kind.value for kind in AgenticEdgeKind)
+
+# NodeKind tokens (Deployment side) -> NodeKind. GENERIC is the default kind and
+# has no token of its own: a literal «node» stereotype is kept as free text.
+NODE_KIND_TOKENS = {
+    kind.value.lower(): kind for kind in NodeKind if kind is not NodeKind.GENERIC
+}
 
 
 # ---------------------------------------------------------------------------

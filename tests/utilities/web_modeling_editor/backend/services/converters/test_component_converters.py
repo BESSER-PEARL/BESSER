@@ -42,6 +42,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 from besser.utilities.web_modeling_editor.backend.services.converters.stereotype_tokens import (
     apply_component_stereotype_tokens,
     extract_permission_scopes,
+    format_component_stereotype,
     tokenise,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
@@ -402,13 +403,15 @@ class TestStereotypeHelpers:
         apply_component_stereotype_tokens(c, None)
         assert c.stereotypes == []
 
-    def test_consumed_defaults_dropped(self):
+    def test_editor_defaults_are_kept_so_they_round_trip(self):
         c = Component(name="X")
         apply_component_stereotype_tokens(c, "component")
-        assert c.stereotypes == []
+        assert c.stereotypes == ["component"]
+        assert format_component_stereotype(c) == "component"
         s = Subsystem(name="Y")
         apply_component_stereotype_tokens(s, "subsystem")
-        assert s.stereotypes == []
+        assert s.stereotypes == ["subsystem"]
+        assert format_component_stereotype(s) == "subsystem"
 
     def test_unknown_token_lands_in_stereotypes_list(self):
         c = Component(name="X")

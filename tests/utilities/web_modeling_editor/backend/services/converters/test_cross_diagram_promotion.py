@@ -293,11 +293,23 @@ class TestJsonToBumlProjectWireUp:
                             "a1": {
                                 "id": "a1",
                                 "name": "Orphan",
+                                "type": "DeploymentArtifact",
+                                "owner": None,
+                                "bounds": {
+                                    "x": 0, "y": 0, "width": 160, "height": 40,
+                                },
+                                "manifests": ["bogus-component"],
+                            },
+                            "dc1": {
+                                "id": "dc1",
+                                "name": "Frontend",
                                 "type": "DeploymentComponent",
                                 "owner": None,
                                 "bounds": {
-                                    "x": 0, "y": 0, "width": 160, "height": 100,
+                                    "x": 0, "y": 80, "width": 160, "height": 100,
                                 },
+                                "stereotype": "component",
+                                "displayStereotype": True,
                             },
                         },
                         "relationships": {},
@@ -313,12 +325,11 @@ class TestJsonToBumlProjectWireUp:
             },
         })
 
-        # The DeploymentComponent "a1" synthesises as Artifact(manifests=["a1"]).
-        # "a1" is NOT a Component id (the only Component id is "c1") — that's
-        # the dangling cross-ref.
+        # The artifact manifests "bogus-component", which is not a Component id
+        # (the only one is "c1"). The DeploymentComponent manifests nothing and
+        # must not be reported: its own element id is never a manifest.
         project = json_to_buml_project(project_input)
-        assert hasattr(project, "_cross_diagram_errors")
         errors = project._cross_diagram_errors["errors"]
         assert len(errors) == 1
-        assert "a1" in errors[0]
+        assert "bogus-component" in errors[0]
         assert "Orphan" in errors[0]

@@ -1,15 +1,15 @@
 """Deployment diagram conversion: DeploymentModel -> WME JSON.
 
-Implements 02-... §7. Pure metamodel-object → JSON walk. Multiplicity
-emission goes into the artifact's name suffix per §3.6.2; the synthetic-
-Artifact-as-``DeploymentComponent`` mapping reverses via
-``layout["wme_type"]``. ``deployment_buml_to_json(content)`` is gated on
-03-.
+``deployment_object_to_json`` is a pure metamodel-object -> JSON walk, the
+inverse of ``json_to_buml.deployment_diagram_processor``. The multiplicity of
+an artifact's first ``DeploymentRelation`` goes into the artifact's name
+suffix (``"Coder [3]"``) and a ``DeploymentComponent`` is emitted as the
+editor's ``DeploymentComponent`` element. ``deployment_buml_to_json(content)``
+loads a BUML file produced by ``deployment_model_to_code``.
 """
 
 import logging
 import uuid
-from typing import Optional
 
 from besser.BUML.metamodel.structural import (
     Multiplicity,
@@ -18,6 +18,7 @@ from besser.BUML.metamodel.structural import (
 from besser.BUML.metamodel.uml_deployment import (
     Artifact,
     CommunicationPath,
+    DeploymentComponent,
     DeploymentDependency,
     DeploymentModel,
     DeploymentRelation,
@@ -87,32 +88,21 @@ def deployment_object_to_json(model: DeploymentModel) -> dict:
     for rel in all_relationships:
         id_for(rel)
 
-    # Index artifact -> deterministic DeploymentRelation for multiplicity
-    # round-trip (Q3 — first-relation wins on divergence).
+    # Index artifact -> deterministic DeploymentRelation for the multiplicity
+    # round-trip (the first relation by timestamp wins on divergence).
     artifact_to_relation = _index_artifact_to_relation(all_relationships)
 
-    # Nodes
     for node in all_nodes:
-        try:
-            elements[id_for(node)] = _emit_node_entry(node, id_for)
-        except Exception as exc:
-            logger.error("Failed to emit Node '%s': %s", node.name, exc)
+        elements[id_for(node)] = _emit_node_entry(node, id_for)
 
     # Artifacts (including nested ones)
     for artifact in all_artifacts:
-        try:
-            elements[id_for(artifact)] = _emit_artifact_entry(
-                artifact, id_for, artifact_to_relation,
-            )
-        except Exception as exc:
-            logger.error("Failed to emit Artifact '%s': %s", artifact.name, exc)
+        elements[id_for(artifact)] = _emit_artifact_entry(
+            artifact, id_for, artifact_to_relation,
+        )
 
-    # Interfaces
     for interface in all_interfaces:
-        try:
-            elements[id_for(interface)] = _emit_interface_entry(interface)
-        except Exception as exc:
-            logger.error("Failed to emit Interface '%s': %s", interface.name, exc)
+        elements[id_for(interface)] = _emit_interface_entry(interface, id_for)
 
     # Relationships — emit explicit edges; owner-link-only relations are
     # already encoded via the artifact's `owner` field and are skipped here
@@ -120,15 +110,7 @@ def deployment_object_to_json(model: DeploymentModel) -> dict:
     for rel in all_relationships:
         if (rel.layout or {}).get("wme_origin") == "owner":
             continue
-        try:
-            entry = _emit_relationship_entry(rel, id_for)
-            if entry is not None:
-                relationships[id_for(rel)] = entry
-        except Exception as exc:
-            logger.error(
-                "Failed to emit Deployment relationship %s: %s",
-                type(rel).__name__, exc,
-            )
+        relationships[id_for(rel)] = _emit_relationship_entry(rel, id_for)
 
     size = _compute_size(elements)
 
@@ -149,7 +131,7 @@ def _index_artifact_to_relation(relationships: list) -> dict:
     artifact has multiple DeploymentRelations.
 
     Logs a warning when an artifact's relations carry *different*
-    multiplicities (Q3 — first-relation-deterministic).
+    multiplicities (the first relation by timestamp is used).
     """
     out: dict = {}
     for rel in relationships:
@@ -193,15 +175,16 @@ def _emit_node_entry(node: Node, id_for) -> dict:
 
 def _emit_artifact_entry(artifact: Artifact, id_for,
                          artifact_to_relation: dict) -> dict:
-    """Emit a DeploymentArtifact or (synthetic) DeploymentComponent entry.
+    """Emit a DeploymentArtifact or DeploymentComponent entry.
 
-    Suffixes the artifact's name with the parsed multiplicity from its
-    first DeploymentRelation (when non-default), per §3.6.2 / §7.3. Falls
-    back to ``layout["original_name"]`` when the parsed multiplicity is the
-    default and an original name was stashed (Q4 belt-and-suspenders).
+    Suffixes the artifact's name with the multiplicity of its first
+    DeploymentRelation (when non-default). Falls back to
+    ``layout["original_name"]`` when the multiplicity is the default and the
+    imported name carried an explicit suffix (e.g. ``"Coder [1]"``).
     """
     layout = artifact.layout or {}
-    wme_type = layout.get("wme_type") or "DeploymentArtifact"
+    is_component = isinstance(artifact, DeploymentComponent)
+    wme_type = "DeploymentComponent" if is_component else "DeploymentArtifact"
     bounds = layout.get("bounds") or {"x": 0, "y": 0, "width": 160, "height": 40}
 
     rel = artifact_to_relation.get(artifact)
@@ -226,16 +209,22 @@ def _emit_artifact_entry(artifact: Artifact, id_for,
     if stereotype:
         entry["stereotype"] = stereotype
         entry["displayStereotype"] = bool(layout.get("displayStereotype", True))
+    # The editor's DeploymentArtifact always carries ``manifests`` and, for an
+    # agent, ``agentModelRef``; a DeploymentComponent only when set.
+    if not is_component or artifact.manifests:
+        entry["manifests"] = list(artifact.manifests)
+    if artifact.agent_model_ref is not None:
+        entry["agentModelRef"] = artifact.agent_model_ref
     return entry
 
 
-def _emit_interface_entry(interface: Interface) -> dict:
+def _emit_interface_entry(interface: Interface, id_for) -> dict:
     """Emit a DeploymentInterface entry."""
     layout = interface.layout or {}
     wme_type = layout.get("wme_type") or "DeploymentInterface"
     bounds = layout.get("bounds") or {"x": 0, "y": 0, "width": 20, "height": 20}
     return {
-        "id": (layout.get("id") or str(uuid.uuid4())),
+        "id": id_for(interface),
         "name": interface.name,
         "type": wme_type,
         "owner": layout.get("owner"),
@@ -243,8 +232,12 @@ def _emit_interface_entry(interface: Interface) -> dict:
     }
 
 
-def _emit_relationship_entry(rel, id_for) -> Optional[dict]:
-    """Emit one relationship entry."""
+def _emit_relationship_entry(rel, id_for) -> dict:
+    """Emit one relationship entry.
+
+    Raises:
+        ConversionError: for a relationship class with no editor mapping.
+    """
     layout = rel.layout or {}
     bounds = layout.get("bounds") or {"x": 0, "y": 0, "width": 1, "height": 1}
     path = layout.get("path") or [{"x": 0, "y": 0}, {"x": 1, "y": 0}]
@@ -269,11 +262,9 @@ def _emit_relationship_entry(rel, id_for) -> Optional[dict]:
     elif isinstance(rel, InterfaceRequired):
         wme_type = "DeploymentInterfaceRequired"
     else:
-        logger.warning(
-            "Unknown Deployment relationship class %s; skipping.",
-            type(rel).__name__,
+        raise ConversionError(
+            f"Deployment relationship class {type(rel).__name__} has no editor mapping."
         )
-        return None
 
     entry = {
         "id": id_for(rel),
@@ -321,6 +312,7 @@ def deployment_buml_to_json(content: str) -> dict:
     allowed_names = {
         "Artifact": Artifact,
         "CommunicationPath": CommunicationPath,
+        "DeploymentComponent": DeploymentComponent,
         "DeploymentDependency": DeploymentDependency,
         "DeploymentModel": DeploymentModel,
         "DeploymentRelation": DeploymentRelation,

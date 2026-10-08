@@ -15,6 +15,7 @@ from besser.BUML.metamodel.structural import Multiplicity, UNLIMITED_MAX_MULTIPL
 from besser.BUML.metamodel.uml_deployment import (
     Artifact,
     CommunicationPath,
+    DeploymentComponent,
     DeploymentModel,
     DeploymentRelation,
     Node,
@@ -224,20 +225,24 @@ class TestProcessDeploymentDiagram:
         assert len(model.all_artifacts()) == 3
         assert len(model.interfaces) == 1
 
-    def test_deployment_component_synthesises_artifact_with_manifests(
+    def test_deployment_component_becomes_deployment_component_without_manifests(
         self, real_deployment_diagram,
     ):
         model = process_deployment_diagram(real_deployment_diagram)
-        # The nested DeploymentComponent (cmp-inside) becomes a synthetic
-        # Artifact with manifests=["cmp-inside"].
-        artifacts_with_manifest = [
-            a for a in model.all_artifacts() if a.manifests
-        ]
-        assert len(artifacts_with_manifest) == 2
-        manifest_ids = sorted(
-            {m for a in artifacts_with_manifest for m in a.manifests}
-        )
-        assert manifest_ids == ["cmp-free", "cmp-inside"]
+        components = [a for a in model.all_artifacts()
+                      if isinstance(a, DeploymentComponent)]
+        assert sorted(c.name for c in components) == ["AuthService", "Reporter"]
+        # The element's own id is never fabricated into manifests.
+        assert all(c.manifests == [] for c in components)
+
+    def test_artifact_manifests_are_read_from_the_element(self):
+        payload = {"title": "T", "model": {"elements": {"a1": {
+            "id": "a1", "name": "Coder", "type": "DeploymentArtifact", "owner": None,
+            "manifests": ["component-1"],
+        }}, "relationships": {}}}
+        (artifact,) = process_deployment_diagram(payload).all_artifacts()
+        assert type(artifact) is Artifact
+        assert artifact.manifests == ["component-1"]
 
     def test_owner_chain_nests_artifact_in_node(self, real_deployment_diagram):
         model = process_deployment_diagram(real_deployment_diagram)

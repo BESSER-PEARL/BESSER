@@ -30,22 +30,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
 )
-
-
-def _format_multiplicity_label(multiplicity):
-    """Render a ``Multiplicity`` as its UML association-end label.
-
-    Collapses an exact multiplicity (``min == max``) to a single value, matching
-    UML convention (``1..1`` -> ``1``, ``5..5`` -> ``5``). An unbounded upper bound
-    renders as ``*`` (``0..*``, ``1..*``). The result round-trips through
-    ``parse_multiplicity`` (a bare ``N`` is read back as ``N..N``).
-    """
-    min_val = multiplicity.min
-    if multiplicity.max == UNLIMITED_MAX_MULTIPLICITY:
-        return f"{min_val}..*"
-    if min_val == multiplicity.max:
-        return f"{min_val}"
-    return f"{min_val}..{multiplicity.max}"
+from besser.utilities.web_modeling_editor.backend.services.converters.parsers.multiplicity_parser import (
+    format_multiplicity_label,
+)
 
 
 def parse_buml_content(content: str) -> DomainModel:
@@ -566,7 +553,7 @@ def class_buml_to_json(domain_model):
                         "type": rel_type,
                         "source": {
                             "element": class_id_map[source_class],
-                            "multiplicity": _format_multiplicity_label(source_prop.multiplicity),
+                            "multiplicity": format_multiplicity_label(source_prop.multiplicity),
                             "role": source_prop.name,
                             "navigable": source_prop.is_navigable,
                             "direction": source_dir,
@@ -574,7 +561,7 @@ def class_buml_to_json(domain_model):
                         },
                         "target": {
                             "element": class_id_map[target_class],
-                            "multiplicity": _format_multiplicity_label(target_prop.multiplicity),
+                            "multiplicity": format_multiplicity_label(target_prop.multiplicity),
                             "role": target_prop.name,
                             "navigable": target_prop.is_navigable,
                             "direction": target_dir,

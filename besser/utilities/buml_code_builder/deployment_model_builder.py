@@ -14,7 +14,6 @@ from besser.BUML.metamodel.structural import UNLIMITED_MAX_MULTIPLICITY
 from besser.BUML.metamodel.uml_deployment import (
     Artifact,
     CommunicationPath,
-    DeploymentComponent,
     DeploymentDependency,
     DeploymentModel,
     DeploymentRelation,

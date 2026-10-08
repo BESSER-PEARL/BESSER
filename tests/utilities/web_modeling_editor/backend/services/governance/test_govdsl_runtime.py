@@ -6,16 +6,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from besser.generators.docker_compose.docker_compose_generator import (
+pytest.importorskip("governancedsl")
+
+from besser.generators.docker_compose.docker_compose_generator import (  # noqa: E402
     _a2a_descriptor,
     _a2a_descriptor_from_tags,
 )
-from besser.utilities.web_modeling_editor.backend.services.governance import govdsl_runtime
+from besser.utilities.web_modeling_editor.backend.services.governance import govdsl_runtime  # noqa: E402
 
-from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (  # noqa: E402
     GovernanceDslValidationError,
 )
-from besser.utilities.web_modeling_editor.backend.services.governance.govdsl_runtime import (
+from besser.utilities.web_modeling_editor.backend.services.governance.govdsl_runtime import (  # noqa: E402
     summarize_governance,
 )
 

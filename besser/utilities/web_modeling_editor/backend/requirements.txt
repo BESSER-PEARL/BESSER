@@ -22,7 +22,12 @@ bocl == 1.0.1
 cryptography
 openpyxl >= 3.1.0
 openai >= 1.40.0
-governancedsl >= 0.1.1
+# Governance DSL parser for governed merging gateways (Docker Compose swarms).
+# It depends on besser itself (besser>=6.5.2) and on
+# antlr4-python3-runtime==4.13.1, which the root requirement
+# antlr4-python3-runtime>=4.13.1 admits. Install it after the local besser
+# (the Dockerfile does) so pip never pulls besser from PyPI.
+governancedsl==0.1.1
 # The Spec-Driven Agent's Claude client; 1.x changes the SDK surface.
 anthropic >= 0.88.0, < 1
 websockets >= 15.0

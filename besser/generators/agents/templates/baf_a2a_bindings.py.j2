@@ -257,8 +257,7 @@ def _a2a_finalize_pending(session, pending, message):
     decision = tally(pending['policy_type'], pending['ratio'], pending['candidates'],
                      pending['ballots'] + [ballot])
     logging.info('[governance] %s', json.dumps(decision))
-    winner = pending['cand_text'].get(decision['outcome']) or next(iter(pending['cand_text'].values()), '')
-    return winner + _fm_footer(decision)
+    return decision_reply(decision, pending['cand_text'])
 
 
 def _a2a_wrap(state, edges, sends, merge_cfg=None, fallback=False):

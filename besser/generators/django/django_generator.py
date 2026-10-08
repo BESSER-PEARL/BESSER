@@ -1,6 +1,7 @@
 """
 This module generates Django code using Jinja2 templates based on BUML models.
 """
+import logging
 import os
 import shutil
 import subprocess
@@ -13,6 +14,8 @@ from besser.generators import GeneratorInterface
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.generators.structural_utils import normalize_method_code
 from besser.utilities import sort_by_timestamp
+
+logger = logging.getLogger(__name__)
 
 ##############################
 #    Django Generator
@@ -741,12 +744,12 @@ JAZZMIN_SETTINGS = {{
                                               fkeys=self.fkeys)
                 self.generate_project_urls()
 
-            print("✅ Django project generation completed successfully!")
+            print("Django project generation completed successfully!")
 
         except subprocess.CalledProcessError as e:
             # Re-raised so callers never package a half-written project as success.
-            print(f"❌ Error during project generation: {e}")
+            logger.error("Error during project generation: %s", e)
             raise
         except Exception as e:
-            print(f"❌ Unexpected error: {e}")
+            logger.error("Unexpected error: %s", e)
             raise

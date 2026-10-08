@@ -76,6 +76,15 @@ def _config_has_personalization_content(config) -> bool:
     return False
 
 
+def json_literal(value, indent: int = 2) -> str:
+    r"""JSON for a ``json.loads(r'''...''')`` literal in generated code.
+
+    Unlike Jinja's ``tojson`` it keeps ``<``, ``>`` and ``&`` readable (``age > 65``,
+    not ``age \u003e 65``); only ``'`` is escaped, so the raw string cannot close early.
+    """
+    return json.dumps(value, indent=indent, ensure_ascii=False).replace("'", r"\u0027")
+
+
 def extract_braced_vars(template: str) -> list[str]:
     """Return the unique ``{identifier}`` placeholders of *template*, in order of first appearance.
 
@@ -89,6 +98,38 @@ def extract_braced_vars(template: str) -> list[str]:
         list[str]: Placeholder names without braces, e.g. ``["name", "user_message"]``.
     """
     return list(dict.fromkeys(re.findall(r'\{(\w+)\}', template or '')))
+
+
+_SQL_ITEM_HEADER = re.compile(r'^(\s*)-\s+[\w-]+\s*:\s*$')
+_SQLITE_DIALECT = re.compile(r'^\s*dialect\s*:\s*["\']?sqlite')
+_FILE_KEY = re.compile(r'^\s*file\s*:')
+_DATABASE_KEY = re.compile(r'^(\s*)database(\s*:)')
+
+
+def sqlite_database_to_file(config_yaml: str) -> str:
+    """Rename ``database:`` to ``file:`` in sqlite ``db.sql`` entries of *config_yaml*.
+
+    BAF reads a sqlite path from ``file``; older editor builds wrote ``database``.
+    """
+    lines = config_yaml.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        header = _SQL_ITEM_HEADER.match(lines[i])
+        i += 1
+        if not header:
+            continue
+        start = i
+        while i < len(lines) and (not lines[i].strip() or
+                                  len(lines[i]) - len(lines[i].lstrip()) > len(header.group(1))):
+            i += 1
+        block = range(start, i)
+        if (any(_SQLITE_DIALECT.match(lines[j]) for j in block)
+                and not any(_FILE_KEY.match(lines[j]) for j in block)):
+            for j in block:
+                if _DATABASE_KEY.match(lines[j]):
+                    lines[j] = _DATABASE_KEY.sub(r'\1file\2', lines[j], count=1)
+                    break
+    return ''.join(lines)
 
 
 def workspace_rel_dir(path: str, name: str) -> str:
@@ -314,6 +355,7 @@ class BAFGenerator(GeneratorInterface):
         env.globals['resolve_rag_var_name'] = resolve_rag_var_name
         env.globals['extract_braced_vars'] = extract_braced_vars
         env.filters['python_repr'] = repr
+        env.filters['json_literal'] = json_literal
         agent_template = env.get_template('baf_agent_template.py.j2')
         gui_modules = collect_gui_modules(self.model)
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
@@ -408,7 +450,7 @@ class BAFGenerator(GeneratorInterface):
             config_path = self.build_generation_path(file_name="config.yaml")
             with open(config_path, mode="w", encoding="utf-8") as f:
                 if self.config_yaml is not None:
-                    f.write(self.config_yaml)
+                    f.write(sqlite_database_to_file(self.config_yaml))
                 else:
                     config_template = env.get_template('baf_config_template.py.j2')
                     properties = sorted(self.model.properties, key=lambda prop: prop.section)

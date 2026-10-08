@@ -91,7 +91,7 @@ def test_duplicate_agent_names_keep_uuid_configuration_and_distinct_ports(tmp_pa
     for service, port in [('alpha', 9001), ('beta', 9002)]:
         config = yaml.safe_load((tmp_path / service / 'config.yaml').read_text(encoding='utf-8'))
         assert config['platforms']['a2a']['port'] == port
-        assert config['db']['sql'][0]['fff']['database'] == 'saved.db'
+        assert config['db']['sql'][0]['fff']['file'] == 'saved.db'
         code = (tmp_path / service / 'Duplicate.py').read_text(encoding='utf-8')
         ast.parse(code)
         assert code.count('agent = Agent(') == 1

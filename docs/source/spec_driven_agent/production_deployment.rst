@@ -191,6 +191,10 @@ Sandbox and network
   ``/besser_api/spec-driven/push-to-github`` and
   ``/besser_api/spec-driven/import-github-run``, which stay on the backend
   with the rest of ``/besser_api/``.
+- Give ``/besser_api/transform-agent-model-json`` (agent personalization) a
+  ``proxy_read_timeout`` of about 600 s. It makes one LLM call per selected
+  option in sequence, so several options exceed nginx's 60 s default and
+  return a 504 while the backend keeps calling the LLM.
 
 Deploying
 ---------

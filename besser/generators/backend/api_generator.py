@@ -143,15 +143,17 @@ def cross_router_calls(method_code: str, current_class_name: str, class_names: L
     can call another class's CRUD/relationship/method endpoint functions
     directly, e.g. ``await update_manager(...)`` or ``await create_book(...)``.
     When routes lived in a single ``main_api.py`` file those names were all in
-    the same module namespace. Now that each class has its own router module,
-    a call that targets a *different* class needs an explicit import. We
+    the same module namespace. Now that each class has its own router module
+    (and a second one for its method endpoints), such calls need an explicit
+    import, including calls to the method's own class's CRUD functions. We
     detect it here (instead of importing every router into every other
     router at module scope) to avoid circular imports between routers that
     reference each other.
 
     Returns a sorted, de-duplicated list of ``(target_module, function_name)``
-    tuples. Calls to functions on ``current_class_name`` itself are excluded
-    since those are already defined in the same router module.
+    tuples. Method endpoints live in ``<class>_methods``, everything else in
+    ``<class>``; the current class's own method endpoints are skipped because
+    the caller is that module, but its CRUD functions are imported.
     """
     if not method_code:
         return []
@@ -162,13 +164,13 @@ def cross_router_calls(method_code: str, current_class_name: str, class_names: L
     found = set()
     for target in class_names:
         target_lower = target.lower()
-        if target_lower == current_lower:
-            continue
         simple_names = {tmpl.format(c=target_lower) for tmpl in _SIMPLE_FUNC_TEMPLATES}
         for name in candidate_names:
-            if (
+            if name.startswith(f"execute_{target_lower}_"):
+                if target_lower != current_lower:
+                    found.add((f"{target_lower}_methods", name))
+            elif (
                 name in simple_names
-                or name.startswith(f"execute_{target_lower}_")
                 or name.endswith(f"_of_{target_lower}")
                 or (name.startswith("add_") and name.endswith(f"_to_{target_lower}"))
                 or (name.startswith("remove_") and name.endswith(f"_from_{target_lower}"))

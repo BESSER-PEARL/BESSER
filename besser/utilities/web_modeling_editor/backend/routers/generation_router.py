@@ -82,6 +82,7 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_ma
 from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
     generate_user_profile_document as _generate_user_profile_document,
     normalize_user_model_output as _normalize_user_model_output,
+    user_criteria_comparators as _user_criteria_comparators,
     safe_path as _safe_path,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.gui_personalization_utils import (
@@ -1255,7 +1256,7 @@ async def _handle_user_diagram_generation(
     generator_instance = generator_class(object_model, output_dir=temp_dir)
     await asyncio.to_thread(generator_instance.generate)
 
-    _normalize_user_model_output(object_model, temp_dir)
+    _normalize_user_model_output(object_model, temp_dir, _user_criteria_comparators(json_data))
 
     return _create_file_response(temp_dir, generator_type)
 

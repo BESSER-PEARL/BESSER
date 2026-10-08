@@ -522,8 +522,8 @@ def test_E7_export_non_agentic_lane():
     assert lane_entry["trustScore"] == 0
 
 
-def test_E8_export_message_flow_emits_isagentic_false():
-    """E-8: Base MessageFlow exports with isAgentic=false + WME flow defaults."""
+def test_E8_export_message_flow_carries_no_agentic_fields():
+    """E-8: A flow exports only the fields the editor's BPMNFlow serialises."""
     t1 = Task(name="T1")
     t2 = Task(name="T2")
     p1 = Process(name="P1", flow_nodes={t1})
@@ -538,9 +538,8 @@ def test_E8_export_message_flow_emits_isagentic_false():
     )
     out = bpmn_object_to_json(model)
     [rel] = out["relationships"].values()
-    assert rel["isAgentic"] is False
-    assert rel["trustScore"] == 0
-    # collaborationMode and mergingStrategy no longer emitted (P3').
+    assert "isAgentic" not in rel
+    assert "trustScore" not in rel
     assert "collaborationMode" not in rel
     assert "mergingStrategy" not in rel
 
@@ -921,3 +920,33 @@ def test_S2_collaboration_mode_silently_ignored():
     assert isinstance(task, AgenticTask)
     # No collaboration_mode attribute on P3' AgenticTask.
     assert not hasattr(task, "collaboration_mode")
+
+
+_AGENTIC_FIELDS = ("isAgentic", "reflectionMode", "trustScore", "agentDiagramRef",
+                   "reflectionReviewerLaneId", "gatewayRole", "governanceDsl", "role",
+                   "multiplicity")
+
+
+def test_R5_agentic_process_round_trips_every_agentic_field():
+    """JSON -> BUML -> JSON keeps every agentic field and adds none to flows."""
+    elements = {
+        "pool": _node("pool", "BPMNPool", "Swarm"),
+        "lane-c": _node("lane-c", "BPMNSwimlane", "Coder", owner="pool", isAgentic=True,
+                        role="solution", trustScore=60, multiplicity=2, agentDiagramRef="agent-c"),
+        "lane-r": _node("lane-r", "BPMNSwimlane", "Reviewer", owner="pool", isAgentic=True,
+                        role="supervision", trustScore=90, multiplicity=1, agentDiagramRef="agent-r"),
+        "task": _node("task", "BPMNTask", "Draft", owner="lane-c", taskType="default", marker="none",
+                      isAgentic=True, reflectionMode="cross", trustScore=70,
+                      agentDiagramRef="agent-c", reflectionReviewerLaneId="lane-r"),
+        "gw": _node("gw", "BPMNGateway", "Merge", owner="lane-r", gatewayType="parallel",
+                    isAgentic=True, gatewayRole="merging", trustScore=50,
+                    governanceDsl="MajorityPolicy p { }"),
+    }
+    relationships = {"f1": _flow("f1", "task", "gw")}
+    out = bpmn_object_to_json(process_bpmn_diagram(_envelope(elements, relationships)))
+    for elem_id, original in elements.items():
+        expected = {k: original[k] for k in _AGENTIC_FIELDS if k in original}
+        emitted = {k: out["elements"][elem_id][k] for k in _AGENTIC_FIELDS
+                   if k in out["elements"][elem_id]}
+        assert emitted == expected, elem_id
+    assert set(out["relationships"]["f1"]) == set(relationships["f1"])

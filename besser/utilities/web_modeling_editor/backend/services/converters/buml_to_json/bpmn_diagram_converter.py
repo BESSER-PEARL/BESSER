@@ -73,6 +73,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
+    strip_buml_imports,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 from besser.utilities.web_modeling_editor.backend.services.utils import (
@@ -157,11 +158,7 @@ _WME_LANE_DEFAULTS = {
     "trustScore": 0,
     "multiplicity": 1,
 }
-_WME_FLOW_AGENTIC_DEFAULTS = {
-    # WME's BPMNFlow.serialize() always emits these fields on every flow.
-    "isAgentic": False,
-    "trustScore": 0,
-}
+
 
 def _wme_type_for(obj) -> str:
     """Return the WME ``type`` string for a metamodel object."""
@@ -173,6 +170,7 @@ def _wme_type_for(obj) -> str:
 # ---------------------------------------------------------------------------
 # bpmn_object_to_json
 # ---------------------------------------------------------------------------
+
 
 def bpmn_object_to_json(model: BPMNModel) -> dict:
     """Convert a ``BPMNModel`` into a WME BPMN diagram JSON dict.
@@ -269,6 +267,7 @@ def bpmn_object_to_json(model: BPMNModel) -> dict:
 # Element emission helpers
 # ---------------------------------------------------------------------------
 
+
 def _emit_pool(participant: Participant, elements: dict, id_for, grid: "_GridLayout") -> None:
     """Emit a pool (``BPMNPool``) and its lanes (``BPMNSwimlane``)."""
     pool_id = id_for(participant)
@@ -280,6 +279,7 @@ def _emit_pool(participant: Participant, elements: dict, id_for, grid: "_GridLay
         elements[id_for(lane)] = _emit_node(
             lane, owner_id=pool_id, id_for=id_for, grid=grid,
         )
+
 
 def _emit_process_contents(process: Process, owner_id, elements: dict,
                            id_for, grid: "_GridLayout") -> None:
@@ -307,6 +307,7 @@ def _emit_process_contents(process: Process, owner_id, elements: dict,
             data_object, owner_id=owner_id, id_for=id_for, grid=grid,
         )
 
+
 def _emit_subprocess_children(sub: SubProcess, elements: dict,
                               id_for, grid: "_GridLayout") -> None:
     """Recursively emit a sub-process's flow nodes (their owner is the sub-process)."""
@@ -317,6 +318,7 @@ def _emit_subprocess_children(sub: SubProcess, elements: dict,
         )
         if isinstance(node, SubProcess):
             _emit_subprocess_children(node, elements, id_for, grid)
+
 
 def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
     """Build one ``elements[id]`` entry for a metamodel object."""
@@ -363,6 +365,8 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
             entry["trustScore"] = obj.trust_score
             if obj.agent_diagram_ref is not None:
                 entry["agentDiagramRef"] = obj.agent_diagram_ref
+            if obj.reflection_reviewer_lane_id is not None:
+                entry["reflectionReviewerLaneId"] = obj.reflection_reviewer_lane_id
 
     if isinstance(obj, Gateway):
         entry.update(_WME_GATEWAY_DEFAULTS)
@@ -388,6 +392,7 @@ def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
 # ---------------------------------------------------------------------------
 # Flow emission helpers
 # ---------------------------------------------------------------------------
+
 
 def _emit_flow(flow: BPMNConnectingObject, relationships: dict,
                elements: dict, id_for) -> None:
@@ -443,8 +448,8 @@ def _emit_flow(flow: BPMNConnectingObject, relationships: dict,
     if isinstance(flow, SequenceFlow):
         entry["isDefault"] = flow.is_default
 
-    entry.update(_WME_FLOW_AGENTIC_DEFAULTS)
     relationships[id_for(flow)] = entry
+
 
 def _resolve_directions(layout: dict, source_entry: dict, target_entry: dict):
     """Pick connection directions for an emitted flow.
@@ -462,6 +467,7 @@ def _resolve_directions(layout: dict, source_entry: dict, target_entry: dict):
 # Misc helpers
 # ---------------------------------------------------------------------------
 
+
 def _walk_subprocesses(model: BPMNModel):
     """Yield every ``SubProcess`` (including nested ones) in the model."""
     def _recurse(container):
@@ -472,6 +478,7 @@ def _walk_subprocesses(model: BPMNModel):
 
     for process in model.processes:
         yield from _recurse(process)
+
 
 def _compute_envelope_size(elements: dict) -> dict:
     """Bounding box of all element bounds, with a sensible minimum."""
@@ -492,6 +499,7 @@ def _compute_envelope_size(elements: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Grid layout (deterministic fallback when layout is missing)
 # ---------------------------------------------------------------------------
+
 
 class _GridLayout:
     """Deterministic per-class grid placement used only when ``layout["bounds"]`` is
@@ -529,6 +537,7 @@ class _GridLayout:
 # ---------------------------------------------------------------------------
 # bpmn_buml_to_json — BUML .py source string → WME JSON
 # ---------------------------------------------------------------------------
+
 
 def bpmn_buml_to_json(content: str) -> dict:
     """Convert a BPMN BUML ``.py`` source string into a WME BPMN diagram JSON dict.
@@ -585,22 +594,11 @@ def bpmn_buml_to_json(content: str) -> dict:
         "AgentRole": AgentRole,
     }
 
-    cleaned_lines = []
-    in_import_block = False
-    for line in content.splitlines():
-        stripped = line.lstrip()
-        if in_import_block:
-            if ")" in line:
-                in_import_block = False
-            continue
-        if stripped.startswith(("import ", "from ")):
-            if "(" in line and ")" not in line:
-                in_import_block = True
-            continue
-        if any(gen in line for gen in ["Generator(", ".generate("]):
-            continue
-        cleaned_lines.append(line)
-    cleaned_content = "\n".join(cleaned_lines)
+    # A BPMN file may end with a generator run; only the model is loaded.
+    cleaned_content = "\n".join(
+        line for line in strip_buml_imports(content).splitlines()
+        if not any(gen in line for gen in ("Generator(", ".generate("))
+    )
 
     try:
         local_vars = safe_load_buml(cleaned_content, allowed_names)
@@ -615,6 +613,7 @@ def bpmn_buml_to_json(content: str) -> dict:
             "`bpmn_model_to_code`)."
         )
     return bpmn_object_to_json(model)
+
 
 def _find_bpmn_model(namespace: dict):
     """Return the ``BPMNModel`` from the exec'd namespace, preferring ``bpmn_model``."""

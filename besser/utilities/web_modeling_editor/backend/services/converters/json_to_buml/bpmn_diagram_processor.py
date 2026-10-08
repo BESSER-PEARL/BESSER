@@ -175,6 +175,7 @@ def _build_node(elem: dict):
                     reflection_mode=reflection,
                     trust_score=trust,
                     agent_diagram_ref=agent_ref,
+                    reflection_reviewer_lane_id=elem.get("reflectionReviewerLaneId") or None,
                 )
 
             return Task(name=name, task_type=task_type, loop_characteristics=loop)

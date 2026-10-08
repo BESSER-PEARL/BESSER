@@ -75,6 +75,9 @@ def _emit_flow_node(node, container_var: str, dispenser: NameDispenser,
         ref_kwarg = ""
         if node.agent_diagram_ref is not None:
             ref_kwarg = f", agent_diagram_ref={_quoted(node.agent_diagram_ref)}"
+        if node.reflection_reviewer_lane_id is not None:
+            ref_kwarg += (f", reflection_reviewer_lane_id="
+                          f"{_quoted(node.reflection_reviewer_lane_id)}")
         body.append(
             f"{var} = AgenticTask(name={_quoted(node.name)}, "
             f"task_type=TaskType.{node.task_type.name}, "

@@ -427,3 +427,12 @@ class TestDeterminism:
         first = bpmn_model_to_code(model)
         second = bpmn_model_to_code(model)
         assert first == second
+
+
+def test_reflection_reviewer_lane_id_survives_exec_round_trip():
+    task = AgenticTask(name="Draft", reflection_mode=ReflectionMode.CROSS,
+                       reflection_reviewer_lane_id="lane-r")
+    model = BPMNModel(name="M", processes={Process(name="P", flow_nodes={task})})
+    rebuilt = _find_model(_exec_source(bpmn_model_to_code(model)))
+    (node,) = rebuilt.all_flow_nodes()
+    assert node.reflection_reviewer_lane_id == "lane-r"

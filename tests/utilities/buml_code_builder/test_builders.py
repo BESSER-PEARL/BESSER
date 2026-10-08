@@ -223,6 +223,24 @@ class TestDomainModelBuilder:
         # Must compile without SyntaxError
         compile(code, file_path, "exec")
 
+    def test_roundtrip_exec_empty_model(self, tmp_path):
+        """An empty class diagram round-trips: empty collections are written as
+        ``set()``, not ``{}`` (an empty dict, which DomainModel rejects)."""
+        file_path = str(tmp_path / "domain_model.py")
+
+        domain_model_to_code(DomainModel(name="Empty_model"), file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        namespace = {}
+        exec(code, namespace)
+
+        recreated = namespace["domain_model"]
+        assert recreated.get_classes() == set()
+        assert recreated.associations == set()
+        assert recreated.generalizations == set()
+
     def test_roundtrip_exec(self, tmp_path):
         """Generated code can be exec()'d and produces a DomainModel with correct structure."""
         model = self._build_library_model()

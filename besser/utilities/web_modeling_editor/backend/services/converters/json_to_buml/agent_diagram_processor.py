@@ -456,16 +456,10 @@ def collect_agent_components(json_data: dict) -> dict:
 
     Precedence (later wins): legacy component nodes in ``model.nodes`` <
     diagram-level ``agentComponents`` < ``model.agentComponents`` <
-    ``model.components`` (canonical). v3-style component elements in
-    ``model.elements`` are accepted as the lowest-precedence source.
+    ``model.components`` (canonical). A v3 ``model.elements`` map is never read.
     """
     model_data = json_data.get("model") or {}
     merged: dict = {}
-    legacy_elements = model_data.get("elements")
-    if isinstance(legacy_elements, dict):
-        for element_id, element in legacy_elements.items():
-            if isinstance(element, dict) and element.get("type") in AGENT_COMPONENT_TYPES:
-                merged[element_id] = {**element, "id": element.get("id") or element_id}
     for node in model_data.get("nodes") or []:
         if isinstance(node, dict) and node.get("type") in AGENT_COMPONENT_TYPES:
             for entry in _node_to_components(node):

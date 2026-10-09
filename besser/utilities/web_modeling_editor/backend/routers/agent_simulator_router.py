@@ -292,8 +292,8 @@ def _spawn_background(coro) -> None:
 def _model_has_custom_code_action(model: Dict[str, Any]) -> bool:
     """Return True if any action row of the diagram model is a custom Python code action.
 
-    v4: action rows are inline on ``AgentState`` nodes (``data.bodies`` /
-    ``data.fallbackBodies``); legacy ``elements`` maps are still scanned.
+    Action rows are inline on ``AgentState`` nodes (``data.bodies`` /
+    ``data.fallbackBodies``), the only bodies the converter reads.
     """
     candidates = []
     for node in model.get("nodes") or []:
@@ -304,9 +304,6 @@ def _model_has_custom_code_action(model: Dict[str, Any]) -> bool:
             rows = data.get(key)
             if isinstance(rows, list):
                 candidates.extend(rows)
-    elements = model.get("elements")
-    if isinstance(elements, dict):
-        candidates.extend(elements.values())
     for element in candidates:
         if not isinstance(element, dict):
             continue

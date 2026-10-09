@@ -284,6 +284,45 @@ def test_create_session_rejects_restricted_custom_code(simulator):
     assert simulator.requests == []
 
 
+def _hybrid_model(**v4_actions) -> Dict[str, Any]:
+    """v4 nodes plus a v3-style ``elements`` map; it passes the legacy-format guard
+    because it has ``nodes``. The ``elements`` carry code that must never run."""
+    model = _agent_model(v4_actions or None)
+    model["elements"] = {
+        "smuggled-code": {"id": "smuggled-code", "type": "AgentStateBody", "actionType": "CustomCodeAction",
+                          "name": "def act(session):\n    SMUGGLED_MARKER = 1\n", "owner": "state-1"},
+        "smuggled-tool": {"id": "smuggled-tool", "type": "AgentTool", "name": "smuggled_tool",
+                          "code": "def smuggled_tool():\n    SMUGGLED_MARKER = 2\n"},
+    }
+    return model
+
+
+def test_hybrid_payload_elements_never_reach_the_simulator(simulator):
+    """The restriction checks v4 bodies only, so a v3 ``elements`` map next to
+    ``nodes`` must not be read by the converter either."""
+    resp = _request("POST", f"{BASE}/sessions", ALICE, json=_session_payload(_hybrid_model()))
+    assert resp.status_code == 200, resp.text
+    [sent] = simulator.requests
+    assert "SMUGGLED_MARKER" not in sent.content.decode()
+
+
+def test_converter_ignores_hybrid_payload_elements():
+    """A v3 AgentTool in ``elements`` used to become a generated tool, whose code
+    the custom-code restriction never checks."""
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.agent_diagram_processor import (
+        process_agent_diagram,
+    )
+    agent = process_agent_diagram({"title": "Agent", "model": _hybrid_model()})
+    assert [tool.name for tool in agent.tools] == []
+
+
+def test_hybrid_payload_with_v4_custom_code_is_still_restricted(simulator):
+    model = _hybrid_model(a1={"id": "a1", "actionType": "CustomCodeAction", "name": "def act(session): pass"})
+    resp = _request("POST", f"{BASE}/sessions", ALICE, json=_session_payload(model))
+    assert resp.status_code == 403
+    assert simulator.requests == []
+
+
 def test_create_session_maps_code_validation_error_to_400(simulator, monkeypatch):
     monkeypatch.setattr(asr, "AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE", False)
     model = _custom_code_model("def act(ctx):\n    pass\n")

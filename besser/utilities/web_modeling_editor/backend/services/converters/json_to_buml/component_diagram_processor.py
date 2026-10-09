@@ -66,7 +66,6 @@ _COMPONENT_SUBTYPE_CLASSES = {
 }
 
 
-
 def process_component_diagram(json_data: dict) -> ComponentModel:
     """Convert a v4 WME Component diagram into a ``ComponentModel``.
 

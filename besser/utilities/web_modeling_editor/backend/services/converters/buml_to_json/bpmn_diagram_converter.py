@@ -2,12 +2,9 @@
 
 Emits the v4 wire shape (``{nodes, edges}``) directly — mirrors
 ``buml_to_json/class_diagram_converter.py`` (``make_node``/``make_edge`` from
-``_node_builders``, no v3-shape intermediate). Ported from the v3 converter of
-the same name; the metamodel walk (pools -> lanes -> process contents -> data
-stores -> flows) is unchanged, only the emitted shape differs (flat node/edge
-lists instead of ``elements``/``relationships`` dicts, ``parentId`` instead of
-``owner``, one edge ``type`` per flow kind instead of ``"BPMNFlow"`` +
-``flowType``).
+``_node_builders``). The metamodel is walked pools -> lanes -> process
+contents -> data stores -> flows; every node is emitted with its ``parentId``
+and each flow kind has its own edge ``type``.
 
 Two entry points:
 
@@ -161,8 +158,7 @@ def _wme_type_for(obj) -> str:
 
 
 class _GridLayout:
-    """Deterministic per-class grid placement when layout['bounds'] is absent.
-    Ported unchanged from v3 — pure geometry, no wire-shape dependency."""
+    """Deterministic per-class grid placement when layout['bounds'] is absent."""
 
     _ROW_FOR_TYPE = {
         "bpmnPool": 0, "bpmnSwimlane": 1,

@@ -1,19 +1,14 @@
 """BPMN processing for converting JSON to BUML format.
 
 Reads the v4 wire shape (``{nodes, edges}``) natively — mirrors
-``json_to_buml/class_diagram_processor.py``. Ported from the v3 (elements/
-relationships) processor of the same name; the only changes are the JSON
-access layer (flat ``nodes``/``edges`` lists instead of ``elements``/
-``relationships`` dicts, ``node["parentId"]`` instead of ``element["owner"]``,
-and one edge ``type`` per BPMN flow kind instead of a single ``"BPMNFlow"``
-type with a ``flowType`` discriminator — see
-``packages/library/lib/utils/versionConverter.ts``'s ``convertV3EdgeTypeToV4``).
-The BUML BPMN metamodel algorithm (containment via the owner/parentId chain,
-flow routing via ``process_of``) is unchanged.
+``json_to_buml/class_diagram_processor.py``. Containment follows the
+``parentId`` chain, each BPMN flow kind has its own edge ``type`` (see
+``docs/source/migrations/uml-v4-shape.md``), and flows are routed to their
+process via ``process_of``.
 
 ``BPMNElement.layout`` / ``BPMNConnectingObject.layout`` are declared opaque
 by the metamodel (type-checked as dict-or-None, content never interpreted),
-so this port is free to redefine the internal stash shape for v4 — see
+so the converters define the internal stash shape — see
 ``_layout_dict`` / ``_flow_layout_dict``.
 
 Design points:

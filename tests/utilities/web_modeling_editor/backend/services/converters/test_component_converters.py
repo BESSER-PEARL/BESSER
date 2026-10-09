@@ -388,6 +388,21 @@ class TestRoundTrip:
             assert out_nodes[child_id]["parentId"] == "elem-consensus-group"
         assert out_nodes["elem-orchestrator-agent"]["position"] == {"x": 40, "y": 80}
 
+    def test_editor_default_stereotypes_survive_the_buml_file(self):
+        """The editor writes «component» / «subsystem» on new elements; they must
+        come back as written, not as "" (direct and through the exported .py)."""
+        payload = _diagram("Defaults", [
+            _node("s", "componentSubsystem", 0, 0, 400, 300,
+                  {"name": "Core", "stereotype": "subsystem", "isComponentSubsystemHeaderShown": True}),
+            _node("c", "component", 40, 60, 160, 100,
+                  {"name": "Api", "stereotype": "component", "isComponentHeaderShown": True}, parent="s"),
+        ], [])
+        model = process_component_diagram(payload)
+        for out in (component_object_to_json(model), component_buml_to_json(component_model_to_code(model))):
+            nodes = _nodes_by_id(out)
+            assert nodes["s"]["data"]["stereotype"] == "subsystem"
+            assert nodes["c"]["data"]["stereotype"] == "component"
+
     def test_required_interface_socket_variant_survives(self):
         """A ComponentRequiredQuarterInterface edge reads as InterfaceRequired and
         comes back with its drawn socket variant, also through a BUML file."""

@@ -1,16 +1,17 @@
-# BESSER UML v4 Wire Shape Specification (v3 Legacy Notes)
+# BESSER UML v4 Wire Shape
 
-**Status**: Canonical spec for the v4 React Flow editor.
+**Status**: the wire contract between the web editor and the backend.
 **Audience**: every contributor touching `packages/library` (frontend nodes/edges)
 or `besser/utilities/web_modeling_editor/backend/services/converters/` (Python).
-**Source of truth**: this document.
 
 This file describes, per BESSER diagram type, the **v4** shape that the
-React-Flow library at `packages/library` emits and accepts as the canonical
-on-disk / on-wire format. For backward compatibility it also documents the
-legacy **v3** shape that the retired SVG/Redux editor used to emit; the
-v3→v4 migrator at `packages/library/lib/utils/versionConverter.ts`
-upgrades old fixtures to v4 on load.
+React Flow library at `packages/library` emits and accepts as the on-disk and
+on-wire format. It also documents the legacy **v3** shape that the previous
+editor emitted, because the frontend still upgrades it: the per-diagram
+migrators in `packages/library/lib/utils/versionConverter.ts` lift a v3 model
+to v4 when a project, file or template is loaded. The backend reads only v4
+and answers HTTP 400 on a v3 model (see
+[Conversion direction guarantees](#conversion-direction-guarantees)).
 
 The mapping is exhaustive enough that:
 
@@ -18,9 +19,7 @@ The mapping is exhaustive enough that:
   `data` field schema for each node/edge `type`,
 - the Python `json_to_buml/<diagram>_diagram_processor.py` and
   `buml_to_json/<diagram>_diagram_converter.py` parse and emit the correct
-  shape without consulting frontend code,
-- the TS `migrate-uml-v3-to-v4.ts` migrator and the Python normalizer are
-  byte-equivalent on every legacy fixture.
+  shape without consulting frontend code.
 
 When in doubt, prefer **explicit fields on `node.data`** over inferring from
 labels. Inheritance from v3:
@@ -47,9 +46,13 @@ labels. Inheritance from v3:
 
 ## Project envelope
 
-### v3 (today)
+`BesserProject.diagrams[T][i].model` is one diagram model. The current
+project schema is `PROJECT_SCHEMA_VERSION = 6`
+(`packages/webapp/src/main/shared/types/project.ts`): schema 5 lifted the
+diagram models to v4, schema 6 made Component and Deployment diagrams project
+types.
 
-`BesserProject.diagrams[T][i].model` is per-diagram a v3 `UMLModel`:
+### v3 model (legacy)
 
 ```ts
 type V3UMLModel = {
@@ -64,10 +67,7 @@ type V3UMLModel = {
 };
 ```
 
-`PROJECT_SCHEMA_VERSION = 4` wraps these into `BesserProject` (see
-`packages/webapp/src/main/shared/types/project.ts`).
-
-### v4 (target)
+### v4 model
 
 ```ts
 type V4UMLModel = {
@@ -104,9 +104,10 @@ type BesserEdge = {
 };
 ```
 
-`PROJECT_SCHEMA_VERSION` bumps to `5` to mark the project envelope contains v4
-diagram models. The migrator runs on read in
-`packages/webapp/src/main/shared/services/storage/local-storage-repository.ts`.
+Loading a project runs `ensureProjectMigrated` (`shared/types/project.ts`,
+called by `ProjectStorageRepository.ts`), whose `migrateProjectToV5` step lifts
+every v3 model through
+`packages/webapp/src/main/shared/services/storage/migrate-uml-v3-to-v4.ts`.
 
 ### Project mapping rules
 
@@ -779,8 +780,9 @@ fixtures:
 }
 ```
 
-The Python normalizer (`json_to_buml/agent_diagram_processor.py`) and the TS
-migrator must implement identical fallthrough order:
+The Python transition normalizer (`_normalise_agent_transitions` in
+`json_to_buml/agent_diagram_processor.py`) and the TS migrator implement the
+same fallthrough order:
 
 1. If `transitionType === 'custom'` **or** legacy `condition === 'custom_transition'`
    **or** `custom.event` non-empty/`custom.condition` non-empty: emit
@@ -1286,14 +1288,12 @@ Model `type` on the wire and project bucket key: **`"DeploymentDiagram"`**
 
 ## Conversion direction guarantees
 
-Two directions, both must be implemented:
-
 - **Frontend (TS)**: `migrate-uml-v3-to-v4.ts` reads a v3 model and emits a
-  v4 model. Pure, no IO. Same fallthrough rules as the Python normalizer.
+  v4 model. Pure, no IO. Agent transitions follow the same fallthrough rules
+  as the Python transition normalizer.
 - **Backend (Python)**: `json_to_buml/<diagram>_diagram_processor.py`
   parses v4 directly. `buml_to_json/<diagram>_diagram_converter.py` emits
-  v4 directly. **No v3 emission path** anywhere on the backend after Wave
-  3 (the old fork is deleted).
+  v4 directly. The backend has no v3 emission path.
 - **Backend rejects v3 on ingest.** The backend has no v3 *read* path
   either, so a v3 UML model would convert to an empty B-UML model. Every
   endpoint that takes diagram or project JSON therefore refuses one with
@@ -1319,54 +1319,21 @@ Round-trip tests must hold for **every diagram type** for at least:
 
 ---
 
-## Open questions surfaced during spec authoring
-
-These are flagged for user resolution before Wave-2 fan-out so SA-2..6
-don't have to invent assumptions:
-
-1. **`UserDiagram` references** — does a `UserModelName` carry a `classId`
-   linkage like `ObjectName` does? Source `uml-user-model-name.ts` would
-   resolve this; if not yet defined, recommend adding `classId?: string`
-   for parity with `ObjectName`.
-2. **NN attribute keys for ambiguous slugs** — e.g. `DimensionAttribute*`
-   appears on both Pooling and BatchNormalization. The mapping table above
-   uses `dimension` for both; SA-5 should confirm by inspection that no
-   layer carries two `dimension` attributes that differ in meaning.
-3. **`ClassOCLConstraint` collapse policy** — recommended above to
-   collapse onto the owner class. Confirm this matches how the backend
-   processor (`class_diagram_processor.py`) currently consumes them; if
-   the backend reads them as standalone elements with cross-references,
-   the v4 spec needs a top-level `oclConstraint` node type instead.
-4. **`StateObjectNode` cross-diagram reference** — does it carry a
-   `classId` linking to a sibling ClassDiagram (similar to `ObjectName`)?
-   The above schema includes the field as optional; SA-3 should confirm.
-5. **`AgentRagElement.dbCustomName` vs `ragDatabaseName`** — both fields
-   exist in the v3 typings; the migrator preserves both verbatim. SA-4
-   should confirm the runtime semantics so the BAF generator picks the
-   correct one.
-
-If any of the above is answered "different from spec", patch the spec
-**before** the Wave 2 sub-agents read it. The hand-off contract is the
-spec, not the implementation.
-
----
-
 ## Visual deviations from v3
 
-### NN layer cards (SA-2.2 #34, restored in SA-UX-FIX-2)
+### NN layer cards
 
-v3 layer icons restored in SA-UX-FIX-2 — `_NNLayerBase.tsx` now
-renders the per-kind PNG (`/images/nn-layers/<kind>.png`) above the
-stereotype/name header, mirroring v3 visuals while keeping the v4
-stereotype-card structure. Default layer drop height bumped from 60
-→ 140 px to make room.
+`_NNLayerBase.tsx` renders the per-kind PNG
+(`/images/nn-layers/<kind>.png`) above the stereotype/name header, like the
+v3 layer icons, while keeping the v4 stereotype-card structure. The default
+layer drop height is 140 px to make room.
 
-### Header underline on UserModelName (SA-2.2 #35)
+### Header underline on UserModelName
 
 `HeaderSection.tsx` now applies `textDecoration="underline"` on both
 the parent `<text>` element and the inner name `<tspan>`.
 Chromium-based browsers historically dropped underline on tspans when
-the parent had a `dy` offset (which happens for the SA-2 / SA-4 cards
-with a stereotype line above the name); explicit duplication on the
+the parent had a `dy` offset (which happens for cards with a stereotype
+line above the name); explicit duplication on the
 tspan keeps both the ObjectName and UserModelName headers correctly
 underlined regardless of browser quirks.

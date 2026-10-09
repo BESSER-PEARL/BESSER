@@ -60,8 +60,9 @@ Diagram JSON Format
 UML diagrams (every type except ``GUINoCodeDiagram`` and
 ``QuantumCircuitDiagram``) travel in the **v4** React Flow shape,
 ``{"version": "4.x", "type": ..., "nodes": [...], "edges": [...]}``. The field
-schema per diagram type is ``docs/source/migrations/uml-v4-shape.md`` in the
-repository. The converters read only this shape.
+schema per diagram type is the `UML v4 wire shape
+<https://github.com/BESSER-PEARL/BESSER/blob/development/docs/source/migrations/uml-v4-shape.md>`__ document (``docs/source/migrations/uml-v4-shape.md`` in the
+repository). The converters read only this shape.
 
 A diagram in the **legacy v3** editor format
 (``{"version": "3.x", "elements": {...}, "relationships": {...}}``) is refused
@@ -174,8 +175,8 @@ whole-swarm structural and runtime-allocation views backing the
 They are standalone diagrams for normal import/export, and they also
 participate in project-level multi-agent system generation.
 
-Their v4 node and edge types and ``data`` fields are listed in
-``docs/source/migrations/uml-v4-shape.md``.
+Their v4 node and edge types and ``data`` fields are listed in the
+`UML v4 wire shape <https://github.com/BESSER-PEARL/BESSER/blob/development/docs/source/migrations/uml-v4-shape.md>`__ document.
 
 **Agentic profile.** The Component diagram's agentic vocabulary is carried in
 the node's ``data.stereotype`` string (an edge's ``data.stereotype`` for

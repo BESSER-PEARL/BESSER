@@ -246,10 +246,10 @@ def _build_node(node: dict):
     if node_type == "bpmnGroup":
         return Group(name=name)
     if node_type == "bpmnSwimlane":
-        # packages/library/lib/nodes/bpmn/BPMNSwimlane.tsx â€” a lane is a child
+        # packages/library/lib/nodes/bpmn/BPMNSwimlane.tsx — a lane is a child
         # (parentId) of its bpmnPool.
         if data.get("isAgentic"):
-            # Â«AgenticLaneÂ». The editor's former role values (worker / manager)
+            # «AgenticLane». The editor's former role values (worker / manager)
             # are accepted as aliases.
             role_value = data.get("role", "solution") or "solution"
             role_value = _AGENT_ROLE_ALIASES.get(role_value, role_value)

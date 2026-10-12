@@ -56,6 +56,7 @@ from besser.spec_driven_agent.providers.llm_client import (
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
+from besser.spec_driven_agent.state import agent_trace
 from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
     get_besser_version,
@@ -1036,6 +1037,8 @@ class SmartGenerationRunner:
         self._t_last_error_code: Optional[str] = None
         self._t_model_requested: Optional[str] = None
         self._t_model_switched_to: Optional[str] = None
+        # The model shown on the start event; the Agent Trace record's model_id.
+        self._llm_model: Optional[str] = None
         self._t_blockers_found: Optional[int] = None
         self._t_stream_aborted: Optional[str] = None
 
@@ -1146,6 +1149,7 @@ class SmartGenerationRunner:
                 self.request.llm_model or _DEFAULT_MODELS.get(self.request.provider, "")
             )
 
+        self._llm_model = llm_model
         # ---- 1. Emit start (no api_key anywhere in the payload) --------
         yield self._sse(StartEvent(
             runId=self.run_id,
@@ -1243,6 +1247,13 @@ class SmartGenerationRunner:
                             self.temp_dir,
                         )
                         self._seeded = True
+                        # Lines that changed since the base run (a person
+                        # editing the pushed repo) are attributed to a human.
+                        await _run_blocking(
+                            agent_trace.seed_attribution,
+                            self.temp_dir,
+                            _EXCLUDED_OUTPUT_DIRS,
+                        )
                         logger.info(
                             "smart-modify run %s seeded from base %s",
                             self.run_id, self._base_run_id,
@@ -2234,6 +2245,13 @@ class SmartGenerationRunner:
         if self.temp_dir is None:
             raise RuntimeError("Runner has no temp_dir")
 
+        # Every line that differs from the scaffold (or from the seed) was
+        # written by the LLM; attribute it before the deterministic packaging
+        # steps below change anything.
+        attribution_ok = self._reconcile_attribution(
+            result_path, agent_trace.ai_contributor(self._trace_model_id(), self.run_id),
+        )
+
         # An LLM-authored React frontend (the class-diagram path, where no GUI
         # model means generate_web_app is never offered) ships without a vite
         # config, so JSX compiles with the classic runtime and the page is
@@ -2247,6 +2265,11 @@ class SmartGenerationRunner:
                     "spec-driven run %s frontend scaffold repairs: %s",
                     self.run_id, "; ".join(frontend_repairs),
                 )
+                if attribution_ok:
+                    attribution_ok = self._reconcile_attribution(
+                        result_path, agent_trace.generator_contributor(
+                            "frontend_scaffold_repair", get_besser_version()),
+                    )
         except Exception:
             logger.exception(
                 "Frontend scaffold repair failed for run %s", self.run_id
@@ -2271,6 +2294,14 @@ class SmartGenerationRunner:
 
         recipe = self._read_recipe(result_path)
         recipe["secret_findings"] = scrub.findings
+
+        # Agent Trace record (.agent-trace/<run id>.json): who wrote each line
+        # of the delivered files. Built after the scrub, so a redacted line
+        # is attributed to the redaction and the line numbers match the
+        # files that ship. Best-effort: never blocks the download.
+        ai_share = None
+        if attribution_ok:
+            ai_share = self._write_agent_trace(result_path, recipe)
         try:
             verification = build_verification_report(recipe)
         except Exception:
@@ -2305,8 +2336,21 @@ class SmartGenerationRunner:
         # node_modules/) into the download zip. Symlinks are dropped, never
         # read through (os.walk does not descend into linked dirs).
         user_files: list[str] = []
+        trace_files: list[str] = []
         for root, dirs, files in os.walk(result_path):
             dirs[:] = [d for d in dirs if d not in _EXCLUDED_OUTPUT_DIRS]
+            if os.path.relpath(root, result_path) == ".":
+                # Agent Trace records ride in the zip (this run's and those
+                # of earlier runs on the same app) but are not user files.
+                trace_root = os.path.join(root, agent_trace.TRACE_DIRNAME)
+                if agent_trace.TRACE_DIRNAME in dirs and is_plain_entry(trace_root):
+                    trace_files = sorted(
+                        os.path.join(trace_root, name)
+                        for name in os.listdir(trace_root)
+                        if name.endswith(".json")
+                        and is_plain_entry(os.path.join(trace_root, name))
+                    )
+                dirs[:] = [d for d in dirs if d != agent_trace.TRACE_DIRNAME]
             for name in files:
                 # The secret scrub skips these globs, so they must not ship.
                 if name.startswith(".besser_") or _is_excluded_output_file(name):
@@ -2340,6 +2384,8 @@ class SmartGenerationRunner:
                     arcname = os.path.relpath(path, result_path)
                     zf.write(path, arcname)
                 zf.write(provenance_path, PROVENANCE_FILENAME)
+                for path in trace_files:
+                    zf.write(path, os.path.relpath(path, result_path))
             entry = SmartRunEntry(
                 file_path=zip_path,
                 file_name=zip_name,
@@ -2367,8 +2413,47 @@ class SmartGenerationRunner:
             topLevel=top_level,
             tokensUsed=int(getattr(self, "_final_tokens", 0) or 0),
             verification=verification,
+            aiShare=ai_share,
         )
         return event, entry
+
+    def _trace_model_id(self) -> Optional[str]:
+        """``provider/model`` of the model that served the run (after any switch)."""
+        model = self._t_model_switched_to or self._llm_model or self.request.llm_model
+        return agent_trace.normalize_model_id(self.request.provider, model)
+
+    def _reconcile_attribution(self, result_path: str, contributor: dict) -> bool:
+        """Attribute changed lines to ``contributor``; False if attribution failed."""
+        try:
+            agent_trace.reconcile_workspace(result_path, contributor, _EXCLUDED_OUTPUT_DIRS)
+            return True
+        except Exception:
+            logger.exception("Line attribution failed for run %s", self.run_id)
+            return False
+
+    def _write_agent_trace(self, result_path: str, recipe: dict) -> Optional[dict]:
+        """Write this run's Agent Trace record; returns the AI-written share."""
+        try:
+            state = agent_trace.reconcile_workspace(
+                result_path,
+                agent_trace.generator_contributor("secret_redaction", get_besser_version()),
+                _EXCLUDED_OUTPUT_DIRS,
+            )
+            record = agent_trace.build_trace_record(
+                result_path,
+                state,
+                run_id=self.run_id,
+                besser_version=get_besser_version(),
+                base_generator=recipe.get("generator_used"),
+                model_id=self._trace_model_id(),
+            )
+            path = agent_trace.write_trace_record(result_path, record, self.run_id)
+            share = agent_trace.ai_share(state, self.run_id)
+            share["tracePath"] = os.path.relpath(path, result_path).replace(os.sep, "/")
+            return share
+        except Exception:
+            logger.exception("Agent Trace record failed for run %s", self.run_id)
+            return None
 
     def _read_recipe(self, result_path: str) -> dict:
         recipe_path = os.path.join(result_path, ".besser_recipe.json")

@@ -251,6 +251,13 @@ class TestSeedArm:
         # Excluded: build/dependency dirs.
         assert not os.path.exists(os.path.join(runner.temp_dir, "node_modules"))
 
+        # Line attribution (#620): the base has no attribution state, so its
+        # lines are of unknown origin rather than credited to this run's AI.
+        from besser.spec_driven_agent.state.agent_trace import AttributionState
+        state = AttributionState.load(runner.temp_dir)
+        assert state is not None
+        assert {state.contributors[i]["kind"] for i in state.files["app/main.py"][1]} == {"unknown"}
+
         # The base is untouched and still fully downloadable.
         assert os.path.isfile(os.path.join(base_dir, "app", "main.py"))
         assert os.path.isfile(os.path.join(base_dir, CHECKPOINT_FILENAME))

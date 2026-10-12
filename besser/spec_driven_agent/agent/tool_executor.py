@@ -31,6 +31,7 @@ from typing import Any, Callable, Literal
 from uuid import uuid4
 
 from besser.BUML.metamodel.structural import DomainModel
+from besser.utilities.provenance import get_besser_version
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
@@ -72,6 +73,7 @@ from besser.spec_driven_agent.agent.edit_apply import (
     _strip_line_numbers,
 )
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
+from besser.spec_driven_agent.state.agent_trace import record_generated_files
 from besser.spec_driven_agent.validation import frontend_source
 
 logger = logging.getLogger(__name__)
@@ -1535,6 +1537,11 @@ class ToolExecutor:
         files = self._list_dir(directory)
         for f in files:
             self._generator_files.add(f["path"])
+        # Line-level attribution for the run's Agent Trace record.
+        record_generated_files(
+            self.workspace, [f["path"] for f in files],
+            os.path.basename(os.path.normpath(directory)), get_besser_version(),
+        )
         return files
 
     @staticmethod

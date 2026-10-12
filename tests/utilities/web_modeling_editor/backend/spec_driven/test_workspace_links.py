@@ -6,6 +6,7 @@ not read through, on every path that copies the tree out.
 """
 
 import asyncio
+import json
 import os
 import pathlib
 import zipfile
@@ -101,12 +102,15 @@ def test_download_zip_skips_symlinked_file_and_dir(tmp_path):
 
     runner = SmartGenerationRunner(_build_request())
     runner.temp_dir = str(tmp_path)
-    _done, entry = runner._package_result(str(result_path))
+    done, entry = runner._package_result(str(result_path))
 
     assert entry.is_zip
     with zipfile.ZipFile(entry.file_path) as archive:
         names = archive.namelist()
-        assert sorted(names) == ["BESSER_GENERATION.md", "app.py", "main.py"]
+        trace = f".agent-trace/{done.runId}.json"
+        assert sorted(names) == [trace, "BESSER_GENERATION.md", "app.py", "main.py"]
+        # Linked files are not attributed either.
+        assert {f["path"] for f in json.loads(archive.read(trace))["files"]} == {"app.py", "main.py"}
         assert all(SECRET not in archive.read(n).decode("utf-8") for n in names)
 
 

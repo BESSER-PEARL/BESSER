@@ -1,9 +1,8 @@
-import requests
-import json
 import base64
 import os
 
 from besser.BUML.metamodel.structural import DomainModel
+from besser.utilities.llm_utils import DEFAULT_OPENAI_MODEL, LLMUpstreamError, post_openai_chat
 from besser.BUML.notations.structuralPlantUML import plantuml_to_buml
 
 UNLIMITED_MULTIPLICITY = 9999
@@ -56,7 +55,7 @@ def _describe_domain_model(dm: DomainModel) -> str:
 
 
 def image_to_plantuml(image_path: str, openai_token: str, existing_model: DomainModel = None,
-                      openai_model: str = "gpt-4o"):
+                      openai_model: str = DEFAULT_OPENAI_MODEL):
     """Transforms an image into a PlantUML model.
 
     Args:
@@ -101,11 +100,6 @@ def image_to_plantuml(image_path: str, openai_token: str, existing_model: Domain
             "ends of an association have two labels, omit one of the labels, as "
             "PlantUML does not support naming the ends."
         )
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + openai_token
-    }
-
     payload = {
         "model": openai_model,
         "messages": [
@@ -128,15 +122,19 @@ def image_to_plantuml(image_path: str, openai_token: str, existing_model: Domain
         "max_tokens": 500
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-    response_data = json.loads(response.text)
-    if ('error' in response_data):
+    try:
+        message = post_openai_chat(openai_token, payload)
+    except LLMUpstreamError as exc:
+        # Keeps this function's contract (report and return None) while the shared
+        # transport adds what the inline request lacked: a timeout, and no
+        # provider response body in the message (it goes to the log instead).
         print("An error took place during the request to transform your given image:")
-        print(response_data['error']['message'])
+        print(exc)
         return
-    # Extracting the message
-    messages = [choice['message'] for choice in response_data.get('choices', {})]
-    message = messages[0]["content"]
+    if not message:
+        print("An error took place during the request to transform your given image:")
+        print("OpenAI returned an empty completion.")
+        return
     # Find the start and end positions of the desired chunk
     start_position = message.find("@startuml")
     end_position = message.find("@enduml", start_position)
@@ -148,7 +146,7 @@ def image_to_plantuml(image_path: str, openai_token: str, existing_model: Domain
 
 
 def image_to_buml(image_path: str, openai_token: str, existing_model: DomainModel = None,
-                  openai_model: str = "gpt-4o"):
+                  openai_model: str = DEFAULT_OPENAI_MODEL):
     """Transforms an image into a B-UML model.
 
     Args:

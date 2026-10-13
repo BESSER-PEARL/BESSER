@@ -73,25 +73,25 @@ def _redact(text: str, secret: str) -> str:
     return text.replace(secret, "***") if secret else text
 
 
-def call_openai_chat_json(
+def post_openai_chat(
     api_key: str,
-    model: str,
-    system_msg: str,
-    user_msg: str,
+    payload: dict,
     *,
     http_post: Optional[Callable[..., Any]] = None,
     timeout: float = DEFAULT_REQUEST_TIMEOUT,
     endpoint: str = OPENAI_CHAT_ENDPOINT,
-    temperature: float = 0.0,
-    max_completion_tokens: int = 4000,
 ) -> str:
-    """Send one chat request and return the assistant message content.
+    """POST a chat-completions ``payload`` and return the assistant content.
+
+    The transport half of every OpenAI chat call in the codebase: it applies a
+    timeout, turns every failure into :class:`LLMUpstreamError`, and never puts
+    the provider's response body in an exception message. The payload is the
+    caller's, untouched, because it differs by use (a text prompt, or a vision
+    request with image parts and ``max_tokens``).
 
     Args:
         api_key: Bearer token. It is stripped, and redacted from anything logged.
-        model: Model name.
-        system_msg: System prompt.
-        user_msg: User prompt.
+        payload: The complete request body.
         http_post: Transport override for tests. ``None`` looks up
             :func:`requests.post` **at call time**, so monkeypatching it works.
         timeout: Seconds before the request is abandoned. Always applied.
@@ -108,15 +108,6 @@ def call_openai_chat_json(
     post = http_post if http_post is not None else requests.post
     key = api_key.strip()
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg},
-        ],
-        "temperature": temperature,
-        "max_completion_tokens": max_completion_tokens,
-    }
 
     try:
         response = post(endpoint, headers=headers, json=payload, timeout=timeout)
@@ -147,3 +138,34 @@ def call_openai_chat_json(
     message = first.get("message", {}) if isinstance(first, dict) else {}
     content = message.get("content", "") if isinstance(message, dict) else ""
     return content if isinstance(content, str) else ""
+
+
+def call_openai_chat_json(
+    api_key: str,
+    model: str,
+    system_msg: str,
+    user_msg: str,
+    *,
+    http_post: Optional[Callable[..., Any]] = None,
+    timeout: float = DEFAULT_REQUEST_TIMEOUT,
+    endpoint: str = OPENAI_CHAT_ENDPOINT,
+    temperature: float = 0.0,
+    max_completion_tokens: int = 4000,
+) -> str:
+    """Send one system+user text prompt and return the assistant content.
+
+    A thin payload builder over :func:`post_openai_chat`; see there for the
+    error contract.
+    """
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg},
+        ],
+        "temperature": temperature,
+        "max_completion_tokens": max_completion_tokens,
+    }
+    return post_openai_chat(
+        api_key, payload, http_post=http_post, timeout=timeout, endpoint=endpoint,
+    )

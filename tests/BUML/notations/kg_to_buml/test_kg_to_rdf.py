@@ -32,8 +32,8 @@ from besser.BUML.metamodel.kg.constants import (
     SH_PROPERTY,
 )
 from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
-from besser.BUML.notations.kg_to_buml.owl2uml import build_uml_model
-from besser.BUML.notations.kg_to_buml.to_buml import lower_to_buml
+from besser.BUML.notations.kg_to_buml.owl2uml import plan_domain_model
+from besser.BUML.notations.kg_to_buml.to_buml import build_domain_model
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
 
 SH = "http://www.w3.org/ns/shacl#"
@@ -156,7 +156,7 @@ def test_declared_nodes_are_not_redeclared(tmp_path: Path):
     """
     graph, _ = _project(tmp_path, ttl)
     assert (URIRef(EX + "Undeclared"), RDF.type, OWL.Class) not in graph
-    model = build_uml_model(graph, None, shapes=graph)
+    model = plan_domain_model(graph, None, shapes=graph)
     assert model.classes["Undeclared"].is_stub is True
 
 
@@ -465,14 +465,14 @@ def _digest(domain_model) -> str:
 
 
 def _lowered(plan):
-    return lower_to_buml(plan, model_name="Parity", warnings=[]).domain_model
+    return build_domain_model(plan, model_name="Parity", warnings=[]).domain_model
 
 
 def _model_from_ttl(*paths: Path):
     graph = Graph()
     for path in paths:
         graph.parse(str(path), format="turtle")
-    return _lowered(build_uml_model(graph, None, shapes=graph))
+    return _lowered(plan_domain_model(graph, None, shapes=graph))
 
 
 def _model_via_kg(*paths: Path, tmp_path: Path):
@@ -484,7 +484,7 @@ def _model_via_kg(*paths: Path, tmp_path: Path):
     merged.serialize(destination=str(combined), format="turtle")
     kg = owl_file_to_knowledge_graph(str(combined))
     graph, base = kg_to_rdf(kg)
-    return _lowered(build_uml_model(graph, base, shapes=graph))
+    return _lowered(plan_domain_model(graph, base, shapes=graph))
 
 
 LOAD_BEARING_PREDICATES = [

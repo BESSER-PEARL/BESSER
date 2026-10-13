@@ -162,7 +162,7 @@ def kg_to_rdf(
 
     Returns ``(graph, base_namespace)``. The same graph should be passed as both
     the ontology and the shapes argument of
-    :func:`~besser.BUML.notations.kg_to_buml.owl2uml.build_uml_model` — the
+    :func:`~besser.BUML.notations.kg_to_buml.owl2uml.plan_domain_model` — the
     SHACL phase only looks at ``sh:NodeShape`` subjects, so the two vocabularies
     coexist without interfering.
     """

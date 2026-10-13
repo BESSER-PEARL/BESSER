@@ -18,9 +18,9 @@ from . import naming
 from .axioms import AxiomIndex, primitive_for
 from .canonicalize import Canonicalizer
 from .expressions import ExpressionResolver
-from .model import (
-    UMLModel, Class, Attribute, DataType, Enumeration, Association,
-    OCLConstraint,
+from ._plan import (
+    ModelPlan, PlannedClass, PlannedAttribute, PlannedDataType, PlannedEnumeration, PlannedAssociation,
+    PlannedInvariant,
 )
 
 #: The nine BUML primitives. Deviation from the reference, which uses UML-ish
@@ -49,7 +49,7 @@ class Mapper:
         self.base = base
         self.ax = AxiomIndex(graph)
         self.canon = Canonicalizer(graph, base)
-        self.model = UMLModel()
+        self.model = ModelPlan()
         self.shapes = shapes            # optional SHACL shapes graph (phase 2)
         self.warnings: list[KGConversionWarning] = warnings if warnings is not None else []
         self._name_to_iri: dict[str, URIRef] = {}
@@ -72,7 +72,7 @@ class Mapper:
     # =====================================================================
     #  orchestration
     # =====================================================================
-    def run(self) -> UMLModel:
+    def run(self) -> ModelPlan:
         self._map_datatypes()         # D09, D37
         self._map_classes()           # D08
         self._map_class_axioms()      # D26, D27(via canon), O06, O16, O17, restriction †
@@ -148,7 +148,7 @@ class Mapper:
         rep = URIRef(self.canon.rep(iri))
         declared = rep in self.ax.named_classes()
         foreign = bool(self.base) and not str(rep).startswith(self.base)
-        self.model.classes[name] = Class(
+        self.model.classes[name] = PlannedClass(
             name=name, uri=str(rep),
             is_stub=not declared,
             is_foreign=declared and foreign,
@@ -159,7 +159,7 @@ class Mapper:
 
     def make_aux_class(self, base_name: str, abstract: bool = False) -> str:
         name = self.canon.reserve(base_name)
-        self.model.classes[name] = Class(name=name, is_auxiliary=True, is_abstract=abstract)
+        self.model.classes[name] = PlannedClass(name=name, is_auxiliary=True, is_abstract=abstract)
         return name
 
     def make_enum(self, literals: list[str], hint: str) -> str:
@@ -169,7 +169,7 @@ class Mapper:
             if literal not in seen:
                 seen.add(literal)
                 lits.append(literal)
-        self.model.enumerations[name] = Enumeration(name=name, literals=lits)
+        self.model.enumerations[name] = PlannedEnumeration(name=name, literals=lits)
         return name
 
     def iri_for_name(self, name: str):
@@ -184,7 +184,7 @@ class Mapper:
     def add_association(self, source_type: str, target_type: str, role: str,
                         src_mult=(0, "*"), tgt_mult=(0, "*"), name: str | None = None,
                         source_role: str | None = None, uri: str | None = None) -> None:
-        self.model.associations.append(Association(
+        self.model.associations.append(PlannedAssociation(
             name=name or role,
             source=source_type,
             target=target_type,
@@ -210,16 +210,16 @@ class Mapper:
         if cls is None or any(a.name == pname for a in cls.attributes):
             return
         cls.attributes.append(
-            Attribute(name=pname, type=dtype, lower=mult[0], upper=mult[1], uri=uri)
+            PlannedAttribute(name=pname, type=dtype, lower=mult[0], upper=mult[1], uri=uri)
         )
 
     def add_ocl(self, context: str, body: str, origin: str = "",
                 name: str | None = None) -> None:
         if context not in self.model.classes:
             # context must exist to carry the note (e.g. Thing)
-            self.model.classes[context] = Class(name=context, is_stub=True)
+            self.model.classes[context] = PlannedClass(name=context, is_stub=True)
         self.model.classes[context].invariants.append(
-            OCLConstraint(context=context, body=body, name=name, origin_rule=origin)
+            PlannedInvariant(context=context, body=body, name=name, origin_rule=origin)
         )
 
     def set_attribute_type(self, ctx: str, pname: str, dtype: str) -> bool:
@@ -304,7 +304,7 @@ class Mapper:
 
     def register_primitive(self, name: str) -> str:
         if name not in self.model.datatypes:
-            self.model.datatypes[name] = DataType(name=name, is_primitive=True)
+            self.model.datatypes[name] = PlannedDataType(name=name, is_primitive=True)
         return name
 
     def resolve_data_range(self, node) -> str:
@@ -314,7 +314,7 @@ class Mapper:
             if node in self.ax.datatypes():          # custom rdfs:Datatype (D09/D37)
                 dt = self.canon.name(node)
                 if dt not in self.model.datatypes:
-                    self.model.datatypes[dt] = DataType(name=dt, uri=str(node))
+                    self.model.datatypes[dt] = PlannedDataType(name=dt, uri=str(node))
                 self._name_to_iri.setdefault(dt, node)
                 return dt
             return self.register_primitive(primitive_for(node))
@@ -342,7 +342,7 @@ class Mapper:
             if cached:
                 return cached
             name = self.canon.reserve(f"_{base_name}_restricted")
-            self.model.datatypes[name] = DataType(name=name, facets=facets)
+            self.model.datatypes[name] = PlannedDataType(name=name, facets=facets)
             self._composite_datarange_cache[key] = name
             return name
         from rdflib.collection import Collection as RDFList
@@ -405,10 +405,10 @@ class Mapper:
         else:
             hint = "_DataRange"
         name = self.canon.reserve(hint)
-        dt = DataType(name=name)
+        dt = PlannedDataType(name=name)
         if kind in ("union", "intersection", "complement") and members:
             # "any" (lowercase) is the BUML primitive; see ``axioms.primitive_for``.
-            dt.attributes.append(Attribute(name="value", type="any", lower=0, upper="*"))
+            dt.attributes.append(PlannedAttribute(name="value", type="any", lower=0, upper="*"))
             if kind == "union":
                 expr = " or ".join(f"v.oclIsTypeOf({m})" for m in members)
                 origin = "O02"
@@ -418,7 +418,7 @@ class Mapper:
             else:                                      # complement (single operand)
                 expr = f"not v.oclIsTypeOf({members[0]})"
                 origin = "O03"
-            dt.invariants.append(OCLConstraint(
+            dt.invariants.append(PlannedInvariant(
                 context=name, body=f"self.value->forAll(v | {expr})",
                 name=f"{kind}_invariant", origin_rule=origin,
             ))
@@ -580,7 +580,7 @@ class Mapper:
             cls = self.model.classes[owner]
             if any(a.name == pname for a in cls.attributes):
                 continue
-            cls.attributes.append(Attribute(name=pname, type=dtype, lower=0, upper=upper,
+            cls.attributes.append(PlannedAttribute(name=pname, type=dtype, lower=0, upper=upper,
                                             uri=str(p)))
 
     def _has_property(self, cls_name: str, pname: str) -> bool:
@@ -688,4 +688,4 @@ class Mapper:
             referenced.update(pair)
         for missing in sorted(referenced - known - _PRIMITIVES):
             if missing and missing not in self.model.classes:
-                self.model.classes[missing] = Class(name=missing, is_stub=True)
+                self.model.classes[missing] = PlannedClass(name=missing, is_stub=True)

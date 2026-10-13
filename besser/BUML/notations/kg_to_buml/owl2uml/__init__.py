@@ -12,8 +12,8 @@ paper's three rule tables:
   the classes the OWL phase already produced.
 
 It reads an :class:`rdflib.Graph` and produces the pure-data
-:class:`~besser.BUML.notations.kg_to_buml.owl2uml.model.UMLModel` — no BESSER
-metamodel types are involved. Lowering ``UMLModel`` onto a BUML
+:class:`~besser.BUML.notations.kg_to_buml.owl2uml._plan.ModelPlan` — no BESSER
+metamodel types are involved. Lowering the plan onto a BUML
 ``DomainModel`` is the job of
 :mod:`besser.BUML.notations.kg_to_buml.to_buml`, and projecting a
 :class:`~besser.BUML.metamodel.kg.KnowledgeGraph` into the input graph is the
@@ -43,25 +43,17 @@ from __future__ import annotations
 from typing import List, Optional
 
 from besser.BUML.notations.kg_to_buml._common import KGConversionWarning
-from besser.BUML.notations.kg_to_buml.owl2uml.model import (
-    Association,
-    Attribute,
-    Class,
-    DataType,
-    Enumeration,
-    OCLConstraint,
-    UMLModel,
-)
+from besser.BUML.notations.kg_to_buml.owl2uml._plan import ModelPlan
 
 
-def build_uml_model(
+def plan_domain_model(
     graph,
     base: Optional[str] = None,
     *,
     shapes=None,
     warnings: Optional[List[KGConversionWarning]] = None,
-) -> UMLModel:
-    """Apply the D/O/S rules to ``graph`` and return the intermediate UML model.
+) -> ModelPlan:
+    """Apply the D/O/S rules to ``graph`` and return the plan to lower onto BUML.
 
     Args:
         graph: The OWL 2 graph, as an :class:`rdflib.Graph`.
@@ -79,13 +71,4 @@ def build_uml_model(
     return Mapper(graph, base, shapes=shapes, warnings=warnings).run()
 
 
-__all__ = [
-    "build_uml_model",
-    "UMLModel",
-    "Class",
-    "Attribute",
-    "DataType",
-    "Enumeration",
-    "Association",
-    "OCLConstraint",
-]
+__all__ = ["plan_domain_model", "ModelPlan"]

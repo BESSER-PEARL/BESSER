@@ -34,7 +34,7 @@ association construction the single place a validation error can surface.
 from __future__ import annotations
 
 import re
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from besser.BUML.metamodel.structural import (
@@ -56,41 +56,56 @@ from besser.BUML.notations.kg_to_buml._common import KGConversionWarning, add_wa
 from besser.BUML.notations.kg_to_buml.datatype_mapping import PRIMITIVE_BY_NAME
 from besser.BUML.notations.kg_to_buml.owl2uml import naming
 from besser.BUML.notations.ocl.api import parse_ocl
-from besser.BUML.notations.kg_to_buml.owl2uml.model import (
-    Association as UMLAssociation,
-    Class as UMLClass,
-    UMLModel,
+from besser.BUML.notations.kg_to_buml.owl2uml._plan import (
+    ModelPlan,
+    PlannedAssociation,
+    PlannedClass,
 )
 
-__all__ = ["lower_to_buml", "LoweredModel"]
+__all__ = ["build_domain_model", "ClassConversionResult"]
 
 
 _TYPE_CHECK_RE = re.compile(r"ocl(?:IsKindOf|IsTypeOf|AsType)\(\s*([A-Za-z_]\w*)\s*\)")
 
 
-class LoweredModel:
-    """Result of :func:`lower_to_buml`."""
+@dataclass
+class ClassConversionResult:
+    """Output of :func:`~besser.BUML.notations.kg_to_buml.kg_to_class_diagram`.
 
-    def __init__(self) -> None:
-        self.domain_model: Optional[DomainModel] = None
-        self.iri_to_class: Dict[str, Class] = {}
-        self.property_iri_to_attribute: Dict[str, Property] = {}
-        self.property_iri_to_association: Dict[str, BinaryAssociation] = {}
-        self.assoc_source_end: Dict[int, Property] = {}
-        self.class_stereotypes: Dict[str, List[str]] = {}
-        self.warnings: List[KGConversionWarning] = []
+    Defined here, beside the code that fills it in, because the lowering
+    populates its maps while it builds the model; ``kg_to_class_diagram``
+    re-exports it as the public name.
+    """
+
+    domain_model: DomainModel
+    iri_to_class: Dict[str, Class] = field(default_factory=dict)
+    property_iri_to_attribute: Dict[str, Property] = field(default_factory=dict)
+    property_iri_to_association: Dict[str, BinaryAssociation] = field(default_factory=dict)
+    # For each derived BinaryAssociation, the Property end that represents the
+    # *source* (KG triple subject) side. Important for self-referential
+    # associations where both ends share the same type and would otherwise be
+    # indistinguishable.
+    assoc_source_end: Dict[int, Property] = field(default_factory=dict)
+    warnings: List[KGConversionWarning] = field(default_factory=list)
+    # Classifications BUML has nowhere to store — class name → ["aux"],
+    # ["external"], ["deprecated"], ["dataType"]. See ``_report_stereotypes``.
+    class_stereotypes: Dict[str, List[str]] = field(default_factory=dict)
 
 
-def lower_to_buml(
-    model: UMLModel,
+def build_domain_model(
+    model: ModelPlan,
     *,
     model_name: str,
     emit_ocl: bool = True,
     warnings: Optional[List[KGConversionWarning]] = None,
-) -> LoweredModel:
+) -> ClassConversionResult:
     """Build a ``DomainModel`` (plus OCL constraints) from ``model``."""
-    out = LoweredModel()
-    out.warnings = warnings if warnings is not None else []
+    # The result is filled in as the model is built (the passes record the IRI
+    # maps and stereotypes on it), so it exists before the DomainModel does.
+    out = ClassConversionResult(
+        domain_model=None,   # type: ignore[arg-type]  # assigned below, once assembled
+        warnings=warnings if warnings is not None else [],
+    )
 
     renames = _plan_renames(model, out.warnings)
     generalizations = _break_cycles(model, renames, out.warnings)
@@ -125,7 +140,7 @@ def _safe_model_name(raw: str) -> str:
     return name or "KGClassDiagram"
 
 
-def _plan_renames(model: UMLModel, warnings) -> Dict[str, str]:
+def _plan_renames(model: ModelPlan, warnings) -> Dict[str, str]:
     """Map UML type name → BUML-safe type name.
 
     ``naming.sanitize`` already satisfies ``NamedElement.name`` (no spaces, no
@@ -165,7 +180,7 @@ def _resolve(name: str, renames: Dict[str, str]) -> str:
 # ----------------------------------------------------------------------
 
 
-def _break_cycles(model: UMLModel, renames, warnings) -> List[Tuple[str, str]]:
+def _break_cycles(model: ModelPlan, renames, warnings) -> List[Tuple[str, str]]:
     """Return ``(subclass, superclass)`` pairs with cycle-forming edges removed.
 
     ``Class.all_parents()`` and ``all_specializations()`` recurse without a
@@ -225,7 +240,7 @@ def _build_generalizations(pairs, classes) -> List[Generalization]:
 # ----------------------------------------------------------------------
 
 
-def _build_classes(model: UMLModel, renames, out: LoweredModel) -> Dict[str, Class]:
+def _build_classes(model: ModelPlan, renames, out: ClassConversionResult) -> Dict[str, Class]:
     """Create one ``Class`` per UML class, plus one per materialised data range.
 
     Materialised data ranges (``DataUnionOf`` and friends, O01-O05) are the
@@ -270,11 +285,11 @@ def _build_classes(model: UMLModel, renames, out: LoweredModel) -> Dict[str, Cla
     return classes
 
 
-def _metadata_for(uml_class: UMLClass) -> Optional[Metadata]:
+def _metadata_for(uml_class: PlannedClass) -> Optional[Metadata]:
     return Metadata(uri=uml_class.uri) if uml_class.uri else None
 
 
-def _report_stereotypes(out: LoweredModel) -> None:
+def _report_stereotypes(out: ClassConversionResult) -> None:
     """Summarise the classifications BUML has no place to store.
 
     BUML has no stereotype concept, and ``Metadata.description`` round-trips
@@ -302,7 +317,7 @@ def _report_stereotypes(out: LoweredModel) -> None:
         )
 
 
-def _build_enumerations(model: UMLModel, renames, warnings) -> Dict[str, Enumeration]:
+def _build_enumerations(model: ModelPlan, renames, warnings) -> Dict[str, Enumeration]:
     enumerations: Dict[str, Enumeration] = {}
     for name in sorted(model.enumerations):
         uml_enum = model.enumerations[name]
@@ -373,8 +388,8 @@ def _multiplicity(lower: int, upper, warnings, *, label: str) -> Multiplicity:
 # ----------------------------------------------------------------------
 
 
-def _build_attributes(model: UMLModel, renames, classes, enumerations,
-                      generalizations, out: LoweredModel) -> None:
+def _build_attributes(model: ModelPlan, renames, classes, enumerations,
+                      generalizations, out: ClassConversionResult) -> None:
     inherited = _inherited_attribute_names(model, renames, generalizations)
     for name in sorted(model.classes):
         uml_class = model.classes[name]
@@ -397,7 +412,7 @@ def _build_attributes(model: UMLModel, renames, classes, enumerations,
         _attach_attributes(buml_class, datatype.attributes, renames, classes, enumerations, out)
 
 
-def _inherited_attribute_names(model: UMLModel, renames, generalizations) -> Dict[str, Set[str]]:
+def _inherited_attribute_names(model: ModelPlan, renames, generalizations) -> Dict[str, Set[str]]:
     """Attribute names each class already inherits from an ancestor.
 
     A restriction over a data property declares the attribute on the auxiliary
@@ -465,20 +480,20 @@ def _attach_attributes(buml_class, attributes, renames, classes, enumerations, o
 
 
 def _build_associations(
-    model: UMLModel, renames, classes, generalizations, out: LoweredModel
+    model: ModelPlan, renames, classes, generalizations, out: ClassConversionResult
 ) -> List[BinaryAssociation]:
     resolved = _resolve_association_types(model, renames, classes)
     resolved = _merge_fanout(resolved, classes, generalizations, out)
     return _instantiate_associations(resolved, classes, generalizations, out)
 
 
-def _resolve_association_types(model, renames, classes) -> List[UMLAssociation]:
+def _resolve_association_types(model, renames, classes) -> List[PlannedAssociation]:
     """Resolve each association's names, returning copies the lowering may adjust.
 
     Copies, because :func:`_merge_fanout` retargets and widens them in place and
     the mapper's records must stay as the rules stated them.
     """
-    planned: List[UMLAssociation] = []
+    planned: List[PlannedAssociation] = []
     seen: Set[Tuple[str, str, str]] = set()
     ordered = sorted(
         model.associations,
@@ -505,7 +520,7 @@ def _resolve_association_types(model, renames, classes) -> List[UMLAssociation]:
     return planned
 
 
-def _merge_fanout(planned, classes, generalizations, out: LoweredModel):
+def _merge_fanout(planned, classes, generalizations, out: ClassConversionResult):
     """Collapse associations that would give one class two ends of the same name.
 
     Rules D30/D31 link a union-typed ``rdfs:domain``/``rdfs:range`` directly to
@@ -516,11 +531,11 @@ def _merge_fanout(planned, classes, generalizations, out: LoweredModel):
     association to an abstract auxiliary class that every former target
     specialises. ``oclIsKindOf(Ti)`` still holds, so the invariants stay true.
     """
-    groups: Dict[Tuple[str, str], List[UMLAssociation]] = {}
+    groups: Dict[Tuple[str, str], List[PlannedAssociation]] = {}
     for assoc in planned:
         groups.setdefault((assoc.source, assoc.role), []).append(assoc)
 
-    merged: List[UMLAssociation] = []
+    merged: List[PlannedAssociation] = []
     for (source, role), group in sorted(groups.items()):
         targets = sorted({a.target for a in group})
         if len(targets) <= 1:
@@ -648,7 +663,7 @@ def _ancestors_first(planned, generalizations):
     return sorted(planned, key=lambda a: (depth(a.source), a.source, a.role, a.target))
 
 
-def _instantiate_associations(planned, classes, generalizations, out: LoweredModel):
+def _instantiate_associations(planned, classes, generalizations, out: ClassConversionResult):
     associations: List[BinaryAssociation] = []
     used_names: Set[str] = set()
     namespace = _EndNameSpace(classes, generalizations)
@@ -724,7 +739,7 @@ def _instantiate_associations(planned, classes, generalizations, out: LoweredMod
     return associations
 
 
-def _default_source_role(assoc: UMLAssociation) -> str:
+def _default_source_role(assoc: PlannedAssociation) -> str:
     """Name for the reverse end, which the paper's model leaves anonymous.
 
     Always safe to choose freely: generated OCL only navigates a source role
@@ -746,7 +761,7 @@ def _unique_name(candidate: str, taken: Set[str]) -> str:
     return name
 
 
-def _unique_association_name(assoc: UMLAssociation, used: Set[str]) -> str:
+def _unique_association_name(assoc: PlannedAssociation, used: Set[str]) -> str:
     for candidate in (assoc.name, f"{assoc.name}_{assoc.source}"):
         if candidate not in used:
             used.add(candidate)
@@ -765,7 +780,7 @@ def _unique_association_name(assoc: UMLAssociation, used: Set[str]) -> str:
 # ----------------------------------------------------------------------
 
 
-def _build_constraints(model: UMLModel, renames, classes, domain_model, out: LoweredModel) -> None:
+def _build_constraints(model: ModelPlan, renames, classes, domain_model, out: ClassConversionResult) -> None:
     """Attach the invariants, re-validated against the finished model.
 
     The mapper already guards emission with ``_has_property``, but that only

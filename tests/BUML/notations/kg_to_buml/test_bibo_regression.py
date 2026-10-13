@@ -37,7 +37,7 @@ from rdflib import Graph
 from besser.BUML.metamodel.structural import Class, Enumeration
 from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
 from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
-from besser.BUML.notations.kg_to_buml.owl2uml import build_uml_model
+from besser.BUML.notations.kg_to_buml.owl2uml import plan_domain_model
 from besser.BUML.notations.kg_to_buml.preflight import analyze_kg_for_class_diagram
 from besser.BUML.notations.kg_to_buml.resolutions import KGResolution
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
@@ -79,7 +79,7 @@ def uml_model(combined_ttl: str):
     """The intermediate model, before BUML's rules apply."""
     kg = owl_file_to_knowledge_graph(combined_ttl)
     graph, base = kg_to_rdf(kg)
-    return build_uml_model(graph, base, shapes=graph)
+    return plan_domain_model(graph, base, shapes=graph)
 
 
 @pytest.fixture(scope="module")

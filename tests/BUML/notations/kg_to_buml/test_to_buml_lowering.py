@@ -18,16 +18,16 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
 )
 from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
-from besser.BUML.notations.kg_to_buml.owl2uml.model import (
-    Association,
-    Attribute,
-    Class as UMLClass,
-    DataType,
-    Enumeration as UMLEnumeration,
-    OCLConstraint,
-    UMLModel,
+from besser.BUML.notations.kg_to_buml.owl2uml._plan import (
+    ModelPlan,
+    PlannedAssociation,
+    PlannedAttribute,
+    PlannedClass,
+    PlannedDataType,
+    PlannedEnumeration,
+    PlannedInvariant,
 )
-from besser.BUML.notations.kg_to_buml.to_buml import lower_to_buml
+from besser.BUML.notations.kg_to_buml.to_buml import build_domain_model
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
 
 
@@ -37,9 +37,9 @@ def _write_ttl(tmp_path: Path, content: str) -> str:
     return str(path)
 
 
-def _lower(model: UMLModel, **kwargs):
+def _lower(model: ModelPlan, **kwargs):
     warnings: list = []
-    result = lower_to_buml(model, model_name="Test", warnings=warnings, **kwargs)
+    result = build_domain_model(model, model_name="Test", warnings=warnings, **kwargs)
     return result, warnings
 
 
@@ -58,32 +58,32 @@ def _codes(warnings):
 
 
 def _attr(name, type="str", lower=0, upper="*", **kwargs):
-    return Attribute(name=name, type=type, lower=lower, upper=upper, **kwargs)
+    return PlannedAttribute(name=name, type=type, lower=lower, upper=upper, **kwargs)
 
 
 def _cls(name, *attributes, invariants=(), **flags):
-    cls = UMLClass(name=name, **flags)
+    cls = PlannedClass(name=name, **flags)
     cls.attributes.extend(attributes)
     cls.invariants.extend(invariants)
     return cls
 
 
 def _inv(context, body, name="check"):
-    return OCLConstraint(context=context, body=body, name=name)
+    return PlannedInvariant(context=context, body=body, name=name)
 
 
 def _datatype(name, *attributes, **flags):
-    datatype = DataType(name=name, **flags)
+    datatype = PlannedDataType(name=name, **flags)
     datatype.attributes.extend(attributes)
     return datatype
 
 
 def _enum(name, literals):
-    return UMLEnumeration(name=name, literals=list(literals))
+    return PlannedEnumeration(name=name, literals=list(literals))
 
 
 def _assoc(name, source, target, role, *, source_navigable=False):
-    return Association(
+    return PlannedAssociation(
         name=name, source=source, target=target, role=role, navigable_source=source_navigable,
     )
 
@@ -92,17 +92,17 @@ def _gen(subclass, superclass):
     return (subclass, superclass)
 
 
-def _model(*items) -> UMLModel:
+def _model(*items) -> ModelPlan:
     """Assemble a plan from classes, datatypes, enumerations, associations and generalizations."""
-    model = UMLModel()
+    model = ModelPlan()
     for item in items:
-        if isinstance(item, UMLClass):
+        if isinstance(item, PlannedClass):
             model.classes[item.name] = item
-        elif isinstance(item, DataType):
+        elif isinstance(item, PlannedDataType):
             model.datatypes[item.name] = item
-        elif isinstance(item, UMLEnumeration):
+        elif isinstance(item, PlannedEnumeration):
             model.enumerations[item.name] = item
-        elif isinstance(item, Association):
+        elif isinstance(item, PlannedAssociation):
             model.associations.append(item)
         elif isinstance(item, tuple):          # a (subclass, superclass) pair, see _gen
             model.generalizations.append(item)
@@ -313,7 +313,7 @@ def test_a_role_an_ancestor_already_provides_is_dropped(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def _model_with_invariant(body: str, *, with_feature: bool = True) -> UMLModel:
+def _model_with_invariant(body: str, *, with_feature: bool = True) -> ModelPlan:
     return _model(_cls(
         "Person",
         *([_attr("name")] if with_feature else []),

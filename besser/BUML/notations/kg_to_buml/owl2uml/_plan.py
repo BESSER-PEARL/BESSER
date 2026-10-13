@@ -1,12 +1,26 @@
-"""Intermediate UML + OCL model.
+"""The plan the OWL/SHACL rules build before anything is lowered onto BUML.
 
-Pure data classes with no rdflib / PlantUML dependencies: they are the contract
-between the *mapping* phase (which reads OWL-2) and the *emission* phase (which
-writes PlantUML).  A future XMI emitter could consume the exact same model.
+``Mapper`` (the rule engine) fills a :class:`ModelPlan`; ``to_buml`` then turns
+it into a BUML ``DomainModel``. It is a separate structure rather than BUML
+objects built as the rules fire because BUML validates eagerly and the rules
+cannot satisfy it one step at a time:
 
-Naming: element ``name`` values are already sanitised to valid UML/PlantUML
-identifiers; ``uri`` keeps the original IRI for provenance.  Multiplicity upper
+* a class's name is only final once *every* type name is known (primitive
+  shadowing, a class and a datatype sharing a name, ``_2`` suffixes);
+* a ``Generalization`` registers itself on both classes at construction and
+  ``Class.all_parents()`` has no visited set, so one cycle hangs the process
+  before any model exists to report it;
+* association end names must be unique across a class's whole hierarchy, and
+  merging associations that would collide needs all of them at once;
+* the OCL can only be checked against a finished model.
+
+So this is deliberately only data: no rdflib, no BUML. Every ``name`` is the
+canonicaliser's choice; ``uri`` keeps the original IRI for provenance. Upper
 bounds use the string ``"*"`` for "unbounded".
+
+Only what the lowering reads lives here. The reference implementation this
+package ports also modelled individuals, links, ontology metadata and
+``owl:hasKey`` identifiers; nothing consumed them, so they are not carried.
 """
 from __future__ import annotations
 
@@ -17,7 +31,7 @@ Upper = int | Literal["*"]
 
 
 @dataclass
-class OCLConstraint:
+class PlannedInvariant:
     """An OCL invariant/definition rendered as a PlantUML note."""
 
     context: str
@@ -27,24 +41,24 @@ class OCLConstraint:
 
 
 @dataclass
-class DataType:
+class PlannedDataType:
     name: str
     uri: str | None = None
     is_primitive: bool = False
     facets: list[str] = field(default_factory=list)
-    attributes: list[Attribute] = field(default_factory=list)     # O01-O03 composite value slot
-    invariants: list[OCLConstraint] = field(default_factory=list)  # O01-O03 membership check
+    attributes: list[PlannedAttribute] = field(default_factory=list)     # O01-O03 composite value slot
+    invariants: list[PlannedInvariant] = field(default_factory=list)  # O01-O03 membership check
 
 
 @dataclass
-class Enumeration:
+class PlannedEnumeration:
     name: str
     uri: str | None = None
     literals: list[str] = field(default_factory=list)
 
 
 @dataclass
-class Attribute:
+class PlannedAttribute:
     name: str
     type: str = "String"
     lower: int = 0
@@ -53,7 +67,7 @@ class Attribute:
 
 
 @dataclass
-class Class:
+class PlannedClass:
     name: str
     uri: str | None = None
     is_abstract: bool = False       # union aux (D19), complement aux (O06)
@@ -61,8 +75,8 @@ class Class:
     is_stub: bool = False           # referenced but never declared owl:Class
     is_foreign: bool = False        # declared, but outside the base namespace
     is_deprecated: bool = False     # owl:deprecated
-    attributes: list[Attribute] = field(default_factory=list)
-    invariants: list[OCLConstraint] = field(default_factory=list)
+    attributes: list[PlannedAttribute] = field(default_factory=list)
+    invariants: list[PlannedInvariant] = field(default_factory=list)
 
     def stereotypes(self) -> list[str]:
         s: list[str] = []
@@ -76,7 +90,7 @@ class Class:
 
 
 @dataclass
-class Association:
+class PlannedAssociation:
     """A binary association, ``source --role--> target``.
 
     The same record serves twice: the mapper fills it with the names the rules
@@ -96,11 +110,11 @@ class Association:
 
 
 @dataclass
-class UMLModel:
-    classes: dict[str, Class] = field(default_factory=dict)
-    datatypes: dict[str, DataType] = field(default_factory=dict)
-    enumerations: dict[str, Enumeration] = field(default_factory=dict)
-    associations: list[Association] = field(default_factory=list)
+class ModelPlan:
+    classes: dict[str, PlannedClass] = field(default_factory=dict)
+    datatypes: dict[str, PlannedDataType] = field(default_factory=dict)
+    enumerations: dict[str, PlannedEnumeration] = field(default_factory=dict)
+    associations: list[PlannedAssociation] = field(default_factory=list)
     #: ``(subclass, superclass)`` pairs, in the order the rules stated them.
     generalizations: list[tuple[str, str]] = field(default_factory=list)
 
@@ -113,8 +127,8 @@ class UMLModel:
             | set(self.enumerations)
         )
 
-    def ocl_constraints(self) -> list[OCLConstraint]:
-        out: list[OCLConstraint] = []
+    def ocl_constraints(self) -> list[PlannedInvariant]:
+        out: list[PlannedInvariant] = []
         for cls in self.classes.values():
             out.extend(cls.invariants)
         for dt in self.datatypes.values():

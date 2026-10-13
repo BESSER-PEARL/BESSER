@@ -1203,6 +1203,41 @@ class TestGUIModelBuilder:
         assert isinstance(transition, Transition)
         assert transition.target_screen is None
 
+    def test_keyword_named_screen_compiles(self, tmp_path):
+        """A screen named after a Python keyword gets a suffixed variable.
+
+        Every reference to it (module screens, button targetScreen,
+        Transition target) must use the same suffixed name.
+        """
+        from besser.BUML.metamodel.gui.events_actions import Event, EventType, Transition
+
+        target = Screen(name="class", description="", view_elements=set())
+        btn = Button(
+            name="GoBtn", label="Go", description="",
+            buttonType=ButtonType.RaisedButton, actionType=ButtonActionType.Navigate,
+            targetScreen=target,
+        )
+        btn.events = {Event(name="go", event_type=EventType.OnClick,
+                            actions={Transition(name="to_class", target_screen=target)})}
+        home = Screen(name="Home", description="", view_elements={btn})
+        gui = GUIModel(name="G", package="p", versionCode="1", versionName="1.0",
+                       modules={Module(name="M", screens={home, target})}, description="")
+
+        file_path = str(tmp_path / "gui.py")
+        gui_model_to_code(gui, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        assert "class_ = Screen(" in code
+        compile(code, file_path, "exec")
+        namespace = {}
+        exec(code, namespace)
+        screens = {s.name: s for s in next(iter(namespace["gui_model"].modules)).screens}
+        assert set(screens) == {"Home", "class"}
+        button = next(iter(screens["Home"].view_elements))
+        assert button.targetScreen is screens["class"]
+        assert next(iter(next(iter(button.events)).actions)).target_screen is screens["class"]
+
 
 # ---------------------------------------------------------------------------
 # project_builder.py

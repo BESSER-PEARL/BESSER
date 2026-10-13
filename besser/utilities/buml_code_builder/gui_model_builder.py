@@ -7,7 +7,9 @@ It creates executable Python code that can recreate the GUI model programmatical
 
 import os
 from besser.BUML.metamodel.gui import GUIModel
-from besser.utilities.buml_code_builder.common import _comment_safe, buml_header, safe_class_name, _escape_python_string
+from besser.utilities.buml_code_builder.common import (
+    _comment_safe, _escape_python_string, buml_header, safe_class_name, safe_var_name,
+)
 from besser.BUML.metamodel.gui.graphical_ui import (
     ViewContainer,
     Button,
@@ -39,29 +41,6 @@ def _escape_string(value: str | None) -> str:
 def _get_attr_name(element) -> str | None:
     """Return the name attribute of a BUML element if present."""
     return getattr(element, "name", None) if element is not None else None
-
-
-def safe_var_name(name: str) -> str:
-    """
-    Convert a name to a safe Python variable name.
-
-    Args:
-        name: Original name
-
-    Returns:
-        Safe variable name
-    """
-    if not name:
-        return "unnamed"
-    # Replace spaces and special characters with underscores
-    safe_name = ''.join(c if c.isalnum() or c == '_' else '_' for c in name)
-    # Remove leading digits
-    if safe_name and safe_name[0].isdigit():
-        safe_name = f"_{safe_name}"
-    # Remove consecutive underscores
-    while '__' in safe_name:
-        safe_name = safe_name.replace('__', '_')
-    return safe_name.strip('_').lower() or "unnamed"
 
 
 def _build_styling_expr(styling):

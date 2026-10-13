@@ -133,39 +133,11 @@ def _evaluation_limitation_for(constraint, domain_model) -> Optional[str]:
 
 def extract_context_class_name(expression):
     """Extract the context class name from an OCL expression"""
-    try:
-        # Look for pattern: context ClassName
-        match = re.search(r'context\s+(\w+)', expression, re.IGNORECASE)
-        if match:
-            return match.group(1)
+    if not isinstance(expression, str):
         return ""
-    except:
-        return ""
-
-def is_basic_ocl_syntax_valid(expression):
-    """Basic OCL syntax validation without full parsing"""
-    try:
-        # Check for basic OCL structure
-        if not expression.strip():
-            return False
-        
-        # Must start with context
-        if not expression.strip().lower().startswith('context'):
-            return False
-        
-        # Check for balanced parentheses
-        open_parens = expression.count('(')
-        close_parens = expression.count(')')
-        if open_parens != close_parens:
-            return False
-        
-        # Check for basic OCL keywords that suggest valid structure
-        ocl_keywords = ['inv', 'pre', 'post', 'self', 'collect', 'select', 'exists', 'forall', 'size']
-        has_ocl_keywords = any(keyword in expression.lower() for keyword in ocl_keywords)
-        
-        return has_ocl_keywords
-    except:
-        return False
+    # Look for pattern: context ClassName
+    match = re.search(r'context\s+(\w+)', expression, re.IGNORECASE)
+    return match.group(1) if match else ""
 
 def _ensure_canonical_expression(constraint, kind: str, method=None) -> None:
     """In-place upgrade of legacy body-only ``constraint.expression``.

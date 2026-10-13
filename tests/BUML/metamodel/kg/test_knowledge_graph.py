@@ -209,3 +209,27 @@ def test_validate_reports_a_dangling_edge_instead_of_letting_it_pass():
 
     with pytest.raises(ValueError, match="dangling"):
         kg.validate()
+
+
+# ---------------------------------------------------------------------------
+# IRI local names
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "iri, expected",
+    [
+        ("http://example.org/ns#Person", "Person"),
+        ("http://example.org/ns/Person", "Person"),
+        ("urn:besser:Thing", "Thing"),                   # no # or / at all
+        ("http://purl.org/ontology/bibo/", "bibo"),      # trailing separator
+        ("http://example.org/ns#", "ns"),
+        ("Person", "Person"),
+        ("", ""),
+        (None, ""),
+    ],
+)
+def test_local_name(iri, expected):
+    from besser.BUML.metamodel.kg.iri import local_name
+
+    assert local_name(iri) == expected

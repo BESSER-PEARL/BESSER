@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import keyword
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
-from urllib.parse import urldefrag
 
 from besser.BUML.metamodel.kg import KGEdge, KGNode, KnowledgeGraph
+from besser.BUML.metamodel.kg.iri import local_name as _local_name
 from besser.BUML.metamodel.kg.constants import (
     OWL as OWL_NS,
     RDF as RDF_NS,
@@ -96,19 +97,8 @@ def normalize_predicate(iri_or_label: Optional[str]) -> Optional[str]:
     return _PREDICATE_ALIASES.get(iri_or_label, iri_or_label)
 
 
-def local_name(iri: Optional[str]) -> str:
-    """Return the local-name part of an IRI (after ``#`` or the last ``/``)."""
-    if not iri:
-        return ""
-    # Strip fragment first; if there is one, that's the local name.
-    base, frag = urldefrag(iri)
-    if frag:
-        return frag
-    if "/" in base:
-        return base.rsplit("/", 1)[-1]
-    if ":" in base:
-        return base.rsplit(":", 1)[-1]
-    return base
+# Re-exported: the one implementation lives in the metamodel package.
+local_name = _local_name
 
 
 _IDENT_FIRST_CHAR = re.compile(r"[^A-Za-z_]")
@@ -186,6 +176,20 @@ def build_indexes(kg: KnowledgeGraph) -> GraphIndexes:
     return idx
 
 
+def short_digest(raw: str, length: int, *, algo: str = "sha1") -> str:
+    """Hex digest of ``raw``, truncated to ``length`` characters.
+
+    The shared tail of every id/signature helper in the KG code. What goes into
+    ``raw`` (separators, sort order) and the ``algo``/``length`` are deliberately
+    left to each caller: those ids are echoed to the editor and back (issue ids,
+    ``kgSignature``), so changing one invalidates a round-trip.
+
+    Encoding uses ``errors="replace"`` so a lone surrogate in a client-supplied
+    id degrades to ``?`` instead of raising ``UnicodeEncodeError`` (a 500).
+    """
+    return hashlib.new(algo, raw.encode("utf-8", errors="replace")).hexdigest()[:length]
+
+
 def sorted_by_id(items):
     """Stable sort by ``.id`` for deterministic output."""
     return sorted(items, key=lambda x: x.id)
@@ -249,6 +253,7 @@ def add_warning(
 
 __all__ = [
     "find_cycles",
+    "short_digest",
     "RDF_TYPE",
     "RDFS_SUBCLASS_OF",
     "RDFS_DOMAIN",

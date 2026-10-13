@@ -18,7 +18,6 @@ the editor and re-run preflight).
 
 from __future__ import annotations
 
-import hashlib
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -50,6 +49,7 @@ from besser.BUML.notations.kg_to_buml._common import (
     RDF_TYPE,
     build_indexes,
     find_cycles,
+    short_digest,
     is_meta_vocab,
     local_name,
     normalize_predicate,
@@ -135,7 +135,7 @@ def kg_signature(kg: KnowledgeGraph) -> str:
     node_ids = sorted(n.id for n in kg.nodes)
     edge_ids = sorted(e.id for e in kg.edges)
     raw = "\0".join(node_ids) + "\0\0" + "\0".join(edge_ids)
-    return hashlib.sha1(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
+    return short_digest(raw, 16)
 
 
 def analyze_kg_for_class_diagram(kg: KnowledgeGraph) -> KGPreflightReport:
@@ -179,7 +179,7 @@ def analyze_kg_for_class_diagram(kg: KnowledgeGraph) -> KGPreflightReport:
 
 def _issue_id(code: str, *parts: str) -> str:
     raw = code + "\0" + "\0".join(sorted(parts))
-    return hashlib.sha1(raw.encode("utf-8", errors="replace")).hexdigest()[:12]
+    return short_digest(raw, 12)
 
 
 def _classes_in(kg: KnowledgeGraph) -> List[KGClass]:

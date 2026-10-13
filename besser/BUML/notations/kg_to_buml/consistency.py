@@ -17,7 +17,6 @@ in the in-memory graph passed to pyshacl.
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -26,6 +25,7 @@ import rdflib
 from rdflib import BNode, Literal, RDF, URIRef, XSD
 from rdflib.namespace import OWL
 
+from besser.BUML.metamodel.kg.iri import local_name as _local_name
 from besser.BUML.metamodel.kg import (
     KnowledgeGraph,
     KGBlank,
@@ -33,6 +33,7 @@ from besser.BUML.metamodel.kg import (
     KGNodeConstraint,
     KGPropertyConstraint,
 )
+from besser.BUML.notations.kg_to_buml._common import short_digest
 from besser.BUML.notations.kg_to_buml.preflight import kg_signature
 from besser.utilities.kg_to_owl import DEFAULT_NAMESPACE, _slugify, knowledge_graph_to_rdf
 from besser.BUML.metamodel.kg.constants import (
@@ -431,16 +432,6 @@ def _parse_validation_report(
     return issues
 
 
-def _local_name(iri: str) -> str:
-    """Return the local part of an IRI for display."""
-    if not iri:
-        return ""
-    if "#" in iri:
-        return iri.rsplit("#", 1)[-1]
-    if "/" in iri:
-        return iri.rsplit("/", 1)[-1]
-    return iri
-
 
 def _shape_value(g: rdflib.Graph, shape: Any, predicate: URIRef) -> Optional[Any]:
     """First object of (shape, predicate, *) in the graph, or None."""
@@ -667,11 +658,8 @@ def _synthesize_message(focus: Any, component_local: str, path_iri: Optional[str
 
 
 def _hash_id(*terms: Any) -> str:
-    h = hashlib.md5()
-    for t in terms:
-        h.update(str(t).encode("utf-8"))
-        h.update(b"\x00")
-    return h.hexdigest()[:16]
+    # md5, not sha1: these ids already ship to the editor, so the digest must not change.
+    return short_digest("".join(f"{t}\x00" for t in terms), 16, algo="md5")
 
 
 def _dedupe(issues: List[ConsistencyIssue]) -> List[ConsistencyIssue]:

@@ -49,6 +49,7 @@ from besser.BUML.metamodel.kg import (
     PropertyChainAxiom,
     SubPropertyOfAxiom,
 )
+from besser.BUML.metamodel.kg.iri import local_name as _local_name
 from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_CLASS,
     CONSTRAINT_TARGET_PROPERTY,
@@ -129,16 +130,6 @@ def _is_datatype_iri(iri: str) -> bool:
         return False
     return iri.startswith(_XSD_NAMESPACE) or iri in _DATATYPE_IRIS
 
-
-def _local_name(iri: str) -> str:
-    """Return the local name of an IRI (after ``#`` or the last ``/``)."""
-    if not iri:
-        return ""
-    if "#" in iri:
-        return iri.rsplit("#", 1)[-1]
-    if "/" in iri:
-        return iri.rsplit("/", 1)[-1]
-    return iri
 
 
 def _literal_id(lit: Literal) -> str:

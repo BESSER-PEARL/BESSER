@@ -8,25 +8,13 @@ from __future__ import annotations
 
 import re
 
+from besser.BUML.metamodel.kg.iri import local_name as _local_name
+
 _INVALID = re.compile(r"[^0-9A-Za-z_]")
 
 
-def local_name(iri: str) -> str:
-    """Return the local part of an IRI (after the last ``#``, ``/`` or ``:``).
-
-    The ``:`` fallback only applies to IRIs with no ``#`` or ``/`` at all — in
-    practice URN-style identifiers such as ``urn:besser:Thing``, which the KG
-    editor mints for synthetic classes. An ``http(s)`` IRI always contains ``/``
-    and so never reaches it.
-    """
-    s = str(iri).rstrip("#/")
-    for sep in ("#", "/"):
-        if sep in s:
-            s = s.rsplit(sep, 1)[-1]
-            return s or str(iri)
-    if ":" in s:
-        s = s.rsplit(":", 1)[-1]
-    return s or str(iri)
+# ``local_name`` lives in the metamodel package so every layer can share it.
+local_name = _local_name
 
 
 def sanitize(name: str) -> str:

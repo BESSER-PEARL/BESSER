@@ -432,3 +432,34 @@ def test_issues_are_ordered_most_severe_first():
     ranks = [_SEVERITY_RANK[i.severity] for i in report.issues]
 
     assert ranks == sorted(ranks)
+
+
+def test_issue_identity_survives_a_lone_surrogate_in_a_node_id():
+    """A client can send JSON with a lone surrogate in an id (``"\\ud800"``).
+
+    The md5-based id helper encoded strictly, so such a KG made the whole
+    consistency check raise ``UnicodeEncodeError`` -- a 500 -- while the sibling
+    hash helpers already used ``errors="replace"``.
+    """
+    from besser.BUML.notations.kg_to_buml.consistency import _hash_id
+
+    assert len(_hash_id("alice\ud800", "shape", "\ud800")) == 16
+
+
+def test_issue_ids_keep_their_exact_values():
+    """The ids are echoed to the editor and back, so the digests are a contract.
+
+    Expected values were computed independently with hashlib, not by calling the
+    code under test.
+    """
+    from besser.BUML.metamodel.kg import KGClass, KGEdge, KnowledgeGraph
+    from besser.BUML.notations.kg_to_buml.consistency import _hash_id
+    from besser.BUML.notations.kg_to_buml.preflight import _issue_id, kg_signature
+
+    assert _hash_id("a", "b") == "aa3a791e273bce9c"          # md5("a\0b\0")[:16]
+    assert _issue_id("CODE", "y", "x") == "d207a558006c"      # parts are sorted
+    kg = KnowledgeGraph(name="sig")
+    n1, n2 = KGClass(id="n1", label="n1"), KGClass(id="n2", label="n2")
+    kg.nodes = {n2, n1}
+    kg.add_edge(KGEdge(id="e1", source=n1, target=n2, iri="http://x/p"))
+    assert kg_signature(kg) == "0950ab9576296782"

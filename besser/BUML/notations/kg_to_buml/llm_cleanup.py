@@ -15,7 +15,6 @@ parameters), and the list is capped at :data:`MAX_LLM_SUGGESTIONS`.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from collections import Counter
@@ -30,7 +29,7 @@ from besser.BUML.metamodel.kg import (
     KGProperty,
     KnowledgeGraph,
 )
-from besser.BUML.notations.kg_to_buml._common import RDF_TYPE, normalize_predicate
+from besser.BUML.notations.kg_to_buml._common import RDF_TYPE, normalize_predicate, short_digest
 from besser.BUML.notations.kg_to_buml.preflight import (
     KGAction,
     KGIssue,
@@ -315,7 +314,7 @@ def _axiom_to_dict(axiom: Any) -> Dict[str, Any]:
 def _llm_issue_id(action_key: str, affected_node_ids: List[str], affected_edge_ids: List[str]) -> str:
     parts = [action_key, *sorted(affected_node_ids), *sorted(affected_edge_ids)]
     raw = "LLM_CLEANUP\0" + "\0".join(parts)
-    return hashlib.sha1(raw.encode("utf-8", errors="replace")).hexdigest()[:12]
+    return short_digest(raw, 12)
 
 
 def _dedup_key(action_key: str, parameters: Dict[str, Any]) -> Tuple:

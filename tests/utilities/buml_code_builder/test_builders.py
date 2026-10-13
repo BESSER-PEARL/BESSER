@@ -1174,6 +1174,37 @@ class TestGUIModelBuilder:
         assert isinstance(recreated, GUIModel)
         assert recreated.name == "TestGUI"
 
+    def test_transition_without_target_screen_compiles(self, tmp_path):
+        """A Transition with no target screen emits ``target_screen=None``.
+
+        The TODO note used to be inlined into the constructor call, so its
+        ``#`` commented out the closing paren and the output did not compile.
+        """
+        from besser.BUML.metamodel.gui.events_actions import Event, EventType, Transition
+
+        btn = Button(
+            name="GoBtn", label="Go", description="",
+            buttonType=ButtonType.RaisedButton, actionType=ButtonActionType.Navigate,
+        )
+        btn.events = {Event(name="go", event_type=EventType.OnClick,
+                            actions={Transition(name="nowhere", target_screen=None)})}
+        screen = Screen(name="Home", description="", view_elements={btn})
+        gui = GUIModel(name="G", package="p", versionCode="1", versionName="1.0",
+                       modules={Module(name="M", screens={screen})}, description="")
+
+        file_path = str(tmp_path / "gui.py")
+        gui_model_to_code(gui, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        compile(code, file_path, "exec")
+        namespace = {}
+        exec(code, namespace)
+        transition = next(iter(next(iter(
+            namespace["gui_model"].modules)).screens)).view_elements.pop().events.pop().actions.pop()
+        assert isinstance(transition, Transition)
+        assert transition.target_screen is None
+
 
 # ---------------------------------------------------------------------------
 # project_builder.py

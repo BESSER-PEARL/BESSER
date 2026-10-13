@@ -592,10 +592,13 @@ def _write_action(f, var_name, action, created_vars):
         params_code = f', parameters={{{", ".join(param_vars)}}}'
 
     if isinstance(action, Transition):
-        target_screen = 'None  # TODO: Set target_screen reference'
         if hasattr(action, 'target_screen') and action.target_screen:
-            target_screen_var = safe_var_name(action.target_screen.name)
-            target_screen = f'{target_screen_var}'
+            target_screen = safe_var_name(action.target_screen.name)
+        else:
+            # The note must sit on its own line: inlined, the ``#`` would
+            # comment out the rest of the constructor call.
+            target_screen = 'None'
+            f.write('# TODO: Set target_screen reference\n')
         f.write(f'{var_name} = Transition(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_screen={target_screen}{params_code})\n')
 
     elif isinstance(action, Create):

@@ -270,9 +270,7 @@ def _build_classes(model: UMLModel, renames, out: LoweredModel) -> Dict[str, Cla
 
 
 def _metadata_for(uml_class: UMLClass) -> Optional[Metadata]:
-    if not (uml_class.uri or uml_class.comment):
-        return None
-    return Metadata(uri=uml_class.uri, description=uml_class.comment)
+    return Metadata(uri=uml_class.uri) if uml_class.uri else None
 
 
 def _report_stereotypes(out: LoweredModel) -> None:
@@ -429,7 +427,6 @@ def _attach_attributes(buml_class, attributes, renames, classes, enumerations, o
                        inherited: Optional[Set[str]] = None) -> None:
     built: List[Property] = []
     taken: Set[str] = set(inherited or ())
-    seen_id = False
     for attribute in attributes:
         attr_name = naming.sanitize(attribute.name) or "_"
         if attr_name in taken:
@@ -442,17 +439,6 @@ def _attach_attributes(buml_class, attributes, renames, classes, enumerations, o
                 )
             continue
         taken.add(attr_name)
-        is_id = bool(attribute.is_id)
-        if is_id and seen_id:
-            # BUML permits at most one identifier per class.
-            add_warning(
-                out.warnings,
-                "MULTIPLE_ID_ATTRIBUTES",
-                f"{buml_class.name}.{attr_name} is a second identifier attribute "
-                f"(from owl:hasKey); kept as an ordinary attribute.",
-            )
-            is_id = False
-        seen_id = seen_id or is_id
         prop = Property(
             name=attr_name,
             type=_lower_type(
@@ -463,8 +449,6 @@ def _attach_attributes(buml_class, attributes, renames, classes, enumerations, o
                 attribute.lower, attribute.upper, out.warnings,
                 label=f"Attribute {buml_class.name}.{attr_name}",
             ),
-            is_id=is_id,
-            is_derived=bool(attribute.is_derived),
             metadata=Metadata(uri=attribute.uri) if attribute.uri else None,
         )
         built.append(prop)

@@ -9,7 +9,7 @@ back into.
 from __future__ import annotations
 
 from rdflib import URIRef, BNode, Literal
-from rdflib.namespace import OWL, RDF, RDFS
+from rdflib.namespace import OWL, RDF
 
 from besser.BUML.metamodel.structural import data_types as _buml_data_types
 from besser.BUML.notations.kg_to_buml._common import KGConversionWarning
@@ -20,8 +20,7 @@ from .canonicalize import Canonicalizer
 from .expressions import ExpressionResolver
 from .model import (
     UMLModel, Class, Attribute, DataType, Enumeration, Association,
-    AssociationEnd, Generalization, InstanceSpecification, Slot, Link,
-    OCLConstraint, Comment,
+    AssociationEnd, Generalization, OCLConstraint,
 )
 
 #: The nine BUML primitives. Deviation from the reference, which uses UML-ish
@@ -55,6 +54,7 @@ class Mapper:
         self.warnings: list[KGConversionWarning] = warnings if warnings is not None else []
         self._name_to_iri: dict[str, URIRef] = {}
         self._gen_seen: set[tuple[str, str]] = set()
+        self._instances_seen: set[str] = set()    # individuals already named (see ensure_instance)
         self._handled_props: set = set()          # object props consumed by inverse pairs
         self._datarange_cache: dict = {}          # BNode -> DataType name (dedup shared anon data ranges)
         self._composite_datarange_cache: dict = {}  # (kind, members) -> DataType name (dedup by structure)
@@ -73,7 +73,6 @@ class Mapper:
     #  orchestration
     # =====================================================================
     def run(self) -> UMLModel:
-        self._map_ontology()          # D01-D04
         self._map_datatypes()         # D09, D37
         self._map_classes()           # D08
         self._map_class_axioms()      # D26, D27(via canon), O06, O16, O17, restriction †
@@ -176,11 +175,11 @@ class Mapper:
     def iri_for_name(self, name: str):
         return self._name_to_iri.get(name)
 
-    def add_generalization(self, sub: str, sup: str, **kw) -> None:
+    def add_generalization(self, sub: str, sup: str) -> None:
         if sub == sup or (sub, sup) in self._gen_seen:
             return
         self._gen_seen.add((sub, sup))
-        self.model.generalizations.append(Generalization(subclass=sub, superclass=sup, **kw))
+        self.model.generalizations.append(Generalization(subclass=sub, superclass=sup))
 
     def add_association(self, source_type: str, target_type: str, role: str,
                         src_mult=(0, "*"), tgt_mult=(0, "*"), name: str | None = None,
@@ -213,12 +212,12 @@ class Mapper:
         )
 
     def add_ocl(self, context: str, body: str, origin: str = "",
-                kind: str = "inv", name: str | None = None) -> None:
+                name: str | None = None) -> None:
         if context not in self.model.classes:
             # context must exist to carry the note (e.g. Thing)
             self.model.classes[context] = Class(name=context, is_stub=True)
         self.model.classes[context].invariants.append(
-            OCLConstraint(context=context, body=body, kind=kind, name=name, origin_rule=origin)
+            OCLConstraint(context=context, body=body, name=name, origin_rule=origin)
         )
 
     def set_attribute_type(self, ctx: str, pname: str, dtype: str) -> bool:
@@ -241,15 +240,26 @@ class Mapper:
         return False
 
     def ensure_instance(self, iri) -> str:
+        """Name an individual and make sure its classifier exists.
+
+        No instance is recorded: nothing downstream consumes one. What this still
+        does matters, though, and is easy to mistake for dead code:
+
+        * ``canon.name`` reserves the individual's name (and its data properties'),
+          so the order of first requests decides which IRI keeps an un-suffixed
+          name when two collide;
+        * ``ensure_class`` creates a stub for a classifier the ontology never
+          declared, which the output carries as an ``external`` class.
+        """
         name = self.canon.name(iri)
-        if name in self.model.instances:
+        if name in self._instances_seen:
             return name
-        inst = InstanceSpecification(name=name, uri=str(iri))
-        self.model.instances[name] = inst
+        self._instances_seen.add(name)
         cls = self.ax.classifier_of(iri)
-        inst.classifier = self.ensure_class(cls) if cls is not None else None
-        for p, lit in self.ax.data_assertions(iri):
-            inst.slots.append(Slot(attribute=self.canon.name(p), values=[self.literal_value(lit)]))
+        if cls is not None:
+            self.ensure_class(cls)
+        for p, _literal in self.ax.data_assertions(iri):
+            self.canon.name(p)
         return name
 
     def classifier_name(self, iri) -> str:
@@ -330,7 +340,7 @@ class Mapper:
             if cached:
                 return cached
             name = self.canon.reserve(f"_{base_name}_restricted")
-            self.model.datatypes[name] = DataType(name=name, base=base_name, facets=facets)
+            self.model.datatypes[name] = DataType(name=name, facets=facets)
             self._composite_datarange_cache[key] = name
             return name
         from rdflib.collection import Collection as RDFList
@@ -408,7 +418,7 @@ class Mapper:
                 origin = "O03"
             dt.invariants.append(OCLConstraint(
                 context=name, body=f"self.value->forAll(v | {expr})",
-                kind="inv", name=f"{kind}_invariant", origin_rule=origin,
+                name=f"{kind}_invariant", origin_rule=origin,
             ))
         self.model.datatypes[name] = dt
         self._composite_datarange_cache[key] = name
@@ -420,28 +430,6 @@ class Mapper:
     # =====================================================================
     #  phases
     # =====================================================================
-    def _map_ontology(self) -> None:
-        onto = self.ax.ontology()
-        if onto is None:
-            self.model.name = "ontology"
-            return
-        self.model.uri = str(onto)
-        self.model.name = naming.sanitize(naming.local_name(onto))
-        ver = self.g.value(onto, OWL.versionIRI) or self.g.value(onto, OWL.versionInfo)
-        if ver is not None:
-            self.model.version = str(ver)
-        for imp in sorted(self.g.objects(onto, OWL.imports), key=str):
-            self.model.imports.append(str(imp))
-        parts = []
-        for pred in (URIRef("http://purl.org/dc/terms/title"),
-                     URIRef("http://purl.org/dc/elements/1.1/title"),
-                     RDFS.comment,
-                     URIRef("http://purl.org/dc/terms/description")):
-            for o in sorted(self.g.objects(onto, pred), key=str):
-                parts.append(str(o).strip())
-        if parts:
-            self.model.comments.append(Comment(text=" — ".join(parts)))
-
     def _map_datatypes(self) -> None:
         for dt in self.ax.sorted_datatypes:
             if self.canon.is_alias(dt):
@@ -475,8 +463,7 @@ class Mapper:
             members = [self.resolver.resolve_class(m) for m in RDFList(self.g, lst)]
             cname = self.ensure_class(c)
             for m in members:
-                self.add_generalization(m, cname, set_name="disjointUnion",
-                                        is_disjoint=True, is_complete=True)
+                self.add_generalization(m, cname)
             disj = " or ".join(f"self.oclIsKindOf({m})" for m in members)
             self.add_ocl(cname, disj, origin="O17", name="complete")
 
@@ -681,10 +668,10 @@ class Mapper:
 
     def _map_individuals(self) -> None:
         for i in self.ax.sorted_individuals:
-            name = self.ensure_instance(i)
+            self.ensure_instance(i)
             for p, o in self.ax.object_assertions(i):       # D40
-                tgt = self.ensure_instance(o)
-                self.model.links.append(Link(source=name, target=tgt, role=self.canon.name(p)))
+                self.ensure_instance(o)
+                self.canon.name(p)                          # reserve the role's name
 
     def _post_checks(self) -> None:
         """Create stubs for any type referenced but not yet declared."""
@@ -697,9 +684,6 @@ class Mapper:
                 referenced.add(attr.type)
         for g in self.model.generalizations:
             referenced.update({g.subclass, g.superclass})
-        for inst in self.model.instances.values():
-            if inst.classifier:
-                referenced.add(inst.classifier)
         for missing in sorted(referenced - known - _PRIMITIVES):
             if missing and missing not in self.model.classes:
                 self.model.classes[missing] = Class(name=missing, is_stub=True)

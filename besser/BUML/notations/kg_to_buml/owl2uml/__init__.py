@@ -48,14 +48,10 @@ from besser.BUML.notations.kg_to_buml.owl2uml.model import (
     AssociationEnd,
     Attribute,
     Class,
-    Comment,
     DataType,
     Enumeration,
     Generalization,
-    InstanceSpecification,
-    Link,
     OCLConstraint,
-    Slot,
     UMLModel,
 )
 
@@ -96,8 +92,4 @@ __all__ = [
     "AssociationEnd",
     "Generalization",
     "OCLConstraint",
-    "InstanceSpecification",
-    "Slot",
-    "Link",
-    "Comment",
 ]

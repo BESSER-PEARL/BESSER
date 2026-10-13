@@ -203,15 +203,6 @@ def test_attributes_do_not_share_the_default_multiplicity_singleton():
     assert attributes[0].multiplicity is not attributes[1].multiplicity
 
 
-def test_only_the_first_identifier_attribute_is_kept():
-    model = _model(_cls("Person", _attr("ssn", is_id=True), _attr("passport", is_id=True)))
-    result, warnings = _lower(model)
-
-    identifiers = [a for a in _classes(result)["Person"].attributes if a.is_id]
-    assert len(identifiers) == 1
-    assert "MULTIPLE_ID_ATTRIBUTES" in _codes(warnings)
-
-
 # ---------------------------------------------------------------------------
 # Generalizations
 # ---------------------------------------------------------------------------

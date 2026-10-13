@@ -60,18 +60,16 @@ from besser.BUML.metamodel.kg import (
 )
 from besser.utilities.kg_to_owl import (
     DEFAULT_NAMESPACE,
-    OWL_RESTRICTION_KINDS,
     SHACL_LOGICAL_KINDS,
     SHACL_NODE_KINDS,
     SHACL_PROPERTY_KINDS,
     emit_nodeconstraint_owl_axioms,
+    emit_owl_restriction,
     emit_rdf_list,
     emit_shacl_constraint,
     predicate_for_edge,
-    spec_to_literal,
     term_for_node,
 )
-from rdflib.namespace import XSD
 
 from besser.BUML.notations.kg_to_buml._common import (
     KGConversionWarning,
@@ -541,7 +539,7 @@ def _pass_d_spec_backfill(g, nodes, terms, idx, default_ns, warnings) -> None:
             # Staged even with no specs of its own: a node shape whose whole job
             # is to carry `sh:property` children still needs its `rdf:type` and
             # `sh:targetClass`, which is exactly what the SHACL phase keys on.
-            _stage_shacl_node_shape(staged, node, idx, resolve_ref)
+            _stage_shacl_node_shape(staged, node, idx, terms, resolve_ref)
 
     for triple in staged:
         if (triple[0], triple[1]) not in present:
@@ -581,38 +579,9 @@ def _stage_owl_restriction(staged, pc: KGPropertyConstraint, idx, terms) -> None
     """
     property_term = idx.pc_property.get(pc.id)
     property_iri = str(property_term) if property_term is not None else pc.metadata.get("onPropertyIri")
-    if not property_iri:
-        return
-    restriction = terms[pc.id]
-    for spec in pc.get_specs():
-        predicate = OWL_RESTRICTION_KINDS.get(spec.get("kind"))
-        if predicate is None:
-            continue
-        staged.add((restriction, RDF.type, OWL.Restriction))
-        staged.add((restriction, OWL.onProperty, URIRef(property_iri)))
-        _stage_restriction_value(staged, restriction, predicate, spec)
-
-
-def _stage_restriction_value(staged, restriction, predicate, spec) -> None:
-
-    kind = spec.get("kind")
-    value = spec.get("value")
-    on_class = spec.get("on_class")
-    if kind in ("someValuesFrom", "allValuesFrom"):
-        staged.add((restriction, predicate,
-                    URIRef(str(value)) if isinstance(value, str) else spec_to_literal(value)))
-    elif kind == "hasValue":
-        target = URIRef(value) if isinstance(value, str) and "://" in value else spec_to_literal(value)
-        if target is not None:
-            staged.add((restriction, predicate, target))
-    elif kind == "hasSelf":
-        staged.add((restriction, predicate, Literal(bool(value), datatype=XSD.boolean)))
-    else:
-        literal = spec_to_literal(value)
-        if literal is not None:
-            staged.add((restriction, predicate, literal))
-        if on_class and str(kind).endswith("QualifiedCardinality"):
-            staged.add((restriction, OWL.onClass, URIRef(on_class)))
+    emit_owl_restriction(
+        staged, pc, property_iri, [], DEFAULT_NAMESPACE, subject=terms[pc.id],
+    )
 
 
 def _stage_shacl_property_shape(staged, pc: KGPropertyConstraint, idx, terms, resolve_ref) -> None:
@@ -628,9 +597,11 @@ def _stage_shacl_property_shape(staged, pc: KGPropertyConstraint, idx, terms, re
             emit_shacl_constraint(staged, shape, spec, resolve_ref, SH.PropertyShape)
 
 
-def _stage_shacl_node_shape(staged, nc: KGNodeConstraint, idx, resolve_ref) -> None:
-
-    shape = term_for_node(nc, DEFAULT_NAMESPACE)
+def _stage_shacl_node_shape(staged, nc: KGNodeConstraint, idx, terms, resolve_ref) -> None:
+    # ``terms`` already holds this node's term, built with the caller's
+    # ``default_namespace``; recomputing it here with the module default ignored
+    # that argument.
+    shape = terms[nc.id]
     staged.add((shape, RDF.type, SH.NodeShape))
     for target in idx.nc_targets.get(nc.id, []):
         staged.add((shape, SH.targetClass, target))

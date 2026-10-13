@@ -236,14 +236,54 @@ def _emit_rdf_list(g: rdflib.Graph, items: Iterable[Any]) -> BNode:
     return head
 
 
+def _emit_restriction_value(g: rdflib.Graph, restriction, predicate: URIRef, spec: dict) -> None:
+    """Add the value triple(s) of one OWL restriction spec to ``restriction``.
+
+    The kind-dispatch half of restriction emission, shared by the TTL exporter
+    and the KG -> UML conversion projection (``kg_to_rdf``), which used to carry
+    a copy each. A spec whose value cannot be rendered as an RDF term (for
+    example a ``hasValue`` with no value) emits nothing, rather than handing
+    ``None`` to ``Graph.add``, which raises ``AssertionError``.
+    """
+    kind = spec.get("kind")
+    value = spec.get("value")
+    on_class = spec.get("on_class")
+    if kind in ("someValuesFrom", "allValuesFrom"):
+        target = URIRef(str(value)) if isinstance(value, str) else _spec_to_literal(value)
+        if target is not None:
+            g.add((restriction, predicate, target))
+    elif kind == "hasValue":
+        target = URIRef(value) if isinstance(value, str) and "://" in value else _spec_to_literal(value)
+        if target is not None:
+            g.add((restriction, predicate, target))
+    elif kind == "hasSelf":
+        g.add((restriction, predicate, Literal(bool(value), datatype=XSD.boolean)))
+    else:
+        literal = _spec_to_literal(value)
+        if literal is not None:
+            g.add((restriction, predicate, literal))
+        if on_class and str(kind).endswith("QualifiedCardinality"):
+            g.add((restriction, OWL.onClass, URIRef(on_class)))
+
+
 def _emit_owl_restriction(
     g: rdflib.Graph,
     pc: KGPropertyConstraint,
     property_iri: Optional[str],
     owner_class_iris: List[str],
     default_ns: str,
+    *,
+    subject=None,
 ) -> None:
-    """Emit one ``owl:Restriction`` blank node per OWL-compatible spec."""
+    """Emit an ``owl:Restriction`` per OWL-compatible spec of ``pc``.
+
+    Args:
+        subject: The term to use as the restriction node. By default a fresh
+            ``BNode`` is minted per spec, which is right for the exporter. The
+            conversion projection passes the constraint node's *own* term,
+            because that node already is the original restriction and reusing it
+            keeps the ``rdfs:subClassOf`` link emitted elsewhere valid.
+    """
     if not property_iri:
         return
     for spec in pc.get_specs():
@@ -251,26 +291,10 @@ def _emit_owl_restriction(
         pred = _OWL_RESTRICTION_KINDS.get(kind)
         if pred is None:
             continue
-        restr = BNode()
+        restr = subject if subject is not None else BNode()
         g.add((restr, RDF.type, OWL.Restriction))
         g.add((restr, OWL.onProperty, URIRef(property_iri)))
-        value = spec.get("value")
-        on_class = spec.get("on_class")
-        if kind in ("someValuesFrom", "allValuesFrom"):
-            target = URIRef(str(value)) if isinstance(value, str) else _spec_to_literal(value)
-            g.add((restr, pred, target))
-        elif kind == "hasValue":
-            target = _spec_to_literal(value) if not isinstance(value, str) or "://" not in value \
-                else URIRef(value)
-            g.add((restr, pred, target))
-        elif kind == "hasSelf":
-            g.add((restr, pred, Literal(bool(value), datatype=XSD.boolean)))
-        else:
-            lit = _spec_to_literal(value)
-            if lit is not None:
-                g.add((restr, pred, lit))
-            if on_class and kind.endswith("QualifiedCardinality"):
-                g.add((restr, OWL.onClass, URIRef(on_class)))
+        _emit_restriction_value(g, restr, pred, spec)
         for owner_iri in owner_class_iris:
             g.add((URIRef(owner_iri), RDFS.subClassOf, restr))
 

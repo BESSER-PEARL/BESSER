@@ -419,3 +419,52 @@ def test_property_chain_axiom_round_trips_as_single_rdf_list(tmp_path: Path):
         f"--- original ---\n{g_orig.serialize(format='turtle')}\n"
         f"--- round-tripped ---\n{out}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Restriction emission shared with the KG -> UML conversion projection
+# ---------------------------------------------------------------------------
+
+
+def _kg_with_restriction(*specs):
+    from besser.BUML.metamodel.kg import KGEdge, KGProperty, KGPropertyConstraint, KnowledgeGraph
+    from besser.BUML.metamodel.kg.constants import CONSTRAINT_TARGET_PROPERTY
+
+    kg = KnowledgeGraph(name="r")
+    prop = KGProperty(id="p", label="p", iri="http://x/p")
+    pc = KGPropertyConstraint(id="pc", label="pc")
+    for spec in specs:
+        pc.add_spec(spec)
+    kg.nodes = {prop, pc}
+    kg.add_edge(KGEdge(id="e", source=pc, target=prop, iri=CONSTRAINT_TARGET_PROPERTY))
+    return kg
+
+
+def test_valueless_has_value_is_skipped_not_a_crash():
+    """``Graph.add`` rejects ``None`` with an AssertionError, so a ``hasValue``
+    spec with no value used to make the whole export (and the
+    ``/export-kg-rdf`` endpoint) fail. The conversion projection already guarded
+    this; the exporter now shares that code."""
+    kg = _kg_with_restriction({"kind": "hasValue", "value": None})
+
+    graph = knowledge_graph_to_rdf(kg, vocab="owl")      # must not raise
+
+    from rdflib import OWL
+
+    assert not list(graph.triples((None, OWL.hasValue, None)))
+
+
+def test_restriction_value_kinds_still_round_trip_through_the_shared_emitter():
+    from rdflib import OWL, XSD, Literal, URIRef
+
+    kg = _kg_with_restriction(
+        {"kind": "someValuesFrom", "value": "http://x/C"},
+        {"kind": "hasSelf", "value": True},
+        {"kind": "minCardinality", "value": 2},
+    )
+
+    graph = knowledge_graph_to_rdf(kg, vocab="owl")
+
+    assert (None, OWL.someValuesFrom, URIRef("http://x/C")) in graph
+    assert (None, OWL.hasSelf, Literal(True, datatype=XSD.boolean)) in graph
+    assert any(o.toPython() == 2 for _, _, o in graph.triples((None, OWL.minCardinality, None)))

@@ -160,7 +160,15 @@ def _is_valid_diagram(diag, diagram_type):
         nodes = data.get("nodes")
     else:
         nodes = getattr(model, "nodes", None)
-    return bool(nodes)
+    if nodes:
+        return True
+
+    # An agent diagram may hold only off-canvas ``components`` (intents,
+    # LLMs, RAG databases, ...) and no canvas nodes yet; it is still a model.
+    if diagram_type == "AgentDiagram":
+        components = data.get("components") if isinstance(data, dict) else getattr(model, "components", None)
+        return bool(components)
+    return False
 
 
 def _collect_valid_diagrams(project):

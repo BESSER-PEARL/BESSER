@@ -279,7 +279,12 @@ SINGLE_DIAGRAM_KEYWORDS: List[Tuple[str, Tuple[str, ...]]] = [
     )),
 ]
 
-_SINGLE_DIAGRAM_DEFAULT_TITLES = {
+# Single source of truth for the diagram types every imported project carries
+# (one slot per type, with an empty placeholder when the source file has none)
+# and their default titles. Insertion order is the order of the ``diagrams`` /
+# ``currentDiagramIndices`` keys in the returned project. Keys are diagram
+# *model* types; ``_fill_diagram_defaults`` re-keys the BPMN bucket for WME.
+DIAGRAM_DEFAULT_TITLES: Dict[str, str] = {
     'ClassDiagram': 'Class Diagram',
     'ObjectDiagram': 'Object Diagram',
     'AgentDiagram': 'Agent Diagram',
@@ -291,6 +296,38 @@ _SINGLE_DIAGRAM_DEFAULT_TITLES = {
     'ComponentDiagram': 'Component Diagram',
     'DeploymentDiagram': 'Deployment Diagram',
 }
+
+
+def _fill_diagram_defaults(
+    diagram_jsons: Dict[str, List[Dict[str, Any]]],
+) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, int]]:
+    """Give every known diagram type a slot and an active index.
+
+    Types missing from *diagram_jsons* get one empty placeholder diagram. Every
+    bucket in the result -- known type or not -- gets a
+    ``currentDiagramIndices`` entry, so the frontend never sees a bucket
+    without an active index. The BPMN bucket is re-keyed as ``"BPMN"`` (WME's
+    key; ``model.type`` stays ``"BPMNDiagram"``).
+
+    Returns:
+        ``(diagrams, current_diagram_indices)``
+    """
+    filled: Dict[str, List[Dict[str, Any]]] = {}
+    for diagram_type, title in DIAGRAM_DEFAULT_TITLES.items():
+        filled[diagram_type] = diagram_jsons.get(diagram_type) or [{
+            "id": str(uuid.uuid4()),
+            "title": title,
+            "model": empty_model(diagram_type),
+            "lastUpdate": datetime.now(timezone.utc).isoformat(),
+        }]
+    # Keep any bucket of a type not listed above (canonical types first).
+    for diagram_type, entries in diagram_jsons.items():
+        filled.setdefault(diagram_type, entries)
+
+    filled["BPMN"] = filled.pop("BPMNDiagram")
+
+    current_diagram_indices = {diagram_type: 0 for diagram_type in filled}
+    return filled, current_diagram_indices
 
 
 def _detect_single_diagram_type(content: str) -> str:
@@ -319,7 +356,7 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
             "NNDiagram, BPMNDiagram, ComponentDiagram, DeploymentDiagram."
         )
 
-    title = _SINGLE_DIAGRAM_DEFAULT_TITLES[diagram_type]
+    title = DIAGRAM_DEFAULT_TITLES[diagram_type]
     try:
         if diagram_type == 'ClassDiagram':
             parsed = parse_buml_content(content)
@@ -352,37 +389,9 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         "lastUpdate": datetime.now(timezone.utc).isoformat(),
     }
 
-    diagram_defaults = {
-        "ClassDiagram": "ClassDiagram",
-        "ObjectDiagram": "ObjectDiagram",
-        "AgentDiagram": "AgentDiagram",
-        "StateMachineDiagram": "StateMachineDiagram",
-        "GUINoCodeDiagram": "GUINoCodeDiagram",
-        "QuantumCircuitDiagram": "QuantumCircuitDiagram",
-        "NNDiagram": "NNDiagram",
-        "BPMNDiagram": "BPMNDiagram",
-        "ComponentDiagram": "ComponentDiagram",
-        "DeploymentDiagram": "DeploymentDiagram",
-    }
-
-    diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}
-    for dt, mt in diagram_defaults.items():
-        if dt == diagram_type:
-            diagram_jsons[dt] = [filled_entry]
-        else:
-            diagram_jsons[dt] = [{
-                "id": str(uuid.uuid4()),
-                "title": _SINGLE_DIAGRAM_DEFAULT_TITLES[dt],
-                "model": empty_model(mt),
-                "lastUpdate": datetime.now(timezone.utc).isoformat(),
-            }]
-
-    current_diagram_indices = {dt: 0 for dt in diagram_defaults}
-
-    # WME keys the BPMN bucket as "BPMN" (model.type stays "BPMNDiagram").
-    if "BPMNDiagram" in diagram_jsons:
-        diagram_jsons["BPMN"] = diagram_jsons.pop("BPMNDiagram")
-        current_diagram_indices["BPMN"] = current_diagram_indices.pop("BPMNDiagram")
+    diagram_jsons, current_diagram_indices = _fill_diagram_defaults(
+        {diagram_type: [filled_entry]}
+    )
     current_diagram_type = "BPMN" if diagram_type == "BPMNDiagram" else diagram_type
 
     return {
@@ -532,32 +541,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
     created_at = datetime.now(timezone.utc).isoformat()
 
     # Ensure every diagram type has at least one entry (empty default)
-    diagram_defaults = {
-        "ClassDiagram": "ClassDiagram",
-        "ObjectDiagram": "ObjectDiagram",
-        "AgentDiagram": "AgentDiagram",
-        "StateMachineDiagram": "StateMachineDiagram",
-        "GUINoCodeDiagram": "GUINoCodeDiagram",
-        "QuantumCircuitDiagram": "QuantumCircuitDiagram",
-        "NNDiagram": "NNDiagram",
-        "BPMNDiagram": "BPMNDiagram",
-    }
-
-    for diagram_type, model_type in diagram_defaults.items():
-        if diagram_type not in diagram_jsons:
-            diagram_jsons[diagram_type] = [{
-                "id": str(uuid.uuid4()),
-                "title": diagram_type.replace("Diagram", " Diagram"),
-                "model": empty_model(model_type),
-                "lastUpdate": datetime.now(timezone.utc).isoformat(),
-            }]
-
-    current_diagram_indices = {diagram_type: 0 for diagram_type in diagram_defaults}
-
-    # WME keys the BPMN bucket as "BPMN" (model.type stays "BPMNDiagram").
-    if "BPMNDiagram" in diagram_jsons:
-        diagram_jsons["BPMN"] = diagram_jsons.pop("BPMNDiagram")
-        current_diagram_indices["BPMN"] = current_diagram_indices.pop("BPMNDiagram")
+    diagram_jsons, current_diagram_indices = _fill_diagram_defaults(diagram_jsons)
 
     return {
         "id": project_id,

@@ -57,7 +57,7 @@ class SQLGenerator(GeneratorInterface):
         """
         if self.sql_dialect not in DDL_DIALECT_URLS:
             raise ValueError(
-                f"Invalid SQL dialect '{self.sql_dialect}'. "
+                f"Invalid DBMS (SQL dialect '{self.sql_dialect}'). "
                 f"Valid options are {', '.join(sorted(DDL_DIALECT_URLS))}."
             )
 

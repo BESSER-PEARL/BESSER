@@ -435,7 +435,7 @@ def test_database_url_env_does_not_change_dialect(domain_model, tmpdir, monkeypa
 
 
 def test_invalid_dialect_raises_value_error(domain_model, tmpdir):
-    with pytest.raises(ValueError, match="Invalid SQL dialect"):
+    with pytest.raises(ValueError, match="Invalid DBMS"):
         SQLGenerator(model=domain_model, output_dir=str(tmpdir), sql_dialect="db2").generate()
 
 

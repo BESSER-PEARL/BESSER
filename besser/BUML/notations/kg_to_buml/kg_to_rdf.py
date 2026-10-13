@@ -16,7 +16,13 @@ the **raw edges as authoritative** and uses the constraint specs only to fill
 the gaps the importer left behind. It does reuse the exporter's leaf emitters
 and vocabulary tables, so the two paths cannot drift.
 ``test_kg_to_rdf.py`` pins the parity that matters, on both a synthetic graph
-and the BIBO fixture.
+and the BIBO fixture, and ``test_projection_contract.py`` pins exactly how the
+two projections may differ (with the SHACL vocabulary set aside, only this
+module's ``owl:NamedIndividual`` declarations).
+
+Do not point the consistency check at this projection: it validates the
+exporter's, which mirrors OWL-sourced restrictions as SHACL shapes. This one
+must not, since the conversion applies its OWL and SHACL rules separately.
 
 Four passes:
 

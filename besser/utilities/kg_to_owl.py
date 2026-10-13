@@ -11,6 +11,15 @@ Constraints are serialised using either the OWL vocabulary (anonymous
 ``rdfs:subClassOf``) or the SHACL Core vocabulary (``sh:NodeShape`` /
 ``sh:PropertyShape``), or both. The ``vocab`` argument on
 :func:`serialize_knowledge_graph` controls which vocabularies are emitted.
+
+This is one of **two** KG → RDF projections, built for different jobs. The
+other, :func:`besser.BUML.notations.kg_to_buml.kg_to_rdf.kg_to_rdf`, is the input
+to the KG → UML conversion; it treats raw edges as authoritative and so keeps
+what this exporter drops around constraint nodes. They share their leaf emitters
+(the ``emit_*`` aliases at the end of this module), and
+``tests/BUML/notations/kg_to_buml/test_projection_contract.py`` pins where they
+may differ. The consistency check validates *this* projection, because it needs
+the OWL → SHACL mirroring the exporter performs.
 """
 
 from __future__ import annotations

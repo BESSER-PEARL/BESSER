@@ -1,10 +1,27 @@
+import re
+from typing import Optional
+
 from antlr4 import InputStream, CommonTokenStream
 from bocl.OCLWrapper import OCLWrapper
-from besser.BUML.metamodel.structural import Class
+from besser.BUML.metamodel.ocl.ocl import LoopExp, PropertyCallExpression, VariableExp
+from besser.BUML.metamodel.ocl.predicates import is_comparison, is_self
+from besser.BUML.metamodel.ocl.walk import walk
+from besser.BUML.metamodel.structural import Class, PrimitiveDataType, Property
+from besser.BUML.notations.ocl.api import parse_ocl
 from besser.BUML.notations.ocl.BOCLLexer import BOCLLexer
 from besser.BUML.notations.ocl.BOCLParser import BOCLParser
 from besser.BUML.notations.ocl.error_handling import BOCLErrorListener, BOCLSyntaxError
-import re
+from besser.BUML.notations.ocl.pretty_printer import pretty_print
+
+# Primitive types whose values the B-OCL evaluator (``bocl`` 1.0.1) cannot
+# compare. It splices ``str(value)`` into a Python expression, and
+# ``2026-01-01 09:00:00`` / ``09:00:00`` are not valid Python literals. Dates
+# become the integer ``int(f"{year}{month}{day}")`` without zero padding, so
+# 2026-01-15 (2026115) sorts after 2026-02-01 (202621) and never equals the
+# zero-padded ``Date::today()`` (20260115).
+_UNEVALUABLE_TEMPORAL_TYPES = {"date", "datetime", "time"}
+
+_NOT_EVALUATED = "not evaluated against the object diagram"
 
 
 def _parse_only(expression: str) -> None:
@@ -27,6 +44,92 @@ def _parse_only(expression: str) -> None:
 
     if error_listener.has_errors():
         raise BOCLSyntaxError(error_listener.errors)
+
+
+def _comparison_operand_limitation(operand) -> Optional[str]:
+    """Why the evaluator cannot compare ``operand``, or ``None`` if it can."""
+    if isinstance(operand, VariableExp):
+        return "comparing objects"
+    prop = operand.property if isinstance(operand, PropertyCallExpression) else operand
+    if not isinstance(prop, Property):
+        return None
+    if isinstance(prop.type, Class):
+        return "comparing objects"
+    if isinstance(prop.type, PrimitiveDataType) and prop.type.name in _UNEVALUABLE_TEMPORAL_TYPES:
+        return f"comparing {prop.type.name} values"
+    return None
+
+
+def _evaluation_limitation(ast) -> Optional[str]:
+    """Return why the B-OCL evaluator cannot evaluate ``ast`` correctly.
+
+    The checker evaluates invariants with ``bocl.OCLWrapper`` (the external
+    ``bocl`` package). Its evaluator turns the AST into a Python string for
+    ``eval()``; the constructs detected here either crash that ``eval()``
+    with a Python ``SyntaxError`` or silently produce a wrong answer, so a
+    perfectly valid constraint would be reported as violated (or as
+    satisfied when it is not). They all parse fine, so the checker reports
+    such a constraint as syntactically valid and not evaluated instead.
+
+    Returns ``None`` when nothing unsupported is found, otherwise one
+    ``"; "``-separated sentence naming each kind of unsupported construct
+    once, with its first occurrence as the example.
+    """
+    reasons: dict[str, str] = {}  # kind -> message; first occurrence wins
+    for node in walk(ast):
+        if isinstance(node, LoopExp):
+            names = [it.name for it in node.iterator]
+            if len(names) > 1:
+                # The evaluator binds every iterator of a loop to the same
+                # element, so forAll(a, b | ...) only ever sees a == b.
+                reasons.setdefault(
+                    "iterators",
+                    f"'{node.name}' with several iterator variables ({', '.join(names)})",
+                )
+            for body in node.body:
+                for inner in walk(body):
+                    if is_self(inner):
+                        # Inside a loop body the evaluator resolves ``self``
+                        # to the current element, not to the context object.
+                        reasons.setdefault("self", f"'self' inside a '{node.name}' body")
+                    elif isinstance(inner, LoopExp) and any(
+                        isinstance(n, VariableExp) and n.name in names
+                        for b in inner.body for n in walk(b)
+                    ):
+                        # Same cause as several iterators: the inner body
+                        # cannot see the outer element.
+                        reasons.setdefault(
+                            "nested",
+                            f"a nested '{inner.name}' that refers to the outer iterator "
+                            f"variable '{names[0]}'",
+                        )
+        elif is_comparison(node):
+            for operand in (node.arguments[0], node.arguments[2]):
+                kind = _comparison_operand_limitation(operand)
+                if kind:
+                    reasons.setdefault(kind, f"{kind} ('{pretty_print(node)}')")
+                    break
+    if not reasons:
+        return None
+    return "; ".join(reasons.values()) + " - not supported by the evaluator yet"
+
+
+def _evaluation_limitation_for(constraint, domain_model) -> Optional[str]:
+    """Parse ``constraint`` and run :func:`_evaluation_limitation` on its AST.
+
+    A constraint that cannot be parsed here is left to the evaluator, which
+    reports the parse error itself.
+    """
+    context_class = getattr(constraint, "context", None)
+    try:
+        parsed = parse_ocl(
+            constraint.expression, domain_model,
+            context_class=context_class if isinstance(context_class, Class) else None,
+        )
+    except Exception:  # noqa: BLE001 - any failure: let the evaluator report it
+        return None
+    return _evaluation_limitation(parsed.ast)
+
 
 def extract_context_class_name(expression):
     """Extract the context class name from an OCL expression"""
@@ -141,6 +244,12 @@ def check_ocl_constraint(domain_model, object_model = None):
     """
     Check all OCL constraints in the domain model — class invariants plus
     method preconditions and postconditions.
+
+    Returns a dict with ``success``, ``message``, ``valid_constraints``,
+    ``invalid_constraints`` and ``warnings``. ``warnings`` lists invariants
+    that are syntactically valid but could not be evaluated against
+    ``object_model`` (see :func:`_evaluation_limitation`); they also appear
+    in ``valid_constraints``, since no violation was found.
     """
     try:
         constraints = list(_collect_all_constraints(domain_model))
@@ -149,11 +258,16 @@ def check_ocl_constraint(domain_model, object_model = None):
                 "success": True,
                 "message": "",
                 "valid_constraints": [],
-                "invalid_constraints": []
+                "invalid_constraints": [],
+                "warnings": [],
             }
 
         valid_constraints = []
         invalid_constraints = []
+        # Constraints that are syntactically valid but that the evaluator
+        # cannot check against the object diagram (see
+        # ``_evaluation_limitation``); surfaced as diagram warnings.
+        warnings = []
         parser = OCLWrapper(domain_model, object_model)
 
         for label, kind, constraint in constraints:
@@ -220,21 +334,32 @@ def check_ocl_constraint(domain_model, object_model = None):
                         if not all(_has_all_referenced(obj) for obj in context_instances):
                             continue
 
-                    result = parser.evaluate(constraint)
-                    if result is True:
+                    limitation = _evaluation_limitation_for(constraint, domain_model)
+                    if limitation is None:
+                        result = parser.evaluate(constraint)
+                        if not isinstance(result, bool):
+                            # An invariant is Boolean; anything else (e.g. the
+                            # ``()`` the evaluator yields for a loop whose source
+                            # it could not resolve) means it failed silently.
+                            limitation = (
+                                f"the evaluator returned a non-Boolean value ({result!r})"
+                            )
+                    if limitation is not None:
+                        valid_constraints.append(
+                            f"✅ {label} '{expression}' - Syntax valid; {_NOT_EVALUATED}: "
+                            f"{limitation}{explanation_suffix}"
+                        )
+                        warnings.append(f"OCL {label} {_NOT_EVALUATED}: {limitation}")
+                    elif result is True:
                         valid_constraints.append(
                             f"✅ {label} '{expression}' - Evaluates to: True{explanation_suffix}"
                         )
-                    elif result is False:
+                    else:
                         # Prefer the natural-language description as the primary
                         # violation reason when one is provided.
                         violation_reason = description if description else "Evaluates to False"
                         invalid_constraints.append(
                             f"❌ {label} '{expression}' - Constraint violation: {violation_reason}"
-                        )
-                    else:
-                        valid_constraints.append(
-                            f"✅ {label} '{expression}' - Evaluates to: {result}{explanation_suffix}"
                         )
             except Exception as e:
                 invalid_constraints.append(
@@ -245,6 +370,7 @@ def check_ocl_constraint(domain_model, object_model = None):
             "success": len(invalid_constraints) == 0,
             "valid_constraints": valid_constraints,
             "invalid_constraints": invalid_constraints,
+            "warnings": warnings,
             "message": f"Found {len(valid_constraints)} valid and {len(invalid_constraints)} invalid constraints"
         }
 
@@ -253,5 +379,6 @@ def check_ocl_constraint(domain_model, object_model = None):
             "success": False,
             "message": f"{str(e)}",
             "valid_constraints": [],
-            "invalid_constraints": []
+            "invalid_constraints": [],
+            "warnings": [],
         }

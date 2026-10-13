@@ -81,6 +81,7 @@ from besser.spec_driven_agent.planning.gap_analyzer import analyze_gaps_via_llm
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints, action_gap_tasks, action_implementation_issues, merge_action_tasks,
 )
+from besser.spec_driven_agent.planning.scaffold_map import scaffold_overview
 from besser.spec_driven_agent.providers.llm_client import (
     ClaudeLLMClient,
     FROM_SCRATCH_MAX_TOKENS,
@@ -192,6 +193,9 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _REVISION_IGNORED_SUFFIXES,
     _ROLLBACK_DISCARD_DIR,
     _ROLLBACK_PRESERVED,
+    _SCAFFOLD_MAP_CHARS,
+    _SCAFFOLD_MAP_CHARS_SMALL,
+    _SMALL_WINDOW_THRESHOLD,
     _RUNTIME_FAILED,
     _RUNTIME_FAILURE_PREFIXES,
     _RUNTIME_FATAL_SOURCE_PREFIXES,
@@ -1714,6 +1718,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 modify_mode=self._modify_mode,
                 workspace_files=self._workspace_file_list(),
                 action_endpoints=self._expected_action_endpoints(),
+                scaffold_map=self._scaffold_map_overview(),
             )
             # The planning call may have switched the client to its
             # outage fallback model — surface that before Phase 2 turns.
@@ -3324,6 +3329,26 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                      if item.get("conversion_issue_id"))
         return tasks
 
+    def _scaffold_map_overview(self) -> str:
+        """Line-free scaffold map for the system prompt and the gap analyzer.
+
+        Built from the files on disk; ``""`` when nothing was recognised or
+        the map is switched off (``BESSER_LLM_SCAFFOLD_MAP=0``). Small-context
+        models get a smaller budget and rely on ``locate_code`` for the rest.
+        """
+        if os.environ.get("BESSER_LLM_SCAFFOLD_MAP", "1").lower() in ("0", "false", "no"):
+            return ""
+        try:
+            budget = _SCAFFOLD_MAP_CHARS
+            # Same reserve as compaction: the output this run may produce.
+            reserve = max(COMPACT_RESERVE_TOKENS, int(getattr(self.client, "max_tokens", 0) or 0))
+            if effective_threshold(getattr(self.client, "model", None), reserve=reserve) < _SMALL_WINDOW_THRESHOLD:
+                budget = _SCAFFOLD_MAP_CHARS_SMALL
+            return scaffold_overview(self.output_dir, self.domain_model, max_chars=budget)
+        except Exception:
+            logger.debug("Scaffold map overview failed", exc_info=True)
+            return ""
+
     def _expected_action_endpoints(self):
         # Keep initial obligations even if a handler is deleted, and discover
         # handlers introduced after an initially empty/from-scratch scaffold.
@@ -3999,6 +4024,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # flips it to prepend the "preserve what works" directive.
             modify_mode=self._modify_mode,
             design_system=design_system,
+            scaffold_map=self._scaffold_map_overview(),
             # Without both, the runtime-verification runbook never renders.
             allow_shell=self.allow_shell_tools,
             output_dir=self.output_dir,

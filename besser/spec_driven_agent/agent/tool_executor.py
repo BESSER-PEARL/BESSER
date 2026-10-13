@@ -523,6 +523,9 @@ class ToolExecutor:
         self.nn_model = nn_model
         # Track files created by generators — used to warn if LLM overwrites them
         self._generator_files: set[str] = set()
+        # Per generator output dir: file stamps taken just before the
+        # generator ran (see _gen_dir / _track_generated_files).
+        self._pre_generation: dict[str, dict[str, tuple[int, int]]] = {}
         # Per-path modify_file counts. After >= 2 targeted edits on a small
         # generator file the write_file guardrail relaxes, so a deliberate
         # rewrite is not bounced with "use modify_file".
@@ -1527,19 +1530,40 @@ class ToolExecutor:
         return sorted(files, key=lambda x: x["path"])
 
     def _gen_dir(self, name: str) -> str:
-        """Create and return a generator output subdirectory."""
+        """Create and return a generator output subdirectory.
+
+        Also records each existing file's (mtime, size) there, so
+        ``_track_generated_files`` can tell the files this generator call
+        wrote from files already in the folder (the model's own, on a
+        Phase 2 re-run), which must keep their line attribution.
+        """
         d = os.path.join(self.workspace, name)
         os.makedirs(d, exist_ok=True)
+        self._pre_generation[os.path.normpath(d)] = self._file_stamps(d)
         return d
+
+    def _file_stamps(self, directory: str) -> dict[str, tuple[int, int]]:
+        stamps: dict[str, tuple[int, int]] = {}
+        for f in self._list_dir(directory):
+            try:
+                st = os.stat(os.path.join(self.workspace, f["path"]))
+            except OSError:
+                continue
+            stamps[f["path"]] = (st.st_mtime_ns, st.st_size)
+        return stamps
 
     def _track_generated_files(self, directory: str) -> list[dict]:
         """List files in a generator output dir and mark them as generator-created."""
         files = self._list_dir(directory)
-        for f in files:
-            self._generator_files.add(f["path"])
-        # Line-level attribution for the run's Agent Trace record.
+        # Only the files this call wrote or rewrote are generator output: on a
+        # Phase 2 re-run the folder also holds the model's own files, which
+        # must keep their attribution and stay outside the scaffold guards.
+        before = self._pre_generation.pop(os.path.normpath(directory), {})
+        after = self._file_stamps(directory)
+        written = [path for path, stamp in after.items() if before.get(path) != stamp]
+        self._generator_files.update(written)
         record_generated_files(
-            self.workspace, [f["path"] for f in files],
+            self.workspace, written,
             os.path.basename(os.path.normpath(directory)), get_besser_version(),
         )
         return files
@@ -1591,16 +1615,18 @@ class ToolExecutor:
         "generate_fastapi_backend": (
             "This generated a MODULAR FastAPI app: main_api.py (slim — CORS, middleware, "
             "exception handlers, system endpoints, and include_router() calls), database.py "
-            "(engine/session/get_db), routers/<Class>.py (one APIRouter per class holding "
-            "that class's CRUD/relationship/method endpoints, decorated with @router — NOT "
-            "@app), sql_alchemy.py (ORM), pydantic_classes.py (schemas), and bal_stdlib.py "
-            "(helpers). "
-            "To add auth: create a NEW auth.py file, then use modify_file to add "
-            "Depends(get_current_user) to the endpoints in the relevant routers/<Class>.py. "
-            "To add pagination: use modify_file to add skip/limit parameters to the GET list "
-            "endpoints in routers/<Class>.py. "
-            "To add a new endpoint: add it to the appropriate routers/<Class>.py (use @router), "
-            "or create a new router file and register it with include_router() in main_api.py. "
+            "(engine/session/get_db/init_db), routers/<class_lower>.py (one APIRouter per class "
+            "holding that class's CRUD and relationship endpoints, decorated with @router — NOT "
+            "@app), routers/<class_lower>_methods.py (the model-method endpoints; a method with "
+            "no body is an HTTP 501 stub to implement in place), sql_alchemy.py (ORM), "
+            "pydantic_classes.py (schemas), and bal_stdlib.py (helpers). "
+            "List, count, paginated and search endpoints already exist per class. "
+            "To add auth: create a NEW auth.py file, then add Depends(get_current_user) at the "
+            "router or include_router level. "
+            "To add a new endpoint: add it to the class's routers/<class_lower>.py with @router — "
+            "a static path must go BEFORE the '/<class>/{<class>_id}/' route or that route "
+            "captures it — or create a new router file and register it with include_router() "
+            "in main_api.py. locate_code gives the exact place and lines. "
             "NEVER rewrite these files — use modify_file for surgical edits."
         ),
         "generate_django": (
@@ -2921,6 +2947,24 @@ class ToolExecutor:
             return {"error": f"Failed to delete {args['path']}: {exc}"}
         return {"status": "deleted", "path": args["path"]}
 
+    def _locate_code(self, args: dict) -> dict:
+        """Where code lives and where new code goes, from the files on disk now.
+
+        Read-only. Built fresh on every call (the scaffold map in the system
+        prompt is line-free precisely because lines move as the model edits).
+        """
+        from besser.spec_driven_agent.planning.scaffold_map import locate
+
+        filters = {}
+        for key in ("entity", "path", "query"):
+            value = args.get(key)
+            if value is None or value == "":
+                continue
+            if not isinstance(value, str):
+                return {"error": f"locate_code: '{key}' must be a string"}
+            filters[key] = value
+        return locate(self.workspace, domain_model=self.domain_model, **filters)
+
     def _search_in_files(self, args: dict) -> dict:
         """Search for a pattern across workspace files."""
         pattern = args["pattern"]
@@ -3413,6 +3457,7 @@ class ToolExecutor:
         "replace_file_lines": _replace_file_lines,
         "modify_file": _modify_file,
         "search_in_files": _search_in_files,
+        "locate_code": _locate_code,
         "delete_file": _delete_file,
         # Execution
         "run_command": _run_command,

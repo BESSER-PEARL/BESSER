@@ -63,8 +63,9 @@ GENERATOR_TOOLS: list[dict[str, Any]] = [
         "description": (
             "Generate a complete, MODULAR FastAPI backend with CRUD endpoints, SQLAlchemy ORM, "
             "and Pydantic models. This is the most complete backend generator. "
-            "Output: main_api.py (slim app) + database.py + routers/<Class>.py (endpoints per "
-            "class) + sql_alchemy.py + pydantic_classes.py + bal_stdlib.py + requirements.txt"
+            "Output: main_api.py (slim app) + database.py + routers/<class_lower>.py (endpoints "
+            "per class) + routers/<class_lower>_methods.py (model methods) + sql_alchemy.py + "
+            "pydantic_classes.py + bal_stdlib.py + requirements.txt"
         ),
         "input_schema": {
             "type": "object",
@@ -423,6 +424,37 @@ FILE_TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["pattern"],
+        },
+    },
+    {
+        "name": "locate_code",
+        "description": (
+            "Find WHERE code lives and where new code goes in the generated "
+            "scaffold, from the files as they are NOW. Returns each matching "
+            "place with its current line range, the read_file offset/limit to "
+            "read exactly it, one verbatim line to quote as modify_file's "
+            "old_text, who owns it (generator, this run, an earlier AI run, a "
+            "human edit) and placement hints: the route to insert static "
+            "routes before, the include_router block, a method's 501 stub to "
+            "implement, the <Route> table, model fields. Use it before "
+            "adding an endpoint, implementing a method, adding a field or a "
+            "page, instead of guessing paths or line numbers. Filters combine: "
+            "entity (a domain class name), path (a file or folder), query "
+            "(words matched against anchor ids, routes, function names, e.g. "
+            "'include_routers', 'POST /book', 'lend'). With no argument it "
+            "lists the app-level anchors, the entities and the pitfalls found "
+            "in this code."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity": {"type": "string", "description": "Domain class name, e.g. 'Book'"},
+                "path": {"type": "string", "description": "Workspace-relative file or folder"},
+                "query": {
+                    "type": "string",
+                    "description": "Words to match against anchor ids, labels, routes and function names",
+                },
+            },
         },
     },
     {
@@ -870,6 +902,8 @@ _TOOL_MODEL_REQUIREMENTS: dict[str, frozenset[str]] = {
     "generate_bpmn":            frozenset({"bpmn"}),
     "generate_pytorch":         frozenset({"nn"}),
     "generate_tensorflow":      frozenset({"nn"}),
+    # Reads the scaffold on disk, whatever model drove the run
+    "locate_code":              frozenset(),
     # Model-query tools need the domain model
     "query_class":              frozenset({"domain"}),
     "list_classes_with":        frozenset({"domain"}),

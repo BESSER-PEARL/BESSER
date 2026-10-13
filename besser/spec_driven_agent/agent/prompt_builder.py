@@ -107,6 +107,7 @@ def build_system_prompt(
     allow_shell: bool = False,
     output_dir: str | None = None,
     design_system: str = "",
+    scaffold_map: str = "",
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -154,6 +155,11 @@ def build_system_prompt(
             joins the rules and replaces the guidance it conflicts with: the
             GUI "loose hint" framing, Rule 2's write_file fallback for pages,
             Rule 13's styling advice and Rule 15's "one shared stylesheet".
+        scaffold_map: The line-free scaffold map overview
+            (``planning.scaffold_map.scaffold_overview``), or ``""``: per
+            entity, where its code lives, the named insertion anchors, the
+            pitfalls found in this code and where new code goes. Kept out of
+            the frontend heuristics' input, so it cannot switch Rule 15 on.
 
     Returns:
         The full system prompt string.
@@ -340,6 +346,18 @@ def build_system_prompt(
     inventory_section = ""
     if inventory:
         inventory_section = f"\n## What was already generated\n\n{inventory}\n"
+
+    # Scaffold map — where each entity's code lives and where new code goes.
+    # Line-free on purpose: the prompt is built once per run, so it names
+    # files, symbols and anchor ids; locate_code resolves them to current lines.
+    scaffold_map_section = ""
+    if scaffold_map:
+        scaffold_map_section = (
+            "\n## Where to add code (scaffold map)\n\n"
+            "Extend the generated code at these places instead of rewriting it "
+            "or adding parallel code the framework never reaches.\n\n"
+            f"{scaffold_map}\n"
+        )
 
     # Exact backend endpoint manifest — removes the frontend's URL-reconstruction
     # guesswork (the #1 "builds but 404s" failure). Constant across turns within
@@ -697,7 +715,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     variable_tail = f"""\
 
 ## Variable context (per-run — not cached below this line)
-{inventory_section}{endpoint_section}{snapshot_section}{requirements_section}
+{inventory_section}{scaffold_map_section}{endpoint_section}{snapshot_section}{requirements_section}
 ## User request
 
 The generator handled the base app (CRUD, ORM, schemas, pages). Your job is to
@@ -1116,8 +1134,14 @@ def build_scaffold_snapshot(
 
 _SYMBOL_PATTERNS = {
     ".py": re.compile(r"^(?:async\s+)?(?:def|class)\s+(\w+)", re.M),
+    # Exported names, plus the two un-exported shapes the React scaffold uses:
+    # ``function App() {}`` (exported later by ``export default App;``) and
+    # ``const Main: React.FC = ...`` pages.
     ".js": re.compile(
-        r"^export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|let)\s+(\w+)", re.M
+        r"^(?:export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|let)\s+"
+        r"|(?:async\s+)?function\s+"
+        r"|const\s+(?=[A-Z]\w*\s*:\s*React\.FC\b))(\w+)",
+        re.M,
     ),
 }
 for _ext in (".jsx", ".ts", ".tsx", ".mjs"):
@@ -1231,8 +1255,10 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
         lines.append("\nBackend: FastAPI with SQLAlchemy ORM + Pydantic schemas (modular)")
         lines.append(
             "Files: main_api.py (slim app + include_router calls), database.py "
-            "(engine/session), routers/<Class>.py (endpoints per class, @router), "
-            "sql_alchemy.py, pydantic_classes.py, bal_stdlib.py, requirements.txt"
+            "(engine/session), routers/<class_lower>.py (CRUD + relationship "
+            "endpoints per class, @router), routers/<class_lower>_methods.py "
+            "(model-method endpoints), sql_alchemy.py, pydantic_classes.py, "
+            "bal_stdlib.py, requirements.txt"
         )
 
     return "\n".join(lines)

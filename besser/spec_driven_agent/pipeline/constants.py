@@ -117,7 +117,7 @@ _TOOL_DETAIL_MAX_CHARS = 160
 # make a run readable afterwards.
 _TOOL_DETAIL_KEYS = (
     "path", "file_path", "filename", "target", "action", "id", "ids",
-    "text", "command", "pattern", "query", "class_name", "generator",
+    "text", "command", "pattern", "query", "class_name", "generator", "entity",
 )
 
 
@@ -173,9 +173,17 @@ def _tool_call_detail(tool_name: str, tool_input: object, blocks_in_turn: int) -
 
 
 
+# Scaffold map overview (planning/scaffold_map) in the system prompt and the
+# gap analyzer: its character budget, and the smaller one for models whose
+# compaction threshold is below _SMALL_WINDOW_THRESHOLD tokens (32k/60k
+# self-hosted windows), which rely on locate_code for the rest.
+_SCAFFOLD_MAP_CHARS = 4000
+_SCAFFOLD_MAP_CHARS_SMALL = 1500
+_SMALL_WINDOW_THRESHOLD = 40_000
+
 # Tools that are read-only and shouldn't count for loop detection
 _READONLY_TOOLS = frozenset({
-    "read_file", "list_files", "search_in_files", "check_syntax", "validate_app", "test_api",
+    "read_file", "list_files", "search_in_files", "locate_code", "check_syntax", "validate_app", "test_api",
     # Checklist bookkeeping — marking several items done back-to-back is
     # exactly what the end_turn gate asks for, never a stuck loop.
     "task_list",

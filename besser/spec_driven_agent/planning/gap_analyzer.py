@@ -56,6 +56,7 @@ logger = logging.getLogger(__name__)
 _MAX_INVENTORY_CHARS = 8_000
 _MAX_MODEL_JSON_CHARS = 12_000
 _MAX_ACTION_INVENTORY_CHARS = 8_000
+_MAX_SCAFFOLD_MAP_CHARS = 6_000
 _MAX_TASKS = 16
 
 
@@ -100,6 +101,7 @@ def analyze_gaps_via_llm(
     modify_mode: bool = False,
     workspace_files: list[str] | None = None,
     action_endpoints: list[ActionEndpoint] | None = None,
+    scaffold_map: str = "",
 ) -> list[str] | None:
     """Return a focused task list for Phase 2.
 
@@ -133,6 +135,11 @@ def analyze_gaps_via_llm(
         action_endpoints: Source-derived operation routes and their handler
             locations. Presence in the domain model is not an implementation;
             this inventory identifies the actual executable extension points.
+        scaffold_map: The line-free scaffold map overview
+            (``planning.scaffold_map.scaffold_overview``): where each entity's
+            code lives and the named places new code goes. Lets a task say
+            where its code belongs instead of inventing a path, and shows
+            what already exists. ``""`` leaves the prompt as before.
 
     Returns:
         ``None`` on failure, ``[]`` when no work is needed, otherwise
@@ -195,6 +202,7 @@ def analyze_gaps_via_llm(
         action_inventory=(format_action_inventory(action_endpoints)
                           if action_endpoints is not None
                           else "Action handlers were not inventoried; inspect their implementations."),
+        scaffold_map=scaffold_map,
     )
 
     tasks = _call_planner(llm_client, user_prompt)
@@ -1387,16 +1395,30 @@ def _build_user_prompt(
     model_json: str,
     inventory: str,
     action_inventory: str = "",
+    scaffold_map: str = "",
 ) -> str:
     # Only derived inventories are clipped; user requirements must not disappear.
     inventory_clipped = _clip(inventory, _MAX_INVENTORY_CHARS, "inventory")
     actions_clipped = _clip(action_inventory, _MAX_ACTION_INVENTORY_CHARS, "action inventory")
+    map_section = ""
+    placement_rule = ""
+    if scaffold_map:
+        map_section = (
+            "SCAFFOLD MAP (where each entity's code lives and where new code goes):\n"
+            f"{_clip(scaffold_map, _MAX_SCAFFOLD_MAP_CHARS, 'scaffold map')}\n\n"
+        )
+        placement_rule = (
+            " When a task extends the scaffold, name the file (and the anchor "
+            "id, when the SCAFFOLD MAP gives one) where its code goes, and do "
+            "not task re-creating anything the map shows already exists."
+        )
     return (
         f"USER REQUEST:\n{instructions}\n\n"
         f"DETERMINISTIC GENERATOR THAT RAN: {generator_used}\n\n"
         f"DOMAIN MODEL (JSON):\n{model_json}\n\n"
         f"FILE INVENTORY (paths + sizes):\n{inventory_clipped}\n\n"
         f"ACTION IMPLEMENTATION INVENTORY (source-derived):\n{actions_clipped}\n\n"
+        f"{map_section}"
         "Work in two passes.\n\n"
         "PASS 1 — USER REQUEST vs DOMAIN MODEL. Re-read the request and "
         "enumerate every concrete thing it names:\n"
@@ -1429,8 +1451,9 @@ def _build_user_prompt(
         "Then submit the combined list as a JSON array of short task strings "
         f"(max {_MAX_TASKS}), Pass-1 gaps FIRST — they are invisible "
         "everywhere else. Tie every task to either a specific model element "
-        "or a specific line of the user's request. Submit an empty array "
-        "only if the scaffold "
+        "or a specific line of the user's request."
+        f"{placement_rule}"
+        " Submit an empty array only if the scaffold "
         "already covers the request in full."
     )
 

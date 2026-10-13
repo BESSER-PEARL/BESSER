@@ -164,6 +164,10 @@ Feature flags
   the run, so once the model has edited a file the copy is stale and quoting
   from it makes ``modify_file`` miss. With it off, file text reaches the model
   only through ``read_file`` (always current; several reads batch in one turn).
+- ``BESSER_LLM_SCAFFOLD_MAP`` (on; ``0`` disables it) -- Put the line-free
+  scaffold map ("Where to add code") in the Phase-2 system prompt and the
+  planning call. The ``locate_code`` tool works either way. See
+  :ref:`spec-driven-scaffold-map`.
 - ``BESSER_LLM_ROLLING_CACHE`` (**on**; ``0`` disables it) -- Add a
   rolling prompt-cache breakpoint on the growing conversation, so the prior
   prefix is served from cache instead of re-billed each turn. Anthropic path

@@ -47,6 +47,36 @@ __all__ = [
 SH = rdflib.Namespace("http://www.w3.org/ns/shacl#")
 
 
+# SHACL-AF constructs that make a validator EXECUTE something the KG author
+# wrote, rather than merely check a shape. A SPARQL body may carry
+# `SERVICE <http://...>`, which rdflib resolves with a plain urlopen() against
+# no allowlist -- so on a shared host an uploaded ontology could make the
+# server fetch a URL of the author's choosing (link-local metadata endpoints
+# included). BESSER's own constraint vocabulary (``_SHACL_PROPERTY_KINDS`` /
+# ``_SHACL_NODE_KINDS`` / ``_SHACL_LOGICAL_KINDS`` in ``kg_to_owl``) cannot
+# author any of these, so dropping them costs nothing a BESSER model expresses;
+# they can only arrive as raw triples through an imported OWL/TTL file.
+#
+# ``sh:target`` is the *custom* (SPARQL/JS) target predicate and belongs here.
+# The Core targeting predicates -- sh:targetClass, sh:targetNode,
+# sh:targetSubjectsOf, sh:targetObjectsOf -- are deliberately NOT listed: they
+# are what BESSER's shapes use, and implicit class targeting is a separate
+# always-on code path that `advanced=False` does not disable.
+_EXECUTABLE_SHACL_PREDICATES = frozenset({
+    SH.sparql, SH.rule, SH.target, SH.expression, SH.js,
+    SH.select, SH.construct, SH.ask, SH.update,
+    SH.jsLibrary, SH.jsFunctionName,
+})
+
+_EXECUTABLE_SHACL_TYPES = frozenset({
+    SH.SPARQLRule, SH.TripleRule, SH.Rule,
+    SH.SPARQLConstraint, SH.SPARQLTarget, SH.SPARQLTargetType,
+    SH.SPARQLFunction, SH.SPARQLAskValidator, SH.SPARQLSelectValidator,
+    SH.JSRule, SH.JSConstraint, SH.JSTarget, SH.JSTargetType,
+    SH.JSFunction, SH.JSValidator, SH.JSLibrary,
+})
+
+
 # ---------------------------------------------------------------------------
 # Public dataclasses
 # ---------------------------------------------------------------------------
@@ -141,14 +171,23 @@ def check_kg_consistency(
     data_graph = knowledge_graph_to_rdf(kg, vocab="both")
     _normalize_count_literals(data_graph)
     _augment_with_owl_shim(data_graph)
+    _strip_executable_shacl(data_graph)
 
+    # ``advanced=False`` (pyshacl's own default) is load-bearing, not a tuning
+    # knob: the KG doubles as the shapes graph here, so with SHACL-AF enabled a
+    # sh:SPARQLRule in an imported ontology would be executed by the validator.
+    # It gates exactly three features -- sh:Function/sh:expression, sh:Rule and
+    # custom sh:target -- none of which BESSER's constraint model can express.
+    # Implicit class targeting, which BESSER's shapes DO rely on, is a separate
+    # always-on code path and keeps working. ``_strip_executable_shacl`` above
+    # removes the same constructs from the graph as defence in depth.
     _conforms, results_graph, _results_text = pyshacl.validate(
         data_graph,
         shacl_graph=data_graph,
         ont_graph=data_graph,
         inference=inference,
         allow_warnings=True,
-        advanced=True,
+        advanced=False,
         meta_shacl=False,
         debug=False,
     )
@@ -168,6 +207,37 @@ def check_kg_consistency(
 # ---------------------------------------------------------------------------
 # Graph pre-processing
 # ---------------------------------------------------------------------------
+
+
+def _strip_executable_shacl(g: rdflib.Graph) -> int:
+    """Remove SHACL-AF constructs that a validator would *execute*.
+
+    The KG under test is its own shapes graph, so any SPARQL a rule or custom
+    target carries would run with the server's network access. See
+    :data:`_EXECUTABLE_SHACL_PREDICATES` for why this is a security boundary
+    and not a capability trade-off.
+
+    Mutates ``g`` in place. Returns the number of triples removed, which is 0
+    for every KG built through BESSER's own constraint model.
+    """
+    doomed: Set[Tuple[Any, Any, Any]] = set()
+
+    # The link that reaches a SPARQL body, and the body itself.
+    for predicate in _EXECUTABLE_SHACL_PREDICATES:
+        for triple in g.triples((None, predicate, None)):
+            doomed.add(triple)
+
+    # Anything declared to BE one of those constructs: drop the type triple and
+    # every other statement describing that subject, so no partially-stripped
+    # rule is left for a later pyshacl version to pick up.
+    for rdf_type in _EXECUTABLE_SHACL_TYPES:
+        for subject in set(g.subjects(RDF.type, rdf_type)):
+            for triple in g.triples((subject, None, None)):
+                doomed.add(triple)
+
+    for triple in doomed:
+        g.remove(triple)
+    return len(doomed)
 
 
 def _normalize_count_literals(g: rdflib.Graph) -> None:

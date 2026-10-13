@@ -146,6 +146,17 @@ MAX_IMAGE_SIZE = 10 * 1024 * 1024     # 10 MB
 MAX_BUML_SIZE = 2 * 1024 * 1024       # 2 MB
 MAX_OWL_SIZE = 5 * 1024 * 1024        # 5 MB
 
+# How far into an OWL/RDF upload to look for a DTD declaration. A DTD is only
+# legal in the prolog, so the head of the document is the only place it can
+# appear; scanning the whole 5 MB would just be wasted work.
+_DTD_PROBE_CHARS = 4096
+
+# Largest number of orphan nodes one /classify-orphans-with-llm call may carry.
+# The classifier sends one blocking OpenAI request per MAX_ORPHAN_BATCH (40)
+# nodes with no internal ceiling, so an unbounded list turns a single request
+# into an arbitrarily long chain of upstream calls.
+MAX_ORPHAN_CLASSIFY_NODES = 400
+
 # ---------------------------------------------------------------------------
 # Allowed MIME / extension sets per upload type
 # ---------------------------------------------------------------------------
@@ -253,9 +264,26 @@ def _validate_file_content(content: bytes, filename: str) -> None:
         if not content.strip():
             raise HTTPException(status_code=400, detail="OWL/RDF file is empty.")
         try:
-            content.decode("utf-8")
+            text = content.decode("utf-8")
         except UnicodeDecodeError:
             raise HTTPException(status_code=400, detail="OWL/RDF file is not valid UTF-8 text.")
+
+        # Reject a DTD before rdflib sees it. rdflib's RDF/XML parser builds its
+        # parser with xml.sax.make_parser() and never disables entity
+        # resolution, and stock expat has no expansion limit -- so a few hundred
+        # bytes of nested internal entities ("billion laughs") expand into
+        # minutes of CPU inside the request. No ontology BESSER imports needs a
+        # DTD, so this costs nothing real.
+        probe = text.lstrip()[:_DTD_PROBE_CHARS].upper()
+        if "<!DOCTYPE" in probe or "<!ENTITY" in probe:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "OWL/RDF file declares a DTD (<!DOCTYPE/<!ENTITY), which is "
+                    "not accepted: entity expansion can be used to exhaust server "
+                    "resources. Please re-export the ontology without a DTD."
+                ),
+            )
 
 
 async def _read_file(path: str, mode: str = "r", **kwargs) -> str | bytes:
@@ -1018,7 +1046,9 @@ async def import_owl(owl_file: UploadFile = File(...)):
         safe_filename = os.path.basename(owl_file.filename or "ontology.owl")
         owl_path = os.path.join(temp_dir, safe_filename)
         await _write_file(owl_path, owl_content)
-        kg = owl_file_to_knowledge_graph(owl_path)
+        # rdflib's parse is CPU-bound and can run for seconds on a large
+        # ontology; on the event loop it stalls every other request.
+        kg = await asyncio.to_thread(owl_file_to_knowledge_graph, owl_path)
         diagram_json = kg_to_json(kg)
 
         diagram_title = diagram_json.get("title", "Imported Knowledge Graph")
@@ -1375,7 +1405,11 @@ async def llm_clean_kg_endpoint(
 
     kg, _json_data = _kg_payload_to_kg(diagram_input)
     try:
-        report = analyze_kg_with_description(kg, description, api_key, model=model)
+        # Blocking HTTP with a 120 s timeout: on the event loop it freezes the
+        # whole backend for the duration (generation_router does the same).
+        report = await asyncio.to_thread(
+            analyze_kg_with_description, kg, description, api_key, model=model
+        )
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -1497,11 +1531,23 @@ async def classify_orphans_with_llm_endpoint(
         raise HTTPException(status_code=400, detail="'node_ids' must contain only strings.")
     if not parsed_node_ids:
         raise HTTPException(status_code=400, detail="'node_ids' must not be empty.")
+    if len(parsed_node_ids) > MAX_ORPHAN_CLASSIFY_NODES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'node_ids' carries {len(parsed_node_ids)} nodes; at most "
+                f"{MAX_ORPHAN_CLASSIFY_NODES} can be classified per request. "
+                "Classify them in smaller batches."
+            ),
+        )
 
     kg, _json_data = _kg_payload_to_kg(diagram_input)
     _enforce_signature(diagram_input, kg)
     try:
-        report = classify_orphan_nodes_with_llm(
+        # One blocking OpenAI request per 40 nodes, sequentially; the cap above
+        # bounds the chain and to_thread keeps it off the event loop.
+        report = await asyncio.to_thread(
+            classify_orphan_nodes_with_llm,
             kg,
             parsed_node_ids,
             description,

@@ -23,6 +23,11 @@ from besser.BUML.metamodel.kg import (
     KGPropertyConstraint,
     KnowledgeGraph,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
+    strip_buml_imports,
+)
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 
 __all__ = ["kg_to_json", "kg_buml_to_json"]
@@ -64,7 +69,7 @@ def kg_to_json(kg: KnowledgeGraph) -> Dict[str, Any]:
 
 
 def kg_buml_to_json(content: str) -> Dict[str, Any]:
-    """Execute a BUML Python snippet and serialize the resulting ``KnowledgeGraph``.
+    """Load a BUML Python snippet and serialize the resulting ``KnowledgeGraph``.
 
     Mirrors ``quantum_buml_to_json`` / ``class_buml_to_json`` — used by the
     project round-trip pipeline, which drops the return value straight into a
@@ -72,48 +77,31 @@ def kg_buml_to_json(content: str) -> Dict[str, Any]:
     (``{"type", "version", "nodes", "edges", "axioms"}``), not the
     ``{"title", "model"}`` envelope :func:`kg_to_json` builds for the HTTP
     endpoints.
+
+    ``content`` arrives from a user upload (``/get-json-model``,
+    ``/get-project-json-model``), so it is loaded through
+    :func:`safe_load_buml`, which validates the AST against an allowlist before
+    executing anything. A restricted-``__builtins__`` ``exec`` would not do: it
+    blocks name lookups but not ``().__class__.__base__.__subclasses__()``,
+    which reaches ``os`` through attribute access alone. The KG builder only
+    ever emits literals and constructor calls, so the allowlist costs nothing.
     """
     import besser.BUML.metamodel.kg as kg_module
 
-    safe_globals: Dict[str, Any] = {
-        "__builtins__": {
-            "set": set,
-            "list": list,
-            "dict": dict,
-            "tuple": tuple,
-            "str": str,
-            "int": int,
-            "float": float,
-            "bool": bool,
-            "len": len,
-            "range": range,
-            "True": True,
-            "False": False,
-            "None": None,
-            "print": lambda *a, **kw: None,
-        },
+    allowed_names: Dict[str, Any] = {
+        "set": set,
+        "list": list,
+        "dict": dict,
+        "tuple": tuple,
     }
     for name in dir(kg_module):
         if not name.startswith("_"):
-            safe_globals[name] = getattr(kg_module, name)
+            allowed_names[name] = getattr(kg_module, name)
 
-    cleaned_lines = []
-    in_import_block = False
-    for line in content.splitlines():
-        stripped = line.lstrip()
-        if in_import_block:
-            if ")" in line:
-                in_import_block = False
-            continue
-        if stripped.startswith(("import ", "from ")):
-            if "(" in line and ")" not in line:
-                in_import_block = True
-            continue
-        cleaned_lines.append(line)
-    cleaned = "\n".join(cleaned_lines)
-
-    local_vars: Dict[str, Any] = {}
-    exec(cleaned, safe_globals, local_vars)  # noqa: S102 — trusted BUML code
+    try:
+        local_vars = safe_load_buml(strip_buml_imports(content), allowed_names)
+    except Exception as exc:
+        raise ConversionError(f"Failed to load Knowledge Graph BUML content: {exc}") from exc
 
     kg: KnowledgeGraph | None = None
     for value in local_vars.values():
@@ -121,7 +109,7 @@ def kg_buml_to_json(content: str) -> Dict[str, Any]:
             kg = value
             break
     if kg is None:
-        raise ValueError("BUML KG code did not define a KnowledgeGraph instance.")
+        raise ConversionError("BUML KG code did not define a KnowledgeGraph instance.")
     return kg_to_json(kg)["model"]
 
 

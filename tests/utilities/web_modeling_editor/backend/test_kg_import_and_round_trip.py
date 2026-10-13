@@ -214,3 +214,115 @@ def _write_ttl(tmp_path: Path) -> Path:
     path = tmp_path / "roundtrip.ttl"
     path.write_text(TTL_FIXTURE, encoding="utf-8")
     return path
+
+
+# ---------------------------------------------------------------------------
+# Security: uploaded .py is loaded through the AST allowlist, never exec()'d
+# ---------------------------------------------------------------------------
+
+
+def test_kg_buml_loader_blocks_subclass_walk_escape():
+    """The classic restricted-builtins escape must not reach the interpreter.
+
+    ``().__class__.__base__.__subclasses__()`` needs no builtin name at all, so
+    the previous ``exec`` with a trimmed ``__builtins__`` let it through. It is
+    the payload that motivated moving KG onto ``safe_load_buml``.
+    """
+    from besser.utilities.web_modeling_editor.backend.services.converters import (
+        kg_buml_to_json,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+        ConversionError,
+    )
+
+    payload = (
+        "kg_model = KnowledgeGraph(name='x')\n"
+        "stolen = ().__class__.__base__.__subclasses__()\n"
+    )
+    with pytest.raises(ConversionError):
+        kg_buml_to_json(payload)
+
+
+def test_kg_buml_loader_blocks_dunder_attribute_access():
+    from besser.utilities.web_modeling_editor.backend.services.converters import (
+        kg_buml_to_json,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+        ConversionError,
+    )
+
+    payload = (
+        "kg_model = KnowledgeGraph(name='x')\n"
+        "leak = kg_model.__class__.__init__.__globals__\n"
+    )
+    with pytest.raises(ConversionError):
+        kg_buml_to_json(payload)
+
+
+def test_kg_buml_loader_still_loads_generated_code(tmp_path: Path):
+    """The allowlist must not cost us the real round-trip it exists to protect."""
+    from besser.utilities.buml_code_builder import kg_model_to_code
+    from besser.utilities.web_modeling_editor.backend.services.converters import (
+        kg_buml_to_json,
+    )
+
+    kg = owl_file_to_knowledge_graph(str(_write_ttl(tmp_path)))
+    out = tmp_path / "kg_model.py"
+    kg_model_to_code(model=kg, file_path=str(out), model_var_name="kg_model")
+
+    model = kg_buml_to_json(out.read_text(encoding="utf-8"))
+
+    assert model["type"] == "KnowledgeGraphDiagram"
+    assert {n["id"] for n in model["nodes"]} == {n.id for n in kg.nodes}
+    assert len(model["edges"]) == len(kg.edges)
+
+
+def _write_ttl(tmp_path: Path) -> Path:
+    p = tmp_path / "loader.ttl"
+    p.write_text(TTL_FIXTURE, encoding="utf-8")
+    return p
+
+
+# ---------------------------------------------------------------------------
+# Resource limits: a DTD must be refused before rdflib expands it
+# ---------------------------------------------------------------------------
+
+
+# Nested internal entities: ~200 bytes that expand to roughly 3**9 copies of
+# the payload. rdflib builds its RDF/XML parser with xml.sax.make_parser() and
+# never caps expansion, so the cost is paid synchronously inside the request.
+_BILLION_LAUGHS = """<?xml version="1.0"?>
+<!DOCTYPE rdf:RDF [
+  <!ENTITY a "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">
+  <!ENTITY b "&a;&a;&a;"> <!ENTITY c "&b;&b;&b;"> <!ENTITY d "&c;&c;&c;">
+  <!ENTITY e "&d;&d;&d;"> <!ENTITY f "&e;&e;&e;"> <!ENTITY g "&f;&f;&f;">
+  <!ENTITY h "&g;&g;&g;"> <!ENTITY i "&h;&h;&h;"> <!ENTITY j "&i;&i;&i;">
+]>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+  <rdf:Description rdf:about="http://ex.org/Boom">
+    <rdfs:label>&j;</rdfs:label>
+  </rdf:Description>
+</rdf:RDF>
+"""
+
+
+def test_import_owl_rejects_a_dtd_before_parsing(client):
+    resp = client.post(
+        "/besser_api/import-owl",
+        files={"owl_file": ("bomb.owl", _BILLION_LAUGHS.encode("utf-8"), "application/rdf+xml")},
+    )
+
+    assert resp.status_code == 400
+    assert "DTD" in resp.json()["detail"]
+
+
+def test_import_owl_still_accepts_a_plain_ontology(client, ttl_path: Path):
+    """The DTD guard must not reject the ontologies we actually import."""
+    resp = client.post(
+        "/besser_api/import-owl",
+        files={"owl_file": ("tiny.ttl", ttl_path.read_bytes(), "text/turtle")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["diagramType"] == "KnowledgeGraphDiagram"

@@ -394,3 +394,37 @@ def test_classify_orphans_with_llm_rejects_invalid_node_ids_json(client):
         },
     )
     assert response.status_code == 400
+
+
+# --------------------------------------------------------------------------
+# Resource limits: one request must not fan out into unbounded upstream calls
+# --------------------------------------------------------------------------
+
+
+def test_classify_orphans_rejects_an_oversized_node_list(client, monkeypatch):
+    """The classifier issues one blocking OpenAI call per 40 nodes.
+
+    Without a ceiling, a single request walks that chain for as long as the
+    caller cares to make it, holding a worker the whole time.
+    """
+    from besser.utilities.web_modeling_editor.backend.routers.conversion_router import (
+        MAX_ORPHAN_CLASSIFY_NODES,
+    )
+
+    def _no_calls(*args, **kwargs):  # pragma: no cover - must never run
+        raise AssertionError("an over-cap request reached the OpenAI client")
+
+    monkeypatch.setattr("besser.BUML.notations.kg_to_buml.llm_cleanup.requests.post", _no_calls)
+
+    response = client.post(
+        "/besser_api/classify-orphans-with-llm",
+        data={
+            "diagram": json.dumps(_kg_with_orphan_diagram()),
+            "description": "Track people.",
+            "api_key": "sk-test",
+            "node_ids": json.dumps([f"ghost{i}" for i in range(MAX_ORPHAN_CLASSIFY_NODES + 1)]),
+        },
+    )
+
+    assert response.status_code == 400
+    assert str(MAX_ORPHAN_CLASSIFY_NODES) in response.json()["detail"]

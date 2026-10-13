@@ -269,3 +269,90 @@ def test_report_carries_kg_signature_and_inference():
     report = check_kg_consistency(kg)
     assert isinstance(report.kg_signature, str) and report.kg_signature
     assert report.inference_used == "owlrl"
+
+
+# ---------------------------------------------------------------------------
+# Security: SHACL-AF must never execute what the KG author wrote
+# ---------------------------------------------------------------------------
+
+
+# A SPARQLRule whose CONSTRUCT reaches for the cloud metadata endpoint. If the
+# validator runs SHACL-AF rules, rdflib resolves the SERVICE clause with a
+# plain urlopen() against no allowlist, and a KG uploaded to a shared editor
+# host becomes a request forgery primitive.
+_SSRF_TTL = _PREFIX + """
+:Person a owl:Class, sh:NodeShape ;
+    sh:targetClass :Person ;
+    sh:rule [
+        a sh:SPARQLRule ;
+        sh:construct \"\"\"
+            PREFIX : <http://example.org/>
+            CONSTRUCT { ?this :leaked ?o }
+            WHERE {
+                SERVICE <http://169.254.169.254/latest/meta-data/iam/security-credentials/> {
+                    ?s ?p ?o
+                }
+            }
+        \"\"\" ;
+    ] .
+:alice a :Person .
+"""
+
+
+def test_sparql_rule_in_kg_never_triggers_a_network_fetch(monkeypatch):
+    """The SSRF regression test: no urlopen, no matter what the KG carries."""
+    calls = []
+
+    def _explode(*args, **kwargs):  # pragma: no cover - must never run
+        calls.append(args[0] if args else kwargs)
+        raise AssertionError(
+            "consistency checking resolved a URL chosen by the KG author: "
+            f"{args[0] if args else kwargs!r}"
+        )
+
+    # rdflib's SERVICE evaluator imports urlopen into its own module namespace.
+    monkeypatch.setattr(
+        "rdflib.plugins.sparql.evaluate.urlopen", _explode, raising=True
+    )
+
+    report = check_kg_consistency(_kg(_SSRF_TTL))
+
+    assert calls == []
+    # The checker still returns a usable report rather than failing closed.
+    assert report.kg_signature
+
+
+def test_executable_shacl_is_stripped_before_validation():
+    """The rule and its SPARQL body are gone from the graph that pyshacl sees."""
+    from besser.BUML.notations.kg_to_buml.consistency import (
+        SH,
+        _strip_executable_shacl,
+    )
+    from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
+
+    graph = knowledge_graph_to_rdf(_kg(_SSRF_TTL), vocab="both")
+    removed = _strip_executable_shacl(graph)
+
+    assert removed > 0
+    assert not list(graph.triples((None, SH.rule, None)))
+    assert not list(graph.triples((None, SH.construct, None)))
+    assert "169.254.169.254" not in graph.serialize(format="turtle")
+
+
+def test_stripping_leaves_a_normal_besser_kg_untouched():
+    """Nothing BESSER's own constraint model emits is affected by the strip."""
+    from besser.BUML.notations.kg_to_buml.consistency import _strip_executable_shacl
+    from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
+
+    kg = _kg(_PREFIX + """
+:Person a owl:Class .
+:name a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:string .
+:PersonShape a sh:NodeShape ; sh:targetClass :Person ;
+    sh:property [ sh:path :name ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] .
+:alice a :Person ; :name "Alice" .
+""")
+    graph = knowledge_graph_to_rdf(kg, vocab="both")
+    before = len(graph)
+
+    assert _strip_executable_shacl(graph) == 0
+    assert len(graph) == before

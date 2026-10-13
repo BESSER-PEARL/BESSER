@@ -4,6 +4,7 @@ Project Builder
 This module generates Python code for complete BUML projects including all models.
 """
 
+import logging
 import os
 import tempfile
 import uuid
@@ -29,6 +30,8 @@ from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
 from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
 from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
+
+logger = logging.getLogger(__name__)
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -576,4 +579,4 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
         f.write("    metadata=metadata\n")
         f.write(")\n")
 
-    print(f"Project saved to {file_path}")
+    logger.info("Project saved to %s", file_path)

@@ -1,3 +1,4 @@
+import logging
 import os
 from jinja2 import Environment, FileSystemLoader
 
@@ -12,6 +13,9 @@ from besser.generators.structural_utils import (
     normalize_method_code,
     get_pk_py_types,
 )
+
+logger = logging.getLogger(__name__)
+
 
 class SQLAlchemyGenerator(GeneratorInterface):
     """
@@ -285,4 +289,4 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 check_constraints=check_constraints,
             )
             f.write(generated_code)
-            print("Code generated successfully!")
+            logger.info("Code generated in the location: %s", file_path)

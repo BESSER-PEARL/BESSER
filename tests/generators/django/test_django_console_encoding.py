@@ -4,8 +4,10 @@ On Windows a redirected stdout is cp1252. The status messages used to start
 with emoji, so a successful generation raised ``UnicodeEncodeError`` on
 '\u2705', and a failed one replaced the real error with a second
 ``UnicodeEncodeError`` on '\u274c' raised from inside the except handler.
+The status messages now go through ``logging`` rather than ``print``.
 """
 import io
+import logging
 import subprocess
 import sys
 
@@ -31,15 +33,15 @@ def _cp1252_stdout(monkeypatch):
     return stream
 
 
-def test_generation_succeeds_on_a_cp1252_console(tmp_path, monkeypatch):
+def test_generation_succeeds_on_a_cp1252_console(tmp_path, monkeypatch, caplog):
     pytest.importorskip("django")
-    cp1252_stdout = _cp1252_stdout(monkeypatch)
-    DjangoGenerator(model=_model(), project_name="myproject", app_name="app",
-                    output_dir=str(tmp_path)).generate()
+    _cp1252_stdout(monkeypatch)
+    with caplog.at_level(logging.INFO, logger="besser.generators.django.django_generator"):
+        DjangoGenerator(model=_model(), project_name="myproject", app_name="app",
+                        output_dir=str(tmp_path)).generate()
 
     assert (tmp_path / "myproject" / "app" / "models.py").is_file()
-    cp1252_stdout.seek(0)
-    assert "completed successfully" in cp1252_stdout.read()
+    assert "completed successfully" in caplog.text
 
 
 def test_generation_failure_keeps_the_original_error(tmp_path, monkeypatch):

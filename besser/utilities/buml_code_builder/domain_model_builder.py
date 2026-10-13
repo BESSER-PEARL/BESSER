@@ -4,6 +4,7 @@ Domain Model Builder
 This module generates Python code for BUML domain models and object models.
 """
 
+import logging
 import os
 from typing import Optional
 from besser.BUML.metamodel.structural.structural import (
@@ -22,6 +23,8 @@ from besser.utilities.buml_code_builder.common import (
     safe_class_name,
     safe_var_name,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _set_literal(items: str) -> str:
@@ -581,7 +584,7 @@ def domain_model_to_code(
         if objectmodel:
             _write_object_model_section(f, objectmodel, object_model_var_name)
 
-    print(f"BUML model saved to {file_path}")
+    logger.info("BUML model saved to %s", file_path)
 
 
 def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_name: str = "object_model",
@@ -742,4 +745,4 @@ def object_model_to_code(
 
         _write_object_model_section(f, objectmodel, object_model_var_name, header_label)
 
-    print(f"BUML object model saved to {file_path}")
+    logger.info("BUML object model saved to %s", file_path)

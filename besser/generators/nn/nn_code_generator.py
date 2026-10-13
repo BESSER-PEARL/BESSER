@@ -4,6 +4,7 @@ by `TFGenerator` and `PytorchGenerator` to generates code for neural
 networks based on the B-UML model.
 """
 
+import logging
 import os
 import re
 from collections.abc import Callable
@@ -24,6 +25,8 @@ from besser.generators.nn.utils_nn import (
     handle_tensorop,
     renumber_tensorop_variables,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class NNCodeGenerator(GeneratorInterface):
@@ -576,4 +579,4 @@ class NNCodeGenerator(GeneratorInterface):
 
         with open(file_path, mode="w", encoding="utf-8") as f:
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.info("Code generated in the location: %s", file_path)

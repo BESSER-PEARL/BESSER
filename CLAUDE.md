@@ -62,6 +62,7 @@ The docs gate fails on **any** Sphinx warning or error, except an unreachable ex
 ```bash
 docker compose up --build           # backend on :9000, frontend on :8080
 python -m besser.utilities.web_modeling_editor.backend.backend   # backend alone, on :9000
+besser-wme-backend --port 9000      # same, via the console script (--host, --port, --log-level)
 ```
 The Spec-Driven Agent's PIA / Local (Ollama) providers need `BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`
 (the local `docker-compose.yml` sets it; running the backend alone does not).

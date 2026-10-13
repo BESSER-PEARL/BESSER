@@ -110,37 +110,10 @@ class WrappingVisitor(BOCLVisitorImpl):
         text = ctx.BOOLEAN_LITERAL().getText()
         return BooleanLiteralExpression("NP", text == "true")
 
-    def visitAllInstancesExp(self, ctx: BOCLParser.AllInstancesExpContext):
-        # expression.allInstances() — treat the LHS expression as a type reference
-        source = self.visit(ctx.expression())
-        if isinstance(source, VariableExp):
-            type_exp = TypeExp(source.name, source.name)
-        else:
-            type_exp = source
-        oce = OperationCallExpression(name="ALLInstances", operation="ALLInstances", arguments=[])
-        oce.source = type_exp
-        return oce
-
-    def visitArrowasSet(self, ctx: BOCLParser.ArrowasSetContext):
-        source = self.visit(ctx.expression())
-        oce = OperationCallExpression(name="ASSET", operation="ASSET", arguments=[])
-        oce.source = source
-        return oce
-
-    def visitIntersection(self, ctx: BOCLParser.IntersectionContext):
-        source = self.visit(ctx.expression(0))
-        arg = self.visit(ctx.expression(1))
-        oce = OperationCallExpression(name="INTERSECTION", operation="INTERSECTION", arguments=[arg])
-        oce.source = source
-        return oce
-
-    def visitIsunique(self, ctx: BOCLParser.IsuniqueContext):
-        source = self.visit(ctx.expression(0))
-        arg = self.visit(ctx.expression(1))
-        oce = OperationCallExpression(name="ISUNIQUE", operation="ISUNIQUE", arguments=[arg])
-        oce.source = source
-        return oce
-
+    # ``visitAllInstancesExp`` (``X.allInstances()``), ``visitArrowasSet``,
+    # ``visitIntersection`` and ``visitIsunique`` live on ``BOCLVisitorImpl``:
+    # the B-OCL evaluator (``bocl.OCLWrapper``) builds its AST with the base
+    # visitor, so they must be there for evaluation to see them too.
 
     def visitArrowIterator(self, ctx: BOCLParser.ArrowIteratorContext):
         source = self.visit(ctx.expression(0))

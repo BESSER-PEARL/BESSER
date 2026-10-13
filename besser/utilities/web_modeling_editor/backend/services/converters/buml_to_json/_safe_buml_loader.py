@@ -52,7 +52,16 @@ def strip_buml_imports(code: str) -> str:
 # rebuilds element timestamps (and object slot values) with
 # ``datetime.datetime.fromisoformat("...")`` after an ``import datetime`` that
 # the caller strips. Only the ``datetime`` class is exposed, not the module.
+#
+# Callers put this sentinel in ``allowed_names``; ``safe_load_buml`` swaps it
+# for a fresh namespace from ``make_safe_datetime_module()`` on every call, so
+# the object an upload actually sees is never shared with another upload.
 SAFE_DATETIME_MODULE = types.SimpleNamespace(datetime=_datetime.datetime)
+
+
+def make_safe_datetime_module() -> types.SimpleNamespace:
+    """Return a new, per-load stand-in for the ``datetime`` module."""
+    return types.SimpleNamespace(datetime=_datetime.datetime)
 
 
 class SafeBumlLoaderError(ValueError):
@@ -188,6 +197,38 @@ def _attribute_root_name(node: ast.AST) -> str | None:
     return None
 
 
+def _validate_write_target(
+    node: ast.AST,
+    allowed_names: Mapping[str, Any],
+    declared_vars: Set[str],
+) -> None:
+    """Refuse a write (``x.attr = v`` / ``x[k] = v``) that can reach shared state.
+
+    Everything in ``allowed_names`` lives for the whole process and is handed
+    to every upload, so ``datetime.datetime = 1`` or ``Class.validate = 1``
+    would poison every later import, for every user. A write is accepted only
+    when its chain starts at a variable this script itself declared (and that
+    is not also an injected name). Aliasing a shared object through such a
+    variable (``d = datetime; d.datetime = 1``) is caught at run time by
+    ``_guarded_setattr``.
+    """
+    if not isinstance(node.ctx, ast.Store):
+        raise SafeBumlLoaderError("Deleting attributes or items is not allowed in BUML")
+    root_node = node
+    while isinstance(root_node, (ast.Attribute, ast.Subscript)):
+        root_node = root_node.value
+    if not isinstance(root_node, ast.Name):
+        raise SafeBumlLoaderError(
+            "Assignment must target an attribute of a variable declared in the BUML file"
+        )
+    root = root_node.id
+    if root in allowed_names or root not in declared_vars:
+        raise SafeBumlLoaderError(
+            f"Assignment to an attribute or item of {root!r} is not allowed: "
+            "only variables declared in the BUML file may be modified"
+        )
+
+
 def _validate_node(
     node: ast.AST,
     allowed_names: Mapping[str, Any],
@@ -257,6 +298,9 @@ def _validate_node(
                     f"Attribute access on unknown name: {root!r}"
                 )
 
+    if isinstance(node, (ast.Attribute, ast.Subscript)) and not isinstance(node.ctx, ast.Load):
+        _validate_write_target(node, allowed_names, declared_vars)
+
     if isinstance(node, ast.Name):
         # Store-context names are fine (we collect them separately); only
         # Load-context references need to resolve to something we allow.
@@ -312,6 +356,102 @@ def _validate_node(
         if isinstance(node, ast.ExceptHandler) and child is node.type:
             continue
         _validate_node(child, allowed_names, declared_vars, depth + 1, guarded)
+
+
+# Name under which the run-time write guard is placed in the exec globals. The
+# leading underscore makes it unreachable from user content: the validator
+# rejects every underscore name before the rewrite below introduces this one.
+_SETATTR_GUARD_NAME = "_besser_guarded_setattr"
+
+# Objects that are never a fresh model element built by the script: classes,
+# modules, namespaces and anything callable that is not an instance. Writing to
+# one of these changes behaviour for the whole process.
+_SHARED_OBJECT_TYPES = (
+    type,
+    types.ModuleType,
+    types.SimpleNamespace,
+    types.FunctionType,
+    types.BuiltinFunctionType,
+    types.MethodType,
+    types.BuiltinMethodType,
+    property,
+    classmethod,
+    staticmethod,
+)
+
+
+def _make_guarded_setattr(protected: Mapping[str, Any]):
+    """Build the run-time check behind every ``<expr>.<attr> = <value>``.
+
+    The static check only sees names; ``d = datetime; d.datetime = 1`` reaches
+    the shared object through a variable the script declared. At run time the
+    actual target object is known, so it is refused when it is one of the
+    injected objects or of a kind that is never a per-upload model element.
+    """
+    protected_ids = {id(value) for value in protected.values()}
+
+    def _guarded_setattr(target: Any, attr: str, value: Any) -> None:
+        if id(target) in protected_ids or isinstance(target, _SHARED_OBJECT_TYPES):
+            raise SafeBumlLoaderError(
+                f"Assignment to attribute {attr!r} of a shared object is not allowed in BUML"
+            )
+        setattr(target, attr, value)
+
+    return _guarded_setattr
+
+
+def _check_assignment_shapes(module: ast.Module) -> None:
+    """Attribute writes must be the single target of a plain assignment.
+
+    That is the only shape the builders emit (``var.attr = value``), and the
+    only one ``_GuardAttributeWrites`` rewrites, so ``a = b.x = v`` and
+    ``x, y.z = ...`` are refused rather than left unguarded.
+    """
+    for stmt in ast.walk(module):
+        if isinstance(stmt, ast.Assign):
+            targets = stmt.targets
+            if len(targets) > 1 or not isinstance(targets[0], (ast.Name, ast.Attribute)):
+                for target in targets:
+                    if any(isinstance(n, (ast.Attribute, ast.Subscript)) for n in ast.walk(target)):
+                        raise SafeBumlLoaderError(
+                            "Attribute assignment must be a single, plain target in BUML"
+                        )
+        elif isinstance(stmt, ast.AnnAssign):
+            if isinstance(stmt.target, (ast.Attribute, ast.Subscript)) and stmt.value is None:
+                raise SafeBumlLoaderError(
+                    "Annotated attribute declaration without a value is not allowed in BUML"
+                )
+
+
+class _GuardAttributeWrites(ast.NodeTransformer):
+    """Rewrite ``obj.attr = value`` to ``_besser_guarded_setattr(obj, "attr", value)``."""
+
+    def _rewrite(self, stmt: ast.stmt, target: ast.Attribute, value: ast.expr) -> ast.stmt:
+        obj = target.value
+        call = ast.Call(
+            func=ast.Name(id=_SETATTR_GUARD_NAME, ctx=ast.Load()),
+            args=[_as_load(obj), ast.Constant(value=target.attr), value],
+            keywords=[],
+        )
+        return ast.copy_location(ast.Expr(value=call), stmt)
+
+    def visit_Assign(self, node: ast.Assign) -> ast.stmt:
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Attribute):
+            return self._rewrite(node, node.targets[0], node.value)
+        return node
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.stmt:
+        if isinstance(node.target, ast.Attribute) and node.value is not None:
+            return self._rewrite(node, node.target, node.value)
+        return node
+
+
+def _as_load(node: ast.expr) -> ast.expr:
+    """Return ``node`` with every context switched to ``Load``."""
+    for sub in ast.walk(node):
+        if hasattr(sub, "ctx"):
+            sub.ctx = ast.Load()
+    return node
 
 
 def _collect_assigned_names(module: ast.Module) -> Set[str]:
@@ -431,6 +571,11 @@ def safe_load_buml(
             )
 
     _validate_node(tree, allowed_names, declared_vars)
+    _check_assignment_shapes(tree)
+
+    # Every attribute write goes through a run-time check of the real target
+    # object; see _make_guarded_setattr.
+    tree = _GuardAttributeWrites().visit(tree)
 
     # Re-parse with location info preserved (ast.parse already did this, but
     # fix_missing_locations is cheap insurance for manually constructed ASTs).
@@ -445,6 +590,12 @@ def safe_load_buml(
     # anything, and the validator pins that handler to a literal ``pass``.
     globals_ns: Dict[str, Any] = {"__builtins__": {"NameError": NameError}}
     globals_ns.update(allowed_names)
+    # A fresh ``datetime`` stand-in per load, so nothing an upload does to it
+    # can be seen by another upload.
+    for name, value in allowed_names.items():
+        if value is SAFE_DATETIME_MODULE:
+            globals_ns[name] = make_safe_datetime_module()
+    globals_ns[_SETATTR_GUARD_NAME] = _make_guarded_setattr(globals_ns)
     locals_ns: Dict[str, Any] = {}
     exec(code, globals_ns, locals_ns)  # noqa: S102 - AST pre-validated above
     return locals_ns

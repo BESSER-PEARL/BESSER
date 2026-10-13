@@ -10,12 +10,15 @@ The loader must:
     root is not a previously assigned or pre-approved name, etc.
 """
 
+import datetime as _real_datetime
+
 import pytest
 
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, Enumeration, PrimitiveDataType, Property,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    SAFE_DATETIME_MODULE,
     SafeBumlLoaderError,
     safe_load_buml,
 )
@@ -266,3 +269,116 @@ def test_attribute_calls_on_declared_objects_still_load(allowed_names):
     )
     namespace = safe_load_buml(source, allowed_names)
     assert namespace["model"].name == "Library"
+
+
+# ---------------------------------------------------------------------------
+# Writes through injected (process-wide) objects
+# ---------------------------------------------------------------------------
+# Everything in ``allowed_names`` is shared by every upload the process
+# handles. An assignment to one of its attributes would outlive the request
+# and poison every later import, for every user.
+
+_TS = 'x = datetime.datetime.fromisoformat("2024-01-02T03:04:05")\n'
+
+
+@pytest.fixture
+def with_datetime(allowed_names):
+    return {**allowed_names, "datetime": SAFE_DATETIME_MODULE}
+
+
+@pytest.mark.parametrize("source", [
+    "datetime.datetime = 1\n",
+    "datetime.datetime: int = 1\n",
+    "Class.add_attribute = 1\n",
+    "StringType.name = 'poisoned'\n",
+    "StringType.metadata.description = 'poisoned'\n",
+    "datetime.datetime.fromisoformat = 1\n",
+    # Aliasing a shared object through a script variable must not help.
+    "d = datetime\nd.datetime = 1\n",
+    "k = Class\nk.add_attribute = 1\n",
+    "s = [StringType][0]\ns.name = 'poisoned'\n",
+    "a = b = datetime\nb.datetime = 1\n",
+])
+def test_writes_to_injected_objects_are_refused(with_datetime, source):
+    with pytest.raises(SafeBumlLoaderError):
+        safe_load_buml(source, with_datetime)
+    # Nothing leaked into the shared objects.
+    assert SAFE_DATETIME_MODULE.datetime is _real_datetime.datetime
+    assert with_datetime["StringType"].name == "str"
+    assert callable(Class.add_attribute)
+
+
+@pytest.mark.parametrize("source", [
+    "del datetime.datetime\n",
+    "Class.x += 1\n",
+    "x, datetime.datetime = 1, 2\n",
+])
+def test_delete_augmented_and_unpacking_writes_are_refused(with_datetime, source):
+    with pytest.raises(SafeBumlLoaderError):
+        safe_load_buml(source, with_datetime)
+    assert SAFE_DATETIME_MODULE.datetime is _real_datetime.datetime
+
+
+def test_fresh_load_after_rejected_poisoning_still_works(with_datetime):
+    with pytest.raises(SafeBumlLoaderError):
+        safe_load_buml("datetime.datetime = 1\n", with_datetime)
+    result = safe_load_buml(_TS, with_datetime)
+    assert result["x"] == _real_datetime.datetime(2024, 1, 2, 3, 4, 5)
+
+
+def test_each_load_gets_its_own_datetime_namespace(with_datetime):
+    # Belt and braces: even a mutation the validator missed stays per-call.
+    first = safe_load_buml("d = datetime\n", with_datetime)["d"]
+    second = safe_load_buml("d = datetime\n", with_datetime)["d"]
+    assert first is not SAFE_DATETIME_MODULE
+    assert first is not second
+    assert first.datetime is _real_datetime.datetime
+
+
+def test_attribute_writes_on_script_objects_still_load(allowed_names):
+    # The shape every builder emits: ``<declared var>.<attr> = <value>``,
+    # including inside the ``except NameError: pass`` guard.
+    source = (
+        "book = Class(name='Book')\n"
+        "book.is_abstract = True\n"
+        "model = DomainModel(name='Library', types={book})\n"
+        "model.name = 'Renamed'\n"
+        "try:\n"
+        "    book.synonyms = undefined_name\n"
+        "except NameError:\n"
+        "    pass\n"
+    )
+    namespace = safe_load_buml(source, allowed_names)
+    assert namespace["book"].is_abstract is True
+    assert namespace["model"].name == "Renamed"
+    assert set(namespace) == {"book", "model"}
+
+
+def test_builder_export_with_attribute_writes_round_trips(tmp_path):
+    """A real ``domain_model_to_code`` export assigns ``cls.attributes = {...}``,
+    ``method.code = ...`` and, under the NameError guard,
+    ``method.state_machine = sm``; it must still load."""
+    from besser.BUML.metamodel.structural import (
+        Method, MethodImplementationType, StringType as RealStringType,
+    )
+    from besser.utilities.buml_code_builder import domain_model_to_code
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+        parse_buml_content,
+    )
+
+    book = Class(name="Book")
+    book.attributes = {Property(name="title", type=RealStringType)}
+    book.methods = {
+        Method(name="describe", code="def describe(self):\n    return self.title\n"),
+        Method(name="flow", implementation_type=MethodImplementationType.STATE_MACHINE),
+    }
+    out = tmp_path / "model.py"
+    domain_model_to_code(DomainModel(name="Library", types={book}), str(out))
+    source = out.read_text(encoding="utf-8")
+    assert ".attributes=" in source and ".code = " in source and ".state_machine = sm" in source
+
+    loaded = parse_buml_content(source)
+    loaded_book = loaded.get_class_by_name("Book")
+    assert {a.name for a in loaded_book.attributes} == {"title"}
+    describe = next(m for m in loaded_book.methods if m.name == "describe")
+    assert "return self.title" in describe.code

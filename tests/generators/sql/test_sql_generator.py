@@ -406,3 +406,48 @@ def test_sqlite_ddl_executes(domain_model_with_enums, tmpdir):
     finally:
         conn.close()
     assert {"author", "book", "library"} <= tables
+
+
+def test_mssql_ddl_needs_no_db_driver(domain_model_with_enums, tmpdir):
+    """DDL is compiled against the dialect only: no pyodbc / ODBC library is needed."""
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=domain_model_with_enums, output_dir=str(output_dir), sql_dialect="mssql").generate()
+
+    with open(os.path.join(str(output_dir), "tables_mssql.sql"), "r", encoding="utf-8") as f:
+        generated_code = f.read()
+
+    assert "CREATE TABLE book" in generated_code
+    assert "IDENTITY" in generated_code
+    # Targets a current SQL Server: DATE, not the pre-2008 DATETIME fallback.
+    assert "release DATE NOT NULL" in generated_code
+
+
+def test_database_url_env_does_not_change_dialect(domain_model, tmpdir, monkeypatch):
+    """The DDL dialect comes from sql_dialect, never from a DATABASE_URL in the environment."""
+    monkeypatch.setenv("DATABASE_URL", "mssql+pyodbc://user:pw@localhost/db")
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=domain_model, output_dir=str(output_dir), sql_dialect="postgresql").generate()
+
+    with open(os.path.join(str(output_dir), "tables_postgresql.sql"), "r", encoding="utf-8") as f:
+        generated_code = f.read()
+
+    assert "id SERIAL NOT NULL" in generated_code
+
+
+def test_invalid_dialect_raises_value_error(domain_model, tmpdir):
+    with pytest.raises(ValueError, match="Invalid SQL dialect"):
+        SQLGenerator(model=domain_model, output_dir=str(tmpdir), sql_dialect="db2").generate()
+
+
+def test_failing_ddl_script_raises_clear_error(domain_model, tmpdir, monkeypatch):
+    """A failing DDL subprocess surfaces its stderr instead of a FileNotFoundError."""
+    import subprocess
+
+    from besser.generators.sql import sql_generator
+
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="ImportError: boom")
+
+    monkeypatch.setattr(sql_generator.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="(?s)dialect 'sqlite'.*ImportError: boom"):
+        SQLGenerator(model=domain_model, output_dir=str(tmpdir), sql_dialect="sqlite").generate()

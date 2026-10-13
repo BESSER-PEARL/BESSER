@@ -21,6 +21,12 @@ Parameters
 - ``sql_dialect``: The target SQL dialect for the generated statements (default: ``"sqlite"``).
 - ``output_dir``: Optional output directory (default: ``output/`` in the current directory).
 
+No database driver is needed: the statements are compiled against the SQLAlchemy dialect
+only, so generating, for example, ``mssql`` DDL does not require ``pyodbc``. SQL Server DDL
+targets a current server version (``DATE`` and ``TIME`` columns, not the pre-2008 ``DATETIME``
+fallback). An unknown dialect raises ``ValueError``; if the DDL cannot be produced, a
+``RuntimeError`` carrying the underlying error is raised.
+
 Supported Dialects
 ------------------
 

@@ -7,7 +7,36 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 
+# Marker of the trailing "database connection" section of the SQLAlchemy module.
+# Everything from here on (``create_engine(DATABASE_URL)``, the ``__main__``
+# block) needs a DB driver and is irrelevant for DDL generation, so it is cut.
+_DB_CONNECTION_MARKER = "\n# Database connection"
+
+# SQLAlchemy URL whose dialect the DDL is compiled against. The DDL is compiled
+# against a mock engine (``create_mock_engine``), which builds the dialect object
+# without importing the DBAPI driver, so no database driver (pyodbc, psycopg2,
+# oracledb, ...) has to be installed. The drivers match the default
+# ``DATABASE_URL`` of the generated SQLAlchemy module so the DDL is unchanged.
+DDL_DIALECT_URLS = {
+    "sqlite": "sqlite://",
+    "postgresql": "postgresql+psycopg2://",
+    "mysql": "mysql+pymysql://",
+    "mariadb": "mysql+pymysql://",
+    "mssql": "mssql+pyodbc://",
+    "oracle": "oracle+oracledb://",
+}
+
+
 class SQLGenerator(GeneratorInterface):
+    """Generates SQL DDL (``CREATE TABLE`` statements) for a B-UML domain model.
+
+    Args:
+        model (DomainModel): The B-UML domain model.
+        output_dir (str, optional): Output directory; defaults to ``<cwd>/output``.
+        sql_dialect (str, optional): One of ``sqlite``, ``postgresql``, ``mysql``,
+            ``mssql``, ``mariadb`` or ``oracle``. Defaults to ``sqlite``.
+    """
+
     def __init__(self, model: DomainModel, output_dir: str = None, sql_dialect: str = "sqlite"):
         super().__init__(model, output_dir)
         self.sql_dialect = sql_dialect
@@ -16,7 +45,17 @@ class SQLGenerator(GeneratorInterface):
         """
         Generates SQL code based on the provided B-UML model and saves it to the specified output directory.
         If the output directory is not specified, the code will be stored in the <current directory>/output folder.
+
+        Raises:
+            ValueError: If the dialect is not supported.
+            RuntimeError: If the DDL could not be produced.
         """
+        if self.sql_dialect not in DDL_DIALECT_URLS:
+            raise ValueError(
+                f"Invalid SQL dialect '{self.sql_dialect}'. "
+                f"Valid options are {', '.join(sorted(DDL_DIALECT_URLS))}."
+            )
+
         # Determine output path
         final_output_dir = self.output_dir or os.path.join(os.getcwd(), "output")
         os.makedirs(final_output_dir, exist_ok=True)
@@ -29,18 +68,33 @@ class SQLGenerator(GeneratorInterface):
             alchemy_gen = SQLAlchemyGenerator(model=self.model, output_dir=temp_dir)
             alchemy_gen.generate(dbms=self.sql_dialect)
 
-            # Read and strip final line (optional)
+            # Keep only the model definitions: drop the database connection
+            # section (engine creation needs a driver, __main__ creates tables).
             with open(temp_py_path, "r", encoding="utf-8") as f:
-                lines = f.read().splitlines()
-            lines = lines[:-1]  # remove last line if needed
-            content = "\n".join(lines)
+                content = f.read()
+            marker_idx = content.find(_DB_CONNECTION_MARKER)
+            if marker_idx == -1:
+                raise RuntimeError(
+                    "SQL generation failed: could not locate the database connection "
+                    "section in the generated SQLAlchemy module."
+                )
+            content = content[:marker_idx]
             dialect = self.sql_dialect
 
             # Append DDL dump logic
             ddl_dump_code = '''
 
+from sqlalchemy import create_mock_engine as _create_mock_engine
 from sqlalchemy.schema import CreateTable
 import os
+
+# Dialect only: building it does not import the DBAPI driver.
+_ddl_dialect = _create_mock_engine("DIALECT_URL_PLACEHOLDER", lambda *args, **kwargs: None).dialect
+if 'DIALECT_PLACEHOLDER' == 'mssql':
+    # Without a connection the server version is unknown and SQL Server is assumed to
+    # predate 2008 (DATE/TIME rendered as DATETIME). Target a current SQL Server.
+    _ddl_dialect.server_version_info = (16,)
+    _ddl_dialect.deprecate_large_types = True
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
 sql_file_path = os.path.join(current_directory, "tables_DIALECT_PLACEHOLDER.sql")
@@ -59,7 +113,7 @@ if 'DIALECT_PLACEHOLDER'.lower() == 'postgresql':
                     ddl_statements.append(f"CREATE TYPE {enum_name} AS ENUM ({', '.join(enum_values)})")
 
 for table in Base.metadata.sorted_tables:
-    ddl = str(CreateTable(table).compile(engine))
+    ddl = str(CreateTable(table).compile(dialect=_ddl_dialect))
     # For Oracle, add CHECK constraint for enum columns
     if 'DIALECT_PLACEHOLDER'.lower() == 'oracle':
         for col in table.columns:
@@ -112,19 +166,26 @@ with open(sql_file_path, "w") as f:
     for stmt in ddl_statements:
         f.write(f"{stmt};\\n\\n")
 '''
-            content += ddl_dump_code.replace("DIALECT_PLACEHOLDER", dialect)
+            content += ddl_dump_code.replace(
+                "DIALECT_URL_PLACEHOLDER", DDL_DIALECT_URLS[dialect]
+            ).replace("DIALECT_PLACEHOLDER", dialect)
 
             # Write back modified file
             with open(temp_py_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
-            # Run the temporary Python file
-            try:
-                subprocess.run([sys.executable, temp_py_path], check=True, text=True, capture_output=True)
-            except subprocess.CalledProcessError as e:
-                print(f"Error running generated SQLAlchemy file:\n{e.stderr}")
+            # Run the temporary Python file (in the temp dir, so it leaves nothing behind)
+            result = subprocess.run(
+                [sys.executable, temp_py_path], text=True, capture_output=True, cwd=temp_dir, check=False
+            )
+            src_sql = os.path.join(temp_dir, f"tables_{self.sql_dialect}.sql")
+            if result.returncode != 0 or not os.path.isfile(src_sql):
+                details = (result.stderr or result.stdout or "").strip() or "no output"
+                raise RuntimeError(
+                    f"SQL generation failed for dialect '{self.sql_dialect}': the DDL script "
+                    f"exited with code {result.returncode}.\n{details}"
+                )
 
             # Copy generated .sql file to final output location
-            src_sql = os.path.join(temp_dir, f"tables_{self.sql_dialect}.sql")
             dst_sql = os.path.join(final_output_dir, f"tables_{self.sql_dialect}.sql")
             shutil.copyfile(src_sql, dst_sql)

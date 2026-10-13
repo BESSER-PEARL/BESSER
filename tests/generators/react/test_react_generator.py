@@ -1,5 +1,10 @@
 import os
 import pytest
+import json
+import io
+import wave
+from unittest.mock import patch, MagicMock
+from types import SimpleNamespace
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, Property, StringType, IntegerType,
     BinaryAssociation, Multiplicity
@@ -57,6 +62,31 @@ def test_react_generator_instantiation(domain_model, gui_model):
     generator = ReactGenerator(model=domain_model, gui_model=gui_model)
     assert generator is not None
     assert generator.gui_model is gui_model
+
+
+def test_generated_read_aloud_synthesizes_final_text_without_preview_cache(domain_model, gui_model, tmp_path):
+    from besser.generators.gui.tts.base import SpeechAudio
+    audio = io.BytesIO()
+    with wave.open(audio, 'wb') as stream:
+        stream.setnchannels(1); stream.setsampwidth(2); stream.setframerate(24000)
+        stream.writeframes(b'\x00\x00' * 100)
+    text = next(iter(next(iter(next(iter(gui_model.modules)).screens)).view_elements))
+    text.content = 'Hello World everyone'
+    text.custom_attributes = {'data-besser-read-aloud': 'true', 'data-besser-audio': json.dumps({'text': 'Legacy cached text', 'assetId': 'a' * 64})}
+    provider = SimpleNamespace(configuration={'provider': 'fake', 'model': 'fake'}, text2speech=MagicMock(return_value=SpeechAudio(audio.getvalue())))
+    generator = ReactGenerator(model=domain_model, gui_model=gui_model, output_dir=str(tmp_path / 'app'))
+    with patch('besser.generators.gui.tts.create_text2speech', return_value=provider): generator.generate()
+    page = next((tmp_path / 'app' / 'src' / 'pages').glob('*.tsx')).read_text(encoding='utf-8')
+    assert '<ReadAloud' in page
+    assert 'import.meta.env.BASE_URL' in page
+    assert next((tmp_path / 'app' / 'public' / 'audio').glob('*.wav')).read_bytes() == audio.getvalue()
+    assert (tmp_path / 'app' / 'src' / 'components' / 'runtime' / 'ReadAloud.tsx').exists()
+    text.content = 'Read the new instructions carefully.'
+    generator = ReactGenerator(model=domain_model, gui_model=gui_model, output_dir=str(tmp_path / 'stale'))
+    with patch('besser.generators.gui.tts.create_text2speech', return_value=provider): generator.generate()
+    page = next((tmp_path / 'stale' / 'src' / 'pages').glob('*.tsx')).read_text(encoding='utf-8')
+    assert '<ReadAloud' in page
+    assert provider.text2speech.call_args.args[0] == text.content
 
 
 def test_react_generator_generate(domain_model, gui_model, tmpdir):

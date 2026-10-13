@@ -244,6 +244,9 @@ async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
         userProfileModel: <UserDiagram UML model JSON>
         pageName: str (optional)
         model: str (optional OpenAI model id)
+        guiPersonalization: {presentation: {language: "french", languageComplexity: "simple", sentenceLength: "concise"}, content: {adaptContentToUserProfile: true, summarizeLongContent: true}} (optional)
+        adaptFromProfile: bool (optional, default true). False uses only explicit
+            text rules, without a general LLM rewrite of the page model.
 
     Returns the same ``{components, css}`` shape adapted in style and content,
     ready to be imported back into the editor as a page variant.
@@ -262,6 +265,8 @@ async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
         page_name=payload.get("pageName"),
         model=payload.get("model"),
         openai_api_key=extract_openai_api_key(payload),
+        gui_personalization=payload.get("guiPersonalization"),
+        adapt_from_profile=payload.get("adaptFromProfile", True),
     )
     return {
         "guiPage": {"components": result["components"], "css": result["css"]},
@@ -269,6 +274,23 @@ async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
         "model": result["model"],
         "generatedAt": _utc_now_iso(),
     }
+
+
+@router.post("/generate-gui-audio")
+@handle_endpoint_errors("generate_gui_audio")
+async def generate_gui_audio_endpoint(payload: Dict[str, Any] = Body(...)):
+    """Explicit design-time generation; provider and credentials come only from server env."""
+    from besser.generators.gui.tts import create_text2speech
+    from besser.generators.gui.gui_audio import generate_gui_audio
+    try:
+        provider = create_text2speech()
+        result = await asyncio.to_thread(generate_gui_audio, payload.get("guiPage"), provider, language=payload.get("language"))
+        return Response(content=json.dumps(result), media_type="application/json", headers={"Cache-Control": "no-store"})
+    except ValueError as error:
+        raise ValidationError(str(error)) from error
+    except Exception as error:
+        logger.exception("GUI audio generation failed")
+        raise GenerationError("Audio generation failed. Check the configured TTS provider and server logs.") from error
 
 
 @router.get("/agent-config-manual-mapping")

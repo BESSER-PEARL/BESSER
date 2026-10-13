@@ -515,11 +515,13 @@ def append_speech(match):
     text = match.group(1)
     return f"session.reply('{text}')\n    platform.reply_speech(session, '{text}')"
 
-def complexity_text_batch(texts, complexity, model=DEFAULT_OPENAI_MODEL, openai_api_key=None, config=None):
+def complexity_text_batch(texts, complexity, model=DEFAULT_OPENAI_MODEL, openai_api_key=None, config=None, *, simple_text_prompt=None):
     """
     Adjusts the complexity of each text in `texts` based on the specified `complexity` level.
     Complexity can be "simple", "medium", or "complex".
     Returns a list of texts with the adjusted complexity.
+    ``simple_text_prompt`` lets GUI personalization supply its accessibility
+    objective while retaining the shared batching and newline handling.
     """
     if complexity not in {"simple", "medium", "complex"}:
         raise ValueError("Invalid complexity level. Choose from 'simple', 'medium', or 'complex'.")
@@ -529,7 +531,7 @@ def complexity_text_batch(texts, complexity, model=DEFAULT_OPENAI_MODEL, openai_
 
     # Define the system prompt based on the complexity level
     if complexity == "simple":
-        system_prompt = (
+        system_prompt = simple_text_prompt or (
             "You are a text simplification engine. "
             "Simplify the following texts to make them easier to understand while retaining their meaning. "
             "If a text already fits the A1-A2 complexity level, no changes are required. "

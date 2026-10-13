@@ -115,6 +115,8 @@ class PageBuilderMixin:
 
     def _build_page_imports(self, context: _PageRenderContext) -> str:
         imports: List[str] = []
+        if "ReadAloud" in context.imports:
+            imports.append('import { ReadAloud } from "../components/runtime/ReadAloud";')
         if "ChartBlock" in context.imports:
             imports.append("import { ChartBlock } from \"../components/runtime/ChartBlock\";")
         if "TableBlock" in context.imports:
@@ -231,8 +233,31 @@ class PageBuilderMixin:
             tag = self._select_text_tag(node.get("tag"))
             content = node.get("content") or ""
             content_expr = f"{{{json.dumps(content, ensure_ascii=False)}}}"
+            attributes.pop("data-besser-audio", None)  # Ignore legacy backend cache references.
             props = self._build_element_props(component_id, class_list, style, attributes, None)
-            return f"{indent_str}<{tag}{props}>{content_expr}</{tag}>"
+            text_jsx = f"{indent_str}<{tag}{props}>{content_expr}</{tag}>"
+            if attributes.get("data-besser-read-aloud") in (True, "true"):
+                from besser.generators.gui.gui_audio import reading_text, synthesize_audio_text, audio_signature
+                from besser.generators.gui.tts import create_text2speech
+                spoken_content = reading_text({"type": "text", "content": content, "attributes": attributes})
+                if spoken_content:
+                    provider = getattr(self, "_gui_tts_provider", None)
+                    if provider is None:
+                        provider = self._gui_tts_provider = create_text2speech()
+                    language = attributes.get("lang")
+                    asset_id = audio_signature(spoken_content, language, provider.configuration)
+                    audio_dir = self.build_generation_path("public/audio")
+                    os.makedirs(audio_dir, exist_ok=True)
+                    audio_path = os.path.join(audio_dir, f"{asset_id}.wav")
+                    if not os.path.isfile(audio_path):
+                        clip = synthesize_audio_text(spoken_content, provider, language=language)
+                        with open(audio_path, "wb") as stream:
+                            stream.write(clip)
+                    context.imports.add("ReadAloud")
+                    text_jsx = f"{indent_str}<{tag}{props}>{{{json.dumps(spoken_content, ensure_ascii=False)}}}</{tag}>"
+                    summary = "true" if attributes.get("data-besser-gui-summary") else "false"
+                    return f'{indent_str}<ReadAloud src={{import.meta.env.BASE_URL + "audio/{asset_id}.wav"}} summary={{{summary}}}>\n{text_jsx}\n{indent_str}</ReadAloud>'
+            return text_jsx
 
         # Button
         if comp_type in {"button", "action-button"}:

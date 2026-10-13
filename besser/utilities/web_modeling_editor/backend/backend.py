@@ -21,7 +21,7 @@ from starlette.requests import Request
 from starlette.responses import Response as StarletteResponse
 
 import sys
-sys.path.append("C:/Users/conrardy/Desktop/git/BESSER")
+sys.path.append("C:/Users/Aaron/Documents/GitHub/BESSER")
 
 from besser.utilities.web_modeling_editor.backend.middleware import setup_middleware
 
@@ -130,6 +130,7 @@ _REQUIRED_ENV_VARS = [
 _OPTIONAL_ENV_VARS = [
     "SMTP_PASSWORD",
     "OPENAI_API_KEY",
+    "BESSER_GUI_TTS_PROVIDER",
 ]
 
 
@@ -159,6 +160,8 @@ def _validate_env_vars() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _validate_env_vars()
+    from besser.generators.gui.tts import log_text2speech_environment
+    log_text2speech_environment(logger)
 
     # Run an immediate cleanup of stale temp files left from previous runs,
     # then schedule a background task that repeats every hour.

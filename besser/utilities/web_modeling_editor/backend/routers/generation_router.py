@@ -1453,12 +1453,12 @@ def _create_file_response(temp_dir: str, generator_type: str):
         raise ValueError(f"{generator_type} generation failed: No output files were created.")
 
     # Match against the expected filename from generator config
+    generator_info = get_generator_info(generator_type)
     expected_name = get_filename_for_generator(generator_type)
     if expected_name in files:
         file_name = expected_name
     else:
         # Fall back to matching by extension, then first file
-        generator_info = get_generator_info(generator_type)
         ext = generator_info.file_extension if generator_info else ""
         matching = [f for f in sorted(files) if f.endswith(ext)] if ext else []
         file_name = matching[0] if matching else sorted(files)[0]
@@ -1467,8 +1467,12 @@ def _create_file_response(temp_dir: str, generator_type: str):
     with open(output_file_path, "rb") as f:
         file_content = f.read()
 
-    # Use the proper filename from config
-    proper_filename = get_filename_for_generator(generator_type)
+    # Use the proper filename from config, unless the generator's own name is
+    # meaningful (e.g. Supabase's ``<timestamp>_<slug>.sql`` migration name).
+    if generator_info and generator_info.keep_generated_filename:
+        proper_filename = file_name
+    else:
+        proper_filename = expected_name
     file_content = _with_version_comment(file_content, proper_filename)
 
     return Response(

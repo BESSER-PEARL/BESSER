@@ -90,7 +90,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
 | `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks) |
 | `…/backend/routers/` | One router per concern (generation, conversion, validation, deployment, spec_driven, telemetry, agent_simulator); `error_handler.py` has `@handle_endpoint_errors` |
-| `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` registry (`GeneratorInfo`) + `get_filename_for_generator` |
+| `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` registry (`GeneratorInfo`, incl. download filenames) + `get_filename_for_generator` |
 | `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins, most `BESSER_LLM_*` caps and flags |
 | `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`) |
 | `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
@@ -191,7 +191,9 @@ in one response. (Spec-Driven code validation is a separate, fourth layer; see a
 1. Package in `besser/generators/<name>/` implementing `GeneratorInterface` (`__init__(model, output_dir=None)`,
    `generate()`; `output_dir=None` means `<cwd>/output`); templates in `generators/<name>/templates/`
 2. Register in `backend/config/generators.py`: `SUPPORTED_GENERATORS` (`GeneratorInfo`: `output_type`
-   `"file"`/`"zip"`, `requires_class_diagram`, `required_diagram_type`) **and** `get_filename_for_generator`
+   `"file"`/`"zip"`, `requires_class_diagram`, `required_diagram_type`, `download_filename`; without a
+   `download_filename` the download falls back to `<key>_output<ext>`; `keep_generated_filename` keeps a
+   single-file generator's own filename). Don't rename an existing `download_filename` — users rely on it
 3. Tests in `tests/generators/<name>/`
 4. `docs/source/generators/<name>.rst`, added to a toctree **and** the "Choosing a Generator" table in
    `docs/source/generators.rst`

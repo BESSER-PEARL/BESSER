@@ -111,7 +111,7 @@ class TestGeneratedZip:
         (
             "django",
             {"project_name": "library_site", "app_name": "books", "containerization": False},
-            "django_output.zip",
+            "django_project.zip",
             "manage.py",
             ["project_name: `library_site`", "app_name: `books`", "containerization: `False`"],
         ),
@@ -119,7 +119,7 @@ class TestGeneratedZip:
             "spring",
             {"project_name": "lib", "app_name": "LibApp", "package_name": "com.acme.lib",
              "spring_boot_version": "3.4.4", "java_version": "21"},
-            "spring_output.zip",
+            "spring_boot_project.zip",
             "pom.xml",
             ["project_name: `lib`", "app_name: `LibApp`", "package_name: `com.acme.lib`",
              "spring_boot_version: `3.4.4`", "java_version: `21`"],

@@ -132,6 +132,106 @@ def sqlite_database_to_file(config_yaml: str) -> str:
     return ''.join(lines)
 
 
+DEFAULT_DB_NAME = 'db1'
+"""``db.sql`` entry that a ``DBReply`` with ``db_selection_type='default'`` queries."""
+
+_PLACEHOLDER_PREFIX = 'YOUR-'
+
+
+def _find_sql_db(data, db_name: str):
+    """Return the ``db.sql.<db_name>`` entry of a parsed BAF config, or ``None``.
+
+    ``db.sql`` may be a list of single-key mappings (the generated layout) or a
+    mapping; BAF flattens both to ``db.sql.<name>.<key>``.
+    """
+    db = data.get('db') if isinstance(data, dict) else None
+    sql = db.get('sql') if isinstance(db, dict) else None
+    if isinstance(sql, dict):
+        return sql.get(db_name)
+    if isinstance(sql, list):
+        for item in sql:
+            if isinstance(item, dict) and len(item) == 1 and db_name in item:
+                return item[db_name]
+    return None
+
+
+def _is_placeholder_db(entry) -> bool:
+    """True when a ``db.sql`` entry is missing, empty or still holds a ``YOUR-...`` placeholder."""
+    if not isinstance(entry, dict) or not entry:
+        return True
+    return any(isinstance(v, str) and v.strip().startswith(_PLACEHOLDER_PREFIX) for v in entry.values())
+
+
+def yaml_scalar(value) -> str:
+    """*value* as a YAML scalar; strings are double-quoted (a JSON string is valid YAML)."""
+    if isinstance(value, bool):
+        return 'True' if value else 'False'
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(str(value))
+
+
+def link_default_database(config_yaml: str, db_entry: dict, db_name: str = DEFAULT_DB_NAME) -> str:
+    """Point ``db.sql.<db_name>`` of a user-supplied *config_yaml* at *db_entry*.
+
+    The entry is replaced only when it is missing or still holds ``YOUR-...``
+    placeholders, so a database the user configured on purpose is kept. A
+    ``- <db_name>:`` list item is rewritten in place, keeping the rest of the text
+    (comments included); otherwise the YAML is parsed, updated and dumped again.
+    Text that is not a YAML mapping is returned unchanged.
+
+    Args:
+        config_yaml (str): The ``config.yaml`` text.
+        db_entry (dict): The connection properties, e.g. ``{"dialect": "sqlite", "file": "..."}``.
+        db_name (str): The ``db.sql`` entry to set. Defaults to ``db1``.
+
+    Returns:
+        str: The updated ``config.yaml`` text.
+    """
+    try:
+        import yaml  # pylint: disable=import-outside-toplevel
+    except ImportError:  # pragma: no cover - PyYAML ships with the backend requirements
+        return config_yaml
+    try:
+        data = yaml.safe_load(config_yaml) if config_yaml.strip() else {}
+    except yaml.YAMLError:
+        return config_yaml
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return config_yaml
+    if not _is_placeholder_db(_find_sql_db(data, db_name)):
+        return config_yaml
+
+    if not config_yaml.endswith('\n'):
+        config_yaml += '\n'
+    lines = config_yaml.splitlines(keepends=True)
+    header_re = re.compile(r'^(\s*)-\s+' + re.escape(db_name) + r'\s*:\s*$')
+    for i, line in enumerate(lines):
+        header = header_re.match(line)
+        if not header:
+            continue
+        indent = len(header.group(1))
+        end = i + 1
+        while end < len(lines) and (not lines[end].strip()
+                                    or len(lines[end]) - len(lines[end].lstrip()) > indent):
+            end += 1
+        body = [f"{' ' * (indent + 4)}{key}: {yaml_scalar(value)}\n" for key, value in db_entry.items()]
+        return ''.join(lines[:i + 1] + body + lines[end:])
+
+    db = data.get('db')
+    if not isinstance(db, dict):
+        db = data['db'] = {}
+    sql = db.get('sql')
+    if isinstance(sql, dict):
+        sql[db_name] = dict(db_entry)
+    else:
+        others = [item for item in (sql if isinstance(sql, list) else [])
+                  if not (isinstance(item, dict) and db_name in item)]
+        db['sql'] = [{db_name: dict(db_entry)}] + others
+    return yaml.safe_dump(data, sort_keys=False)
+
+
 def workspace_rel_dir(path: str, name: str) -> str:
     """Return the directory of a workspace relative to the generated agent's folder.
 
@@ -221,6 +321,13 @@ class BAFGenerator(GeneratorInterface):
             not exposed on the network; container builds (e.g. ``DockerComposeGenerator``)
             pass ``"0.0.0.0"`` so the published ports reach the servers. A supplied
             ``config_yaml`` is written as-is.
+        default_db (dict, optional): Connection properties of ``db1``, the database a
+            ``DBReply`` with ``db_selection_type='default'`` queries (e.g.
+            ``{"dialect": "sqlite", "file": "/app/webapp_data/app.db"}``). ``None`` (the
+            default) keeps the ``YOUR-DB-*`` placeholders. A supplied ``config_yaml`` is
+            changed only when its ``db1`` is missing or still holds placeholders (see
+            :func:`link_default_database`). ``WebAppGenerator`` uses it to connect the
+            agent to the web app's database.
     """
     def __init__(
         self,
@@ -235,9 +342,11 @@ class BAFGenerator(GeneratorInterface):
         a2a_descriptor: Optional[dict] = None,
         deployment_component_metadata: bool = False,
         bind_host: str = "localhost",
+        default_db: Optional[dict] = None,
     ):
         super().__init__(model, output_dir)
         self.bind_host = bind_host
+        self.default_db = dict(default_db) if default_db else None
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
         self.config_yaml = config_yaml
         self.openai_api_key = openai_api_key
@@ -363,6 +472,7 @@ class BAFGenerator(GeneratorInterface):
         env.globals['extract_braced_vars'] = extract_braced_vars
         env.filters['python_repr'] = repr
         env.filters['json_literal'] = json_literal
+        env.filters['yaml_scalar'] = yaml_scalar
         agent_template = env.get_template('baf_agent_template.py.j2')
         gui_modules = collect_gui_modules(self.model)
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
@@ -457,12 +567,16 @@ class BAFGenerator(GeneratorInterface):
             config_path = self.build_generation_path(file_name="config.yaml")
             with open(config_path, mode="w", encoding="utf-8") as f:
                 if self.config_yaml is not None:
-                    f.write(sqlite_database_to_file(self.config_yaml))
+                    config_yaml = sqlite_database_to_file(self.config_yaml)
+                    if self.default_db:
+                        config_yaml = link_default_database(config_yaml, self.default_db)
+                    f.write(config_yaml)
                 else:
                     config_template = env.get_template('baf_config_template.py.j2')
                     properties = sorted(self.model.properties, key=lambda prop: prop.section)
                     f.write(config_template.render(properties=properties, agent=self.model,
-                                                   bind_host=self.bind_host))
+                                                   bind_host=self.bind_host,
+                                                   default_db=self.default_db))
             logger.info("Agent config file generated at %s", config_path)
             # Generate readme.txt using the Jinja2 template
             readme_template = env.get_template('readme.txt.j2')

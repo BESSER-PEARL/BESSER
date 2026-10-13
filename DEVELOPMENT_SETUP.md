@@ -60,8 +60,14 @@ venv\Scripts\activate          # Windows
 # source venv/bin/activate     # Linux / macOS
 pip install -r requirements.txt
 pip install -e .
-python besser/utilities/web_modeling_editor/backend/backend.py
+pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
+besser-wme-backend
 ```
+
+`besser-wme-backend` (installed by `pip install -e .` or `pip install besser`)
+accepts `--host`, `--port` and `--log-level`; run it with `--help` for details.
+`python besser/utilities/web_modeling_editor/backend/backend.py` starts the
+same server.
 
 The backend runs on `http://localhost:9000/besser_api`. To use the
 Spec-Driven Agent's PIA or Local (e.g. Ollama) providers, set

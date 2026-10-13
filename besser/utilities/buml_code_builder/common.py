@@ -5,7 +5,7 @@ import keyword
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from besser.utilities.provenance import get_besser_version
-from besser.utilities.utils import timestamp_to_iso
+from besser.utilities.utils import explicit_timestamp_iso
 
 if TYPE_CHECKING:
     from besser.BUML.metamodel.gui import DataSourceElement
@@ -78,12 +78,12 @@ RESERVED_NAMES = ['Class', 'Property', 'Method', 'Parameter', 'Enumeration', 'da
 def timestamp_expr(element: Any) -> Optional[str]:
     """Return Python source rebuilding ``element.timestamp``, or ``None``.
 
-    The generated script recreates the element with the timestamp stored on
-    the source model (never the current time), so building the same model
-    always yields the same source. The generated file must ``import datetime``.
-    Returns ``None`` when the element has no ``datetime`` timestamp.
+    Only an explicit timestamp is emitted (passed to the constructor, set
+    later, or read from editor JSON); one that defaulted to the creation time
+    gives ``None``, so building the same model always yields the same source.
+    The generated file must ``import datetime``.
     """
-    iso = timestamp_to_iso(getattr(element, "timestamp", None))
+    iso = explicit_timestamp_iso(element)
     if iso is None:
         return None
     return f'datetime.datetime.fromisoformat("{_escape_python_string(iso)}")'

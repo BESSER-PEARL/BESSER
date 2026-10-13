@@ -17,6 +17,18 @@ def timestamp_to_iso(timestamp: _Any) -> _Optional[str]:
     return None
 
 
+def explicit_timestamp_iso(element: _Any) -> _Optional[str]:
+    """ISO 8601 form of ``element.timestamp`` when it was given explicitly.
+
+    A timestamp that defaulted to the creation time (see
+    ``Element.has_explicit_timestamp``) gives ``None``: writing it out would
+    make serializing the same model twice produce different output.
+    """
+    if not getattr(element, "has_explicit_timestamp", False):
+        return None
+    return timestamp_to_iso(getattr(element, "timestamp", None))
+
+
 def parse_iso_timestamp(value: _Any) -> _Optional[_datetime.datetime]:
     """Parse an ISO 8601 string written by :func:`timestamp_to_iso`.
 

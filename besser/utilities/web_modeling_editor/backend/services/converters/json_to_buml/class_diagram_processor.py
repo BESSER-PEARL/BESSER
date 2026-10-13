@@ -737,13 +737,14 @@ def _process_association_classes(
         methods = set(class_obj.methods)
 
         # Create the association class with attributes and methods
-        # Keep the promoted class's identity in time: it is the same diagram
-        # element, so it keeps the timestamp the plain class was created with.
+        # The promoted class is the same diagram element, so it keeps an
+        # explicit timestamp read from the JSON. A defaulted one is not copied:
+        # passing it would make it explicit and serializers would emit it.
         association_class = AssociationClass(
             name=class_name,
             attributes=attributes,
             association=association,
-            timestamp=class_obj.timestamp,
+            timestamp=class_obj.timestamp if class_obj.has_explicit_timestamp else None,
         )
 
         # Add methods to the association class if they exist

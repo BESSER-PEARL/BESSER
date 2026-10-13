@@ -61,7 +61,11 @@ which generators use to order members. The class-diagram converters keep it:
 ``class_buml_to_json`` writes an optional ISO 8601 ``timestamp`` string on the
 diagram model, on each class, enumeration, attribute, enumeration literal,
 method and OCL constraint element, on each association and inheritance
-relationship, and on each association end (``source`` / ``target``).
+relationship, and on each association end (``source`` / ``target``). Only
+explicit timestamps are written (``Element.has_explicit_timestamp``: given to
+the constructor, set later, or read from JSON); one that defaulted to the
+creation time is left out, so converting the same model twice gives the same
+JSON, and exporting a timestamp-less diagram to B-UML twice gives the same file.
 ``process_class_diagram`` reads the field back. A missing or malformed value
 falls back to the creation time, and a value with a UTC offset is converted to
 naive local time, like the metamodel's own timestamps. Method parameters live

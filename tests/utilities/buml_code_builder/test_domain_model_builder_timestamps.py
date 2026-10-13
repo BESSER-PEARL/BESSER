@@ -145,3 +145,32 @@ def test_class_named_datetime_does_not_shadow_the_module(tmp_path):
     rebuilt = next(iter(namespace["domain_model"].types))
     assert rebuilt.name == "datetime"
     assert rebuilt.timestamp == _ts(1)
+
+
+def test_defaulted_timestamps_are_not_emitted(tmp_path):
+    """A timestamp left to the creation-time default is not written out, so a
+    model built without explicit timestamps generates the same code as before."""
+    library = Class(name="Library", attributes={Property(name="name", type=StringType)})
+    model = DomainModel(name="Plain", types={library})
+    assert not library.has_explicit_timestamp
+    code = _generate(model, tmp_path)
+    assert "fromisoformat" not in code
+    assert 'Library = Class(name="Library")\n' in code
+
+
+def test_explicit_timestamp_flag():
+    assert Class(name="A", timestamp=_ts(1)).has_explicit_timestamp
+    defaulted = Class(name="B")
+    assert not defaulted.has_explicit_timestamp
+    defaulted.timestamp = _ts(2)
+    assert defaulted.has_explicit_timestamp
+
+
+def test_flag_survives_deepcopy_and_pickle():
+    import copy
+    import pickle
+
+    explicit, defaulted = Class(name="A", timestamp=_ts(1)), Class(name="B")
+    for clone in (copy.deepcopy, lambda obj: pickle.loads(pickle.dumps(obj))):
+        assert clone(explicit).has_explicit_timestamp
+        assert not clone(defaulted).has_explicit_timestamp

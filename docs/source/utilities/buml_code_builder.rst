@@ -42,9 +42,9 @@ The generated code will include:
 * All relationships (associations and generalizations)
 * A complete domain model instance that can be used to recreate the model
 
-Each element is recreated with the ``timestamp`` stored on the source model,
-passed as a constructor argument, so generators that order members by
-timestamp see the same order in the recreated model:
+An element whose ``timestamp`` was given explicitly is recreated with that
+timestamp, passed as a constructor argument, so generators that order members
+by timestamp see the same order in the recreated model:
 
 .. code-block:: python
 
@@ -52,12 +52,19 @@ timestamp see the same order in the recreated model:
 
     Library = Class(name="Library", timestamp=datetime.datetime.fromisoformat("2024-03-01T09:30:06.123456"))
 
-The value comes from the model, never from the clock, so building the same
-model twice gives the same file. This covers the domain model, classes,
-enumerations and their literals, attributes, methods and their parameters,
-associations and their ends, association classes, generalizations and OCL
-constraints. A class named ``datetime`` is emitted as ``datetime_`` so that it
-does not shadow the imported module.
+A timestamp is explicit when it was passed to the constructor, assigned
+later through the ``timestamp`` setter, or read from editor JSON
+(``Element.has_explicit_timestamp``). A timestamp left to its default, the
+creation time, is not emitted: writing it would make the same model, for
+example the same diagram exported twice, produce different files. A model
+built in Python without explicit timestamps therefore gets fresh timestamps
+when the generated file runs.
+
+The rule covers the domain model, classes, enumerations and their literals,
+attributes, methods and their parameters, associations and their ends,
+association classes, generalizations and OCL constraints. A class named
+``datetime`` is emitted as ``datetime_`` so that it does not shadow the
+imported module.
 
 Agent / GUI / State Machine / Quantum / Project generation
 -----------------------------------------------------------

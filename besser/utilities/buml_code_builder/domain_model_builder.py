@@ -462,8 +462,9 @@ def domain_model_to_code(
                         f.write("except NameError:\n")
                         f.write("    pass\n")
 
-                # Create attributes set string if attributes exist
-                attributes_str = ""
+                # ``attributes`` is a required AssociationClass argument, so an
+                # association class without attributes gets an empty set.
+                attributes_str = "attributes=set(), "
                 if sort(ac.attributes):
                     attrs_str = ", ".join(sorted([f"{ac_var_name}_{attr.name}" for attr in ac.attributes]))
                     attributes_str = f"attributes={{{attrs_str}}}, "

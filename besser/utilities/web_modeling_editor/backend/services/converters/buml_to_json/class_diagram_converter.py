@@ -34,16 +34,18 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.multiplicity_parser import (
     format_multiplicity_label,
 )
-from besser.utilities.utils import timestamp_to_iso
+from besser.utilities.utils import explicit_timestamp_iso
 
 
 def _set_timestamp(target: dict, element) -> dict:
     """Record ``element.timestamp`` on a JSON dict as an ISO 8601 ``timestamp``.
 
-    The field is optional: it is left out when the element has no timestamp,
-    and ``json_to_buml`` falls back to the creation time when it is absent.
+    Only an explicit timestamp is written (see ``Element.has_explicit_timestamp``);
+    one that defaulted to the creation time is left out, so converting the same
+    model twice gives the same JSON. ``json_to_buml`` falls back to the creation
+    time when the field is absent.
     """
-    iso = timestamp_to_iso(getattr(element, "timestamp", None))
+    iso = explicit_timestamp_iso(element)
     if iso is not None:
         target["timestamp"] = iso
     return target
@@ -136,7 +138,8 @@ def parse_buml_content(content: str) -> DomainModel:
         for var_name, var_value in local_vars.items():
             if isinstance(var_value, DomainModel):
                 domain_name = var_value.name
-                domain_timestamp = var_value.timestamp
+                if var_value.has_explicit_timestamp:
+                    domain_timestamp = var_value.timestamp
 
         domain_model = DomainModel(domain_name, timestamp=domain_timestamp)
         # First pass: Add all classes and enumerations

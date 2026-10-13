@@ -1,9 +1,10 @@
 """Element timestamps survive the class-diagram converters (GitHub issue #152).
 
 ``class_buml_to_json`` writes an optional ISO 8601 ``timestamp`` on every
-element, relationship, association end and on the diagram model itself;
-``process_class_diagram`` reads it back, and falls back to the creation time
-when it is absent or malformed.
+element, relationship, association end and on the diagram model itself, when
+that timestamp is explicit; ``process_class_diagram`` reads it back, and falls
+back to the creation time when it is absent or malformed. Defaulted
+timestamps are never written, so timestamp-less input converts identically.
 """
 import copy
 from datetime import datetime, timedelta, timezone
@@ -11,9 +12,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from besser.BUML.metamodel.structural import AssociationClass
+from besser.BUML.metamodel.structural import structural
+from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.utilities.utils import parse_iso_timestamp, timestamp_to_iso
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
+    parse_buml_content,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
     process_class_diagram,
@@ -201,3 +205,54 @@ def test_exported_model_and_elements_carry_iso_strings():
     assert classes and all(isinstance(e["timestamp"], str) for e in classes)
     constraint_boxes = [e for e in exported["elements"].values() if e["type"] == "ClassOCLConstraint"]
     assert [e["timestamp"] for e in constraint_boxes] == ["2024-03-01T09:30:20.123456"]
+
+
+def _without_timestamps(diagram: dict) -> dict:
+    diagram = copy.deepcopy(diagram)
+    for item in [diagram["model"], *diagram["model"]["elements"].values()]:
+        item.pop("timestamp", None)
+    for rel in diagram["model"]["relationships"].values():
+        for item in (rel, rel["source"], rel["target"]):
+            item.pop("timestamp", None)
+    return diagram
+
+
+def _force_clock_forward(monkeypatch):
+    """Make every later default timestamp differ from the earlier run's."""
+    monkeypatch.setattr(structural, "_last_timestamp", datetime.now() + timedelta(days=365))
+
+
+def test_timestampless_json_gives_identical_buml_code(tmp_path, monkeypatch):
+    """Editor JSON usually has no timestamps; exporting it twice must give the
+    same B-UML file even though the elements get different default timestamps."""
+    diagram = _without_timestamps(_diagram())
+    first, second = tmp_path / "first.py", tmp_path / "second.py"
+    first_model = process_class_diagram(copy.deepcopy(diagram))
+    domain_model_to_code(first_model, str(first))
+    _force_clock_forward(monkeypatch)
+    second_model = process_class_diagram(copy.deepcopy(diagram))
+    domain_model_to_code(second_model, str(second))
+    assert first_model.get_class_by_name("Library").timestamp != second_model.get_class_by_name("Library").timestamp
+    code = first.read_text(encoding="utf-8")
+    assert code == second.read_text(encoding="utf-8")
+    assert "fromisoformat" not in code
+
+
+def test_timestampless_json_gives_no_json_timestamps(monkeypatch):
+    diagram = _without_timestamps(_diagram())
+    first = class_buml_to_json(process_class_diagram(copy.deepcopy(diagram)))
+    _force_clock_forward(monkeypatch)
+    second = class_buml_to_json(process_class_diagram(copy.deepcopy(diagram)))
+    assert set(_json_timestamps(first).values()) == {None}
+    assert _json_timestamps(first) == _json_timestamps(second)
+
+
+def test_explicit_json_timestamps_reach_buml_code_and_back(tmp_path, monkeypatch):
+    """JSON -> BUML -> code -> BUML -> JSON keeps explicit timestamps."""
+    path = tmp_path / "model.py"
+    domain_model_to_code(process_class_diagram(_diagram()), str(path))
+    code = path.read_text(encoding="utf-8")
+    assert f'Library = Class(name="Library", timestamp=datetime.datetime.fromisoformat("{_iso(4)}"))' in code
+    _force_clock_forward(monkeypatch)
+    reexported = class_buml_to_json(parse_buml_content(code))
+    assert _json_timestamps(reexported) == _json_timestamps(_diagram()["model"])

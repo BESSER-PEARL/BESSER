@@ -178,15 +178,32 @@ def test_malformed_timestamp_falls_back_to_creation_time(bad):
     assert model.get_class_by_name("Novel").timestamp == datetime.fromisoformat(_iso(9))
 
 
-def test_timezone_aware_timestamp_becomes_naive_local_time():
-    """Model timestamps are naive; an aware one would break sort_by_timestamp."""
+def test_timezone_aware_timestamp_becomes_naive_utc():
+    """Model timestamps are naive; an aware one would break sort_by_timestamp.
+    It is normalised to UTC, never to the server's local time."""
     diagram = _diagram()
     aware = datetime(2024, 5, 6, 7, 8, 9, tzinfo=timezone(timedelta(hours=2)))
     diagram["model"]["elements"]["library"]["timestamp"] = aware.isoformat()
     model = process_class_diagram(diagram)
     stamp = model.get_class_by_name("Library").timestamp
     assert stamp.tzinfo is None
-    assert stamp == aware.astimezone().replace(tzinfo=None)
+    assert stamp == datetime(2024, 5, 6, 5, 8, 9)
+
+
+@pytest.mark.skipif(not hasattr(__import__("time"), "tzset"), reason="needs time.tzset")
+@pytest.mark.parametrize("server_tz", ["UTC", "America/New_York", "Asia/Tokyo"])
+def test_aware_timestamp_does_not_depend_on_the_server_timezone(monkeypatch, server_tz):
+    """The same JSON must give the same B-UML on every host."""
+    import time
+
+    monkeypatch.setenv("TZ", server_tz)
+    time.tzset()
+    try:
+        assert parse_iso_timestamp("2024-05-06T07:08:09+02:00") == datetime(2024, 5, 6, 5, 8, 9)
+        assert parse_iso_timestamp("2024-05-06T07:08:09Z") == datetime(2024, 5, 6, 7, 8, 9)
+    finally:
+        monkeypatch.undo()
+        time.tzset()
 
 
 def test_timestamp_helpers():

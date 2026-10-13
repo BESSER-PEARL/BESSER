@@ -68,7 +68,9 @@ creation time is left out, so converting the same model twice gives the same
 JSON, and exporting a timestamp-less diagram to B-UML twice gives the same file.
 ``process_class_diagram`` reads the field back. A missing or malformed value
 falls back to the creation time, and a value with a UTC offset is converted to
-naive local time, like the metamodel's own timestamps. Method parameters live
+UTC and stored naive, like the metamodel's own timestamps (UTC rather than the
+server's local time, so the same JSON gives the same B-UML on every host).
+Method parameters live
 in the method signature string, so they are recreated with a fresh timestamp.
 
 The editor itself does not keep the field yet: its element model serializes a

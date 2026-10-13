@@ -34,9 +34,10 @@ def parse_iso_timestamp(value: _Any) -> _Optional[_datetime.datetime]:
 
     Tolerant by design: ``None``, non-string and malformed values return
     ``None`` so the caller falls back to the metamodel's default (the creation
-    time). A timezone-aware value is converted to naive local time, because the
-    metamodel's default timestamps are naive and ``sort_by_timestamp`` cannot
-    compare naive with aware datetimes.
+    time). A timezone-aware value is converted to UTC and made naive, because
+    the metamodel's default timestamps are naive and ``sort_by_timestamp``
+    cannot compare naive with aware datetimes. UTC, not the server's local
+    time, so the same input gives the same model on every host.
     """
     if not isinstance(value, str) or not value.strip():
         return None
@@ -45,7 +46,7 @@ def parse_iso_timestamp(value: _Any) -> _Optional[_datetime.datetime]:
     except ValueError:
         return None
     if parsed.tzinfo is not None:
-        parsed = parsed.astimezone().replace(tzinfo=None)
+        parsed = parsed.astimezone(_datetime.timezone.utc).replace(tzinfo=None)
     return parsed
 
 

@@ -1,3 +1,4 @@
+import copy
 import logging
 import os
 import textwrap
@@ -175,9 +176,11 @@ def link_default_database(config_yaml: str, db_entry: dict, db_name: str = DEFAU
     """Point ``db.sql.<db_name>`` of a user-supplied *config_yaml* at *db_entry*.
 
     The entry is replaced only when it is missing or still holds ``YOUR-...``
-    placeholders, so a database the user configured on purpose is kept. A
-    ``- <db_name>:`` list item is rewritten in place, keeping the rest of the text
-    (comments included); otherwise the YAML is parsed, updated and dumped again.
+    placeholders, so a database the user configured on purpose is kept. The
+    ``- <db_name>:`` list item under ``db:`` -> ``sql:`` is rewritten in place,
+    keeping the rest of the text (comments included); an item of that name under
+    any other key is left alone. Otherwise, or if the in-place edit would not
+    parse to exactly the intended change, the YAML is parsed, updated and dumped.
     Text that is not a YAML mapping is returned unchanged.
 
     Args:
@@ -203,25 +206,10 @@ def link_default_database(config_yaml: str, db_entry: dict, db_name: str = DEFAU
     if not _is_placeholder_db(_find_sql_db(data, db_name)):
         return config_yaml
 
-    if not config_yaml.endswith('\n'):
-        config_yaml += '\n'
-    lines = config_yaml.splitlines(keepends=True)
-    header_re = re.compile(r'^(\s*)-\s+' + re.escape(db_name) + r'\s*:\s*$')
-    for i, line in enumerate(lines):
-        header = header_re.match(line)
-        if not header:
-            continue
-        indent = len(header.group(1))
-        end = i + 1
-        while end < len(lines) and (not lines[end].strip()
-                                    or len(lines[end]) - len(lines[end].lstrip()) > indent):
-            end += 1
-        body = [f"{' ' * (indent + 4)}{key}: {yaml_scalar(value)}\n" for key, value in db_entry.items()]
-        return ''.join(lines[:i + 1] + body + lines[end:])
-
-    db = data.get('db')
+    expected = copy.deepcopy(data)
+    db = expected.get('db')
     if not isinstance(db, dict):
-        db = data['db'] = {}
+        db = expected['db'] = {}
     sql = db.get('sql')
     if isinstance(sql, dict):
         sql[db_name] = dict(db_entry)
@@ -229,7 +217,60 @@ def link_default_database(config_yaml: str, db_entry: dict, db_name: str = DEFAU
         others = [item for item in (sql if isinstance(sql, list) else [])
                   if not (isinstance(item, dict) and db_name in item)]
         db['sql'] = [{db_name: dict(db_entry)}] + others
-    return yaml.safe_dump(data, sort_keys=False)
+
+    rewritten = _rewrite_sql_list_item(config_yaml, db_entry, db_name)
+    if rewritten is not None:
+        # Keep the in-place edit only when it means exactly the intended
+        # change; anything the line scan misread falls back to a re-dump.
+        try:
+            if yaml.safe_load(rewritten) == expected:
+                return rewritten
+        except yaml.YAMLError:
+            pass
+    return yaml.safe_dump(expected, sort_keys=False)
+
+
+# A block-style ``key:`` or ``- key:`` line; group 5 is whatever follows the colon.
+_YAML_KEY_LINE = re.compile(r'''^(\s*)(-\s+)?(["']?)([^\s#"':][^#"':]*?)\3\s*:(?:\s+(.*))?$''')
+
+
+def _rewrite_sql_list_item(config_yaml: str, db_entry: dict, db_name: str):
+    """Rewrite the ``- <db_name>:`` block item of ``db.sql`` in *config_yaml*, in place.
+
+    Block-style YAML is scanned line by line, tracking the chain of open parent
+    keys by indentation, so only the item whose parents are exactly the
+    top-level ``db`` then ``sql`` is touched; a ``- db1:`` under any other key
+    is not the agent's database. The rest of the text, comments included, is
+    kept. Returns ``None`` when there is no such item.
+    """
+    text = config_yaml if config_yaml.endswith('\n') else config_yaml + '\n'
+    lines = text.splitlines(keepends=True)
+    parents: list = []  # (indent, key) of each open block key above the line
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        indent = len(line) - len(line.lstrip())
+        is_item = stripped.startswith('-')
+        # A block sequence may sit at its parent key's own indentation.
+        parents = [(ind, key) for ind, key in parents if ind < indent or (is_item and ind == indent)]
+        match = _YAML_KEY_LINE.match(line.rstrip('\r\n'))
+        if not match:
+            continue
+        key, value = match.group(4).strip(), (match.group(5) or '').strip()
+        opens_block = not value or value.startswith('#')
+        if (is_item and key == db_name and opens_block
+                and [k for _, k in parents] == ['db', 'sql'] and parents[0][0] == 0):
+            end = i + 1
+            while end < len(lines) and (not lines[end].strip()
+                                        or len(lines[end]) - len(lines[end].lstrip()) > indent):
+                end += 1
+            body = [f"{' ' * (indent + 4)}{k}: {yaml_scalar(v)}\n" for k, v in db_entry.items()]
+            return ''.join(lines[:i + 1] + body + lines[end:])
+        if opens_block:
+            key_indent = indent + len(match.group(2)) if is_item else indent
+            parents.append((key_indent, key))
+    return None
 
 
 def workspace_rel_dir(path: str, name: str) -> str:

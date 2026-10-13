@@ -195,3 +195,44 @@ def test_link_default_database_edge_cases(text):
 def test_link_default_database_mapping_form():
     text = "db:\n  sql:\n    db1:\n      dialect: postgresql\n      host: YOUR-DB-HOST\n"
     assert _sql_dbs(yaml.safe_load(link_default_database(text, AGENT_DB)))["db1"] == AGENT_DB
+
+
+_DECOY_YAML = (
+    "# my agent\n"
+    "backups:\n"
+    "  - db1:\n"
+    "      keep: 7  # days\n"
+    "db:\n"
+    "  monitoring:\n"
+    "  - db1:\n"
+    "      enabled: true\n"
+    "  sql:\n"
+    "  # the default database\n"
+    "  - db1:\n"
+    "      dialect: postgresql\n"
+    "      host: YOUR-DB-HOST\n"
+    "  - analytics:\n"
+    "      dialect: sqlite\n"
+    "      file: a.db\n"
+)
+
+
+def test_link_default_database_skips_db1_items_outside_db_sql():
+    """Only ``db.sql``'s ``- db1:`` is the agent's database; an earlier
+    ``- db1:`` under another key must be left as it is."""
+    result = link_default_database(_DECOY_YAML, AGENT_DB)
+    config = yaml.safe_load(result)
+    assert _sql_dbs(config)["db1"] == AGENT_DB
+    assert _sql_dbs(config)["analytics"] == {"dialect": "sqlite", "file": "a.db"}
+    assert config["backups"] == [{"db1": {"keep": 7}}]
+    assert config["db"]["monitoring"] == [{"db1": {"enabled": True}}]
+    # Rewritten in place: comments survive.
+    assert "# my agent\n" in result and "# days" in result and "# the default database" in result
+
+
+def test_link_default_database_falls_back_when_db1_is_not_a_block_item():
+    """No ``- db1:`` block under ``db.sql`` to rewrite in place: parse/update/dump."""
+    text = "other:\n  - db1:\n      x: 1\ndb:\n  sql: [{db1: {host: YOUR-DB-HOST}}]\n"
+    config = yaml.safe_load(link_default_database(text, AGENT_DB))
+    assert _sql_dbs(config)["db1"] == AGENT_DB
+    assert config["other"] == [{"db1": {"x": 1}}]

@@ -248,11 +248,17 @@ def test_generate_user_profile_document_smoke_uses_user_profile_temp_prefix():
     assert isinstance(result, dict) and result, "expected a non-empty result dict"
     # The hierarchy normalization fired, so we should see "model" not "objects".
     assert "model" in result and "objects" not in result
-    # Temp dir prefix matches the cleanup service's allow-list ("user_profile_").
+    # Temp dir prefix is one the cleanup service sweeps.
+    from besser.utilities.web_modeling_editor.backend.constants.constants import (
+        USER_PROFILE_TEMP_DIR_PREFIX,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.cleanup import _BESSER_TEMP_PREFIXES
+
     assert captured_prefixes, "expected TemporaryDirectory to be called"
     assert any(
-        prefix.startswith("user_profile_") for prefix in captured_prefixes
-    ), f"expected a user_profile_ prefix, got: {captured_prefixes!r}"
+        prefix.startswith(USER_PROFILE_TEMP_DIR_PREFIX) for prefix in captured_prefixes
+    ), f"expected a {USER_PROFILE_TEMP_DIR_PREFIX} prefix, got: {captured_prefixes!r}"
+    assert USER_PROFILE_TEMP_DIR_PREFIX in _BESSER_TEMP_PREFIXES
 
 
 def test_generate_user_profile_document_raises_generation_error_when_generator_not_configured():

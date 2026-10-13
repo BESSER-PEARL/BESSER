@@ -19,6 +19,15 @@ TEMP_DIR_PREFIX = "besser_"
 AGENT_TEMP_DIR_PREFIX = "besser_agent_"
 CSV_TEMP_DIR_PREFIX = "besser_csv_"
 LLM_TEMP_DIR_PREFIX = "besser_llm_"
+USER_PROFILE_TEMP_DIR_PREFIX = "besser_user_profile_"
+# Every prefix above; services/cleanup.py removes stale temp dirs that match one.
+TEMP_DIR_PREFIXES = (
+    TEMP_DIR_PREFIX,
+    AGENT_TEMP_DIR_PREFIX,
+    CSV_TEMP_DIR_PREFIX,
+    LLM_TEMP_DIR_PREFIX,
+    USER_PROFILE_TEMP_DIR_PREFIX,
+)
 
 # ---------------------------------------------------------------------
 # LLM spec-driven generation caps & feature flags

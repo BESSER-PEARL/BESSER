@@ -209,8 +209,9 @@ Agent is not in `SUPPORTED_GENERATORS`; it has its own router rather than `/gene
 2. **Determinism**: identical input → identical output (no timestamps in file names)
 3. **Shared helpers** belong in `besser/utilities`, not in individual generators
 4. **Temp directories** use the `besser_*` prefixes from `constants.py` (`besser_`, `besser_agent_`,
-   `besser_csv_`, `besser_llm_`) so the hourly cleanup task (`services/cleanup.py`, >24 h) finds them;
-   clean up with try/finally; stream large outputs as ZIPs
+   `besser_csv_`, `besser_llm_`, `besser_user_profile_`) so the hourly cleanup task (`services/cleanup.py`,
+   >24 h) finds them — never a bare `TemporaryDirectory()`; a new prefix goes in `TEMP_DIR_PREFIXES`, which
+   cleanup reads; clean up with try/finally; stream large outputs as ZIPs
 5. **Backend contract changes** (endpoints, request/response shapes) must be coordinated with the frontend's
    `shared/api/` layer
 6. **Docs sync**: public-surface changes usually need `docs/source/` updates (see below)

@@ -21,6 +21,7 @@ OWL/OWL2 constructs into structured annotations:
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -53,6 +54,8 @@ from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_PROPERTY,
     SH_PROPERTY,
 )
+
+logger = logging.getLogger(__name__)
 
 
 SH = Namespace("http://www.w3.org/ns/shacl#")
@@ -837,12 +840,18 @@ def _decode_shacl_shapes(
             try:
                 entry["min_count"] = int(str(q_min))
             except (TypeError, ValueError):
-                pass
+                # Dropped silently before: the constraint then simply did not
+                # exist in the imported model, with nothing to explain it.
+                logger.warning(
+                    "Ignoring sh:qualifiedMinCount %r on %s: not an integer.", q_min, s
+                )
         if q_max is not None:
             try:
                 entry["max_count"] = int(str(q_max))
             except (TypeError, ValueError):
-                pass
+                logger.warning(
+                    "Ignoring sh:qualifiedMaxCount %r on %s: not an integer.", q_max, s
+                )
         out[s]["qualified"].append(entry)
 
     return out

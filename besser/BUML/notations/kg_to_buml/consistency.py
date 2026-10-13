@@ -146,6 +146,11 @@ _COMPONENT_TO_KIND: Dict[str, str] = {
 }
 
 
+# Most severe first. ``sorted`` on the severity *strings* yields
+# info < violation < warning, which is not a severity order at all.
+_SEVERITY_RANK: Dict[str, int] = {"violation": 0, "warning": 1, "info": 2}
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -387,7 +392,14 @@ def _parse_validation_report(
         msg_text = str(message) if message else _synthesize_message(focus, component_local, path_iri)
         constraint_label = _constraint_label_for(source_shape, path_iri, spec_kind, component_local, data_graph)
 
-        issue_id = _hash_id(focus, source_shape, component, value)
+        # Hashing `source_shape` directly made the id change on every call: the
+        # OWL shim mints fresh BNodes for its shapes, so their labels are
+        # random per run, and ids leaked into API responses and orderings.
+        # The resolved constraint node id is stable when there is one; the
+        # violated path identifies the shape otherwise.
+        issue_id = _hash_id(
+            focus, constraint_node_id or "", path_iri or "", component, value
+        )
 
         issues.append(
             ConsistencyIssue(
@@ -403,7 +415,10 @@ def _parse_validation_report(
                 constraint_label=constraint_label,
             )
         )
-    issues.sort(key=lambda i: (i.severity, i.code, i.id))
+    # By rank, not alphabetically: sorting the severity strings put them in
+    # info -> violation -> warning order, burying the most severe findings in
+    # the middle of the list the UI renders top-down.
+    issues.sort(key=lambda i: (_SEVERITY_RANK.get(i.severity, 99), i.code, i.id))
     return issues
 
 
@@ -612,12 +627,14 @@ def _term_to_node_id(
     if isinstance(term, BNode):
         # The exporter materialises stable BNode handles for KGBlank /
         # KGNodeConstraint / KGPropertyConstraint nodes (see
-        # _build_iri_to_node_id). Consult the mapping first; if we can't
-        # resolve, surface the raw bnode handle so the frontend at least
-        # has *something* to display.
-        key = f"_:{str(term)}"
-        mapped = iri_to_node_id.get(key)
-        return mapped if mapped is not None else key
+        # _build_iri_to_node_id). Consult the mapping first.
+        #
+        # An unresolved handle used to be returned as "_:<label>". Those labels
+        # belong to blank nodes rdflib minted during validation (the OWL shim
+        # builds its shapes from fresh BNodes), so the value was a different
+        # random string on every call and named nothing the frontend could look
+        # up. None says "no constraint node" honestly.
+        return iri_to_node_id.get(f"_:{str(term)}")
     if isinstance(term, Literal):
         return None
     return iri_to_node_id.get(str(term))

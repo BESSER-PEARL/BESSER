@@ -92,6 +92,17 @@ class KGNode(Element, ABC):
 
     @property
     def metadata(self) -> Dict[str, Any]:
+        """The live dict: in-place mutation is a supported workflow.
+
+        Returning a copy would be safer -- it would stop
+        ``node.metadata["constraintSpecs"] = ...`` installing a spec that the
+        constraint subclasses' setter validation would have rejected -- but the
+        OWL importer builds node metadata precisely that way
+        (``owl_to_buml`` does ``node.metadata.update(...)`` and
+        ``node.metadata[k] = v`` while classifying), so handing out a copy
+        would silently drop it. The setter still copies what it is given, so a
+        caller's own dict cannot alias our state.
+        """
         return self.__metadata
 
     @metadata.setter
@@ -101,7 +112,7 @@ class KGNode(Element, ABC):
             return
         if not isinstance(value, dict):
             raise ValueError("KGNode.metadata must be a dict or None.")
-        self.__metadata = value
+        self.__metadata = dict(value)
 
     def __hash__(self):
         return hash((type(self).__name__, self.id))
@@ -218,6 +229,17 @@ class _ConstraintNodeMixin:
     def get_specs(self):
         return list(self.metadata.get("constraintSpecs", []))
 
+    # Declared once here rather than copied into each subclass, which is where
+    # these three lines used to live twice over. The mixin precedes KGNode in
+    # both MROs, so this property wins while still delegating storage to it.
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        return KGNode.metadata.fget(self)
+
+    @metadata.setter
+    def metadata(self, value):
+        KGNode.metadata.fset(self, self._validate_constraint_metadata(value))
+
 
 class KGNodeConstraint(_ConstraintNodeMixin, KGNode):
     """A reified constraint that applies to a class.
@@ -233,12 +255,6 @@ class KGNodeConstraint(_ConstraintNodeMixin, KGNode):
     on export).
     """
 
-    @KGNode.metadata.setter
-    def metadata(self, value):
-        validated = self._validate_constraint_metadata(value)
-        # delegate to base setter via the underlying property machinery
-        KGNode.metadata.fset(self, validated)
-
 
 class KGPropertyConstraint(_ConstraintNodeMixin, KGNode):
     """A reified constraint that applies to a property.
@@ -248,11 +264,6 @@ class KGPropertyConstraint(_ConstraintNodeMixin, KGNode):
     ``constraintTargetProperty`` edge and/or grouped under a
     :class:`KGNodeConstraint` via the ``sh:property`` edge.
     """
-
-    @KGNode.metadata.setter
-    def metadata(self, value):
-        validated = self._validate_constraint_metadata(value)
-        KGNode.metadata.fset(self, validated)
 
 
 class KGEdge(Element):
@@ -334,6 +345,7 @@ class KGEdge(Element):
 
     @property
     def metadata(self) -> Dict[str, Any]:
+        """The live dict, for the same reason as :attr:`KGNode.metadata`."""
         return self.__metadata
 
     @metadata.setter
@@ -343,7 +355,7 @@ class KGEdge(Element):
             return
         if not isinstance(value, dict):
             raise ValueError("KGEdge.metadata must be a dict or None.")
-        self.__metadata = value
+        self.__metadata = dict(value)
 
     def __hash__(self):
         return hash(("KGEdge", self.id))
@@ -385,6 +397,15 @@ class KnowledgeGraph(Model):
 
     @nodes.setter
     def nodes(self, value: Set[KGNode]):
+        """Replace the node set, rejecting duplicate ids.
+
+        ``KGNode.__hash__`` keys on ``(type, id)``, so a plain ``set`` happily
+        holds ``KGClass(id="x")`` alongside ``KGIndividual(id="x")`` -- and the
+        docs promise ids are unique. When both are present, ``kg_model_to_code``
+        reattaches an edge to whichever node it finds first and the other is
+        lost. Mirrors ``DomainModel.types``, which rejects duplicate names the
+        same way.
+        """
         if value is None:
             self.__nodes = set()
             return
@@ -392,6 +413,7 @@ class KnowledgeGraph(Model):
             if not isinstance(n, KGNode):
                 raise ValueError("KnowledgeGraph.nodes must contain only KGNode instances.")
         self.__nodes = set(value)
+        self._reject_duplicate_node_ids()
 
     @property
     def edges(self) -> Set[KGEdge]:
@@ -414,9 +436,29 @@ class KnowledgeGraph(Model):
         self.__edges = set(value)
 
     def add_node(self, node: KGNode) -> None:
+        """Add one node, rejecting an id another node already uses."""
         if not isinstance(node, KGNode):
             raise ValueError("add_node expects a KGNode instance.")
+        clash = next((n for n in self.__nodes if n.id == node.id and n is not node), None)
+        if clash is not None:
+            raise ValueError(
+                f"KnowledgeGraph already holds a node with id {node.id!r} "
+                f"({type(clash).__name__}); node ids must be unique across types."
+            )
         self.__nodes.add(node)
+
+    def _reject_duplicate_node_ids(self) -> None:
+        seen: Dict[str, str] = {}
+        duplicates: Set[str] = set()
+        for n in self.__nodes:
+            if n.id in seen:
+                duplicates.add(n.id)
+            seen[n.id] = type(n).__name__
+        if duplicates:
+            raise ValueError(
+                "KnowledgeGraph cannot hold nodes with duplicate ids: "
+                + ", ".join(sorted(duplicates))
+            )
 
     def add_edge(self, edge: KGEdge) -> None:
         if not isinstance(edge, KGEdge):
@@ -455,6 +497,75 @@ class KnowledgeGraph(Model):
             if n.id == node_id:
                 return n
         return None
+
+    def validate(self, raise_exception: bool = True) -> dict:
+        """Validate the graph, collecting every problem rather than the first.
+
+        ``KnowledgeGraph`` was the only ``Model`` without this, so a graph
+        assembled by assigning ``kg.nodes`` / ``kg.edges`` directly (which the
+        setters allow, and which skips ``add_edge``'s endpoint check in the
+        order they are assigned) could carry dangling edges unnoticed.
+
+        Args:
+            raise_exception: raise ``ValueError`` when validation fails.
+
+        Returns:
+            dict: ``{"success": bool, "errors": list, "warnings": list}``,
+            matching ``DomainModel.validate`` and ``StateMachine.validate``.
+        """
+        errors: List[str] = []
+        warnings: List[str] = []
+
+        self._validate_unique_node_ids(errors)
+        self._validate_edge_endpoints(errors)
+        self._validate_axiom_references(warnings)
+
+        result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
+        if errors and raise_exception:
+            raise ValueError("\n".join(errors))
+        return result
+
+    def _validate_unique_node_ids(self, errors: List[str]) -> None:
+        seen: Set[str] = set()
+        for n in sorted(self.__nodes, key=lambda x: x.id):
+            if n.id in seen:
+                errors.append(f"Duplicate node id {n.id!r} in the knowledge graph.")
+            seen.add(n.id)
+
+    def _validate_edge_endpoints(self, errors: List[str]) -> None:
+        node_ids = {n.id for n in self.__nodes}
+        for e in sorted(self.__edges, key=lambda x: x.id):
+            for role, endpoint in (("source", e.source), ("target", e.target)):
+                if endpoint.id not in node_ids:
+                    errors.append(
+                        f"KGEdge {e.id!r} has a dangling {role}: node "
+                        f"{endpoint.id!r} is not in the graph."
+                    )
+
+    def _validate_axiom_references(self, warnings: List[str]) -> None:
+        """Axioms name nodes by id; a missing one is reported but not fatal.
+
+        An imported ontology may legitimately reference an IRI it does not
+        define, so this is a warning -- it should not block a conversion.
+        """
+        node_ids = {n.id for n in self.__nodes}
+        id_fields = (
+            "class_ids", "property_ids", "part_class_ids", "chain_property_ids",
+            "union_class_id", "sub_property_id", "super_property_id",
+            "property_a_id", "property_b_id", "class_id", "property_id",
+        )
+        for axiom in self.__axioms:
+            for field_name in id_fields:
+                value = getattr(axiom, field_name, None)
+                if not value:
+                    continue
+                referenced = value if isinstance(value, list) else [value]
+                for ref in referenced:
+                    if isinstance(ref, str) and ref not in node_ids:
+                        warnings.append(
+                            f"{type(axiom).__name__}.{field_name} references "
+                            f"{ref!r}, which is not a node in the graph."
+                        )
 
     def __repr__(self):
         return f"KnowledgeGraph(name={self.name!r}, nodes={len(self.nodes)}, edges={len(self.edges)})"

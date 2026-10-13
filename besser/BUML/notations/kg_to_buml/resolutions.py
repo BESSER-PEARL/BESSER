@@ -15,7 +15,6 @@ to surface protocol mismatches loudly.
 from __future__ import annotations
 
 import copy
-import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
@@ -149,11 +148,20 @@ def dispatch_decision(kg: KnowledgeGraph, issue, decision: str) -> KnowledgeGrap
 
 
 def _next_edge_id(kg: KnowledgeGraph, prefix: str = "edge") -> str:
+    """Mint an unused edge id deterministically.
+
+    ``uuid4`` made this non-reproducible: applying the same decisions to the
+    same KG twice produced different edge ids, so a caller could not compare
+    two runs, and the KG signature changed for no modelled reason. Counting up
+    from the number of edges keeps it stable and still collision-free.
+    """
     used = {e.id for e in kg.edges}
+    counter = len(used)
     while True:
-        candidate = f"{prefix}:{uuid.uuid4().hex[:8]}"
+        candidate = f"{prefix}:{counter}"
         if candidate not in used:
             return candidate
+        counter += 1
 
 
 def _require_class(kg: KnowledgeGraph, class_id: str) -> KGClass:
@@ -1026,6 +1034,7 @@ _HANDLERS: Dict[str, Any] = {
     "ignore": _h_noop,
     "bump_to_unbounded": _h_noop,           # converter already bumps via ABox heuristic
     "record_as_description": _h_noop,       # writer can read restriction metadata
+    "keep_cycle": _h_noop,                  # to_buml._break_cycles handles it at lowering
 }
 
 

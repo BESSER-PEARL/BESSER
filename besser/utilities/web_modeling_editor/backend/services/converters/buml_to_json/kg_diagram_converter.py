@@ -93,6 +93,12 @@ def kg_buml_to_json(content: str) -> Dict[str, Any]:
         "list": list,
         "dict": dict,
         "tuple": tuple,
+        # The builder emits set() for an empty node/edge set and float('nan') /
+        # float('inf') for non-finite metadata values, since their repr() is a
+        # bare name Python does not define. Both are plain constructors; the
+        # allowlist's protection comes from refusing unknown calls and dunder
+        # attribute access, not from withholding these.
+        "float": float,
     }
     for name in dir(kg_module):
         if not name.startswith("_"):

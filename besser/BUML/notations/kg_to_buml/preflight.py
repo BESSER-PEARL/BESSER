@@ -46,6 +46,7 @@ from besser.BUML.notations.kg_to_buml._common import (
     RDFS_SUBCLASS_OF,
     RDF_TYPE,
     build_indexes,
+    find_cycles,
     is_meta_vocab,
     local_name,
     normalize_predicate,
@@ -677,22 +678,7 @@ def _detect_cyclic_subclass(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
         parents_of[edge.source.id].add(edge.target.id)
         parent_edge_id[(edge.source.id, edge.target.id)] = edge.id
 
-    seen_cycle: Set[Tuple[str, ...]] = set()
-
-    def _dfs(node_id: str, stack: List[str]):
-        if node_id in stack:
-            cycle = tuple(stack[stack.index(node_id):] + [node_id])
-            seen_cycle.add(cycle)
-            return
-        stack.append(node_id)
-        for p in parents_of.get(node_id, ()):
-            _dfs(p, stack)
-        stack.pop()
-
-    for n in parents_of:
-        _dfs(n, [])
-
-    for cycle in sorted(seen_cycle):
+    for cycle in find_cycles(parents_of):
         # Deterministic: pick the lex-last edge in the cycle to break.
         edge_ids = []
         for i in range(len(cycle) - 1):
@@ -715,10 +701,12 @@ def _detect_cyclic_subclass(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
                 parameters={"edge_id": break_edge},
                 label=f"Break the cycle at edge '{break_edge}'",
             ),
+            # Skipping must actually skip. This used to be a copy of
+            # recommended_action, so choosing "skip" broke the edge anyway.
             skip_action=KGAction(
-                key="break_at_edge",
-                parameters={"edge_id": break_edge},
-                label=f"Break the cycle at edge '{break_edge}'",
+                key="keep_cycle",
+                parameters={},
+                label="Leave the cycle in place (the classes stay as imported)",
             ),
         ))
     return out

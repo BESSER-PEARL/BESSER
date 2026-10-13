@@ -1,10 +1,10 @@
 """Tests for the KnowledgeGraph → Python code builder.
 
 The builder's output is never imported — ``kg_buml_to_json`` strips the import
-block and ``exec()``s the rest against a restricted namespace. These tests
-therefore always assert through that reader rather than against the emitted
-text, so a change that produces plausible-looking code the reader cannot
-execute still fails.
+block and loads the rest through ``safe_load_buml``, an AST allowlist. These
+tests therefore always assert through that reader rather than against the
+emitted text, so a change that produces plausible-looking code the reader
+cannot load still fails.
 """
 
 from __future__ import annotations
@@ -232,3 +232,41 @@ def test_model_var_name_is_configurable(sample_kg, tmp_path):
     text = path.read_text(encoding="utf-8")
     assert "kg_model_2 = KnowledgeGraph(" in text
     assert kg_buml_to_json(text)["nodes"]
+
+
+# ---------------------------------------------------------------------------
+# Generated code must always be loadable
+# ---------------------------------------------------------------------------
+
+
+def test_non_finite_floats_round_trip(tmp_path):
+    """``repr(float('nan'))`` is ``nan``: a name Python does not define.
+
+    The emitted module used to fail to load with NameError.
+    """
+    kg = KnowledgeGraph(name="floats")
+    node = KGIndividual(id="measurement", label="Measurement")
+    node.metadata["readings"] = [float("nan"), float("inf"), float("-inf"), 1.5]
+    kg.add_node(node)
+
+    model = _round_trip(kg, tmp_path)
+
+    readings = next(
+        n["metadata"]["readings"] for n in model["nodes"] if n["id"] == "measurement"
+    )
+    assert readings[0] != readings[0]            # nan is the only value unequal to itself
+    assert readings[1] == float("inf")
+    assert readings[2] == float("-inf")
+    assert readings[3] == 1.5
+
+
+def test_unknown_node_type_raises_instead_of_being_relabelled():
+    """Defaulting to KGIndividual silently rewrote the node's kind."""
+    from besser.BUML.metamodel.kg import KGNode
+    from besser.utilities.buml_code_builder.kg_model_builder import _node_class_name
+
+    class FutureKGNode(KGNode):
+        pass
+
+    with pytest.raises(TypeError, match="unexpected KGNode type FutureKGNode"):
+        _node_class_name(FutureKGNode(id="n1", label="N1"))

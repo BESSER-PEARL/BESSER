@@ -235,6 +235,17 @@ class ExpressionResolver:
             name, new = self._aux((kind, p, d, k, True), naming.restriction_name(kind, p, d, n=k))
             if new:
                 self.m.add_association(name, d, p, (0, "*"), _CARD_MULT[kind](k))
+                if kind == "max" and k == 0:
+                    # BUML's Multiplicity cannot express an upper bound of 0, so
+                    # the (0, 0) above is clamped to (0, 1) downstream -- the
+                    # model would then permit exactly what the ontology forbids.
+                    # The data-property branch already covers its own 0 case via
+                    # `size() <= 0`; this is the object-property equivalent.
+                    self.m.add_ocl(
+                        name,
+                        f"self.{p}->isEmpty()",
+                        origin=_CARD_OBJ_RULE[kind],
+                    )
         else:
             filler = self.g.value(node, OWL.onDataRange)
             # No onDataRange: fall back to the widest primitive. Resolved through

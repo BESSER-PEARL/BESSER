@@ -340,3 +340,33 @@ def test_sh_equals_and_less_than_translate_to_ocl(tmp_path: Path):
     assert any(
         "self.startDate->forAll(v | self.endDate->forAll(w | v < w))" in b for b in bodies
     )
+
+
+def test_object_max_cardinality_zero_emits_an_ocl_constraint(tmp_path: Path):
+    """``owl:maxCardinality 0`` on an object property forbids every link.
+
+    BUML's Multiplicity cannot express an upper bound of 0, so the lowering
+    clamps (0, 0) to (0, 1) -- which would let the model hold exactly the one
+    link the ontology rules out. The data-property branch already guarded its
+    own 0 case with ``size() <= 0``; this is the object-property equivalent.
+    """
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+    :Pet a owl:Class .
+    :owns a owl:ObjectProperty ; rdfs:domain :Person ; rdfs:range :Pet .
+    :Person a owl:Class .
+    :PetFreePerson a owl:Class ; rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty :owns ;
+        owl:maxCardinality "0"^^xsd:nonNegativeInteger
+    ] .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    result = kg_to_class_diagram(kg)
+
+    all_bodies = [c.expression for c in result.domain_model.constraints]
+    assert any("self.owns->isEmpty()" in b for b in all_bodies), all_bodies

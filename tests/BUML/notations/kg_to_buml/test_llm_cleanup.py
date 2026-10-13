@@ -647,3 +647,53 @@ def test_classify_orphan_nodes_with_llm_skips_unknown_ids():
     # Only the existing node produces an issue (synthetic drop fallback).
     assert report.issue_count == 1
     assert report.issues[0].affected_node_ids == ["ghost1"]
+
+
+# ---------------------------------------------------------------------------
+# Malformed LLM output must be dropped, not crash the request
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"node_id": ["Person", "Car"]},   # unhashable -> used to raise TypeError
+        {"node_id": {"id": "Person"}},
+        {"node_id": 42},
+        {"edge_id": ["e1"]},
+    ],
+    ids=["list_node_id", "dict_node_id", "int_node_id", "list_edge_id"],
+)
+def test_parse_llm_suggestions_drops_wrongly_typed_ids(parameters):
+    """A model that answers with the wrong JSON type is the model's business.
+
+    Reading these straight out of the payload meant ``node_id not in
+    live_node_ids`` raised ``TypeError: unhashable type: 'list'`` -- one odd
+    completion turned into a 500 for the user.
+    """
+    kg = _small_kg()
+    raw = json.dumps({"suggestions": [
+        _suggestion(parameters=parameters),
+        _suggestion(parameters={"node_id": "Person"}),
+    ]})
+
+    issues = parse_llm_suggestions(raw, kg)
+
+    assert len(issues) == 1
+    assert issues[0].recommended_action.parameters["node_id"] == "Person"
+
+
+@pytest.mark.parametrize(
+    "affected",
+    [{"affected_node_ids": "Person"}, {"affected_node_ids": {"a": 1}},
+     {"affected_node_ids": [1, 2]}, {"affected_edge_ids": "e1"}],
+    ids=["str_nodes", "dict_nodes", "int_nodes", "str_edges"],
+)
+def test_parse_llm_suggestions_drops_wrongly_typed_affected_lists(affected):
+    """``list("Person")`` is 6 one-character ids, which is plausible nonsense."""
+    kg = _small_kg()
+    bad = _suggestion(parameters={"node_id": "Person"})
+    bad.update(affected)
+    raw = json.dumps({"suggestions": [bad]})
+
+    assert parse_llm_suggestions(raw, kg) == []

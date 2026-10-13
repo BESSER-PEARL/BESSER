@@ -32,6 +32,21 @@ def _regex_literal(s: str) -> str:
     return "'" + s.replace("'", "\\'").replace("\n", " ") + "'"
 
 
+# SHACL rows with no OCL equivalent (see the note at the end of
+# ShaclMapper.rules). Skipping these is a decision, not an omission, so they
+# must not warn.
+_UNTRANSLATABLE_SHACL = frozenset({
+    SH.nodeKind, SH.closed, SH.flags, SH.languageIn, SH.severity, SH.message,
+})
+
+# Predicates that describe the shape itself rather than constrain data.
+_STRUCTURAL_SHACL = frozenset({
+    SH.path, SH.property, SH.targetClass, SH.targetNode, SH.targetSubjectsOf,
+    SH.targetObjectsOf, SH.name, SH.description, SH.order, SH.group,
+    SH.defaultValue, SH.deactivated, SH.ignoredProperties, SH.nodeValidator,
+})
+
+
 class ShaclMapper:
     def __init__(self, mapper, shapes):
         self.m = mapper
@@ -113,6 +128,21 @@ class ShaclMapper:
         for pred in sorted(set(self.g.predicates(ps)), key=str):
             handler = self.rules.get(pred)
             if handler is None:
+                # Only a sh:-namespaced predicate that is neither a known
+                # no-OCL-equivalent row nor shape bookkeeping is a constraint
+                # we are actually dropping. Those used to be skipped in
+                # silence, so a constraint the ontology states simply did not
+                # appear in the model and nothing said why.
+                if (
+                    str(pred).startswith(str(SH))
+                    and pred not in _UNTRANSLATABLE_SHACL
+                    and pred not in _STRUCTURAL_SHACL
+                ):
+                    self.m.warn(
+                        "SHACL_PREDICATE_UNSUPPORTED",
+                        f"Skipping {str(pred).split('#')[-1]!r} on {ctx}.{pname}: "
+                        f"no OCL equivalent is implemented for it.",
+                    )
                 continue
             for body, suffix in handler(ps, pname):
                 if body:

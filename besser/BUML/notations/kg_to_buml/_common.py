@@ -6,7 +6,7 @@ import keyword
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urldefrag
 
 from besser.BUML.metamodel.kg import KGEdge, KGNode, KnowledgeGraph
@@ -184,6 +184,51 @@ def sorted_by_id(items):
     return sorted(items, key=lambda x: x.id)
 
 
+def find_cycles(parents: Dict[str, Set[str]]) -> List[Tuple[str, ...]]:
+    """Find the ``rdfs:subClassOf`` cycles in a ``child -> {parents}`` map.
+
+    Returns one canonical tuple per cycle, each closed (first id repeated last)
+    and rotated to start at its lexicographically smallest member, so the same
+    cycle is never reported twice under a different rotation. Sorted, so the
+    result is stable across runs and hash seeds.
+
+    Uses the three-colour DFS that :func:`to_buml._break_cycles` already relies
+    on: a node is grey while it is on the current path and black once fully
+    explored, and only a grey hit is a cycle. The earlier implementation here
+    tracked just the current path, so a node reachable by several routes was
+    re-explored once per route -- it enumerated every simple path rather than
+    every cycle, and a cycle-free stack of diamonds was enough to make it
+    quadratic then exponential (55 classes took 1.7 s, and preflight runs this
+    on every call and again after each decision).
+    """
+    GREY, BLACK = 0, 1
+    state: Dict[str, int] = {}
+    path: List[str] = []
+    found: Set[Tuple[str, ...]] = set()
+
+    def visit(node: str) -> None:
+        state[node] = GREY
+        path.append(node)
+        for parent in sorted(parents.get(node, ())):
+            if state.get(parent) == GREY:
+                cycle = path[path.index(parent):]
+                # Rotate so the smallest id leads: A->B->A and B->A->B are one
+                # cycle, and reporting both makes applying both decisions fail.
+                pivot = cycle.index(min(cycle))
+                rotated = cycle[pivot:] + cycle[:pivot]
+                found.add(tuple(rotated) + (rotated[0],))
+            elif parent not in state:
+                visit(parent)
+        path.pop()
+        state[node] = BLACK
+
+    for node in sorted(parents):
+        if node not in state:
+            visit(node)
+
+    return sorted(found)
+
+
 def add_warning(
     warnings: List[KGConversionWarning],
     code: str,
@@ -196,6 +241,7 @@ def add_warning(
 
 
 __all__ = [
+    "find_cycles",
     "RDF_TYPE",
     "RDFS_SUBCLASS_OF",
     "RDFS_DOMAIN",

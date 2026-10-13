@@ -154,3 +154,58 @@ def test_each_axiom_subclass_round_trips():
     assert len(kg.axioms) == 7
     # Every entry is a KGAxiom.
     assert all(isinstance(a, KGAxiom) for a in kg.axioms)
+
+
+# ---------------------------------------------------------------------------
+# Node id uniqueness and validate()
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_node_ids_are_rejected_across_node_types():
+    """``KGNode.__hash__`` keys on (type, id), so a set alone does not catch it.
+
+    When both survived, ``kg_model_to_code`` reattached an edge to whichever
+    node it found first and the other was dropped.
+    """
+    kg = KnowledgeGraph(name="dup")
+    kg.add_node(KGClass(id="x", label="X"))
+
+    with pytest.raises(ValueError, match="id 'x'"):
+        kg.add_node(KGIndividual(id="x", label="X individual"))
+
+
+def test_duplicate_node_ids_are_rejected_by_the_nodes_setter():
+    kg = KnowledgeGraph(name="dup")
+    with pytest.raises(ValueError, match="duplicate ids"):
+        kg.nodes = {KGClass(id="x", label="X"), KGIndividual(id="x", label="X")}
+
+
+def test_validate_returns_the_standard_shape_for_a_sound_graph():
+    kg = KnowledgeGraph(name="ok")
+    a = KGClass(id="A", label="A")
+    b = KGClass(id="B", label="B")
+    kg.nodes = {a, b}
+    kg.add_edge(KGEdge(id="e1", source=a, target=b, iri="http://ex.org/p"))
+
+    result = kg.validate()
+
+    assert result == {"success": True, "errors": [], "warnings": []}
+
+
+def test_validate_reports_a_dangling_edge_instead_of_letting_it_pass():
+    kg = KnowledgeGraph(name="dangling")
+    a = KGClass(id="A", label="A")
+    ghost = KGClass(id="Ghost", label="Ghost")
+    kg.nodes = {a, ghost}
+    kg.add_edge(KGEdge(id="e1", source=a, target=ghost, iri="http://ex.org/p"))
+
+    # Assigning nodes directly is what the setter allows, and what skips
+    # add_edge's endpoint check.
+    kg.nodes = {a}
+
+    result = kg.validate(raise_exception=False)
+    assert result["success"] is False
+    assert any("dangling" in e for e in result["errors"])
+
+    with pytest.raises(ValueError, match="dangling"):
+        kg.validate()

@@ -312,14 +312,12 @@ def json_to_buml_project(project):
     from .kg_diagram_processor import process_kg_diagram
 
     for kg_diag in diagrams.get("KnowledgeGraphDiagram", []):
-        try:
-            kg_model = process_kg_diagram(kg_diag.model_dump())
-            model_list.append(kg_model)
-        except Exception as e:
-            logger.warning(
-                "KnowledgeGraphDiagram '%s' could not be processed: %s",
-                getattr(kg_diag, "title", "unknown"), e,
-            )
+        # Errors propagate, as they do for every other diagram type above and
+        # below. Logging a warning and carrying on produced an export that was
+        # silently missing the user's knowledge graph, and the only sign of it
+        # was a line in the server log the user never sees.
+        kg_model = process_kg_diagram(kg_diag.model_dump())
+        model_list.append(kg_model)
 
     # ── Process ALL StateMachineDiagrams ──────────────────────────────
     for sm_diag in diagrams.get("StateMachineDiagram", []):

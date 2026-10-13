@@ -331,13 +331,29 @@ def _build_enumerations(model: UMLModel, renames, warnings) -> Dict[str, Enumera
     return enumerations
 
 
-def _lower_type(type_name: str, renames, classes, enumerations):
-    """Resolve a UML type name to a BUML type object."""
+def _lower_type(type_name: str, renames, classes, enumerations, warnings=None, *, label: str = ""):
+    """Resolve a UML type name to a BUML type object.
+
+    Falls back to ``StringType`` for a name that resolves to neither a class,
+    an enumeration nor a primitive -- but says so. Silently typing an
+    unresolved range as a string produced a model that looked complete and
+    was wrong, with nothing to point at.
+    """
     primitive = PRIMITIVE_BY_NAME.get(type_name)
     if primitive is not None:
         return primitive
     safe = _resolve(type_name, renames)
-    return classes.get(safe) or enumerations.get(safe) or StringType
+    resolved = classes.get(safe) or enumerations.get(safe)
+    if resolved is not None:
+        return resolved
+    if warnings is not None:
+        add_warning(
+            warnings,
+            "TYPE_UNRESOLVED",
+            f"{label or type_name} has type {type_name!r}, which resolves to no "
+            f"class, enumeration or primitive; defaulted to String.",
+        )
+    return StringType
 
 
 def _multiplicity(lower: int, upper, warnings, *, label: str) -> Multiplicity:
@@ -446,7 +462,10 @@ def _attach_attributes(buml_class, attributes, renames, classes, enumerations, o
         seen_id = seen_id or is_id
         prop = Property(
             name=attr_name,
-            type=_lower_type(attribute.type, renames, classes, enumerations),
+            type=_lower_type(
+                attribute.type, renames, classes, enumerations, out.warnings,
+                label=f"Attribute {buml_class.name}.{attr_name}",
+            ),
             multiplicity=_multiplicity(
                 attribute.lower, attribute.upper, out.warnings,
                 label=f"Attribute {buml_class.name}.{attr_name}",

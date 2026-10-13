@@ -123,6 +123,38 @@ OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 # ----------------------------------------------------------------------
 
 
+#: Sentinel distinguishing "the key was absent" (None, fine) from "the key held
+#: something that is not an id" (skip the suggestion).
+_INVALID_ID = object()
+
+
+def _as_id(value: Any):
+    """Return a non-empty id string, ``None`` if absent, ``_INVALID_ID`` else.
+
+    LLM output is untrusted *in shape* as well as in content.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value or None
+    return _INVALID_ID
+
+
+def _as_id_list(value: Any) -> Optional[List[str]]:
+    """Return a list of id strings, or ``None`` when the value is not one.
+
+    ``list()`` of a str would have yielded one entry per character, and of a
+    dict its keys -- both plausible-looking nonsense.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return None
+    if not all(isinstance(v, str) for v in value):
+        return None
+    return list(value)
+
+
 def build_kg_snapshot(kg: KnowledgeGraph) -> Dict[str, Any]:
     """Produce a compact, JSON-serialisable snapshot of ``kg`` for the LLM.
 
@@ -340,14 +372,24 @@ def parse_llm_suggestions(
         parameters = recommended.get("parameters") or {}
         if not isinstance(parameters, dict):
             continue
-        affected_node_ids = list(item.get("affected_node_ids") or [])
-        affected_edge_ids = list(item.get("affected_edge_ids") or [])
+        # Every id below comes from LLM output, so its type is not guaranteed.
+        # These used to be read straight out of the JSON: a model that answered
+        # with a *list* `node_id` made `node_id not in live_node_ids` raise
+        # TypeError (unhashable), i.e. one odd completion returned a 500.
+        affected_node_ids = _as_id_list(item.get("affected_node_ids"))
+        affected_edge_ids = _as_id_list(item.get("affected_edge_ids"))
+        if affected_node_ids is None or affected_edge_ids is None:
+            continue
 
         # node_id parameters must reference a real node.
-        node_id_param = parameters.get("node_id")
+        node_id_param = _as_id(parameters.get("node_id"))
+        if node_id_param is _INVALID_ID:
+            continue
         if node_id_param and node_id_param not in live_node_ids:
             continue
-        edge_id_param = parameters.get("edge_id")
+        edge_id_param = _as_id(parameters.get("edge_id"))
+        if edge_id_param is _INVALID_ID:
+            continue
         if edge_id_param and edge_id_param not in live_edge_ids:
             continue
         # affected_*_ids must reference real ids.

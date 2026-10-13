@@ -356,3 +356,65 @@ def test_stripping_leaves_a_normal_besser_kg_untouched():
 
     assert _strip_executable_shacl(graph) == 0
     assert len(graph) == before
+
+
+# ---------------------------------------------------------------------------
+# Determinism and ordering of the report
+# ---------------------------------------------------------------------------
+
+
+# owl:disjointWith deliberately: the shapes for it are minted by
+# _augment_with_owl_shim as fresh BNodes, which is the path whose random
+# labels used to end up in issue ids and in constraint_node_id. A fixture
+# whose source shape resolves to a real node would not exercise it.
+_VIOLATING_TTL = _PREFIX + """
+:Person a owl:Class .
+:Project a owl:Class .
+:Person owl:disjointWith :Project .
+:alice a :Person, :Project .
+:bob a :Person, :Project .
+:hasName a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:string .
+:Person rdfs:subClassOf [
+    a owl:Restriction ;
+    owl:onProperty :hasName ;
+    owl:minCardinality "1"^^xsd:nonNegativeInteger
+] .
+"""
+
+
+def test_issue_ids_are_stable_across_calls():
+    """Ids were hashed from BNodes the validator minted for the OWL shim.
+
+    Those labels are fresh per call, so every run returned different ids for
+    the same findings in a different order -- nothing could be cached, diffed
+    or referenced from a previous response.
+    """
+    kg = _kg(_VIOLATING_TTL)
+
+    first = check_kg_consistency(kg)
+    second = check_kg_consistency(kg)
+
+    assert first.issue_count > 0, "fixture produced no issues to compare"
+    assert [i.id for i in first.issues] == [i.id for i in second.issues]
+
+
+def test_no_synthetic_blank_node_ids_leak_as_constraint_node_ids():
+    """`constraint_node_id` must name a KG node or nothing at all."""
+    kg = _kg(_VIOLATING_TTL)
+    node_ids = {n.id for n in kg.nodes}
+
+    report = check_kg_consistency(kg)
+
+    for issue in report.issues:
+        if issue.constraint_node_id is not None:
+            assert issue.constraint_node_id in node_ids, issue.constraint_node_id
+
+
+def test_issues_are_ordered_most_severe_first():
+    """Sorting the severity strings gave info -> violation -> warning."""
+    from besser.BUML.notations.kg_to_buml.consistency import _SEVERITY_RANK
+
+    report = check_kg_consistency(_kg(_VIOLATING_TTL))
+    ranks = [_SEVERITY_RANK[i.severity] for i in report.issues]
+
+    assert ranks == sorted(ranks)

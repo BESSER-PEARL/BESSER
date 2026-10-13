@@ -70,6 +70,63 @@ def test_kg_json_round_trip(ttl_path: Path):
     assert j1 == j2
 
 
+# The tiny fixture above carries no axioms, which is why a missing entry in the
+# processor's axiom table went unnoticed: EquivalentPropertiesAxiom was dropped
+# on the way back in and bibo.ttl returned 51 of its 61 axioms. These two
+# fixtures do carry axioms -- the same pair test_kg_to_rdf.py parametrizes over.
+_AXIOM_BEARING_FIXTURES = [
+    Path(__file__).resolve().parents[3] / "fixtures" / "complex_kg.ttl",
+    Path(__file__).resolve().parents[3]
+    / "BUML" / "notations" / "kg_to_buml" / "fixtures" / "bibo" / "bibo.ttl",
+]
+
+
+@pytest.mark.parametrize("fixture", _AXIOM_BEARING_FIXTURES, ids=lambda p: p.name)
+def test_kg_json_round_trip_preserves_axioms(fixture: Path):
+    assert fixture.is_file(), f"missing fixture: {fixture}"
+    kg = owl_file_to_knowledge_graph(str(fixture))
+    assert kg.axioms, "fixture carries no axioms, so it cannot guard this"
+
+    j1 = kg_to_json(kg)
+    kg2 = process_kg_diagram(j1)
+    j2 = kg_to_json(kg2)
+
+    assert len(kg2.axioms) == len(kg.axioms)
+    assert sorted(type(a).__name__ for a in kg2.axioms) == sorted(
+        type(a).__name__ for a in kg.axioms
+    )
+    assert j1 == j2
+
+
+def test_every_axiom_subclass_round_trips():
+    """No hand-maintained list to drift: the table is derived, so assert that."""
+    from besser.BUML.metamodel.kg import KGAxiom
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.kg_diagram_processor import (  # noqa: E501
+        _AXIOM_KIND_TO_CLASS,
+    )
+
+    assert set(_AXIOM_KIND_TO_CLASS) == {c.__name__ for c in KGAxiom.__subclasses__()}
+
+
+def test_malformed_axiom_raises_instead_of_vanishing():
+    from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+        ConversionError,
+    )
+
+    base = {"type": "KnowledgeGraphDiagram", "version": "1.0.0", "nodes": [], "edges": []}
+
+    with pytest.raises(ConversionError, match="Unknown KG axiom kind"):
+        process_kg_diagram({"model": {**base, "axioms": [{"kind": "NoSuchAxiom"}]}})
+
+    with pytest.raises(ConversionError, match="missing 'kind'"):
+        process_kg_diagram({"model": {**base, "axioms": [{"class_ids": ["A", "B"]}]}})
+
+    with pytest.raises(ConversionError, match="Malformed"):
+        process_kg_diagram(
+            {"model": {**base, "axioms": [{"kind": "HasKeyAxiom", "bogus_field": 1}]}}
+        )
+
+
 def test_import_owl_endpoint_and_validation(client, ttl_path: Path):
     with ttl_path.open("rb") as fh:
         resp = client.post(

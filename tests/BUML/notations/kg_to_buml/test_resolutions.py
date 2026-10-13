@@ -17,7 +17,7 @@ from besser.BUML.notations.kg_to_buml import (
     dispatch_decision,
     kg_to_class_diagram,
 )
-from besser.BUML.metamodel.kg import KGPropertyConstraint
+from besser.BUML.metamodel.kg import KGClass, KGPropertyConstraint, KnowledgeGraph
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
 
 
@@ -388,3 +388,18 @@ def test_every_preflight_action_dispatches(fixture: Path, decision: str):
                 f"{type(exc).__name__}: {exc}"
             )
     assert not failures, "undispatchable actions:\n" + "\n".join(failures)
+
+
+def test_applying_the_same_resolutions_twice_yields_identical_edge_ids():
+    """Minted edge ids used to come from uuid4, so two identical runs differed.
+
+    Generators in this repo must produce identical output for identical input,
+    and the KG signature changed for no modelled reason.
+    """
+    from besser.BUML.notations.kg_to_buml.resolutions import _next_edge_id
+
+    kg = KnowledgeGraph(name="det")
+    person = KGClass(id="Person", label="Person")
+    kg.add_node(person)
+
+    assert _next_edge_id(kg) == _next_edge_id(kg)

@@ -9,12 +9,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from besser.BUML.metamodel.kg import (
-    DisjointClassesAxiom,
-    DisjointUnionAxiom,
-    EquivalentClassesAxiom,
-    HasKeyAxiom,
-    ImportAxiom,
-    InversePropertiesAxiom,
+    KGAxiom,
     KGBlank,
     KGClass,
     KGEdge,
@@ -24,22 +19,16 @@ from besser.BUML.metamodel.kg import (
     KGProperty,
     KGPropertyConstraint,
     KnowledgeGraph,
-    PropertyChainAxiom,
-    SubPropertyOfAxiom,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 
-_AXIOM_KIND_TO_CLASS = {
-    "EquivalentClassesAxiom": EquivalentClassesAxiom,
-    "DisjointClassesAxiom": DisjointClassesAxiom,
-    "DisjointUnionAxiom": DisjointUnionAxiom,
-    "SubPropertyOfAxiom": SubPropertyOfAxiom,
-    "InversePropertiesAxiom": InversePropertiesAxiom,
-    "PropertyChainAxiom": PropertyChainAxiom,
-    "HasKeyAxiom": HasKeyAxiom,
-    "ImportAxiom": ImportAxiom,
-}
+# Derived from the class hierarchy, not hand-listed. The hand-written table
+# was missing EquivalentPropertiesAxiom, and because an unknown kind was
+# silently dropped, nothing failed: bibo.ttl simply came back with 51 of its
+# 61 axioms. Deriving it means a new KGAxiom subclass round-trips the day it
+# is added.
+_AXIOM_KIND_TO_CLASS = {cls.__name__: cls for cls in KGAxiom.__subclasses__()}
 
 
 _NODE_TYPE_TO_CLASS = {
@@ -77,25 +66,30 @@ def process_kg_diagram(json_data: Dict[str, Any]) -> KnowledgeGraph:
         kg.add_edge(edge)
 
     for raw_axiom in model.get("axioms", []) or []:
-        axiom = _build_axiom(raw_axiom)
-        if axiom is not None:
-            kg.add_axiom(axiom)
+        kg.add_axiom(_build_axiom(raw_axiom))
 
     return kg
 
 
 def _build_axiom(raw: Dict[str, Any]):
+    """Rebuild one axiom from its JSON form.
+
+    Raises ``ConversionError`` rather than returning ``None`` for anything
+    malformed, matching :func:`_build_node` / :func:`_build_edge`. Returning
+    ``None`` meant a bad axiom vanished from the model without a word.
+    """
     kind = raw.get("kind")
     if not kind:
-        return None
+        raise ConversionError("KG axiom is missing 'kind'.")
     cls = _AXIOM_KIND_TO_CLASS.get(kind)
     if cls is None:
-        return None
+        known = ", ".join(sorted(_AXIOM_KIND_TO_CLASS))
+        raise ConversionError(f"Unknown KG axiom kind '{kind}'. Expected one of: {known}.")
     payload = {k: v for k, v in raw.items() if k != "kind"}
     try:
         return cls(**payload)
-    except TypeError:
-        return None
+    except TypeError as exc:
+        raise ConversionError(f"Malformed '{kind}' axiom: {exc}") from exc
 
 
 def _build_node(raw: Dict[str, Any]):

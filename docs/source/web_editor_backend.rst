@@ -488,6 +488,13 @@ File Upload Limits
 - CSV files: 5 MB max
 - Images: 10 MB max
 - BUML Python files: 2 MB max
+- OWL/RDF ontologies (``.owl``, ``.ttl``, ``.rdf``, ``.xml``, ``.nt``,
+  ``.n3``): 5 MB max
+
+OWL/RDF uploads that declare a DTD (``<!DOCTYPE`` / ``<!ENTITY``) are rejected
+with HTTP 400 before parsing. The XML parser underneath applies no
+entity-expansion limit, so a small file of nested entities would otherwise
+expand far enough to exhaust server resources; no ontology needs a DTD.
 
 
 Environment Variables

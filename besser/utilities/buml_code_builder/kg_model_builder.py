@@ -6,13 +6,14 @@ Counterpart of
 .kg_diagram_converter.kg_buml_to_json``, which reads the code this module
 writes. Two constraints follow from that pairing and shape everything below:
 
-1. **The generated source is executed, not imported.** ``kg_buml_to_json``
-   strips the import block and ``exec()``s the rest against a restricted
-   namespace whose only builtins are ``set list dict tuple str int float bool
-   len range print`` plus the public names of ``besser.BUML.metamodel.kg``.
-   The emitted code therefore sticks to literals and constructor calls — no
-   comprehensions over helpers like ``sorted`` or ``enumerate``, and ``set()``
-   rather than a bare ``{}`` for an empty node/edge set.
+1. **The generated source is loaded, not imported.** ``kg_buml_to_json``
+   strips the import block and hands the rest to ``safe_load_buml``, which
+   validates the AST against an allowlist before executing it: only literals,
+   names bound to ``set list dict tuple`` or a public name of
+   ``besser.BUML.metamodel.kg``, and calls on those. The emitted code
+   therefore sticks to literals and constructor calls — no comprehensions over
+   helpers like ``sorted`` or ``enumerate``, no dunder attribute access, and
+   ``set()`` rather than a bare ``{}`` for an empty node/edge set.
 
 2. **The section banner has to be written here.** ``project_to_code`` only
    prepends a numbered ``# KNOWLEDGE_GRAPH MODEL n: "…" #`` header when a
@@ -25,10 +26,13 @@ Values are rendered with :func:`repr` rather than the usual
 ``_escape_python_string``. Node and edge ``metadata`` carries arbitrarily
 nested constraint specs imported from OWL/SHACL, and hand-escaping nested
 structures is error-prone where ``repr`` is correct by construction for every
-JSON-safe type. :func:`_literal` guarantees only such types reach it.
+JSON-safe type. :func:`_literal` guarantees only such types reach it, and
+special-cases the one place ``repr`` is not valid Python: a non-finite float,
+whose ``repr`` is the undefined name ``nan`` / ``inf``.
 """
 
 import hashlib
+import math
 from typing import Any, Dict, List, Set, TextIO
 
 from besser.BUML.metamodel.kg import (
@@ -204,9 +208,12 @@ def _node_class_name(node: KGNode) -> str:
     for cls in _NODE_CLASSES:
         if type(node) is cls:
             return cls.__name__
-    # Defensive: a future node kind should still round-trip as an individual
-    # rather than emitting a name the exec namespace does not define.
-    return "KGIndividual"
+    # Falling back to "KGIndividual" silently rewrote the node's kind, so a new
+    # KGNode subclass would round-trip as the wrong type with nothing said.
+    # bpmn_model_to_code raises here for the same reason.
+    raise TypeError(
+        f"kg_model_to_code: unexpected KGNode type {type(node).__name__}"
+    )
 
 
 def _axiom_expr(axiom: Any) -> str:
@@ -229,6 +236,12 @@ def _literal(value: Any) -> str:
     its ``str()`` form so a stray object can never emit a ``repr`` that is not
     valid Python (``<Foo object at 0x…>``).
     """
+    if isinstance(value, float) and not math.isfinite(value):
+        # repr() gives bare `nan` / `inf`, which are names Python does not
+        # define -- the generated module then fails to load with NameError.
+        if math.isnan(value):
+            return "float('nan')"
+        return "float('inf')" if value > 0 else "float('-inf')"
     if value is None or isinstance(value, (bool, int, float)):
         return repr(value)
     if isinstance(value, str):

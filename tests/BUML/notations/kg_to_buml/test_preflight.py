@@ -367,6 +367,76 @@ def test_cyclic_subclass(tmp_path: Path):
     assert {"http://ex.org/A", "http://ex.org/B"} <= set(issue.affected_node_ids)
 
 
+def test_cyclic_subclass_is_reported_once_per_cycle(tmp_path: Path):
+    """A 2-cycle is one finding, not one per rotation.
+
+    Starting a fresh path-walk from every node reported A->B->A and B->A->B as
+    separate issues; applying both decisions then raised ResolutionError.
+    """
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :A a owl:Class ; rdfs:subClassOf :B .
+    :B a owl:Class ; rdfs:subClassOf :A .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+
+    cycles = [i for i in report.issues if i.code == "CYCLIC_SUBCLASS"]
+    assert len(cycles) == 1, [i.description for i in cycles]
+
+
+def test_cyclic_subclass_skip_actually_skips(tmp_path: Path):
+    """skip_action was a copy of recommended_action, so "skip" broke the edge."""
+    from besser.BUML.notations.kg_to_buml.resolutions import dispatch_decision
+
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :A a owl:Class ; rdfs:subClassOf :B .
+    :B a owl:Class ; rdfs:subClassOf :A .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    issue = _issue(analyze_kg_for_class_diagram(kg), "CYCLIC_SUBCLASS")
+
+    assert issue.skip_action.key != issue.recommended_action.key
+
+    kept = dispatch_decision(kg, issue, "skip")
+    assert len(kept.edges) == len(kg.edges), "skip removed an edge"
+
+    broken = dispatch_decision(kg, issue, "accept")
+    assert len(broken.edges) == len(kg.edges) - 1, "accept did not break the cycle"
+
+
+def test_cycle_detection_stays_fast_on_an_acyclic_diamond_stack():
+    """Guards the complexity, not the wall clock.
+
+    A stack of diamonds has exponentially many distinct paths but no cycle at
+    all. The previous path-enumerating DFS took 1.7 s at 55 classes; the
+    colour DFS is linear in edges, so this is instant. preflight runs it on
+    every call and again after each decision, so this is on a hot path.
+    """
+    import time
+
+    from besser.BUML.notations.kg_to_buml._common import find_cycles
+
+    # 60 diamonds chained head-to-tail: 2**60 distinct root-to-leaf paths.
+    parents = {}
+    for i in range(60):
+        top, left, right, bottom = f"t{i}", f"l{i}", f"r{i}", f"t{i + 1}"
+        parents[top] = {left, right}
+        parents[left] = {bottom}
+        parents[right] = {bottom}
+
+    started = time.perf_counter()
+    assert find_cycles(parents) == []
+    assert time.perf_counter() - started < 1.0
+
+
 # --- PROPERTY_NO_RANGE ----------------------------------------------------
 
 

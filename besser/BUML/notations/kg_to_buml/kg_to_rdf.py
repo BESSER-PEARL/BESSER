@@ -226,7 +226,7 @@ def _pass_a2_declarations(g, nodes, edges, terms, default_ns, warnings) -> None:
     for edge in edges:
         if str(edge.iri or "") != str(RDF.type):
             continue
-        target_iri = getattr(edge.target, "iri", None) or ""
+        target_iri = edge.target.iri or ""
         if target_iri.startswith(_OWL_NS) or target_iri.startswith(str(RDFS)):
             typed[edge.source.id] = True
 
@@ -246,7 +246,7 @@ def _range_index(edges) -> Dict[str, List[str]]:
     out: Dict[str, List[str]] = {}
     for edge in edges:
         if str(edge.iri or "") == str(RDFS.range):
-            out.setdefault(edge.source.id, []).append(getattr(edge.target, "iri", None) or "")
+            out.setdefault(edge.source.id, []).append(edge.target.iri or "")
     return out
 
 

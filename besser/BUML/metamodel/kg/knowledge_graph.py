@@ -246,8 +246,8 @@ class KGNodeConstraint(_ConstraintNodeMixin, KGNode):
 
     Materialises an OWL restriction set or a SHACL ``sh:NodeShape`` as a
     first-class visual node. The constraint payload lives in
-    ``metadata['constraintSpecs']`` as a list of dicts matching
-    :class:`~besser.BUML.metamodel.kg.constraint_specs.ConstraintSpec`.
+    ``metadata['constraintSpecs']`` as a list of dicts whose schema is
+    documented in :mod:`besser.BUML.metamodel.kg.constraint_specs`.
 
     Linked to its target class via an edge with iri
     ``http://besser.local/kg#constraintTargetClass`` (and, for SHACL

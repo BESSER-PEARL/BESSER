@@ -497,7 +497,7 @@ def _h_keep_object_property(kg: KnowledgeGraph, res: KGResolution) -> None:
         if not (
             e.source.id == prop.id
             and normalize_predicate(e.iri) == RDFS_RANGE
-            and _looks_like_datatype_iri(getattr(e.target, "iri", None))
+            and _looks_like_datatype_iri(e.target.iri)
         )
     }
     _replace_graph(kg, set(kg.nodes), new_edges)
@@ -516,7 +516,7 @@ def _h_keep_datatype_property(kg: KnowledgeGraph, res: KGResolution) -> None:
         if not (
             e.source.id == prop.id
             and normalize_predicate(e.iri) == RDFS_RANGE
-            and not _looks_like_datatype_iri(getattr(e.target, "iri", None))
+            and not _looks_like_datatype_iri(e.target.iri)
             and isinstance(e.target, KGClass)
         )
     }
@@ -899,7 +899,7 @@ def _h_reclassify_node(kg: KnowledgeGraph, res: KGResolution) -> None:
     new_node = target_cls(
         id=node.id,
         label=node.label,
-        iri=getattr(node, "iri", None),
+        iri=node.iri,
         metadata=dict(node.metadata),
     )
     _swap_node(kg, node, new_node)

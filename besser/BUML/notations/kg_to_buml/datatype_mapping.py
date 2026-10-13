@@ -1,9 +1,8 @@
-"""XSD datatype → BESSER primitive mapping and literal-value parsing."""
+"""XSD datatype → BESSER primitive mapping."""
 
 from __future__ import annotations
 
-import datetime as _dt
-from typing import Any, Optional, Tuple
+from typing import Optional, Tuple
 
 from besser.BUML.metamodel.structural import (
     AnyType,
@@ -105,82 +104,4 @@ def xsd_to_primitive(datatype_iri: Optional[str]) -> Tuple[PrimitiveDataType, bo
     return StringType, False
 
 
-def _parse_iso_duration(value: str) -> _dt.timedelta:
-    """Parse an ISO-8601 duration (``PnYnMnDTnHnMnS``) into a ``timedelta``.
-
-    Years and months don't have a fixed length, so they are approximated
-    (year=365 days, month=30 days). This matches the loose semantics expected
-    when round-tripping ABox data into a typed BUML model.
-    """
-    import re
-
-    match = re.match(
-        r"^(?P<sign>-)?P"
-        r"(?:(?P<years>\d+)Y)?"
-        r"(?:(?P<months>\d+)M)?"
-        r"(?:(?P<weeks>\d+)W)?"
-        r"(?:(?P<days>\d+)D)?"
-        r"(?:T"
-        r"(?:(?P<hours>\d+)H)?"
-        r"(?:(?P<minutes>\d+)M)?"
-        r"(?:(?P<seconds>\d+(?:\.\d+)?)S)?"
-        r")?$",
-        value,
-    )
-    if not match:
-        raise ValueError(f"Invalid ISO-8601 duration: {value!r}")
-    parts = match.groupdict()
-    sign = -1 if parts["sign"] else 1
-    days = (
-        int(parts["years"] or 0) * 365
-        + int(parts["months"] or 0) * 30
-        + int(parts["weeks"] or 0) * 7
-        + int(parts["days"] or 0)
-    )
-    seconds = (
-        int(parts["hours"] or 0) * 3600
-        + int(parts["minutes"] or 0) * 60
-        + float(parts["seconds"] or 0)
-    )
-    return _dt.timedelta(days=sign * days, seconds=sign * seconds)
-
-
-def parse_literal(value: str, datatype_iri: Optional[str]) -> Any:
-    """Parse a lexical literal into a Python value matching its XSD datatype.
-
-    On parse failure, returns the original string — the caller is responsible
-    for downgrading the slot to ``StringType`` and emitting a warning.
-    """
-    primitive, _known = xsd_to_primitive(datatype_iri)
-    if primitive is StringType or primitive is AnyType:
-        return value
-    name = primitive.name
-    try:
-        if name == "bool":
-            lowered = value.strip().lower()
-            if lowered in {"true", "1"}:
-                return True
-            if lowered in {"false", "0"}:
-                return False
-            raise ValueError(f"not a boolean: {value!r}")
-        if name == "int":
-            return int(value)
-        if name == "float":
-            return float(value)
-        if name == "date":
-            return _dt.date.fromisoformat(value)
-        if name == "datetime":
-            # rdflib emits ``2024-01-01T00:00:00+00:00``; ``fromisoformat`` handles it
-            # (Python 3.11+ also handles the ``Z`` suffix, but we strip just in case).
-            cleaned = value.replace("Z", "+00:00")
-            return _dt.datetime.fromisoformat(cleaned)
-        if name == "time":
-            return _dt.time.fromisoformat(value)
-        if name == "timedelta":
-            return _parse_iso_duration(value)
-    except (ValueError, TypeError):
-        return value
-    return value
-
-
-__all__ = ["xsd_to_primitive", "parse_literal", "PRIMITIVE_BY_NAME"]
+__all__ = ["xsd_to_primitive", "PRIMITIVE_BY_NAME"]

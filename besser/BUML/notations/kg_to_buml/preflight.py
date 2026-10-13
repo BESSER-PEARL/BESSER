@@ -574,9 +574,9 @@ def _detect_range_both_datatype_and_class(kg: KnowledgeGraph, indexes) -> List[K
     out: List[KGIssue] = []
     for prop in _properties_in(kg):
         ranges = _range_targets(prop, indexes)
-        has_dt = any(_looks_like_datatype_iri(getattr(r, "iri", None)) for r in ranges)
+        has_dt = any(_looks_like_datatype_iri(r.iri) for r in ranges)
         has_class = any(
-            isinstance(r, KGClass) and not _looks_like_datatype_iri(getattr(r, "iri", None))
+            isinstance(r, KGClass) and not _looks_like_datatype_iri(r.iri)
             for r in ranges
         )
         if has_dt and has_class:
@@ -636,7 +636,7 @@ def _detect_range_not_type(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
         bad_ranges = [
             r for r in ranges
             if isinstance(r, (KGIndividual, KGBlank))
-            and not _looks_like_datatype_iri(getattr(r, "iri", None))
+            and not _looks_like_datatype_iri(r.iri)
             and not _is_handled_range_combinator(r)
         ]
         if not bad_ranges:
@@ -744,7 +744,7 @@ def _detect_unmapped_datatypes(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
     out: List[KGIssue] = []
     for prop in _properties_in(kg):
         for rng in _range_targets(prop, indexes):
-            iri = getattr(rng, "iri", None)
+            iri = rng.iri
             if not iri or not _looks_like_datatype_iri(iri):
                 continue
             _, known = xsd_to_primitive(iri)
@@ -922,7 +922,7 @@ def _detect_undeclared_class(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
             referenced_as_class.add(edge.target.id)
         elif pred == RDFS_RANGE:
             tgt = edge.target
-            if not isinstance(tgt, (KGBlank, KGLiteral, KGProperty)) and not _looks_like_datatype_iri(getattr(tgt, "iri", None)):
+            if not isinstance(tgt, (KGBlank, KGLiteral, KGProperty)) and not _looks_like_datatype_iri(tgt.iri):
                 referenced_as_class.add(tgt.id)
         elif pred == RDFS_SUBCLASS_OF:
             if not isinstance(edge.source, KGBlank):
@@ -945,7 +945,7 @@ def _detect_undeclared_class(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
             continue
         if isinstance(node, KGClass):
             continue
-        if is_meta_vocab(getattr(node, "iri", None) or node_id):
+        if is_meta_vocab(node.iri or node_id):
             continue
         # The overwhelming common case is a KGIndividual (the importer's
         # default classification for any untyped URIRef) — promote it to a

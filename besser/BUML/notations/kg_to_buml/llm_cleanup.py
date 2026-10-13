@@ -675,8 +675,8 @@ def _build_orphan_node_snapshot(node: KGNode, kg: KnowledgeGraph) -> Dict[str, A
     snap: Dict[str, Any] = {
         "id": node.id,
         "kind": _node_kind(node),
-        "label": getattr(node, "label", None),
-        "iri": getattr(node, "iri", None),
+        "label": node.label,
+        "iri": node.iri,
         "incident_edges": incident,
     }
     if isinstance(node, KGLiteral):
@@ -751,7 +751,7 @@ def _build_orphan_classification_prompt(
 
 def _synthesize_drop_node_issue(node: KGNode) -> KGIssue:
     """Build a synthetic 'drop_node' issue for an orphan the LLM didn't cover."""
-    label = getattr(node, "label", None) or node.id
+    label = node.label or node.id
     description = (
         f"The LLM did not classify '{label}'. Drop it from the KG by default, "
         f"or skip to keep it as-is."

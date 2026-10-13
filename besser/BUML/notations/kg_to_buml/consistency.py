@@ -604,12 +604,10 @@ def _build_iri_to_node_id(kg: KnowledgeGraph) -> Dict[str, str]:
     """
     mapping: Dict[str, str] = {}
     for node in kg.nodes:
-        nid = getattr(node, "id", None)
-        if not nid:
-            continue
+        nid = node.id      # always non-empty: KGNode.id's setter rejects "" / None
         # Identity mapping always.
         mapping[nid] = nid
-        iri = getattr(node, "iri", None)
+        iri = node.iri
         if iri:
             mapping[iri] = nid
             continue
@@ -630,7 +628,7 @@ def _build_iri_to_node_id(kg: KnowledgeGraph) -> Dict[str, str]:
             continue
         else:
             # KGIndividual / KGClass / KGProperty without an iri.
-            slug = _slugify(getattr(node, "label", None) or nid)
+            slug = _slugify(node.label or nid)
             mapping[f"{DEFAULT_NAMESPACE}{slug}"] = nid
     return mapping
 

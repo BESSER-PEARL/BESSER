@@ -1,9 +1,32 @@
 """Normalised constraint specifications for KG NodeConstraint / PropertyConstraint.
 
-A ``ConstraintSpec`` captures a single OWL2/SHACL constraint in a vocabulary-
+A constraint spec captures a single OWL2/SHACL constraint in a vocabulary-
 agnostic form. Specs live in ``KGNodeConstraint.metadata['constraintSpecs']``
 or ``KGPropertyConstraint.metadata['constraintSpecs']`` as plain dicts (so the
-existing JSON round-trip plumbing keeps working).
+existing JSON round-trip plumbing keeps working); :func:`is_valid_spec` is the
+structural check. There is deliberately no spec class: nothing needs one, and a
+dataclass next to the dicts would be a second schema to keep in step.
+
+A spec dict has these keys:
+
+``kind``
+    The discriminator; a key of :data:`CONSTRAINT_VOCAB_MAP`.
+``value``
+    Its shape depends on ``kind``:
+
+    - integer kinds (``minCardinality``, ``maxLength`` ...): ``int``
+    - IRI kinds (``datatype``, ``hasValue`` IRIs): ``str``
+    - list kinds (``oneOf``, ``in``, ``unionOf`` ...): ``List[Any]``
+    - nested kinds (``shaclAnd``, ``shaclOr`` ...): ``List[Dict]`` of nested specs
+    - ``hasValue`` may also carry ``{"value": "x", "datatype": "...", "language": "en"}``
+      for literal values
+``on_class``
+    Populated for qualified cardinality (``owl:onClass`` /
+    ``sh:qualifiedValueShape``); otherwise absent.
+``vocab_pref``
+    An explicit per-spec vocabulary override. When absent, the exporter picks
+    any vocabulary listed in :data:`CONSTRAINT_VOCAB_MAP` that is compatible
+    with the user's export-time choice.
 
 The :data:`CONSTRAINT_VOCAB_MAP` table is the single source of truth that
 the importer, exporter, and validation layers consult to decide which
@@ -13,81 +36,18 @@ table in ``constraint-catalog.ts``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal
 
 
 __all__ = [
-    "ConstraintKind",
     "Vocab",
-    "ConstraintSpec",
     "CONSTRAINT_VOCAB_MAP",
-    "CONSTRAINT_CATEGORY",
+    "LOGICAL_KINDS",
     "is_valid_spec",
 ]
 
 
 Vocab = Literal["owl", "shacl"]
-
-
-ConstraintKind = Literal[
-    # NodeConstraint kinds
-    "equivalentClasses",
-    "disjointWith",
-    "subClassOf",
-    "complementOf",
-    "unionOf",
-    "intersectionOf",
-    "oneOf",
-    "hasKey",
-    "disjointUnionOf",
-    "shaclClosed",
-    "shaclIgnoredProperties",
-    "shaclDisjoint",
-    # PropertyConstraint cardinality
-    "minCardinality",
-    "maxCardinality",
-    "exactCardinality",
-    "minQualifiedCardinality",
-    "maxQualifiedCardinality",
-    "exactQualifiedCardinality",
-    # PropertyConstraint value
-    "someValuesFrom",
-    "allValuesFrom",
-    "hasValue",
-    "hasSelf",
-    # PropertyConstraint datatype / literal (SHACL Core)
-    "datatype",
-    "nodeKind",
-    "pattern",
-    "flags",
-    "minLength",
-    "maxLength",
-    "minInclusive",
-    "maxInclusive",
-    "minExclusive",
-    "maxExclusive",
-    "languageIn",
-    "uniqueLang",
-    "in",
-    # Property-pair comparison (SHACL Core)
-    "equals",
-    "lessThan",
-    "lessThanOrEquals",
-    # Logical
-    "shaclNot",
-    "shaclAnd",
-    "shaclOr",
-    "shaclXone",
-    # SHACL meta
-    "shaclSeverity",
-    "shaclMessage",
-    "shaclName",
-    "shaclDescription",
-    "shaclDeactivated",
-    "shaclOrder",
-    "shaclGroup",
-]
 
 
 # Which vocabularies (OWL, SHACL, or both) can express each constraint kind.
@@ -157,110 +117,6 @@ CONSTRAINT_VOCAB_MAP: Dict[str, List[str]] = {
     "shaclOrder": ["shacl"],
     "shaclGroup": ["shacl"],
 }
-
-
-# UI category used to group specs in the inspector picker. The frontend
-# mirrors this layout. ``classAxiom`` and ``shapeMeta`` are NodeConstraint-only;
-# ``cardinality``, ``value``, ``datatype`` are PropertyConstraint-only;
-# ``enumeration`` and ``logical`` and ``meta`` apply to both.
-CONSTRAINT_CATEGORY: Dict[str, str] = {
-    # Class axioms
-    "equivalentClasses": "classAxiom",
-    "disjointWith": "classAxiom",
-    "subClassOf": "classAxiom",
-    "complementOf": "classAxiom",
-    "unionOf": "classAxiom",
-    "intersectionOf": "classAxiom",
-    "hasKey": "classAxiom",
-    "disjointUnionOf": "classAxiom",
-    "shaclClosed": "classAxiom",
-    "shaclIgnoredProperties": "classAxiom",
-    "shaclDisjoint": "classAxiom",
-    # Cardinality
-    "minCardinality": "cardinality",
-    "maxCardinality": "cardinality",
-    "exactCardinality": "cardinality",
-    "minQualifiedCardinality": "cardinality",
-    "maxQualifiedCardinality": "cardinality",
-    "exactQualifiedCardinality": "cardinality",
-    # Value
-    "someValuesFrom": "value",
-    "allValuesFrom": "value",
-    "hasValue": "value",
-    "hasSelf": "value",
-    "nodeKind": "value",
-    "equals": "value",
-    "lessThan": "value",
-    "lessThanOrEquals": "value",
-    # Datatype
-    "datatype": "datatype",
-    "pattern": "datatype",
-    "flags": "datatype",
-    "minLength": "datatype",
-    "maxLength": "datatype",
-    "minInclusive": "datatype",
-    "maxInclusive": "datatype",
-    "minExclusive": "datatype",
-    "maxExclusive": "datatype",
-    "languageIn": "datatype",
-    "uniqueLang": "datatype",
-    # Enumeration
-    "oneOf": "enumeration",
-    "in": "enumeration",
-    # Logical
-    "shaclNot": "logical",
-    "shaclAnd": "logical",
-    "shaclOr": "logical",
-    "shaclXone": "logical",
-    # Meta
-    "shaclSeverity": "meta",
-    "shaclMessage": "meta",
-    "shaclName": "meta",
-    "shaclDescription": "meta",
-    "shaclDeactivated": "meta",
-    "shaclOrder": "meta",
-    "shaclGroup": "meta",
-}
-
-
-@dataclass
-class ConstraintSpec:
-    """A single normalised constraint instance.
-
-    ``value`` shape depends on ``kind``:
-
-    - integer kinds (``minCardinality``, ``maxLength`` …): ``int``
-    - IRI kinds (``datatype``, ``hasValue`` IRIs): ``str``
-    - list kinds (``oneOf``, ``in``, ``unionOf`` …): ``List[Any]``
-    - nested kinds (``shaclAnd``, ``shaclOr`` …): ``List[Dict]`` of nested specs
-    - ``hasValue`` may also carry ``{"value": "x", "datatype": "...", "language": "en"}``
-      for literal values
-
-    ``on_class`` is populated for qualified cardinality (``owl:onClass`` /
-    ``sh:qualifiedValueShape``) and otherwise left ``None``.
-
-    ``vocab_pref`` is an explicit per-spec override. When ``None``, the
-    exporter picks any vocabulary listed in :data:`CONSTRAINT_VOCAB_MAP`
-    that's compatible with the user's export-time choice.
-    """
-
-    kind: str
-    value: Any = None
-    on_class: Optional[str] = None
-    vocab_pref: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        d = asdict(self)
-        return {k: v for k, v in d.items() if v is not None or k == "value"}
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ConstraintSpec":
-        return cls(
-            kind=data["kind"],
-            value=data.get("value"),
-            on_class=data.get("on_class"),
-            vocab_pref=data.get("vocab_pref"),
-        )
 
 
 #: The four SHACL Core logical-operator kinds. Their ``value`` is a list of

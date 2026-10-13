@@ -41,7 +41,7 @@ Seven node kinds, matching what an OWL/RDF graph can contain:
 The two constraint kinds reify constraints as first-class, visible nodes so
 they can be inspected and edited on the canvas. Their payload lives in
 ``metadata['constraintSpecs']`` as a list of vocabulary-agnostic
-``ConstraintSpec`` dicts, each naming a ``kind`` (``minCardinality``,
+constraint-spec dicts, each naming a ``kind`` (``minCardinality``,
 ``allValuesFrom``, ``pattern``, ``shaclOr``, …) and a value.
 
 Edges and axioms

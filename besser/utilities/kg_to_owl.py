@@ -34,6 +34,7 @@ from besser.BUML.metamodel.kg import (
     KnowledgeGraph,
     PropertyChainAxiom,
 )
+from besser.BUML.metamodel.kg.constraint_specs import LOGICAL_KINDS
 from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_CLASS,
     CONSTRAINT_TARGET_PROPERTY,
@@ -282,9 +283,10 @@ _SHACL_LOGICAL_KINDS: Dict[str, URIRef] = {
     "shaclXone": SH.xone,
 }
 
-#: Constraint kinds whose ``value`` is a list of nested shapes — the four
-#: logical operators above. Used to gate vocab-skip counting at export time.
-LOGICAL_KINDS: Set[str] = set(_SHACL_LOGICAL_KINDS.keys())
+# The metamodel owns the set of logical-operator kinds (the four above); this
+# module only maps each to its SHACL predicate. Fail at import, not at export
+# time, if the two ever disagree.
+assert LOGICAL_KINDS == set(_SHACL_LOGICAL_KINDS), "LOGICAL_KINDS drifted from _SHACL_LOGICAL_KINDS"
 
 
 def _emit_inline_shape(
@@ -722,10 +724,8 @@ def serialize_knowledge_graph(
             ``"shacl"`` / ``"both"``). See :func:`knowledge_graph_to_rdf`.
     """
     g = knowledge_graph_to_rdf(kg, default_namespace=default_namespace, vocab=vocab)
-    serialized = g.serialize(format=fmt)
-    if isinstance(serialized, bytes):  # rdflib < 6 returned bytes
-        return serialized.decode("utf-8")
-    return serialized
+    # rdflib >= 6 (7.0 is the pinned floor) returns ``str`` here.
+    return g.serialize(format=fmt)
 
 
 # ----------------------------------------------------------------------
@@ -738,8 +738,8 @@ def serialize_knowledge_graph(
 # touching a constraint node, which is right for a user-facing TTL export but
 # lossy for conversion. It does, however, need the *leaf* emitters and the
 # spec↔vocabulary tables below. Sharing them (instead of forking) keeps the
-# two paths from drifting whenever a ``ConstraintKind`` is added to
-# :mod:`besser.BUML.metamodel.kg.constraint_specs`.
+# two paths from drifting whenever a kind is added to
+# :data:`~besser.BUML.metamodel.kg.constraint_specs.CONSTRAINT_VOCAB_MAP`.
 
 slugify = _slugify
 term_for_node = _term_for_node
@@ -747,10 +747,7 @@ predicate_for_edge = _predicate_for_edge
 spec_to_literal = _spec_to_literal
 emit_rdf_list = _emit_rdf_list
 emit_owl_restriction = _emit_owl_restriction
-emit_inline_shape = _emit_inline_shape
 emit_shacl_constraint = _emit_single_shacl_constraint
-emit_shacl_property_shape_into = _emit_shacl_property_shape_into
-emit_shacl_node_shape_into = _emit_shacl_node_shape_into
 emit_nodeconstraint_owl_axioms = _emit_nodeconstraint_owl_axioms
 
 #: Spec kind → vocabulary predicate tables (see the note above).
@@ -758,4 +755,3 @@ OWL_RESTRICTION_KINDS = _OWL_RESTRICTION_KINDS
 SHACL_PROPERTY_KINDS = _SHACL_PROPERTY_KINDS
 SHACL_NODE_KINDS = _SHACL_NODE_KINDS
 SHACL_LOGICAL_KINDS = _SHACL_LOGICAL_KINDS
-INTERNAL_PREDICATES = _INTERNAL_PREDICATES

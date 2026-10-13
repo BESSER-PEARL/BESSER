@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(not os.environ.get("KG_GOLDEN_DIR"), reason="KG_GOLDEN_DIR not set")
+if not os.environ.get("KG_GOLDEN_DIR"):
+    pytest.skip("KG_GOLDEN_DIR not set (see tests/kg_golden/README.md)", allow_module_level=True)
 
 _ROOT = Path(__file__).resolve().parents[1]
 _KG = _ROOT / "BUML" / "notations" / "kg_to_buml"

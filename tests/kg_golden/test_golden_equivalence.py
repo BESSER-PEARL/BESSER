@@ -18,13 +18,20 @@ from tests.kg_golden import dump
 _DIR = os.environ.get("KG_GOLDEN_DIR")
 _RECORD = os.environ.get("KG_GOLDEN_MODE") == "record"
 
-pytestmark = pytest.mark.skipif(not _DIR, reason="KG_GOLDEN_DIR not set")
+if not _DIR:
+    # Module level, not a skipif mark: with no corpus the parametrize lists below
+    # are empty, and pytest then hands the `ids=` callable a NOTSET sentinel.
+    pytest.skip("KG_GOLDEN_DIR not set (see tests/kg_golden/README.md)", allow_module_level=True)
 
 
 def _corpus():
     if not _DIR:
         return []
     return sorted((Path(_DIR) / "corpus").glob("*.pkl"))
+
+
+def _id(path) -> str:
+    return getattr(path, "stem", "none")[:10]
 
 
 def _check(name: str, key: str, actual) -> None:
@@ -49,7 +56,7 @@ def _load(path: Path):
     return pickle.loads(path.read_bytes())          # fresh copy every time
 
 
-@pytest.mark.parametrize("path", _corpus(), ids=lambda p: p.stem[:10])
+@pytest.mark.parametrize("path", _corpus(), ids=_id)
 def test_class_diagram(path: Path):
     from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
 
@@ -61,7 +68,7 @@ def test_class_diagram(path: Path):
         _check(path.stem, f"class_ocl{int(emit_ocl)}", result)
 
 
-@pytest.mark.parametrize("path", _corpus(), ids=lambda p: p.stem[:10])
+@pytest.mark.parametrize("path", _corpus(), ids=_id)
 def test_conversion_projection(path: Path):
     from besser.BUML.notations.kg_to_buml._common import KGConversionWarning  # noqa: F401
     from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
@@ -78,7 +85,7 @@ def test_conversion_projection(path: Path):
 
 
 @pytest.mark.parametrize("vocab", ["owl", "shacl", "both"])
-@pytest.mark.parametrize("path", _corpus(), ids=lambda p: p.stem[:10])
+@pytest.mark.parametrize("path", _corpus(), ids=_id)
 def test_export_projection(path: Path, vocab: str):
     from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
 
@@ -91,7 +98,7 @@ def test_export_projection(path: Path, vocab: str):
 
 
 @pytest.mark.parametrize("inference", ["rdfs", pytest.param("owlrl", marks=pytest.mark.slow)])
-@pytest.mark.parametrize("path", _corpus(), ids=lambda p: p.stem[:10])
+@pytest.mark.parametrize("path", _corpus(), ids=_id)
 def test_consistency(path: Path, inference: str):
     from besser.BUML.notations.kg_to_buml.consistency import check_kg_consistency
 

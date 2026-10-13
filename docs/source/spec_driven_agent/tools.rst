@@ -67,8 +67,8 @@ The LLM sees the map twice:
   ("Where to add code"): files, symbols, anchor ids, the pitfalls found in
   this code and a recipe per common change. Line numbers are left out because
   the prompt is built once per run and would go stale after the first edit.
-  The overview is budgeted (4,000 characters; 1,500 for 32k-context models)
-  and switched off with ``BESSER_LLM_SCAFFOLD_MAP=0``.
+  The overview is budgeted (4,000 characters; 1,500 for 32k-context models).
+  ``BESSER_LLM_SCAFFOLD_MAP=0`` switches off the overview and the tool below.
 - **Through** ``locate_code``, a read-only tool that rebuilds the map from
   disk on every call. Filtered by ``entity``, ``path`` or ``query`` (words
   matched against anchor ids, routes and function names), it returns each
@@ -82,6 +82,13 @@ The LLM sees the map twice:
   advisory. The map is cached per workspace and rebuilt when a file changes;
   dependency, build and hidden directories are skipped, and only the 2,000
   shallowest source files are mapped (the answer says when that cap applied).
+
+Whether the map makes runs better is measured, not assumed:
+``tests/live/scaffold_map_ab.py`` runs the same requests with the map and
+without it (``BESSER_LLM_SCAFFOLD_MAP=0``), boots each delivered backend and
+checks every requested behaviour over HTTP, and compares the arms on those
+checks and on turns, failed edits, cost and blockers left. It makes real,
+paid LLM calls; ``--dry-run`` exercises it offline.
 
 File edits and checklist evidence
 ---------------------------------

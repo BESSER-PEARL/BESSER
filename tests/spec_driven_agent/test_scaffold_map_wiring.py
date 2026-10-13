@@ -149,13 +149,17 @@ def _orchestrator(tmp_path, model, client_model="mock-model") -> LLMOrchestrator
 
 def test_orchestrator_overview_honours_the_switch_and_small_windows(tmp_path, monkeypatch, library_book_author_model):
     _backend(tmp_path, library_book_author_model)
-    assert _orchestrator(tmp_path, library_book_author_model)._scaffold_map_overview()
+    on = _orchestrator(tmp_path, library_book_author_model)
+    assert on._scaffold_map_overview()
+    assert "locate_code" in {t["name"] for t in on.tools}
 
     small = _orchestrator(tmp_path, library_book_author_model, client_model="devstral:24b")
     assert 0 < len(small._scaffold_map_overview()) <= _SCAFFOLD_MAP_CHARS_SMALL
 
     monkeypatch.setenv("BESSER_LLM_SCAFFOLD_MAP", "0")
-    assert _orchestrator(tmp_path, library_book_author_model)._scaffold_map_overview() == ""
+    off = _orchestrator(tmp_path, library_book_author_model)
+    assert off._scaffold_map_overview() == ""
+    assert "locate_code" not in {t["name"] for t in off.tools}     # off = the pre-map baseline
 
 
 def test_an_empty_workspace_has_no_map(tmp_path):

@@ -166,8 +166,9 @@ Feature flags
   only through ``read_file`` (always current; several reads batch in one turn).
 - ``BESSER_LLM_SCAFFOLD_MAP`` (on; ``0`` disables it) -- Put the line-free
   scaffold map ("Where to add code") in the Phase-2 system prompt and the
-  planning call. The ``locate_code`` tool works either way. See
-  :ref:`spec-driven-scaffold-map`.
+  planning call, and offer the ``locate_code`` tool. Off, the agent works
+  without either, as before the map existed (the baseline arm of
+  ``tests/live/scaffold_map_ab.py``). See :ref:`spec-driven-scaffold-map`.
 - ``BESSER_LLM_ROLLING_CACHE`` (**on**; ``0`` disables it) -- Add a
   rolling prompt-cache breakpoint on the growing conversation, so the prior
   prefix is served from cache instead of re-billed each turn. Anthropic path

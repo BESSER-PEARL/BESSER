@@ -171,6 +171,11 @@ from besser.spec_driven_agent.state.tracing import (
 logger = logging.getLogger(__name__)
 
 
+def scaffold_map_enabled() -> bool:
+    """``BESSER_LLM_SCAFFOLD_MAP`` (default on): the map overview and ``locate_code``."""
+    return os.environ.get("BESSER_LLM_SCAFFOLD_MAP", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     FRONTEND_WALK_SKIP_DIRS,
     TOOL_INPUTS_FILENAME,
@@ -372,6 +377,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             has_nn_model=self.nn_model is not None,
             allow_shell=allow_shell_tools,
         )
+        if not scaffold_map_enabled():
+            # Map switched off: no overview and no locate_code, i.e. the agent
+            # works as it did before the map existed.
+            self.tools = [t for t in self.tools if t.get("name") != "locate_code"]
         # Phase 3 auto-fix policy. False = report-only (industry default
         # for static analysers — fix on request, never blindly).
         self.auto_fix_issues = auto_fix_issues
@@ -3333,10 +3342,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """Line-free scaffold map for the system prompt and the gap analyzer.
 
         Built from the files on disk; ``""`` when nothing was recognised or
-        the map is switched off (``BESSER_LLM_SCAFFOLD_MAP=0``). Small-context
+        the map is switched off (``BESSER_LLM_SCAFFOLD_MAP=0``, which also
+        removes the locate_code tool). Small-context
         models get a smaller budget and rely on ``locate_code`` for the rest.
         """
-        if os.environ.get("BESSER_LLM_SCAFFOLD_MAP", "1").lower() in ("0", "false", "no"):
+        if not scaffold_map_enabled():
             return ""
         try:
             budget = _SCAFFOLD_MAP_CHARS

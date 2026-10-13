@@ -86,3 +86,85 @@ class SimulationLimitsResponse(BaseModel):
     diskMb: Optional[int] = None
     sessionLifetimeSeconds: Optional[int] = None
     editorQuotaEnabled: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Knowledge Graph (KG) endpoints
+#
+# These pin the wire shape the editor already consumes, field for field, so
+# the frontend contract is declared in one place and visible in /openapi.json.
+# Note the deliberate casing split: preflight/refinement payloads are camelCase,
+# while each issue in a consistency report keeps its dataclass's snake_case
+# field names, which the editor reads (KgConsistencyConfirmModal /
+# KgRefineModal). Standardising that is a coordinated frontend change, not
+# something to do silently here.
+# ---------------------------------------------------------------------------
+
+
+class KGActionResponse(BaseModel):
+    """A pre-filled action attached to a preflight issue."""
+    key: str
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    label: str = ""
+
+
+class KGIssueResponse(BaseModel):
+    """One KG element with no clean 1-to-1 B-UML mapping."""
+    id: str
+    code: str
+    description: str
+    affectedNodeIds: List[str] = Field(default_factory=list)
+    affectedEdgeIds: List[str] = Field(default_factory=list)
+    recommendedAction: Optional[KGActionResponse] = None
+    skipAction: Optional[KGActionResponse] = None
+
+
+class KGPreflightReportResponse(BaseModel):
+    """Response of ``/analyze-kg-for-buml-conversion``, ``/llm-clean-kg`` and
+    ``/classify-orphans-with-llm``."""
+    kgSignature: str
+    diagramType: str
+    issueCount: int
+    issues: List[KGIssueResponse] = Field(default_factory=list)
+
+
+class KGConsistencyIssueResponse(BaseModel):
+    """One OWL/SHACL finding. Field names are snake_case on purpose (see above)."""
+    id: str
+    code: str
+    severity: str
+    message: str
+    affected_node_ids: List[str] = Field(default_factory=list)
+    affected_edge_ids: List[str] = Field(default_factory=list)
+    constraint_node_id: Optional[str] = None
+    spec_kind: Optional[str] = None
+    path_iri: Optional[str] = None
+    constraint_label: Optional[str] = None
+
+
+class KGConsistencyReportResponse(BaseModel):
+    """Response of ``/check-kg-consistency``."""
+    issues: List[KGConsistencyIssueResponse] = Field(default_factory=list)
+    issueCount: int
+    severityCounts: Dict[str, int]
+    kgSignature: str
+    inferenceUsed: str
+    exportedAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    version: str = "1.0.0"
+
+
+class KGPendingOrphanClassification(BaseModel):
+    """Orphan nodes the user deferred to the per-node LLM classifier."""
+    nodeIds: List[str]
+    kgSignature: str
+
+
+class KGRefinementResponse(BaseModel):
+    """Response of ``/apply-kg-refinement``: the cleaned KG plus its new signature."""
+    title: str
+    model: Dict[str, Any]
+    diagramType: str
+    kgSignature: str
+    pendingOrphanClassification: Optional[KGPendingOrphanClassification] = None
+    exportedAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    version: str = "1.0.0"

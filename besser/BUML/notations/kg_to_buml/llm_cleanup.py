@@ -21,8 +21,6 @@ import logging
 from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-import requests
-
 from besser.BUML.metamodel.kg import (
     KGBlank,
     KGClass,
@@ -39,7 +37,14 @@ from besser.BUML.notations.kg_to_buml.preflight import (
     KGPreflightReport,
     kg_signature,
 )
-from besser.utilities.llm_utils import clean_json_response, parse_json_safely
+from besser.utilities.llm_utils import (
+    DEFAULT_OPENAI_MODEL,
+    OPENAI_CHAT_ENDPOINT,
+    LLMUpstreamError,
+    call_openai_chat_json,
+    clean_json_response,
+    parse_json_safely,
+)
 
 
 __all__ = [
@@ -115,7 +120,7 @@ MAX_ORPHAN_BATCH = 40
 # Max neighbours included in each per-orphan mini-snapshot.
 ORPHAN_CONTEXT_NEIGHBORS = 5
 
-OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions"
+OPENAI_ENDPOINT = OPENAI_CHAT_ENDPOINT
 
 
 # ----------------------------------------------------------------------
@@ -585,17 +590,18 @@ def analyze_kg_with_description(
     kg: KnowledgeGraph,
     description: str,
     api_key: str,
-    model: str = "gpt-4o",
+    model: str = DEFAULT_OPENAI_MODEL,
     *,
     _http_post: Optional[Callable[..., Any]] = None,
 ) -> KGPreflightReport:
     """Call GPT-4o for KG cleanup suggestions and wrap them in a preflight report.
 
     The ``_http_post`` keyword is for tests — production callers should leave
-    it ``None`` so the function looks up :func:`requests.post` at call time
+    it ``None`` so the transport looks up :func:`requests.post` at call time
     (this lets monkeypatches on ``requests.post`` take effect). Network or
-    parse failures raise :class:`RuntimeError` with a contextual message;
-    the caller is expected to translate that into a user-facing 4xx/5xx
+    parse failures raise :class:`~besser.utilities.llm_utils.LLMUpstreamError`
+    (a ``RuntimeError``) whose message never contains the provider's response
+    body; the caller is expected to translate it into a user-facing 5xx
     response.
     """
     if not isinstance(kg, KnowledgeGraph):
@@ -605,51 +611,14 @@ def analyze_kg_with_description(
     if not api_key or not api_key.strip():
         raise ValueError("A non-empty OpenAI API key is required.")
 
-    http_post = _http_post if _http_post is not None else requests.post
-
     snapshot = build_kg_snapshot(kg)
     system_msg, user_msg = _build_prompt(snapshot, description)
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key.strip()}",
-    }
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_msg},
-        ],
-        "temperature": 0.0,
-        "max_completion_tokens": 4000,
-    }
-
-    try:
-        response = http_post(OPENAI_ENDPOINT, headers=headers, json=payload, timeout=120)
-    except requests.RequestException as exc:
-        raise RuntimeError(f"OpenAI request failed: {exc}") from exc
-
-    if not getattr(response, "ok", False):
-        status = getattr(response, "status_code", "?")
-        body = getattr(response, "text", "")
-        raise RuntimeError(f"OpenAI API call failed: HTTP {status} {body}")
-
-    try:
-        response_json = response.json()
-    except ValueError as exc:
-        raise RuntimeError("OpenAI response was not valid JSON.") from exc
-
-    if isinstance(response_json, dict) and "error" in response_json:
-        message = (response_json.get("error") or {}).get("message") or response_json["error"]
-        raise RuntimeError(f"OpenAI API error: {message}")
-
-    raw_content = (
-        (response_json.get("choices") or [{}])[0]
-        .get("message", {})
-        .get("content", "")
+    raw_content = call_openai_chat_json(
+        api_key, model, system_msg, user_msg, http_post=_http_post,
     )
     if not raw_content:
-        raise RuntimeError("OpenAI returned an empty completion.")
+        raise LLMUpstreamError("OpenAI returned an empty completion.")
 
     issues = parse_llm_suggestions(raw_content, kg)
     return KGPreflightReport(
@@ -807,7 +776,7 @@ def classify_orphan_nodes_with_llm(
     node_ids: List[str],
     description: str,
     api_key: str,
-    model: str = "gpt-4o",
+    model: str = DEFAULT_OPENAI_MODEL,
     *,
     _http_post: Optional[Callable[..., Any]] = None,
 ) -> KGPreflightReport:
@@ -823,8 +792,10 @@ def classify_orphan_nodes_with_llm(
     call per chunk. Results are merged into a single report with
     ``diagram_type = "OrphanClassification"``.
 
-    Network or parse failures raise :class:`RuntimeError` with a contextual
-    message; the caller is expected to translate that into a 4xx/5xx.
+    Network or parse failures raise
+    :class:`~besser.utilities.llm_utils.LLMUpstreamError` (a ``RuntimeError``)
+    whose message never carries the provider's response body; the caller is
+    expected to translate that into a 5xx.
     """
     if not isinstance(kg, KnowledgeGraph):
         raise TypeError(
@@ -869,12 +840,6 @@ def classify_orphan_nodes_with_llm(
         key=lambda d: d["id"],
     )
 
-    http_post = _http_post if _http_post is not None else requests.post
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key.strip()}",
-    }
-
     classified: Dict[str, KGIssue] = {}
 
     for chunk_start in range(0, len(orphan_nodes), MAX_ORPHAN_BATCH):
@@ -885,41 +850,8 @@ def classify_orphan_nodes_with_llm(
             orphans=snaps,
             description=description,
         )
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": user_msg},
-            ],
-            "temperature": 0.0,
-            "max_completion_tokens": 4000,
-        }
-        try:
-            response = http_post(
-                OPENAI_ENDPOINT, headers=headers, json=payload, timeout=120
-            )
-        except requests.RequestException as exc:
-            raise RuntimeError(f"OpenAI request failed: {exc}") from exc
-
-        if not getattr(response, "ok", False):
-            status = getattr(response, "status_code", "?")
-            body = getattr(response, "text", "")
-            raise RuntimeError(f"OpenAI API call failed: HTTP {status} {body}")
-        try:
-            response_json = response.json()
-        except ValueError as exc:
-            raise RuntimeError("OpenAI response was not valid JSON.") from exc
-        if isinstance(response_json, dict) and "error" in response_json:
-            message = (
-                (response_json.get("error") or {}).get("message")
-                or response_json["error"]
-            )
-            raise RuntimeError(f"OpenAI API error: {message}")
-
-        raw_content = (
-            (response_json.get("choices") or [{}])[0]
-            .get("message", {})
-            .get("content", "")
+        raw_content = call_openai_chat_json(
+            api_key, model, system_msg, user_msg, http_post=_http_post,
         )
         if not raw_content:
             continue

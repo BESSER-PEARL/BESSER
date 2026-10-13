@@ -24,6 +24,9 @@ from fastapi.responses import Response
 # Backend response models
 from besser.utilities.web_modeling_editor.backend.models.responses import (
     DiagramExportResponse,
+    KGConsistencyReportResponse,
+    KGPreflightReportResponse,
+    KGRefinementResponse,
     ProjectExportResponse,
 )
 
@@ -49,10 +52,13 @@ from besser.BUML.notations.kg_to_buml import (
     kg_to_class_diagram as kg_to_class_diagram_buml,
 )
 from dataclasses import asdict as _dataclass_asdict
+from besser.utilities.llm_utils import LLMUpstreamError
 
 # Custom exception types translated to HTTP codes by @handle_endpoint_errors.
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
+    UpstreamServiceError,
+    ValidationError,
 )
 
 # BESSER utilities
@@ -129,6 +135,12 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_MODEL_FILENAME,
     BPMN_DIAGRAM_TYPE,
     DEPLOYMENT_DIAGRAM_TYPE,
+    DEFAULT_KG_LLM_MODEL,
+    MAX_OWL_SIZE,
+    KG_DTD_PROBE_CHARS,
+    MAX_ORPHAN_CLASSIFY_NODES,
+    ALLOWED_KG_EXTENSIONS,
+    ALLOWED_OWL_EXTENSIONS,
 )
 
 # Centralized error handling
@@ -144,18 +156,7 @@ logger = logging.getLogger(__name__)
 MAX_CSV_SIZE = 5 * 1024 * 1024       # 5 MB
 MAX_IMAGE_SIZE = 10 * 1024 * 1024     # 10 MB
 MAX_BUML_SIZE = 2 * 1024 * 1024       # 2 MB
-MAX_OWL_SIZE = 5 * 1024 * 1024        # 5 MB
 
-# How far into an OWL/RDF upload to look for a DTD declaration. A DTD is only
-# legal in the prolog, so the head of the document is the only place it can
-# appear; scanning the whole 5 MB would just be wasted work.
-_DTD_PROBE_CHARS = 4096
-
-# Largest number of orphan nodes one /classify-orphans-with-llm call may carry.
-# The classifier sends one blocking OpenAI request per MAX_ORPHAN_BATCH (40)
-# nodes with no internal ceiling, so an unbounded list turns a single request
-# into an arbitrarily long chain of upstream calls.
-MAX_ORPHAN_CLASSIFY_NODES = 400
 
 # ---------------------------------------------------------------------------
 # Allowed MIME / extension sets per upload type
@@ -163,8 +164,6 @@ MAX_ORPHAN_CLASSIFY_NODES = 400
 ALLOWED_SPREADSHEET_EXTENSIONS = {".csv", ".xlsx"}
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 ALLOWED_BUML_EXTENSIONS = {".py"}
-ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}
-ALLOWED_OWL_EXTENSIONS = {".owl", ".ttl", ".rdf", ".xml", ".nt", ".n3"}
 
 
 def _validate_upload(file: UploadFile, *, max_size: int, allowed_extensions: set[str], content: bytes) -> None:
@@ -274,7 +273,7 @@ def _validate_file_content(content: bytes, filename: str) -> None:
         # bytes of nested internal entities ("billion laughs") expand into
         # minutes of CPU inside the request. No ontology BESSER imports needs a
         # DTD, so this costs nothing real.
-        probe = text.lstrip()[:_DTD_PROBE_CHARS].upper()
+        probe = text.lstrip()[:KG_DTD_PROBE_CHARS].upper()
         if "<!DOCTYPE" in probe or "<!ENTITY" in probe:
             raise HTTPException(
                 status_code=400,
@@ -1201,7 +1200,7 @@ def _report_to_response(report):
     }
 
 
-@router.post("/check-kg-consistency")
+@router.post("/check-kg-consistency", response_model=KGConsistencyReportResponse)
 @handle_endpoint_errors("check_kg_consistency")
 async def check_kg_consistency_endpoint(input_data: DiagramInput):
     """Run the OWL2 + SHACL consistency check on the supplied KG.
@@ -1232,7 +1231,7 @@ async def check_kg_consistency_endpoint(input_data: DiagramInput):
     }
 
 
-@router.post("/analyze-kg-for-buml-conversion")
+@router.post("/analyze-kg-for-buml-conversion", response_model=KGPreflightReportResponse)
 @handle_endpoint_errors("analyze_kg_for_buml_conversion")
 async def analyze_kg_for_buml_conversion_endpoint(input_data: DiagramInput):
     """Run the KG → BUML preflight and return a structured list of issues.
@@ -1374,13 +1373,13 @@ def _apply_llm_decisions(
     return resolved
 
 
-@router.post("/llm-clean-kg")
+@router.post("/llm-clean-kg", response_model=KGPreflightReportResponse)
 @handle_endpoint_errors("llm_clean_kg")
 async def llm_clean_kg_endpoint(
     diagram: str = Form(...),
     description: str = Form(...),
     api_key: str = Form(...),
-    model: str = Form("gpt-4o"),
+    model: str = Form(DEFAULT_KG_LLM_MODEL),
 ):
     """Ask GPT-4o for KG cleanup suggestions targeted at a described system.
 
@@ -1411,9 +1410,11 @@ async def llm_clean_kg_endpoint(
             analyze_kg_with_description, kg, description, api_key, model=model
         )
     except (ValueError, TypeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise ValidationError(str(exc)) from exc
+    except LLMUpstreamError as exc:
+        # Its message is already free of the provider's response body (that is
+        # logged, not returned), so it is safe to hand to the client as a 502.
+        raise UpstreamServiceError(str(exc)) from exc
     return _report_to_response(report)
 
 
@@ -1422,7 +1423,7 @@ async def llm_clean_kg_endpoint(
 # ----------------------------------------------------------------------
 
 
-@router.post("/apply-kg-refinement")
+@router.post("/apply-kg-refinement", response_model=KGRefinementResponse)
 @handle_endpoint_errors("apply_kg_refinement")
 async def apply_kg_refinement_endpoint(input_data: DiagramInput):
     """Apply Refine-KG decisions and return the cleaned KG.
@@ -1493,14 +1494,14 @@ async def apply_kg_refinement_endpoint(input_data: DiagramInput):
     }
 
 
-@router.post("/classify-orphans-with-llm")
+@router.post("/classify-orphans-with-llm", response_model=KGPreflightReportResponse)
 @handle_endpoint_errors("classify_orphans_with_llm")
 async def classify_orphans_with_llm_endpoint(
     diagram: str = Form(...),
     description: str = Form(...),
     api_key: str = Form(...),
     node_ids: str = Form(...),
-    model: str = Form("gpt-4o"),
+    model: str = Form(DEFAULT_KG_LLM_MODEL),
 ):
     """Per-node LLM classification for a batch of orphan node ids.
 
@@ -1555,9 +1556,11 @@ async def classify_orphans_with_llm_endpoint(
             model=model,
         )
     except (ValueError, TypeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise ValidationError(str(exc)) from exc
+    except LLMUpstreamError as exc:
+        # Its message is already free of the provider's response body (that is
+        # logged, not returned), so it is safe to hand to the client as a 502.
+        raise UpstreamServiceError(str(exc)) from exc
     return _report_to_response(report)
 
 

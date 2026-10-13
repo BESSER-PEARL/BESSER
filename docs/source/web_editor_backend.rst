@@ -49,8 +49,8 @@ auto-converted by a Pydantic model validator for backward compatibility.
 Supported diagram types (the project keys): ``ClassDiagram``, ``ObjectDiagram``,
 ``StateMachineDiagram``, ``AgentDiagram``, ``GUINoCodeDiagram``,
 ``QuantumCircuitDiagram``, ``UserDiagram``, ``NNDiagram``, ``BPMN``,
-``ComponentDiagram``, and ``DeploymentDiagram``. A single BPMN diagram payload
-has type ``BPMNDiagram``.
+``ComponentDiagram``, ``DeploymentDiagram``, and ``KnowledgeGraphDiagram``. A
+single BPMN diagram payload has type ``BPMNDiagram``.
 
 
 Neural Network Diagrams
@@ -95,6 +95,33 @@ escaping the processor is mapped to a generic HTTP 500 by
 identical BUML NN models across runs — element IDs are derived from a
 thread-local counter via ``uuid.uuid5`` under a fixed namespace.
 
+
+Knowledge Graph Diagrams
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+``KnowledgeGraphDiagram`` is a self-contained diagram type: its payload holds
+``nodes``, ``edges`` and ``axioms`` and needs no cross-diagram reference. The
+backend maps it to a ``KnowledgeGraph`` (see
+:doc:`the KG metamodel <buml_language/model_types/knowledge_graph>`).
+
+**Import and export.** ``/import-owl`` parses an OWL/RDF ontology into the
+diagram JSON, and ``/export-kg-rdf/{fmt}`` writes it back as Turtle or RDF/XML.
+Imports go through the upload checks described under *File Upload Limits*.
+
+**JSON ↔ BUML.** ``/export-buml`` writes executable BUML Python
+(``knowledge_graph.py``) through ``kg_model_to_code``. ``/get-json-model``
+auto-detects KG content and reads it back; the file is validated by an AST
+allowlist (``safe_load_buml``) and is never passed to ``exec``.
+
+**Conversion.** ``/analyze-kg-for-buml-conversion`` reports every element with
+no clean 1-to-1 B-UML mapping, each with a recommended and a skip action;
+``/kg-to-class-diagram`` then produces the ``ClassDiagram``, applying the
+chosen resolutions. See :doc:`buml_language/model_building/kg_to_buml`.
+
+**Validation.** ``/validate-diagram`` runs the same preflight and OWL/SHACL
+consistency checks as the editor's Refine KG dialog and reports findings only.
+
+**Determinism.** Identical input yields identical output, including issue ids.
 
 BPMN Diagrams
 ^^^^^^^^^^^^^
@@ -510,6 +537,8 @@ Environment Variables
 - ``OPENAI_API_KEY`` -- OpenAI key consumed by several features:
 
   - image-to-model and knowledge-graph-to-model conversion,
+  - the Refine KG LLM endpoints (``/llm-clean-kg`` and
+    ``/classify-orphans-with-llm``),
   - the :doc:`LLM-based agent recommendation <generators/agent_personalization>`
     endpoint (``/recommend-agent-config-llm``),
   - the BAF generator's personalization pipeline when ``agentLanguage`` /

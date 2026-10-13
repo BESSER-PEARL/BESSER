@@ -21,8 +21,8 @@ Models and services
 -------------------
 
 Use class diagrams for data, GUI diagrams for screens, state machines and
-agent diagrams for behaviour, BPMN for processes, and neural-network diagrams
-for training architectures. See :doc:`buml_language` for the model catalogue.
+agent diagrams for behaviour, BPMN for processes, neural-network diagrams
+for training architectures, and knowledge-graph diagrams for ontologies. See :doc:`buml_language` for the model catalogue.
 Available generation actions depend on the selected diagram and deployment.
 
 The assistant service creates and edits diagrams. The :doc:`Spec-Driven Agent

@@ -33,20 +33,16 @@ class DiagramInput(BaseModel):
     kgSignature: Optional[str] = None
     # LLM-cleanup round-trip: ``llmIssues`` carries the issue list returned
     # by ``/llm-clean-kg`` so ``/apply-kg-refinement`` can reconstruct the
-    # KGIssue / KGAction objects without re-calling the LLM. ``description``
-    # is the natural-language target-system description (analyse leg only).
+    # KGIssue / KGAction objects without re-calling the LLM. (The
+    # natural-language system description is not part of this model: it
+    # arrives as a multipart form field on the endpoints that need it.)
     llmIssues: Optional[List[Dict[str, Any]]] = None
-    description: Optional[str] = None
     # KG refinement (unified Refine KG modal): ``source`` selects which
     # apply path the unified ``/apply-kg-refinement`` endpoint takes —
     # ``"static"`` re-runs the static analyzer and dispatches accept/skip
     # decisions, ``"llm"`` reconstructs LLM-issue objects from
     # ``llmIssues`` and dispatches them.
     source: Optional[Literal["static", "llm"]] = None
-    # Orphan-node classification: list of node ids the user opted to
-    # send to the per-node LLM classifier instead of dropping. Populated
-    # by ``/classify-orphans-with-llm`` request bodies.
-    orphanNodeIds: Optional[List[str]] = None
     # KG RDF export: which constraint vocabularies to emit. ``"owl"`` emits
     # only ``owl:Restriction`` blank nodes; ``"shacl"`` emits only
     # ``sh:NodeShape`` / ``sh:PropertyShape``; ``"both"`` (default) emits

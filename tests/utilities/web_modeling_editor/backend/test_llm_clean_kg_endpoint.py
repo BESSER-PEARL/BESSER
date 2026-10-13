@@ -74,7 +74,7 @@ def test_llm_clean_kg_returns_issue_list(client, monkeypatch):
         return _FakeResp(_llm_payload([suggestion]))
 
     monkeypatch.setattr(
-        "besser.BUML.notations.kg_to_buml.llm_cleanup.requests.post", fake_post,
+        "requests.post", fake_post,
     )
 
     response = client.post(
@@ -128,7 +128,7 @@ def test_llm_clean_kg_propagates_openai_error(client, monkeypatch):
         return _FakeResp({"error": {"message": "rate limit"}}, status_code=429)
 
     monkeypatch.setattr(
-        "besser.BUML.notations.kg_to_buml.llm_cleanup.requests.post", fake_post,
+        "requests.post", fake_post,
     )
     response = client.post(
         "/besser_api/llm-clean-kg",
@@ -332,7 +332,7 @@ def test_classify_orphans_with_llm_returns_per_node_issues(client, monkeypatch):
         return _FakeResp(_llm_payload([suggestion]))
 
     monkeypatch.setattr(
-        "besser.BUML.notations.kg_to_buml.llm_cleanup.requests.post", fake_post,
+        "requests.post", fake_post,
     )
 
     response = client.post(
@@ -414,7 +414,7 @@ def test_classify_orphans_rejects_an_oversized_node_list(client, monkeypatch):
     def _no_calls(*args, **kwargs):  # pragma: no cover - must never run
         raise AssertionError("an over-cap request reached the OpenAI client")
 
-    monkeypatch.setattr("besser.BUML.notations.kg_to_buml.llm_cleanup.requests.post", _no_calls)
+    monkeypatch.setattr("requests.post", _no_calls)
 
     response = client.post(
         "/besser_api/classify-orphans-with-llm",
@@ -428,3 +428,72 @@ def test_classify_orphans_rejects_an_oversized_node_list(client, monkeypatch):
 
     assert response.status_code == 400
     assert str(MAX_ORPHAN_CLASSIFY_NODES) in response.json()["detail"]
+
+
+# --------------------------------------------------------------------------
+# The upstream response body must never reach the client
+# --------------------------------------------------------------------------
+
+
+_SECRET_BODY = "Incorrect API key provided: sk-live-ABCDEF. Org org-internal-123."
+
+
+def test_502_detail_does_not_echo_the_upstream_body_or_key(client, monkeypatch, caplog):
+    """OpenAI error bodies can echo fragments of the request, key included.
+
+    The 502 used to carry ``str(exc)`` straight from ``HTTP <status> <body>``.
+    The status is useful to the user; the body belongs in the server log only.
+    """
+    import logging
+
+    class _Resp:
+        ok = False
+        status_code = 401
+        text = _SECRET_BODY
+
+        def json(self):
+            return {"error": {"message": _SECRET_BODY}}
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _Resp())
+
+    with caplog.at_level(logging.WARNING):
+        response = client.post(
+            "/besser_api/llm-clean-kg",
+            data={
+                "diagram": json.dumps(_kg_diagram()),
+                "description": "build it",
+                "api_key": "sk-live-ABCDEF",
+            },
+        )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "401" in detail
+    assert "sk-live-ABCDEF" not in detail
+    assert "org-internal" not in detail
+    assert "Incorrect API key" not in detail
+    # ...and the operator can still see what happened, with the key redacted.
+    assert "Incorrect API key" in caplog.text
+    assert "sk-live-ABCDEF" not in caplog.text
+
+
+def test_502_for_a_json_error_object_is_also_sanitised(client, monkeypatch):
+    class _Resp:
+        ok = True
+        status_code = 200
+
+        def json(self):
+            return {"error": {"message": _SECRET_BODY}}
+
+    monkeypatch.setattr("requests.post", lambda *a, **kw: _Resp())
+    response = client.post(
+        "/besser_api/llm-clean-kg",
+        data={
+            "diagram": json.dumps(_kg_diagram()),
+            "description": "build it",
+            "api_key": "sk-live-ABCDEF",
+        },
+    )
+
+    assert response.status_code == 502
+    assert "org-internal" not in response.json()["detail"]

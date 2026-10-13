@@ -34,6 +34,19 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.multiplicity_parser import (
     format_multiplicity_label,
 )
+from besser.utilities.utils import timestamp_to_iso
+
+
+def _set_timestamp(target: dict, element) -> dict:
+    """Record ``element.timestamp`` on a JSON dict as an ISO 8601 ``timestamp``.
+
+    The field is optional: it is left out when the element has no timestamp,
+    and ``json_to_buml`` falls back to the creation time when it is absent.
+    """
+    iso = timestamp_to_iso(getattr(element, "timestamp", None))
+    if iso is not None:
+        target["timestamp"] = iso
+    return target
 
 
 def parse_buml_content(content: str) -> DomainModel:
@@ -268,6 +281,7 @@ def class_buml_to_json(domain_model):
                         if not isinstance(default_value, (str, int, float, bool)):
                             default_value = getattr(default_value, "name", None) or str(default_value)
                         attr_element["defaultValue"] = default_value
+                    _set_timestamp(attr_element, attr)
                     elements[attr_id] = attr_element
                     attribute_ids.append(attr_id)
                     y_offset += 30
@@ -378,6 +392,7 @@ def class_buml_to_json(domain_model):
                     if neural_network_id:
                         method_element["neuralNetworkId"] = neural_network_id
 
+                    _set_timestamp(method_element, method)
                     elements[method_id] = method_element
                     method_ids.append(method_id)
                     y_offset += 30
@@ -392,7 +407,7 @@ def class_buml_to_json(domain_model):
                     literals_iter = sorted(type_obj.literals, key=lambda lit: lit.name)
                 for literal in literals_iter:
                     literal_id = str(uuid.uuid4())
-                    elements[literal_id] = {
+                    elements[literal_id] = _set_timestamp({
                         "id": literal_id,
                         "name": literal.name,
                         "type": "ClassAttribute",  # We use ClassAttribute type for literals
@@ -403,7 +418,7 @@ def class_buml_to_json(domain_model):
                             "width": 159,
                             "height": 30,
                         },
-                    }
+                    }, literal)
                     attribute_ids.append(literal_id)
                     y_offset += 30
 
@@ -469,6 +484,7 @@ def class_buml_to_json(domain_model):
                 if type_obj.metadata.icon:
                     element_data["icon"] = type_obj.metadata.icon
 
+            _set_timestamp(element_data, type_obj)
             elements[element_id] = element_data
 
     # Second pass: Create relationships
@@ -552,30 +568,30 @@ def class_buml_to_json(domain_model):
                             "height": 0,
                         }
 
-                    relationships[rel_id] = {
+                    relationships[rel_id] = _set_timestamp({
                         "id": rel_id,
                         "name": name,
                         "type": rel_type,
-                        "source": {
+                        "source": _set_timestamp({
                             "element": class_id_map[source_class],
                             "multiplicity": format_multiplicity_label(source_prop.multiplicity),
                             "role": source_prop.name,
                             "navigable": source_prop.is_navigable,
                             "direction": source_dir,
                             "bounds": source_bounds,
-                        },
-                        "target": {
+                        }, source_prop),
+                        "target": _set_timestamp({
                             "element": class_id_map[target_class],
                             "multiplicity": format_multiplicity_label(target_prop.multiplicity),
                             "role": target_prop.name,
                             "navigable": target_prop.is_navigable,
                             "direction": target_dir,
                             "bounds": target_bounds,
-                        },
+                        }, target_prop),
                         "bounds": rel_bounds,
                         "path": path_points,
                         "isManuallyLayouted": is_manually_layouted,
-                    }
+                    }, association)
         except Exception as e:
             logger.error("Error converting relationship to JSON: %s", e, exc_info=True)
             continue
@@ -605,7 +621,7 @@ def class_buml_to_json(domain_model):
                 gen_source_bounds = {"x": 0, "y": 0, "width": 0, "height": 0}
                 gen_target_bounds = {"x": 0, "y": 0, "width": 0, "height": 0}
 
-            relationships[rel_id] = {
+            relationships[rel_id] = _set_timestamp({
                 "id": rel_id,
                 "type": "ClassInheritance",
                 "source": {
@@ -617,7 +633,7 @@ def class_buml_to_json(domain_model):
                     "bounds": gen_target_bounds,
                 },
                 "path": gen_path,
-            }
+            }, generalization)
 
     # Handle association classes
     for type_obj in sorted(domain_model.types, key=lambda t: t.name):
@@ -716,6 +732,7 @@ def class_buml_to_json(domain_model):
                     # are symmetric for method contracts too.
                     if getattr(constraint, "description", None):
                         elements[box_id]["description"] = constraint.description
+                    _set_timestamp(elements[box_id], constraint)
                     rel_id = str(uuid.uuid4())
                     relationships[rel_id] = {
                         "id": rel_id,
@@ -827,5 +844,6 @@ def class_buml_to_json(domain_model):
         "relationships": relationships,
         "assessments": {},
     }
+    _set_timestamp(result, domain_model)
 
     return result

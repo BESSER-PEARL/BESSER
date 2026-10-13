@@ -53,6 +53,26 @@ Supported diagram types (the project keys): ``ClassDiagram``, ``ObjectDiagram``,
 has type ``BPMNDiagram``.
 
 
+Class Diagrams: Element Timestamps
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Every structural B-UML element carries a ``timestamp`` (its creation time),
+which generators use to order members. The class-diagram converters keep it:
+``class_buml_to_json`` writes an optional ISO 8601 ``timestamp`` string on the
+diagram model, on each class, enumeration, attribute, enumeration literal,
+method and OCL constraint element, on each association and inheritance
+relationship, and on each association end (``source`` / ``target``).
+``process_class_diagram`` reads the field back. A missing or malformed value
+falls back to the creation time, and a value with a UTC offset is converted to
+naive local time, like the metamodel's own timestamps. Method parameters live
+in the method signature string, so they are recreated with a fresh timestamp.
+
+The editor itself does not keep the field yet: its element model serializes a
+fixed set of properties, so a diagram opened and saved in the editor loses its
+timestamps. They survive conversions that do not pass through the editor, such
+as importing a B-UML file and exporting it back.
+
+
 Neural Network Diagrams
 ^^^^^^^^^^^^^^^^^^^^^^^
 

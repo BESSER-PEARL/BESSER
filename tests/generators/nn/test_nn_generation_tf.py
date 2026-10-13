@@ -1,10 +1,18 @@
 import os
+
 import pytest
-
-from besser.BUML.metamodel.nn import LinearLayer, FlattenLayer, Conv2D, \
-    PoolingLayer, Dataset, Image, Configuration, NN
-
+from besser.BUML.metamodel.nn import (
+    NN,
+    Configuration,
+    Conv2D,
+    Dataset,
+    FlattenLayer,
+    Image,
+    LinearLayer,
+    PoolingLayer,
+)
 from besser.generators.nn.tf.tf_code_generator import TFGenerator
+
 
 def run_tests():
     """Run tests"""
@@ -83,13 +91,13 @@ def test_nn_subclassing(tmpdir):
         content = file.read()
 
     # Check for expected lines in the file
-    assert f"class NeuralNetwork(tf.keras.Model):" in content, "Missing NN class definition in the generated file."
+    assert "class NeuralNetwork(tf.keras.Model):" in content, "Missing NN class definition in the generated file."
     assert f"{nn_model.name} = NeuralNetwork()" in content, "Missing NN class instantiation in the generated file."
     assert f"train_loader = load_dataset(\"{nn_model.train_data.path_data}\"" in content, "Training data path is incorrect."
     assert f"IMAGE_SIZE = ({nn_model.train_data.image.shape[0]}, {nn_model.train_data.image.shape[1]})" in content, "Image shape is incorrect."
-    assert f"batch_size={nn_model.configuration.batch_size}" in content, "Batch size is incorrect."
+    assert f"batch_size={nn_model.configuration.batch_size}," in content, "Batch size is incorrect."
     assert f"learning_rate={nn_model.configuration.learning_rate}" in content, "Learning rate is incorrect."
-    assert f"for epoch in range({nn_model.configuration.epochs})" in content, "Epochs is incorrect."
+    assert f"train(my_model, train_loader, criterion, optimizer, {nn_model.configuration.epochs}" in content, "Epochs is incorrect."
     assert f"metrics = {nn_model.configuration.metrics}" in content, "Metrics is incorrect."
 
 

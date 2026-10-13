@@ -15,6 +15,9 @@ from besser.BUML.metamodel.quantum.quantum import (
     CXGate, CYGate, CZGate, CHGate, CRXGate, CRYGate, CRZGate, CPhaseGate,
     FunctionGate
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
+)
 
 
 def quantum_circuit_to_json(circuit: QuantumCircuit) -> dict:
@@ -472,30 +475,19 @@ def quantum_buml_to_json(content: str) -> Dict[str, Any]:
     """
     import besser.BUML.metamodel.quantum.quantum as quantum_module
 
-    safe_globals: dict = {
-        "__builtins__": {
-            "set": set,
-            "list": list,
-            "dict": dict,
-            "tuple": tuple,
-            "str": str,
-            "int": int,
-            "float": float,
-            "bool": bool,
-            "len": len,
-            "range": range,
-            "True": True,
-            "False": False,
-            "None": None,
-            "print": lambda *a, **kw: None,  # no-op to prevent info leakage
-        },
+    allowed_names: dict = {
+        "set": set,
+        "list": list,
+        "dict": dict,
+        "tuple": tuple,
     }
-    # Expose all quantum module members for exec
+    # Expose all public quantum module members so the BUML file can reference
+    # any of the gate classes it constructed.
     for name in dir(quantum_module):
         if not name.startswith("_"):
-            safe_globals[name] = getattr(quantum_module, name)
+            allowed_names[name] = getattr(quantum_module, name)
 
-    # Strip import lines -- all required types are in safe_globals already.
+    # Strip import lines -- all required types are in allowed_names already.
     # Handle multi-line imports (e.g. from ... import (\n    ...\n))
     cleaned_lines = []
     in_import_block = False
@@ -512,9 +504,8 @@ def quantum_buml_to_json(content: str) -> Dict[str, Any]:
         cleaned_lines.append(line)
     cleaned_content = "\n".join(cleaned_lines)
 
-    local_vars = {}
     try:
-        exec(cleaned_content, safe_globals, local_vars)
+        local_vars = safe_load_buml(cleaned_content, allowed_names)
     except Exception as exc:
         raise ValueError(f"Failed to execute quantum BUML content: {exc}") from exc
 

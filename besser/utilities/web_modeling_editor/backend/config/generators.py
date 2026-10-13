@@ -7,6 +7,7 @@ from besser.generators.django import DjangoGenerator
 from besser.generators.python_classes import PythonGenerator
 from besser.generators.java_classes import JavaGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
+from besser.generators.spring.spring_backend_generator import SpringBackendGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.supabase import SupabaseGenerator
@@ -22,7 +23,11 @@ from besser.generators.flutter import FlutterGenerator
 from besser.generators.terraform import TerraformGenerator
 from besser.generators.testgen import TestCaseGenerator
 from besser.generators.bpmn import BPMNGenerator
-from besser.utilities.web_modeling_editor.backend.constants.constants import BPMN_DIAGRAM_TYPE
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    BPMN_DIAGRAM_TYPE,
+    DEPLOYMENT_DIAGRAM_TYPE,
+)
+from besser.generators.docker_compose import DockerComposeGenerator
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -85,6 +90,13 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # Web framework generators (class diagram based)
     "django": GeneratorInfo(
         generator_class=DjangoGenerator,
+        output_type="zip",
+        file_extension=".zip",
+        category="web_framework",
+        requires_class_diagram=True
+    ),
+    "spring": GeneratorInfo(
+        generator_class=SpringBackendGenerator,
         output_type="zip",
         file_extension=".zip",
         category="web_framework",
@@ -219,6 +231,17 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         requires_class_diagram=False,
         required_diagram_type=BPMN_DIAGRAM_TYPE,
     ),
+
+    # Docker Compose generator (UML Deployment diagram based). A ZIP holding
+    # docker-compose.yml plus one baked BAF build context per linked agent.
+    "docker_compose": GeneratorInfo(
+        generator_class=DockerComposeGenerator,
+        output_type="zip",
+        file_extension=".zip",
+        category="deployment",
+        requires_class_diagram=False,
+        required_diagram_type=DEPLOYMENT_DIAGRAM_TYPE,
+    ),
 }
 
 # Neural network generators are conditionally registered since they
@@ -305,6 +328,8 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "tf_nn.py"
     elif generator_type == "bpmn":
         return "bpmn_diagram.bpmn"
+    elif generator_type == "docker_compose":
+        return "docker_compose.zip"
     else:
         return f"{generator_type}_output{info.file_extension}"
 

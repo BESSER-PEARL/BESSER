@@ -13,41 +13,23 @@ from besser.BUML.metamodel.gui import (
     Color, Position, Size, Styling, MetricCard
 )
 from besser.BUML.metamodel.gui.dashboard import (
-    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn
+    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn,
+    Map, MapLayer, MapLayerType,
 )
 from besser.BUML.metamodel.gui.dashboard import Series
+from besser.BUML.metamodel.gui.binding import DataAggregation
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
 
-# TODO: Uncomment when backend aggregation is ready
-# def _parse_aggregation(aggregation_str: str) -> DataAggregation:
-#     """
-#     Parse aggregation string from JSON attributes to DataAggregation enum.
-
-#     Args:
-#         aggregation_str: String value like "sum", "average", "count", etc.
-
-#     Returns:
-#         DataAggregation enum value or None if invalid
-#     """
-#     if not aggregation_str or not isinstance(aggregation_str, str):
-#         return None
-
-#     aggregation_map = {
-#         'sum': DataAggregation.SUM,
-#         'avg': DataAggregation.AVG,
-#         'average': DataAggregation.AVG,
-#         'count': DataAggregation.COUNT,
-#         'min': DataAggregation.MIN,
-#         'minimum': DataAggregation.MIN,
-#         'max': DataAggregation.MAX,
-#         'maximum': DataAggregation.MAX,
-#         'median': DataAggregation.MEDIAN,
-#         'first': DataAggregation.FIRST,
-#         'last': DataAggregation.LAST,
-#     }
-
-#     return aggregation_map.get(aggregation_str.lower())
+def _parse_aggregation(*sources: Dict[str, Any]):
+    """The ``aggregation`` (sum, avg, count, min, max, ...) of the first source
+    that names a known one, e.g. a series and then its chart."""
+    for source in sources:
+        if isinstance(source, dict):
+            parsed = DataAggregation.parse(source.get('aggregation') or source.get('data-aggregation'))
+            if parsed is not None:
+                return parsed
+    return None
 
 
 def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) -> tuple:
@@ -195,7 +177,8 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
                     data_field=data_field,
                     label_field_path=label_field_path,
                     data_field_path=data_field_path,
-                    filter_expression=data_filter
+                    filter_expression=data_filter,
+                    aggregation=_parse_aggregation(s_attrs, attrs),
                 )
 
             # Extract color from series attributes and create styling
@@ -288,7 +271,8 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
                     data_field=data_field,
                     label_field_path=label_field_path,
                     data_field_path=data_field_path,
-                    filter_expression=data_filter
+                    filter_expression=data_filter,
+                    aggregation=_parse_aggregation(s_attrs, attrs),
                 )
 
             # Extract color from series attributes and create styling
@@ -382,7 +366,8 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
                     data_field=data_field,
                     label_field_path=label_field_path,
                     data_field_path=data_field_path,
-                    filter_expression=data_filter
+                    filter_expression=data_filter,
+                    aggregation=_parse_aggregation(s_attrs, attrs),
                 )
             styling = None
             if 'styling' in s_attrs:
@@ -487,7 +472,8 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
                     data_field=data_field,
                     label_field_path=label_field_path,
                     data_field_path=data_field_path,
-                    filter_expression=data_filter
+                    filter_expression=data_filter,
+                    aggregation=_parse_aggregation(s_attrs, attrs),
                 )
             styling = None
             if 'styling' in s_attrs:
@@ -586,7 +572,8 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
                     domain_concept=domain_class,
                     label_field=label_field,
                     data_field=data_field,
-                    filter_expression=data_filter
+                    filter_expression=data_filter,
+                    aggregation=_parse_aggregation(s_attrs, attrs),
                 )
             styling = None
             if 'styling' in s_attrs:
@@ -846,7 +833,8 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
             domain_concept=domain_class,
             label_field=None,  # Metric cards don't need label field
             data_field=data_field,
-            data_field_path=data_field_path
+            data_field_path=data_field_path,
+            aggregation=_parse_aggregation(attrs),
         )
 
     # Create metric card
@@ -867,6 +855,134 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
     _attach_chart_metadata(metric_card, view_comp)
 
     return metric_card
+
+
+def _parse_map_layer(layer_entry: Dict[str, Any], class_model, domain_model) -> MapLayer:
+    """Parse a single layer dict (from the editor's layer-manager trait) into a MapLayer.
+
+    Args:
+        layer_entry: Dict with keys ``name``, ``type``, ``dataSource``,
+            ``latitudeField``, ``longitudeField``, ``labelField``,
+            ``weightField``, ``geojsonField``, ``valueField``.
+        class_model: Class diagram model for element-by-ID lookups.
+        domain_model: Domain model containing structural classes.
+
+    Returns:
+        :class:`~besser.BUML.metamodel.gui.dashboard.MapLayer` instance.
+    """
+    layer_name = sanitize_name(layer_entry.get("name", "layer")) or "layer"
+
+    # --- layer type ---
+    _type_map = {t.value: t for t in MapLayerType}
+    raw_type = layer_entry.get("type", "")
+    layer_type = _type_map.get(raw_type)  # None → auto-detect via effective_layer_type()
+
+    # --- resolve domain class from dataSource (UUID from editor, or name from BUML→JSON) ---
+    data_source_el = get_element_by_id(class_model, layer_entry.get("dataSource", ""))
+    if data_source_el:
+        data_source_name = data_source_el.get("name")
+    else:
+        # Fallback: value may already be a class name (written by _apply_map_attributes)
+        data_source_name = layer_entry.get("dataSource") or None
+    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
+
+    data_binding = None
+    if domain_class:
+        binding_name = sanitize_name(f"{layer_name}_binding")
+        data_binding = DataBinding(name=binding_name, domain_concept=domain_class)
+
+    # --- helper: resolve a field (UUID from editor, or name from BUML→JSON) → Property ---
+    def _resolve_field(key: str):
+        raw = layer_entry.get(key, "")
+        if not raw or domain_class is None:
+            return None
+        el = get_element_by_id(class_model, raw)
+        if el:
+            attr_name = clean_attribute_name(el.get("name", raw))
+        else:
+            # Fallback: treat the value as a field name directly
+            attr_name = clean_attribute_name(raw)
+        return next(
+            (a for a in domain_class.attributes if clean_attribute_name(a.name) == attr_name),
+            None,
+        )
+
+    return MapLayer(
+        name=layer_name,
+        layer_type=layer_type,
+        latitude_field=_resolve_field("latitudeField"),
+        longitude_field=_resolve_field("longitudeField"),
+        label_field=_resolve_field("labelField"),
+        weight_field=_resolve_field("weightField"),
+        geojson_field=_resolve_field("geojsonField"),
+        value_field=_resolve_field("valueField"),
+        data_binding=data_binding,
+    )
+
+
+def parse_map(view_comp: Dict[str, Any], class_model, domain_model) -> Map:
+    """Parse a map component from GrapesJS JSON into a BUML Map instance.
+
+    Reads static positioning attributes (``map-title``, ``map-latitude``,
+    ``map-longitude``, ``map-zoom``) from the component's ``attributes`` dict.
+    Parses the ``map-layers`` JSON string (emitted by the editor's layer-manager
+    trait) into a list of :class:`~besser.BUML.metamodel.gui.dashboard.MapLayer`
+    objects — one per element in the array. Each layer resolves its own domain
+    class, :class:`~besser.BUML.metamodel.gui.binding.DataBinding`, and field
+    :class:`~besser.BUML.metamodel.structural.Property` references.
+
+    Args:
+        view_comp: Component dictionary from GrapesJS JSON.
+        class_model: Class diagram model for element-by-ID lookups.
+        domain_model: Domain model containing structural classes.
+
+    Returns:
+        :class:`~besser.BUML.metamodel.gui.dashboard.Map` instance.
+    """
+    attrs = view_comp.get("attributes", {})
+
+    # --- static map properties ---
+    title = attrs.get("map-title", "Location Map")
+    try:
+        center_latitude = float(attrs.get("map-latitude", 0.0))
+    except (TypeError, ValueError):
+        center_latitude = 0.0
+    try:
+        center_longitude = float(attrs.get("map-longitude", 0.0))
+    except (TypeError, ValueError):
+        center_longitude = 0.0
+    try:
+        zoom = int(attrs.get("map-zoom", 10))
+    except (TypeError, ValueError):
+        zoom = 10
+
+    # --- layers (emitted as a JSON string by the layer-manager trait) ---
+    layers: List[MapLayer] = []
+    raw_layers = attrs.get("map-layers")
+    if raw_layers:
+        try:
+            layer_entries = json.loads(raw_layers) if isinstance(raw_layers, str) else raw_layers
+            if isinstance(layer_entries, list):
+                for entry in layer_entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    layers.append(_parse_map_layer(entry, class_model, domain_model))
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning("Could not parse map-layers JSON: %s", exc)
+
+    # --- build the Map ---
+    map_name = sanitize_name(title) or "Map"
+    map_component = Map(
+        name=map_name,
+        title=title,
+        center_latitude=center_latitude,
+        center_longitude=center_longitude,
+        zoom=zoom,
+        layers=layers,
+    )
+
+    _attach_chart_metadata(map_component, view_comp)
+    return map_component
 
 
 def parse_agent_component(view_comp: Dict[str, Any], class_model, domain_model) -> AgentComponent:

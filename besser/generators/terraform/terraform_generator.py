@@ -7,8 +7,9 @@ class TerraformGenerator(GeneratorInterface):
     """
     TerraformGenerator is a class that implements the GeneratorInterface and is responsible for generating
     the Terraform models code based on the input B-UML model.
+
     Args:
-        deployement_model (DeployementModel): The deployment model containing multiple public clusters.
+        deployment_model (DeploymentModel): The deployment model containing multiple public clusters.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
 
@@ -46,8 +47,10 @@ class TerraformGenerator(GeneratorInterface):
         """
         Converts the input value to its underlying value if it is an instance of an enum class,
         otherwise converts it to a string.
+
         Args:
             value: The value to convert, which can be of any type including enum instances.
+
         Returns:
             The underlying value if an enum instance, or the string representation of the value.
         """

@@ -1,0 +1,26 @@
+Version 7.16.1
+==============
+
+Patch release: **the diagram validation endpoint no longer returns the text of
+an unexpected exception to the caller**. No metamodel, API contract or generator
+changes; the validation messages a diagram earns are unchanged.
+
+Highlights
+----------
+
+- **Unexpected errors no longer describe the server**: ``/validate-diagram``
+  caught every exception and put its message into the response's ``errors``
+  list. For a ``ValueError`` or a ``ConversionError`` that is the point — those
+  are the messages the metamodel setters and the JSON converters raise for the
+  person drawing the diagram, and they still come through unchanged. Anything
+  else reaching that handler is a bug rather than a problem with the diagram,
+  and its message describes our internals: a missing key, an object repr, a path
+  on the server, returned to anyone able to post a diagram. The traceback now
+  goes to the log and the caller receives a single sentence, which is what the
+  OCL check in the same function and the ``@handle_endpoint_errors`` decorator
+  already did. Reported by CodeQL as ``py/stack-trace-exposure``.
+
+- **Release notes credit**: the v7.16.0 notes now name
+  `Klausmp <https://github.com/Klausmp>`_ alongside
+  `palfner-sse <https://github.com/palfner-sse>`_ for the Java generator work —
+  the two substantive commits of BESSER #596 are authored by the former account.

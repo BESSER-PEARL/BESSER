@@ -1,0 +1,49 @@
+Version 7.17.1
+==============
+
+Patch release: **a project exported as BUML with both a class diagram and a GUI
+model can be imported again**. No metamodel or API contract changes; the fix is
+in the GUI code builder and the BUML reader, and it applies to files exported by
+earlier versions as well as to new ones.
+
+Highlights
+----------
+
+- **A GUI table referencing an inherited attribute produced an export that
+  could not be read back**: the GUI code builder named a column's ``Property``
+  variable after the class the table is bound to, while the domain model builder
+  names it after the class that *declares* the attribute. Those are the same
+  class until inheritance is involved. A ``Guest`` table showing ``Person.id``
+  was written as ``field=Guest_id``, and since ``Guest`` declares nothing of its
+  own, nothing in the file ever defined that name — importing it failed with
+  ``NameError: name 'Guest_id' is not defined``. ``FieldColumn`` and
+  ``LookupColumn`` now resolve the declaring class through ``Property.owner``,
+  which is what the method-button code in the same builder already did.
+
+- **Tables, lookups and chart series were missing from the reader's
+  vocabulary**: the BUML reader executes a GUI section against an allowlisted
+  namespace rather than letting it import anything, and that allowlist was
+  written by hand. It had drifted to 58 of the metamodel's 68 GUI types, and
+  everything table-related was among the missing — ``FieldColumn``,
+  ``LookupColumn``, ``ExpressionColumn``, ``Column`` and ``Series``. Any project
+  containing a table failed on its first column. The namespace is now derived
+  from the GUI metamodel modules, so a component type added later is understood
+  by the reader at the same moment the metamodel gains it.
+
+- **A GUI section is now read with its domain model in scope**: a GUI model
+  refers to the domain elements it binds to, but the section was executed on its
+  own, unlike object diagrams, which were already given the structural code as
+  context. The structural section now runs first, and
+  ``ClassName_attributeName`` is bound for every attribute a class exposes,
+  inherited ones included. That is what the convention means — ``Guest`` really
+  does expose ``id`` — so files written by the older builder load correctly
+  rather than only newly exported ones.
+
+- **The GUI sandbox exposes** ``globals()``: the builder emits
+  ``globals().get('domain_model')`` to resolve the domain model at runtime, so a
+  GUI model reaching that line was unreadable regardless of the above. It
+  returns the sandbox's own namespace, whose ``__builtins__`` is already the
+  restricted mapping, so it grants the executed code nothing it did not have.
+
+Reported against v7.17.0 with a real exported project; that file now imports
+with its 47 class-diagram elements and 7 GUI pages intact.

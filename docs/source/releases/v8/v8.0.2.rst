@@ -1,0 +1,63 @@
+Version 8.0.2
+=============
+
+Patch release: **generated-code and agent-configuration fixes**. It corrects
+SQL, backend, Django and agent output that failed when run, fixes agent
+configuration written by the editor, and links the three BESSER documentation
+sites to each other. There are no metamodel or API contract changes.
+
+Generators
+----------
+
+* **SQL for SQLite, MySQL, MSSQL and MariaDB.** Models with an enumeration
+  produced a PostgreSQL-only ``CREATE TYPE … AS ENUM`` statement for every
+  dialect except Oracle, which SQLite and the others reject. The statement is
+  now emitted for PostgreSQL only; other dialects keep the enumeration inline.
+* **Action-language methods that change data.** A method such as
+  ``this.status = "read";`` returned an error in the generated backend: the
+  methods router did not import its own class's update function, related links
+  were sent as objects instead of ids, single-valued navigation returned a
+  wrapper instead of the object, and a call on another object's method named
+  the wrong endpoint. These now work on standalone classes and on classes
+  linked by associations. Generation no longer fails on a call to another
+  class's method or on a method that returns nothing.
+* **Django on Windows.** Generation stopped with a ``UnicodeEncodeError`` when
+  its console output was redirected on Windows, and a failure inside generation
+  was masked by a second encoding error. Console messages are now plain text
+  and errors reach the caller.
+
+Agents
+------
+
+* **Agents in a Docker Compose web app.** A generated agent listened on
+  ``localhost`` inside its container, so the editor's chat could not connect
+  through the published port. Agents bundled into the web-app image now bind
+  to all interfaces; standalone agent generation is unchanged.
+* **SQLite databases in the agent configuration.** The editor wrote
+  ``database:`` for an SQLite entry, while the agent framework reads ``file:``.
+  The editor now writes ``file:``, and generation also accepts configurations
+  saved by earlier versions.
+* **User-profile conditions.** A criterion such as ``age > 65`` lost its
+  comparator in the generated agent and became ``age = 65``. Comparators are now
+  kept, and generated code shows them literally.
+* **Agent templates.** The Gym Agent, Personalized Gym Agent and Chatbot
+  templates used an LLM without defining one, so the generated agent failed at
+  its first LLM call. Each now defines one.
+
+Documentation
+-------------
+
+* The BESSER, Web Modeling Editor and Modeling Agent documentation sites link
+  to each other from every page, and broken links between them are fixed.
+* :doc:`/spec_driven_agent/production_deployment` notes that agent
+  personalization needs a longer proxy read timeout (about 600 s): it makes one
+  LLM call per selected option, so several options exceed the common 60 s
+  default.
+* The editor documentation now states that Ctrl+Z does not undo changes made by
+  the AI assistant.
+
+Upgrade and deployment
+----------------------
+
+No action is required. Operators who proxy the editor backend should give
+``/besser_api/transform-agent-model-json`` a read timeout of about 600 s.

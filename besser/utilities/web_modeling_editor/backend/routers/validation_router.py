@@ -24,6 +24,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
     process_object_diagram,
     process_nn_diagram,
+    process_component_diagram,
+    process_deployment_diagram,
     process_bpmn_diagram,
     process_kg_diagram,
 )
@@ -33,6 +35,7 @@ from besser.utilities.web_modeling_editor.backend.constants.user_buml_model impo
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     BPMN_DIAGRAM_TYPE,
+    DEPLOYMENT_DIAGRAM_TYPE,
 )
 
 # Backend services - Validators
@@ -235,6 +238,14 @@ async def validate_diagram(input_data: DiagramInput):
                 "warnings": []
             }
 
+        elif diagram_type in ("ComponentDiagram", DEPLOYMENT_DIAGRAM_TYPE):
+            # Conversion and construction errors are collected by the handlers below.
+            processor = (process_component_diagram if diagram_type == "ComponentDiagram"
+                         else process_deployment_diagram)
+            result = processor(input_data.model_dump()).validate(raise_exception=False)
+            validation_errors.extend(result["errors"])
+            validation_warnings.extend(result["warnings"])
+
         else:
             return {
                 "isValid": False,
@@ -252,10 +263,12 @@ async def validate_diagram(input_data: DiagramInput):
         # Construction validation errors (from BUML creation setters)
         logger.warning("Construction validation error: %s", e)
         validation_errors.extend(str(e).splitlines())
-    except Exception as e:
+    except Exception:
+        # A bug, not a problem with the diagram: the message describes our
+        # internals and helps nobody drawing a diagram. Traceback to the log, one
+        # sentence to the caller - as the OCL check below already does.
         logger.exception("Unexpected error during diagram conversion/validation")
-        error_msg = str(e).strip()
-        validation_errors.append(error_msg if error_msg else "An unexpected error occurred during validation.")
+        validation_errors.append("An unexpected error occurred during validation.")
 
     # Step 2: If BUML model created successfully AND it's a diagram with OCL support
     ocl_results = None

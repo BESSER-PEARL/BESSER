@@ -1,0 +1,104 @@
+############################################
+#
+#   BESSER Action Language standard lib
+#
+############################################
+
+
+async def BAL_size(sequence:list) -> int:
+    return len(sequence)
+
+async def BAL_is_empty(sequence:list) -> bool:
+    return len(sequence) == 0
+
+async def BAL_add(sequence:list, elem) -> None:
+    sequence.append(elem)
+
+async def BAL_remove(sequence:list, elem) -> None:
+    sequence.remove(elem)
+
+async def BAL_contains(sequence:list, elem) -> bool:
+    return elem in sequence
+
+async def BAL_filter(sequence:list, predicate) -> list:
+    return [elem for elem in sequence if predicate(elem)]
+
+async def BAL_forall(sequence:list, predicate) -> bool:
+    for elem in sequence:
+        if not predicate(elem):
+            return False
+    return True
+
+async def BAL_exists(sequence:list, predicate) -> bool:
+    for elem in sequence:
+        if predicate(elem):
+            return True
+    return False
+
+async def BAL_one(sequence:list, predicate) -> bool:
+    found = False
+    for elem in sequence:
+        if predicate(elem):
+            if found:
+                return False
+            found = True
+    return found
+
+async def BAL_is_unique(sequence:list, mapping) -> bool:
+    mapped = [mapping(elem) for elem in sequence]
+    return len(set(mapped)) == len(mapped)
+
+async def BAL_map(sequence:list, mapping) -> list:
+    return [mapping(elem) for elem in sequence]
+
+async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
+    for elem in sequence:
+        aggregator = reduce_fn(aggregator, elem)
+    return aggregator
+
+
+############################################
+#
+#   Association class link helpers
+#
+############################################
+# Shared by every router that reads/writes links materialized by an
+# association class (Trip.seats -> Reservation rows, etc.). Non-underscore
+# names so `from bal_stdlib import *` re-exports them.
+from enum import Enum as _Enum
+
+_UNSET = object()
+
+
+def link_target(link):
+    """Return the id of the entity a relationship link payload points to.
+
+    A payload is either a plain id, a mapping, or a model exposing a ``target`` field.
+    """
+    if link is None or isinstance(link, (int, str)):
+        return link
+    if isinstance(link, dict):
+        return link.get("target")
+    return getattr(link, "target", link)
+
+
+def link_attrs(link, names):
+    """Return the association-class attributes carried by a relationship link payload.
+
+    Attributes the payload does not provide are left out, so they are neither
+    inserted as NULL nor used to overwrite an existing link's stored values.
+    """
+    if link is None or isinstance(link, (int, str)):
+        return {}
+    values = {}
+    for name in names:
+        if isinstance(link, dict):
+            if name not in link:
+                continue
+            value = link[name]
+        else:
+            value = getattr(link, name, _UNSET)
+            if value is _UNSET:
+                continue
+        values[name] = value.value if isinstance(value, _Enum) else value
+    return values

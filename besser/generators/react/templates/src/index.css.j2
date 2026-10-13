@@ -1,3 +1,8 @@
+/* Tailwind v4: this single import IS the build step. Without it every
+   utility class in the generated pages is inert and the layout falls
+   back to browser defaults. */
+@import "tailwindcss";
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',

@@ -13,7 +13,9 @@ from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.state_machine.state_machine import StateMachine
-from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string
+from besser.BUML.metamodel.uml_component import ComponentModel
+from besser.BUML.metamodel.uml_deployment import DeploymentModel
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, buml_header
 from besser.utilities.buml_code_builder.domain_model_builder import (
     domain_model_to_code,
     object_model_to_code,
@@ -26,6 +28,8 @@ from besser.utilities.buml_code_builder.quantum_model_builder import quantum_mod
 from besser.utilities.buml_code_builder.kg_model_builder import kg_model_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
+from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
+from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -46,6 +50,8 @@ def _write_temp_to_output(temp_path: str, out_file, section_header: str = ""):
     """Read a temp file and append its content (with optional header) to *out_file*."""
     with open(temp_path, "r", encoding="utf-8") as tmp:
         content = tmp.read()
+    # One version header per file: the project writes its own at the top.
+    content = content.removeprefix(buml_header())
     if section_header:
         out_file.write(section_header)
     out_file.write(content)
@@ -92,6 +98,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     state_machine_models = []   # StateMachine models
     nn_models = []
     bpmn_models = []
+    component_models = []        # ComponentModel models (UML Component diagrams)
+    deployment_models = []       # DeploymentModel models (UML Deployment diagrams)
 
     # Import GUIModel locally to avoid circular imports
     try:
@@ -149,6 +157,10 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             bpmn_models.append(model)
         elif KnowledgeGraph and isinstance(model, KnowledgeGraph):
             kg_models.append(model)
+        elif isinstance(model, ComponentModel):
+            component_models.append(model)
+        elif isinstance(model, DeploymentModel):
+            deployment_models.append(model)
 
     # If we have user object models but no user domain model, use the
     # reference one shipped with the editor backend (when available).
@@ -195,6 +207,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     model_vars = []
 
     with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(buml_header())
         temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
 
         try:
@@ -208,7 +221,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_domain > 1:
-                    label = getattr(dm, "name", f"Model {idx}")
+                    label = _comment_safe(getattr(dm, "name", "")) or f"Model {idx}"
                     section = f"# STRUCTURAL MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"domain_model_{idx}.py")
@@ -276,7 +289,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_user > 1:
-                    label = getattr(udm, "name", f"User Model {idx}")
+                    label = _comment_safe(getattr(udm, "name", "")) or f"User Model {idx}"
                     section = f"# USER MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"user_model_{idx}.py")
@@ -301,7 +314,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_agent > 1:
-                    label = getattr(am, "name", f"Agent {idx}")
+                    label = _comment_safe(getattr(am, "name", "")) or f"Agent {idx}"
                     section = f"# AGENT MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"agent_model_{idx}.py")
@@ -324,7 +337,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                     section = ""
                     if n_gui > 1:
-                        label = getattr(gm, "name", f"GUI {idx}")
+                        label = _comment_safe(getattr(gm, "name", "")) or f"GUI {idx}"
                         section = f"# GUI MODEL {idx}: \"{label}\" #\n\n"
 
                     tmp_path = os.path.join(temp_dir, f"gui_model_{idx}.py")
@@ -346,7 +359,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_quantum > 1:
-                    label = getattr(qm, "name", f"Quantum {idx}")
+                    label = _comment_safe(getattr(qm, "name", "")) or f"Quantum {idx}"
                     section = f"# QUANTUM MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"quantum_model_{idx}.py")
@@ -366,7 +379,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_kg > 1:
-                    label = getattr(kgm, "name", f"Knowledge Graph {idx}")
+                    label = _comment_safe(getattr(kgm, "name", "")) or f"Knowledge Graph {idx}"
                     section = f"# KNOWLEDGE_GRAPH MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"kg_model_{idx}.py")
@@ -386,7 +399,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_sm > 1:
-                    label = getattr(smm, "name", f"State Machine {idx}")
+                    label = _comment_safe(getattr(smm, "name", "")) or f"State Machine {idx}"
                     section = f"# STATE MACHINE MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"state_machine_{idx}.py")
@@ -456,6 +469,48 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 tmp_path = os.path.join(temp_dir, f"bpmn_model_{idx}.py")
                 bpmn_model_to_code(
                     model=bpmn,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f, section_header=section)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
+            # COMPONENT MODELS                                           #
+            # ---------------------------------------------------------- #
+            n_comp = len(component_models)
+            for idx, cm in enumerate(component_models, start=1):
+                var_name = _suffixed_name("component_model", idx, n_comp)
+
+                section = ""
+                if n_comp > 1:
+                    label = _comment_safe(getattr(cm, "name", "")) or f"Component {idx}"
+                    section = f'# COMPONENT MODEL {idx}: "{label}" #\n\n'
+
+                tmp_path = os.path.join(temp_dir, f"component_model_{idx}.py")
+                component_model_to_code(
+                    model=cm,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f, section_header=section)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
+            # DEPLOYMENT MODELS                                          #
+            # ---------------------------------------------------------- #
+            n_dep = len(deployment_models)
+            for idx, dm in enumerate(deployment_models, start=1):
+                var_name = _suffixed_name("deployment_model", idx, n_dep)
+
+                section = ""
+                if n_dep > 1:
+                    label = _comment_safe(getattr(dm, "name", "")) or f"Deployment {idx}"
+                    section = f'# DEPLOYMENT MODEL {idx}: "{label}" #\n\n'
+
+                tmp_path = os.path.join(temp_dir, f"deployment_model_{idx}.py")
+                deployment_model_to_code(
+                    model=dm,
                     file_path=tmp_path,
                     model_var_name=var_name,
                 )

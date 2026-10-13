@@ -16,10 +16,21 @@ from besser.BUML.metamodel.object.object import ObjectModel
 from besser.utilities import sort_by_timestamp as sort
 from besser.utilities.buml_code_builder.common import (
     PRIMITIVE_TYPE_MAPPING,
+    _comment_safe,
+    buml_header,
     _escape_python_string,
     safe_class_name,
     safe_var_name,
 )
+
+
+def _set_literal(items: str) -> str:
+    """Python source for a set of the comma-separated ``items``.
+
+    ``{}`` is an empty dict, not an empty set, so an empty collection is
+    written as ``set()``.
+    """
+    return f"{{{items}}}" if items else "set()"
 
 
 def _method_var_name(method) -> str:
@@ -42,6 +53,7 @@ _IMPLEMENTATION_TYPE_VALUE_TO_NAME = {
     MethodImplementationType.BAL.value: MethodImplementationType.BAL.name,
     MethodImplementationType.STATE_MACHINE.value: MethodImplementationType.STATE_MACHINE.name,
     MethodImplementationType.QUANTUM_CIRCUIT.value: MethodImplementationType.QUANTUM_CIRCUIT.name,
+    MethodImplementationType.NEURAL_NETWORK.value: MethodImplementationType.NEURAL_NETWORK.name,
 }
 
 
@@ -138,6 +150,7 @@ def domain_model_to_code(
     object_model_var_name = object_model_var_name or "object_model"
 
     with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(buml_header())
         # Write imports
         f.write("####################\n")
         f.write("# STRUCTURAL MODEL #\n")
@@ -213,7 +226,7 @@ def domain_model_to_code(
         # Write class members for regular classes
         for cls in regular_classes:
             cls_var_name = safe_class_name(cls.name)
-            f.write(f"# {cls.name} class attributes and methods\n")
+            f.write(f"# {_comment_safe(cls.name)} class attributes and methods\n")
 
             # Write attributes
             for attr in sort(cls.attributes):
@@ -276,6 +289,11 @@ def domain_model_to_code(
                 if impl_type == MethodImplementationType.QUANTUM_CIRCUIT:
                     f.write("try:\n")
                     f.write(f"    {cls_var_name}_m_{method_var_name}.quantum_circuit = qc\n")
+                    f.write("except NameError:\n")
+                    f.write("    pass\n")
+                if impl_type == MethodImplementationType.NEURAL_NETWORK:
+                    f.write("try:\n")
+                    f.write(f"    {cls_var_name}_m_{method_var_name}.neural_network = nn_model\n")
                     f.write("except NameError:\n")
                     f.write("    pass\n")
 
@@ -418,6 +436,11 @@ def domain_model_to_code(
                         f.write(f"    {ac_var_name}_m_{method_var_name}.quantum_circuit = qc\n")
                         f.write("except NameError:\n")
                         f.write("    pass\n")
+                    if impl_type == MethodImplementationType.NEURAL_NETWORK:
+                        f.write("try:\n")
+                        f.write(f"    {ac_var_name}_m_{method_var_name}.neural_network = nn_model\n")
+                        f.write("except NameError:\n")
+                        f.write("    pass\n")
 
                 # Create attributes set string if attributes exist
                 attributes_str = ""
@@ -534,23 +557,18 @@ def domain_model_to_code(
         enum_names = ', '.join(safe_class_name(enum.name) for enum in sort(model.get_enumerations()))
         types_str = (f"{class_names}, {enum_names}" if class_names and enum_names else
                     class_names or enum_names)
-        f.write(f"    types={{{types_str}}},\n")
+        f.write(f"    types={_set_literal(types_str)},\n")
 
         # Include both regular associations and those used in association classes
         all_assoc_names = ', '.join([assoc.name for assoc in regular_associations] +
                                     [ac.association.name for ac in association_classes])
-        if all_assoc_names:
-            f.write(f"    associations={{{all_assoc_names}}},\n")
-        else:
-            f.write("    associations={},\n")
+        f.write(f"    associations={_set_literal(all_assoc_names)},\n")
 
         if hasattr(model, 'constraints') and model.constraints:
             constraints_str = ', '.join(c.name.replace("-", "_") for c in sort(model.constraints))
             f.write(f"    constraints={{{constraints_str}}},\n")
-        if model.generalizations:
-            f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))}}},\n")
-        else:
-            f.write("    generalizations={},\n")
+        gen_names = ', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))
+        f.write(f"    generalizations={_set_literal(gen_names)},\n")
 
         # Add metadata if it exists
         if domain_metadata_var:
@@ -668,7 +686,7 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
     objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
     f.write(f"{object_model_var_name}: ObjectModel = ObjectModel(\n")
     f.write(f"    name=\"{_escape_python_string(objectmodel.name)}\",\n")
-    f.write(f"    objects={{{objects_str}}}")
+    f.write(f"    objects={_set_literal(objects_str)}")
 
     # Add metadata if it exists
     if hasattr(objectmodel, 'metadata') and objectmodel.metadata:

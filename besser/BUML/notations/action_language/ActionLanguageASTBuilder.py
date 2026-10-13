@@ -457,7 +457,7 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
                     the_type = ObjectType(return_type)
                 elif isinstance(return_type, Enumeration):
                     the_type = EnumType(return_type)
-                elif return_type.name in base_classes:
+                elif return_type is not None and return_type.name in base_classes:  # None: returns nothing
                     the_type = base_classes[return_type.name]
                 self.__current_type = the_type
                 return MethodCall(receiver, method_obj, args)
@@ -567,7 +567,7 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
                     the_type = ObjectType(return_type)
                 elif isinstance(return_type, Enumeration):
                     the_type = EnumType(return_type)
-                elif return_type.name in base_classes:
+                elif return_type is not None and return_type.name in base_classes:  # None: returns nothing
                     the_type = base_classes[return_type.name]
                 self.__current_type = the_type
                 return MethodCall(receiver, method_obj, args)

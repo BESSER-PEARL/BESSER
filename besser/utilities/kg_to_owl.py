@@ -64,9 +64,9 @@ _INTERNAL_PREDICATES: Set[str] = {
 # triples. The importer represents these in the KG editor as direct
 # subject->member edges (one per member, for visibility/editability — see
 # owl_to_buml._flatten_owl_list_valued_triples), which must NOT be re-emitted
-# as-is here (that would produce invalid multi-object owl:unionOf/hasKey/...
-# triples). Skipped in the generic edge loop below; re-emitted properly as a
-# single rdf:List via the dedicated passes that follow it.
+# as-is here (that would produce invalid multi-object owl:unionOf or
+# owl:hasKey triples). Skipped in the generic edge loop below; re-emitted
+# properly as a single rdf:List via the dedicated passes that follow it.
 _OWL_LIST_VALUED_PREDICATES: Set[str] = {
     str(OWL.unionOf), str(OWL.intersectionOf), str(OWL.oneOf),
     str(OWL.hasKey), str(OWL.disjointUnionOf), str(OWL.propertyChainAxiom),

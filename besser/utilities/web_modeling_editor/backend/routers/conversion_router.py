@@ -63,6 +63,8 @@ from besser.utilities.buml_code_builder.state_machine_builder import state_machi
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
 from besser.utilities.buml_code_builder.kg_model_builder import kg_model_to_code
+from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
+from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -80,6 +82,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_nn_diagram,
     process_bpmn_diagram,
     process_kg_diagram,
+    process_component_diagram,
+    process_deployment_diagram,
     json_to_buml_project,
     # BUML to JSON converters
     class_buml_to_json,
@@ -92,6 +96,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     bpmn_buml_to_json,
     kg_to_json,
     kg_buml_to_json,
+    component_buml_to_json,
+    deployment_buml_to_json,
 )
 
 # Backend services - Other services
@@ -122,6 +128,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     OUTPUT_DIR_NAME,
     AGENT_MODEL_FILENAME,
     BPMN_DIAGRAM_TYPE,
+    DEPLOYMENT_DIAGRAM_TYPE,
 )
 
 # Centralized error handling
@@ -326,6 +333,10 @@ router = APIRouter(prefix="/besser_api", tags=["conversion"])
 async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     buml_project = json_to_buml_project(input_data)
 
+    errors = buml_project._cross_diagram_errors["errors"]
+    if errors:
+        raise ConversionError("Cannot export project: " + "; ".join(errors))
+
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         output_file_path = os.path.join(temp_dir, "project.py")
         project_to_code(project=buml_project, file_path=output_file_path)
@@ -437,7 +448,12 @@ async def export_buml(input_data: DiagramInput):
             )
 
         elif elements_data.get("type") == "KnowledgeGraphDiagram":
-            kg_model = process_kg_diagram(json_data)
+            try:
+                kg_model = process_kg_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(
+                    f"Malformed Knowledge Graph diagram payload: {exc}"
+                ) from exc
             output_file_path = os.path.join(temp_dir, "knowledge_graph.py")
             # ``model_var_name`` must stay "kg_model": ``project_to_json``'s
             # SECTION_CONFIG keys on that name, so any other value makes the
@@ -448,6 +464,46 @@ async def export_buml(input_data: DiagramInput):
                 content=file_content,
                 media_type="text/plain",
                 headers={"Content-Disposition": 'attachment; filename="knowledge_graph.py"'},
+            )
+
+        elif elements_data.get("type") == "ComponentDiagram":
+            try:
+                component_model = process_component_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(
+                    f"Malformed Component diagram payload: {exc}"
+                ) from exc
+            output_file_path = os.path.join(temp_dir, "component_model.py")
+            component_model_to_code(
+                model=component_model, file_path=output_file_path,
+            )
+            file_content = await _read_file(output_file_path, "rb")
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={
+                    "Content-Disposition": 'attachment; filename="component_model.py"',
+                },
+            )
+
+        elif elements_data.get("type") == DEPLOYMENT_DIAGRAM_TYPE:
+            try:
+                deployment_model = process_deployment_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(
+                    f"Malformed Deployment diagram payload: {exc}"
+                ) from exc
+            output_file_path = os.path.join(temp_dir, "deployment_model.py")
+            deployment_model_to_code(
+                model=deployment_model, file_path=output_file_path,
+            )
+            file_content = await _read_file(output_file_path, "rb")
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={
+                    "Content-Disposition": 'attachment; filename="deployment_model.py"',
+                },
             )
 
         else:
@@ -523,6 +579,17 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         'knowledgegraph(', 'kgclass(', 'kgproperty(', 'kgindividual('
     ])
 
+    # UML Component / Deployment markers: only calls specific to one of the two
+    # builders (both emit `.add_relationship(`, so it identifies neither).
+    is_uml_component = any(keyword in content_lower for keyword in [
+        'componentmodel(', '.add_component(', 'agenticedge(',
+    ])
+
+    is_uml_deployment = any(keyword in content_lower for keyword in [
+        'deploymentmodel(', 'deploymentrelation(', 'communicationpath(',
+        '.add_nested_node(',
+    ])
+
     is_project = 'project(' in content_lower or 'def create_project' in content_lower
 
     # Try to parse based on detected type
@@ -567,7 +634,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
                 "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
                 "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE,
-                "KnowledgeGraphDiagram",
+                "KnowledgeGraphDiagram", "ComponentDiagram",
+                DEPLOYMENT_DIAGRAM_TYPE,
             ):
                 if dtype not in priority:
                     priority.append(dtype)
@@ -662,16 +730,32 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
 
     elif is_kg:
-        try:
-            logger.info("Detected Knowledge Graph diagram, parsing...")
-            kg_json = kg_buml_to_json(buml_content)
-            diagram_data = {
-                "title": diagram_title,
-                "model": kg_json
-            }
-            diagram_type = "KnowledgeGraphDiagram"
-        except Exception as kg_error:
-            logger.error("Knowledge Graph diagram parsing failed: %s", str(kg_error))
+        # A ConversionError from the converter names the actual problem and is
+        # reported as such (HTTP 400) rather than as "format not recognized".
+        logger.info("Detected Knowledge Graph diagram, parsing...")
+        diagram_data = {
+            "title": diagram_title,
+            "model": kg_buml_to_json(buml_content),
+        }
+        diagram_type = "KnowledgeGraphDiagram"
+
+    elif is_uml_component:
+        # A ConversionError from the converter names the actual problem and is
+        # reported as such (HTTP 400) rather than as "format not recognized".
+        logger.info("Detected UML Component diagram, parsing...")
+        diagram_data = {
+            "title": diagram_title,
+            "model": component_buml_to_json(buml_content),
+        }
+        diagram_type = "ComponentDiagram"
+
+    elif is_uml_deployment:
+        logger.info("Detected UML Deployment diagram, parsing...")
+        diagram_data = {
+            "title": diagram_title,
+            "model": deployment_buml_to_json(buml_content),
+        }
+        diagram_type = DEPLOYMENT_DIAGRAM_TYPE
 
     # Check if we successfully parsed any diagram
     if diagram_data is None or diagram_type is None:
@@ -679,7 +763,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
             "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, "
             "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, "
-            "KnowledgeGraphDiagram, or Project."
+            "KnowledgeGraphDiagram, ComponentDiagram, DeploymentDiagram, or Project."
         )
 
     # Return the diagram in the format expected by the frontend
@@ -1511,8 +1595,11 @@ async def transform_agent_model_json(input_data: DiagramInput):
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
         generation_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
+        resolved_agent = getattr(agent_module, "agent", agent_model)
+        # gui_models is now serialized by agent_model_to_code, so the
+        # exec'd module's agent already carries it.
         generator_instance = generator_class(
-            getattr(agent_module, "agent", agent_model),
+            resolved_agent,
             config=config,
             openai_api_key=extract_openai_api_key(config),
             output_dir=generation_output_dir,

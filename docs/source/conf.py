@@ -5,12 +5,14 @@ import inspect
 import os
 import sys
 from configparser import ConfigParser
+from pathlib import Path
 
 # -- Add the project root directory to the path
-sys.path.insert(0, os.path.abspath('../../'))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
 config: ConfigParser = ConfigParser()
-config.read('../../setup.cfg')
+config.read(REPO_ROOT / 'setup.cfg')
 
 # -- Project information
 project = config.get('metadata', 'description')
@@ -29,9 +31,7 @@ extensions = [
     'sphinx.ext.autodoc',  # include documentation from docstrings
     'sphinx.ext.autosummary',  # generate autodoc summaries
     'sphinx.ext.intersphinx',  # link to other projects’ documentation
-    'sphinx_paramlinks',  # allows :param: directives within Python documentation to be linkable
     'sphinx.ext.linkcode',  # add external links to source code
-    'sphinx_copybutton',  # add a little “copy” button to the right of the code blocks
     'sphinx.ext.napoleon',  # support for Google (and also NumPy) style docstrings
 ]
 
@@ -41,18 +41,60 @@ intersphinx_mapping = {
 }
 intersphinx_disabled_domains = ['std']
 
+# Optional third-party libraries that some generators import lazily (e.g.
+# ``deep_translator`` in the agent-personalization generator). They are not in
+# the docs build environment, so mock them for autodoc — otherwise importing the
+# module to read its docstrings fails with ModuleNotFoundError and the page is
+# dropped from the build.
+autodoc_mock_imports = ['deep_translator']
+
 templates_path = ['_templates']
 
 html_title = f"{project} {release}"
 
 # -- Options for HTML output
 html_favicon = "_static/besser_ico.ico"
+html_theme = "sphinx_immaterial"
+extensions.append("sphinx_immaterial")
+html_logo = "_static/besser_logo_dark.png"
+html_static_path = ["_static"]
+html_css_files = ["docs.css"]
 html_theme_options = {
-    "light_logo": "besser_logo_light.png",
-    "dark_logo": "besser_logo_dark.png"
+    "font": False,
+    "features": ["navigation.sections", "navigation.top", "search.highlight"],
+    "palette": [
+        {
+            "media": "(prefers-color-scheme: light)",
+            "scheme": "default",
+            "primary": "cyan",
+            "accent": "cyan",
+            "toggle": {"icon": "material/weather-night", "name": "Switch to dark mode"},
+        },
+        {
+            "media": "(prefers-color-scheme: dark)",
+            "scheme": "slate",
+            "primary": "cyan",
+            "accent": "cyan",
+            "toggle": {"icon": "material/weather-sunny", "name": "Switch to light mode"},
+        },
+    ],
+    "repo_url": "https://github.com/BESSER-PEARL/BESSER",
+    "repo_name": "Source",
+    "globaltoc_collapse": False,
+    "toc_title": "On this page",
 }
-html_theme = 'furo'
-html_static_path = ['_static']
+html_show_sourcelink = False
+autodoc_member_order = 'bysource'
+# Keep class attribute descriptions as fields; the properties below are indexed
+# once by autodoc rather than a second time by Napoleon's Attributes sections.
+napoleon_use_ivar = True
+# Material already handles signature and code-block links. Keep descriptive
+# parameter lists without indexing the same constructor parameters twice.
+napoleon_use_param = False
+# These sections describe properties and methods, not constructor arguments.
+# Keep them as explanatory text; autodoc indexes the actual members below.
+napoleon_custom_sections = [('Attributes', 'params_style'), ('Methods', 'params_style')]
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 # -- Options for EPUB output
 #epub_show_urls = 'footnote'

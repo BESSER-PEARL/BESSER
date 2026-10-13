@@ -70,7 +70,7 @@
                 {%- for association in class_obj.associations %}
                     {%- if association.ends|length == 2 and association.name not in processed_associations %}
                       {%- set ns = namespace(end1=None, end2=None) %}
-                        {%- set ends_list = association.ends | list %}
+                        {%- set ends_list = association.ends | sort(attribute='name') | list %}
                         {%- if ends_list[0].type.name == ends_list[1].type.name %}
                             {%- set ns.end1 = ends_list[1] %}
                             {%- set ns.end2 = ends_list[0] %}

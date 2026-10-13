@@ -13,6 +13,27 @@ You can create the application in two ways:
    The :doc:`../web_editor` supports only the generation of Django apps with the Admin Panel. To generate a Django app with UI Components,
    you must use the Python API.
 
+.. seealso::
+   For a Django project that goes beyond the template — custom apps, auth,
+   containerisation, tests — the
+   :doc:`Spec-Driven Agent <../spec_driven_agent/index>` runs this generator
+   first and then lets an LLM customise the result to a natural-language
+   request.
+
+.. versionchanged:: 8.0.0
+   ``DjangoGenerator.generate()`` raises when generation fails, including
+   while updating ``settings.py``, instead of printing the error and
+   returning. It writes under ``output_dir`` without
+   changing the process's working directory, and refuses to replace an
+   existing, non-empty directory that is not a generated Django project (one
+   without ``manage.py``). A ``default_value`` that cannot be expressed as a
+   literal of the attribute's type raises ``InvalidDefaultValueError``, and a
+   method without an implementation that cannot be inferred from the class
+   raises ``NotImplementedError`` in the generated code. Inferred bodies
+   (``__str__``, getters, predicates) take inherited attributes into account.
+   See the
+   :doc:`release notes </releases/v8/v8.0.0>`.
+
 Check the guidelines below to learn how to generate a Django app depending on your needs:
 
 .. toctree::

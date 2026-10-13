@@ -1629,6 +1629,8 @@ class GUIModel(Model):
         modules (set[Module]): The set of modules contained in the model.
         description (str): The description of the model.
         screenCompatibility (bool): Indicates whether the model has screen compatibility.
+        stylesheet (str): Raw CSS shared by the whole GUI (class, compound, ``:root``,
+            ``@media`` and state rules) that cannot be expressed as per-element styling.
 
     Attributes:
         name (str): The name of the model.
@@ -1639,10 +1641,11 @@ class GUIModel(Model):
         modules (set[Module]): The set of modules contained in the model.
         description (str): The description of the model.
         screenCompatibility (bool): Indicates whether the model has screen compatibility.
+        stylesheet (str): Raw CSS shared by the whole GUI.
     """
     def __init__(self, name: str, package: str, versionCode: str, versionName: str, modules: set[Module],
                  description: str, timestamp: int = None, screenCompatibility: bool = False,
-                 style_entries: list = None):
+                 style_entries: list = None, stylesheet: str = ""):
         super().__init__(name, timestamp)
         self.package: str = package
         self.versionCode: str = versionCode
@@ -1651,6 +1654,17 @@ class GUIModel(Model):
         self.modules: set[Module] = modules
         self.screenCompatibility: str = screenCompatibility
         self.style_entries: list = style_entries if style_entries is not None else []
+        self.stylesheet: str = stylesheet
+
+    @property
+    def stylesheet(self) -> str:
+        """str: Get the raw CSS shared by the whole GUI."""
+        return self.__stylesheet
+
+    @stylesheet.setter
+    def stylesheet(self, stylesheet: str):
+        """str: Set the raw CSS shared by the whole GUI (None becomes an empty string)."""
+        self.__stylesheet = stylesheet or ""
 
     @property
     def package(self) -> str:

@@ -1,0 +1,86 @@
+Version 7.16.0
+==============
+
+Minor release: **a substantially better Java generator, and a round of fixes to
+the generated web app driven by running a full acceptance suite against it**.
+The Java work was contributed by `Klausmp <https://github.com/Klausmp>`_ and
+`palfner-sse <https://github.com/palfner-sse>`_ (BESSER #595, #596) and
+reviewed and completed by the BESSER team. The rest came out of driving the
+`Agentic-Low-Code-Benchmark <https://github.com/BESSER-PEARL/Agentic-Low-Code-Benchmark>`_
+hotel-booking suite through the generated interface, which surfaced a set of
+defects that only appear once an application is actually used.
+
+One change can reject a model that was previously accepted: a class may no
+longer declare a method with the name of one of its attributes or association
+ends. See *Model validation* below.
+
+Highlights
+----------
+
+- **Java generator**: enumerations are generated as Java ``enum`` files and used
+  as the type of the attributes, parameters and return values that reference
+  them; bidirectional associations emit a field on both sides; navigability is
+  honoured, so a non-navigable end no longer produces a field; methods declared
+  in the model are emitted as stubs; and the package name is now an explicit
+  ``package_name`` parameter of ``JavaGenerator`` rather than being guessed from
+  the output path. Method stubs throw ``UnsupportedOperationException`` so the
+  generated sources compile whatever a method returns, and the test suite now
+  compiles its output with ``javac`` when a JDK is available.
+
+- **A 0..1 association end is a single object again**: relationships are
+  assigned after the class body, so SQLAlchemy never sees the ``Mapped_``
+  annotation and inferred a collection from the foreign-key direction. An
+  optional end read back as ``[]`` rather than ``None``, which made a guard as
+  ordinary as ``if self.invoice is not None`` always true — a booking could
+  never produce its bill.
+
+- **Association ends keep the names the diagram gives them**: an association
+  class exposed only its link rows, so ``self.rooms`` — the end name the model
+  uses, and the one its own OCL constraints navigate — raised ``AttributeError``
+  at runtime. The ends are now reachable under their model names as read-only
+  views over the link table, with writes still going through the association
+  class.
+
+- **A class's methods are on the class**: model methods existed only as bodies
+  inlined into the endpoints exposing them, so a method calling another method
+  of the same object failed on an object that, per the diagram, has it.
+
+- **An optional association-class attribute stays optional**: the link payload
+  declared every attribute of the association class as required whatever the
+  model said, so the request the form built was rejected for a value the
+  interface never asked for.
+
+- **A declined method is no longer reported as a success**: a method that guards
+  itself — refusing a second bill, a departure before arrival — reports that by
+  returning false, and the page announced "Operation completed successfully" all
+  the same. The confirmation is withheld and the result popup names the outcome.
+
+- **Lookup options identify the record**: the attribute shown for a related
+  record preferred one literally named ``name``, so two guests called Jane were
+  indistinguishable in a dropdown. An attribute the model marks as a business
+  identifier now wins, an email outranks a name, and every multi-select option
+  carries the key of the record it stands for.
+
+Model validation
+----------------
+
+``DomainModel.validate()`` reports a method that shares its name with an
+attribute or an association end of the same class. Generated code reaches both
+through that one name, so one wins and the other becomes unreachable: a body
+reading ``self.check_out - self.check_in`` subtracted two methods instead of two
+dates, and the failure surfaced at runtime with nothing pointing back to the
+diagram. A model that does this now fails validation and has to rename one of
+the two.
+
+Other fixes
+-----------
+
+- The standalone web app tool
+  (``besser.utilities.web_modeling_editor.backend.tools.generate_web_app_from_json``)
+  reads the project export the editor writes today. A project keeps a list of
+  diagrams per type and names the active one in ``currentDiagramIndices``, which
+  the generation router already honoured; the tool still expected a single
+  diagram per type and failed on every current export.
+- The generated create form preselects the default values declared on the
+  attributes, so an enumeration with a default arrives selected instead of
+  empty.

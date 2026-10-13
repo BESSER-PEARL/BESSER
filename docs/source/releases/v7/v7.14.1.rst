@@ -1,0 +1,61 @@
+Version 7.14.1
+==============
+
+Patch release: **working OCL enforcement, full association-class support and a
+usable create/edit dialog in generated web applications**. Every fix was found
+and verified against a real hotel-booking model with OCL constraints, an
+association class (``ReservedRoom`` between ``Booking`` and ``Room``) and
+user-written method code. No metamodel or API-contract changes.
+
+Highlights
+----------
+
+- **OCL constraints are enforced in generated backends**: the Pydantic generator
+  previously leaked OCL syntax verbatim (``v.matches(...)``) with broken message
+  quoting — a ``SyntaxError`` that prevented freshly generated backends from even
+  starting. ``matches`` now translates to ``re.match`` validators, constraints
+  comparing two attributes (e.g. ``check_in <= check_out``) become
+  ``@model_validator(mode='after')`` validators, collection constraints emit an
+  explanatory ``# NOTE:`` instead of broken code, and every generated expression
+  is syntax-checked before it is written. The Django generator's ``clean()``
+  template received the same quoting fix.
+- **Association classes work end-to-end**: creating entities linked through an
+  association class crashed with ``NameError`` (the REST template emitted
+  join-table code for a table the SQLAlchemy generator correctly never creates).
+  All endpoints now go through the association class: links travel as
+  ``{"target": <pk>, ...association attributes}`` payloads, ``PUT`` reconciles
+  them, ``?detailed=true`` exposes the link rows, and the association class gets
+  working CRUD keyed by both foreign keys. Primary keys are respected everywhere
+  — classes whose id attribute is not named ``id`` (e.g. ``Room.number``) are
+  queried by their actual key, in the backend and in the dialog's selects alike.
+- **The generated create/edit dialog understands association classes**: when
+  selecting related entities, the association attributes (e.g. per-room
+  ``agreed_price``) unfold inline right under the checked option; long option
+  lists are searchable (checked options stay pinned through the filter); lookup
+  selects display the same field the table column is configured with (with a
+  readable ``name``-first default) while submitting real primary keys; and the
+  dialog itself was reorganized into a wider two-column layout with Details and
+  Relationships sections.
+- **Robust embedding of user method code**: method bodies written in the
+  editor's code box with mixed tabs and spaces produced an ``IndentationError``
+  that took the whole generated application down at startup. Method code is now
+  normalized and compile-gated before embedding (FastAPI, Python and Django
+  generators); a body that still does not compile is emitted as a commented stub
+  raising ``NotImplementedError`` instead of breaking the module.
+
+Fixes
+-----
+
+- Generated 4xx responses now carry the endpoint's actual message in ``detail``
+  (previously a generic "HTTP 400 error occurred" placeholder), so the dialog's
+  error banner shows e.g. *"Room with ID 15 not found"*.
+- To-one ends through an association class are optional at creation time,
+  resolving the chicken-and-egg between the two linked entities.
+
+Frontend (via the submodule bump)
+---------------------------------
+
+The frontend submodule moves to include a fix to the GUI autogeneration: lookup
+columns now default to a readable display attribute (an attribute named
+``name``, then the first non-id string attribute) instead of the raw primary
+key.

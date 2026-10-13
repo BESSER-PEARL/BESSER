@@ -2,7 +2,7 @@
 
 The aux-class names follow the tokens used in ``conversion_kg2uml.tex`` exactly:
 ``_some_p_D``, ``_min_n_p_D``, ``_all_p_D``, ``_not_C``,
-``_C1_..._Cn_Union``/``_Intersection``, ``_hasValue_p_a`` (O08), etc.
+``_C1_..._Cn_Union``/``_Intersection``, and ``_hasValue_p_a`` (O08).
 """
 from __future__ import annotations
 

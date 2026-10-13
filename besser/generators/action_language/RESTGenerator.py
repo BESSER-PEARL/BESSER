@@ -121,7 +121,7 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
             if isinstance(a_access.receiver, FieldAccess):
                 a_receiver = a_access.receiver.accept(self, context)[0]
                 index = a_access.index.accept(self, context)[0]
-                list_update = [f"list_update = {a_receiver}", f"list_update[{index}] = {assignee_by_id}"]
+                list_update = [f"list_update = [x.id for x in {a_receiver}]", f"list_update[{index}] = {assignee_by_id}"]
                 target = a_access.receiver
                 assignee = assignee_by_id = "list_update"
 
@@ -148,11 +148,19 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
                     else:
                         mapping.append(f"{attr.name} = inst_to_update.{attr.name}")
 
+                # <Class>Create takes related ids, not ORM objects
                 for end in sorted(type.clazz.all_association_ends(), key=lambda e: e.name):
+                    many = end.multiplicity.max > 1
                     if end.name == f_access.field.name:
-                        mapping.append(f"{end.name} = {assignee_by_id}")
+                        if many and list_update is None:
+                            mapping.append(f"{end.name} = [x.id for x in {assignee}]")
+                        else:
+                            mapping.append(f"{end.name} = {assignee_by_id}")
+                    elif many:
+                        mapping.append(f"{end.name} = [x.id for x in inst_to_update.{end.name}]")
                     else:
-                        mapping.append(f"{end.name} = inst_to_update.{end.name}")
+                        mapping.append(f"{end.name} = (inst_to_update.{end.name}.id "
+                                       f"if inst_to_update.{end.name} is not None else None)")
 
                 out.append(
                     f"await update_{class_name.lower()}(inst_to_update.id, "
@@ -266,8 +274,11 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
             param_dict_str.append(f"'{param.name}': {expr}")
 
         receiver = node.receiver.accept(self, context)[0]
+        # the endpoint belongs to the receiver's class, not necessarily this one
+        receiver_type = node.receiver.accept(BALTypeChecker(), TypeCheckingContext())
+        owner = receiver_type.clazz.name if isinstance(receiver_type, ObjectType) else self.class_name
 
-        return [f"(await execute_{self.class_name.lower()}_{node.method.name}({receiver}.id, {{ {', '.join(param_dict_str)} }}, database))"]
+        return [f"(await execute_{owner.lower()}_{node.method.name}({receiver}.id, {{ {', '.join(param_dict_str)} }}, database))"]
 
     def visit_StandardLibCall(self, node: StandardLibCall, context: RESTGenerationContext) -> list[str]:
         args = []
@@ -294,7 +305,9 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
             other_end = [end for end in assoc.ends if end is not node.field][0]
             return [f"(await get_{node.field.name.lower()}_of_{other_end.type.name.lower()}({receiver}.id, database))['{node.field.name}']"]
         else:
-            return [f"(await get_{node.field.type.name.lower()}({receiver}.{node.field.name}.id, database))"]
+            # get_<class> wraps the instance as {"<class>": obj, "<end>_ids": [...]}
+            target = node.field.type.name.lower()
+            return [f"(await get_{target}({receiver}.{node.field.name}.id, database))['{target}']"]
 
     def visit_ArrayAccess(self, node: ArrayAccess, context: RESTGenerationContext) -> list[str]:
         receiver = node.receiver.accept(self, context)[0]

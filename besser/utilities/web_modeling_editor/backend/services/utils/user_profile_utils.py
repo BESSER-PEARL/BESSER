@@ -153,9 +153,40 @@ def build_user_model_hierarchy(document: Dict[str, Any]) -> Optional[Dict[str, A
     return normalized_document
 
 
-def normalize_user_model_output(object_model, temp_dir: str) -> None:
+_CRITERIA_COMPARATORS = ("<=", ">=", "<", ">")
+
+
+def user_criteria_comparators(diagram_payload: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """Map object name -> {attribute: comparator} for the UserDiagram's non-equality criteria.
+
+    The object model keeps only a criterion's value, so without this ``age > 65``
+    reaches the profile document as ``age: 65``.
+    """
+    model_data = diagram_payload.get("model") if isinstance(diagram_payload, dict) else None
+    if not isinstance(model_data, dict):
+        return {}
+    elements = model_data.get("elements") or (model_data.get("model") or {}).get("elements") or {}
+    comparators: Dict[str, Dict[str, str]] = defaultdict(dict)
+    for element in elements.values():
+        if not isinstance(element, dict) or element.get("type") != "UserModelAttribute":
+            continue
+        operator = element.get("attributeOperator")
+        name = element.get("name") or ""
+        owner = elements.get(element.get("owner")) or {}
+        if operator in _CRITERIA_COMPARATORS and operator in name and owner.get("name"):
+            comparators[owner["name"]][name.split(operator, 1)[0].strip()] = operator
+    return dict(comparators)
+
+
+def normalize_user_model_output(
+    object_model, temp_dir: str, comparators: Optional[Dict[str, Dict[str, str]]] = None,
+) -> None:
     """Rewrite the generated JSON so the ``objects`` list is folded into a
-    hierarchical ``model`` tree rooted on the ``User`` instance."""
+    hierarchical ``model`` tree rooted on the ``User`` instance.
+
+    ``comparators`` (from :func:`user_criteria_comparators`) prefixes those
+    values with their comparator, e.g. ``"age": "> 65"``.
+    """
     file_name = sanitize_object_model_filename(getattr(object_model, "name", None))
     json_path = safe_path(temp_dir, f"{file_name}.json")
     if not os.path.isfile(json_path):
@@ -166,6 +197,14 @@ def normalize_user_model_output(object_model, temp_dir: str) -> None:
             document = json.load(source)
     except (OSError, json.JSONDecodeError):
         return
+
+    for obj in document.get("objects") or []:
+        attributes = obj.get("attributes") if isinstance(obj, dict) else None
+        if not isinstance(attributes, dict):
+            continue
+        for attribute, operator in (comparators or {}).get(obj.get("id"), {}).items():
+            if attribute in attributes:
+                attributes[attribute] = f"{operator} {attributes[attribute]}"
 
     normalized_document = build_user_model_hierarchy(document)
     if not normalized_document:
@@ -220,7 +259,9 @@ def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[s
             generator_instance = generator_class(object_model, output_dir=temp_dir)
             generator_instance.generate()
 
-            normalize_user_model_output(object_model, temp_dir)
+            normalize_user_model_output(
+                object_model, temp_dir, user_criteria_comparators(prepared_payload)
+            )
 
             file_name = sanitize_object_model_filename(getattr(object_model, "name", None))
             json_path = safe_path(temp_dir, f"{file_name}.json")

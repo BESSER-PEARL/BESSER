@@ -9,12 +9,13 @@ with ASGITransport is used because the installed starlette/httpx versions
 do not support the legacy TestClient(app=...) pattern.
 """
 
+import copy
 import io
 import json
 import os
 import asyncio
-from functools import wraps
-from typing import Any, Dict, Optional
+import zipfile
+from typing import Any, Dict
 
 import pytest
 import httpx
@@ -106,6 +107,26 @@ def class_diagram_model():
                 },
             },
         },
+    }
+
+
+@pytest.fixture
+def spring_class_diagram_input(class_diagram_model):
+    """``class_diagram_input`` with identifiers, which JPA entities require."""
+    model = copy.deepcopy(class_diagram_model)
+    for class_key, attribute_key in (("class-1", "id-1"), ("class-2", "id-2")):
+        model["elements"][attribute_key] = {
+            "type": "Attribute",
+            "name": "id",
+            "visibility": "public",
+            "attributeType": "int",
+            "isId": True,
+        }
+        model["elements"][class_key]["attributes"].append(attribute_key)
+    return {
+        "title": "LibraryModel",
+        "model": model,
+        "generator": "spring",
     }
 
 
@@ -400,6 +421,66 @@ class TestGenerateOutput:
         response = client.post("/besser_api/generate-output", json=payload)
         assert response.status_code == 200
         assert "application/zip" in response.headers.get("content-type", "")
+
+    def test_generate_spring_applies_the_submitted_config(self, spring_class_diagram_input):
+        """The Spring dialog's fields must reach the generator, not be dropped."""
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {
+                "project_name": "mylibrary",
+                "app_name": "LibraryApplication",
+                "spring_boot_version": "3.4.4",
+                "java_version": "21",
+                "package_name": "com.acme.library",
+            },
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+        assert "application/zip" in response.headers.get("content-type", "")
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            assert "pom.xml" in names
+            assert "mvnw" in names
+            assert ".mvn/wrapper/maven-wrapper.properties" in names
+            # app_name and package_name are what the config asked for.
+            assert "src/main/java/com/acme/library/LibraryApplication.java" in names
+            assert "src/main/java/com/acme/library/entity/Book.java" in names
+            pom = archive.read("pom.xml").decode("utf-8")
+            assert "<version>3.4.4</version>" in pom
+            assert "<java.version>21</java.version>" in pom
+
+    def test_generate_spring_without_config_uses_defaults(self, spring_class_diagram_input):
+        """No config at all must still produce a project (the registry default path)."""
+        payload = {**spring_class_diagram_input, "generator": "spring"}
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            assert "src/main/java/com/example/Application.java" in names
+
+    def test_generate_spring_rejects_a_traversing_project_name(self, spring_class_diagram_input):
+        """``project_name`` is a directory name; it must not escape the temp dir."""
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {"project_name": "../../evil"},
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert "pom.xml" in archive.namelist()
+
+    def test_generate_spring_rejects_an_invalid_package_name(self, spring_class_diagram_input):
+        payload = {
+            **spring_class_diagram_input,
+            "generator": "spring",
+            "config": {"package_name": "../../etc"},
+        }
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -773,6 +854,46 @@ class TestGetJsonModel:
         response = self._upload_buml_content("", "empty.py")
         assert response.status_code == 400
 
+    def test_component_buml_with_relationships_round_trips(self):
+        from besser.BUML.metamodel.uml_component import (
+            Component, ComponentDependency, ComponentModel, Interface, InterfaceProvided,
+        )
+        from besser.utilities.buml_code_builder.component_model_builder import (
+            component_model_to_code,
+        )
+
+        frontend, backend, api = Component("Frontend"), Component("Backend"), Interface("Api")
+        model = ComponentModel("Shop", components={frontend, backend}, interfaces={api},
+                               relationships={ComponentDependency(frontend, backend),
+                                              InterfaceProvided(backend, api)})
+        response = self._upload_buml_content(component_model_to_code(model), "shop.py")
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["diagramType"] == "ComponentDiagram"
+        assert {r["type"] for r in data["model"]["relationships"].values()} == {
+            "ComponentDependency", "ComponentInterfaceProvided"}
+
+    def test_deployment_buml_with_relationships_round_trips(self):
+        from besser.BUML.metamodel.uml_deployment import (
+            Artifact, CommunicationPath, DeploymentDependency, DeploymentModel, Node,
+        )
+        from besser.utilities.buml_code_builder.deployment_model_builder import (
+            deployment_model_to_code,
+        )
+
+        web, db = Node("Web"), Node("Db")
+        app, lib = Artifact("App", manifests=["c1"]), Artifact("Lib")
+        web.add_artifact(app)
+        model = DeploymentModel("Infra", nodes={web, db}, artifacts={lib},
+                                relationships={CommunicationPath(web, db),
+                                               DeploymentDependency(app, lib)})
+        response = self._upload_buml_content(deployment_model_to_code(model), "infra.py")
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["diagramType"] == "DeploymentDiagram"
+        assert {r["type"] for r in data["model"]["relationships"].values()} == {
+            "DeploymentAssociation", "DeploymentDependency"}
+
 
 # ---------------------------------------------------------------------------
 # Middleware & Request Validation
@@ -1080,10 +1201,306 @@ class TestProjectGeneration:
         assert "Author" in body
         assert "Book" in body
 
+    def test_project_backend_generation_runs_nn_implemented_method(self):
+        """A method implemented by a project NNDiagram becomes an endpoint running that network."""
+        fixture = os.path.join(
+            os.path.dirname(__file__), os.pardir, "converters", "nn", "fixtures", "tutorial_example.json"
+        )
+        with open(fixture, encoding="utf-8") as f:
+            nn_model = json.load(f)
+
+        class_model = {
+            "type": "ClassDiagram",
+            "elements": {
+                "cls-classifier": {
+                    "id": "cls-classifier", "name": "Classifier", "type": "Class", "owner": None,
+                    "bounds": {"x": 0, "y": 0, "width": 160, "height": 100},
+                    "attributes": [], "methods": ["meth-predict"],
+                },
+                "meth-predict": {
+                    "id": "meth-predict", "name": "+ predict(pixels: any): any", "type": "ClassMethod",
+                    "owner": "cls-classifier", "bounds": {"x": 0, "y": 40, "width": 159, "height": 30},
+                    "implementationType": "neural_network", "neuralNetworkId": "nn-diagram-1",
+                },
+            },
+            "relationships": {},
+        }
+        payload = {
+            "id": "proj-nn",
+            "type": "Project",
+            "name": "NNProject",
+            "createdAt": "2025-01-01T00:00:00Z",
+            "currentDiagramType": "ClassDiagram",
+            "currentDiagramIndices": {"ClassDiagram": 0, "NNDiagram": 0},
+            "diagrams": {
+                "ClassDiagram": [{"id": "class-diagram-1", "title": "Domain", "model": class_model}],
+                "NNDiagram": [{"id": "nn-diagram-1", "title": "Tutorial", "model": nn_model}],
+            },
+            "settings": {"generator": "backend"},
+        }
+        response = client.post("/besser_api/generate-output-from-project", json=payload)
+        assert response.status_code == 200, response.text
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = set(archive.namelist())
+            router = archive.read("routers/classifier_methods.py").decode("utf-8")
+            requirements = archive.read("requirements.txt").decode("utf-8")
+
+        assert "nn_runtime.py" in names
+        assert "neural_networks/__init__.py" in names
+        assert "neural_networks/weights/README.md" in names
+        network_modules = [n for n in names if n.startswith("neural_networks/") and n.count("/") == 1
+                           and n.endswith(".py") and not n.endswith("__init__.py")]
+        assert len(network_modules) == 1
+        module_name = network_modules[0].split("/")[1][:-3]
+        assert f'run_network("{module_name}", [pixels])' in router
+        assert "has no implementation" not in router
+        assert "torch" in requirements
+
 
 # ---------------------------------------------------------------------------
 # Recommendation Endpoints
 # ---------------------------------------------------------------------------
+
+class TestDockerComposeRouting:
+    @staticmethod
+    def _project_input(generator, diagram_type, model):
+        from besser.utilities.web_modeling_editor.backend.models import ProjectInput
+
+        return ProjectInput(
+            id="routing-project",
+            type="Project",
+            name="Routing Project",
+            createdAt="2026-08-05T00:00:00Z",
+            currentDiagramType=diagram_type,
+            currentDiagramIndices={diagram_type: 0},
+            diagrams={
+                diagram_type: [{
+                    "id": "diagram-1",
+                    "title": diagram_type,
+                    "model": model,
+                    "lastUpdate": "2026-08-05T00:00:00Z",
+                }],
+            },
+            settings={"generator": generator},
+        )
+
+    def test_single_docker_compose_uses_deploymentuml_handler(self, monkeypatch):
+        from besser.utilities.web_modeling_editor.backend.models import DiagramInput
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as router,
+        )
+
+        async def fake_deployment_handler(*_args, **_kwargs):
+            return "docker-compose-handler"
+
+        async def fake_class_handler(*_args, **_kwargs):
+            pytest.fail("Docker Compose must not use the core class-diagram handler")
+
+        monkeypatch.setattr(
+            router, "_handle_deployment_diagram_generation", fake_deployment_handler
+        )
+        monkeypatch.setattr(
+            router, "_handle_class_diagram_generation", fake_class_handler
+        )
+
+        result = _run(router.generate_code_output(DiagramInput(
+            title="Deployment",
+            model={
+                "type": "DeploymentDiagram",
+                "elements": {},
+                "relationships": {},
+            },
+            generator="docker_compose",
+        )))
+
+        assert result == "docker-compose-handler"
+
+    def test_single_terraform_bypasses_deploymentuml_handler(
+        self, monkeypatch, class_diagram_model
+    ):
+        from besser.utilities.web_modeling_editor.backend.models import DiagramInput
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as router,
+        )
+
+        async def fake_deployment_handler(*_args, **_kwargs):
+            pytest.fail("Terraform must not enter the DeploymentUML handler")
+
+        async def fake_class_handler(*_args, **_kwargs):
+            return "master-fallback"
+
+        monkeypatch.setattr(
+            router, "_handle_deployment_diagram_generation", fake_deployment_handler
+        )
+        monkeypatch.setattr(
+            router, "_handle_class_diagram_generation", fake_class_handler
+        )
+
+        result = _run(router.generate_code_output(DiagramInput(
+            title="Core deployment",
+            model=class_diagram_model,
+            generator="terraform",
+        )))
+
+        assert result == "master-fallback"
+
+    def test_project_docker_compose_uses_project_handler(self, monkeypatch):
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as router,
+        )
+
+        async def fake_project_handler(*_args, **_kwargs):
+            return "docker-compose-project-handler"
+
+        monkeypatch.setattr(
+            router, "_handle_deployment_project_generation", fake_project_handler
+        )
+
+        project = self._project_input(
+            "docker_compose",
+            "DeploymentDiagram",
+            {
+                "type": "DeploymentDiagram",
+                "elements": {},
+                "relationships": {},
+            },
+        )
+
+        result = _run(router.generate_code_output_from_project(project))
+
+        assert result == "docker-compose-project-handler"
+
+    def test_project_docker_compose_maps_governance_dsl_validation_to_422(self, monkeypatch):
+        from fastapi import HTTPException
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as router,
+        )
+        from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+            GovernanceDslValidationError,
+        )
+
+        async def fake_project_handler(*_args, **_kwargs):
+            raise GovernanceDslValidationError(
+                "Invalid Governance DSL on merging gateway 'gw1': "
+                "Governance DSL syntax error: line 1:8 mismatched input"
+            )
+
+        monkeypatch.setattr(
+            router,
+            "_handle_deployment_project_generation",
+            fake_project_handler,
+        )
+
+        project = self._project_input(
+            "docker_compose",
+            "DeploymentDiagram",
+            {
+                "type": "DeploymentDiagram",
+                "elements": {},
+                "relationships": {},
+            },
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(router.generate_code_output_from_project(project))
+
+        assert exc_info.value.status_code == 422
+        assert "merging gateway 'gw1'" in exc_info.value.detail
+        assert "syntax error" in exc_info.value.detail
+
+    def test_project_terraform_bypasses_project_handler(
+        self, monkeypatch, class_diagram_model
+    ):
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as router,
+        )
+
+        async def fake_project_handler(*_args, **_kwargs):
+            pytest.fail("Terraform must not enter the Docker Compose project handler")
+
+        async def fake_generate(diagram_input):
+            assert diagram_input.generator == "terraform"
+            return "master-fallback"
+
+        monkeypatch.setattr(
+            router, "_handle_deployment_project_generation", fake_project_handler
+        )
+        monkeypatch.setattr(router, "generate_code_output", fake_generate)
+
+        project = self._project_input(
+            "terraform",
+            "ClassDiagram",
+            class_diagram_model,
+        )
+
+        result = _run(router.generate_code_output_from_project(project))
+
+        assert result == "master-fallback"
+
+    _DEPLOYMENT = {
+        "type": "DeploymentDiagram",
+        "elements": {
+            "host": {"id": "host", "name": "Host", "type": "DeploymentNode", "owner": None,
+                     "bounds": {"x": 0, "y": 0, "width": 300, "height": 200},
+                     "stereotype": "node", "displayStereotype": True},
+            "app": {"id": "app", "name": "App", "type": "DeploymentArtifact", "owner": "host",
+                    "bounds": {"x": 10, "y": 40, "width": 160, "height": 40},
+                    "manifests": []},
+        },
+        "relationships": {},
+    }
+
+    @staticmethod
+    def _zip_names(response):
+        assert response.status_code == 200, response.text
+        assert "application/zip" in response.headers.get("content-type", "")
+        assert "docker_compose.zip" in response.headers.get("content-disposition", "")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            return set(archive.namelist())
+
+    def test_single_docker_compose_returns_the_registered_zip(self):
+        response = client.post("/besser_api/generate-output", json={
+            "title": "Deployment", "model": self._DEPLOYMENT, "generator": "docker_compose",
+        })
+        assert self._zip_names(response) == {"docker-compose.yml", "BESSER_GENERATION.md"}
+
+    def test_project_docker_compose_returns_zip_with_provenance(self):
+        project = self._project_input("docker_compose", "DeploymentDiagram", self._DEPLOYMENT)
+        response = client.post("/besser_api/generate-output-from-project",
+                               json=project.model_dump(mode="json"))
+        assert self._zip_names(response) == {"docker-compose.yml", "BESSER_GENERATION.md"}
+
+    def test_project_docker_compose_reports_an_invalid_deployment_as_400(self):
+        model = copy.deepcopy(self._DEPLOYMENT)
+        model["relationships"]["bad"] = {
+            "id": "bad", "name": "", "type": "DeploymentAssociation", "owner": None,
+            "source": {"element": "host"}, "target": {"element": "app"},
+        }
+        project = self._project_input("docker_compose", "DeploymentDiagram", model)
+        response = client.post("/besser_api/generate-output-from-project",
+                               json=project.model_dump(mode="json"))
+        assert response.status_code == 400
+        assert "bad" in response.json()["detail"]
+
+    def test_configuration_error_maps_to_500_with_its_message(self):
+        from fastapi import HTTPException
+        from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
+            handle_endpoint_errors,
+        )
+        from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+            ConfigurationError,
+        )
+
+        @handle_endpoint_errors("missing_dependency")
+        async def endpoint():
+            raise ConfigurationError("install governancedsl==0.1.1")
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(endpoint())
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "install governancedsl==0.1.1"
+
 
 class TestRecommendationEndpoints:
     """Tests for recommendation-related endpoints."""
@@ -1695,3 +2112,31 @@ class TestFeedbackEndpoint:
         """Missing required fields returns 422."""
         response = client.post("/besser_api/feedback", json={})
         assert response.status_code == 422
+
+
+def test_validation_does_not_return_internal_error_text(monkeypatch):
+    """A bug in conversion must not describe our internals to the caller.
+
+    The validation errors a diagram earns are meant to be read by the person who
+    drew it. An unexpected exception is a different thing: its message carries a
+    repr, a key, a path, and returning it verbatim hands that to anyone who can
+    post a diagram.
+    """
+    from besser.utilities.web_modeling_editor.backend.routers import validation_router
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("/srv/besser/internal.py line 42: secret_token='abc123'")
+
+    monkeypatch.setattr(validation_router, "process_class_diagram", explode)
+
+    response = client.post("/besser_api/validate-diagram", json={
+        "title": "Diagram",
+        "model": {"type": "ClassDiagram", "elements": {}, "relationships": {}},
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["isValid"] is False
+    assert body["errors"] == ["An unexpected error occurred during validation."]
+    assert "secret_token" not in response.text
+    assert "internal.py" not in response.text

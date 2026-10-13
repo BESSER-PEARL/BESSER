@@ -1,5 +1,16 @@
 {# Template for nn components #}
 
+{%- macro get_layer_name(layer_syntax, strip_counter_flag=False) -%}
+    {# Extract layer name from syntax like "self.layer_c2 = nn.Dropout(...)" #}
+    {%- set name = layer_syntax.split('.', 1)[1].split('=', 1)[0].strip() -%}
+    {# Strip counter suffix (_cN) if requested #}
+    {%- if strip_counter_flag -%}
+        {{- name|strip_counter_suffix -}}
+    {%- else -%}
+        {{- name -}}
+    {%- endif -%}
+{%- endmacro -%}
+
 {% macro add_to_set(current_set, new_element) %}
     {{ current_set }}
     {% if new_element not in current_set %}
@@ -24,13 +35,16 @@ from datetime import datetime
 {%- set perm = namespace(imported=False) -%}
 {% if model.train_data is not none %}import torch
 from datetime import datetime {%- set ti.torch_imported = True %}{% endif %}
-{%- for module_name, module_details in modules_details.items() -%}{% if ti.torch_imported == False and ((module_name.endswith("op") and module_details[0].startswith("torch")) or (module_details[-1].__class__.mro()[1].__name__ == "RNN" and module_details[-1].bidirectional and module_details[-1].return_type == "hidden"))%}import torch {%- set ti.torch_imported = True -%}{%- endif %}{%- endfor %}
+{%- for module_name, module_details in modules_details.items() -%}{% if ti.torch_imported == False and ((module_name.endswith("op") and (module_details[0].startswith("torch") or "torch." in module_details[0])) or (module_details[-1].__class__.mro()[1].__name__ == "RNN" and module_details[-1].bidirectional and module_details[-1].return_type == "hidden"))%}import torch {%- set ti.torch_imported = True -%}{%- endif %}{%- endfor %}
 {% for module_name, module_details in modules_details.items() -%}{% if actv.actv_imported == False and "get_activation_function" in module_details[0] %}from besser.generators.nn.pytorch.utils_pytorch import get_activation_function{% set actv.actv_imported = True %}
 {% elif perm.imported == False and "Permute" in module_details[0] %}from besser.generators.nn.utils_nn import Permute {% set perm.imported = True %} 
 {% elif perm.imported == False and module_name.endswith("nn") %}{%- for subnn_key, subnn_value in module_details.items() %}{% if perm.imported == False and "Permute" in subnn_value[0] %}from besser.generators.nn.utils_nn import Permute{%- set perm.imported = True -%} {%- endif %}{%- endfor %}
 {%- endif %}{%- endfor %}
 {% if model.train_data.input_format == "csv" %}import pandas as pd {%- endif %}
 from torch import nn
+import torch.nn.functional as F
+
+
 {% if model.train_data.input_format == "images" %}from torchvision import datasets, transforms
 {% if model.train_data.image.normalize %}from besser.generators.nn.utils_nn import compute_mean_std{%- endif %}{%- endif %}
 {% if model.train_data %}{% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
@@ -39,11 +53,23 @@ from torch import nn
 
 
 {%- macro print_sequential(model, modules_details) %}
+{% if modules_details.get('_lambda_needed', False) %}
+# Lambda wrapper for sequential compatibility
+class Lambda(nn.Module):
+    def __init__(self, fn):
+        super().__init__()
+        self.fn = fn
+
+    def forward(self, x):
+        return self.fn(x)
+
+{% endif %}
+
     {%- for module_name, module_details in modules_details.items() %}
         {%- if module_name.endswith("nn") %}
-{{ module_name.split('_')[0] }} = nn.Sequential(
+{{ module_name[:-3] }} = nn.Sequential(
     {%- for subnn_key, subnn_value in module_details.items() %}
-        {%- if subnn_key != "in_out_variable" %}
+        {%- if subnn_key not in ["in_out_variable", "subnn_input", "subnn_output"] %}
             {%- if subnn_key.endswith("activ") or subnn_key.endswith("layer") %}
     {{ subnn_value[0].split('=', 1)[1].strip() }},
             {%- else %}
@@ -58,12 +84,14 @@ from torch import nn
 
 {{ model.name }} = nn.Sequential(
 {%- for module_name, module_details in modules_details.items() %}
-    {%- if module_name.endswith("nn") %}
-    {{ module_name.split('_')[0] }},
-    {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
+    {%- if module_name not in ["_lambda_needed"] %}
+        {%- if module_name.endswith("nn") %}
+    {{ module_name[:-3] }},
+        {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
     {{ module_details[0].split('=', 1)[1].strip() }},
-    {%- else %}
+        {%- else %}
     {{ module_details[0] }},
+        {%- endif -%}
     {%- endif -%}
 {%- endfor %}
 )
@@ -76,9 +104,9 @@ from torch import nn
     {%- set activ_func_list = [] -%}
     {%- for module_name, module_details in modules_details.items() %}
         {%- if module_name.endswith("nn") %}
-        self.{{ module_name.split('_')[0] }} = nn.Sequential(
+        self.{{ module_name[:-3] }} = nn.Sequential(
             {%- for subnn_key, subnn_value in module_details.items() %}
-                {%- if subnn_key != "in_out_variable" %}
+                {%- if subnn_key not in ["in_out_variable", "subnn_input", "subnn_output"] %}
                     {%- if "op" in subnn_key %}
             {{ subnn_value[0] }},
                     {%- else %}
@@ -93,51 +121,132 @@ from torch import nn
         {{ module_details[0] }}
                 {%- endif -%}
         {%- elif module_name.endswith("layer") %}
+        {%- if module_details[3] is defined and module_details[3].is_layer_call %}
+        {# Skip layer definition if is_layer_call is True - it will be called in forward #}
+        {%- else %}
         {{ module_details[0] }}
+        {%- endif -%}
         {%- endif -%}
     {%- endfor -%}
 {% endmacro -%}
 
-{%- macro print_forward(modules_details) %}
+{%- macro print_forward(modules_details, strip_layer_counter_suffix=False, model=None) %}
     {%- set return_variable =  namespace(value="") %}
     {%- for module_name, module_details in modules_details.items() -%}
     {%- if module_name.endswith("op") %}
-        {{ module_details[1] }} = {{ module_details[0] }}
-    {%- elif module_name.endswith("nn") %}
-        {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
-    {%- else %}
-        {%- if module_name.endswith("activ") %}
-        {{ module_details[1] }} = self.{{ module_details[0].split('.', 1)[1].split('=', 1)[0].strip() }}({{ module_details[2] }})
-        {%- elif module_details[-1].__class__.mro()[1].__name__ == "RNN" %}
-            {%- if module_details[-1].return_type == "hidden" %}
-                {%- if module_details[-1].__class__.__name__ == "LSTMLayer" %}
-        _, ({{ module_details[1] }}, _) = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
-                {%- else %}
-        _, {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
-                {%- endif -%}
-                {%- if module_details[-1].bidirectional %}
-        {{ module_details[1] }} = torch.cat(({{ module_details[1] }}[-2], {{ module_details[1] }}[-1]), dim=1)
-                {%- else %}
-        {{ module_details[1] }} = {{ module_details[1] }}[-1]
-                {%- endif -%}
-            {%- elif module_details[-1].return_type == "full" %}
-        {{ module_details[1] }}, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        {%- set tensorop = module_details[2] if module_details|length > 2 else None -%}
+        {%- if tensorop and tensorop.tns_type == 'split' and tensorop.split_sizes is defined %}
+            {%- set num_splits = tensorop.split_sizes|length if tensorop.split_sizes is iterable and tensorop.split_sizes is not string else tensorop.split_sizes -%}
+            {%- if num_splits == 1 %}
+        ({{ module_details[1] }},) = {{ module_details[0] }}
             {%- else %}
-        {{ module_details[1] }}, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        {{ module_details[1] }} = {{ module_details[0] }}
+            {%- endif -%}
+        {%- else %}
+        {{ module_details[1] }} = {{ module_details[0] }}
+        {%- endif %}
+    {% elif module_name.endswith("nn") %}
+        {% if "subnn_input" in module_details and "subnn_output" in module_details -%}
+        {{ module_details["subnn_output"] }} = self.{{ module_name[:-3] }}({{ module_details["subnn_input"] }})
+        {% else -%}
+        {{ module_details["in_out_variable"] }} = self.{{ module_name[:-3] }}({{ module_details["in_out_variable"] }})
+        {% endif %}
+    {% else -%}
+        {%- if 'INLINE_ONLY' not in module_details %}
+        {# Strip counter suffix from layer name for forward calls if flag is set #}
+        {%- set layer_name = module_details[3].name|strip_counter_suffix if (strip_layer_counter_suffix and module_details|length > 3) else (module_details[3].name if module_details|length > 3 else '') -%}
+        {%- if module_name.endswith("activ") -%}
+        {{ module_details[1] }} = self.{{ get_layer_name(module_details[0], strip_layer_counter_suffix) }}({{ module_details[2] }})
+        {%- elif module_details[3].__class__.mro()[1].__name__ == "RNN" %}
+            {%- if module_details[3].return_type == "both" %}
+                {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
+        {{ module_details[1] }}, ({{ module_details[4] }}, {{ module_details[4] }}_cell) = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% endif %})
+                {%- else %}
+        {{ module_details[1] }}, {{ module_details[4] }} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0){% endif %})
+                {%- endif -%}
+                {%- if module_details[3].bidirectional %}
+                    {%- if not module_details[3].skip_hidden_concat %}
+        {{ module_details[4] }} = torch.cat(({{ module_details[4] }}[-2], {{ module_details[4] }}[-1]), dim=1)
+                    {%- endif %}
+                {%- else %}
+                    {%- set hidden_target_var = module_details[3].hidden_subscript_target if (module_details[3].hidden_subscript_target is defined and module_details[3].hidden_subscript_target) else None -%}
+                    {%- set hidden_source_var = module_details[3].hidden_subscript_source if (module_details[3].hidden_subscript_source is defined and module_details[3].hidden_subscript_source) else module_details[4] -%}
+                    {%- if hidden_target_var %}
+        {{ hidden_target_var }} = {{ hidden_source_var }}[-1]
+                        {%- set return_variable.value = hidden_target_var -%}
+                    {%- else %}
+                        {%- set hidden_output_var = module_details[3].hidden_state_var if (module_details[3].hidden_state_var is defined and module_details[3].hidden_state_var) else None -%}
+                        {%- if hidden_output_var and hidden_output_var != module_details[4] %}
+        {{ hidden_output_var }} = {{ module_details[4] }}[-1]
+                            {%- set return_variable.value = hidden_output_var -%}
+                        {%- else %}
+        {{ module_details[4] }} = {{ module_details[4] }}[-1]
+                        {%- endif %}
+                    {%- endif %}
+                {%- endif -%}
+            {%- elif module_details[3].return_type == "hidden" %}
+                {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
+        _, ({{ module_details[4] }}, {{ module_details[5] }}) = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% endif %})
+                {%- else %}
+        _, {{ module_details[4] }} = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0){% endif %}{% endif %})
+                {%- endif -%}
+                {%- if module_details[3].bidirectional %}
+                    {%- if not module_details[3].skip_hidden_concat %}
+        {{ module_details[4] }} = torch.cat(({{ module_details[4] }}[-2], {{ module_details[4] }}[-1]), dim=1)
+                        {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
+        {{ module_details[5] }} = torch.cat(({{ module_details[5] }}[-2], {{ module_details[5] }}[-1]), dim=1)
+                        {%- endif %}
+                    {%- endif %}
+                {%- else %}
+                    {%- set hidden_target_var = module_details[3].hidden_subscript_target if (module_details[3].hidden_subscript_target is defined and module_details[3].hidden_subscript_target) else None -%}
+                    {%- set hidden_source_var = module_details[3].hidden_subscript_source if (module_details[3].hidden_subscript_source is defined and module_details[3].hidden_subscript_source) else module_details[4] -%}
+                    {%- if hidden_target_var %}
+        {{ hidden_target_var }} = {{ hidden_source_var }}[-1]
+                        {%- set return_variable.value = hidden_target_var -%}
+                    {%- else %}
+                        {%- set hidden_output_var = module_details[3].hidden_state_var if (module_details[3].hidden_state_var is defined and module_details[3].hidden_state_var) else None -%}
+                        {%- if hidden_output_var and hidden_output_var != module_details[4] %}
+        {{ hidden_output_var }} = {{ module_details[4] }}[-1]
+                            {%- set return_variable.value = hidden_output_var -%}
+                        {%- else %}
+        {{ module_details[4] }} = {{ module_details[4] }}[-1]
+                        {%- endif %}
+                    {%- endif %}
+                    {%- if module_details[3].__class__.__name__ == "LSTMLayer" %}
+        {{ module_details[5] }} = {{ module_details[5] }}[-1]
+                    {%- endif %}
+                {%- endif -%}
+            {%- elif module_details[3].return_type == "full" %}
+        {{ module_details[1] }}, _ = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if module_details[3].hx_source + '_op' in modules_details %}, hx={{ modules_details[module_details[3].hx_source + '_op'][1] }}{% elif module_details[3].hx_source + '_layer' in modules_details %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0){% endif %}{% endif %}{% endif %})
+            {%- else %}
+        {{ module_details[1] }}, _ = self.{{ layer_name }}({{ module_details[2] }}{% if module_details[3].hx_source %}{% if module_details[3].hx_source + '_op' in modules_details %}, hx={{ modules_details[module_details[3].hx_source + '_op'][1] }}{% elif module_details[3].hx_source + '_layer' in modules_details %}{% if modules_details[module_details[3].hx_source + '_layer'][3].__class__.__name__ == "LSTMLayer" %}, hx=({{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0), {{ modules_details[module_details[3].hx_source + '_layer'][5] }}.unsqueeze(0)){% else %}, hx={{ modules_details[module_details[3].hx_source + '_layer'][4] }}.unsqueeze(0){% endif %}{% endif %}{% endif %})
         {{ module_details[1] }} = {{ module_details[1] }}[:, -1, :]
             {%- endif -%}
 
-        {%- else %}
-        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        {%- else -%}
+        {{ module_details[1] }} = self.{{ layer_name }}({{ module_details[2] }})
+        {%- endif -%}
         {%- endif -%}
     {%- endif -%}
+    {# Update return_variable for non-RNN layers or RNN layers without special subscripting #}
     {%- if module_name.endswith("nn") %}
-    {%- set return_variable.value =  module_details["in_out_variable"] %}
-    {%- else %} 
-    {%- set return_variable.value =  module_details[1] %}
+        {%- set return_variable.value = module_details["in_out_variable"] %}
+    {%- elif module_name.endswith("layer") and module_details|length > 3 and module_details[3] is defined and module_details[3].__class__.mro()[1].__name__ == "RNN" %}
+        {# For RNN layers, only update if no special subscript target was set #}
+        {%- if not (module_details[3].hidden_subscript_target is defined and module_details[3].hidden_subscript_target) %}
+            {%- if not (module_details[3].hidden_state_var is defined and module_details[3].hidden_state_var and module_details[3].hidden_state_var != module_details[4]) %}
+                {%- set return_variable.value = module_details[1] %}
+            {%- endif %}
+        {%- endif %}
+    {%- else %}
+        {%- set return_variable.value = module_details[1] %}
     {%- endif -%}
     {%- endfor %}
+    {%- if model and model.return_vars %}
+        return {{ model.return_vars -}}
+    {%- else %}
         return {{ return_variable.value -}}
+    {%- endif %}
 {% endmacro -%}
 
 {%- macro get_loss_function(configuration) %}
@@ -327,4 +436,97 @@ print(f"Mean Absolute Error (MAE): {mae}")
 print('##### Saving the model')
 torch.save({{ model.name }}, f"{{ model.name | lower }}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
 print("The model is saved successfully")
+{% endmacro -%}
+
+
+{%- macro train_model_body(model, prediction_task) -%}
+print('##### Training the model')
+for epoch in range(epochs):
+    # Initialize the running loss for the current epoch
+    running_loss = 0.0
+    total_loss = 0.0
+    # Iterate over mini-batches of training data
+    for i, data in enumerate(train_loader, 0):
+        inputs, labels = data
+        # Zero the gradients to prepare for backward pass
+        optimizer.zero_grad()
+        outputs = model(inputs)
+        # Compute the loss
+        {%- if prediction_task == "regression" %}
+        labels = labels.unsqueeze(1)
+        {% elif prediction_task == "binary" %}
+        outputs = outputs.squeeze()
+        labels = labels.float()
+        {%- endif %}
+        loss = criterion(outputs, labels)
+        loss.backward()
+        # Update model parameters based on computed gradients
+        optimizer.step()
+        running_loss += loss.item()
+        total_loss += loss.item()
+        if i % 200 == 199:    # Print every 200 mini-batches
+            print(
+                f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 200:.3f}"
+            )
+            running_loss = 0.0
+    print(
+        f"[{epoch + 1}] overall loss for epoch: "
+        f"{total_loss / len(train_loader):.3f}"
+    )
+print('Training finished')
+{%- endmacro -%}
+
+
+{% macro evaluate_model_body(model, prediction_task) -%}
+print('##### Evaluating the model')
+# Disable gradient calculation during inference
+with torch.no_grad():
+    # Initialize lists to store predicted and true labels
+    predicted_labels = []
+    true_labels = []
+    test_loss = 0.0
+    for data in test_loader:
+        # Extract inputs and labels from the data batch
+        inputs, labels = data
+        true_labels.extend(labels)
+        # Forward pass
+        outputs = model(inputs)
+        {% if prediction_task == "binary" -%}
+        predicted = (outputs.numpy() > 0.5).astype(int)
+        labels = labels.float()
+        outputs = outputs.squeeze()
+        {%- elif prediction_task == "multi_class" -%}
+        _, predicted = torch.max(outputs.data, 1)
+        {%- else -%}
+        predicted = outputs.numpy()
+        labels = labels.unsqueeze(1)
+        {%- endif %}
+        predicted_labels.extend(predicted)
+        test_loss += criterion(outputs, labels).item()
+
+average_loss = test_loss / len(test_loader)
+print(f"Test Loss: {average_loss:.3f}")
+
+# Calculate the metrics
+metrics = {{ model.configuration.metrics }}
+{%- if prediction_task != "regression" %}
+report = classification_report(true_labels, predicted_labels, output_dict=True)
+for metric in metrics:
+    {%- if prediction_task == "binary" %}
+    print(f"{metric.capitalize()}: {report['1'][metric]}")
+    {%- elif prediction_task == "multi_class" %}
+    metric_list = []
+    for class_label in report.keys():
+        if class_label not in ('macro avg', 'weighted avg', 'accuracy'):
+            print(f"{metric.capitalize()} for class {class_label}:",
+                  report[class_label][metric])
+            metric_list.append(report[class_label][metric])
+    metric_value = sum(metric_list) / len(metric_list)
+    print(f"Average {metric.capitalize()}: {metric_value:.2f}")
+    print(f"Accuracy: {report['accuracy']}")
+{% endif -%}
+{%- else %}
+mae = mean_absolute_error(true_labels, predicted_labels)
+print(f"Mean Absolute Error (MAE): {mae}")
+{%- endif -%}
 {% endmacro -%}

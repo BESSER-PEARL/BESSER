@@ -6,3 +6,4 @@ Agent model
    :private-members:
    :undoc-members:
    :show-inheritance:
+   :exclude-members: _LLM_PROVIDERS

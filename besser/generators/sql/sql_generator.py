@@ -47,8 +47,8 @@ sql_file_path = os.path.join(current_directory, "tables_DIALECT_PLACEHOLDER.sql"
 
 ddl_statements = []
 
-# --- Emit ENUM types (not for Oracle — Oracle uses CHECK constraints) ---
-if 'DIALECT_PLACEHOLDER'.lower() != 'oracle':
+# --- Emit ENUM types: PostgreSQL only; other dialects render enums inline (Oracle via CHECK) ---
+if 'DIALECT_PLACEHOLDER'.lower() == 'postgresql':
     for table in Base.metadata.tables.values():
         for col in table.columns:
             if isinstance(col.type, Enum):

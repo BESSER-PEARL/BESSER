@@ -9,7 +9,7 @@ import re
 from besser.BUML.metamodel.state_machine.state_machine import (
     StateMachine, CustomCodeAction,
 )
-from besser.utilities.buml_code_builder.common import _escape_python_string
+from besser.utilities.buml_code_builder.common import _escape_python_string, buml_header
 
 
 def _sanitize_identifier(name: str) -> str:
@@ -32,7 +32,7 @@ def state_machine_to_code(model: StateMachine, file_path: str = None,
     Returns:
         The generated Python code as a string.
     """
-    code_lines = []
+    code_lines = [buml_header().rstrip("\n")]
     code_lines.append("#######################")
     code_lines.append("# STATE MACHINE MODEL #")
     code_lines.append("#######################")

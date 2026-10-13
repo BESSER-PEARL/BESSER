@@ -1,0 +1,59 @@
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+
+@RestController
+@RequestMapping("/api/{{ route }}")
+public class {{ cls }}Controller {
+
+    @Autowired
+    private I{{ cls }}Service _{{ instance }}Service;
+
+    @GetMapping
+    public ResponseEntity<List<{{ cls }}>> getAll() {
+        return ResponseEntity.ok(_{{ instance }}Service.findAll());
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<{{ cls }}> getById(@PathVariable {{ id_type }} id) {
+        return _{{ instance }}Service.findById(id).map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PostMapping
+    public ResponseEntity<{{ cls }}> create(@RequestBody {{ cls }} entity) {
+        {{ cls }} saved = _{{ instance }}Service.save(entity);
+        return ResponseEntity.ok(saved);
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<{{ cls }}> update(@PathVariable {{ id_type }} id, @RequestBody {{ cls }} entity) {
+
+        Optional<{{ cls }}> existing = _{{ instance }}Service.findById(id);
+
+        if (existing.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        entity.set{{ id_accessor }}(id);
+        {{ cls }} updated = _{{ instance }}Service.save(entity);
+
+        return ResponseEntity.ok(updated);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteById(@PathVariable {{ id_type }} id) {
+
+        Optional<{{ cls }}> existing = _{{ instance }}Service.findById(id);
+
+        if (existing.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        _{{ instance }}Service.delete(existing.get());
+
+        return ResponseEntity.noContent().build();
+    }
+
+}

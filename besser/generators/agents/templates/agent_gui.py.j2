@@ -1,0 +1,13 @@
+{# Appended to guis/<module>.py after the GUIModel code emitted by gui_model_to_code,
+   which defines ``gui_model``. The agent imports ``gui`` from this module. #}
+
+from baf.core.gui.agent_gui import AgentGUI
+
+gui = AgentGUI(
+    model=gui_model,
+    gui_id={{ gui_action.gui_id | string | tojson }},
+    persist={{ gui_action.persist }},
+{% if gui_action.width %}
+    width={{ gui_action.width | string | tojson }},
+{% endif %}
+)

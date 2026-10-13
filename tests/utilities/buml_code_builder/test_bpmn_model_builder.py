@@ -20,10 +20,8 @@ from besser.BUML.metamodel.bpmn import (
     SubProcess,
     Task,
 )
-from besser.utilities.buml_code_builder.bpmn_model_builder import (
-    _NameDispenser,
-    bpmn_model_to_code,
-)
+from besser.utilities.buml_code_builder.common import NameDispenser, buml_header
+from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
 from tests.bpmn_models import (
     _gateway_model,
     _poolless_model,
@@ -135,16 +133,28 @@ class TestNameCollisions:
         assert len(recovered.all_flow_nodes()) == 3
 
     def test_dispenser_caches_per_object(self):
-        d = _NameDispenser()
+        d = NameDispenser()
         t = Task(name="x")
         first = d.name_for(t)
         second = d.name_for(t)
         assert first == second
 
     def test_dispenser_unique_for_same_name_different_objects(self):
-        d = _NameDispenser()
+        d = NameDispenser()
         names = {d.name_for(Task(name="x")) for _ in range(5)}
         assert len(names) == 5
+
+    def test_dispenser_never_hands_out_a_reserved_name(self):
+        d = NameDispenser(reserved={"task_model"})
+        assert d.name_for(Task(name="model")) == "task_model_1"
+
+    def test_model_variable_name_is_reserved(self):
+        p = Process(name="model")
+        source = bpmn_model_to_code(BPMNModel(name="M", processes={p}),
+                                    model_var_name="process_model")
+        ns = {}
+        exec(source, ns)
+        assert isinstance(ns["process_model"], BPMNModel)
 
 
 class TestLayoutPassthrough:
@@ -170,7 +180,8 @@ class TestLayoutPassthrough:
 class TestBannerAndImports:
     def test_banner_present_at_top(self):
         source = bpmn_model_to_code(_poolless_model())
-        assert source.startswith("####################\n#    BPMN MODEL    #\n####################\n")
+        # Below the one-line version header every B-UML file starts with.
+        assert source.startswith(buml_header() + "####################\n#    BPMN MODEL    #\n####################\n")
 
     def test_only_used_classes_imported(self):
         # Pool-less model uses no Gateway / Collaboration / DataStore; their import

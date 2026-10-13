@@ -66,10 +66,17 @@ def test_class_endpoint_returns_class_diagram(client, kg_payload: dict):
     assert "Class" in types
     assert "ClassAttribute" in types
     rel_types = {r["type"] for r in relationships.values()}
-    # A plain owl:ObjectProperty is navigable domain → range only; the reverse
-    # end becomes navigable when (and only when) owl:inverseOf names it.
-    assert "ClassUnidirectional" in rel_types  # worksFor association
+    # Plain associations are emitted as ClassBidirectional; navigability is
+    # carried by the explicit per-end "navigable" flags rather than by the
+    # relationship type. A plain owl:ObjectProperty is navigable
+    # domain → range only, so exactly one end is navigable — the reverse end
+    # becomes navigable when (and only when) owl:inverseOf names it.
+    assert "ClassBidirectional" in rel_types   # worksFor association
     assert "ClassInheritance" in rel_types     # Employee → Person
+    assoc = next(r for r in relationships.values() if r["type"] == "ClassBidirectional")
+    assert [assoc["source"]["navigable"], assoc["target"]["navigable"]].count(True) == 1
+    assert assoc["target"]["role"] == "worksFor"
+    assert assoc["target"]["navigable"] is True
 
 
 def test_endpoints_reject_non_kg_payload(client):

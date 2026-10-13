@@ -76,20 +76,22 @@ class Class:
 
 
 @dataclass
-class AssociationEnd:
-    type: str                       # target class name
-    role: str | None = None
-    lower: int = 0
-    upper: Upper = "*"
-    navigable: bool = True
-    uri: str | None = None
-
-
-@dataclass
 class Association:
+    """A binary association, ``source --role--> target``.
+
+    The same record serves twice: the mapper fills it with the names the rules
+    state, and the lowering then resolves them (renames, sanitising) into copies
+    it may adjust freely, without disturbing the mapper's own.
+    """
+
     name: str
-    source: AssociationEnd
-    target: AssociationEnd
+    source: str                     # source class name
+    target: str                     # target class name
+    role: str | None = None         # the target end's name; falls back to ``name``
+    source_role: str | None = None  # the reverse end's name, if the rules gave one
+    src_mult: tuple[int, Upper] = (0, "*")
+    tgt_mult: tuple[int, Upper] = (0, "*")
+    navigable_source: bool = False  # whether the reverse end is navigable
     uri: str | None = None
 
 

@@ -20,7 +20,6 @@ from besser.BUML.metamodel.structural import (
 from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
 from besser.BUML.notations.kg_to_buml.owl2uml.model import (
     Association,
-    AssociationEnd,
     Attribute,
     Class as UMLClass,
     DataType,
@@ -86,9 +85,7 @@ def _enum(name, literals):
 
 def _assoc(name, source, target, role, *, source_navigable=False):
     return Association(
-        name=name,
-        source=AssociationEnd(type=source, role=None, lower=0, upper="*", navigable=source_navigable),
-        target=AssociationEnd(type=target, role=role, lower=0, upper="*"),
+        name=name, source=source, target=target, role=role, navigable_source=source_navigable,
     )
 
 

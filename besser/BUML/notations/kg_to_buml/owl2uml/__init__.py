@@ -45,7 +45,6 @@ from typing import List, Optional
 from besser.BUML.notations.kg_to_buml._common import KGConversionWarning
 from besser.BUML.notations.kg_to_buml.owl2uml.model import (
     Association,
-    AssociationEnd,
     Attribute,
     Class,
     DataType,
@@ -89,7 +88,6 @@ __all__ = [
     "DataType",
     "Enumeration",
     "Association",
-    "AssociationEnd",
     "Generalization",
     "OCLConstraint",
 ]

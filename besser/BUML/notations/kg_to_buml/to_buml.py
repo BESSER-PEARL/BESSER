@@ -34,6 +34,7 @@ association construction the single place a validation error can surface.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from besser.BUML.metamodel.structural import (
@@ -471,41 +472,36 @@ def _build_associations(
     return _instantiate_associations(resolved, classes, generalizations, out)
 
 
-class _PlannedAssociation:
-    """A binary association after type resolution but before instantiation."""
+def _resolve_association_types(model, renames, classes) -> List[UMLAssociation]:
+    """Resolve each association's names, returning copies the lowering may adjust.
 
-    __slots__ = ("source", "target", "role", "source_role", "src_mult", "tgt_mult",
-                 "navigable_source", "uri", "name")
-
-    def __init__(self, assoc: UMLAssociation, source: str, target: str):
-        self.source = source
-        self.target = target
-        self.role = naming.sanitize(assoc.target.role or assoc.name) or "target"
-        self.source_role = naming.sanitize(assoc.source.role) if assoc.source.role else None
-        self.src_mult = (assoc.source.lower, assoc.source.upper)
-        self.tgt_mult = (assoc.target.lower, assoc.target.upper)
-        self.navigable_source = assoc.source.navigable
-        self.uri = assoc.uri
-        self.name = naming.sanitize(assoc.name) or self.role
-
-
-def _resolve_association_types(model, renames, classes) -> List[_PlannedAssociation]:
-    planned: List[_PlannedAssociation] = []
+    Copies, because :func:`_merge_fanout` retargets and widens them in place and
+    the mapper's records must stay as the rules stated them.
+    """
+    planned: List[UMLAssociation] = []
     seen: Set[Tuple[str, str, str]] = set()
     ordered = sorted(
         model.associations,
-        key=lambda a: (a.source.type, a.target.role or a.name, a.target.type, a.uri or ""),
+        key=lambda a: (a.source, a.role or a.name, a.target, a.uri or ""),
     )
     for assoc in ordered:
-        source = _resolve(assoc.source.type, renames)
-        target = _resolve(assoc.target.type, renames)
+        source = _resolve(assoc.source, renames)
+        target = _resolve(assoc.target, renames)
         if source not in classes or target not in classes:
             continue
-        key = (source, target, naming.sanitize(assoc.target.role or assoc.name) or "target")
+        role = naming.sanitize(assoc.role or assoc.name) or "target"
+        key = (source, target, role)
         if key in seen:
             continue
         seen.add(key)
-        planned.append(_PlannedAssociation(assoc, source, target))
+        planned.append(replace(
+            assoc,
+            source=source,
+            target=target,
+            role=role,
+            source_role=naming.sanitize(assoc.source_role) if assoc.source_role else None,
+            name=naming.sanitize(assoc.name) or role,
+        ))
     return planned
 
 
@@ -520,11 +516,11 @@ def _merge_fanout(planned, classes, generalizations, out: LoweredModel):
     association to an abstract auxiliary class that every former target
     specialises. ``oclIsKindOf(Ti)`` still holds, so the invariants stay true.
     """
-    groups: Dict[Tuple[str, str], List[_PlannedAssociation]] = {}
+    groups: Dict[Tuple[str, str], List[UMLAssociation]] = {}
     for assoc in planned:
         groups.setdefault((assoc.source, assoc.role), []).append(assoc)
 
-    merged: List[_PlannedAssociation] = []
+    merged: List[UMLAssociation] = []
     for (source, role), group in sorted(groups.items()):
         targets = sorted({a.target for a in group})
         if len(targets) <= 1:
@@ -728,7 +724,7 @@ def _instantiate_associations(planned, classes, generalizations, out: LoweredMod
     return associations
 
 
-def _default_source_role(assoc: _PlannedAssociation) -> str:
+def _default_source_role(assoc: UMLAssociation) -> str:
     """Name for the reverse end, which the paper's model leaves anonymous.
 
     Always safe to choose freely: generated OCL only navigates a source role
@@ -750,7 +746,7 @@ def _unique_name(candidate: str, taken: Set[str]) -> str:
     return name
 
 
-def _unique_association_name(assoc: _PlannedAssociation, used: Set[str]) -> str:
+def _unique_association_name(assoc: UMLAssociation, used: Set[str]) -> str:
     for candidate in (assoc.name, f"{assoc.name}_{assoc.source}"):
         if candidate not in used:
             used.add(candidate)

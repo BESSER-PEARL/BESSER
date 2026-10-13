@@ -20,7 +20,7 @@ from .canonicalize import Canonicalizer
 from .expressions import ExpressionResolver
 from .model import (
     UMLModel, Class, Attribute, DataType, Enumeration, Association,
-    AssociationEnd, Generalization, OCLConstraint,
+    Generalization, OCLConstraint,
 )
 
 #: The nine BUML primitives. Deviation from the reference, which uses UML-ish
@@ -119,10 +119,10 @@ class Mapper:
             cls = self.model.classes.get(name)
             names = {a.name for a in cls.attributes} if cls is not None else set()
             for assoc in self.model.associations:
-                if assoc.source.type == name and assoc.target.role:
-                    names.add(assoc.target.role)
-                if assoc.target.type == name and assoc.source.navigable and assoc.source.role:
-                    names.add(assoc.source.role)
+                if assoc.source == name and assoc.role:
+                    names.add(assoc.role)
+                if assoc.target == name and assoc.navigable_source and assoc.source_role:
+                    names.add(assoc.source_role)
             return names
 
         inherited = features(thing)
@@ -186,12 +186,14 @@ class Mapper:
                         source_role: str | None = None, uri: str | None = None) -> None:
         self.model.associations.append(Association(
             name=name or role,
+            source=source_type,
+            target=target_type,
+            role=role,
+            source_role=source_role,
+            src_mult=tuple(src_mult),
+            tgt_mult=tuple(tgt_mult),
+            navigable_source=source_role is not None,
             uri=uri,
-            source=AssociationEnd(type=source_type, role=source_role,
-                                  lower=src_mult[0], upper=src_mult[1],
-                                  navigable=source_role is not None),
-            target=AssociationEnd(type=target_type, role=role,
-                                  lower=tgt_mult[0], upper=tgt_mult[1], navigable=True),
         ))
 
     def add_attribute(self, ctx: str, pname: str, dtype: str,
@@ -614,10 +616,10 @@ class Mapper:
             if cls is not None and any(a.name == pname for a in cls.attributes):
                 return True
             for assoc in self.model.associations:
-                if assoc.source.type == name and assoc.target.role == pname:
+                if assoc.source == name and assoc.role == pname:
                     return True
-                if (assoc.target.type == name and assoc.source.navigable
-                        and assoc.source.role == pname):
+                if (assoc.target == name and assoc.navigable_source
+                        and assoc.source_role == pname):
                     return True
             for gen in self.model.generalizations:
                 if gen.subclass == name:
@@ -678,7 +680,7 @@ class Mapper:
         known = self.model.all_type_names()
         referenced: set[str] = set()
         for a in self.model.associations:
-            referenced.update({a.source.type, a.target.type})
+            referenced.update({a.source, a.target})
         for cls in self.model.classes.values():
             for attr in cls.attributes:
                 referenced.add(attr.type)

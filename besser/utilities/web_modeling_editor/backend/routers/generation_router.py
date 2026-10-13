@@ -1065,25 +1065,9 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
     if not os.path.exists(project_dir) or not os.listdir(project_dir):
         raise ValueError("Django project generation failed: Output directory is empty")
 
-    # Create ZIP file
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for root, _, files in os.walk(project_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arc_name = os.path.relpath(file_path, project_dir)
-                zip_file.write(file_path, arc_name)
-
-    add_generation_provenance_to_zip(zip_buffer, "django", {
+    return _create_zip_response(project_dir, "django", {
         "project_name": project_name, "app_name": app_name, "containerization": containerization,
     })
-    file_name = get_filename_for_generator("django")
-
-    return StreamingResponse(
-        zip_buffer,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
 
 
 async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: str):
@@ -1121,25 +1105,10 @@ async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: 
     if not os.listdir(project_dir):
         raise ValueError("Spring Boot project generation failed: Output directory is empty")
 
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for root, _, files in os.walk(project_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arc_name = os.path.relpath(file_path, project_dir)
-                zip_file.write(file_path, arc_name)
-
-    add_generation_provenance_to_zip(zip_buffer, "spring", {
+    return _create_zip_response(project_dir, "spring", {
         "project_name": project_name, "app_name": app_name, "spring_boot_version": spring_boot_version,
         "java_version": java_version, "package_name": package_name,
     })
-    file_name = get_filename_for_generator("spring")
-
-    return StreamingResponse(
-        zip_buffer,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
 
 
 async def _generate_sql(buml_model, generator_class, config: dict, temp_dir: str):
@@ -1209,20 +1178,8 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
 
     if mode == "smart_data":
         # For smart_data mode, we create a zip file with a specific name
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for root, _, files in os.walk(temp_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arc_name = os.path.relpath(file_path, temp_dir)
-                    zip_file.write(file_path, arc_name)
-
-        add_generation_provenance_to_zip(zip_buffer, "jsonschema", {"mode": mode})
-
-        return StreamingResponse(
-            zip_buffer,
-            media_type="application/zip",
-            headers={"Content-Disposition": 'attachment; filename="smart_data_schemas.zip"'},
+        return _create_zip_response(
+            temp_dir, "jsonschema", {"mode": mode}, file_name="smart_data_schemas.zip",
         )
     else:
         return _create_file_response(temp_dir, "jsonschema")
@@ -1432,18 +1389,41 @@ async def _generate_standard(buml_model, generator_class, generator_type: str, g
         return _create_file_response(temp_dir, generator_type)
 
 
-def _create_zip_response(temp_dir: str, generator_type: str, options: Optional[dict] = None):
-    """Create a ZIP file response, with ``BESSER_GENERATION.md`` at its root."""
+def _zip_directory(source_dir: str) -> io.BytesIO:
+    """Zip every file under ``source_dir`` into an in-memory archive.
+
+    Entry names are relative to ``source_dir``, so the archive root is the
+    directory's content rather than the directory itself.
+    """
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for root, _, files in os.walk(temp_dir):
+        for root, _, files in os.walk(source_dir):
             for file in files:
                 file_path = os.path.join(root, file)
-                arc_name = os.path.relpath(file_path, temp_dir)
+                arc_name = os.path.relpath(file_path, source_dir)
                 zip_file.write(file_path, arc_name)
+    return zip_buffer
 
+
+def _create_zip_response(
+    source_dir: str,
+    generator_type: str,
+    options: Optional[dict] = None,
+    file_name: Optional[str] = None,
+):
+    """Zip ``source_dir`` into a download, with ``BESSER_GENERATION.md`` at its root.
+
+    Args:
+        source_dir: Directory whose contents become the archive root.
+        generator_type: Generator key, recorded in the provenance file and used
+            to look up the download filename.
+        options: Generation options recorded in the provenance file.
+        file_name: Download filename override; defaults to
+            ``get_filename_for_generator(generator_type)``.
+    """
+    zip_buffer = _zip_directory(source_dir)
     add_generation_provenance_to_zip(zip_buffer, generator_type, options)
-    file_name = get_filename_for_generator(generator_type)
+    file_name = file_name or get_filename_for_generator(generator_type)
 
     return StreamingResponse(
         zip_buffer,

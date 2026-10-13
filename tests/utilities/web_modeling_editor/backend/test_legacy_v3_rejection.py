@@ -343,3 +343,52 @@ def test_github_project_save_skips_buml_export_of_legacy_diagrams():
             _project(class_model), "save",
         ))
         assert pushed == expected
+
+
+# ---------------------------------------------------------------------------
+# Models nested in an agent diagram's config
+# ---------------------------------------------------------------------------
+
+def _v4_agent_model() -> Dict[str, Any]:
+    with open(os.path.join(FIXTURES_V4, "agent_diagram_basic.json"), encoding="utf-8") as f:
+        return json.load(f)["model"]
+
+
+def _v4_user_model() -> Dict[str, Any]:
+    return {"version": "4.0.0", "type": "UserDiagram", "nodes": [], "edges": []}
+
+
+@pytest.mark.parametrize("entry", [
+    {"user_profile": _v3_model("UserDiagram")},
+    {"user_profile": _v4_user_model(), "agent_model": _v3_model("AgentDiagram")},
+], ids=["v3-user-profile", "v3-agent-model"])
+def test_generate_output_rejects_v3_personalization_mapping(entry):
+    payload = _diagram(
+        _v4_agent_model(), generator="agent",
+        config={"personalizationMapping": [{"name": "variant", **entry}]},
+    )
+    response = _post("/besser_api/generate-output", json=payload)
+    _assert_legacy_rejected(response)
+    assert "personalizationMapping[0]" in response.json()["detail"]
+
+
+def test_normalize_personalization_mapping_rejects_v3_before_conversion():
+    from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+        normalize_personalization_mapping,
+    )
+
+    def _must_not_run(_payload):
+        raise AssertionError("a v3 user profile must be rejected before conversion")
+
+    config = {"personalizationMapping": [{"user_profile": _v3_model("UserDiagram")}]}
+    with pytest.raises(LegacyDiagramFormatError):
+        normalize_personalization_mapping(config, {"model": _v4_agent_model()}, _must_not_run)
+
+
+def test_transform_agent_model_json_rejects_v3_user_profile_in_config():
+    payload = _diagram(
+        _v4_agent_model(), config={"userProfileModel": _v3_model("UserDiagram")},
+    )
+    response = _post("/besser_api/transform-agent-model-json", json=payload)
+    _assert_legacy_rejected(response)
+    assert "config.userProfileModel" in response.json()["detail"]

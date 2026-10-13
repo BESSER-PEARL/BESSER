@@ -21,6 +21,9 @@ from besser.generators.agents.baf_generator import GenerationMode
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
 from besser.utilities.web_modeling_editor.backend.services.converters import process_agent_diagram
+from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
+    ensure_not_legacy_model,
+)
 AgentZipGenerator = Callable[[Any, Optional[Dict[str, Any]]], Tuple[io.BytesIO, str]]
 
 
@@ -139,9 +142,16 @@ def normalize_personalization_mapping(
                 ),
             )
 
+        ensure_not_legacy_model(
+            user_profile_payload, "UserDiagram", f"personalizationMapping[{index}].user_profile",
+        )
+        agent_model_json = entry.get('agent_model')
+        ensure_not_legacy_model(
+            agent_model_json, "AgentDiagram", f"personalizationMapping[{index}].agent_model",
+        )
+
         simplified_profile = profile_generator_fn(user_profile_payload)
 
-        agent_model_json = entry.get('agent_model')
         agent_model_buml = None
         if isinstance(agent_model_json, dict):
             mapping_payload = dict(json_data)

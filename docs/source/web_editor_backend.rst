@@ -83,7 +83,12 @@ there. A model counts as legacy when it declares a UML ``type`` and a
   refused when any of its UML diagrams is legacy;
 - the agent simulator (``/simulation/validate``, ``/simulation/sessions``) and
   the ``userProfileModel`` of ``/personalize-gui-page``,
-  ``/recommend-agent-config-llm`` and ``/recommend-agent-config-mapping``.
+  ``/recommend-agent-config-llm`` and ``/recommend-agent-config-mapping``;
+- models nested in an agent diagram's ``config``: the ``config.userProfileModel``
+  of ``/transform-agent-model-json`` and every ``personalizationMapping`` entry's
+  ``user_profile`` and ``agent_model`` (agent generation through
+  ``/generate-output``, the Docker Compose project generator and
+  ``/github/deploy-webapp``).
 
 GUI (GrapesJS) and quantum-circuit models keep their own formats and are
 never checked. Saving a project to GitHub (``/github/project/save``,

@@ -4,6 +4,7 @@ Handles project structure processing and diagram coordination.
 Supports both single-diagram and multi-diagram per type formats.
 """
 
+import ast
 import logging
 import uuid
 import re
@@ -20,6 +21,9 @@ from .nn_diagram_converter import nn_buml_to_json
 from .bpmn_diagram_converter import bpmn_buml_to_json
 from .component_diagram_converter import component_buml_to_json
 from .deployment_diagram_converter import deployment_buml_to_json
+from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
+    domain_model as _user_reference_domain_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +40,48 @@ SECTION_CONFIG = {
     'component_model': ('COMPONENT', 'ComponentDiagram', 'Component Diagram'),
     'deployment_model': ('DEPLOYMENT', 'DeploymentDiagram', 'Deployment Diagram'),
 }
+
+# A project export writes a UserDiagram as two ordinary sections (see
+# project_builder): the user reference domain model under a STRUCTURAL header,
+# bound to ``user_model``, and the diagram's objects under an OBJECT header,
+# bound to ``user_object_model``. Those bindings tell them apart from class and
+# object diagrams. Numbered (``_<n>``) variants appear when there are several.
+_USER_MODEL_ASSIGN = re.compile(r'^user_model(?:_\d+)?\s*(?::[^=\n]*)?=(?!=)', re.MULTILINE)
+_USER_OBJECT_MODEL_ASSIGN = re.compile(
+    r'^user_object_model(?:_\d+)?\s*(?::[^=\n]*)?=(?!=)', re.MULTILINE,
+)
+_OBJECT_MODEL_NAME = re.compile(r'ObjectModel\(\s*name\s*=\s*"((?:[^"\\]|\\.)*)"')
+_USER_REFERENCE_CLASS_NAMES = frozenset(
+    cls.name for cls in _user_reference_domain_model.get_classes()
+)
+
+
+def _is_user_reference_section(section_code: str) -> bool:
+    """Return True if a STRUCTURAL section is the user reference domain model.
+
+    Older exports also bound an ordinary class diagram that merely has a class
+    named ``User`` to ``user_model``; such a section has other classes and is
+    imported as a class diagram.
+    """
+    if not _USER_MODEL_ASSIGN.search(section_code):
+        return False
+    try:
+        domain_model = parse_buml_content(section_code)
+    except Exception:  # noqa: BLE001 -- unparsable: let the class-diagram path report it
+        return False
+    return {cls.name for cls in domain_model.get_classes()} == _USER_REFERENCE_CLASS_NAMES
+
+
+def _object_model_title(section_code: str) -> str:
+    """Return the ``ObjectModel(name=...)`` of an object section, or ''."""
+    match = _OBJECT_MODEL_NAME.search(section_code)
+    if not match:
+        return ""
+    try:
+        return ast.literal_eval(f'"{match.group(1)}"')
+    except (ValueError, SyntaxError):
+        return match.group(1)
+
 
 # All known section header keywords used as boundary markers
 ALL_SECTION_KEYWORDS = [
@@ -157,6 +203,7 @@ def _convert_section(
     title: str,
     domain_sections: List[Tuple[str, str]],
     class_diagram_list: List[Dict[str, Any]],
+    user_reference_json: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """
     Convert a single section's code into a diagram JSON entry.
@@ -167,6 +214,8 @@ def _convert_section(
         title: Display title for the diagram
         domain_sections: All structural/domain sections (needed for object diagram context)
         class_diagram_list: Already-converted class diagrams (needed for object diagram references)
+        user_reference_json: The user reference domain model as class-diagram
+            JSON (needed for ``user_object_model`` sections)
 
     Returns:
         Dictionary with 'id', 'title', 'model', and 'lastUpdate' keys
@@ -187,6 +236,12 @@ def _convert_section(
             # Use the first class diagram's model as reference, or empty dict
             class_model_ref = class_diagram_list[0]["model"] if class_diagram_list else {}
             model = object_buml_to_json(combined_code, class_model_ref)
+
+        elif model_name == "user_object_model":
+            model = object_buml_to_json(
+                section_code, user_reference_json or {"elements": {}, "relationships": {}},
+                diagram_type="UserDiagram",
+            )
 
         elif model_name == "agent":
             model = agent_buml_to_json(section_code)
@@ -295,6 +350,7 @@ DIAGRAM_DEFAULT_TITLES: Dict[str, str] = {
     'BPMNDiagram': 'BPMN Diagram',
     'ComponentDiagram': 'Component Diagram',
     'DeploymentDiagram': 'Deployment Diagram',
+    'UserDiagram': 'User Diagram',
 }
 
 
@@ -458,11 +514,35 @@ def project_to_json(content: str) -> Dict[str, Any]:
     # First pass: extract all structural/domain sections (needed as context for object diagrams)
     # Check for both exact "domain_model" and suffixed variants like "domain_model_1"
     domain_sections: List[Tuple[str, str]] = []
-    has_domain_model = any(re.sub(r'_\d+$', '', name) == "domain_model" for name in model_names)
-    if has_domain_model:
+    base_names = {re.sub(r'_\d+$', '', name) for name in model_names}
+    if base_names & {"domain_model", "user_model"}:
         keyword = SECTION_CONFIG["domain_model"][0]
         domain_sections = _extract_all_sections(content, keyword)
         logger.debug("Found %d structural model section(s)", len(domain_sections))
+
+    # UserDiagrams: the user reference domain model is context, not a class
+    # diagram, and each user_object_model section becomes a UserDiagram.
+    user_reference_sections = [
+        section for section in domain_sections if _is_user_reference_section(section[1])
+    ]
+    domain_sections = [s for s in domain_sections if s not in user_reference_sections]
+    user_object_sections: List[Tuple[str, str]] = []
+    user_reference_json: Dict[str, Any] = {}
+    if base_names & {"object_model", "user_object_model"}:
+        object_sections = _extract_all_sections(content, SECTION_CONFIG["object_model"][0])
+        if user_reference_sections:
+            user_object_sections = [
+                section for section in object_sections
+                if _USER_OBJECT_MODEL_ASSIGN.search(section[1])
+            ]
+            user_reference_json = class_buml_to_json(
+                parse_buml_content(user_reference_sections[0][1])
+            )
+    # Without the reference model, a user_object_model section instantiates an
+    # ordinary class diagram (older exports) and is imported as an object diagram.
+    model_aliases = {"user_model": "domain_model"}
+    if not user_object_sections:
+        model_aliases["user_object_model"] = "object_model"
 
     # Process each model type referenced in the project
     # Use a deduplicated ordered list to process each base model name only once.
@@ -473,17 +553,38 @@ def project_to_json(content: str) -> Dict[str, Any]:
     for model_name in model_names:
         # Strip numeric suffix: "domain_model_1" -> "domain_model", "agent_2" -> "agent"
         base_name = re.sub(r'_\d+$', '', model_name)
+        base_name = model_aliases.get(base_name, base_name)
 
         if base_name in seen_base_names:
             continue
         seen_base_names.add(base_name)
+
+        if base_name == "user_object_model":
+            diagram_jsons["UserDiagram"] = [
+                _convert_section(
+                    base_name, section_code,
+                    _object_model_title(section_code) or title
+                    or DIAGRAM_DEFAULT_TITLES["UserDiagram"],
+                    domain_sections, [], user_reference_json,
+                )
+                for title, section_code in user_object_sections
+            ]
+            continue
 
         if base_name not in SECTION_CONFIG:
             logger.debug("Skipping unknown model name '%s' (base: '%s')", model_name, base_name)
             continue
 
         keyword, diagram_type, default_title = SECTION_CONFIG[base_name]
-        sections = _extract_all_sections(content, keyword)
+        if base_name == "domain_model":
+            sections = domain_sections
+        elif base_name == "object_model":
+            sections = [
+                section for section in _extract_all_sections(content, keyword)
+                if section not in user_object_sections
+            ]
+        else:
+            sections = _extract_all_sections(content, keyword)
 
         if not sections:
             logger.info("No sections found for '%s' (keyword: %s), skipping", base_name, keyword)

@@ -107,6 +107,16 @@ so any conversion path (editor → BUML, BUML → JSON, validation) can resolve
 the classes without the caller having to load the User Modeling Language
 separately.
 
+When a project is exported as B-UML, each UserDiagram becomes an
+``ObjectModel`` bound to ``user_object_model`` (``user_object_model_1``,
+``user_object_model_2``, … when there are several), written after the
+reference domain model, which is bound to ``user_model``. Importing the
+project reads these sections back as UserDiagrams; the reference model is
+not imported as a class diagram. A class diagram that merely has a class
+named ``User`` is exported and imported as an ordinary class diagram.
+B-UML stores a slot value, not a comparison, so a criterion such as
+``age < 18`` comes back as the equality criterion ``age = 18``.
+
 
 Normalised profile document
 ---------------------------

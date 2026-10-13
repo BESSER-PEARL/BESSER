@@ -245,7 +245,10 @@ def _emit_rdf_list(g: rdflib.Graph, items: Iterable[Any]) -> BNode:
     return head
 
 
-def _emit_restriction_value(g: rdflib.Graph, restriction, predicate: URIRef, spec: dict) -> None:
+def _emit_restriction_value(
+    g: rdflib.Graph, restriction, predicate: URIRef, spec: dict,
+    blank_handles: frozenset = frozenset(),
+) -> None:
     """Add the value triple(s) of one OWL restriction spec to ``restriction``.
 
     The kind-dispatch half of restriction emission, shared by the TTL exporter
@@ -253,12 +256,22 @@ def _emit_restriction_value(g: rdflib.Graph, restriction, predicate: URIRef, spe
     a copy each. A spec whose value cannot be rendered as an RDF term (for
     example a ``hasValue`` with no value) emits nothing, rather than handing
     ``None`` to ``Graph.add``, which raises ``AssertionError``.
+
+    ``blank_handles`` are the labels of the KG's blank nodes. A spec stores its
+    filler as a plain string, so a restriction over an anonymous class (a union,
+    say) carries that blank node's bare label; rebuilding it as
+    ``URIRef(label)`` produced a relative IRI that nothing in the graph mentions
+    -- and, since the label is minted per import, a different one every time.
+    Such a filler is mapped back to the blank node it names.
     """
     kind = spec.get("kind")
     value = spec.get("value")
     on_class = spec.get("on_class")
     if kind in ("someValuesFrom", "allValuesFrom"):
-        target = URIRef(str(value)) if isinstance(value, str) else _spec_to_literal(value)
+        if isinstance(value, str) and value in blank_handles:
+            target = BNode(value)
+        else:
+            target = URIRef(str(value)) if isinstance(value, str) else _spec_to_literal(value)
         if target is not None:
             g.add((restriction, predicate, target))
     elif kind == "hasValue":
@@ -272,7 +285,8 @@ def _emit_restriction_value(g: rdflib.Graph, restriction, predicate: URIRef, spe
         if literal is not None:
             g.add((restriction, predicate, literal))
         if on_class and str(kind).endswith("QualifiedCardinality"):
-            g.add((restriction, OWL.onClass, URIRef(on_class)))
+            on_class_term = BNode(on_class) if on_class in blank_handles else URIRef(on_class)
+            g.add((restriction, OWL.onClass, on_class_term))
 
 
 def _emit_owl_restriction(
@@ -283,6 +297,7 @@ def _emit_owl_restriction(
     default_ns: str,
     *,
     subject=None,
+    blank_handles: frozenset = frozenset(),
 ) -> None:
     """Emit an ``owl:Restriction`` per OWL-compatible spec of ``pc``.
 
@@ -292,6 +307,8 @@ def _emit_owl_restriction(
             conversion projection passes the constraint node's *own* term,
             because that node already is the original restriction and reusing it
             keeps the ``rdfs:subClassOf`` link emitted elsewhere valid.
+        blank_handles: Labels of the KG's blank nodes; see
+            :func:`_emit_restriction_value`.
     """
     if not property_iri:
         return
@@ -303,7 +320,7 @@ def _emit_owl_restriction(
         restr = subject if subject is not None else BNode()
         g.add((restr, RDF.type, OWL.Restriction))
         g.add((restr, OWL.onProperty, URIRef(property_iri)))
-        _emit_restriction_value(g, restr, pred, spec)
+        _emit_restriction_value(g, restr, pred, spec, blank_handles)
         for owner_iri in owner_class_iris:
             g.add((URIRef(owner_iri), RDFS.subClassOf, restr))
 
@@ -727,11 +744,16 @@ def knowledge_graph_to_rdf(
             )
 
     if "owl" in vocabs:
+        blank_handles = frozenset(
+            n.id[2:] if n.id.startswith("_:") else n.id for n in kg.nodes if isinstance(n, KGBlank)
+        )
         for node in kg.nodes:
             if isinstance(node, KGPropertyConstraint):
                 prop_iri = pc_to_property_iri.get(node.id) or node.metadata.get("onPropertyIri")
                 owner_iris = pc_to_owner_classes.get(node.id, [])
-                _emit_owl_restriction(g, node, prop_iri, owner_iris, default_namespace)
+                _emit_owl_restriction(
+                    g, node, prop_iri, owner_iris, default_namespace, blank_handles=blank_handles,
+                )
             elif isinstance(node, KGNodeConstraint):
                 target_iris = nc_to_target_classes.get(node.id, [])
                 _emit_nodeconstraint_owl_axioms(g, node, target_iris)

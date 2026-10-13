@@ -30,7 +30,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from rdflib import OWL, RDF, Graph, Namespace, URIRef
 from rdflib.compare import isomorphic
 
@@ -100,14 +99,6 @@ def test_individual_declarations_are_the_only_thing_the_contract_sets_aside():
     assert len(declarations(converted)) > len(declarations(exported))
 
 
-_BIBO_DANGLING_FILLER = pytest.mark.xfail(
-    strict=True,
-    reason="exporter rebuilds a blank-node restriction filler as a dangling relative IRI "
-           "(kg_to_owl._emit_restriction_value); fixed together with this marker's removal",
-)
-
-
-@_BIBO_DANGLING_FILLER
 def test_the_projections_agree_on_a_real_ontology():
     exported, converted = _views(_KG / "bibo" / "bibo.ttl")
 
@@ -125,7 +116,6 @@ def _dangling_fillers(graph: Graph):
     ]
 
 
-@_BIBO_DANGLING_FILLER
 def test_exporter_keeps_a_blank_node_restriction_filler_connected():
     """``allValuesFrom`` whose filler is a blank-node class stays a blank node.
 
@@ -139,3 +129,17 @@ def test_exporter_keeps_a_blank_node_restriction_filler_connected():
 
     assert _dangling_fillers(knowledge_graph_to_rdf(kg, vocab="owl")) == []
     assert _dangling_fillers(kg_to_rdf(kg)[0]) == []          # the converter never had the bug
+
+
+def test_a_blank_node_filler_is_the_same_node_the_kg_declares():
+    """Not just "no dangling IRI": the filler must be the blank node that has the
+    union's own triples, so the restriction is actually connected to it."""
+    kg = owl_file_to_knowledge_graph(str(_KG / "bibo" / "bibo.ttl"))
+    graph = knowledge_graph_to_rdf(kg, vocab="owl")
+
+    blank_fillers = [
+        f for _, _, f in graph.triples((None, OWL.allValuesFrom, None)) if not isinstance(f, URIRef)
+    ]
+    assert blank_fillers, "bibo has a restriction over an anonymous class"
+    for filler in blank_fillers:
+        assert any(True for _ in graph.triples((filler, None, None))), f"{filler} has no description"

@@ -807,7 +807,7 @@ class GuiSerializationMixin:
                 if association_class_meta:
                     column_dict["association_class"] = association_class_meta
                 elif with_nested and not is_association_row:
-                    nested = self._nested_create_metadata(end, fkeys, link_associations)
+                    nested = self._nested_create_metadata(end, fkeys, link_associations, domain_concept)
                     if nested:
                         column_dict["nested_create"] = nested
 
@@ -815,8 +815,17 @@ class GuiSerializationMixin:
         return form_columns
 
     def _nested_create_metadata(self, end: Any, fkeys: Dict[str, List[str]],
-                                link_associations: set) -> Optional[Dict[str, Any]]:
+                                link_associations: set,
+                                owner: Any = None) -> Optional[Dict[str, Any]]:
         """Nested-creation metadata for the to-many ``end`` of a table's class.
+
+        ``owner`` is the table's class. It may be a subclass of the class that
+        declares the association (which inherits ``end``): the parent record
+        is then created through the subclass's endpoint, so its response key
+        and key field are the subclass's. The back-reference keeps the name of
+        the association end, the field of the child's Create schema; with
+        joined-table inheritance the subclass row's key is also the key of its
+        row in the declaring class's table, which the foreign key targets.
 
         The parts of a composition (and, likewise, the children of a 1:N
         association whose back-reference is mandatory) cannot be picked from
@@ -833,10 +842,13 @@ class GuiSerializationMixin:
         if len(ends) != 2 or getattr(association, "name", None) in link_associations:
             return None
         near = ends[0] if ends[1] is end else ends[1]
-        child, parent = getattr(end, "type", None), getattr(near, "type", None)
-        if not isinstance(child, Class) or not isinstance(parent, Class) or child is parent:
+        child, declaring = getattr(end, "type", None), getattr(near, "type", None)
+        parent = owner if isinstance(owner, Class) else declaring
+        if not isinstance(child, Class) or not isinstance(declaring, Class) or child is declaring:
             return None
-        if getattr(child, "is_abstract", False):
+        if parent is not declaring and declaring not in parent.all_parents():
+            return None  # ``end`` is not an end of the table's class
+        if getattr(child, "is_abstract", False) or getattr(parent, "is_abstract", False):
             return None
         if near.multiplicity.max != 1:
             return None  # N:M: the child does not belong to a single parent

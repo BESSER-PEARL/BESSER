@@ -47,7 +47,11 @@ Dynamic data tables with:
   part is refused, the records this save created are deleted again (parts
   first, then the parent) and the error is shown in the dialog. The form of a
   part is the part's own form without the back-reference; its lookups (e.g. a
-  Book's authors) are selected from existing records. The metadata travels in
+  Book's authors) are selected from existing records. A table of a subclass of
+  the whole (``Special`` extends ``Library``, or a concrete subclass of an
+  abstract whole) offers the same: the record is created through its own
+  endpoint (``POST /special/``) and its key is set as the part's
+  back-reference (``library``). The metadata travels in
   the list lookup's ``nested_create`` entry of the table's ``formColumns``
 
 MethodButton

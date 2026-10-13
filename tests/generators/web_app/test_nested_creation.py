@@ -28,6 +28,7 @@ from besser.BUML.metamodel.structural import (
     BinaryAssociation,
     Class,
     DomainModel,
+    Generalization,
     IntegerType,
     Multiplicity,
     Property,
@@ -58,13 +59,27 @@ def _library_model():
     shelves = BinaryAssociation(name="Library_Shelf", ends={
         _end("library", library, 0, 1), _end("shelves", shelf, 0, "*"),
     })
-    return DomainModel(name="Lib", types={library, book, author, shelf},
-                       associations={holds, writes, shelves})
+    # A subclass table inherits the composition: its parent record is created
+    # through /special/, so its key is read from that response.
+    special = Class(name="Special", attributes={Property(name="theme", type=StringType)})
+    # An abstract whole whose parts are created from a concrete subclass's table
+    archive = Class(name="Archive", is_abstract=True,
+                    attributes={Property(name="code", type=StringType)})
+    city_archive = Class(name="CityArchive", attributes={Property(name="city", type=StringType)})
+    record = Class(name="Record", attributes={Property(name="ref", type=StringType)})
+    files = BinaryAssociation(name="Archive_Record", ends={
+        _end("archive", archive, 1, 1, composite=True), _end("records", record, 0, "*"),
+    })
+    return DomainModel(name="Lib", types={library, book, author, shelf, special, archive, city_archive, record},
+                       associations={holds, writes, shelves, files},
+                       generalizations={Generalization(general=library, specific=special),
+                                        Generalization(general=archive, specific=city_archive)})
 
 
 def _gui(domain):
     screens = set()
-    for index, cls in enumerate(sorted(domain.get_classes(), key=lambda c: c.name)):
+    concrete = [cls for cls in domain.get_classes() if not cls.is_abstract]
+    for index, cls in enumerate(sorted(concrete, key=lambda c: c.name)):
         table = Table(name=f"{cls.name}_table", data_binding=DataBinding(domain_concept=cls),
                       component_id=f"t{cls.name}")
         screens.add(Screen(name=cls.name, description=cls.name, view_elements={table},
@@ -109,6 +124,24 @@ def test_composition_parts_can_be_created_with_the_whole(generated):
     assert fields["authors"]["column_type"] == "lookup" and fields["authors"]["required"] is True
     # No nesting inside a nested form
     assert "nested_create" not in fields["authors"]
+
+
+def test_a_subclass_table_creates_parts_against_its_own_record(generated):
+    nested = _form_columns(generated, "Special")["books"]["nested_create"]
+
+    assert (nested["entity"], nested["endpoint"]) == ("Book", "/book/")
+    # The Special is created through /special/, answered as {"special": ...}
+    assert (nested["parent_response_key"], nested["parent_key_field"]) == ("special", "id")
+    # BookCreate's field is still named after the end on Library
+    assert nested["back_reference"] == "library"
+
+
+def test_an_abstract_whole_gets_its_parts_from_a_concrete_subclass(generated):
+    nested = _form_columns(generated, "Cityarchive")["records"]["nested_create"]  # page: Cityarchive.tsx
+
+    assert (nested["entity"], nested["back_reference"]) == ("Record", "archive")
+    assert (nested["parent_response_key"], nested["parent_key_field"]) == ("cityarchive", "id")
+    assert nested["composition"] is True
 
 
 def test_no_nested_creation_where_existing_records_can_be_picked(generated):
@@ -213,3 +246,35 @@ def test_backend_accepts_the_nested_create_sequence(app):
     assert _request(app, "DELETE", f"/book/{book_id}/").status_code == 200
     assert _request(app, "DELETE", f"/library/{library_id}/").status_code == 200
     assert _request(app, "GET", f"/library/{library_id}/").status_code == 404
+
+
+def test_backend_accepts_parts_of_a_subclass_record(app):
+    author = _request(app, "POST", "/author/", json={"name": "Grace"})
+    author_id = _entity(author.json(), "author")["id"]
+
+    special = _request(app, "POST", "/special/", json={"name": "Rare", "theme": "maps"})
+    assert special.status_code == 200, special.text
+    # What TableComponent reads with the metadata's parent_response_key / parent_key_field
+    special_id = _entity(special.json(), "special")["id"]
+    assert isinstance(special_id, int)
+    book = _request(app, "POST", "/book/", json={
+        "title": "Atlas", "pages": 3, "authors": [author_id], "library": special_id,
+    })
+    assert book.status_code == 200, book.text
+    book_id = _entity(book.json(), "book")["id"]
+    assert _entity(_request(app, "GET", f"/book/{book_id}/").json(), "book")["library_id"] == special_id
+
+    assert _request(app, "DELETE", f"/book/{book_id}/").status_code == 200
+    assert _request(app, "DELETE", f"/special/{special_id}/").status_code == 200
+
+
+def test_backend_accepts_parts_of_a_concrete_subclass_of_an_abstract_whole(app):
+    city = _request(app, "POST", "/cityarchive/", json={"code": "A1", "city": "Esch"})
+    assert city.status_code == 200, city.text
+    city_id = _entity(city.json(), "cityarchive")["id"]
+    record = _request(app, "POST", "/record/", json={"ref": "R-1", "archive": city_id})
+    assert record.status_code == 200, record.text
+    record_id = _entity(record.json(), "record")["id"]
+
+    assert _request(app, "DELETE", f"/record/{record_id}/").status_code == 200
+    assert _request(app, "DELETE", f"/cityarchive/{city_id}/").status_code == 200

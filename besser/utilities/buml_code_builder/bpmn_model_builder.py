@@ -340,6 +340,19 @@ def bpmn_model_to_code(model: BPMNModel, file_path: Optional[str] = None,
     body.append(f"{model_var_name} = BPMNModel(name={_quoted(model.name)})")
     body.append("")
 
+    # Data stores — model-level. Emitted BEFORE the processes: a process's data
+    # associations (and associations) may reference a data store, so its variable
+    # must already be bound when those lines execute.
+    if model.data_stores:
+        needed.add("DataStore")
+        body.append("# --- Data stores ---")
+        for ds in sort_by_timestamp(model.data_stores):
+            ds_var = dispenser.name_for(ds)
+            body.append(f"{ds_var} = DataStore(name={_quoted(ds.name)})")
+            _emit_layout_if_present(ds, ds_var, body)
+            body.append(f"{model_var_name}.add_data_store({ds_var})")
+        body.append("")
+
     process_vars: dict = {}  # process -> var
     for process in sort_by_timestamp(model.processes):
         needed.add("Process")
@@ -415,17 +428,6 @@ def bpmn_model_to_code(model: BPMNModel, file_path: Optional[str] = None,
         for mflow in sort_by_timestamp(model.collaboration.message_flows):
             _emit_message_flow(mflow, dispenser, body, needed)
         body.append(f"{model_var_name}.collaboration = collaboration")
-        body.append("")
-
-    # 6. Data stores — model-level
-    if model.data_stores:
-        needed.add("DataStore")
-        body.append("# --- Data stores ---")
-        for ds in sort_by_timestamp(model.data_stores):
-            ds_var = dispenser.name_for(ds)
-            body.append(f"{ds_var} = DataStore(name={_quoted(ds.name)})")
-            _emit_layout_if_present(ds, ds_var, body)
-            body.append(f"{model_var_name}.add_data_store({ds_var})")
         body.append("")
 
     # ---- Assemble: header → imports → body

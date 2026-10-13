@@ -156,6 +156,22 @@ libraries used in authored tools/custom code must be added to the Dockerfile by
 the user. GUI packaging requirements and external model/database services remain
 separate deployment concerns.
 
+Agent databases
+~~~~~~~~~~~~~~~
+
+A Deployment model describes where agents run, not an application with its own
+data: the generator bakes no web app, no class diagram and no database, and
+mounts no volume into the agents. A ``DBReply`` action with the *default*
+database (``db_selection_type='default'``) queries ``db1`` under ``db.sql`` in the
+agent's ``config.yaml``, which therefore keeps the ``YOUR-DB-*`` placeholders of a
+standalone agent (:doc:`baf`); a ``configYaml`` saved in the editor is used as
+written. A ``db``-stereotyped artifact (a Database capability) is an externally
+hosted service without connection details, so it is neither a service in the
+Compose file nor wired into ``db1``. Fill in ``db1`` (or the ``db.sql`` entry a
+*custom* selection names) in each agent's ``config.yaml`` before
+``docker compose up``. This differs from the :doc:`full_web_app`, whose agents
+query the generated backend's SQLite database.
+
 Tag-driven A2A wiring
 ~~~~~~~~~~~~~~~~~~~~~~~
 

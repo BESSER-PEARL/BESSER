@@ -44,6 +44,9 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
+    reinject_hidden_containers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +124,8 @@ async def validate_diagram(input_data: DiagramInput):
             validation_warnings.extend(domain_validation.get("warnings", []))
 
             if domain_validation.get("success", False):
-                object_model = process_object_diagram(input_data.model_dump(), buml_model)
+                preprocessed = reinject_hidden_containers(input_data.model_dump())
+                object_model = process_object_diagram(preprocessed, buml_model)
                 object_validation = object_model.validate(raise_exception=False)
                 validation_errors.extend(object_validation.get("errors", []))
                 validation_warnings.extend(object_validation.get("warnings", []))

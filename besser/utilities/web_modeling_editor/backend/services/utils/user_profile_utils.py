@@ -35,6 +35,135 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Hidden-container re-injection
+# ---------------------------------------------------------------------------
+# The canvas stores User→Disability and User→Skill directly (Accessibility and
+# Competence are hidden from the canvas).  The backend domain model only has
+# User→Accessibility→Disability and User→Competence→Skill/Language/Education/
+# Experience.  Any caller that sends a raw canvas model must call
+# reinject_hidden_containers first so process_object_diagram finds valid
+# associations — both the validation and generation routers need this.
+
+_HIDDEN_CONTAINER_PARENT: dict[str, str] = {
+    "Disability": "Accessibility",
+    "Skill":      "Competence",
+    "Language":   "Competence",
+    "Education":  "Competence",
+    "Experience": "Competence",
+}
+
+
+def reinject_hidden_containers(payload: dict) -> dict:
+    """Insert hidden grouping containers (Accessibility, Competence) into a
+    raw UserDiagram JSON payload before it reaches process_object_diagram.
+
+    The canvas omits these containers: it connects User→Disability directly.
+    This rewrites every such direct link to User→Container→Child, mirroring
+    what the frontend's reinjectHiddenContainers does before submission.
+
+    Safe to call on already-processed models: if no raw User→X links exist
+    the payload is returned unchanged (same dict reference).
+
+    Args:
+        payload: The full ``input_data.model_dump()`` dict with a ``"model"``
+                 key holding the raw ``UserDiagram`` model.
+
+    Returns:
+        The same dict with the ``"model"`` key replaced by the re-injected
+        model when re-injection was needed; the original dict otherwise.
+    """
+    model = payload.get("model", {})
+    if not isinstance(model, dict) or model.get("type") != "UserDiagram":
+        return payload
+
+    elements: dict = model.get("elements", {})
+    relationships: dict = model.get("relationships", {})
+    if not elements or not relationships:
+        return payload
+
+    box_class: dict[str, str] = {
+        eid: el["className"]
+        for eid, el in elements.items()
+        if el and el.get("type") == "UserModelName" and el.get("className")
+    }
+
+    needs_reinject = any(
+        (box_class.get(rel.get("source", {}).get("element", "")) == "User"
+         and box_class.get(rel.get("target", {}).get("element", "")) in _HIDDEN_CONTAINER_PARENT)
+        or
+        (box_class.get(rel.get("target", {}).get("element", "")) == "User"
+         and box_class.get(rel.get("source", {}).get("element", "")) in _HIDDEN_CONTAINER_PARENT)
+        for rel in relationships.values()
+        if rel
+    )
+    if not needs_reinject:
+        return payload
+
+    new_elements = dict(elements)
+    new_relationships: dict = {}
+    container_box_for: dict[tuple, str] = {}
+    _seq = [0]
+
+    def _ensure_container(user_box_id: str, container_class: str) -> str:
+        key = (user_box_id, container_class)
+        if key in container_box_for:
+            return container_box_for[key]
+        box_id = f"reinject_{container_class.lower()}_{_seq[0]}"
+        _seq[0] += 1
+        new_elements[box_id] = {
+            "type": "UserModelName",
+            "id": box_id,
+            "name": f"{container_class[0].lower()}{container_class[1:]}_1",
+            "owner": None,
+            "bounds": {"x": 0, "y": 0, "width": 200, "height": 50},
+            "attributes": [],
+            "methods": [],
+            "className": container_class,
+        }
+        container_box_for[key] = box_id
+        return box_id
+
+    def _make_link(link_id: str, src_id: str, tgt_id: str) -> dict:
+        return {
+            "id": link_id,
+            "type": "ObjectLink",
+            "source": {"element": src_id, "direction": "Right",
+                       "bounds": {"x": 0, "y": 0, "width": 0, "height": 0}},
+            "target": {"element": tgt_id, "direction": "Left",
+                       "bounds": {"x": 0, "y": 0, "width": 0, "height": 0}},
+            "bounds": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "name": "",
+            "path": [{"x": 100, "y": 10}, {"x": 0, "y": 10}],
+            "isManuallyLayouted": False,
+        }
+
+    for rel_id, rel in relationships.items():
+        src_id = rel.get("source", {}).get("element", "")
+        tgt_id = rel.get("target", {}).get("element", "")
+        src_cls = box_class.get(src_id, "")
+        tgt_cls = box_class.get(tgt_id, "")
+
+        if src_cls == "User" and tgt_cls in _HIDDEN_CONTAINER_PARENT:
+            container_cls = _HIDDEN_CONTAINER_PARENT[tgt_cls]
+            container_id = _ensure_container(src_id, container_cls)
+            new_relationships[rel_id] = _make_link(rel_id, src_id, container_id)
+            child_link_id = f"reinject_link_{_seq[0]}"
+            _seq[0] += 1
+            new_relationships[child_link_id] = _make_link(child_link_id, container_id, tgt_id)
+        elif tgt_cls == "User" and src_cls in _HIDDEN_CONTAINER_PARENT:
+            container_cls = _HIDDEN_CONTAINER_PARENT[src_cls]
+            container_id = _ensure_container(tgt_id, container_cls)
+            new_relationships[rel_id] = _make_link(rel_id, container_id, tgt_id)
+            child_link_id = f"reinject_link_{_seq[0]}"
+            _seq[0] += 1
+            new_relationships[child_link_id] = _make_link(child_link_id, src_id, container_id)
+        else:
+            new_relationships[rel_id] = rel
+
+    new_model = {**model, "elements": new_elements, "relationships": new_relationships}
+    return {**payload, "model": new_model}
+
 
 def safe_path(base_dir: str, user_filename: str) -> str:
     """Resolve a user-provided filename safely within base_dir."""

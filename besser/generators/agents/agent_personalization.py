@@ -1,10 +1,44 @@
 import json
 import logging
 import os
+import re
 
 from besser.BUML.metamodel.state_machine.agent import AgentReply
 
 logger = logging.getLogger(__name__)
+
+# Placeholder used to preserve embedded newlines in messages when building
+# single-line numbered-list prompts for OpenAI.  The LLM is instructed to
+# keep this token intact, so restoring it after parsing is reliable.
+_NEWLINE_PLACEHOLDER = "[[NL]]"
+
+
+def _encode_for_prompt(text: str) -> str:
+    """Replace embedded newlines with a placeholder so each numbered item stays on one line."""
+    return text.replace("\n", _NEWLINE_PLACEHOLDER)
+
+
+def _decode_from_response(text: str) -> str:
+    """Restore the newline placeholder back to actual newlines."""
+    return text.replace(_NEWLINE_PLACEHOLDER, "\n")
+
+
+def _parse_numbered_response(response_text: str) -> list:
+    """Parse a numbered-list response (e.g. '1. foo\\n2. bar') into a plain list.
+
+    Strips leading 'N. ' number prefixes; ignores blank lines.
+    Does NOT split multi-line items — each non-blank line is one item.
+    Multi-line content must have been encoded with _encode_for_prompt before
+    sending so that every item occupies exactly one line in the response.
+    """
+    results = []
+    for line in response_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(r'^\d+\.\s+(.*)', line)
+        results.append(m.group(1) if m else line)
+    return results
 
 
 OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
@@ -122,17 +156,17 @@ def translate_text_batch(texts, target_language, model=DEFAULT_OPENAI_MODEL, ope
     if not isinstance(texts, (list, tuple)):
         raise TypeError("texts must be a list or tuple of strings")
 
-    # Define the system prompt for translation
+    encoded = [_encode_for_prompt(t) for t in texts]
+
     system_prompt = (
         "You are a translation engine. "
         "Translate each numbered text below into {}. "
+        "Text items may contain the token [[NL]] which represents a line break — preserve [[NL]] in the output. "
         "Return only the translated texts as a numbered list, matching the input order, with no additional explanation."
     ).format(target_language)
 
-    # Combine all texts into a single prompt with numbering for clarity
-    user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
+    user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(encoded))
 
-    # Call the model once with all texts
     response_text = call_openai_chat(
         system_prompt,
         user_prompt,
@@ -141,12 +175,7 @@ def translate_text_batch(texts, target_language, model=DEFAULT_OPENAI_MODEL, ope
         config=config,
     )
 
-    # Try to split the returned text back into a list of outputs
-    results = [
-        line.split(". ", 1)[1] if ". " in line else line
-        for line in response_text.splitlines()
-        if line.strip()
-    ]
+    results = [_decode_from_response(item) for item in _parse_numbered_response(response_text)]
     return results
 
 def translate_text_api(text, target_language):
@@ -230,10 +259,9 @@ def style_text_batch(texts, style, model=DEFAULT_OPENAI_MODEL, openai_api_key=No
 
     system_prompt = style_prompts[style]
 
-    # Combine all texts into a single prompt with numbering for clarity
-    user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
+    encoded = [_encode_for_prompt(t) for t in texts]
+    user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(encoded))
 
-    # Call the model once with all texts
     response_text = call_openai_chat(
         system_prompt,
         user_prompt,
@@ -242,8 +270,7 @@ def style_text_batch(texts, style, model=DEFAULT_OPENAI_MODEL, openai_api_key=No
         config=config,
     )
 
-    # Try to split the returned text back into a list of outputs
-    results = [line.split(". ", 1)[1].replace("'", "\\'") if ". " in line else line for line in response_text.splitlines() if line.strip()]
+    results = [_decode_from_response(item) for item in _parse_numbered_response(response_text)]
     return results
 
 
@@ -324,7 +351,6 @@ def configure_agent(agent, config, openai_api_key: str = None):
                 for action in body.actions:
                     if isinstance(action, AgentReply):
                         action.message = personalized_messages[msg_index]
-                        action.message = action.message.replace("'", "\\'")
                         msg_index += 1
 
 
@@ -440,12 +466,13 @@ def replace_content_profile_batch(messages: list[str], config: dict, openai_api_
         return personalized_messages
 
     numbered_replies = "\n".join(
-        f"{i + 1}. {text}" for i, (_, text) in enumerate(valid_entries)
+        f"{i + 1}. {_encode_for_prompt(text)}" for i, (_, text) in enumerate(valid_entries)
     )
     user_prompt = (
         f"User profile (JSON):\n{profile_context}\n\n"
         "Original agent replies (numbered):\n"
         f"{numbered_replies}\n\n"
+        "Text items may contain the token [[NL]] which represents a line break — preserve [[NL]] in the output.\n"
         "Rewrite each reply so it aligns with the profile only when necessary.\n"
         "Return the rewritten replies as a numbered list matching the inputs and do not use any formatting."
     )
@@ -458,11 +485,7 @@ def replace_content_profile_batch(messages: list[str], config: dict, openai_api_
             openai_api_key=openai_api_key,
             config=flattened_config,
         )
-        results = [
-            line.split(". ", 1)[1] if ". " in line else line
-            for line in response_text.splitlines()
-            if line.strip()
-        ]
+        results = [_decode_from_response(item) for item in _parse_numbered_response(response_text)]
 
         if len(results) != len(valid_entries):
             logger.warning(
@@ -527,10 +550,9 @@ def complexity_text_batch(texts, complexity, model=DEFAULT_OPENAI_MODEL, openai_
             "Return the enhanced texts as a numbered list."
         )
 
-    # Combine all texts into a single prompt with numbering for clarity
-    user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
+    encoded = [_encode_for_prompt(t) for t in texts]
+    user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(encoded))
 
-    # Call the model once with all texts
     response_text = call_openai_chat(
         system_prompt,
         user_prompt,
@@ -539,12 +561,7 @@ def complexity_text_batch(texts, complexity, model=DEFAULT_OPENAI_MODEL, openai_
         config=config,
     )
 
-    # Try to split the returned text back into a list of outputs
-    results = [
-        line.split(". ", 1)[1] if ". " in line else line
-        for line in response_text.splitlines()
-        if line.strip()
-    ]
+    results = [_decode_from_response(item) for item in _parse_numbered_response(response_text)]
     return results
 
 
@@ -576,7 +593,8 @@ def sentence_length_batch(texts, preference, model=DEFAULT_OPENAI_MODEL, openai_
             "Return the rewritten texts as a numbered list in the same order."
         )
 
-    user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
+    encoded = [_encode_for_prompt(t) for t in texts]
+    user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(encoded))
     response_text = call_openai_chat(
         system_prompt,
         user_prompt,
@@ -584,9 +602,5 @@ def sentence_length_batch(texts, preference, model=DEFAULT_OPENAI_MODEL, openai_
         openai_api_key=openai_api_key,
         config=config,
     )
-    results = [
-        line.split(". ", 1)[1] if ". " in line else line
-        for line in response_text.splitlines()
-        if line.strip()
-    ]
+    results = [_decode_from_response(item) for item in _parse_numbered_response(response_text)]
     return results

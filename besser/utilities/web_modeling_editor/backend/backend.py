@@ -20,6 +20,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response as StarletteResponse
 
+import sys
+sys.path.append("C:/Users/conrardy/Desktop/git/BESSER")
+
 from besser.utilities.web_modeling_editor.backend.middleware import setup_middleware
 
 # Backend constants (no circular dependency risk)

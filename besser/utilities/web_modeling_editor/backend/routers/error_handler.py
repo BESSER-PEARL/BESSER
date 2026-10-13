@@ -36,6 +36,8 @@ def handle_endpoint_errors(endpoint_name: str):
         * ``ConversionError``  -> HTTP 400
         * ``ValidationError``  -> HTTP 400
         * ``GenerationError``  -> HTTP 500
+        * ``ValueError``       -> HTTP 400 with message
+        * ``RuntimeError``     -> HTTP 400 with message (e.g. missing API key)
         * ``HTTPException``    -> re-raised as-is
         * ``Exception``        -> HTTP 500 with generic message
 
@@ -65,6 +67,9 @@ def handle_endpoint_errors(endpoint_name: str):
             except ValueError as exc:
                 logger.warning("Value error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except RuntimeError as exc:
+                logger.warning("Runtime error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             except Exception:
                 logger.exception("Unexpected error in %s", endpoint_name)
                 raise HTTPException(
@@ -88,6 +93,9 @@ def handle_endpoint_errors(endpoint_name: str):
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             except ValueError as exc:
                 logger.warning("Value error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except RuntimeError as exc:
+                logger.warning("Runtime error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except Exception:
                 logger.exception("Unexpected error in %s", endpoint_name)

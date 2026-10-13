@@ -77,6 +77,7 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
     normalize_user_model_output as _normalize_user_model_output,
     extract_user_profile_names as _extract_user_profile_names,
     safe_path as _safe_path,
+    reinject_hidden_containers as _reinject_hidden_containers,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.gui_personalization_utils import (
     personalize_gui_page as run_gui_personalization,
@@ -809,7 +810,7 @@ async def _handle_user_diagram_generation(
 ):
     """Handle user diagram generation using the preset user reference domain."""
     try:
-        object_model = process_object_diagram(json_data, user_reference_domain_model)
+        object_model = process_object_diagram(_reinject_hidden_containers(json_data), user_reference_domain_model)
     except Exception as conversion_error:
         logger.exception("Failed to convert user diagram to BUML")
         raise HTTPException(

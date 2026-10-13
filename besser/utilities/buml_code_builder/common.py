@@ -2,6 +2,7 @@
 Common utilities for BUML code builders
 """
 import keyword
+import re
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from besser.utilities.provenance import get_besser_version
@@ -47,6 +48,20 @@ def _comment_safe(name: str) -> str:
     into executable code when the generated source is later processed.
     """
     return (name or '').replace('\r\n', ' ').translate(_COMMENT_BREAKS)
+
+
+def _sanitize_identifier(name: str) -> str:
+    """Sanitize a string to be a valid Python identifier.
+
+    Replaces any character other than ASCII letters, digits and ``_`` with
+    ``_``, then strips leading characters that cannot start an identifier
+    (digits, so ``1state`` becomes ``state``). Returns ``'unnamed'`` when
+    nothing is left. Case is preserved and keywords are not suffixed — see
+    :func:`safe_var_name` for that.
+    """
+    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    sanitized = re.sub(r'^[^a-zA-Z_]+', '', sanitized)
+    return sanitized or 'unnamed'
 
 
 def buml_header() -> str:

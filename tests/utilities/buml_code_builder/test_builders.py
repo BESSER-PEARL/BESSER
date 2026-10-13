@@ -579,10 +579,8 @@ class TestFormatMethodCodeLiteral:
 from besser.BUML.metamodel.state_machine.state_machine import (
     StateMachine, Body, Event,
 )
-from besser.utilities.buml_code_builder.state_machine_builder import (
-    state_machine_to_code,
-    _sanitize_identifier,
-)
+from besser.utilities.buml_code_builder.common import _sanitize_identifier
+from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 
 
 class TestSanitizeIdentifier:

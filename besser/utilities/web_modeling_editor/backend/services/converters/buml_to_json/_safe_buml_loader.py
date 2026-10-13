@@ -19,6 +19,8 @@ value inside ``safe_globals``.
 from __future__ import annotations
 
 import ast
+import datetime as _datetime
+import types
 from typing import Any, Dict, Mapping, Set
 
 
@@ -44,6 +46,13 @@ def strip_buml_imports(code: str) -> str:
         cleaned_lines.append(line)
 
     return "\n".join(cleaned_lines)
+
+
+# Stand-in for the ``datetime`` module, for ``allowed_names``. Generated BUML
+# rebuilds element timestamps (and object slot values) with
+# ``datetime.datetime.fromisoformat("...")`` after an ``import datetime`` that
+# the caller strips. Only the ``datetime`` class is exposed, not the module.
+SAFE_DATETIME_MODULE = types.SimpleNamespace(datetime=_datetime.datetime)
 
 
 class SafeBumlLoaderError(ValueError):

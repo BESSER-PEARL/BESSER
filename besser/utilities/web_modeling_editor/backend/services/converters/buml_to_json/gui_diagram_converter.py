@@ -62,6 +62,7 @@ from besser.BUML.metamodel.gui.events_actions import (
 )
 from besser.BUML.metamodel.gui.style import Layout, LayoutType, PositionType, Styling
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    SAFE_DATETIME_MODULE,
     safe_load_buml,
 )
 
@@ -245,6 +246,8 @@ def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Option
         context_names: Dict[str, Any] = {
             **_structural_namespace(),
             "UNLIMITED_MAX_MULTIPLICITY": _structural_module.UNLIMITED_MAX_MULTIPLICITY,
+            # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
+            "datetime": SAFE_DATETIME_MODULE,
             "set": set,
             "list": list,
             "dict": dict,

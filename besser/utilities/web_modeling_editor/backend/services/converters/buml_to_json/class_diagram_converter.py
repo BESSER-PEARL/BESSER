@@ -28,6 +28,7 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
     calculate_path_points, calculate_relationship_bounds
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    SAFE_DATETIME_MODULE,
     safe_load_buml,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.multiplicity_parser import (
@@ -61,6 +62,8 @@ def parse_buml_content(content: str) -> DomainModel:
             "AssociationClass": AssociationClass,
             "Metadata": Metadata,
             "MethodImplementationType": MethodImplementationType,
+            # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
+            "datetime": SAFE_DATETIME_MODULE,
             "set": set,
             "list": list,
             "dict": dict,
@@ -116,11 +119,13 @@ def parse_buml_content(content: str) -> DomainModel:
         local_vars = safe_load_buml(cleaned_content, allowed_names)
 
         domain_name = "Imported_Domain_Model"
+        domain_timestamp = None
         for var_name, var_value in local_vars.items():
             if isinstance(var_value, DomainModel):
                 domain_name = var_value.name
+                domain_timestamp = var_value.timestamp
 
-        domain_model = DomainModel(domain_name)
+        domain_model = DomainModel(domain_name, timestamp=domain_timestamp)
         # First pass: Add all classes and enumerations
         classes = {}
         for var_name, var_value in local_vars.items():

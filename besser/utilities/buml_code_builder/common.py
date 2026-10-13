@@ -5,6 +5,7 @@ import keyword
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from besser.utilities.provenance import get_besser_version
+from besser.utilities.utils import timestamp_to_iso
 
 if TYPE_CHECKING:
     from besser.BUML.metamodel.gui import DataSourceElement
@@ -68,8 +69,33 @@ PRIMITIVE_TYPE_MAPPING = {
     'any': 'AnyType'
 }
 
-# Reserved names that need special handling
-RESERVED_NAMES = ['Class', 'Property', 'Method', 'Parameter', 'Enumeration']
+# Reserved names that need special handling. ``datetime`` is the module the
+# generated code imports to rebuild element timestamps (and object slot values),
+# so a class of that name must not shadow it.
+RESERVED_NAMES = ['Class', 'Property', 'Method', 'Parameter', 'Enumeration', 'datetime']
+
+
+def timestamp_expr(element: Any) -> Optional[str]:
+    """Return Python source rebuilding ``element.timestamp``, or ``None``.
+
+    The generated script recreates the element with the timestamp stored on
+    the source model (never the current time), so building the same model
+    always yields the same source. The generated file must ``import datetime``.
+    Returns ``None`` when the element has no ``datetime`` timestamp.
+    """
+    iso = timestamp_to_iso(getattr(element, "timestamp", None))
+    if iso is None:
+        return None
+    return f'datetime.datetime.fromisoformat("{_escape_python_string(iso)}")'
+
+
+def timestamp_kwarg(element: Any) -> str:
+    """Return a ``, timestamp=...`` constructor argument for ``element``.
+
+    Empty string when the element has no timestamp (see :func:`timestamp_expr`).
+    """
+    expr = timestamp_expr(element)
+    return f", timestamp={expr}" if expr else ""
 
 
 def safe_var_name(name: str, lowercase: bool = True) -> str:

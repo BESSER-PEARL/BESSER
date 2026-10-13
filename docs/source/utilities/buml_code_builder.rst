@@ -42,6 +42,23 @@ The generated code will include:
 * All relationships (associations and generalizations)
 * A complete domain model instance that can be used to recreate the model
 
+Each element is recreated with the ``timestamp`` stored on the source model,
+passed as a constructor argument, so generators that order members by
+timestamp see the same order in the recreated model:
+
+.. code-block:: python
+
+    import datetime
+
+    Library = Class(name="Library", timestamp=datetime.datetime.fromisoformat("2024-03-01T09:30:06.123456"))
+
+The value comes from the model, never from the clock, so building the same
+model twice gives the same file. This covers the domain model, classes,
+enumerations and their literals, attributes, methods and their parameters,
+associations and their ends, association classes, generalizations and OCL
+constraints. A class named ``datetime`` is emitted as ``datetime_`` so that it
+does not shadow the imported module.
+
 Agent / GUI / State Machine / Quantum / Project generation
 -----------------------------------------------------------
 

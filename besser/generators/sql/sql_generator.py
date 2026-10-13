@@ -35,11 +35,16 @@ class SQLGenerator(GeneratorInterface):
         output_dir (str, optional): Output directory; defaults to ``<cwd>/output``.
         sql_dialect (str, optional): One of ``sqlite``, ``postgresql``, ``mysql``,
             ``mssql``, ``mariadb`` or ``oracle``. Defaults to ``sqlite``.
+        ocl_check_constraints (bool, optional): Emit ``CHECK`` constraints for the simple
+            OCL invariants of the model (an attribute compared with a literal, optionally
+            joined by ``and``). Other constraints are skipped. Defaults to ``True``.
     """
 
-    def __init__(self, model: DomainModel, output_dir: str = None, sql_dialect: str = "sqlite"):
+    def __init__(self, model: DomainModel, output_dir: str = None, sql_dialect: str = "sqlite",
+                 ocl_check_constraints: bool = True):
         super().__init__(model, output_dir)
         self.sql_dialect = sql_dialect
+        self.ocl_check_constraints = ocl_check_constraints
 
     def generate(self):
         """
@@ -66,7 +71,7 @@ class SQLGenerator(GeneratorInterface):
 
             # Generate SQLAlchemy code into the temporary folder
             alchemy_gen = SQLAlchemyGenerator(model=self.model, output_dir=temp_dir)
-            alchemy_gen.generate(dbms=self.sql_dialect)
+            alchemy_gen.generate(dbms=self.sql_dialect, ocl_check_constraints=self.ocl_check_constraints)
 
             # Keep only the model definitions: drop the database connection
             # section (engine creation needs a driver, __main__ creates tables).

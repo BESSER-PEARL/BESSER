@@ -4,6 +4,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.generators.default_literals import register_default_literals
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
+from besser.generators.sql_alchemy.ocl_check_constraints import get_check_constraints
 from besser.utilities.utils import sort_by_timestamp
 from besser.generators.structural_utils import (
     get_deferred_fk_associations,
@@ -220,7 +221,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 + f"\n\nSupported types: {', '.join(sorted(self.TYPES))}."
             )
 
-    def generate(self, dbms: str = "sqlite"):
+    def generate(self, dbms: str = "sqlite", ocl_check_constraints: bool = False):
         """
         Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified
         output directory.
@@ -231,6 +232,9 @@ class SQLAlchemyGenerator(GeneratorInterface):
         Args:
             dbms (str, optional): The database management system to be used. Values allowed:
             "sqlite", "postgresql", "mysql", "mssql", "mariadb", or "oracle". Defaults to "sqlite".
+            ocl_check_constraints (bool, optional): Translate simple OCL invariants of the model
+            (comparisons of an attribute with a literal, joined by ``and``) into ``CheckConstraint``
+            table arguments. Untranslatable constraints are skipped. Defaults to False.
 
         Returns:
             None, but stores the generated code as a file named sql_alchemy.py
@@ -246,6 +250,11 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
         classes, asso_classes = self.separate_classes()
         concrete_parents = self.get_concrete_table_inheritance()
+
+        check_constraints = {}
+        if ocl_check_constraints:
+            table_classes = [cls for cls in classes if cls.name not in concrete_parents] + asso_classes
+            check_constraints = get_check_constraints(self.model, self.TYPES, table_classes)
 
         file_path = self.build_generation_path(file_name="sql_alchemy.py")
         templates_path = os.path.join(os.path.dirname(
@@ -272,7 +281,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 fkeys=get_foreign_keys(self.model),
                 deferred_fks=get_deferred_fk_associations(self.model),
                 sort=sort_by_timestamp,
-                concrete_parents=concrete_parents
+                concrete_parents=concrete_parents,
+                check_constraints=check_constraints,
             )
             f.write(generated_code)
             print("Code generated successfully!")

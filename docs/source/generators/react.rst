@@ -37,6 +37,18 @@ Dynamic data tables with:
 - Display-only form fields: a ``formColumns`` entry with ``"readOnly": true``
   is shown in the Add/Edit dialog but cannot be edited, is not validated as
   required, and is left out of the POST/PUT body (the server owns the value)
+- Nested creation of composition parts: when the table's entity is the whole
+  of a composition (``Library 1 <>-- * Book``), or the parent of a 1:N
+  association whose back-reference is mandatory, the Add dialog lets the user
+  fill in new related records alongside the new one (existing ones already
+  belong to another parent, so picking them is not enough). The new record is
+  created first (``POST /library/``), then each part through its own create
+  endpoint (``POST /book/``) with the back-reference set to the new key. If a
+  part is refused, the records this save created are deleted again (parts
+  first, then the parent) and the error is shown in the dialog. The form of a
+  part is the part's own form without the back-reference; its lookups (e.g. a
+  Book's authors) are selected from existing records. The metadata travels in
+  the list lookup's ``nested_create`` entry of the table's ``formColumns``
 
 MethodButton
 ^^^^^^^^^^^^
@@ -173,7 +185,8 @@ Generated Structure
    ├── src/
    │   ├── components/
    │   │   ├── table/
-   │   │   │   └── TableComponent.tsx
+   │   │   │   ├── TableComponent.tsx
+   │   │   │   └── NestedCreateSection.tsx
    │   │   ├── charts/
    │   │   ├── runtime/
    │   │   │   ├── TableBlock.tsx

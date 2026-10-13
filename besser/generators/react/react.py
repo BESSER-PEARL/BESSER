@@ -133,6 +133,7 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
             "RadialBarChart": ["RadialBarChartComponent.tsx.j2"],
             "Table": [
                 "TableComponent.tsx.j2",
+                "NestedCreateSection.tsx.j2",
                 "TableComponent.css.j2",
                 "ColumnFilter.tsx.j2",
                 "ColumnSort.tsx.j2",

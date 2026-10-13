@@ -96,18 +96,13 @@ class Association:
 
 
 @dataclass
-class Generalization:
-    subclass: str
-    superclass: str
-
-
-@dataclass
 class UMLModel:
     classes: dict[str, Class] = field(default_factory=dict)
     datatypes: dict[str, DataType] = field(default_factory=dict)
     enumerations: dict[str, Enumeration] = field(default_factory=dict)
     associations: list[Association] = field(default_factory=list)
-    generalizations: list[Generalization] = field(default_factory=list)
+    #: ``(subclass, superclass)`` pairs, in the order the rules stated them.
+    generalizations: list[tuple[str, str]] = field(default_factory=list)
 
     # ---- convenience accessors -------------------------------------------
     def all_type_names(self) -> set[str]:

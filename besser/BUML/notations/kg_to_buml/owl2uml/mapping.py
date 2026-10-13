@@ -20,7 +20,7 @@ from .canonicalize import Canonicalizer
 from .expressions import ExpressionResolver
 from .model import (
     UMLModel, Class, Attribute, DataType, Enumeration, Association,
-    Generalization, OCLConstraint,
+    OCLConstraint,
 )
 
 #: The nine BUML primitives. Deviation from the reference, which uses UML-ish
@@ -112,7 +112,7 @@ class Mapper:
         thing = self.canon.name(OWL.Thing)
         if thing not in self.model.classes:
             return
-        if not any(g.superclass == thing for g in self.model.generalizations):
+        if not any(sup == thing for _, sup in self.model.generalizations):
             return
 
         def features(name: str) -> set[str]:
@@ -126,7 +126,7 @@ class Mapper:
             return names
 
         inherited = features(thing)
-        has_parent = {g.subclass for g in self.model.generalizations}
+        has_parent = {sub for sub, _ in self.model.generalizations}
         for name in sorted(self.model.classes):
             if name == thing or name in has_parent:
                 continue
@@ -179,7 +179,7 @@ class Mapper:
         if sub == sup or (sub, sup) in self._gen_seen:
             return
         self._gen_seen.add((sub, sup))
-        self.model.generalizations.append(Generalization(subclass=sub, superclass=sup))
+        self.model.generalizations.append((sub, sup))
 
     def add_association(self, source_type: str, target_type: str, role: str,
                         src_mult=(0, "*"), tgt_mult=(0, "*"), name: str | None = None,
@@ -621,9 +621,9 @@ class Mapper:
                 if (assoc.target == name and assoc.navigable_source
                         and assoc.source_role == pname):
                     return True
-            for gen in self.model.generalizations:
-                if gen.subclass == name:
-                    stack.append(gen.superclass)
+            for sub, sup in self.model.generalizations:
+                if sub == name:
+                    stack.append(sup)
         return False
 
     def _map_sub_properties(self) -> None:
@@ -684,8 +684,8 @@ class Mapper:
         for cls in self.model.classes.values():
             for attr in cls.attributes:
                 referenced.add(attr.type)
-        for g in self.model.generalizations:
-            referenced.update({g.subclass, g.superclass})
+        for pair in self.model.generalizations:
+            referenced.update(pair)
         for missing in sorted(referenced - known - _PRIMITIVES):
             if missing and missing not in self.model.classes:
                 self.model.classes[missing] = Class(name=missing, is_stub=True)

@@ -49,7 +49,6 @@ from besser.BUML.notations.kg_to_buml.owl2uml.model import (
     Class,
     DataType,
     Enumeration,
-    Generalization,
     OCLConstraint,
     UMLModel,
 )
@@ -88,6 +87,5 @@ __all__ = [
     "DataType",
     "Enumeration",
     "Association",
-    "Generalization",
     "OCLConstraint",
 ]

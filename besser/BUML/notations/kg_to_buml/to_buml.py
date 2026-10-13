@@ -174,8 +174,8 @@ def _break_cycles(model: UMLModel, renames, warnings) -> List[Tuple[str, str]]:
     canonicaliser could not merge) is enough to produce one.
     """
     edges = sorted(
-        {(_resolve(g.subclass, renames), _resolve(g.superclass, renames))
-         for g in model.generalizations}
+        {(_resolve(sub, renames), _resolve(sup, renames))
+         for sub, sup in model.generalizations}
     )
     parents: Dict[str, List[str]] = {}
     for sub, sup in edges:

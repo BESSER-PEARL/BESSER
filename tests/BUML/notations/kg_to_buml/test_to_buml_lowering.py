@@ -24,7 +24,6 @@ from besser.BUML.notations.kg_to_buml.owl2uml.model import (
     Class as UMLClass,
     DataType,
     Enumeration as UMLEnumeration,
-    Generalization,
     OCLConstraint,
     UMLModel,
 )
@@ -90,7 +89,7 @@ def _assoc(name, source, target, role, *, source_navigable=False):
 
 
 def _gen(subclass, superclass):
-    return Generalization(subclass=subclass, superclass=superclass)
+    return (subclass, superclass)
 
 
 def _model(*items) -> UMLModel:
@@ -105,7 +104,7 @@ def _model(*items) -> UMLModel:
             model.enumerations[item.name] = item
         elif isinstance(item, Association):
             model.associations.append(item)
-        elif isinstance(item, Generalization):
+        elif isinstance(item, tuple):          # a (subclass, superclass) pair, see _gen
             model.generalizations.append(item)
         else:
             raise TypeError(f"not a plan element: {item!r}")

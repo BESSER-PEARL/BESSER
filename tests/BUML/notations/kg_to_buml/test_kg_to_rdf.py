@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 import pytest
-from rdflib import BNode, Graph, Literal, URIRef
+from rdflib import Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS
 
 from besser.BUML.metamodel.kg import (
@@ -33,6 +33,7 @@ from besser.BUML.metamodel.kg.constants import (
 )
 from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
 from besser.BUML.notations.kg_to_buml.owl2uml import build_uml_model
+from besser.BUML.notations.kg_to_buml.to_buml import lower_to_buml
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
 
 SH = "http://www.w3.org/ns/shacl#"
@@ -432,33 +433,46 @@ SYNTHETIC = """
 """
 
 
-def _digest(model) -> str:
+def _digest(domain_model) -> str:
+    """Hash the *lowered* model, i.e. what a user gets, not the internal plan.
+
+    Digesting the pre-lowering plan tied this test to how that plan is
+    represented; the parity it asserts (direct vs. via the KG metamodel) is a
+    property of the result.
+    """
+    classes = sorted(domain_model.get_classes(), key=lambda c: c.name)
     payload = {
-        "classes": sorted(model.classes),
-        "abstract": sorted(c.name for c in model.classes.values() if c.is_abstract),
-        "datatypes": sorted(model.datatypes),
-        "enumerations": sorted(model.enumerations),
+        "classes": [c.name for c in classes],
+        "abstract": [c.name for c in classes if c.is_abstract],
+        "enumerations": sorted(e.name for e in domain_model.get_enumerations()),
         "generalizations": sorted(
-            [g.subclass, g.superclass] for g in model.generalizations
+            [g.specific.name, g.general.name] for g in domain_model.generalizations
         ),
         "associations": sorted(
-            [a.source.type, a.target.type, a.target.role or "", a.source.role or ""]
-            for a in model.associations
+            [a.name, sorted(
+                [e.name, e.type.name, e.multiplicity.min, e.multiplicity.max, e.is_navigable]
+                for e in a.ends
+            )]
+            for a in domain_model.associations
         ),
         "attributes": sorted(
-            [c.name, a.name, a.type, a.multiplicity()]
-            for c in model.classes.values() for a in c.attributes
+            [c.name, a.name, a.type.name, a.multiplicity.min, a.multiplicity.max]
+            for c in classes for a in c.attributes
         ),
-        "invariants": sorted([i.context, i.body] for i in model.ocl_constraints()),
+        "constraints": sorted([c.context.name, c.expression] for c in domain_model.constraints),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _lowered(plan):
+    return lower_to_buml(plan, model_name="Parity", warnings=[]).domain_model
 
 
 def _model_from_ttl(*paths: Path):
     graph = Graph()
     for path in paths:
         graph.parse(str(path), format="turtle")
-    return build_uml_model(graph, None, shapes=graph)
+    return _lowered(build_uml_model(graph, None, shapes=graph))
 
 
 def _model_via_kg(*paths: Path, tmp_path: Path):
@@ -470,7 +484,7 @@ def _model_via_kg(*paths: Path, tmp_path: Path):
     merged.serialize(destination=str(combined), format="turtle")
     kg = owl_file_to_knowledge_graph(str(combined))
     graph, base = kg_to_rdf(kg)
-    return build_uml_model(graph, base, shapes=graph)
+    return _lowered(build_uml_model(graph, base, shapes=graph))
 
 
 LOAD_BEARING_PREDICATES = [

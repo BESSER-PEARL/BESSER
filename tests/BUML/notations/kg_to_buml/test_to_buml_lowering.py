@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from besser.BUML.metamodel.structural import (
     UNLIMITED_MAX_MULTIPLICITY,
@@ -19,7 +18,6 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
 )
 from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
-from besser.BUML.notations.kg_to_buml.owl2uml import build_uml_model
 from besser.BUML.notations.kg_to_buml.owl2uml.model import (
     Association,
     AssociationEnd,
@@ -55,6 +53,68 @@ def _codes(warnings):
     return {w.code for w in warnings}
 
 
+# --- Builders for the internal plan ----------------------------------------
+# Tests describe the pre-lowering model through these, never through the record
+# classes directly, so a change to how that plan is represented touches only
+# this block and not the thirty-odd tests that use it.
+
+
+def _attr(name, type="str", lower=0, upper="*", **kwargs):
+    return Attribute(name=name, type=type, lower=lower, upper=upper, **kwargs)
+
+
+def _cls(name, *attributes, invariants=(), **flags):
+    cls = UMLClass(name=name, **flags)
+    cls.attributes.extend(attributes)
+    cls.invariants.extend(invariants)
+    return cls
+
+
+def _inv(context, body, name="check"):
+    return OCLConstraint(context=context, body=body, name=name)
+
+
+def _datatype(name, *attributes, **flags):
+    datatype = DataType(name=name, **flags)
+    datatype.attributes.extend(attributes)
+    return datatype
+
+
+def _enum(name, literals):
+    return UMLEnumeration(name=name, literals=list(literals))
+
+
+def _assoc(name, source, target, role, *, source_navigable=False):
+    return Association(
+        name=name,
+        source=AssociationEnd(type=source, role=None, lower=0, upper="*", navigable=source_navigable),
+        target=AssociationEnd(type=target, role=role, lower=0, upper="*"),
+    )
+
+
+def _gen(subclass, superclass):
+    return Generalization(subclass=subclass, superclass=superclass)
+
+
+def _model(*items) -> UMLModel:
+    """Assemble a plan from classes, datatypes, enumerations, associations and generalizations."""
+    model = UMLModel()
+    for item in items:
+        if isinstance(item, UMLClass):
+            model.classes[item.name] = item
+        elif isinstance(item, DataType):
+            model.datatypes[item.name] = item
+        elif isinstance(item, UMLEnumeration):
+            model.enumerations[item.name] = item
+        elif isinstance(item, Association):
+            model.associations.append(item)
+        elif isinstance(item, Generalization):
+            model.generalizations.append(item)
+        else:
+            raise TypeError(f"not a plan element: {item!r}")
+    return model
+
+
 # ---------------------------------------------------------------------------
 # Names and types
 # ---------------------------------------------------------------------------
@@ -63,8 +123,7 @@ def _codes(warnings):
 def test_class_named_after_a_primitive_is_renamed():
     """``DomainModel.types`` reads a primitive-named type as "primitives already
     supplied", skips its own injection, then raises on the duplicate name."""
-    model = UMLModel()
-    model.classes["str"] = UMLClass(name="str")
+    model = _model(_cls("str"))
     result, warnings = _lower(model)
 
     assert "str_" in _classes(result)
@@ -77,10 +136,7 @@ def test_class_named_after_a_primitive_is_renamed():
 def test_materialised_data_range_becomes_a_class_not_a_datatype():
     """``Property.owner`` raises for a DataType owner, so a materialised data
     range could not carry its ``value`` attribute as a DataType."""
-    model = UMLModel()
-    datatype = DataType(name="_date_str_Union")
-    datatype.attributes.append(Attribute(name="value", type="any", lower=0, upper="*"))
-    model.datatypes["_date_str_Union"] = datatype
+    model = _model(_datatype("_date_str_Union", _attr("value", "any")))
     result, _ = _lower(model)
 
     lowered = _classes(result)["_date_str_Union"]
@@ -90,11 +146,10 @@ def test_materialised_data_range_becomes_a_class_not_a_datatype():
 
 
 def test_primitive_datatypes_resolve_to_the_shared_singletons():
-    model = UMLModel()
-    model.datatypes["str"] = DataType(name="str", is_primitive=True)
-    cls = UMLClass(name="Person")
-    cls.attributes.append(Attribute(name="name", type="str", lower=0, upper=1))
-    model.classes["Person"] = cls
+    model = _model(
+        _datatype("str", is_primitive=True),
+        _cls("Person", _attr("name", "str", 0, 1)),
+    )
     result, _ = _lower(model)
 
     name = next(a for a in _classes(result)["Person"].attributes if a.name == "name")
@@ -106,10 +161,7 @@ def test_primitive_datatypes_resolve_to_the_shared_singletons():
 def test_enumeration_literals_are_sanitised_and_deduplicated():
     """``Mapper.literal_value`` quotes strings, and a value like ``"foo bar"``
     would be rejected outright by ``NamedElement.name``."""
-    model = UMLModel()
-    model.enumerations["Color"] = UMLEnumeration(
-        name="Color", literals=['"deep red"', '"deep-red"', '"green"']
-    )
+    model = _model(_enum("Color", ['"deep red"', '"deep-red"', '"green"']))
     result, _ = _lower(model)
 
     enum = next(t for t in result.domain_model.types if isinstance(t, Enumeration))
@@ -125,10 +177,7 @@ def test_enumeration_literals_are_sanitised_and_deduplicated():
 def test_zero_upper_bound_is_clamped():
     """``Multiplicity.max`` raises on ``<= 0``, but ``owl:maxCardinality 0`` is
     legal OWL."""
-    model = UMLModel()
-    cls = UMLClass(name="Person")
-    cls.attributes.append(Attribute(name="nickname", type="str", lower=0, upper=0))
-    model.classes["Person"] = cls
+    model = _model(_cls("Person", _attr("nickname", "str", 0, 0)))
     result, warnings = _lower(model)
 
     nickname = next(a for a in _classes(result)["Person"].attributes if a.name == "nickname")
@@ -137,10 +186,7 @@ def test_zero_upper_bound_is_clamped():
 
 
 def test_unbounded_upper_becomes_the_buml_sentinel():
-    model = UMLModel()
-    cls = UMLClass(name="Person")
-    cls.attributes.append(Attribute(name="alias", type="str", lower=0, upper="*"))
-    model.classes["Person"] = cls
+    model = _model(_cls("Person", _attr("alias", "str", 0, "*")))
     result, _ = _lower(model)
 
     alias = next(a for a in _classes(result)["Person"].attributes if a.name == "alias")
@@ -150,11 +196,7 @@ def test_unbounded_upper_becomes_the_buml_sentinel():
 def test_attributes_do_not_share_the_default_multiplicity_singleton():
     """``Property``'s default ``Multiplicity(1, 1)`` is a module-level object;
     handing it out would make every attribute alias the same instance."""
-    model = UMLModel()
-    cls = UMLClass(name="Person")
-    cls.attributes.append(Attribute(name="a", type="str", lower=0, upper=1))
-    cls.attributes.append(Attribute(name="b", type="str", lower=0, upper=1))
-    model.classes["Person"] = cls
+    model = _model(_cls("Person", _attr("a", "str", 0, 1), _attr("b", "str", 0, 1)))
     result, _ = _lower(model)
 
     attributes = sorted(_classes(result)["Person"].attributes, key=lambda a: a.name)
@@ -162,11 +204,7 @@ def test_attributes_do_not_share_the_default_multiplicity_singleton():
 
 
 def test_only_the_first_identifier_attribute_is_kept():
-    model = UMLModel()
-    cls = UMLClass(name="Person")
-    cls.attributes.append(Attribute(name="ssn", type="str", is_id=True))
-    cls.attributes.append(Attribute(name="passport", type="str", is_id=True))
-    model.classes["Person"] = cls
+    model = _model(_cls("Person", _attr("ssn", is_id=True), _attr("passport", is_id=True)))
     result, warnings = _lower(model)
 
     identifiers = [a for a in _classes(result)["Person"].attributes if a.is_id]
@@ -182,12 +220,10 @@ def test_only_the_first_identifier_attribute_is_kept():
 def test_generalization_cycles_are_broken():
     """``Class.all_parents()`` recurses without a visited set, so one cycle
     hangs the first consumer that walks the hierarchy."""
-    model = UMLModel()
-    for name in ("A", "B", "C"):
-        model.classes[name] = UMLClass(name=name)
-    model.generalizations.append(Generalization(subclass="A", superclass="B"))
-    model.generalizations.append(Generalization(subclass="B", superclass="C"))
-    model.generalizations.append(Generalization(subclass="C", superclass="A"))
+    model = _model(
+        _cls("A"), _cls("B"), _cls("C"),
+        _gen("A", "B"), _gen("B", "C"), _gen("C", "A"),
+    )
     result, warnings = _lower(model)
 
     assert len(result.domain_model.generalizations) == 2
@@ -204,16 +240,11 @@ def test_generalization_cycles_are_broken():
 
 def _assoc_model(targets):
     """One source class with an association named ``worksFor`` per target."""
-    model = UMLModel()
-    model.classes["Person"] = UMLClass(name="Person")
-    for target in targets:
-        model.classes[target] = UMLClass(name=target)
-        model.associations.append(Association(
-            name="worksFor",
-            source=AssociationEnd(type="Person", role=None, lower=0, upper="*", navigable=False),
-            target=AssociationEnd(type=target, role="worksFor", lower=0, upper="*"),
-        ))
-    return model
+    return _model(
+        _cls("Person"),
+        *[_cls(target) for target in targets],
+        *[_assoc("worksFor", "Person", target, "worksFor") for target in targets],
+    )
 
 
 def test_fan_out_is_merged_onto_an_abstract_union_class():
@@ -234,15 +265,10 @@ def test_fan_out_is_merged_onto_an_abstract_union_class():
 def test_reverse_end_is_named_and_uniquified():
     """The paper's model leaves the reverse end anonymous; BUML requires a name
     and rejects duplicates across the target's hierarchy."""
-    model = UMLModel()
-    model.classes["Person"] = UMLClass(name="Person")
-    model.classes["Org"] = UMLClass(name="Org")
-    for role in ("worksFor", "foundedBy"):
-        model.associations.append(Association(
-            name=role,
-            source=AssociationEnd(type="Person", role=None, lower=0, upper="*", navigable=False),
-            target=AssociationEnd(type="Org", role=role, lower=0, upper="*"),
-        ))
+    model = _model(
+        _cls("Person"), _cls("Org"),
+        *[_assoc(role, "Person", "Org", role) for role in ("worksFor", "foundedBy")],
+    )
     result, _ = _lower(model)
 
     reverse_names = {
@@ -252,13 +278,7 @@ def test_reverse_end_is_named_and_uniquified():
 
 
 def test_self_association_keeps_two_distinct_ends():
-    model = UMLModel()
-    model.classes["Person"] = UMLClass(name="Person")
-    model.associations.append(Association(
-        name="knows",
-        source=AssociationEnd(type="Person", role=None, lower=0, upper="*", navigable=False),
-        target=AssociationEnd(type="Person", role="knows", lower=0, upper="*"),
-    ))
+    model = _model(_cls("Person"), _assoc("knows", "Person", "Person", "knows"))
     result, _ = _lower(model)
 
     association = next(iter(result.domain_model.associations))
@@ -269,15 +289,10 @@ def test_self_association_keeps_two_distinct_ends():
 
 def test_association_names_are_uniquified():
     """``DomainModel.associations`` rejects duplicate association names."""
-    model = UMLModel()
-    for name in ("Person", "Org", "School"):
-        model.classes[name] = UMLClass(name=name)
-    for source in ("Person", "Org"):
-        model.associations.append(Association(
-            name="memberOf",
-            source=AssociationEnd(type=source, role=None, lower=0, upper="*", navigable=False),
-            target=AssociationEnd(type="School", role=f"memberOf{source}", lower=0, upper="*"),
-        ))
+    model = _model(
+        _cls("Person"), _cls("Org"), _cls("School"),
+        *[_assoc("memberOf", source, "School", f"memberOf{source}") for source in ("Person", "Org")],
+    )
     result, _ = _lower(model)
 
     names = {a.name for a in result.domain_model.associations}
@@ -312,13 +327,11 @@ def test_a_role_an_ancestor_already_provides_is_dropped(tmp_path: Path):
 
 
 def _model_with_invariant(body: str, *, with_feature: bool = True) -> UMLModel:
-    model = UMLModel()
-    cls = UMLClass(name="Person")
-    if with_feature:
-        cls.attributes.append(Attribute(name="name", type="str", lower=0, upper="*"))
-    cls.invariants.append(OCLConstraint(context="Person", body=body, name="check"))
-    model.classes["Person"] = cls
-    return model
+    return _model(_cls(
+        "Person",
+        *([_attr("name")] if with_feature else []),
+        invariants=[_inv("Person", body)],
+    ))
 
 
 def test_expression_uses_the_shape_the_editor_requires():
@@ -387,18 +400,14 @@ def test_an_aux_class_invariant_resolves_through_its_own_declaration():
     about an attribute only its subclasses declare could never be checked. The
     class it constrains does not repeat the declaration: the aux class's carries
     the restriction's own multiplicity and is the one to keep."""
-    model = UMLModel()
-    aux = UMLClass(name="_min_1_name_str", is_auxiliary=True)
-    aux.attributes.append(Attribute(name="name", type="str", lower=1, upper="*"))
-    model.classes["_min_1_name_str"] = aux
-    person = UMLClass(name="Person")
-    person.attributes.append(Attribute(name="name", type="str", lower=0, upper="*"))
-    model.classes["Person"] = person
-    model.generalizations.append(
-        Generalization(subclass="Person", superclass="_min_1_name_str")
-    )
-    aux.invariants.append(
-        OCLConstraint(context="_min_1_name_str", body="self.name->size() >= 1", name="min")
+    model = _model(
+        _cls(
+            "_min_1_name_str", _attr("name", "str", 1, "*"),
+            invariants=[_inv("_min_1_name_str", "self.name->size() >= 1", "min")],
+            is_auxiliary=True,
+        ),
+        _cls("Person", _attr("name")),
+        _gen("Person", "_min_1_name_str"),
     )
     result, warnings = _lower(model)
 
@@ -418,16 +427,14 @@ def test_an_invariant_naming_a_feature_only_a_subclass_has_is_dropped():
     responsible for putting it on a class that owns what it navigates; the
     lowering does not go looking downwards for a class it would fit, because
     picking one silently narrows what the rule said."""
-    model = UMLModel()
-    model.classes["_min_1_name_str"] = UMLClass(name="_min_1_name_str", is_auxiliary=True)
-    person = UMLClass(name="Person")
-    person.attributes.append(Attribute(name="name", type="str", lower=0, upper="*"))
-    model.classes["Person"] = person
-    model.generalizations.append(
-        Generalization(subclass="Person", superclass="_min_1_name_str")
-    )
-    model.classes["_min_1_name_str"].invariants.append(
-        OCLConstraint(context="_min_1_name_str", body="self.name->size() >= 1", name="min")
+    model = _model(
+        _cls(
+            "_min_1_name_str",
+            invariants=[_inv("_min_1_name_str", "self.name->size() >= 1", "min")],
+            is_auxiliary=True,
+        ),
+        _cls("Person", _attr("name")),
+        _gen("Person", "_min_1_name_str"),
     )
     result, warnings = _lower(model)
 
@@ -436,14 +443,10 @@ def test_an_invariant_naming_a_feature_only_a_subclass_has_is_dropped():
 
 
 def test_constraint_names_are_uniquified():
-    model = UMLModel()
-    cls = UMLClass(name="Person")
-    cls.attributes.append(Attribute(name="name", type="str", lower=0, upper="*"))
-    for _ in range(3):
-        cls.invariants.append(
-            OCLConstraint(context="Person", body="self.name->size() > 0", name="check")
-        )
-    model.classes["Person"] = cls
+    model = _model(_cls(
+        "Person", _attr("name"),
+        invariants=[_inv("Person", "self.name->size() > 0") for _ in range(3)],
+    ))
     result, _ = _lower(model)
 
     names = {c.name for c in result.domain_model.constraints}

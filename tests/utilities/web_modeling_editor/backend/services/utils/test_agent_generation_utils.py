@@ -6,6 +6,9 @@ import os
 import zipfile
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+
 from besser.utilities.web_modeling_editor.backend.constants.constants import AGENT_TEMP_DIR_PREFIX
 from besser.utilities.web_modeling_editor.backend.services.utils import agent_generation_utils as utils
 
@@ -118,3 +121,57 @@ def test_multi_language_generation_without_targets(monkeypatch, tmp_path):
     with zipfile.ZipFile(io.BytesIO(buf.getvalue())) as zf:
         assert {n.split("/")[0] for n in zf.namelist()} == {"default"}
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("bad", [
+    "../../../tmp/pwned",
+    "..",
+    "fr/../../x",
+    "fr\\..\\x",
+    "/etc/passwd",
+    "fr.py",
+    "",
+    " french",
+    "default",          # would clobber the default variant's folder
+    123,
+    None,
+    "a" * 200,
+])
+def test_multi_language_generation_rejects_unsafe_language_codes(monkeypatch, tmp_path, bad):
+    """Target languages become file and ZIP entry names; anything that is not
+    a plain language name or code must be refused before a file is written."""
+    _patch(monkeypatch, tmp_path)
+    config = {"languages": {"source": "english", "target": ["french", bad]}}
+
+    with pytest.raises(HTTPException) as excinfo:
+        _run({"model": {}, "config": config}, config, config["languages"])
+
+    assert excinfo.value.status_code == 400
+    assert "language" in str(excinfo.value.detail).lower()
+    assert _FakeAgentGenerator.instances == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_multi_language_generation_rejects_duplicate_targets(monkeypatch, tmp_path):
+    _patch(monkeypatch, tmp_path)
+    config = {"languages": {"target": ["french", "French"]}}
+    with pytest.raises(HTTPException) as excinfo:
+        _run({"model": {}, "config": config}, config, config["languages"])
+    assert excinfo.value.status_code == 400
+
+
+def test_multi_language_generation_rejects_non_list_targets(monkeypatch, tmp_path):
+    _patch(monkeypatch, tmp_path)
+    config = {"languages": {"target": "../x"}}
+    with pytest.raises(HTTPException) as excinfo:
+        _run({"model": {}, "config": config}, config, config["languages"])
+    assert excinfo.value.status_code == 400
+
+
+@pytest.mark.parametrize("good", ["fr", "pt-BR", "zh_Hant", "luxembourgish", "en-GB-oxendict"])
+def test_multi_language_generation_accepts_language_names_and_codes(monkeypatch, tmp_path, good):
+    _patch(monkeypatch, tmp_path)
+    config = {"languages": {"target": [good]}}
+    buf, _ = _run({"model": {}, "config": config}, config, config["languages"])
+    with zipfile.ZipFile(io.BytesIO(buf.getvalue())) as zf:
+        assert f"{good}/agent_model_{good}.py" in zf.namelist()

@@ -172,6 +172,57 @@ def normalize_personalization_mapping(
     json_data['config'] = config
 
 
+# A target language becomes a file name (``agent_model_<lang>.py``) and a ZIP
+# folder (``<lang>/...``), so it must be a plain language name or code: the
+# editor sends names such as ``french`` or ``luxembourgish``; codes such as
+# ``fr``, ``pt-BR`` or ``zh_Hant`` are accepted too. No separators, dots or
+# ``..``, which would let a request write outside its temp directory or plant
+# ``../`` entries in the archive (zip slip).
+_LANGUAGE_CODE_RE = re.compile(r'^[A-Za-z]{2,32}(?:[-_][A-Za-z0-9]{1,8}){0,4}$')
+
+# Folder of the language-less variant; a target with this name would overwrite it.
+_DEFAULT_VARIANT = 'default'
+
+
+def _validated_target_languages(target_langs: Any) -> List[str]:
+    """Return *target_langs* if every entry is a safe, unique language name or code.
+
+    Raises:
+        HTTPException: 400 naming the offending value otherwise.
+    """
+    if target_langs is None:
+        return []
+    if not isinstance(target_langs, list):
+        raise HTTPException(
+            status_code=400,
+            detail="languages.target must be a list of language names or codes",
+        )
+    seen: Set[str] = set()
+    for lang in target_langs:
+        if not isinstance(lang, str) or not _LANGUAGE_CODE_RE.fullmatch(lang):
+            shown = repr(lang)[:60]
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Invalid target language {shown}: use a language name or code "
+                    "made of letters, optionally with '-' or '_' subtags (e.g. 'french', 'fr', 'pt-BR')"
+                ),
+            )
+        folded = lang.lower()
+        if folded == _DEFAULT_VARIANT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid target language {lang!r}: the name is reserved for the default agent",
+            )
+        if folded in seen:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Duplicate target language {lang!r}",
+            )
+        seen.add(folded)
+    return target_langs
+
+
 async def handle_multi_language_generation(
     json_data: dict,
     config: dict,
@@ -200,7 +251,7 @@ async def handle_multi_language_generation(
         ``(zip_buffer, filename)`` tuple ready to be wrapped in a response.
     """
     source_lang = languages.get('source')
-    target_langs = languages.get('target') or []
+    target_langs = _validated_target_languages(languages.get('target'))
     config_yaml = json_data.get('configYaml')
 
     # Each variant keeps its own (agent_model, lang, config) so the generator
@@ -217,7 +268,7 @@ async def handle_multi_language_generation(
         default_json_data['config'] = {
             k: v for k, v in default_json_data['config'].items() if k != 'languages'
         }
-    variants.append((process_agent_diagram(default_json_data), 'default', default_config))
+    variants.append((process_agent_diagram(default_json_data), _DEFAULT_VARIANT, default_config))
 
     # Agents for each target language
     for lang in target_langs:

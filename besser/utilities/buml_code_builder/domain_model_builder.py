@@ -4,13 +4,15 @@ Domain Model Builder
 This module generates Python code for BUML domain models and object models.
 """
 
+import keyword
 import logging
 import os
-from typing import Optional
+from typing import Iterable, Optional
 from besser.BUML.metamodel.structural.structural import (
     Class,
     DomainModel,
     AssociationClass,
+    Enumeration,
     MethodImplementationType,
 )
 from besser.BUML.metamodel.object.object import ObjectModel
@@ -42,6 +44,50 @@ def _timestamp_line(element) -> str:
     """``,\n    timestamp=...`` for a multi-line constructor call, or ``""``."""
     expr = timestamp_expr(element)
     return f",\n    timestamp={expr}" if expr else ""
+
+
+# Every name the generated script binds or reads besides its own element
+# variables: the structural imports, ``datetime`` (timestamps), ``ObjectModel``,
+# the ``set()`` builtin and the names read inside the ``except NameError``
+# guards. An element variable with one of these names would shadow it.
+_SCRIPT_NAMES = frozenset({
+    "Class", "Property", "Method", "Parameter",
+    "BinaryAssociation", "Generalization", "DomainModel",
+    "Enumeration", "EnumerationLiteral", "Multiplicity",
+    "StringType", "IntegerType", "FloatType", "BooleanType",
+    "TimeType", "DateType", "DateTimeType", "TimeDeltaType",
+    "AnyType", "Constraint", "AssociationClass", "Metadata", "MethodImplementationType",
+    "datetime", "ObjectModel", "set", "NameError", "sm", "qc", "nn_model",
+})
+
+
+class _ElementVarNames:
+    """One unique, non-shadowing Python variable per association / constraint.
+
+    Their names are user-typed and were written raw, so an association named
+    ``datetime`` (or ``Multiplicity``, ``set``, ``class``, or the same name as a
+    class) broke or silently corrupted the script. Names are minted on first use
+    and cached per element, so the declaration and every later reference agree.
+    """
+
+    def __init__(self, taken: Iterable[str]):
+        self._taken = set(taken)
+        self._by_element: dict = {}
+
+    def name_for(self, element) -> str:
+        key = id(element)
+        if key in self._by_element:
+            return self._by_element[key]
+        base = safe_var_name(element.name, lowercase=False)
+        if keyword.iskeyword(base) or base in _SCRIPT_NAMES:
+            base = f"{base}_"
+        candidate, suffix = base, 2
+        while candidate in self._taken or keyword.iskeyword(candidate):
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        self._taken.add(candidate)
+        self._by_element[key] = candidate
+        return candidate
 
 
 def _method_var_name(method) -> str:
@@ -326,6 +372,21 @@ def domain_model_to_code(
                 f.write(f"{cls_var_name}.methods={{{methods_str}}}\n")
             f.write("\n")
 
+        # Association and constraint variables must not shadow anything else
+        # the script binds or reads.
+        taken = set(_SCRIPT_NAMES) | {model_var_name, metadata_var_name, object_model_var_name}
+        for type_ in model.types:
+            if isinstance(type_, (Class, Enumeration)):
+                type_var = safe_class_name(type_.name)
+                taken.add(type_var)
+                for attr in getattr(type_, "attributes", None) or ():
+                    taken.add(f"{type_var}_{attr.name}")
+                for method in getattr(type_, "methods", None) or ():
+                    taken.add(f"{type_var}_m_{_method_var_name(method)}")
+        for gen in model.generalizations:
+            taken.add(f"gen_{gen.specific.name}_{gen.general.name}")
+        element_vars = _ElementVarNames(taken)
+
         # Get the associations that are not part of association classes
         association_class_associations = [ac.association for ac in association_classes]
         regular_associations = [assoc for assoc in sort(model.associations) if assoc not in association_class_associations]
@@ -350,7 +411,7 @@ def domain_model_to_code(
 
                 # Write the BinaryAssociation with each property on a new line
                 f.write(
-                    f"{assoc.name}: BinaryAssociation = BinaryAssociation(\n"
+                    f"{element_vars.name_for(assoc)}: BinaryAssociation = BinaryAssociation(\n"
                     f"    name=\"{_escape_python_string(assoc.name)}\",\n"
                     "    ends={\n        " +
                     ",\n        ".join(ends_str) +
@@ -383,7 +444,7 @@ def domain_model_to_code(
 
                 # Write the BinaryAssociation with each property on a new line
                 f.write(
-                    f"{assoc.name}: BinaryAssociation = BinaryAssociation(\n"
+                    f"{element_vars.name_for(assoc)}: BinaryAssociation = BinaryAssociation(\n"
                     f"    name=\"{_escape_python_string(assoc.name)}\",\n"
                     "    ends={\n        " +
                     ",\n        ".join(ends_str) +
@@ -481,7 +542,7 @@ def domain_model_to_code(
                 # Now create the association class
                 f.write(f"{ac_var_name} = AssociationClass(\n")
                 f.write(f"    name=\"{_escape_python_string(ac.name)}\",\n")
-                f.write(f"    {attributes_str}association={assoc.name}{methods_str}{timestamp_kwarg(ac)}\n")
+                f.write(f"    {attributes_str}association={element_vars.name_for(assoc)}{methods_str}{timestamp_kwarg(ac)}\n")
                 f.write(")\n\n")
             f.write("\n")
 
@@ -541,14 +602,11 @@ def domain_model_to_code(
                 # identifier on the LHS — must go through ``safe_var_name``
                 # to neutralize any character that would let the value
                 # escape into executable code at ``exec()`` time.
-                _emit_constraint_decl(
-                    constraint,
-                    safe_var_name(constraint.name, lowercase=False),
-                )
+                _emit_constraint_decl(constraint, element_vars.name_for(constraint))
             for constraint, method, kind, cls in method_contracts:
                 cls_var = safe_class_name(cls.name)
                 method_var = f"{cls_var}_m_{_method_var_name(method)}"
-                contract_var = safe_var_name(constraint.name, lowercase=False)
+                contract_var = element_vars.name_for(constraint)
                 _emit_constraint_decl(constraint, contract_var)
                 f.write(f"{method_var}.add_{kind}({contract_var})\n")
             f.write("\n")
@@ -580,12 +638,12 @@ def domain_model_to_code(
         f.write(f"    types={_set_literal(types_str)},\n")
 
         # Include both regular associations and those used in association classes
-        all_assoc_names = ', '.join([assoc.name for assoc in regular_associations] +
-                                    [ac.association.name for ac in association_classes])
+        all_assoc_names = ', '.join([element_vars.name_for(assoc) for assoc in regular_associations] +
+                                    [element_vars.name_for(ac.association) for ac in association_classes])
         f.write(f"    associations={_set_literal(all_assoc_names)},\n")
 
         if hasattr(model, 'constraints') and model.constraints:
-            constraints_str = ', '.join(c.name.replace("-", "_") for c in sort(model.constraints))
+            constraints_str = ', '.join(element_vars.name_for(c) for c in sort(model.constraints))
             f.write(f"    constraints={{{constraints_str}}},\n")
         gen_names = ', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))
         f.write(f"    generalizations={_set_literal(gen_names)},\n")

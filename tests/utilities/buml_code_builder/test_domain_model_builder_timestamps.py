@@ -147,6 +147,53 @@ def test_class_named_datetime_does_not_shadow_the_module(tmp_path):
     assert rebuilt.timestamp == _ts(1)
 
 
+def _clash_model(assoc_names, constraint_names) -> DomainModel:
+    """A model whose association and constraint names collide with names the
+    generated script itself relies on (imports, builtins, class variables)."""
+    a = Class(name="A", timestamp=_ts(1))
+    b = Class(name="B", timestamp=_ts(2))
+    associations = {
+        BinaryAssociation(name=name, timestamp=_ts(10 + i), ends={
+            Property(name=f"a{i}", type=a, timestamp=_ts(30 + i)),
+            Property(name=f"b{i}", type=b, multiplicity=Multiplicity(0, "*"), timestamp=_ts(50 + i)),
+        })
+        for i, name in enumerate(assoc_names)
+    }
+    constraints = {
+        Constraint(name=name, context=a, language="OCL", timestamp=_ts(70 + i),
+                   expression="context A inv: true")
+        for i, name in enumerate(constraint_names)
+    }
+    return DomainModel(name="Clash", types={a, b}, associations=associations,
+                       constraints=constraints, timestamp=_ts(90))
+
+
+_CLASHING_NAMES = ["datetime", "Multiplicity", "Property", "set", "class", "A", "domain_model", "sm"]
+
+
+def test_association_and_constraint_names_do_not_shadow_script_names(tmp_path):
+    """Association and constraint variables used the raw element name, so an
+    association called ``datetime`` replaced the module before the next
+    ``datetime.datetime.fromisoformat(...)`` and the script failed to run."""
+    model = _clash_model(_CLASHING_NAMES, ["datetime", "Constraint", "DomainModel", "None"])
+    code = _generate(model, tmp_path)
+    namespace: dict = {}
+    exec(code, namespace)
+    rebuilt = namespace["domain_model"]
+    assert _timestamps(rebuilt) == _timestamps(model)
+    assert {assoc.name for assoc in rebuilt.associations} == set(_CLASHING_NAMES)
+    assert {c.name for c in rebuilt.constraints} == {"datetime", "Constraint", "DomainModel", "None"}
+    # Deterministic, and a fixed point once rebuilt.
+    assert _generate(model, tmp_path, "again.py") == code
+    assert _generate(rebuilt, tmp_path, "rebuilt.py") == code
+
+
+def test_association_named_datetime_round_trips_through_the_editor_loader(tmp_path):
+    model = _clash_model(["datetime"], [])
+    parsed = parse_buml_content(_generate(model, tmp_path))
+    assert _timestamps(parsed) == _timestamps(model)
+
+
 def test_defaulted_timestamps_are_not_emitted(tmp_path):
     """A timestamp left to the creation-time default is not written out, so a
     model built without explicit timestamps generates the same code as before."""

@@ -35,6 +35,15 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import rdflib
+from besser.BUML.metamodel.kg.constants import (
+    CONSTRAINT_TARGET_CLASS,
+    CONSTRAINT_TARGET_PROPERTY,
+    OWL as OWL_NS,
+    SH as SH_NS,
+    SH_PATH,
+    SH_PROPERTY,
+    SH_TARGET_CLASS,
+)
 from rdflib import Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS
 
@@ -48,13 +57,6 @@ from besser.BUML.metamodel.kg import (
     KGProperty,
     KGPropertyConstraint,
     KnowledgeGraph,
-)
-from besser.BUML.metamodel.kg.constants import (
-    CONSTRAINT_TARGET_CLASS,
-    CONSTRAINT_TARGET_PROPERTY,
-    SH_PATH,
-    SH_PROPERTY,
-    SH_TARGET_CLASS,
 )
 from besser.utilities.kg_to_owl import (
     DEFAULT_NAMESPACE,
@@ -71,8 +73,8 @@ from besser.utilities.kg_to_owl import (
 
 from besser.BUML.notations.kg_to_buml._common import KGConversionWarning, add_warning
 
-SH = rdflib.Namespace("http://www.w3.org/ns/shacl#")
-_OWL_NS = "http://www.w3.org/2002/07/owl#"
+SH = rdflib.Namespace(SH_NS)
+_OWL_NS = OWL_NS
 
 __all__ = ["kg_to_rdf", "DEFAULT_NAMESPACE"]
 

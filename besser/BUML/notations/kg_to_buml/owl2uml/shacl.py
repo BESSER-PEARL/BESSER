@@ -19,8 +19,11 @@ from __future__ import annotations
 from rdflib import Namespace, URIRef, Literal
 from rdflib.namespace import RDF
 from rdflib.collection import Collection as RDFList
+from besser.BUML.metamodel.kg.constants import (
+    SH as SH_NS,
+)
 
-SH = Namespace("http://www.w3.org/ns/shacl#")
+SH = Namespace(SH_NS)
 
 
 def _regex_literal(s: str) -> str:

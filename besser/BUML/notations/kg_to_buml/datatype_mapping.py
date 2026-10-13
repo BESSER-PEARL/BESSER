@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
+from besser.BUML.metamodel.kg.constants import RDF as RDF_NS, RDFS as RDFS_NS, XSD as XSD_NS
+
 from besser.BUML.metamodel.structural import (
     AnyType,
     BooleanType,
@@ -18,7 +20,7 @@ from besser.BUML.metamodel.structural import (
 )
 
 
-_XSD = "http://www.w3.org/2001/XMLSchema#"
+_XSD = XSD_NS
 
 # Map from full XSD datatype IRI to BESSER primitive.
 _XSD_TO_PRIMITIVE: dict[str, PrimitiveDataType] = {
@@ -66,9 +68,9 @@ _XSD_TO_PRIMITIVE: dict[str, PrimitiveDataType] = {
     f"{_XSD}time": TimeType,
     f"{_XSD}duration": TimeDeltaType,
     # RDF-flavoured "any"
-    "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString": StringType,
-    "http://www.w3.org/2000/01/rdf-schema#Literal": StringType,
-    "http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral": StringType,
+    f"{RDF_NS}langString": StringType,
+    f"{RDFS_NS}Literal": StringType,
+    f"{RDF_NS}PlainLiteral": StringType,
 }
 
 

@@ -10,18 +10,25 @@ from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import urldefrag
 
 from besser.BUML.metamodel.kg import KGEdge, KGNode, KnowledgeGraph
+from besser.BUML.metamodel.kg.constants import (
+    OWL as OWL_NS,
+    RDF as RDF_NS,
+    RDFS as RDFS_NS,
+    SH as SH_NS,
+    XSD as XSD_NS,
+)
 
 # --- Well-known predicate IRIs (full form, as emitted by rdflib) ---
-RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
-RDFS_SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
-RDFS_DOMAIN = "http://www.w3.org/2000/01/rdf-schema#domain"
-RDFS_RANGE = "http://www.w3.org/2000/01/rdf-schema#range"
-RDFS_LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
+RDF_TYPE = f"{RDF_NS}type"
+RDFS_SUBCLASS_OF = f"{RDFS_NS}subClassOf"
+RDFS_DOMAIN = f"{RDFS_NS}domain"
+RDFS_RANGE = f"{RDFS_NS}range"
+RDFS_LABEL = f"{RDFS_NS}label"
 
 # --- Framework namespaces, used by the datatype-IRI predicates below ---
-XSD_NAMESPACE = "http://www.w3.org/2001/XMLSchema#"
-RDF_NAMESPACE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-RDFS_NAMESPACE = "http://www.w3.org/2000/01/rdf-schema#"
+XSD_NAMESPACE = XSD_NS
+RDF_NAMESPACE = RDF_NS
+RDFS_NAMESPACE = RDFS_NS
 
 
 def looks_like_datatype_iri(iri: Optional[str]) -> bool:
@@ -56,11 +63,11 @@ _all_datatype_refs = all_datatype_refs
 # produce user-facing BUML classes when the converter synthesises classes from
 # references.
 _META_VOCAB_NAMESPACES = (
-    "http://www.w3.org/2002/07/owl#",
-    "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
-    "http://www.w3.org/2000/01/rdf-schema#",
-    "http://www.w3.org/2001/XMLSchema#",
-    "http://www.w3.org/ns/shacl#",
+    OWL_NS,
+    RDF_NS,
+    RDFS_NS,
+    XSD_NS,
+    SH_NS,
 )
 
 

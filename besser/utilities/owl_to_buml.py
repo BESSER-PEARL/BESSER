@@ -52,13 +52,17 @@ from besser.BUML.metamodel.kg import (
 from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_CLASS,
     CONSTRAINT_TARGET_PROPERTY,
+    RDF as RDF_NS,
+    RDFS as RDFS_NS,
+    SH as SH_NS,
     SH_PROPERTY,
+    XSD as XSD_NS,
 )
 
 logger = logging.getLogger(__name__)
 
 
-SH = Namespace("http://www.w3.org/ns/shacl#")
+SH = Namespace(SH_NS)
 
 
 __all__ = ["owl_file_to_knowledge_graph"]
@@ -72,9 +76,9 @@ _PROPERTY_TYPES = {
 }
 _CLASS_TYPES = {OWL.Class, RDFS.Class}
 
-_XSD_NAMESPACE = "http://www.w3.org/2001/XMLSchema#"
-_RDF_NAMESPACE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-_RDFS_NAMESPACE = "http://www.w3.org/2000/01/rdf-schema#"
+_XSD_NAMESPACE = XSD_NS
+_RDF_NAMESPACE = RDF_NS
+_RDFS_NAMESPACE = RDFS_NS
 _DATATYPE_IRIS = {
     f"{_RDF_NAMESPACE}langString",
     f"{_RDF_NAMESPACE}PlainLiteral",

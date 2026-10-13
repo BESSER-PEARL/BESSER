@@ -38,6 +38,9 @@ from besser.BUML.metamodel.kg import (
 from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_CLASS,
     CONSTRAINT_TARGET_PROPERTY,
+    OWL as OWL_NS,
+    RDF as RDF_NS,
+    XSD as XSD_NS,
 )
 
 from besser.BUML.notations.kg_to_buml._common import (
@@ -69,9 +72,9 @@ __all__ = [
 ]
 
 
-_XSD_STRING = "http://www.w3.org/2001/XMLSchema#string"
-_RDF_FIRST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"
-_RDF_REST = "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"
+_XSD_STRING = f"{XSD_NS}string"
+_RDF_FIRST = f"{RDF_NS}first"
+_RDF_REST = f"{RDF_NS}rest"
 
 ORPHAN_DESCRIPTION_TRUNCATE = 25
 _CLASS_ANCHOR_PREDICATES = frozenset({RDF_TYPE, RDFS_DOMAIN, RDFS_RANGE, RDFS_SUBCLASS_OF})
@@ -398,7 +401,7 @@ def _detect_unattached_restrictions(kg: KnowledgeGraph, indexes) -> List[KGIssue
     """
     from besser.BUML.metamodel.kg import KGPropertyConstraint
     out: List[KGIssue] = []
-    LINK_PREDS = {RDFS_SUBCLASS_OF, "http://www.w3.org/2002/07/owl#equivalentClass"}
+    LINK_PREDS = {RDFS_SUBCLASS_OF, f"{OWL_NS}equivalentClass"}
 
     # PropertyConstraints with at least one outgoing edge to a Property are
     # NOT considered unattached, regardless of whether a class wraps them.

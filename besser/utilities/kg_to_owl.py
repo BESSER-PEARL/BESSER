@@ -38,6 +38,7 @@ from besser.BUML.metamodel.kg.constraint_specs import LOGICAL_KINDS
 from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_CLASS,
     CONSTRAINT_TARGET_PROPERTY,
+    SH as SH_NS,
     SH_PROPERTY,
 )
 
@@ -50,7 +51,7 @@ __all__ = [
 
 
 DEFAULT_NAMESPACE = "http://besser-pearl.org/kg#"
-SH = Namespace("http://www.w3.org/ns/shacl#")
+SH = Namespace(SH_NS)
 
 logger = logging.getLogger(__name__)
 

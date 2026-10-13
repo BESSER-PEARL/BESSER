@@ -37,7 +37,7 @@ from besser.BUML.metamodel.kg.axioms import (
     PropertyChainAxiom,
     SubPropertyOfAxiom,
 )
-from besser.BUML.metamodel.kg.constants import OWL as OWL_NS
+from besser.BUML.metamodel.kg.constants import OWL as OWL_NS, XSD as XSD_NS
 from besser.BUML.notations.kg_to_buml._common import (
     RDFS_DOMAIN,
     RDFS_RANGE,
@@ -632,7 +632,7 @@ def _h_treat_as_string(kg: KnowledgeGraph, res: KGResolution) -> None:
         if not (e.source.id == prop.id and normalize_predicate(e.iri) == RDFS_RANGE)
     }
     # Ensure xsd:string node exists.
-    xsd_string = "http://www.w3.org/2001/XMLSchema#string"
+    xsd_string = f"{XSD_NS}string"
     target = kg.get_node(xsd_string)
     new_nodes = set(kg.nodes)
     if target is None:

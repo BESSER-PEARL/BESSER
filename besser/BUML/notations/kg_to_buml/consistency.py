@@ -35,6 +35,9 @@ from besser.BUML.metamodel.kg import (
 )
 from besser.BUML.notations.kg_to_buml.preflight import kg_signature
 from besser.utilities.kg_to_owl import DEFAULT_NAMESPACE, _slugify, knowledge_graph_to_rdf
+from besser.BUML.metamodel.kg.constants import (
+    SH as SH_NS,
+)
 
 
 __all__ = [
@@ -44,7 +47,7 @@ __all__ = [
 ]
 
 
-SH = rdflib.Namespace("http://www.w3.org/ns/shacl#")
+SH = rdflib.Namespace(SH_NS)
 
 
 # SHACL-AF constructs that make a validator EXECUTE something the KG author

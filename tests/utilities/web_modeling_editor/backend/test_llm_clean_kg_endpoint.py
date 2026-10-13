@@ -407,7 +407,7 @@ def test_classify_orphans_rejects_an_oversized_node_list(client, monkeypatch):
     Without a ceiling, a single request walks that chain for as long as the
     caller cares to make it, holding a worker the whole time.
     """
-    from besser.utilities.web_modeling_editor.backend.routers.conversion_router import (
+    from besser.utilities.web_modeling_editor.backend.constants.constants import (
         MAX_ORPHAN_CLASSIFY_NODES,
     )
 

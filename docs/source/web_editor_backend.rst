@@ -14,6 +14,7 @@ services. Endpoints are organized by concern:
 
 - **``routers/generation_router.py``** -- Code generation (single-diagram and project-based) and agent-configuration recommendation
 - **``routers/conversion_router.py``** -- BUML import/export, CSV reverse engineering, image-to-model, SVG rendering
+- **``routers/kg_router.py``** -- Knowledge Graph endpoints: OWL/RDF import and export, KG-to-class-diagram conversion with its preflight and Refine-KG flow, consistency checking, and the LLM cleanup endpoints (see `Knowledge Graph Diagrams`_)
 - **``routers/validation_router.py``** -- Diagram validation (metamodel + OCL constraints)
 - **``routers/deployment_router.py``** -- Docker deployment and feedback
 - **``routers/spec_driven_router.py``** -- The :doc:`Spec-Driven Agent <spec_driven_agent/index>`: SSE generation runs, preview, config, durable run status and event replay, resume, cancel, download, and GitHub push/import

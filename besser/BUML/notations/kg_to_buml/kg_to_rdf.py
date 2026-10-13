@@ -68,10 +68,17 @@ from besser.utilities.kg_to_owl import (
     emit_rdf_list,
     emit_shacl_constraint,
     predicate_for_edge,
+    spec_to_literal,
     term_for_node,
 )
+from rdflib.namespace import XSD
 
-from besser.BUML.notations.kg_to_buml._common import KGConversionWarning, add_warning
+from besser.BUML.notations.kg_to_buml._common import (
+    KGConversionWarning,
+    add_warning,
+    is_meta_vocab,
+    looks_like_datatype_iri,
+)
 
 SH = rdflib.Namespace(SH_NS)
 _OWL_NS = OWL_NS
@@ -253,7 +260,6 @@ def _range_index(edges) -> Dict[str, List[str]]:
 
 
 def _declaration_for(node: KGNode, ranges) -> Optional[URIRef]:
-    from besser.BUML.notations.kg_to_buml._common import is_meta_vocab, looks_like_datatype_iri
 
     if is_meta_vocab(node.iri):
         return None
@@ -275,7 +281,6 @@ def _property_declaration(node: KGProperty, range_iris: List[str]) -> URIRef:
     lands as a (string) attribute rather than disappearing — the preflight
     ``PROPERTY_NO_RANGE`` issue is what prompts the user to give it a real one.
     """
-    from besser.BUML.notations.kg_to_buml._common import looks_like_datatype_iri
 
     kind = node.metadata.get("kind")
     if kind == "Object":
@@ -589,8 +594,6 @@ def _stage_owl_restriction(staged, pc: KGPropertyConstraint, idx, terms) -> None
 
 
 def _stage_restriction_value(staged, restriction, predicate, spec) -> None:
-    from besser.utilities.kg_to_owl import spec_to_literal
-    from rdflib.namespace import XSD
 
     kind = spec.get("kind")
     value = spec.get("value")
@@ -626,7 +629,6 @@ def _stage_shacl_property_shape(staged, pc: KGPropertyConstraint, idx, terms, re
 
 
 def _stage_shacl_node_shape(staged, nc: KGNodeConstraint, idx, resolve_ref) -> None:
-    from besser.utilities.kg_to_owl import term_for_node
 
     shape = term_for_node(nc, DEFAULT_NAMESPACE)
     staged.add((shape, RDF.type, SH.NodeShape))

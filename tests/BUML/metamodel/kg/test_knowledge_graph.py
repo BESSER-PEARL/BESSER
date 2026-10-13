@@ -101,7 +101,6 @@ def test_kgliteral_metadata_propagates():
 def test_kgedge_metadata_defaults_and_setter():
     c = KGClass(id="c1", label="C1")
     i = KGIndividual(id="i1", label="I1")
-    kg = KnowledgeGraph(name="graph", nodes={c, i})
 
     e = KGEdge(id="e1", source=i, target=c, label="type")
     assert e.metadata == {}

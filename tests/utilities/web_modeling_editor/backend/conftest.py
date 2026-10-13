@@ -9,8 +9,8 @@ to ``ASGITransport`` in 0.37.2. Driving the ASGI app through
 ``httpx.ASGITransport`` directly is therefore the only approach that works on
 httpx 0.27 and 0.28 alike.
 
-``test_api_integration.py`` documents and uses the same approach; this module
-lifts it into the ``client`` fixture every endpoint test shares.
+``test_api_integration.py`` builds its module-level client from the same class,
+so there is exactly one implementation of this approach.
 
 One behavioural note: ``ASGITransport`` does not run the app's lifespan, so
 the periodic temp-directory cleanup task never starts. No endpoint under test
@@ -69,6 +69,17 @@ class AsgiClient:
 
     def delete(self, url: str, **kwargs: Any) -> httpx.Response:
         return self.request("DELETE", url, **kwargs)
+
+
+@pytest.fixture(autouse=True)
+def isolate_backend_test_artifacts(tmp_path, monkeypatch):
+    """Keep generated test artifacts out of the repository root.
+
+    Applies to every test in this directory. It used to live only in
+    ``test_api_integration.py``, so the endpoint tests added alongside the KG
+    work ran with the repository as their working directory.
+    """
+    monkeypatch.chdir(tmp_path)
 
 
 @pytest.fixture(scope="session")

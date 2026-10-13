@@ -9,6 +9,7 @@ import tempfile
 import uuid
 import shutil
 from besser.BUML.metamodel.structural.structural import DomainModel
+from besser.BUML.metamodel.kg import KnowledgeGraph
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
@@ -125,13 +126,6 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     except ImportError:
         BPMNModel = None
 
-    # Import KnowledgeGraph locally: the kg metamodel pulls in rdflib-adjacent
-    # modules, and project export must keep working if that extra is absent.
-    try:
-        from besser.BUML.metamodel.kg import KnowledgeGraph
-    except ImportError:
-        KnowledgeGraph = None
-
     for model in project.models:
         if isinstance(model, DomainModel):
             if contains_user_class(model):
@@ -155,7 +149,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             nn_models.append(model)
         elif BPMNModel and isinstance(model, BPMNModel):
             bpmn_models.append(model)
-        elif KnowledgeGraph and isinstance(model, KnowledgeGraph):
+        elif isinstance(model, KnowledgeGraph):
             kg_models.append(model)
         elif isinstance(model, ComponentModel):
             component_models.append(model)

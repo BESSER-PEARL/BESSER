@@ -46,9 +46,13 @@ python tests/BUML/metamodel/structural/library/library.py           # standalone
 ### Linting
 ```bash
 # Exactly what CI runs. A bare `ruff check .` uses a different rule set and will disagree.
-ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741 \
-  --ignore E501 --exclude "*/BESSERActionLanguageParser.py"
+ruff check besser/ --select F841,F401,F541,F811,F821,E711,E721,E731,E741 \
+  --ignore E501 --exclude "*/BESSERActionLanguageParser.py" \
+  --per-file-ignores "besser/BUML/notations/mockup_to_buml/llm_assistant/**:F821"
 ```
+`F821` (undefined names) is on because `from __future__ import annotations` hides them from every other
+rule here. The `mockup_to_buml/llm_assistant` prompt examples are few-shot snippets, not importable
+modules, so they alone are exempt from it.
 
 ### Documentation
 ```bash

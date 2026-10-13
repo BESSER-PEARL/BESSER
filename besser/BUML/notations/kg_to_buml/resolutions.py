@@ -93,9 +93,10 @@ class KGResolution:
 
     Args:
         issue_id: The ``id`` of the :class:`KGIssue` this responds to.
-        choice: The ``key`` of the chosen :class:`KGResolutionOption`.
-        parameters: User-supplied values matching the option's
-            ``parameters_schema``.
+        choice: The ``key`` of the chosen action (a key of the handler table below).
+        parameters: The action's parameters. Their keys are whatever the
+            handler registered under ``choice`` reads (e.g. ``edge_id`` for
+            ``break_at_edge``).
     """
 
     issue_id: str
@@ -236,7 +237,7 @@ def _parent_root_classes_under_thing(kg: KnowledgeGraph, thing: KGClass) -> None
 
 
 # ----------------------------------------------------------------------
-# Handlers — keyed by KGResolutionOption.key
+# Handlers — keyed by the action key
 # ----------------------------------------------------------------------
 
 

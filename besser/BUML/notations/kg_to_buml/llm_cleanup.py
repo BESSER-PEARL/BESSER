@@ -16,7 +16,6 @@ parameters), and the list is capped at :data:`MAX_LLM_SUGGESTIONS`.
 from __future__ import annotations
 
 import json
-import logging
 from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -59,9 +58,6 @@ __all__ = [
     "analyze_kg_with_description",
     "classify_orphan_nodes_with_llm",
 ]
-
-
-logger = logging.getLogger(__name__)
 
 
 # Action keys the LLM is allowed to emit. Anything else is dropped during

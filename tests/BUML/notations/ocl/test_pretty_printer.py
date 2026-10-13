@@ -91,3 +91,35 @@ def test_collection_operation_output_reparses(model):
     twice = pretty_print(parse_ocl(once, model))
     assert once == source
     assert twice == once
+
+
+# ---------------------------------------------------------------------------
+# Attributes named after lexer keywords (`date`, `size`)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def keyword_model():
+    from besser.BUML.metamodel.structural import (
+        Class, DateType, DomainModel, IntegerType, Property,
+    )
+
+    record = Class(name="Record", attributes={
+        Property(name="date", type=DateType),
+        Property(name="size", type=IntegerType),
+        Property(name="pages", type=IntegerType),
+    })
+    return DomainModel(name="Library", types={record})
+
+
+@pytest.mark.parametrize("source", [
+    "context Record inv: self.date > 0",
+    "context Record inv: self.size > 0",
+    "context Record inv: self.date->asSet()->forAll(v | self.pages > 0)",
+])
+def test_keyword_named_attribute_round_trips(source, keyword_model):
+    """``date`` and ``size`` are lexer keywords; the parser resolves them as
+    properties and the printer must emit them back the same way, so the pair is
+    a faithful round trip rather than parse-only (as ``test_date_attribute`` is).
+    """
+    assert pretty_print(parse_ocl(source, keyword_model)) == source

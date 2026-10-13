@@ -32,6 +32,7 @@ from besser.BUML.metamodel.kg import (
     KGLiteral,
     KGNode,
     KGProperty,
+    KGPropertyConstraint,
     KnowledgeGraph,
 )
 from besser.BUML.metamodel.kg.constants import (
@@ -399,7 +400,6 @@ def _detect_unattached_restrictions(kg: KnowledgeGraph, indexes) -> List[KGIssue
     softer warning when an attached property constraint has no owner class
     and therefore won't be lifted into a BUML multiplicity.
     """
-    from besser.BUML.metamodel.kg import KGPropertyConstraint
     out: List[KGIssue] = []
     LINK_PREDS = {RDFS_SUBCLASS_OF, f"{OWL_NS}equivalentClass"}
 
@@ -471,7 +471,6 @@ def _detect_unattached_restrictions(kg: KnowledgeGraph, indexes) -> List[KGIssue
 def _detect_unsupported_restrictions(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
     """Restrictions that *are* attached but use semantics with no clean BUML mapping
     (allValuesFrom, hasValue, hasSelf)."""
-    from besser.BUML.metamodel.kg import KGPropertyConstraint
     UNSUPPORTED = {"allValuesFrom", "hasValue", "hasSelf"}
     out: List[KGIssue] = []
     for blank in sorted_by_id([

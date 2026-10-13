@@ -392,13 +392,19 @@ def _parse_validation_report(
         msg_text = str(message) if message else _synthesize_message(focus, component_local, path_iri)
         constraint_label = _constraint_label_for(source_shape, path_iri, spec_kind, component_local, data_graph)
 
-        # Hashing `source_shape` directly made the id change on every call: the
-        # OWL shim mints fresh BNodes for its shapes, so their labels are
-        # random per run, and ids leaked into API responses and orderings.
-        # The resolved constraint node id is stable when there is one; the
-        # violated path identifies the shape otherwise.
+        # `constraint_label` stands in for `source_shape`, which must not be
+        # hashed: the OWL shim mints fresh BNodes for its shapes, so their
+        # labels are random per run and the ids changed on every call.
+        #
+        # Replacing it rather than merely dropping it is the point. The label
+        # is built from the shape's own SHACL triples, so it is stable across
+        # runs *and* still tells two shapes apart -- and something has to.
+        # Both halves of an owl:disjointWith breach share one focus node, one
+        # component and no path, so with nothing shape-derived in the identity
+        # they collapse onto one id and `_dedupe` drops a real finding.
         issue_id = _hash_id(
-            focus, constraint_node_id or "", path_iri or "", component, value
+            focus, constraint_node_id or "", path_iri or "",
+            component, value, constraint_label or "",
         )
 
         issues.append(
@@ -441,10 +447,22 @@ def _shape_value(g: rdflib.Graph, shape: Any, predicate: URIRef) -> Optional[Any
 
 
 def _format_literal_or_iri(term: Any) -> str:
+    """Render a SHACL constraint value for display.
+
+    Blank nodes become a fixed placeholder rather than ``str(term)``. Their
+    label is minted per run, so letting it through made the label a different
+    string on every call -- and :func:`_parse_validation_report` hashes the
+    label into the issue id, so an unstable label means an unstable id. A raw
+    ``Nb3f1a...`` told a reader nothing anyway. Reachable through the rare
+    ``sh:in``-of-blank-nodes and blank ``sh:hasValue`` shapes an imported
+    ontology may carry.
+    """
     if isinstance(term, URIRef):
         return _local_name(str(term))
     if isinstance(term, Literal):
         return f'"{term}"'
+    if isinstance(term, BNode):
+        return "[anonymous]"
     return str(term)
 
 
@@ -656,10 +674,22 @@ def _hash_id(*terms: Any) -> str:
 
 
 def _dedupe(issues: List[ConsistencyIssue]) -> List[ConsistencyIssue]:
-    seen: Set[Tuple[str, str, Tuple[str, ...]]] = set()
+    """Drop issues that merely repeat one already reported.
+
+    ``constraint_label`` is part of the key because it is often the only thing
+    separating two genuine findings: the two directions of an
+    ``owl:disjointWith`` breach agree on code, constraint node and affected
+    nodes, and differ only in which class the individual must not be.
+    """
+    seen: Set[Tuple[str, str, str, Tuple[str, ...]]] = set()
     out: List[ConsistencyIssue] = []
     for i in issues:
-        key = (i.code, i.constraint_node_id or "", tuple(i.affected_node_ids))
+        key = (
+            i.code,
+            i.constraint_node_id or "",
+            i.constraint_label or "",
+            tuple(i.affected_node_ids),
+        )
         if key in seen:
             continue
         seen.add(key)

@@ -169,6 +169,20 @@ def test_disjoint_with_violation():
     # The shim adds sh:NodeShape with sh:not on each side; both fire.
     assert _has_issue(report, code="NotConstraintComponent", focus="http://example.org/alice")
 
+    # Assert BOTH halves survive, not just that one issue exists. The two
+    # agree on code, focus node, affected nodes and (absent) path, so they are
+    # told apart only by the shape-derived constraint label -- and when the
+    # identity stopped carrying anything shape-derived, they collapsed onto one
+    # id and _dedupe silently dropped one. The endpoint test caught that; this
+    # assertion is what should have.
+    breaches = [i for i in report.issues if i.code == "NotConstraintComponent"]
+    assert len(breaches) == 2, [i.constraint_label for i in breaches]
+    assert len({i.id for i in breaches}) == 2, "both halves hashed to one id"
+    assert {i.constraint_label for i in breaches} == {
+        "must NOT be of class Person",
+        "must NOT be of class Project",
+    }
+
 
 def test_disjoint_with_compliant():
     kg = _kg(_PREFIX + """

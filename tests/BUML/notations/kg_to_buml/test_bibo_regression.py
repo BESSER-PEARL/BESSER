@@ -40,8 +40,16 @@ from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
 from besser.BUML.notations.kg_to_buml.owl2uml import build_uml_model
 from besser.BUML.notations.kg_to_buml.preflight import analyze_kg_for_class_diagram
 from besser.BUML.notations.kg_to_buml.resolutions import KGResolution
-from besser.BUML.notations.kg_to_buml.to_buml import _OCL_OPERATIONS
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+
+#: Names that may follow ``self.`` without being a feature. This audit keeps its
+#: own list rather than reading the lowering's: its job is to be an independent
+#: second opinion, and one that shares the code under test is not.
+_OCL_OPERATIONS = frozenset({
+    "oclIsKindOf", "oclIsTypeOf", "oclAsType", "oclIsNew", "oclIsUndefined",
+    "allInstances", "size", "language", "asSet", "asBag", "asSequence",
+    "isEmpty", "notEmpty", "sum", "count", "first", "last", "flatten",
+})
 
 FIXTURES = Path(__file__).parent / "fixtures" / "bibo"
 SCHEMA = FIXTURES / "bibo.ttl"

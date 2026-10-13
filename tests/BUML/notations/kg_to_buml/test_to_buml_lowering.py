@@ -339,6 +339,29 @@ def test_invariant_naming_an_absent_feature_is_dropped():
     assert "OCL_DROPPED_UNRESOLVED_FEATURE" in _codes(warnings)
 
 
+def test_invariant_the_ocl_parser_rejects_is_dropped_with_its_reason():
+    """Validation is the real parser's, not a regex's, so a body that is merely
+    malformed (rather than naming an absent feature) is caught too, and the
+    warning says why instead of shipping something no evaluator can read."""
+    result, warnings = _lower(_model_with_invariant("self.name >"))
+
+    assert not result.domain_model.constraints
+    invalid = [w for w in warnings if w.code == "OCL_DROPPED_INVALID"]
+    assert len(invalid) == 1
+    assert "Person" in invalid[0].message and "not valid OCL" in invalid[0].message
+    assert "OCL_DROPPED_UNRESOLVED_FEATURE" not in _codes(warnings)
+
+
+def test_a_second_hop_is_checked_not_just_the_first():
+    """The regex only ever inspected ``self.<first>``; the parser resolves the
+    whole path, so an invariant navigating through a real feature into one that
+    does not exist is dropped as well."""
+    result, warnings = _lower(_model_with_invariant("self.name.nonexistent > 0"))
+
+    assert not result.domain_model.constraints
+    assert _codes(warnings) & {"OCL_DROPPED_UNRESOLVED_FEATURE", "OCL_DROPPED_INVALID"}
+
+
 def test_invariant_naming_an_absent_type_is_dropped():
     result, warnings = _lower(_model_with_invariant("self.name->forAll(v | v.oclIsKindOf(Ghost))"))
 

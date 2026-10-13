@@ -54,6 +54,7 @@ from besser.BUML.metamodel.structural import (
 from besser.BUML.notations.kg_to_buml._common import KGConversionWarning, add_warning
 from besser.BUML.notations.kg_to_buml.datatype_mapping import PRIMITIVE_BY_NAME
 from besser.BUML.notations.kg_to_buml.owl2uml import naming
+from besser.BUML.notations.ocl.api import parse_ocl
 from besser.BUML.notations.kg_to_buml.owl2uml.model import (
     Association as UMLAssociation,
     Class as UMLClass,
@@ -63,15 +64,7 @@ from besser.BUML.notations.kg_to_buml.owl2uml.model import (
 __all__ = ["lower_to_buml", "LoweredModel"]
 
 
-#: OCL standard operations that may follow ``self.`` without naming a feature.
-_OCL_OPERATIONS = frozenset({
-    "oclIsKindOf", "oclIsTypeOf", "oclAsType", "oclIsNew", "oclIsUndefined",
-    "allInstances", "size", "language", "asSet", "asBag", "asSequence",
-    "isEmpty", "notEmpty", "sum", "count", "first", "last", "flatten",
-})
-
 _TYPE_CHECK_RE = re.compile(r"ocl(?:IsKindOf|IsTypeOf|AsType)\(\s*([A-Za-z_]\w*)\s*\)")
-_SELF_FEATURE_RE = re.compile(r"self\.([A-Za-z_]\w*)")
 
 
 class LoweredModel:
@@ -812,7 +805,6 @@ def _build_constraints(model: UMLModel, renames, classes, domain_model, out: Low
     warning rather than shipped in a form no evaluator can read.
     """
     type_names = {t.name for t in domain_model.types}
-    features = _reachable_features(classes, _hierarchy(domain_model))
     used_names: Set[str] = set()
 
     for invariant in model.ocl_constraints():
@@ -834,7 +826,7 @@ def _build_constraints(model: UMLModel, renames, classes, domain_model, out: Low
         if not _types_resolve(body, type_names, out, context_name):
             continue
 
-        if not _features_resolve(body, context_name, features, out):
+        if not _parses_against_model(body, context_name, context, domain_model, out):
             continue
 
         name = _unique_constraint_name(context_name, invariant, used_names)
@@ -846,65 +838,43 @@ def _build_constraints(model: UMLModel, renames, classes, domain_model, out: Low
         ))
 
 
-def _hierarchy(domain_model) -> Dict[str, List[str]]:
-    """``subclass -> superclasses`` adjacency over the model's generalizations."""
-    parents: Dict[str, List[str]] = {}
-    for generalization in sorted(
-        domain_model.generalizations,
-        key=lambda g: (g.specific.name, g.general.name),
-    ):
-        parents.setdefault(generalization.specific.name, []).append(generalization.general.name)
-    return parents
+_MISSING_PROPERTY_RE = re.compile(r"Property '([^']+)' not found")
 
 
-def _reachable_features(classes, parents) -> Dict[str, Set[str]]:
-    """Feature names an invariant on each class can actually navigate.
+def _parses_against_model(body, context_name, context, domain_model, out) -> bool:
+    """Whether the real OCL parser accepts ``body`` on ``context`` in the finished model.
 
-    Its own features plus every *ancestor's* — no more. This mirrors how OCL
-    resolves ``self.<feature>`` (``Class.all_attributes()`` and
-    ``all_association_ends()``, both walking ``all_parents()``), so a name that
-    passes here is one an evaluator will find.
+    This used to be two regexes: one pulled out every ``self.<name>`` and checked
+    it against a hand-built map of what each class can navigate, which only ever
+    looked at the first hop. The parser resolves the whole expression (every hop,
+    iterator variables, operations) against the same metamodel that
+    ``Class.all_attributes()`` / ``all_association_ends()`` walk, so there is no
+    second opinion to keep in step with it.
 
-    Neither descendants nor ``Thing`` are folded in. Both used to be, and both
-    certified invariants no evaluator could resolve: a feature on a subclass is
-    invisible from above, and ``owl:Thing`` is only an ancestor when the user
-    accepted the ``attach_to_thing`` recommendation for the domain-less property
-    that put it there.
+    A failure is dropped with a warning rather than shipped in a form no
+    evaluator can read. The type check stays separate (:func:`_types_resolve`):
+    the parser accepts ``oclIsKindOf(Unknown)``.
     """
-    direct: Dict[str, Set[str]] = {}
-    for name, buml_class in classes.items():
-        # ``association_ends()`` already returns the *opposite* ends — i.e. the
-        # names this class can navigate — so their names are the features.
-        direct[name] = (
-            {attribute.name for attribute in buml_class.attributes}
-            | {end.name for end in buml_class.association_ends()}
-        )
-
-    resolved: Dict[str, Set[str]] = {}
-    for name in classes:
-        names = set(direct.get(name, set()))
-        for ancestor in _closure(name, parents):
-            names |= direct.get(ancestor, set())
-        resolved[name] = names
-    return resolved
-
-
-def _features_resolve(body, context_name, features, out) -> bool:
-    """Whether the context can navigate every ``self.<feature>`` in ``body``."""
-    missing = sorted(
-        {f for f in _SELF_FEATURE_RE.findall(body) if f not in _OCL_OPERATIONS}
-        - features.get(context_name, set())
-    )
-    if not missing:
-        return True
-    add_warning(
-        out.warnings,
-        "OCL_DROPPED_UNRESOLVED_FEATURE",
-        f"Invariant on {context_name} navigates "
-        f"{', '.join('self.' + m for m in missing)}, which neither the class nor any of "
-        f"its ancestors has; dropped.",
-    )
-    return False
+    try:
+        parse_ocl(f"context {context_name} inv: {body}", domain_model, context_class=context)
+    except Exception as exc:   # BOCLSyntaxError, or ValueError for an unresolvable context
+        missing = _MISSING_PROPERTY_RE.search(str(exc))
+        if missing:
+            add_warning(
+                out.warnings,
+                "OCL_DROPPED_UNRESOLVED_FEATURE",
+                f"Invariant on {context_name} navigates self.{missing.group(1)}, which neither "
+                f"the class nor any of its ancestors has; dropped.",
+            )
+        else:
+            add_warning(
+                out.warnings,
+                "OCL_DROPPED_INVALID",
+                f"Invariant on {context_name} is not valid OCL against the model "
+                f"({str(exc).splitlines()[0] if str(exc) else type(exc).__name__}); dropped.",
+            )
+        return False
+    return True
 
 
 def _types_resolve(body, type_names, out, label) -> bool:

@@ -32,6 +32,11 @@ class BOCLVisitorImpl(BOCLVisitor):
             context_class = self.context_class
         if context_class is None:
             return None
+        if not hasattr(context_class, "all_attributes"):
+            # An iterator variable over a primitive-typed collection
+            # (``self.title->forAll(v | ...)``) is typed with a PrimitiveDataType,
+            # which has no properties to navigate. That is "not found", not a crash.
+            return None
         for attr in context_class.all_attributes():
             if attr.name == name:
                 return attr

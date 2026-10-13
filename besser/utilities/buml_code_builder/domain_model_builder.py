@@ -47,6 +47,17 @@ def _method_var_name(method) -> str:
     return safe_var_name(base, lowercase=False)
 
 
+def _object_var_name(obj) -> str:
+    """Python variable for an object instance: ``<safe name>_obj``.
+
+    Object names are user-controlled and may hold spaces, colons or other
+    characters that are not valid in an identifier, so they go through
+    ``safe_var_name``. Every reference to the object's variable must use
+    this helper so definitions and references stay in sync.
+    """
+    return f"{safe_var_name(obj.name_)}_obj"
+
+
 _IMPLEMENTATION_TYPE_VALUE_TO_NAME = {
     MethodImplementationType.NONE.value: MethodImplementationType.NONE.name,
     MethodImplementationType.CODE.value: MethodImplementationType.CODE.name,
@@ -618,7 +629,7 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
 
     # Write object instances using fluent API
     for obj in sorted(objectmodel.objects, key=lambda x: x.name_):
-        obj_var_name = f"{obj.name_.lower()}_obj"
+        obj_var_name = _object_var_name(obj)
         classifier_var_name = safe_class_name(obj.classifier.name)
 
         # Start the fluent API call using the proper syntax: Class("name")
@@ -663,8 +674,8 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
         for link in objectmodel.links:
             if len(link.connections) == 2:
                 end1, end2 = link.connections
-                obj1_var = f"{end1.object.name_.lower()}_obj"
-                obj2_var = f"{end2.object.name_.lower()}_obj"
+                obj1_var = _object_var_name(end1.object)
+                obj2_var = _object_var_name(end2.object)
                 end2_name = end2.association_end.name
 
                 key = (obj1_var, end2_name)
@@ -683,7 +694,7 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
 
     # Create the object model instance
     f.write("# Object Model instance\n")
-    objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
+    objects_str = ", ".join([_object_var_name(obj) for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
     f.write(f"{object_model_var_name}: ObjectModel = ObjectModel(\n")
     f.write(f"    name=\"{_escape_python_string(objectmodel.name)}\",\n")
     f.write(f"    objects={_set_literal(objects_str)}")

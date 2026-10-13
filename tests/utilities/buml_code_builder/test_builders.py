@@ -1554,6 +1554,53 @@ class TestProjectBuilder:
         object_models = [m for m in recreated.models if isinstance(m, ObjectModel)]
         assert len(object_models) == 2
 
+    def test_object_names_with_spaces_and_colons_roundtrip(self, tmp_path):
+        """Object names are user text: ``"my Book : Book"`` must not leak into
+        an identifier. The exported file must compile, and the link and the
+        ObjectModel must reference the same sanitized variables."""
+        from besser.BUML.metamodel.object import Link, LinkEnd
+
+        title = Property(name="title", type=StringType)
+        book = Class(name="Book", attributes={title})
+        library = Class(name="Library", attributes=set())
+        book_end = Property(name="books", type=book, multiplicity=Multiplicity(0, "*"))
+        library_end = Property(name="library", type=library, multiplicity=Multiplicity(1, 1))
+        holds = BinaryAssociation(name="holds", ends={book_end, library_end})
+        dm = DomainModel(name="LibraryModel", types={library, book}, associations={holds})
+
+        my_book = Object(
+            name="my Book : Book",
+            classifier=book,
+            slots=[AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="1984"))],
+        )
+        # Linked objects: the metamodel derives the re-created Link's name
+        # from both object names, and NamedElement forbids spaces there, so
+        # these use colons/dots only.
+        city_lib = Object(name="cityLib:Library", classifier=library)
+        other_book = Object(name="book.2:Book", classifier=book)
+        Link(name="holds_link", association=holds, connections=[
+            LinkEnd(name="library", association_end=library_end, object=city_lib),
+            LinkEnd(name="books", association_end=book_end, object=other_book),
+        ])
+        om = ObjectModel(name="Instances", objects={my_book, city_lib, other_book})
+
+        file_path = str(tmp_path / "odd_object_names.py")
+        project_to_code(Project(
+            name="OddNames", models=[dm, om], owner="tester", metadata=Metadata(description="odd names"),
+        ), file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        compile(code, file_path, "exec")
+        assert "my_book_book_obj = " in code
+        assert "citylib_library_obj.books = book_2_book_obj" in code
+
+        namespace: dict = {}
+        exec(code, namespace)
+        recreated = next(m for m in namespace["project"].models if isinstance(m, ObjectModel))
+        assert {obj.name for obj in recreated.objects} == {"my Book : Book", "cityLib:Library", "book.2:Book"}
+        assert len(recreated.links) == 1
+
     def test_project_multiple_object_models_roundtrip_no_empty_diagrams(self, tmp_path):
         """Regression for the WME #161 follow-up (round-trip import).
 

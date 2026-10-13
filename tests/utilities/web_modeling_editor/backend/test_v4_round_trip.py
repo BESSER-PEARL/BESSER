@@ -296,11 +296,11 @@ def test_v4_object_diagram_ingest():
     od_fixture = _load("object_diagram_basic.json")
     obj_model = process_object_diagram(od_fixture, domain_model)
     assert obj_model is not None
-    # The legacy processor keeps the full ``"name : Class"`` label.
-    assert any("myBook" in (o.name or "") for o in obj_model.objects)
+    # v4 ``data.name`` is the instance name only; the class comes from ``classId``.
+    my_book = next(o for o in obj_model.objects if o.name == "myBook")
+    assert my_book.classifier.name == "Book"
     # v4 attribute rows keep name and runtime value in separate fields
     # (``ObjectNodeAttribute.value``) — both slots must ingest, typed.
-    my_book = next(o for o in obj_model.objects if "myBook" in (o.name or ""))
     slot_values = {s.attribute.name: s.value.value for s in my_book.slots}
     assert slot_values == {"title": "1984", "pages": 328}
 

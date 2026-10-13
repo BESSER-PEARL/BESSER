@@ -14,7 +14,7 @@
         "width": 200, "height": 100,
         "measured": {"width": 200, "height": 100},
         "data": {
-          "name": "myBook : Book",
+          "name": "myBook",
           "classId": "n-book",
           "attributes": [
             {"id": "n-mybook-a-title", "name": "title", "attributeType": "str", "value": "1984"},

@@ -96,6 +96,30 @@ def _suggest_property_fix(
     return None
 
 
+def _suggest_case_fix(domain_model: DomainModel, error_text: str) -> Optional[str]:
+    """Point a failed navigation at a property that differs only in case.
+
+    An association end drawn without a role name is named after the
+    lower-cased class (``ScheduleSlot`` -> ``scheduleslot``), so the natural
+    ``s.scheduleSlot`` fails to resolve (BESSER-PEARL/BESSER#400). The name
+    may sit on any class reached by navigation, so every class is searched.
+
+    Returns the real property name when exactly one distinct name matches
+    case-insensitively, else ``None``.
+    """
+    match = _MISSING_PROPERTY_RE.match(error_text)
+    if not match:
+        return None
+    missing_name = match.group("name")
+    candidates = {
+        prop.name
+        for cls in domain_model.types if isinstance(cls, Class)
+        for prop in (*cls.attributes, *cls.association_ends())
+        if prop.name.lower() == missing_name.lower() and prop.name != missing_name
+    }
+    return candidates.pop() if len(candidates) == 1 else None
+
+
 def _typeref_name(t) -> str:
     """Best-effort BOCL type name for a Property/Parameter type."""
     if t is None:
@@ -271,6 +295,12 @@ def process_ocl_constraints(
             suggestion = _suggest_property_fix(domain_model, details.get("context"), str(e))
             if suggestion:
                 reason += f" (did you mean 'self.{suggestion}'?)"
+            elif (case_fix := _suggest_case_fix(domain_model, str(e))):
+                reason += (
+                    f" (did you mean '{case_fix}'? Names are case-sensitive, and an "
+                    f"association end without a role name is named after its class "
+                    f"in lower case)"
+                )
             warnings.append(reason)
             if issues is not None:
                 issues.append({**details, "code": "parse_error", "reason": reason})

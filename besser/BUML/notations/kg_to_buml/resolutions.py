@@ -43,6 +43,7 @@ from besser.BUML.notations.kg_to_buml._common import (
     RDFS_RANGE,
     RDFS_SUBCLASS_OF,
     RDF_TYPE,
+    acknowledge_issue,
     is_meta_vocab,
     looks_like_datatype_iri as _looks_like_datatype_iri,
     normalize_predicate,
@@ -126,6 +127,15 @@ def apply_resolutions(kg: KnowledgeGraph, resolutions: List[KGResolution]) -> Kn
     return new_kg
 
 
+#: Choices that leave the graph untouched because the converter's default already does the
+#: right thing. ``dispatch_decision`` records them as acknowledged. ``noop`` is excluded: it
+#: is the LLM cleanup's "omit this suggestion", not a decision about an analyzer issue.
+_KEEP_AS_IS_CHOICES = frozenset({
+    "keep_separate", "keep_both", "keep_as_string", "keep_as_single", "ignore",
+    "bump_to_unbounded", "record_as_description", "keep_cycle",
+})
+
+
 def dispatch_decision(kg: KnowledgeGraph, issue, decision: str) -> KnowledgeGraph:
     """Apply a single ``"accept"`` / ``"skip"`` decision against ``issue``.
 
@@ -145,7 +155,11 @@ def dispatch_decision(kg: KnowledgeGraph, issue, decision: str) -> KnowledgeGrap
         # Some issues have no actionable resolution on one side — treat as no-op.
         return kg
     res = KGResolution(issue_id=issue.id, choice=action.key, parameters=dict(action.parameters))
-    return apply_resolutions(kg, [res])
+    resolved = apply_resolutions(kg, [res])
+    if action.key in _KEEP_AS_IS_CHOICES:
+        # Nothing changed in the graph, so record the review or the issue is reported again.
+        acknowledge_issue(resolved, issue.id, issue.affected_node_ids)
+    return resolved
 
 
 def _next_edge_id(kg: KnowledgeGraph, prefix: str = "edge") -> str:

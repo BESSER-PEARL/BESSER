@@ -50,6 +50,7 @@ from besser.BUML.notations.kg_to_buml._common import (
     RDF_TYPE,
     build_indexes,
     find_cycles,
+    is_issue_acknowledged,
     short_digest,
     is_meta_vocab,
     local_name,
@@ -164,6 +165,16 @@ def analyze_kg_for_class_diagram(kg: KnowledgeGraph) -> KGPreflightReport:
     issues.extend(_detect_equivalent_classes(kg))
     issues.extend(_detect_inverse_properties(kg))
     issues.extend(orphan_issues)
+
+    # Issue ids are order-insensitive (``_issue_id`` sorts its parts), so a symmetric
+    # axiom declared in both directions (``a owl:inverseOf b`` + ``b owl:inverseOf a``)
+    # yields the same id twice. Duplicate ids would share one radio group / checkbox
+    # id in the UI, so keep only the first occurrence.
+    seen_ids: set = set()
+    issues = [i for i in issues if not (i.id in seen_ids or seen_ids.add(i.id))]
+
+    # Drop what the user already reviewed and kept as is (see ``acknowledge_issue``).
+    issues = [i for i in issues if not is_issue_acknowledged(kg, i.id, i.affected_node_ids)]
 
     return KGPreflightReport(
         issues=issues,

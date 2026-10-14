@@ -53,6 +53,35 @@ def all_datatype_refs(members: List[str]) -> bool:
     return bool(members) and all(looks_like_datatype_iri(m) for m in members)
 
 
+#: ``KGNode.metadata`` key listing the preflight issue ids the user already reviewed and
+#: resolved with a "keep as is" choice. Those choices change nothing in the graph (the
+#: converter's default already does the right thing), so without a durable record the
+#: analyzer would report the same issue again on every re-run. The marker lives in node
+#: metadata because that survives the JSON and BUML round-trips; its owner is the first
+#: node the issue affects.
+ACKNOWLEDGED_ISSUES_KEY = "acknowledgedIssues"
+
+
+def acknowledge_issue(kg: KnowledgeGraph, issue_id: str, affected_node_ids: List[str]) -> None:
+    """Record on ``kg`` that ``issue_id`` was reviewed and kept as is.
+
+    A no-op when the issue names no node present in the graph — it then simply keeps being
+    reported, as it did before acknowledgements existed.
+    """
+    owner = kg.get_node(affected_node_ids[0]) if affected_node_ids else None
+    if owner is None or not issue_id:
+        return
+    acknowledged = owner.metadata.setdefault(ACKNOWLEDGED_ISSUES_KEY, [])
+    if issue_id not in acknowledged:
+        acknowledged.append(issue_id)
+
+
+def is_issue_acknowledged(kg: KnowledgeGraph, issue_id: str, affected_node_ids: List[str]) -> bool:
+    """True when :func:`acknowledge_issue` recorded ``issue_id`` on ``kg``."""
+    owner = kg.get_node(affected_node_ids[0]) if affected_node_ids else None
+    return owner is not None and issue_id in owner.metadata.get(ACKNOWLEDGED_ISSUES_KEY, ())
+
+
 # Private aliases kept for call sites that imported the underscore names.
 _looks_like_datatype_iri = looks_like_datatype_iri
 _all_datatype_refs = all_datatype_refs

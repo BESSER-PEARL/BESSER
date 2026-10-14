@@ -78,6 +78,9 @@ from besser.spec_driven_agent.validation import frontend_source
 
 logger = logging.getLogger(__name__)
 
+# Dropped from the generator guides when the scaffold map (locate_code) is off.
+_LOCATE_CODE_HINT = "locate_code gives the exact place and lines. "
+
 
 # OpenCode edit.ts serializes the complete read/validate/write transaction by
 # resolved path. Share locks across executors too; weak references prevent the
@@ -521,6 +524,8 @@ class ToolExecutor:
         self.object_model = object_model
         self.bpmn_model = bpmn_model
         self.nn_model = nn_model
+        # False when the orchestrator switched the scaffold map off (no locate_code).
+        self.scaffold_map = True
         # Track files created by generators — used to warn if LLM overwrites them
         self._generator_files: set[str] = set()
         # Per generator output dir: file stamps taken just before the
@@ -1626,7 +1631,7 @@ class ToolExecutor:
             "To add a new endpoint: add it to the class's routers/<class_lower>.py with @router — "
             "a static path must go BEFORE the '/<class>/{<class>_id}/' route or that route "
             "captures it — or create a new router file and register it with include_router() "
-            "in main_api.py. locate_code gives the exact place and lines. "
+            "in main_api.py. " + _LOCATE_CODE_HINT +
             "NEVER rewrite these files — use modify_file for surgical edits."
         ),
         "generate_django": (
@@ -1685,10 +1690,13 @@ class ToolExecutor:
             model=self.domain_model, output_dir=out,
             http_methods=args.get("http_methods", ["GET", "POST", "PUT", "DELETE"]),
         ).generate()
+        guide = self._MODIFICATION_GUIDES.get("generate_fastapi_backend", "")
+        if not self.scaffold_map:
+            guide = guide.replace(_LOCATE_CODE_HINT, "")
         return {
             "status": "ok",
             "files": self._track_generated_files(out),
-            "guide": self._MODIFICATION_GUIDES.get("generate_fastapi_backend", ""),
+            "guide": guide,
         }
 
     def _gen_django(self, args: dict) -> dict:

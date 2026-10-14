@@ -162,6 +162,18 @@ def test_orchestrator_overview_honours_the_switch_and_small_windows(tmp_path, mo
     assert "locate_code" not in {t["name"] for t in off.tools}     # off = the pre-map baseline
 
 
+def test_the_fastapi_guide_names_locate_code_only_when_the_map_is_on(tmp_path, monkeypatch, library_book_author_model):
+    (tmp_path / "on").mkdir()
+    (tmp_path / "off").mkdir()
+    on = _orchestrator(tmp_path / "on", library_book_author_model)
+    assert "locate_code" in _run(on.executor, "generate_fastapi_backend", {})["guide"]
+
+    monkeypatch.setenv("BESSER_LLM_SCAFFOLD_MAP", "0")
+    off = _orchestrator(tmp_path / "off", library_book_author_model)
+    guide = _run(off.executor, "generate_fastapi_backend", {})["guide"]
+    assert "locate_code" not in guide and "in main_api.py. NEVER rewrite" in guide
+
+
 def test_an_empty_workspace_has_no_map(tmp_path):
     assert scaffold_overview(str(tmp_path)) == ""
     assert not os.listdir(tmp_path)

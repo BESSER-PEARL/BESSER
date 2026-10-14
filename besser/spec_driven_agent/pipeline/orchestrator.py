@@ -381,6 +381,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # Map switched off: no overview and no locate_code, i.e. the agent
             # works as it did before the map existed.
             self.tools = [t for t in self.tools if t.get("name") != "locate_code"]
+            self.executor.scaffold_map = False
         # Phase 3 auto-fix policy. False = report-only (industry default
         # for static analysers — fix on request, never blindly).
         self.auto_fix_issues = auto_fix_issues

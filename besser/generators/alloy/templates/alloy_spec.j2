@@ -105,6 +105,13 @@ one sig {{ literals | join(',\n') | indent(8) }} extends {{ e.name }} {}
 
 {% endfor %}
 {% endif -%}
+
+{% if "int" in basic_signatures or "float" in basic_signatures -%}
+fun abs[x: Int]: Int {
+  x < 0 => negate[x] else x
+}
+{% endif -%}
+
 pred instance_model {
 {% for sig in valid_sigsnv %}
   some {{ strname(sig) }}

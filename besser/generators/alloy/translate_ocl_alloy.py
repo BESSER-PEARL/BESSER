@@ -921,7 +921,16 @@ def parse_predicate(tokens: list[Token]):
                     if depth == 0:
                         break
                 sub.append(t)
-            return parse_predicate(sub)
+            node = parse_predicate(sub)
+            while peek() and peek()[0] == "dot" and peek(1) and peek(1)[0] == "call":
+                consume("dot")
+                callname = consume("call")[1]
+                args = []
+                if peek() and peek()[1] == "(":
+                    consume("(")
+                    args = _collect_args()
+                node = Call(node, callname, args)
+            return node
 
         raise ValueError(f"Unexpected token in parse_primary: {tok}")
 
@@ -1379,6 +1388,9 @@ def _translate_call(node: Call, inherits_from: dict, estado: TranslatorState) ->
 
     if name == "ocliskindof":
         return f"{expr} in {args[0]}"
+
+    if name == "abs":
+        return f"abs[{expr}]"
 
     if _field_type_of(expr, estado.data) == "str" or (
         isinstance(node.expr, Call)

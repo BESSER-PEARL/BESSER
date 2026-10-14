@@ -93,6 +93,18 @@ def test_ocl_multiplication_translates_with_correct_precedence():
     assert alloy == "fact{ all self:this/A|(add[self.A_z, mul[div[6, 2], 3]] > 10)}"
 
 
+def test_ocl_abs_translates_to_abs_call():
+    alloy = ocl_to_alloy({}, {"A": ["z:int"]}, "self.z.abs() > 0", context_name="A")
+    assert alloy == "fact{ all self:this/A|(abs[self.A_z] > 0)}"
+
+
+def test_ocl_abs_with_arithmetic_argument():
+    alloy = ocl_to_alloy(
+        {}, {"A": ["z:int"]}, "(self.z + 1).abs() > 0", context_name="A"
+    )
+    assert "abs[add[self.A_z, 1]]" in alloy
+
+
 @pytest.mark.parametrize(
     ("operator", "expected"),
     [
@@ -448,6 +460,45 @@ def test_ocl_constraint_is_translated_to_alloy_fact(tmpdir):
     assert "this/Player" in spec
     assert "Player_age > 0" in spec
     assert "fact{" in spec
+
+
+def test_generator_emits_abs_function_for_int_model(tmpdir):
+    """An int-typed model with an ``.abs()`` constraint must emit the ``abs``
+    helper in ``model.als`` and translate the call to ``abs[self.<Field>]``."""
+    A = Class(name="A")
+    A.attributes = {Property(name="z", type=IntegerType)}
+    inv = Constraint(
+        name="C",
+        context=A,
+        expression="context A inv C: self.z.abs() >= 0",
+        language="OCL",
+    )
+    model = DomainModel(name="M", types={A}, constraints={inv})
+
+    output_dir = tmpdir.mkdir("output")
+    AlloyGenerator(model=model, output_dir=str(output_dir)).generate()
+
+    with open(_generated_als_path(str(output_dir)), "r", encoding="utf-8") as f:
+        spec = f.read()
+
+    assert "fun abs[x: Int]: Int" in spec
+    assert "abs[self.A_z]" in spec
+
+
+def test_generator_omits_abs_function_without_int_types(tmpdir):
+    """A str-only model must not emit the ``abs`` helper (guarded by the
+    ``int``/``float`` basic signatures)."""
+    Person = Class(name="Person")
+    Person.attributes = {Property(name="name", type=StringType)}
+    model = DomainModel(name="M", types={Person})
+
+    output_dir = tmpdir.mkdir("output")
+    AlloyGenerator(model=model, output_dir=str(output_dir)).generate()
+
+    with open(_generated_als_path(str(output_dir)), "r", encoding="utf-8") as f:
+        spec = f.read()
+
+    assert "fun abs[x: Int]: Int" not in spec
 
 
 def test_ocl_not_implies_with_oclistypeof_and_arrow_size(tmpdir):

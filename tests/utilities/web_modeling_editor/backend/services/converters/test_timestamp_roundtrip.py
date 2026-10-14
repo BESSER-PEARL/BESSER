@@ -190,6 +190,22 @@ def test_timezone_aware_timestamp_becomes_naive_utc():
     assert stamp == datetime(2024, 5, 6, 5, 8, 9)
 
 
+def test_aware_timestamp_in_uploaded_buml_becomes_naive_utc(tmp_path):
+    """A B-UML file with an offset next to defaulted timestamps used to keep the
+    aware value, so exporting it raised "can't compare offset-naive and
+    offset-aware datetimes"."""
+    source = (
+        'A = Class(name="A", timestamp=datetime.datetime.fromisoformat("2024-01-01T00:00:00+02:00"))\n'
+        'B = Class(name="B")\n'
+        'domain_model = DomainModel(name="D", types={A, B}, associations=set(), generalizations=set())\n'
+    )
+    model = parse_buml_content(source)
+    stamp = model.get_class_by_name("A").timestamp
+    assert stamp.tzinfo is None
+    assert stamp == datetime(2023, 12, 31, 22, 0, 0)
+    domain_model_to_code(model, str(tmp_path / "model.py"))
+
+
 @pytest.mark.skipif(not hasattr(__import__("time"), "tzset"), reason="needs time.tzset")
 @pytest.mark.parametrize("server_tz", ["UTC", "America/New_York", "Asia/Tokyo"])
 def test_aware_timestamp_does_not_depend_on_the_server_timezone(monkeypatch, server_tz):

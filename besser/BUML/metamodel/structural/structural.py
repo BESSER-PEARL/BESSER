@@ -1,5 +1,5 @@
 from abc import ABC
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Union, List, TYPE_CHECKING, Literal
 import keyword
@@ -60,7 +60,13 @@ class Element(ABC):
 
     @timestamp.setter
     def timestamp(self, timestamp: datetime):
-        """datetime: Set the timestamp of the element (marks it as explicit)."""
+        """datetime: Set the timestamp of the element (marks it as explicit).
+
+        A timezone-aware value is stored as naive UTC, as ``parse_iso_timestamp``
+        does, since sorting cannot compare it with the naive clock default.
+        """
+        if isinstance(timestamp, datetime) and timestamp.tzinfo is not None:
+            timestamp = timestamp.astimezone(timezone.utc).replace(tzinfo=None)
         self.__timestamp = timestamp
         self.__timestamp_explicit = True
 

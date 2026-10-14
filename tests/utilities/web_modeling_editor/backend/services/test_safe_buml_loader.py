@@ -382,3 +382,115 @@ def test_builder_export_with_attribute_writes_round_trips(tmp_path):
     assert {a.name for a in loaded_book.attributes} == {"title"}
     describe = next(m for m in loaded_book.methods if m.name == "describe")
     assert "return self.title" in describe.code
+
+
+# ---------------------------------------------------------------------------
+# Process-wide primitive types
+# ---------------------------------------------------------------------------
+# ``PrimitiveDataType.name.fset(StringType, "int")`` in a project upload renamed
+# the real StringType; every later ``DomainModel(...)`` then failed with
+# duplicate type names, for every user, until the process restarted.
+
+_PROJECT_TEMPLATE = (
+    "# STRUCTURAL MODEL #\n"
+    'domain_model = DomainModel(name="D")\n'
+    "{payload}\n"
+    "\n"
+    "# GUI MODEL #\n"
+    "x = 1\n"
+    "\n"
+    'project = Project(name="p", models=[domain_model, gui_model], owner="o")\n'
+)
+
+_POISONING_PAYLOADS = [
+    'PrimitiveDataType.name.fset(StringType, "int")',
+    'f = PrimitiveDataType.name.fset\nf(IntegerType, "str")',
+    "Class.timestamp.fset(Class, 5)",
+    'p = Property(name="a", type="str")\nt = p.type\nt.name = "int"',
+    'Property.type_mapping.pop("int")',
+]
+
+
+@pytest.fixture
+def real_primitives():
+    """Restore the process-wide primitives so a failure here cannot cascade."""
+    from besser.BUML.metamodel.structural import structural
+
+    names = {
+        t: getattr(structural, t).name for t in ("StringType", "IntegerType")
+    }
+    mapping = dict(structural.TypedElement.type_mapping)
+    yield structural
+    for type_name, name in names.items():
+        getattr(structural, type_name).name = name
+    structural.TypedElement.type_mapping.clear()
+    structural.TypedElement.type_mapping.update(mapping)
+    for owner in (structural.Class, structural.Element):
+        if "_Element__timestamp" in vars(owner):
+            delattr(owner, "_Element__timestamp")
+
+
+def _assert_primitives_untouched(structural):
+    assert structural.StringType.name == "str"
+    assert structural.IntegerType.name == "int"
+    assert structural.TypedElement.type_mapping["int"] is structural.IntegerType
+    assert "_Element__timestamp" not in vars(structural.Class)
+    structural.DomainModel(name="Later", types={structural.Class(name="A")})
+
+
+@pytest.mark.parametrize("payload", _POISONING_PAYLOADS)
+def test_project_upload_cannot_rename_shared_primitive_types(real_primitives, payload):
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.project_converter import (
+        project_to_json,
+    )
+
+    try:
+        project_to_json(_PROJECT_TEMPLATE.format(payload=payload))
+    except Exception:  # the import itself may fail; the shared state must not change
+        pass
+    _assert_primitives_untouched(real_primitives)
+
+
+@pytest.mark.parametrize("payload", _POISONING_PAYLOADS)
+def test_class_upload_cannot_rename_shared_primitive_types(real_primitives, payload):
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+        parse_buml_content,
+    )
+
+    try:
+        parse_buml_content(payload + '\ndomain_model = DomainModel(name="D")\n')
+    except Exception:
+        pass
+    _assert_primitives_untouched(real_primitives)
+
+
+@pytest.mark.parametrize("source", [
+    "p = PrimitiveDataType.name.setter\n",
+    "p = PrimitiveDataType.name.fget\n",
+    "p = PrimitiveDataType.name.fdel\n",
+    "p = Property.type_mapping\n",
+])
+def test_property_accessors_and_type_mapping_are_refused(allowed_names, source):
+    with pytest.raises(SafeBumlLoaderError):
+        safe_load_buml(source, allowed_names)
+
+
+def test_gui_domain_context_gets_its_own_primitive_types(monkeypatch):
+    from besser.BUML.metamodel.structural import structural
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json import (
+        gui_diagram_converter,
+    )
+
+    seen = []
+    real_loader = gui_diagram_converter.safe_load_buml
+
+    def recording_loader(content, names):
+        seen.append(names)
+        return real_loader(content, names)
+
+    monkeypatch.setattr(gui_diagram_converter, "safe_load_buml", recording_loader)
+    gui_diagram_converter._parse_gui_model("x = 1\n", context_code='domain_model = DomainModel(name="D")\n')
+    context_names = seen[0]
+    for type_name in ("StringType", "IntegerType", "DateTimeType"):
+        assert context_names[type_name] is not getattr(structural, type_name)
+        assert context_names[type_name].name == getattr(structural, type_name).name

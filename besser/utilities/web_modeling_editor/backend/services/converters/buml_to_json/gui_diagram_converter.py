@@ -65,6 +65,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
     SAFE_DATETIME_MODULE,
     safe_load_buml,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+    fresh_primitive_types,
+)
 
 # Namespace root used to decide which objects a GUI BUML section may name.
 _METAMODEL_PREFIX = "besser.BUML.metamodel"
@@ -245,6 +248,8 @@ def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Option
         # safe loader as every other uploaded section.
         context_names: Dict[str, Any] = {
             **_structural_namespace(),
+            # Not the process-wide StringType & co., which an upload could rename.
+            **fresh_primitive_types(),
             "UNLIMITED_MAX_MULTIPLICITY": _structural_module.UNLIMITED_MAX_MULTIPLICITY,
             # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
             "datetime": SAFE_DATETIME_MODULE,

@@ -51,6 +51,21 @@ def _set_timestamp(target: dict, element) -> dict:
     return target
 
 
+def fresh_primitive_types() -> dict:
+    """Per-load copies of the primitive types, so an upload never holds the shared singletons."""
+    return {
+        "StringType": PrimitiveDataType("str"),
+        "IntegerType": PrimitiveDataType("int"),
+        "FloatType": PrimitiveDataType("float"),
+        "BooleanType": PrimitiveDataType("bool"),
+        "TimeType": PrimitiveDataType("time"),
+        "DateType": PrimitiveDataType("date"),
+        "DateTimeType": PrimitiveDataType("datetime"),
+        "TimeDeltaType": PrimitiveDataType("timedelta"),
+        "AnyType": PrimitiveDataType("any"),
+    }
+
+
 def parse_buml_content(content: str) -> DomainModel:
     """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
     try:
@@ -83,15 +98,7 @@ def parse_buml_content(content: str) -> DomainModel:
             "list": list,
             "dict": dict,
             "tuple": tuple,
-            "StringType": PrimitiveDataType("str"),
-            "IntegerType": PrimitiveDataType("int"),
-            "FloatType": PrimitiveDataType("float"),
-            "BooleanType": PrimitiveDataType("bool"),
-            "TimeType": PrimitiveDataType("time"),
-            "DateType": PrimitiveDataType("date"),
-            "DateTimeType": PrimitiveDataType("datetime"),
-            "TimeDeltaType": PrimitiveDataType("timedelta"),
-            "AnyType": PrimitiveDataType("any"),
+            **fresh_primitive_types(),
             # No-op stub: project-exported files often end with a
             # `project = Project(name=..., models=[domain_model], ...)` tail.
             # The class converter only cares about the DomainModel; swallowing

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import datetime as _datetime
+import sys
 import types
 from typing import Any, Dict, Mapping, Set
 
@@ -145,8 +146,14 @@ _ALLOWED_BINOPS: Set[type] = {ast.Add}
 
 # String formatting resolves attribute and index lookups from inside the
 # format string, which the AST walk cannot inspect; ``mro`` exposes the class
-# hierarchy. No BUML file needs either.
-_FORBIDDEN_ATTRIBUTES: Set[str] = {"format", "format_map", "mro"}
+# hierarchy. The property accessors (``PrimitiveDataType.name.fset``) write
+# to any object, bypassing the attribute-write guard, and ``type_mapping`` is
+# a class-level dict shared by the whole process. No BUML file needs any of them.
+_FORBIDDEN_ATTRIBUTES: Set[str] = {
+    "format", "format_map", "mro",
+    "fget", "fset", "fdel", "getter", "setter", "deleter",
+    "type_mapping",
+}
 
 
 def _is_dunder(name: str) -> bool:
@@ -380,6 +387,22 @@ _SHARED_OBJECT_TYPES = (
 )
 
 
+def _metamodel_singleton_ids() -> Set[int]:
+    """Ids of the metamodel's module-level instances (``StringType`` & co.).
+
+    An upload can reach them without naming them, e.g. as the ``type`` of
+    ``Property(name="a", type="str")``.
+    """
+    ids: Set[int] = set()
+    for module_name, module in list(sys.modules.items()):
+        if module is None or not module_name.startswith("besser.BUML.metamodel"):
+            continue
+        for attr_name, value in vars(module).items():
+            if not attr_name.startswith("_") and not isinstance(value, _SHARED_OBJECT_TYPES):
+                ids.add(id(value))
+    return ids
+
+
 def _make_guarded_setattr(protected: Mapping[str, Any]):
     """Build the run-time check behind every ``<expr>.<attr> = <value>``.
 
@@ -388,7 +411,7 @@ def _make_guarded_setattr(protected: Mapping[str, Any]):
     actual target object is known, so it is refused when it is one of the
     injected objects or of a kind that is never a per-upload model element.
     """
-    protected_ids = {id(value) for value in protected.values()}
+    protected_ids = {id(value) for value in protected.values()} | _metamodel_singleton_ids()
 
     def _guarded_setattr(target: Any, attr: str, value: Any) -> None:
         if id(target) in protected_ids or isinstance(target, _SHARED_OBJECT_TYPES):

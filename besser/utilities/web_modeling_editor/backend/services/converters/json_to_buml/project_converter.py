@@ -247,7 +247,13 @@ def json_to_buml_project(project):
             obj_class_diag = diagrams["ClassDiagram"][0]
         if obj_class_diag:
             obj_domain_model = _get_or_process_class_diagram(obj_class_diag)
-            object_model = process_object_diagram(obj_diag.model_dump(), obj_domain_model)
+            obj_json = obj_diag.model_dump()
+            # Stored object diagrams carry no reference data (the migration
+            # drops develop's embedded copy): resolve ``classId`` against the
+            # referenced class diagram so it wins over a missing/stale className.
+            if not obj_json["model"].get("referenceDiagramData"):
+                obj_json["model"]["referenceDiagramData"] = obj_class_diag.model_dump()["model"]
+            object_model = process_object_diagram(obj_json, obj_domain_model)
             model_list.append(object_model)
         else:
             logger.warning(

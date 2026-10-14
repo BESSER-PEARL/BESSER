@@ -59,10 +59,11 @@ def canton_domain():
 
 def _build_class_model(*classes_and_props):
     """
-    Build a minimal GrapesJS class-model dict from (class, prop...) tuples.
+    Build a minimal v4 class diagram model (``{nodes}``; attributes are rows on
+    the class node's ``data.attributes``) from (class, prop...) tuples.
     Returns the model dict and a mapping of object → UUID.
     """
-    elements: dict = {}
+    nodes: list = []
     id_map: dict = {}
     counter = [0]
 
@@ -72,14 +73,18 @@ def _build_class_model(*classes_and_props):
 
     for cls, *props in classes_and_props:
         cls_id = new_id("cls")
-        elements[cls_id] = {"id": cls_id, "type": "Class", "name": cls.name}
+        rows = []
         id_map[cls] = cls_id
         for p in props:
             attr_id = new_id("attr")
-            elements[attr_id] = {"id": attr_id, "type": "ClassAttribute", "name": p.name}
+            rows.append({"id": attr_id, "name": p.name, "attributeType": "str", "visibility": "public"})
             id_map[p] = attr_id
+        nodes.append({
+            "id": cls_id, "type": "class", "position": {"x": 0, "y": 0},
+            "data": {"name": cls.name, "attributes": rows, "methods": []},
+        })
 
-    return {"elements": elements}, id_map
+    return {"version": "4.0.0", "type": "ClassDiagram", "nodes": nodes, "edges": []}, id_map
 
 
 def _collect_attrs(comp: dict, out: list) -> None:

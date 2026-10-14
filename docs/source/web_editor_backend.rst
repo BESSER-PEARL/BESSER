@@ -31,7 +31,9 @@ Additional infrastructure:
 - **``middleware/request_logging.py``** -- Structured request logging with unique IDs and performance timing
 - **``services/cleanup.py``** -- Background temp-file cleanup (removes stale directories every hour)
 - **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError`` and ``ConfigurationError``.
-  ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
+  ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400;
+  ``LegacyDiagramFormatError`` (a diagram in the legacy v3 editor format, see `Diagram JSON Format`_) is a
+  ``ConversionError`` and maps to HTTP 400.
 - **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``sse_events.py`` (the typed event schema), ``secret_redaction.py``, ``telemetry.py``, ``incidents.py``
 - **``constants/constants.py``** -- API version, temp prefixes, generator defaults, CORS origins, and the ``BESSER_LLM_*`` caps and feature flags
 - **``models/responses.py``** -- Standardized Pydantic response models
@@ -52,6 +54,48 @@ Supported diagram types (the project keys): ``ClassDiagram``, ``ObjectDiagram``,
 ``ComponentDiagram``, and ``DeploymentDiagram``. A single BPMN diagram payload
 has type ``BPMNDiagram``.
 
+Diagram JSON Format
+^^^^^^^^^^^^^^^^^^^
+
+UML diagrams (every type except ``GUINoCodeDiagram`` and
+``QuantumCircuitDiagram``) travel in the **v4** React Flow shape,
+``{"version": "4.x", "type": ..., "nodes": [...], "edges": [...]}``. The field
+schema per diagram type is the `UML v4 wire shape
+<https://github.com/BESSER-PEARL/BESSER/blob/development/docs/source/migrations/uml-v4-shape.md>`__ document (``docs/source/migrations/uml-v4-shape.md`` in the
+repository). The converters read only this shape.
+
+A diagram in the **legacy v3** editor format
+(``{"version": "3.x", "elements": {...}, "relationships": {...}}``) is refused
+with **HTTP 400**, because converting it would silently produce an empty model.
+The response ``detail`` names the diagram and asks the user to open it in the
+current editor, which upgrades v3 diagrams on load, or to re-export it from
+there. A model counts as legacy when it declares a UML ``type`` and a
+``version`` starting with ``3.``, or when it has ``elements`` /
+``relationships`` and no ``nodes``. The check covers:
+
+- every endpoint taking a ``DiagramInput`` (``/generate-output``,
+  ``/export-buml``, ``/validate-diagram``, ``/deploy-app``,
+  ``/transform-agent-model-json``), including an object diagram's
+  ``referenceDiagramData``;
+- every endpoint taking a project (``/generate-output-from-project``,
+  ``/export-project-as-buml``, ``/spec-driven/generate``, ``/spec-driven/preview``,
+  ``/spec-driven/resume/{run_id}``, ``/github/deploy-webapp``). A project is
+  refused when any of its UML diagrams is legacy;
+- the agent simulator (``/simulation/validate``, ``/simulation/sessions``) and
+  the ``userProfileModel`` of ``/personalize-gui-page``,
+  ``/recommend-agent-config-llm`` and ``/recommend-agent-config-mapping``;
+- models nested in an agent diagram's ``config``: the ``config.userProfileModel``
+  of ``/transform-agent-model-json`` and every ``personalizationMapping`` entry's
+  ``user_profile`` and ``agent_model`` (agent generation through
+  ``/generate-output``, the Docker Compose project generator and
+  ``/github/deploy-webapp``).
+
+GUI (GrapesJS) and quantum-circuit models keep their own formats and are
+never checked. Saving a project to GitHub (``/github/project/save``,
+``/github/project/create-repo``, ``/github/gist/create``) is storage, not
+conversion: it stores the JSON unchanged whatever its format, and the B-UML
+files that ``/github/project/save`` writes next to it skip legacy diagrams.
+
 
 Neural Network Diagrams
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -59,7 +103,7 @@ Neural Network Diagrams
 The backend treats ``NNDiagram`` as a self-contained diagram type (no
 cross-diagram references are required for code generation). The editor emits
 an NN diagram JSON whose top-level ``type`` is ``"NNDiagram"`` and whose
-``elements``/``relationships`` describe layers, containers, sub-network
+``nodes``/``edges`` describe layers, containers, sub-network
 references, tensor operations, configuration, and training/test datasets.
 
 **Generators.** The registered NN generators are ``pytorch`` and
@@ -86,7 +130,7 @@ processor and surfaces ``ValueError`` as per-line validation errors rather
 than a 500 response. Only ``ValueError`` is caught: any other exception
 escaping the processor is mapped to a generic HTTP 500 by
 ``@handle_endpoint_errors``. The processor verifies whitelists for
-``pooling_type``, ``return_type``, ``task_type``, ``input_format``,
+``padding_type``, ``pooling_type``, ``return_type``, ``task_type``, ``input_format``,
 ``optimizer``, ``loss_function``, and ``metrics``, as well as conv layer
 ``kernel_dim`` / ``stride_dim`` lengths, and detects transitive
 ``NNReference`` cycles among sub-networks.
@@ -108,8 +152,8 @@ the BPMN generator emits vendor-neutral BPMN 2.0 XML.
 
 
 The Agentic extension is represented by ``AgenticTask``, ``AgenticGateway``,
-and ``AgenticLane`` subclasses. The converter consumes the WME ``isAgentic``
-flag and preserves ``reflectionMode``, ``reflectionReviewerLaneId``,
+and ``AgenticLane`` subclasses. The converter consumes the ``isAgentic`` flag
+on the node ``data`` and preserves ``reflectionMode``, ``reflectionReviewerLaneId``,
 ``gatewayRole``, ``trustScore``, lane ``role``, lane ``multiplicity`` (stored as
 ``AgenticLane.swarm_size``), ``agentDiagramRef``, and ``governanceDsl``. Flows
 stay standard BPMN flows and carry no agentic fields.
@@ -136,8 +180,12 @@ whole-swarm structural and runtime-allocation views backing the
 They are standalone diagrams for normal import/export, and they also
 participate in project-level multi-agent system generation.
 
+Their v4 node and edge types and ``data`` fields are listed in the
+`UML v4 wire shape <https://github.com/BESSER-PEARL/BESSER/blob/development/docs/source/migrations/uml-v4-shape.md>`__ document.
+
 **Agentic profile.** The Component diagram's agentic vocabulary is carried in
-the WME ``stereotype`` string. The converter promotes a component to
+the node's ``data.stereotype`` string (an edge's ``data.stereotype`` for
+dependencies). The converter promotes a component to
 ``AgenticComponent`` / ``Skill`` / ``Tool`` (and a dependency to
 ``AgenticEdge``) by matching stereotype tokens; permission scopes ride in a
 ``{permission: ...}`` suffix on agentic-edge stereotypes.

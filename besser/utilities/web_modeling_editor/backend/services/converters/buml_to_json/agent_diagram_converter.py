@@ -1,6 +1,13 @@
 """
-Agent converter module for BUML to JSON conversion.
-Handles agent diagram processing and function analysis.
+Agent BUML -> v4 JSON converter.
+
+The agent code is parsed (``ast``) into a flat element index keyed by id
+(states, their action rows, comments, components, transitions), which
+``_flat_to_v4`` then turns into the v4 wire shape: canvas ``nodes`` /
+``edges`` plus the off-canvas ``components`` map. ``AgentStateTransition``
+edges are emitted in the canonical form (``transitionType +
+predefined|custom``); legacy variants are an *input* concern handled by the
+agent processor's ``_normalise_agent_transitions``.
 """
 
 import ast
@@ -11,6 +18,7 @@ from typing import Any, Dict, List
 
 from besser.utilities.buml_code_builder.agent_model_builder import GUI_BUILDER_FUNCTION_PREFIX
 from .gui_diagram_converter import gui_buml_to_json
+from ._node_builders import make_edge, make_node
 from ...utils.layout_calculator import (
     determine_connection_direction,
     calculate_connection_points,
@@ -137,7 +145,7 @@ def analyze_function_node(node: ast.FunctionDef, source_code: str) -> Dict[str, 
     }
 
 
-def agent_buml_to_json(content: str) -> Dict[str, Any]:
+def _agent_buml_to_flat_json(content: str) -> Dict[str, Any]:
     """
     Convert an agent Python file content to JSON format matching the frontend structure.
 
@@ -1360,6 +1368,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         },
                         "actions": [],
                         "fallbackActions": [],
+                        "bodies": [],
+                        "fallbackBodies": [],
                     }
 
                     # Update position for next element
@@ -1379,33 +1389,6 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 if kw.arg == "description":
                                     state_comments[state_var] = ast.literal_eval(kw.value)
 
-                    # Also store by state name for body lookup
-                    if state_name != var_name:
-                        states[state_name] = state_obj
-
-                    # Create element for visualization
-                    elements[state_id] = {
-                        "id": state_id,
-                        "name": state_name,
-                        "type": "AgentState",
-                        "stateType": "standard",
-                        "owner": None,
-                        "bounds": {
-                            "x": states_x,
-                            "y": states_y,
-                            "width": 160,
-                            "height": 100,
-                        },
-                        "actions": [],
-                        "fallbackActions": [],
-                    }
-
-                    # Update position for next element
-                    if states_x < 200:
-                        states_x += 490
-                    else:
-                        states_x = -280
-                        states_y += 220
 
         # Find initial state and create initial transition
         initial_state = None
@@ -2193,3 +2176,185 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             "relationships": relationships,
             "assessments": {},
         }
+
+
+# ---------------------------------------------------------------------------
+# v4 wire shape
+# ---------------------------------------------------------------------------
+
+# Off-canvas agent component types: emitted in the top-level ``components``
+# map, never as canvas nodes (see uml-v4-shape.md, AgentDiagram -> Components).
+AGENT_COMPONENT_TYPES = frozenset({
+    "AgentIntent", "AgentIntentBody", "AgentRagElement", "AgentTool",
+    "AgentSkill", "AgentWorkspace", "AgentLLM", "AgentGUI",
+})
+
+# replyType (editor key) <-> actionType (metamodel class name). Body rows carry both.
+REPLY_TYPE_TO_ACTION_TYPE = {
+    "text": "TextReplyAction",
+    "llm": "LLMReplyAction",
+    "llm_chat": "LLMChatAction",
+    "rag": "RAGReplyAction",
+    "db_reply": "DBAction",
+    "code": "CustomCodeAction",
+    "web_crawl_llm": "WebCrawlLLMAction",
+    "ws_markdown": "WebSocketReplyMarkdownAction",
+    "ws_html": "WebSocketReplyHTMLAction",
+    "ws_speech": "WebSocketReplySpeechAction",
+    "ws_options": "WebSocketReplyOptionsAction",
+    "ws_location": "WebSocketReplyLocationAction",
+    "ws_file": "WebSocketReplyFileAction",
+    "ws_image": "WebSocketReplyImageAction",
+    "ws_dataframe": "WebSocketReplyDataframeAction",
+    "ws_plotly": "WebSocketReplyPlotlyAction",
+    "gui_reply": "GUIReplyAction",
+}
+ACTION_TYPE_TO_REPLY_TYPE = {v: k for k, v in REPLY_TYPE_TO_ACTION_TYPE.items()}
+
+_ROW_DROP_KEYS = ("type", "owner", "bounds")
+_COMPONENT_DROP_KEYS = ("bounds", "llm", "numPreviousMessages")
+
+
+def _body_rows(elements: Dict[str, Any], ids: List[str]) -> List[Dict[str, Any]]:
+    """Inline the body elements referenced by ``ids`` as v4 ``data.bodies`` rows."""
+    rows: List[Dict[str, Any]] = []
+    seen = set()
+    for body_id in ids or []:
+        if body_id in seen:
+            continue
+        seen.add(body_id)
+        element = elements.get(body_id)
+        if not isinstance(element, dict):
+            continue
+        row = {k: v for k, v in element.items() if k not in _ROW_DROP_KEYS}
+        action_type = row.get("actionType")
+        reply_type = row.get("replyType")
+        if not reply_type:
+            reply_type = ACTION_TYPE_TO_REPLY_TYPE.get(action_type, "text")
+            row["replyType"] = reply_type
+        if not action_type:
+            row["actionType"] = REPLY_TYPE_TO_ACTION_TYPE.get(reply_type, reply_type)
+        if row["replyType"] == "code" and "code" not in row:
+            # v4 code rows carry the source on ``code`` (``name`` doubles as label).
+            row["code"] = row.get("name", "")
+        rows.append(row)
+    return rows
+
+
+def _flat_to_v4(flat: Dict[str, Any]) -> Dict[str, Any]:
+    """Turn the flat element index built by the parser into the v4 wire shape."""
+    elements: Dict[str, Any] = flat.get("elements") or {}
+    relationships: Dict[str, Any] = flat.get("relationships") or {}
+    components: Dict[str, Any] = dict(flat.get("components") or {})
+
+    # Component entries that ended up in ``elements`` (defensive) move out too.
+    for element_id, element in list(elements.items()):
+        if element.get("type") in AGENT_COMPONENT_TYPES:
+            components.setdefault(element_id, element)
+    components = {
+        cid: {k: v for k, v in comp.items() if k not in _COMPONENT_DROP_KEYS}
+        for cid, comp in components.items()
+    }
+
+    initial_marker_ids = {eid for eid, el in elements.items() if el.get("type") == "StateInitialNode"}
+    initial_state_ids = set()
+    for rel in relationships.values():
+        source_id = (rel.get("source") or {}).get("element")
+        if rel.get("type") == "AgentStateTransitionInit" or source_id in initial_marker_ids:
+            target_id = (rel.get("target") or {}).get("element")
+            if target_id:
+                initial_state_ids.add(target_id)
+
+    nodes: List[Dict[str, Any]] = []
+    for element_id, element in elements.items():
+        element_type = element.get("type")
+        bounds = element.get("bounds") or {}
+        position = {"x": bounds.get("x", 0), "y": bounds.get("y", 0)}
+        if element_type == "AgentState":
+            data: Dict[str, Any] = {
+                "name": element.get("name", ""),
+                "initial": element_id in initial_state_ids,
+                "stateType": element.get("stateType") or "standard",
+                "bodies": _body_rows(
+                    elements, list(element.get("actions") or []) + list(element.get("bodies") or [])
+                ),
+                "fallbackBodies": _body_rows(
+                    elements,
+                    list(element.get("fallbackActions") or []) + list(element.get("fallbackBodies") or []),
+                ),
+            }
+            if data["stateType"] == "reasoning":
+                data.update({
+                    "llm_name": element.get("llm_name") or "",
+                    "max_steps": element.get("max_steps", 8),
+                    "enable_task_planning": element.get("enable_task_planning", True),
+                    "stream_steps": element.get("stream_steps", True),
+                    "system_prompt": element.get("system_prompt") or "",
+                    "fallback_message": element.get("fallback_message") or "",
+                })
+            nodes.append(make_node(
+                node_id=element_id, type_="AgentState", data=data, position=position,
+                width=bounds.get("width", 160), height=bounds.get("height", 100),
+            ))
+        elif element_type == "Comments":
+            nodes.append(make_node(
+                node_id=element_id, type_="comment", data={"name": element.get("name", "")},
+                position=position, width=bounds.get("width", 200), height=bounds.get("height", 100),
+            ))
+
+    edges: List[Dict[str, Any]] = []
+    for rel_id, rel in relationships.items():
+        rel_type = rel.get("type")
+        source = rel.get("source") or {}
+        target = rel.get("target") or {}
+        source_id = source.get("element")
+        target_id = target.get("element")
+        handles = {
+            "source_handle": source.get("direction") or "right",
+            "target_handle": target.get("direction") or "left",
+        }
+        if rel_type == "AgentStateTransition" and source_id not in initial_marker_ids:
+            transition_type = rel.get("transitionType") or "predefined"
+            edge_data: Dict[str, Any] = {"name": rel.get("name") or "", "transitionType": transition_type}
+            if transition_type == "custom":
+                custom = dict(rel.get("custom") or {})
+                custom.setdefault("event", "None")
+                custom.setdefault("condition", [])
+                edge_data["custom"] = custom
+            else:
+                predefined = {
+                    k: v for k, v in (rel.get("predefined") or {}).items()
+                    if not (k == "conditionValue" and v in (None, ""))
+                }
+                edge_data["predefined"] = predefined
+            edges.append(make_edge(rel_id, source_id, target_id, "AgentStateTransition", edge_data, **handles))
+        elif rel_type == "Link":
+            edges.append(make_edge(rel_id, source_id, target_id, "CommentLink", {}, **handles))
+
+    result: Dict[str, Any] = {
+        "version": "4.0.0",
+        "type": "AgentDiagram",
+        "title": "",
+        "size": flat.get("size") or {"width": 1980, "height": 640},
+        "nodes": nodes,
+        "edges": edges,
+        "components": components,
+        "interactive": {"elements": {}, "relationships": {}},
+        "assessments": {},
+    }
+    if flat.get("config"):
+        result["config"] = flat["config"]
+    return result
+
+
+def agent_buml_to_json(content: str) -> Dict[str, Any]:
+    """Convert agent B-UML Python code to the v4 AgentDiagram wire shape.
+
+    Canvas: ``AgentState`` nodes (inline ``data.bodies`` / ``data.fallbackBodies``
+    action rows, ``data.initial``, reasoning states as ``data.stateType ==
+    'reasoning'``), ``comment`` nodes, ``AgentStateTransition`` and
+    ``CommentLink`` edges. Off-canvas: intents (+ ``AgentIntentBody`` entries),
+    LLMs, RAG databases, tools, skills, workspaces and GUIs in the top-level
+    ``components`` map.
+    """
+    return _flat_to_v4(_agent_buml_to_flat_json(content))

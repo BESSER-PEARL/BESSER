@@ -4,7 +4,7 @@ End-to-End: New Diagram Type + DSL
 This guide explains the full workflow for adding a **new diagram type with a new DSL**
 that must work across both repositories:
 
-* **WME repo** (frontend + editor package): `BESSER-WEB-MODELING-EDITOR`
+* **WME repo** (frontend diagramming library + webapp): `BESSER-WEB-MODELING-EDITOR`
 * **BESSER repo** (backend + BUML): this repository
 
 Use this when you need **new elements, new rendering, and new backend processing**.
@@ -14,10 +14,10 @@ checklist in ``packages/webapp/src/main/features/project/ADDING_NEW_DIAGRAM_TYPE
 Decision Tree
 -------------
 
-1. **Diagram type already exists in the editor package** (``packages/editor``)?
+1. **Diagram type already exists in the library package** (``packages/library``)?
 
    * Yes: only do the **webapp wiring** (sidebar, project model, import/export labels).
-   * No: you must add **editor package support** + **webapp wiring** + **backend processing**.
+   * No: you must add **library package support** + **webapp wiring** + **backend processing**.
 
 2. **New DSL / new semantics**?
 
@@ -28,8 +28,9 @@ Repository Boundaries (who owns what)
 
 * **WME repo (frontend, diagram engine)**
 
-  - Editor package (diagram types, elements, rendering, palette, property panels)
-  - Webapp (project model, sidebar, import/export, UI)
+  - Library package ``packages/library`` — React Flow + Zustand diagram engine
+    (node components, edge renderers, palette previews, inspector panels)
+  - Webapp ``packages/webapp`` — project model, sidebar, import/export, UI
 
 * **BESSER repo (backend, BUML)**
 
@@ -45,36 +46,43 @@ Step 1: Extend the BUML Metamodel (BESSER repo)
 3. Add or update tests under ``tests/BUML`` and ``tests/BUML_invalid``.
 4. Update docs under ``docs/source/buml_language``.
 
-Step 2: Add the Diagram Type in the Editor Package (WME repo)
--------------------------------------------------------------
+Step 2: Add the Diagram Type in the Library Package (WME repo)
+--------------------------------------------------------------
 
-These files live in the WME repo under ``packages/editor``:
+These files live in the WME repo under ``packages/library``:
 
 1. **Register diagram and element types**
 
-   * ``packages/editor/src/main/packages/diagram-type.ts``
-   * ``packages/editor/src/main/uml-element-type.ts``
-   * ``packages/editor/src/main/uml-relationship-type.ts`` (if you add new relationships)
+   * ``packages/library/lib/types/DiagramType.ts`` (diagram-type enum)
+   * ``packages/library/lib/types/nodes/NodeProps.ts`` (per-node data shapes)
+   * ``packages/library/lib/edges/EdgeProps.ts`` (per-edge data shapes if you add new relationships)
 
-2. **Create a new diagram package folder**
+2. **Create a new diagram folder for nodes and edges**
 
-   * Create ``packages/editor/src/main/packages/<your-diagram>/``
-   * Add element classes (model), React components (rendering), and palette previews.
+   * Create ``packages/library/lib/nodes/<yourDiagram>/`` and add the React Flow
+     node components (``<NodeName>.tsx``) plus the ``index.ts`` that registers
+     them under their v4 type strings.
+   * Create ``packages/library/lib/edges/edgeTypes/<YourEdge>.tsx`` for any new
+     edge types and add palette previews in
+     ``packages/library/lib/components/svgs/nodes/<yourDiagram>/``.
 
 3. **Wire registries**
 
-   * ``packages/editor/src/main/packages/components.ts`` (component map)
-   * ``packages/editor/src/main/packages/uml-elements.ts`` (element map)
-   * ``packages/editor/src/main/packages/uml-relationships.ts`` (relationship map)
-   * ``packages/editor/src/main/packages/compose-preview.ts`` (palette previews)
-   * ``packages/editor/src/main/packages/popups.ts`` (property panels)
-   * ``packages/editor/src/main/components/create-pane/create-pane.tsx`` (diagram type selection)
+   * ``packages/library/lib/nodes/<yourDiagram>/index.ts`` (per-diagram node map)
+   * ``packages/library/lib/edges/edgeTypes/index.ts`` (edge type map)
+   * ``packages/library/lib/components/inspectors/<yourDiagram>/index.ts`` (inspector panels)
+   * ``packages/library/lib/components/popovers/PopoverManager.tsx`` (popover routing)
+   * ``packages/library/lib/utils/versionConverter.ts`` (v3 → v4 migration cases
+     if you need to lift legacy fixtures)
 
 4. **Translations**
 
-   * ``packages/editor/src/main/i18n/en.json`` (and other locales if needed)
+   * Inspector / palette labels are inline in the component sources;
+     localization currently lives at the webapp layer
+     (``packages/webapp/src/main/i18n/``).
 
-Tip: Follow patterns from existing diagram packages (e.g. ``uml-class-diagram``).
+Tip: Follow patterns from existing diagram folders
+(e.g. ``packages/library/lib/nodes/classDiagram``).
 
 Step 3: Wire the Diagram into the Webapp (WME repo)
 ---------------------------------------------------

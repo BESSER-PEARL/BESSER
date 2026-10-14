@@ -380,6 +380,31 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 model_vars.append(var_name)
 
             # ---------------------------------------------------------- #
+            # BPMN MODELS                                                #
+            # ---------------------------------------------------------- #
+            # bpmn_model_to_code() writes its own "# BPMN MODEL #" banner
+            # (mirrors state_machine_builder.py / agent_model_builder.py).
+            # Unlike those, we don't also prepend a numbered project_builder
+            # header here: project_to_json's _extract_all_sections treats
+            # every "# BPMN MODEL ... #" occurrence as a new section
+            # boundary, so stacking our own numbered header directly above
+            # the builder's fixed one would split each model into a bogus
+            # empty section followed by the real one, breaking round-trip
+            # for projects with more than one BPMNModel. See the analogous
+            # NN MODELS handling below for the same reasoning.
+            for idx, bm in enumerate(bpmn_models, start=1):
+                var_name = _suffixed_name("bpmn_model", idx, n_bpmn)
+
+                tmp_path = os.path.join(temp_dir, f"bpmn_model_{idx}.py")
+                bpmn_model_to_code(
+                    model=bm,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
             # NN MODELS                                                  #
             # ---------------------------------------------------------- #
             # Source of titles: json_to_buml_project attaches them to the
@@ -413,34 +438,6 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 # a project held more than one NN.
                 nn_model_to_code(model=nm, file_path=tmp_path, model_var_name=var_name, title=title)
                 _write_temp_to_output(tmp_path, f)
-                model_vars.append(var_name)
-
-            # ---------------------------------------------------------- #
-            # BPMN MODELS                                                #
-            # ---------------------------------------------------------- #
-            for idx, bpmn in enumerate(bpmn_models, start=1):
-                # Variable prefix matches SECTION_CONFIG['bpmn_model'] in the importer
-                # so the round-trip pairs cleanly.
-                var_name = _suffixed_name("bpmn_model", idx, n_bpmn)
-
-                # For n_bpmn == 1, the builder emits its own `# BPMN MODEL #` banner —
-                # matching state_machine's pattern. For n_bpmn > 1 a labeled header
-                # disambiguates between sections (titles still get lost on round-trip
-                # because of the same banner-vs-labeled-header collision the state-
-                # machine path has — see project_builder.py NN block for the proper
-                # fix; not reproduced here to keep `04-` scope tight).
-                section = ""
-                if n_bpmn > 1:
-                    label = _comment_safe(bpmn.name) or f"BPMN {idx}"
-                    section = f"# BPMN MODEL {idx}: \"{label}\" #\n\n"
-
-                tmp_path = os.path.join(temp_dir, f"bpmn_model_{idx}.py")
-                bpmn_model_to_code(
-                    model=bpmn,
-                    file_path=tmp_path,
-                    model_var_name=var_name,
-                )
-                _write_temp_to_output(tmp_path, f, section_header=section)
                 model_vars.append(var_name)
 
             # ---------------------------------------------------------- #

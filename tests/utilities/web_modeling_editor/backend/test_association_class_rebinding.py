@@ -25,41 +25,48 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 )
 
 
-def _cls(eid, name, owner=None):
-    return {"id": eid, "name": name, "type": "Class", "attributes": [], "methods": [],
-            "owner": owner, "bounds": {"x": 0, "y": 0, "width": 200, "height": 100}}
+def _cls(eid, name):
+    """A v4 ``class`` node."""
+    return {"id": eid, "type": "class",
+            "position": {"x": 0, "y": 0}, "width": 200, "height": 100,
+            "data": {"name": name, "stereotype": None, "attributes": [], "methods": []}}
 
 
 def _assoc(rid, name, src, tgt, rtype="ClassBidirectional", src_mult="1", tgt_mult="0..*"):
-    return {"id": rid, "name": name, "type": rtype,
-            "source": {"element": src, "multiplicity": src_mult, "role": ""},
-            "target": {"element": tgt, "multiplicity": tgt_mult, "role": name}}
+    """A v4 association edge; the source role is left empty (class-name fallback)."""
+    return {"id": rid, "type": rtype, "source": src, "target": tgt,
+            "data": {"name": name,
+                     "sourceRole": "", "sourceMultiplicity": src_mult,
+                     "targetRole": name, "targetMultiplicity": tgt_mult,
+                     "points": []}}
+
+
+def _diagram(title, nodes, edges):
+    return {"title": title,
+            "model": {"version": "4.0.0", "type": "ClassDiagram", "nodes": nodes, "edges": edges}}
 
 
 @pytest.fixture
 def restaurant_shape():
     """Order--MenuItem with OrderLine as the association class, AND OrderLine
     separately associated to both ends -- exactly what the agent produced."""
-    return {
-        "title": "New_Project",
-        "model": {
-            "type": "ClassDiagram",
-            "elements": {
-                "c_order": _cls("c_order", "Order"),
-                "c_item": _cls("c_item", "MenuItem"),
-                "c_line": _cls("c_line", "OrderLine"),
-            },
-            "relationships": {
-                "r_om": _assoc("r_om", "orderMenuItem", "c_order", "c_item"),
-                # the promotion: OrderLine is the association class of r_om
-                "r_link": {"id": "r_link", "name": "", "type": "ClassLinkRel",
-                           "source": {"element": "c_line"},
-                           "target": {"element": "r_om"}},
-                "r_lines": _assoc("r_lines", "lines", "c_line", "c_order"),
-                "r_ol": _assoc("r_ol", "orderLines_1", "c_item", "c_line"),
-            },
-        },
-    }
+    return _diagram(
+        "New_Project",
+        [
+            _cls("c_order", "Order"),
+            _cls("c_item", "MenuItem"),
+            _cls("c_line", "OrderLine"),
+        ],
+        [
+            _assoc("r_om", "orderMenuItem", "c_order", "c_item"),
+            # the promotion: OrderLine is the association class of r_om
+            # (v4: a ClassLinkRel edge from the class node to the association edge)
+            {"id": "r_link", "type": "ClassLinkRel", "source": "c_line", "target": "r_om",
+             "data": {"points": []}},
+            _assoc("r_lines", "lines", "c_line", "c_order"),
+            _assoc("r_ol", "orderLines_1", "c_item", "c_line"),
+        ],
+    )
 
 
 def _domain(payload):
@@ -106,12 +113,8 @@ def test_exactly_one_OrderLine_object_is_reachable(restaurant_shape):
 
 def test_a_plain_diagram_is_untouched():
     """No ClassLinkRel -> nothing to promote, nothing to rebind."""
-    payload = {
-        "title": "Plain",
-        "model": {"type": "ClassDiagram",
-                  "elements": {"a": _cls("a", "Book"), "b": _cls("b", "Author")},
-                  "relationships": {"r": _assoc("r", "writes", "a", "b")}},
-    }
+    payload = _diagram("Plain", [_cls("a", "Book"), _cls("b", "Author")],
+                       [_assoc("r", "writes", "a", "b")])
 
     domain = _domain(payload)
 

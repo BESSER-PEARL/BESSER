@@ -44,3 +44,9 @@ The frontend is a Git submodule at
    :maxdepth: 1
 
    web_editor_backend
+
+.. note::
+   The BESSER Web Modeling Editor is built on `React Flow <https://reactflow.dev/>`_
+   and `Zustand <https://github.com/pmndrs/zustand>`_, packaged as the
+   ``@besser/wme`` editor library. The diagram engine lives in
+   ``packages/library`` and the React SPA that hosts it lives in ``packages/webapp``.

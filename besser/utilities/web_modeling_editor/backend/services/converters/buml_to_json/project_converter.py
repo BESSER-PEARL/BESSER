@@ -11,13 +11,13 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Tuple
 
 from .class_diagram_converter import parse_buml_content, class_buml_to_json
+from .bpmn_diagram_converter import bpmn_buml_to_json
 from .state_machine_converter import state_machine_to_json
 from .agent_diagram_converter import agent_buml_to_json
 from .object_diagram_converter import object_buml_to_json
 from .gui_diagram_converter import gui_buml_to_json
 from .quantum_diagram_converter import quantum_buml_to_json
 from .nn_diagram_converter import nn_buml_to_json
-from .bpmn_diagram_converter import bpmn_buml_to_json
 from .component_diagram_converter import component_buml_to_json
 from .deployment_diagram_converter import deployment_buml_to_json
 
@@ -45,16 +45,11 @@ ALL_SECTION_KEYWORDS = [
 
 
 def empty_model(diagram_type: str) -> Dict[str, Any]:
-    """
-    Create an empty model template for the specified diagram type.
+    """Create an empty model template for the given diagram type.
 
-    Args:
-        diagram_type: Type of diagram to create empty model for
-
-    Returns:
-        Dictionary representing empty model structure
+    Returns the v4 wire shape (``{nodes, edges}``) for BESSER WME-driven
+    diagrams; ``GUINoCodeDiagram`` keeps its bespoke shape.
     """
-    # GUINoCodeDiagram has a different structure with pages instead of elements
     if diagram_type == "GUINoCodeDiagram":
         return {
             "version": "3.0.0",
@@ -67,11 +62,11 @@ def empty_model(diagram_type: str) -> Dict[str, Any]:
         }
 
     return {
-        "version": "3.0.0",
+        "version": "4.0.0",
         "type": diagram_type,
         "size": {"width": 1400, "height": 740},
-        "elements": {},
-        "relationships": {},
+        "nodes": [],
+        "edges": [],
         "interactive": {"elements": {}, "relationships": {}},
         "assessments": {}
     }

@@ -165,16 +165,23 @@ def user_criteria_comparators(diagram_payload: Dict[str, Any]) -> Dict[str, Dict
     model_data = diagram_payload.get("model") if isinstance(diagram_payload, dict) else None
     if not isinstance(model_data, dict):
         return {}
-    elements = model_data.get("elements") or (model_data.get("model") or {}).get("elements") or {}
+    nodes = model_data.get("nodes") or (model_data.get("model") or {}).get("nodes") or []
     comparators: Dict[str, Dict[str, str]] = defaultdict(dict)
-    for element in elements.values():
-        if not isinstance(element, dict) or element.get("type") != "UserModelAttribute":
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("type") != "UserModelName":
             continue
-        operator = element.get("attributeOperator")
-        name = element.get("name") or ""
-        owner = elements.get(element.get("owner")) or {}
-        if operator in _CRITERIA_COMPARATORS and operator in name and owner.get("name"):
-            comparators[owner["name"]][name.split(operator, 1)[0].strip()] = operator
+        data = node.get("data") or {}
+        owner_name = data.get("name")
+        for row in data.get("attributes") or []:
+            if not isinstance(row, dict):
+                continue
+            operator = row.get("attributeOperator")
+            name = row.get("name") or ""
+            # Rows carry either a bare name (value in ``value``) or a legacy
+            # "age > 65" name with the comparator embedded.
+            attribute = name.split(operator, 1)[0].strip() if operator and operator in name else name.strip()
+            if operator in _CRITERIA_COMPARATORS and attribute and owner_name:
+                comparators[owner_name][attribute] = operator
     return dict(comparators)
 
 
@@ -238,6 +245,9 @@ def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[s
         or user_profile_model.get("id")
         or "UserProfile"
     )
+    if isinstance(user_profile_model.get("nodes"), list):
+        # A bare v4 model carries its own id/title (a v3 model had neither).
+        diagram_title = "UserProfile"
     prepared_payload = {
         "title": diagram_title,
         "diagramType": "UserDiagram",

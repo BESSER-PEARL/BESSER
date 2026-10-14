@@ -1,5 +1,14 @@
 """
-Agent diagram processing for converting JSON to BUML format.
+Agent diagram processing for converting v4 JSON to BUML format.
+
+Reads the v4 wire shape natively: canvas ``nodes`` / ``edges`` plus the
+off-canvas ``components`` map (intents, LLMs, RAG databases, tools, skills,
+workspaces, GUIs). ``AgentState`` action rows (``data.bodies`` /
+``data.fallbackBodies``) are dispatched one by one on their ``actionType``
+(metamodel class name) or legacy ``replyType``, preserving their order.
+``_normalise_agent_transitions`` collapses the historical
+``AgentStateTransition`` shapes (see ``docs/source/migrations/uml-v4-shape.md``)
+to the canonical ``transitionType + predefined|custom`` form.
 """
 
 import logging
@@ -44,8 +53,8 @@ from besser.BUML.metamodel.state_machine.agent import (
     GUIEvent,
 )
 from besser.BUML.metamodel.structural import DomainModel, Metadata
-from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_diagram_processor import (
-    process_gui_diagram,
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    node_data,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text
 from besser.utilities.web_modeling_editor.backend.services.validators.python_code_validator import (
@@ -347,12 +356,254 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
     return body if action_added else None
 
 
+# ---------------------------------------------------------------------------
+# v4 input helpers
+# ---------------------------------------------------------------------------
+
+# The React Flow frontend creates ``comment`` nodes tethered by
+# ``CommentLink`` edges; ``Comments`` / ``Link`` are the legacy spellings.
+COMMENT_NODE_TYPES = ("comment", "Comments")
+COMMENT_LINK_TYPES = ("CommentLink", "Link")
+
+# Off-canvas agent component types (``model.components``). Nodes of these
+# types are a legacy input only (pre-Components-page React Flow models).
+AGENT_COMPONENT_TYPES = frozenset({
+    "AgentIntent", "AgentIntentBody", "AgentRagElement", "AgentTool",
+    "AgentSkill", "AgentWorkspace", "AgentLLM", "AgentGUI",
+})
+
+# Placeholder label older v4 writers put on the ``name`` of an LLM row.
+_LLM_ROW_PLACEHOLDER = "AI response 🪄"
+
+
+def _normalise_body_row(row: dict) -> dict:
+    """Lift legacy v4 row conventions onto the canonical action-row fields.
+
+    * Older v4 LLM / LLM-chat rows carried the system prompt on ``name``;
+      the canonical field is ``system_message``.
+    * v4 code rows carry the source on ``code`` (``name`` may be a label);
+      the dispatcher reads the source from ``name``.
+    """
+    out = dict(row)
+    action_type = _resolve_action_type(out)
+    if action_type in ("LLMReplyAction", "LLMChatAction") and "system_message" not in out:
+        legacy_prompt = out.get("name") or ""
+        if legacy_prompt and legacy_prompt != _LLM_ROW_PLACEHOLDER:
+            out["system_message"] = legacy_prompt
+    elif action_type == "CustomCodeAction":
+        code_source = out.get("code")
+        if isinstance(code_source, str) and code_source:
+            out["name"] = code_source
+    return out
+
+
+def _build_body_from_action_rows(body_name, rows, language, source_language, translate_text,
+                                 build_db_reply_fn=None, gui_defs_by_id=None):
+    """Build a Body from the v4 inline action rows of an AgentState (order preserved)."""
+    if not isinstance(rows, list) or not rows:
+        return None
+    index: dict = {}
+    ids: list = []
+    for position, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        row_id = row.get("id") or f"{body_name}_{position}"
+        if row_id in index:
+            row_id = f"{row_id}_{position}"
+        index[row_id] = _normalise_body_row(row)
+        ids.append(row_id)
+    return _build_body_from_action_elements(
+        body_name, ids, index, language, source_language, translate_text,
+        build_db_reply_fn=build_db_reply_fn, gui_defs_by_id=gui_defs_by_id,
+    )
+
+
+def _node_to_components(node: dict) -> list:
+    """Flatten a legacy v4 component node into ``model.components`` entries."""
+    data = dict(node_data(node))
+    node_id = node.get("id")
+    node_type = node.get("type")
+    # node.data never carries geometry, but drop stray canvas keys (``width`` is a GUI field).
+    for key in ("bounds", "position", "measured", "parentId"):
+        data.pop(key, None)
+    if node_type == "AgentIntent":
+        rows = data.pop("training_phrases", None)
+        if not isinstance(rows, list) or not rows:
+            rows = data.get("bodies") or []
+        entries = []
+        body_ids = []
+        for position, row in enumerate(rows):
+            if isinstance(row, str):
+                body_ids.append(row)
+                continue
+            if not isinstance(row, dict):
+                continue
+            body_id = row.get("id") or f"{node_id}-body-{position}"
+            body_ids.append(body_id)
+            entries.append({"id": body_id, "type": "AgentIntentBody", "name": row.get("name", ""),
+                            "owner": node_id})
+        intent = {**data, "id": node_id, "type": "AgentIntent", "name": data.get("name", ""),
+                  "owner": None, "bodies": body_ids}
+        return [intent] + entries
+    if node_type == "AgentIntentBody":
+        return [{**data, "id": node_id, "type": "AgentIntentBody", "name": data.get("name", ""),
+                 "owner": node.get("parentId") or data.get("owner")}]
+    return [{**data, "id": node_id, "type": node_type, "name": data.get("name", ""), "owner": None}]
+
+
+def collect_agent_components(json_data: dict) -> dict:
+    """Merge every location agent components may be stored in, keyed by id.
+
+    Precedence (later wins): legacy component nodes in ``model.nodes`` <
+    diagram-level ``agentComponents`` < ``model.agentComponents`` <
+    ``model.components`` (canonical). A v3 ``model.elements`` map is never read.
+    """
+    model_data = json_data.get("model") or {}
+    merged: dict = {}
+    for node in model_data.get("nodes") or []:
+        if isinstance(node, dict) and node.get("type") in AGENT_COMPONENT_TYPES:
+            for entry in _node_to_components(node):
+                merged[entry["id"]] = entry
+    for source in (json_data.get("agentComponents"), model_data.get("agentComponents"),
+                   model_data.get("components")):
+        if isinstance(source, dict):
+            for component_id, component in source.items():
+                if isinstance(component, dict):
+                    merged[component_id] = {**component, "id": component.get("id") or component_id}
+    return merged
+
+
+def _normalise_agent_transitions(edges: list[dict]) -> list[dict]:
+    """Collapse legacy AgentStateTransition shapes to the canonical v4 form.
+
+    The v4 canonical shape is on ``edge.data``:
+        transitionType: 'predefined' | 'custom'
+        predefined: { predefinedType, intentName?, fileType?, formGuiId?, conditionValue? }
+        custom: { event, condition: string[], guiEventGuiId? }
+
+    Legacy shapes are accepted (see uml-v4-shape.md). Fallthrough order:
+      1. transitionType=='custom' OR legacy condition=='custom_transition'
+         OR custom.event/condition non-empty -> emit canonical custom block.
+      2. Otherwise emit canonical predefined block.
+
+    Returns a NEW list of edges; input is not mutated.
+    """
+    out: list[dict] = []
+    for edge in edges:
+        if edge.get("type") != "AgentStateTransition":
+            out.append(edge)
+            continue
+        nedge = dict(edge)
+        ndata = dict(edge.get("data") or {})
+        predefined = ndata.get("predefined") or {}
+        custom = ndata.get("custom") or {}
+
+        is_custom = (
+            ndata.get("transitionType") == "custom"
+            or ndata.get("condition") == "custom_transition"
+            or (isinstance(custom.get("event"), str) and custom.get("event"))
+            or (isinstance(custom.get("condition"), list) and any(
+                isinstance(c, str) and c.strip() for c in custom["condition"]
+            ))
+            or (isinstance(ndata.get("conditionValue"), dict) and (
+                ndata["conditionValue"].get("events") or ndata["conditionValue"].get("conditions")
+            ))
+        )
+        if ndata.get("transitionType") == "predefined" and not ndata.get("condition") == "custom_transition":
+            is_custom = False
+
+        if is_custom:
+            event = (
+                custom.get("event")
+                or ndata.get("event")
+                or ndata.get("customEvent")
+                or "None"
+            )
+            cond = custom.get("condition")
+            if not isinstance(cond, list):
+                cond = ndata.get("customConditions")
+            if not isinstance(cond, list):
+                cv = ndata.get("conditionValue")
+                if isinstance(cv, dict):
+                    events = cv.get("events") or []
+                    if isinstance(events, list) and events and not custom.get("event"):
+                        event = events[0]
+                    cond = cv.get("conditions") or []
+            if not isinstance(cond, list):
+                cond = []
+            block: dict = {"event": event, "condition": cond}
+            gui_event_gui_id = custom.get("guiEventGuiId") or ndata.get("guiEventGuiId")
+            if gui_event_gui_id:
+                block["guiEventGuiId"] = gui_event_gui_id
+            ndata["transitionType"] = "custom"
+            ndata["custom"] = block
+            ndata.pop("predefined", None)
+        else:
+            predefined_type = (
+                predefined.get("predefinedType")
+                or ndata.get("predefinedType")
+                or (ndata.get("condition") if isinstance(ndata.get("condition"), str) else None)
+                or "when_intent_matched"
+            )
+            block = {"predefinedType": predefined_type}
+            intent_name = predefined.get("intentName") or ndata.get("intentName")
+            if intent_name is not None:
+                block["intentName"] = intent_name
+            file_type = predefined.get("fileType") or ndata.get("fileType")
+            if file_type is not None:
+                block["fileType"] = file_type
+            form_gui_id = predefined.get("formGuiId") or ndata.get("formGuiId")
+            if form_gui_id:
+                block["formGuiId"] = form_gui_id
+            cv = predefined.get("conditionValue")
+            if cv is None:
+                if ndata.get("variable") is not None or ndata.get("operator") is not None:
+                    cv = {
+                        "variable": ndata.get("variable", ""),
+                        "operator": ndata.get("operator", ""),
+                        "targetValue": ndata.get("targetValue", ""),
+                    }
+                else:
+                    cv = ndata.get("conditionValue")
+            if cv is not None:
+                block["conditionValue"] = cv
+            ndata["transitionType"] = "predefined"
+            ndata["predefined"] = block
+            ndata.pop("custom", None)
+        nedge["data"] = ndata
+        out.append(nedge)
+    return out
+
+
+_FILE_MIME_MAP = {
+    "pdf": "application/pdf",
+    "txt": "text/plain",
+    "json": "application/json",
+    "csv": "text/csv",
+    "xml": "text/xml",
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif": "image/gif",
+    "mp3": "audio/mpeg",
+    "mp4": "video/mp4",
+}
+
+
 def process_agent_diagram(json_data):
-    # Extract language from config if present
+    """Process an Agent Diagram in the v4 wire shape and return an Agent.
+
+    Canvas: ``model.nodes`` (``AgentState`` with inline ``data.bodies`` /
+    ``data.fallbackBodies`` action rows, ``comment``) and ``model.edges``
+    (``AgentStateTransition``, ``CommentLink``). Off-canvas components come
+    from ``model.components`` and the legacy locations merged by
+    :func:`collect_agent_components`.
+    """
     config = json_data.get('config') or {}
     lang_value = config.get('language', '')
     language = lang_value.lower() if isinstance(lang_value, str) and lang_value else None
     source_language = config.get('source_language')
+
     def translate_text(text, lang, src_lang=None):
         # Use deep-translator's GoogleTranslator for free translation
         if not lang or lang == 'none':
@@ -371,8 +622,7 @@ def process_agent_diagram(json_data):
             return text
         src_code = lang_map.get(src_lang.lower()) if src_lang and isinstance(src_lang, str) else 'auto'
         try:
-            translated = GoogleTranslator(source=src_code, target=target_lang).translate(text)
-            return translated
+            return GoogleTranslator(source=src_code, target=target_lang).translate(text)
         except Exception as e:
             logger.error("Translation error: %s", e)
             return text
@@ -390,52 +640,41 @@ def process_agent_diagram(json_data):
             send_reply=bool(element.get("sendReply", True)),
         )
 
-    """Process Agent Diagram specific elements and return an Agent model."""
-    # Create the agent model
-    title = json_data.get('title', 'Generated_Agent')
+    title = json_data.get('title', 'Generated_Agent') or 'Generated_Agent'
     if ' ' in title:
         title = title.replace(' ', '_')
 
     agent = Agent(title)
 
-    # Get elements and relationships from the JSON data
     model_data = json_data.get('model') or {}
-    elements = model_data.get('elements') or {}
-    relationships = model_data.get('relationships') or {}
-    # Agent components (LLMs, intents, tools, skills, workspaces, RAGs) may be stored in:
-    #   - model.components  (new schema – preferred)
-    #   - top-level agentComponents (legacy schema)
-    #   - model.elements itself (old template / backward-compat format)
-    # Merge all sources; model.components wins over agentComponents for duplicate keys.
-    legacy_agent_components = json_data.get('agentComponents') or {}
-    model_components = model_data.get('components') or {}
-    all_components = {**legacy_agent_components, **model_components}
-    elements = {**elements, **all_components}
+    nodes = model_data.get('nodes') or []
+    edges = model_data.get('edges') or []
+    if not isinstance(nodes, list):
+        nodes = []
+    if not isinstance(edges, list):
+        edges = []
+    edges = _normalise_agent_transitions(edges)
+    nodes_by_id = {n.get("id"): n for n in nodes if isinstance(n, dict) and n.get("id")}
+    components = collect_agent_components(json_data)
 
-    # Track states and bodies for later reference
     states_by_id = {}
     intents_by_id = {}
     rag_dbs_by_id = {}
     rag_dbs_by_name = {}
     gui_defs_by_id = {}  # gui_id -> {persist, width, is_form} of its AgentGUI component
+    comment_nodes = {}
+    comment_links = {}
 
-    # Store comments for later processing
-    comment_elements = {}  # {comment_id: comment_text}
-    comment_links = {}  # {comment_id: [linked_element_ids]}
+    for node in nodes:
+        if isinstance(node, dict) and node.get("type") in COMMENT_NODE_TYPES:
+            comment_nodes[node.get("id")] = node_data(node).get("name", "")
 
-    # First pass: Process intents, primitives, and comments
-    intent_count = 0
-    for element_id, element in elements.items():
+    # Components: LLMs, tools, skills, workspaces, intents, GUIs, RAG databases.
+    for element_id, element in components.items():
         element_type = element.get("type")
-        if element_type == "Comments":
-            comment_text = element.get("name", "")
-            comment_elements[element_id] = comment_text
-            continue
-        elif element_type == "AgentLLM":
+        if element_type == "AgentLLM":
             llm_name = sanitize_text((element.get("name") or "").strip())
-            if not llm_name:
-                continue
-            if any(existing.name == llm_name for existing in agent.llms):
+            if not llm_name or any(existing.name == llm_name for existing in agent.llms):
                 continue
             provider = (element.get("provider") or "openai").lower()
             llm_parameters = element.get("parameters")
@@ -446,44 +685,34 @@ def process_agent_diagram(json_data):
                 num_prev_int = int(num_prev) if num_prev is not None else 1
             except (TypeError, ValueError):
                 num_prev_int = 1
-            global_ctx = element.get("global_context") or None
             agent.new_llm(
                 name=llm_name,
                 provider=provider,
                 parameters=llm_parameters,
                 num_previous_messages=num_prev_int,
-                global_context=global_ctx,
+                global_context=element.get("global_context") or None,
             )
-            continue
         elif element_type == "AgentTool":
             tool_name = sanitize_text((element.get("name") or "").strip())
-            if not tool_name:
-                continue
-            if any(t.name == tool_name for t in agent.tools):
+            if not tool_name or any(t.name == tool_name for t in agent.tools):
                 continue
             agent.new_tool(
                 name=tool_name,
                 description=element.get("description", "") or "",
                 code=element.get("code", "") or "",
             )
-            continue
         elif element_type == "AgentSkill":
             skill_name = sanitize_text((element.get("name") or "").strip())
-            if not skill_name:
-                continue
-            if any(s.name == skill_name for s in agent.skills):
+            if not skill_name or any(s.name == skill_name for s in agent.skills):
                 continue
             agent.new_skill(
                 name=skill_name,
                 content=element.get("content", "") or "",
                 description=element.get("description") or None,
             )
-            continue
         elif element_type == "AgentWorkspace":
             ws_name = sanitize_text((element.get("name") or "").strip())
-            if not ws_name:
-                continue
-            if any(w.name == ws_name for w in agent.workspaces):
+            if not ws_name or any(w.name == ws_name for w in agent.workspaces):
                 continue
             writable = element.get("writable")
             if writable is None:
@@ -498,48 +727,42 @@ def process_agent_diagram(json_data):
                 writable=bool(writable),
                 max_read_bytes=int(max_read_bytes),
             )
-            continue
-        elif element_type == "AgentReasoningState":
-            # Reasoning states are created in the state-construction passes below.
-            continue
         elif element_type == "AgentIntent":
             intent_name = element.get("name")
             training_sentences = []
-            intent_description = element.get("intent_description", None)
-            # Collect training sentences — IDs stored under "bodies" (canonical) or
-            # "ownedElements" (legacy: diagrams saved by an older panel version).
+            # Training sentences: ids of AgentIntentBody components under "bodies"
+            # (canonical) or "ownedElements" (legacy panel builds).
             body_id_list = element.get("bodies") or element.get("ownedElements") or []
-            for body_id in body_id_list:
-                body_element = elements.get(body_id)
-                if body_element:
+            for body_ref in body_id_list:
+                body_element = components.get(body_ref) if isinstance(body_ref, str) else body_ref
+                if isinstance(body_element, dict):
                     training_sentence = sanitize_text(body_element.get("name", ""))
                     if language:
                         training_sentence = translate_text(training_sentence, language, source_language)
                     if training_sentence:
                         training_sentences.append(training_sentence)
-
-            # Create intent and add to agent
-            intent = Intent(intent_name, training_sentences, description=intent_description)
+            intent = Intent(intent_name, training_sentences, description=element.get("intent_description", None))
             agent.add_intent(intent)
             intents_by_id[element_id] = intent
-            intent_count += 1
         elif element_type == "AgentGUI":
-            resolved_gui_id = sanitize_text(element.get("gui_id", "").strip())
+            resolved_gui_id = sanitize_text((element.get("gui_id") or "").strip())
             if not resolved_gui_id:
                 continue
             gui_defs_by_id[resolved_gui_id] = {
                 "persist": bool(element.get("persist", True)),
-                "width": sanitize_text(element.get("width", "")) or None,
+                "width": sanitize_text(element.get("width", "") or "") or None,
                 "is_form": bool(element.get("is_form", False)),
             }
             # The GrapesJS design becomes a B-UML GUIModel. Agent GUIs are not bound to a
             # class diagram, hence the empty domain model. A GUI that has not been designed
             # yet (guiModel null) becomes an empty GUIModel so replies referencing it resolve.
+            from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_diagram_processor import (  # noqa: E501 — lazy: avoids an import cycle
+                process_gui_diagram,
+            )
             agent.add_gui_model(
                 resolved_gui_id,
                 process_gui_diagram(element.get("guiModel") or {}, None, DomainModel("AgentGUIDomain")),
             )
-            continue
         elif element_type == "AgentRagElement":
             rag_name = sanitize_text((element.get("name") or "").strip())
             if not rag_name:
@@ -547,7 +770,6 @@ def process_agent_diagram(json_data):
             if rag_name in rag_dbs_by_name:
                 rag_dbs_by_id[element_id] = rag_dbs_by_name[rag_name]
                 continue
-
             sanitized_slug = rag_name.lower().replace(' ', '_') or "default"
             embedding_provider = (element.get("embedding_provider") or "openai").lower()
             if embedding_provider == "ollama":
@@ -567,10 +789,11 @@ def process_agent_diagram(json_data):
                 chunk_size=1000,
                 chunk_overlap=100,
             )
+            # The LLM is referenced by name; an empty value means "resolve the
+            # agent default at codegen time".
             rag_llm_name = sanitize_text((element.get("llm_name") or element.get("llm") or "").strip()) or ""
             rag_llm_prompt_raw = element.get("llm_prompt") or element.get("llmPrompt") or ""
             rag_llm_prompt = sanitize_text(rag_llm_prompt_raw.strip()) or None
-
             raw_k = element.get("k")
             try:
                 rag_k = int(raw_k) if raw_k is not None else 4
@@ -578,7 +801,6 @@ def process_agent_diagram(json_data):
                 rag_k = 4
             if rag_k <= 0:
                 rag_k = 4
-
             raw_npm = element.get("num_previous_messages")
             if raw_npm is None:
                 raw_npm = element.get("numPreviousMessages")
@@ -588,7 +810,6 @@ def process_agent_diagram(json_data):
                 rag_num_previous_messages = 0
             if rag_num_previous_messages < 0:
                 rag_num_previous_messages = 0
-
             rag_use_hybrid = bool(element.get("use_hybrid_rag", False))
             raw_bm25 = element.get("bm25_weight")
             try:
@@ -597,7 +818,6 @@ def process_agent_diagram(json_data):
                 rag_bm25_weight = 0.6
             if not (0 < rag_bm25_weight < 1):
                 rag_bm25_weight = 0.6
-
             rag_config = agent.new_rag(
                 name=rag_name,
                 vector_store=vector_store,
@@ -612,120 +832,91 @@ def process_agent_diagram(json_data):
             rag_dbs_by_id[element_id] = rag_config
             rag_dbs_by_name[rag_name] = rag_config
 
-    def _is_reasoning_element(element: dict) -> bool:
-        """Return True if this element represents a ReasoningState (old or new schema)."""
-        if element.get("type") == "AgentReasoningState":
-            return True
-        if element.get("type") == "AgentState" and element.get("stateType") == "reasoning":
-            return True
-        return False
+    def _is_state_node(node: dict) -> bool:
+        return isinstance(node, dict) and node.get("type") in ("AgentState", "AgentReasoningState")
 
-    def _is_standard_state_element(element: dict) -> bool:
-        """Return True if this element represents a standard AgentState."""
-        if element.get("type") == "AgentState":
-            return element.get("stateType", "standard") != "reasoning"
-        return False
+    def _is_reasoning_node(node: dict, data: dict) -> bool:
+        """Reasoning states: ``AgentState`` + ``data.stateType == 'reasoning'`` (canonical)
+        or the legacy ``AgentReasoningState`` node type."""
+        if node.get("type") == "AgentReasoningState":
+            return True
+        return node.get("type") == "AgentState" and data.get("stateType") == "reasoning"
 
-    # First identify the initial state
+    # Initial state: the ``data.initial`` flag (canonical v4); fall back to the
+    # legacy ``StateInitialNode`` marker + init edge.
     initial_state_id = None
-    for element_id, element in elements.items():
-        if element.get("type") in ("AgentState", "AgentReasoningState"):
-            # Check if this is an initial state
-            for rel in relationships.values():
-                rel_type = rel.get("type")
-                if rel_type not in ("AgentStateTransition", "AgentStateTransitionInit"):
-                    continue
-                target_el = rel.get("target") or {}
-                source_el = rel.get("source") or {}
-                source_elem_id = source_el.get("element", "")
-                if (target_el.get("element") == element_id and
-                    elements.get(source_elem_id, {}).get("type") == "StateInitialNode"):
-                    initial_state_id = element_id
-                    break
-            if initial_state_id:
+    for node in nodes:
+        if _is_state_node(node) and node_data(node).get("initial") is True:
+            initial_state_id = node.get("id")
+            break
+    if initial_state_id is None:
+        for edge in edges:
+            if edge.get("type") not in ("AgentStateTransition", "AgentStateTransitionInit"):
+                continue
+            source_node = nodes_by_id.get(edge.get("source")) or {}
+            target_node = nodes_by_id.get(edge.get("target")) or {}
+            if source_node.get("type") == "StateInitialNode" and _is_state_node(target_node):
+                initial_state_id = target_node.get("id")
                 break
 
-    def _build_reasoning_state(element_id: str, element: dict, is_initial: bool):
-        state_name = element.get("name", "")
-        llm_name = element.get("llm_name") or element.get("llm")
+    def _build_reasoning_state(node_id: str, data: dict, is_initial: bool):
+        state_name = data.get("name", "") or ""
+        llm_name = data.get("llm_name") or data.get("llm")
         llm_value = llm_name.strip() if isinstance(llm_name, str) and llm_name.strip() else None
-        kwargs = {
-            "name": state_name,
-            "llm": llm_value,
-            "initial": is_initial,
-        }
-        if element.get("max_steps") is not None:
-            kwargs["max_steps"] = int(element.get("max_steps"))
-        if element.get("enable_task_planning") is not None:
-            kwargs["enable_task_planning"] = bool(element.get("enable_task_planning"))
-        if element.get("stream_steps") is not None:
-            kwargs["stream_steps"] = bool(element.get("stream_steps"))
-        if element.get("system_prompt") is not None:
-            kwargs["system_prompt"] = element.get("system_prompt")
-        if element.get("fallback_message") is not None:
-            kwargs["fallback_message"] = element.get("fallback_message")
-        rs = agent.new_reasoning_state(**kwargs)
+        kwargs = {"name": state_name, "llm": llm_value, "initial": is_initial}
+        if data.get("max_steps") is not None:
+            kwargs["max_steps"] = int(data.get("max_steps"))
+        if data.get("enable_task_planning") is not None:
+            kwargs["enable_task_planning"] = bool(data.get("enable_task_planning"))
+        if data.get("stream_steps") is not None:
+            kwargs["stream_steps"] = bool(data.get("stream_steps"))
+        if data.get("system_prompt") is not None:
+            kwargs["system_prompt"] = data.get("system_prompt")
+        if data.get("fallback_message") is not None:
+            kwargs["fallback_message"] = data.get("fallback_message")
         # Tools, skills and workspaces are registered at the agent level and
-        # shared by every reasoning state; the metamodel has no per-state
-        # subset concept, so no per-state ref lists are parsed here.
-        states_by_id[element_id] = rs
+        # shared by every reasoning state.
+        rs = agent.new_reasoning_state(**kwargs)
+        states_by_id[node_id] = rs
         return rs
 
-    def _build_standard_state(element_id: str, element: dict, is_initial: bool):
-        """Create a standard AgentState and its body/fallback body from the new schema."""
-        state_name = element.get("name", "")
+    def _build_agent_state(node_id: str, data: dict, is_initial: bool):
+        state_name = data.get("name", "") or ""
         agent_state = agent.new_state(name=state_name, initial=is_initial)
-        states_by_id[element_id] = agent_state
-
-        # Resolve action element IDs — new key "actions", backward-compat key "bodies"
-        action_ids = element.get("actions", element.get("bodies", []))
-        body = _build_body_from_action_elements(
-            f"{state_name}_body", action_ids, elements,
+        states_by_id[node_id] = agent_state
+        body = _build_body_from_action_rows(
+            f"{state_name}_body", data.get("actions", data.get("bodies")),
             language, source_language, translate_text,
-            build_db_reply_fn=build_db_reply,
-            gui_defs_by_id=gui_defs_by_id,
+            build_db_reply_fn=build_db_reply, gui_defs_by_id=gui_defs_by_id,
         )
         if body:
             agent_state.set_body(body)
-
-        # Only attach a fallback body if fallbackBodyEnabled is absent (legacy) or True
-        fallback_enabled = element.get("fallbackBodyEnabled", True)
-        if fallback_enabled:
-            fallback_ids = element.get("fallbackActions", element.get("fallbackBodies", []))
-            fallback_body = _build_body_from_action_elements(
-                f"{state_name}_fallback_body", fallback_ids, elements,
+        # Only attach a fallback body if fallbackBodyEnabled is absent (legacy) or True.
+        if data.get("fallbackBodyEnabled", True):
+            fallback_body = _build_body_from_action_rows(
+                f"{state_name}_fallback_body", data.get("fallbackActions", data.get("fallbackBodies")),
                 language, source_language, translate_text,
-                build_db_reply_fn=build_db_reply,
-                gui_defs_by_id=gui_defs_by_id,
+                build_db_reply_fn=build_db_reply, gui_defs_by_id=gui_defs_by_id,
             )
             if fallback_body:
                 agent_state.set_fallback_body(fallback_body)
-
         return agent_state
 
-    # Process the initial state first if found
-    if initial_state_id:
-        element = elements.get(initial_state_id)
-        if _is_reasoning_element(element):
-            _build_reasoning_state(initial_state_id, element, is_initial=True)
+    def _build_state(node: dict, is_initial: bool):
+        data = node_data(node)
+        if _is_reasoning_node(node, data):
+            _build_reasoning_state(node.get("id"), data, is_initial)
         else:
-            _build_standard_state(initial_state_id, element, is_initial=True)
+            _build_agent_state(node.get("id"), data, is_initial)
 
-    # Now process the rest of the states (including reasoning states)
-    for element_id, element in elements.items():
-        if element_id == initial_state_id:
-            continue
-        if _is_reasoning_element(element):
-            _build_reasoning_state(element_id, element, is_initial=False)
-        elif _is_standard_state_element(element):
-            _build_standard_state(element_id, element, is_initial=False)
+    if initial_state_id:
+        _build_state(nodes_by_id[initial_state_id], is_initial=True)
+    for node in nodes:
+        if _is_state_node(node) and node.get("id") != initial_state_id:
+            _build_state(node, is_initial=False)
 
-    # Build intent lookup dict for O(1) resolution during transition processing.
-    # Intent names are unique case-insensitively in BUML (see Agent._validate_state_intent_name_collisions),
-    # so we accept both exact and casefold matches. This protects against frontend personalization
-    # variants that emit intentName references with different casing than the intent definitions
-    # they were derived from — without this, the lookup misses and a duplicate Intent is created
-    # that never appears in agent.intents, leaving the template referencing an undefined variable.
+    # Intent names are unique case-insensitively in BUML, so accept both exact and
+    # casefold matches (personalization variants may change the casing).
     intent_lookup = {intent.name: intent for intent in agent.intents}
     intent_lookup_casefold = {
         intent.name.casefold(): intent
@@ -733,332 +924,233 @@ def process_agent_diagram(json_data):
         if isinstance(intent.name, str)
     }
 
-    # Third pass: Process transitions and comment links
     transition_count = 0
-    for relationship in relationships.values():
-        if relationship.get("type") == "Link":
-            # Handle comment links
-            source_element_id = relationship.get("source", {}).get("element")
-            target_element_id = relationship.get("target", {}).get("element")
-
+    for edge in edges:
+        edge_type = edge.get("type")
+        if edge_type in COMMENT_LINK_TYPES:
+            source_id = edge.get("source")
+            target_id = edge.get("target")
             comment_id = None
-            target_id = None
+            target = None
+            if source_id in comment_nodes:
+                comment_id, target = source_id, target_id
+            elif target_id in comment_nodes:
+                comment_id, target = target_id, source_id
+            if comment_id and target:
+                comment_links.setdefault(comment_id, []).append(target)
+            continue
+        if edge_type not in ("AgentStateTransition", "AgentStateTransitionInit"):
+            continue
 
-            if source_element_id in comment_elements:
-                comment_id = source_element_id
-                target_id = target_element_id
-            elif target_element_id in comment_elements:
-                comment_id = target_element_id
-                target_id = source_element_id
+        source_id = edge.get("source")
+        target_id = edge.get("target")
+        if (nodes_by_id.get(source_id) or {}).get("type") == "StateInitialNode":
+            continue
+        source_state = states_by_id.get(source_id)
+        target_state = states_by_id.get(target_id)
+        if not source_state or not target_state:
+            logger.warning(
+                "Skipping agent transition: source '%s' or target '%s' state not found.",
+                source_id, target_id,
+            )
+            continue
 
-            if comment_id and target_id:
-                if comment_id not in comment_links:
-                    comment_links[comment_id] = []
-                comment_links[comment_id].append(target_id)
-        elif relationship.get("type") in ["AgentStateTransition", "AgentStateTransitionInit"]:
-            source_id = relationship.get("source", {}).get("element")
-            target_id = relationship.get("target", {}).get("element")
+        edge_data = edge.get("data") or {}
+        predefined_block = edge_data.get("predefined") or {}
+        custom_block = edge_data.get("custom") or {}
 
-            # Skip initial node transitions (already handled when creating states)
-            if elements.get(source_id, {}).get("type") == "StateInitialNode":
-                continue
-
-            source_state = states_by_id.get(source_id)
-            target_state = states_by_id.get(target_id)
-
-            if not source_state or not target_state:
-                logger.warning(
-                    "Skipping agent transition: source '%s' or target '%s' state not found.",
-                    source_id, target_id
-                )
-                continue
-
-            if source_state and target_state:
-                transition_type = relationship.get("transitionType")
-                predefined_block = relationship.get("predefined") or {}
-                custom_block = relationship.get("custom") or {}
-
-                condition_name = ""
+        if edge_data.get("transitionType") == "custom":
+            selected_event = custom_block.get("event")
+            custom_conditions = custom_block.get("condition")
+            if not isinstance(custom_conditions, list):
+                custom_conditions = []
+            normalized_event = "None"
+            if isinstance(selected_event, str) and selected_event and selected_event != "None":
+                normalized_event = selected_event
+            condition_name = "custom_transition"
+            transition_payload = {"event": normalized_event, "conditions": custom_conditions}
+            if custom_block.get("guiEventGuiId"):
+                transition_payload["guiEventGuiId"] = custom_block.get("guiEventGuiId")
+        else:
+            condition_name = predefined_block.get("predefinedType") or ""
+            if condition_name == "when_intent_matched":
+                transition_payload = predefined_block.get("intentName")
+            elif condition_name == "when_file_received":
+                transition_payload = predefined_block.get("fileType")
+            elif condition_name == "when_form_submitted":
+                transition_payload = predefined_block.get("formGuiId") or ""
+            else:
+                transition_payload = predefined_block.get("conditionValue")
+            if transition_payload is None:
                 transition_payload = ""
 
-                is_custom_transition = (
-                    transition_type == "custom"
-                )
+        if condition_name == "when_intent_matched":
+            intent_to_match = intent_lookup.get(transition_payload)
+            if intent_to_match is None and isinstance(transition_payload, str):
+                intent_to_match = intent_lookup_casefold.get(transition_payload.casefold())
+            if intent_to_match:
+                source_state.when_intent_matched(intent_to_match).go_to(target_state)
+                transition_count += 1
+            elif isinstance(transition_payload, str) and transition_payload.strip():
+                unresolved_intent = Intent(transition_payload.strip())
+                TransitionBuilder(
+                    source=source_state,
+                    event=ReceiveTextEvent(),
+                    conditions=[IntentMatcher(unresolved_intent)],
+                ).go_to(target_state)
+                transition_count += 1
 
-                if is_custom_transition:
-                    selected_event = (
-                        custom_block.get("event")
-                        or relationship.get("event")
-                        or relationship.get("customEvent")
-                    )
-                    custom_conditions = (
-                        custom_block.get("condition")
-                        if isinstance(custom_block.get("condition"), list)
-                        else relationship.get("conditions")
-                    )
-                    if not isinstance(custom_conditions, list):
-                        custom_conditions = relationship.get("customConditions")
-                    if not isinstance(custom_conditions, list):
-                        custom_conditions = []
+        elif condition_name == "when_no_intent_matched":
+            source_state.when_no_intent_matched().go_to(target_state)
+            transition_count += 1
 
-                    normalized_event = "None"
-                    if isinstance(selected_event, str) and selected_event and selected_event != "None":
-                        normalized_event = selected_event
-                    condition_name = "custom_transition"
-                    transition_payload = {
-                        "event": normalized_event,
-                        "conditions": custom_conditions if isinstance(custom_conditions, list) else [],
-                    }
-                    # Carry GUIEvent.message_id through so GUIEvent round-trips correctly.
-                    _gui_mid = (
-                        custom_block.get("guiEventGuiId")
-                        or relationship.get("guiEventGuiId")
+        elif condition_name == "when_variable_operation_matched":
+            if isinstance(transition_payload, dict):
+                variable_name = transition_payload.get("variable")
+                operator_value = transition_payload.get("operator")
+                target_value = transition_payload.get("targetValue")
+                if not variable_name or not operator_value:
+                    logger.warning(
+                        "Incomplete variable operation condition (variable=%s, operator=%s) "
+                        "for transition from '%s' to '%s'. Falling back to no_intent_matched.",
+                        variable_name, operator_value, source_state.name, target_state.name,
                     )
-                    if _gui_mid:
-                        transition_payload["guiEventGuiId"] = _gui_mid
+                    source_state.when_no_intent_matched().go_to(target_state)
+                    transition_count += 1
                 else:
-                    condition_name = (
-                        predefined_block.get("predefinedType")
-                        or relationship.get("predefinedType")
-                        or ""
-                    )
-                    if condition_name == "when_intent_matched":
-                        transition_payload = (
-                            predefined_block.get("intentName")
-                            or relationship.get("intentName")
-                        )
-                    elif condition_name == "when_file_received":
-                        transition_payload = (
-                            predefined_block.get("fileType")
-                            or relationship.get("fileType")
-                        )
-                    else:
-                        transition_payload = predefined_block.get("conditionValue")
-
-                    if transition_payload is None:
-                        transition_payload = relationship.get("conditionValue", "")
-
-                # Create appropriate transition based on condition
-                if condition_name == "when_intent_matched":
-                    # Find the intent by name via O(1) lookup, falling back to a
-                    # case-insensitive match so personalization variants whose JSON
-                    # uses a different casing than the intent definition still resolve
-                    # to the same intent object.
-                    intent_to_match = intent_lookup.get(transition_payload)
-                    if intent_to_match is None and isinstance(transition_payload, str):
-                        intent_to_match = intent_lookup_casefold.get(transition_payload.casefold())
-
-                    if intent_to_match:
-                        source_state.when_intent_matched(intent_to_match).go_to(target_state)
-                        transition_count += 1
-                    elif isinstance(transition_payload, str) and transition_payload.strip():
-                        unresolved_intent = Intent(transition_payload.strip())
-                        TransitionBuilder(
-                            source=source_state,
-                            event=ReceiveTextEvent(),
-                            conditions=[IntentMatcher(unresolved_intent)],
+                    operator_map = {
+                        "<": operator.lt,
+                        "<=": operator.le,
+                        "==": operator.eq,
+                        ">=": operator.ge,
+                        ">": operator.gt,
+                        "!=": operator.ne,
+                    }
+                    op_func = operator_map.get(operator_value)
+                    if op_func:
+                        source_state.when_variable_matches_operation(
+                            var_name=variable_name,
+                            operation=op_func,
+                            target=target_value,
                         ).go_to(target_state)
                         transition_count += 1
-
-                elif condition_name == "when_no_intent_matched":
-                    source_state.when_no_intent_matched().go_to(target_state)
-                    transition_count += 1
-
-                elif condition_name == "when_variable_operation_matched":
-                    # Check if transition payload is a dictionary
-                    if isinstance(transition_payload, dict):
-                        variable_name = transition_payload.get("variable")
-                        operator_value = transition_payload.get("operator")
-                        target_value = transition_payload.get("targetValue")
-
-                        if not variable_name or not operator_value:
-                            logger.warning(
-                                "Incomplete variable operation condition (variable=%s, operator=%s) "
-                                "for transition from '%s' to '%s'. Falling back to no_intent_matched.",
-                                variable_name, operator_value,
-                                source_state.name, target_state.name,
-                            )
-                            source_state.when_no_intent_matched().go_to(target_state)
-                            transition_count += 1
-                        else:
-                            # Map string operators to actual operator functions
-                            operator_map = {
-                                "<": operator.lt,
-                                "<=": operator.le,
-                                "==": operator.eq,
-                                ">=": operator.ge,
-                                ">": operator.gt,
-                                "!=": operator.ne
-                            }
-
-                            op_func = operator_map.get(operator_value)
-                            if op_func:
-                                source_state.when_variable_matches_operation(
-                                    var_name=variable_name,
-                                    operation=op_func,
-                                    target=target_value
-                                ).go_to(target_state)
-                                transition_count += 1
-                            else:
-                                logger.warning(
-                                    "Unknown operator '%s' for variable operation transition "
-                                    "from '%s' to '%s'. Skipping.",
-                                    operator_value, source_state.name, target_state.name,
-                                )
                     else:
-                        # If transition_payload is not a dictionary, add a simple transition
                         logger.warning(
-                            "Expected dict for when_variable_operation_matched condition but got %s. "
-                            "Falling back to no_intent_matched for transition from '%s' to '%s'.",
-                            type(transition_payload).__name__, source_state.name, target_state.name,
+                            "Unknown operator '%s' for variable operation transition from '%s' to '%s'. Skipping.",
+                            operator_value, source_state.name, target_state.name,
                         )
-                        source_state.when_no_intent_matched().go_to(target_state)
-                        transition_count += 1
+            else:
+                logger.warning(
+                    "Expected dict for when_variable_operation_matched condition but got %s. "
+                    "Falling back to no_intent_matched for transition from '%s' to '%s'.",
+                    type(transition_payload).__name__, source_state.name, target_state.name,
+                )
+                source_state.when_no_intent_matched().go_to(target_state)
+                transition_count += 1
 
-                elif condition_name == "when_form_submitted":
-                    form_gui_id = (
-                        predefined_block.get("formGuiId")
-                        or relationship.get("formGuiId")
-                        or ""
-                    )
-                    form_id = form_gui_id if form_gui_id else None
-                    source_state.when_form_submitted(form_id=form_id).go_to(target_state)
-                    transition_count += 1
+        elif condition_name == "when_form_submitted":
+            form_id = transition_payload if isinstance(transition_payload, str) and transition_payload else None
+            source_state.when_form_submitted(form_id=form_id).go_to(target_state)
+            transition_count += 1
 
-                elif condition_name == "when_file_received":
-                    _mime_map = {
-                        "pdf": "application/pdf",
-                        "txt": "text/plain",
-                        "json": "application/json",
-                        "csv": "text/csv",
-                        "xml": "text/xml",
-                        "png": "image/png",
-                        "jpg": "image/jpeg",
-                        "jpeg": "image/jpeg",
-                        "gif": "image/gif",
-                        "mp3": "audio/mpeg",
-                        "mp4": "video/mp4",
-                    }
-                    if isinstance(transition_payload, str) and transition_payload.strip():
-                        tokens = [t.strip() for t in transition_payload.split(",") if t.strip()]
-                        resolved = [
-                            token if "/" in token else _mime_map.get(token.lower(), token)
-                            for token in tokens
-                        ]
-                        if len(resolved) == 1:
-                            source_state.when_file_received(resolved[0]).go_to(target_state)
-                        else:
-                            source_state.when_file_received(resolved).go_to(target_state)
-                    else:
-                        source_state.when_file_received().go_to(target_state)
-                    transition_count += 1
-
-                elif condition_name == "auto":
-                    source_state.go_to(target_state)
-                    transition_count += 1
-
-                elif condition_name == "custom_transition":
-                    event_instance = None
-                    custom_conditions = []
-
-                    if isinstance(transition_payload, dict):
-                        selected_event = transition_payload.get("event")
-                        # Backward compatibility for older payloads that used "events": [..]
-                        if not selected_event:
-                            raw_events = transition_payload.get("events") or []
-                            if isinstance(raw_events, list) and raw_events:
-                                selected_event = raw_events[0]
-
-                        if selected_event == "ReceiveTextEvent":
-                            event_instance = ReceiveTextEvent()
-                        elif selected_event == "ReceiveMessageEvent":
-                            event_instance = ReceiveMessageEvent("")
-                        elif selected_event == "ReceiveJSONEvent":
-                            event_instance = ReceiveJSONEvent()
-                        elif selected_event == "ReceiveFileEvent":
-                            event_instance = ReceiveFileEvent()
-                        elif selected_event == "DummyEvent":
-                            event_instance = DummyEvent()
-                        elif selected_event == "WildcardEvent":
-                            event_instance = WildcardEvent()
-                        elif selected_event == "GUIEvent":
-                            gui_event_gui_id = transition_payload.get("guiEventGuiId", "")
-                            message_id = gui_event_gui_id if gui_event_gui_id else None
-                            event_instance = GUIEvent(message_id=message_id)
-                        elif selected_event == "None":
-                            event_instance = None
-
-                        raw_conditions = transition_payload.get("conditions") or []
-                        if isinstance(raw_conditions, list):
-                            custom_conditions = [c for c in raw_conditions if isinstance(c, str) and c.strip()]
-
-                    condition_objects = []
-                    for condition_index, custom_condition_code in enumerate(custom_conditions, start=1):
-                        generated_name = f"condition_{transition_count + 1}_{condition_index}"
-                        custom_condition = Condition(name=generated_name, callable=None)
-                        custom_condition.code = custom_condition_code
-                        condition_objects.append(custom_condition)
-
-                    transition_builder = None
-                    if event_instance is not None:
-                        transition_builder = source_state.when_event(event_instance)
-
-                    if condition_objects:
-                        if transition_builder is None:
-                            transition_builder = source_state.when_condition(condition_objects[0])
-                            for extra_condition in condition_objects[1:]:
-                                transition_builder.with_condition(extra_condition)
-                        else:
-                            for custom_condition in condition_objects:
-                                transition_builder.with_condition(custom_condition)
-
-                    if transition_builder is not None:
-                        transition_builder.go_to(target_state)
-                        transition_count += 1
-                    else:
-                        source_state.go_to(target_state)
-                        transition_count += 1
-
+        elif condition_name == "when_file_received":
+            # Comma-separated list of MIME types or short extensions (pdf, csv, ...).
+            if isinstance(transition_payload, str) and transition_payload.strip():
+                tokens = [t.strip() for t in transition_payload.split(",") if t.strip()]
+                resolved = [
+                    token if "/" in token else _FILE_MIME_MAP.get(token.lower(), token)
+                    for token in tokens
+                ]
+                if len(resolved) == 1:
+                    source_state.when_file_received(resolved[0]).go_to(target_state)
                 else:
-                    # Default to no_intent_matched if no condition specified
-                    source_state.when_no_intent_matched().go_to(target_state)
-                    transition_count += 1
+                    source_state.when_file_received(resolved).go_to(target_state)
+            else:
+                source_state.when_file_received().go_to(target_state)
+            transition_count += 1
 
-    # Process comments
-    for comment_id, comment_text in comment_elements.items():
+        elif condition_name == "auto":
+            source_state.go_to(target_state)
+            transition_count += 1
+
+        elif condition_name == "custom_transition":
+            event_instance = None
+            custom_conditions = []
+            if isinstance(transition_payload, dict):
+                selected_event = transition_payload.get("event")
+                if selected_event == "ReceiveTextEvent":
+                    event_instance = ReceiveTextEvent()
+                elif selected_event == "ReceiveMessageEvent":
+                    event_instance = ReceiveMessageEvent("")
+                elif selected_event == "ReceiveJSONEvent":
+                    event_instance = ReceiveJSONEvent()
+                elif selected_event == "ReceiveFileEvent":
+                    event_instance = ReceiveFileEvent()
+                elif selected_event == "DummyEvent":
+                    event_instance = DummyEvent()
+                elif selected_event == "WildcardEvent":
+                    event_instance = WildcardEvent()
+                elif selected_event == "GUIEvent":
+                    message_id = transition_payload.get("guiEventGuiId") or None
+                    event_instance = GUIEvent(message_id=message_id)
+                raw_conditions = transition_payload.get("conditions") or []
+                if isinstance(raw_conditions, list):
+                    custom_conditions = [c for c in raw_conditions if isinstance(c, str) and c.strip()]
+
+            condition_objects = []
+            for condition_index, custom_condition_code in enumerate(custom_conditions, start=1):
+                generated_name = f"condition_{transition_count + 1}_{condition_index}"
+                custom_condition = Condition(name=generated_name, callable=None)
+                custom_condition.code = custom_condition_code
+                condition_objects.append(custom_condition)
+
+            transition_builder = None
+            if event_instance is not None:
+                transition_builder = source_state.when_event(event_instance)
+            if condition_objects:
+                if transition_builder is None:
+                    transition_builder = source_state.when_condition(condition_objects[0])
+                    for extra_condition in condition_objects[1:]:
+                        transition_builder.with_condition(extra_condition)
+                else:
+                    for custom_condition in condition_objects:
+                        transition_builder.with_condition(custom_condition)
+            if transition_builder is not None:
+                transition_builder.go_to(target_state)
+            else:
+                source_state.go_to(target_state)
+            transition_count += 1
+
+        else:
+            source_state.when_no_intent_matched().go_to(target_state)
+            transition_count += 1
+
+    for comment_id, comment_text in comment_nodes.items():
         if comment_id in comment_links:
-            # Comment is linked to one or more elements
-            for linked_element_id in comment_links[comment_id]:
-                if linked_element_id in states_by_id:
-                    # Apply comment to state's metadata
-                    state = states_by_id[linked_element_id]
+            for linked_id in comment_links[comment_id]:
+                if linked_id in states_by_id:
+                    state = states_by_id[linked_id]
                     if state.metadata is None:
                         state.metadata = Metadata(description=comment_text)
                     else:
-                        # Append to existing description
                         existing_desc = state.metadata.description or ""
                         state.metadata.description = (
                             f"{existing_desc}\n{comment_text}" if existing_desc else comment_text
                         )
         else:
-            # Unlinked comment - add to Agent metadata
             if agent.metadata is None:
                 agent.metadata = Metadata(description=comment_text)
             else:
-                # Append to existing description
                 existing_desc = agent.metadata.description or ""
                 agent.metadata.description = f"{existing_desc}\n{comment_text}" if existing_desc else comment_text
 
-    # Apply default LLM from the customization config block (if set).
-    # The customization tab persists which registered LLM is the default;
-    # without an explicit pointer the agent already auto-defaulted to the
-    # first one registered.
+    # Apply the default LLM from the diagram config block (if set); without an
+    # explicit pointer the agent already auto-defaulted to the first one registered.
     default_llm_name_cfg = (config or {}).get("default_llm_name")
     if isinstance(default_llm_name_cfg, str) and default_llm_name_cfg.strip():
         if any(existing.name == default_llm_name_cfg for existing in agent.llms):
             agent.set_default_llm(default_llm_name_cfg)
 
-    # Validate the agent model at build time so all callers get validation for free
+    # Validate the agent model at build time so all callers get validation for free.
     agent.validate(raise_exception=True)
-
     return agent

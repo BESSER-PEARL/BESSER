@@ -14,8 +14,7 @@ test is the load-bearing one for the merge -- it exercises the spliced
 ``project_builder.py`` that emits BPMN + Component + Deployment sections into
 a single executable ``project.py``.
 
-The payloads mirror the real-export wire shape used by the converter unit
-tests. They are kept inline so the test is self-contained and CI-safe while
+The payloads use the v4 wire shape (``{nodes, edges}``) the editor sends. They are kept inline so the test is self-contained and CI-safe while
 still exercising the same shape as real WME exports.
 
 Async/ASGI harness mirrors ``test_api_integration.py`` (the installed
@@ -88,41 +87,41 @@ def _component_diagram() -> dict:
     return {
         "title": "Component Diagram",
         "model": {
-            "version": "3.0.0",
+            "version": "4.0.0",
             "type": "ComponentDiagram",
             "size": {"width": 1400, "height": 740},
-            "elements": {
-                "grp": {
-                    "id": "grp", "name": "ConsensusGroup", "type": "Subsystem",
-                    "owner": None,
-                    "bounds": {"x": 100, "y": 100, "width": 520, "height": 280},
-                    "stereotype": "subsystem", "displayStereotype": True,
+            "nodes": [
+                {
+                    "id": "grp", "type": "componentSubsystem",
+                    "position": {"x": 100, "y": 100}, "width": 520, "height": 280,
+                    "data": {"name": "ConsensusGroup", "stereotype": "subsystem",
+                             "isComponentSubsystemHeaderShown": True},
                 },
-                "orch": {
-                    "id": "orch", "name": "OrchestratorAgent", "type": "Component",
-                    "owner": "grp",
-                    "bounds": {"x": 140, "y": 180, "width": 160, "height": 80},
-                    "stereotype": "solution", "displayStereotype": True,
+                {
+                    "id": "orch", "type": "component", "parentId": "grp",
+                    "position": {"x": 40, "y": 80}, "width": 160, "height": 80,
+                    "data": {"name": "OrchestratorAgent", "stereotype": "solution",
+                             "isComponentHeaderShown": True},
                 },
-                "worker": {
-                    "id": "worker", "name": "WorkerAgent", "type": "Component",
-                    "owner": "grp",
-                    "bounds": {"x": 420, "y": 180, "width": 160, "height": 80},
-                    "stereotype": "collaboration", "displayStereotype": True,
+                {
+                    "id": "worker", "type": "component", "parentId": "grp",
+                    "position": {"x": 320, "y": 80}, "width": 160, "height": 80,
+                    "data": {"name": "WorkerAgent", "stereotype": "collaboration",
+                             "isComponentHeaderShown": True},
                 },
-            },
-            "relationships": {
-                "rel": {
-                    "id": "rel", "name": "", "type": "ComponentDependency",
-                    "owner": None,
-                    "bounds": {"x": 300, "y": 220, "width": 120, "height": 1},
-                    "path": [{"x": 0, "y": 0}, {"x": 120, "y": 0}],
-                    "source": {"element": "orch", "direction": "Right"},
-                    "target": {"element": "worker", "direction": "Left"},
-                    "isManuallyLayouted": False,
-                    "stereotype": "delegates {permission: repo:merge:approve}",
+            ],
+            "edges": [
+                {
+                    "id": "rel", "type": "ComponentDependency",
+                    "source": "orch", "target": "worker",
+                    "sourceHandle": "right", "targetHandle": "left",
+                    "data": {
+                        "name": "", "isManuallyLayouted": False,
+                        "points": [{"x": 300, "y": 220}, {"x": 420, "y": 220}],
+                        "stereotype": "delegates {permission: repo:merge:approve}",
+                    },
                 },
-            },
+            ],
             "interactive": {"elements": {}, "relationships": {}},
             "assessments": {},
         },
@@ -135,56 +134,48 @@ def _deployment_diagram() -> dict:
     return {
         "title": "Deployment Diagram",
         "model": {
-            "version": "3.0.0",
+            "version": "4.0.0",
             "type": "DeploymentDiagram",
             "size": {"width": 1040, "height": 640},
-            "elements": {
-                "n1": {
-                    "id": "n1", "name": "EdgeDevice", "type": "DeploymentNode",
-                    "owner": None,
-                    "bounds": {"x": -500, "y": -300, "width": 440, "height": 340},
-                    "stereotype": "device", "displayStereotype": True,
+            "nodes": [
+                {
+                    "id": "n1", "type": "deploymentNode",
+                    "position": {"x": -500, "y": -300}, "width": 440, "height": 340,
+                    "data": {"name": "EdgeDevice", "stereotype": "device",
+                             "isComponentHeaderShown": True},
                 },
-                "a1": {
-                    "id": "a1", "name": "agent-runtime [3]",
-                    "type": "DeploymentArtifact",
-                    "owner": "n1",
-                    "bounds": {"x": -450, "y": -200, "width": 160, "height": 40},
+                {
+                    "id": "a1", "type": "deploymentArtifact", "parentId": "n1",
+                    "position": {"x": 50, "y": 100}, "width": 160, "height": 40,
+                    "data": {"name": "agent-runtime [3]"},
                 },
-                "n2": {
-                    "id": "n2", "name": "LLMHost", "type": "DeploymentNode",
-                    "owner": None,
-                    "bounds": {"x": 230, "y": 0, "width": 160, "height": 100},
-                    "stereotype": "executionEnvironment external",
-                    "displayStereotype": True,
+                {
+                    "id": "n2", "type": "deploymentNode",
+                    "position": {"x": 230, "y": 0}, "width": 160, "height": 100,
+                    "data": {"name": "LLMHost", "stereotype": "executionEnvironment external",
+                             "isComponentHeaderShown": True},
                 },
-            },
-            "relationships": {
+            ],
+            "edges": [
                 # Explicit artifact -> node edge: carries the `[3]` multiplicity
                 # (parsed off the artifact name onto the DeploymentRelation).
-                "r-deploys": {
-                    "id": "r-deploys", "name": "", "type": "DeploymentAssociation",
-                    "owner": None,
-                    "bounds": {"x": 0, "y": 0, "width": 1, "height": 120},
-                    "path": [{"x": 0, "y": 0}, {"x": 0, "y": 120}],
-                    "source": {"direction": "Down", "element": "a1"},
-                    "target": {"direction": "Down", "element": "n1"},
-                    "isManuallyLayouted": False,
-                    "stereotype": "",
+                {
+                    "id": "r-deploys", "type": "DeploymentAssociation",
+                    "source": "a1", "target": "n1",
+                    "sourceHandle": "bottom", "targetHandle": "bottom",
+                    "data": {"name": "", "stereotype": "", "isManuallyLayouted": False,
+                             "points": [{"x": 0, "y": 0}, {"x": 0, "y": 120}]},
                 },
                 # Node <-> node edge: becomes a CommunicationPath, `HTTPS` rides
                 # through as a free-form stereotype.
-                "r-comm": {
-                    "id": "r-comm", "name": "", "type": "DeploymentAssociation",
-                    "owner": None,
-                    "bounds": {"x": 0, "y": 0, "width": 290, "height": 1},
-                    "path": [{"x": 0, "y": 0}, {"x": 290, "y": 0}],
-                    "source": {"direction": "Downright", "element": "n1"},
-                    "target": {"direction": "Left", "element": "n2"},
-                    "isManuallyLayouted": False,
-                    "stereotype": "HTTPS",
+                {
+                    "id": "r-comm", "type": "DeploymentAssociation",
+                    "source": "n1", "target": "n2",
+                    "sourceHandle": "right-bottom", "targetHandle": "left",
+                    "data": {"name": "", "stereotype": "HTTPS", "isManuallyLayouted": False,
+                             "points": [{"x": 0, "y": 0}, {"x": 290, "y": 0}]},
                 },
-            },
+            ],
             "interactive": {"elements": {}, "relationships": {}},
             "assessments": {},
         },
@@ -193,41 +184,36 @@ def _deployment_diagram() -> dict:
 
 def _bpmn_diagram() -> dict:
     """Pool-less BPMN process: StartEvent -> Task -> EndEvent."""
-    def _node(eid, typ, name, **extra):
-        base = {
-            "id": eid, "name": name, "type": typ, "owner": None,
-            "bounds": {"x": 100, "y": 100, "width": 110, "height": 60},
+    def _node(eid, typ, name, **data):
+        return {
+            "id": eid, "type": typ,
+            "position": {"x": 100, "y": 100}, "width": 110, "height": 60,
+            "data": {"name": name, **data},
         }
-        base.update(extra)
-        return base
 
     def _flow(rid, src, tgt):
         return {
-            "id": rid, "name": "", "type": "BPMNFlow", "owner": None,
-            "bounds": {"x": 0, "y": 0, "width": 100, "height": 1},
-            "path": [{"x": 0, "y": 0}, {"x": 100, "y": 0}],
-            "source": {"element": src, "direction": "Right",
-                       "bounds": {"x": 0, "y": 0, "width": 0, "height": 0}},
-            "target": {"element": tgt, "direction": "Left",
-                       "bounds": {"x": 100, "y": 0, "width": 0, "height": 0}},
-            "isManuallyLayouted": False, "flowType": "sequence", "isDefault": False,
+            "id": rid, "type": "BPMNSequenceFlow", "source": src, "target": tgt,
+            "sourceHandle": "right", "targetHandle": "left",
+            "data": {"name": "", "isManuallyLayouted": False, "isDefault": False,
+                     "points": [{"x": 0, "y": 0}, {"x": 100, "y": 0}]},
         }
 
     return {
         "title": "BPMN Diagram",
         "model": {
-            "version": "3.0.0",
+            "version": "4.0.0",
             "type": "BPMNDiagram",
             "size": {"width": 1400, "height": 700},
-            "elements": {
-                "s1": _node("s1", "BPMNStartEvent", "go", eventType="default"),
-                "t1": _node("t1", "BPMNTask", "Review", taskType="user", marker="none"),
-                "e1": _node("e1", "BPMNEndEvent", "done", eventType="default"),
-            },
-            "relationships": {
-                "f1": _flow("f1", "s1", "t1"),
-                "f2": _flow("f2", "t1", "e1"),
-            },
+            "nodes": [
+                _node("s1", "bpmnStartEvent", "go", eventType="default"),
+                _node("t1", "bpmnTask", "Review", taskType="user", marker="none"),
+                _node("e1", "bpmnEndEvent", "done", eventType="default"),
+            ],
+            "edges": [
+                _flow("f1", "s1", "t1"),
+                _flow("f2", "t1", "e1"),
+            ],
             "interactive": {"elements": {}, "relationships": {}},
             "assessments": {},
         },
@@ -259,6 +245,24 @@ def _project_payload() -> dict:
 # ---------------------------------------------------------------------------
 
 class TestExportBumlSingleDiagram:
+    @pytest.mark.parametrize("diagram_type, element_type", [
+        ("ComponentDiagram", "Component"),
+        ("DeploymentDiagram", "DeploymentNode"),
+    ])
+    def test_legacy_v3_diagram_is_rejected(self, diagram_type, element_type):
+        legacy = {
+            "title": "Legacy",
+            "model": {
+                "version": "3.0.0", "type": diagram_type,
+                "elements": {"x": {"id": "x", "name": "X", "type": element_type, "owner": None,
+                                   "bounds": {"x": 0, "y": 0, "width": 160, "height": 100}}},
+                "relationships": {},
+            },
+        }
+        resp = _post(f"{API}/export-buml", json=legacy)
+        assert resp.status_code == 400
+        assert "legacy v3 editor format" in resp.json()["detail"]
+
     def test_component_exports_and_reconstructs(self):
         resp = _post(f"{API}/export-buml", json=_component_diagram())
         assert resp.status_code == 200, resp.text
@@ -334,5 +338,5 @@ class TestExportProjectAllThree:
 
         assert component_model["type"] == "ComponentDiagram"
         assert deployment_model["type"] == "DeploymentDiagram"
-        assert component_model["elements"]
-        assert deployment_model["elements"]
+        assert component_model["nodes"]
+        assert deployment_model["nodes"]

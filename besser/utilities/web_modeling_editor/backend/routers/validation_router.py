@@ -19,20 +19,20 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
 # Backend services - Converters
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_class_diagram,
+    process_bpmn_diagram,
     process_state_machine,
     process_agent_diagram,
     process_object_diagram,
     process_nn_diagram,
     process_component_diagram,
     process_deployment_diagram,
-    process_bpmn_diagram,
+)
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    BPMN_DIAGRAM_TYPES,
+    DEPLOYMENT_DIAGRAM_TYPE,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
-)
-from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    BPMN_DIAGRAM_TYPE,
-    DEPLOYMENT_DIAGRAM_TYPE,
 )
 
 # Backend services - Validators
@@ -95,12 +95,16 @@ async def validate_diagram(input_data: DiagramInput):
                     "message": "\u274c Validation failed"
                 }
 
-            # Process the reference class diagram first
+            # Process the reference class diagram first. v4 models always
+            # carry ``title``; migrated ones may leave it empty.
+            reference_title = reference_data.get("title")
+            if not (reference_title or "").strip():
+                reference_title = "Reference Classes"
             reference_json = {
-                "title": reference_data.get("title", "Reference Classes"),
+                "title": reference_title,
                 "model": {
-                    "elements": reference_data.get("elements", {}),
-                    "relationships": reference_data.get("relationships", {})
+                    "nodes": reference_data.get("nodes", []),
+                    "edges": reference_data.get("edges", []),
                 }
             }
             buml_model = process_class_diagram(reference_json)
@@ -176,15 +180,15 @@ async def validate_diagram(input_data: DiagramInput):
                     validation_errors.extend(nn_validation["errors"])
                     validation_warnings.extend(nn_validation["warnings"])
 
-        elif diagram_type == BPMN_DIAGRAM_TYPE:
+        elif diagram_type in BPMN_DIAGRAM_TYPES:
             try:
                 bpmn_model = process_bpmn_diagram(input_data.model_dump())
             except (ConversionError, ValueError) as e:
                 validation_errors.extend(str(e).splitlines())
             else:
                 bpmn_validation = bpmn_model.validate(raise_exception=False)
-                validation_errors.extend(bpmn_validation["errors"])
-                validation_warnings.extend(bpmn_validation["warnings"])
+                validation_errors.extend(bpmn_validation.get("errors", []))
+                validation_warnings.extend(bpmn_validation.get("warnings", []))
 
         elif diagram_type == "QuantumCircuitDiagram":
             return {

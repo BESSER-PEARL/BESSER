@@ -83,27 +83,29 @@ class TestNNTemplates:
     @staticmethod
     def _wrap(template_model: dict) -> dict:
         """process_nn_diagram expects the outer diagram wrapper, templates
-        are the flat UMLModel — wrap to match the editor payload shape."""
+        are the flat v4 model — wrap to match the editor payload shape."""
         return {
             "title": template_model.get("type", "NNDiagram"),
             "model": template_model,
         }
 
     def test_template_is_flat_umlmodel(self, template_path: Path):
-        """Every NN template is a flat UMLModel (no ``project`` wrapper).
+        """Every NN template is a flat v4 model (no ``project`` wrapper).
 
         A regression that re-introduces the wrapped-project format would
-        make the template load as an empty canvas in the editor — this
-        test locks in the fix from iteration 1.
+        make the template load as an empty canvas in the editor.
         """
         model = json.loads(template_path.read_text(encoding="utf-8"))
         assert model.get("type") == "NNDiagram", (
             f"{template_path.name} must have top-level type=NNDiagram, got {model.get('type')!r}"
         )
-        assert "elements" in model, f"{template_path.name} missing 'elements'"
-        assert "relationships" in model, f"{template_path.name} missing 'relationships'"
+        assert model.get("version", "").startswith("4."), (
+            f"{template_path.name} must be a v4 model, got version {model.get('version')!r}"
+        )
+        assert isinstance(model.get("nodes"), list), f"{template_path.name} missing 'nodes'"
+        assert isinstance(model.get("edges"), list), f"{template_path.name} missing 'edges'"
         assert "project" not in model, (
-            f"{template_path.name} is a wrapped-project export — templates must be flat UMLModel"
+            f"{template_path.name} is a wrapped-project export — templates must be a flat model"
         )
 
     def test_template_parses_via_process_nn_diagram(self, template_path: Path, request):
@@ -122,9 +124,9 @@ class TestNNTemplates:
         nn = process_nn_diagram(self._wrap(model))
         out = nn_model_to_json(nn)
         assert out["type"] == "NNDiagram"
-        assert out["version"] == "3.0.0"
-        assert isinstance(out.get("elements"), dict)
-        assert isinstance(out.get("relationships"), dict)
+        assert out["version"] == "4.0.0"
+        assert isinstance(out.get("nodes"), list)
+        assert isinstance(out.get("edges"), list)
 
 
 @pytest.mark.skipif(

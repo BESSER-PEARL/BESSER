@@ -10,10 +10,10 @@ from typing import Optional
 
 from . import (
     process_class_diagram,
+    process_bpmn_diagram,
     process_object_diagram,
     process_agent_diagram,
     process_state_machine,
-    process_bpmn_diagram,
     process_component_diagram,
     process_deployment_diagram,
 )
@@ -152,9 +152,23 @@ def _is_valid_diagram(diag, diagram_type):
         cols = data.get("cols") if isinstance(data, dict) else getattr(model, "cols", None)
         return cols is not None  # Empty list is valid
 
-    # Standard element-based diagrams
-    elements = data.get("elements") if isinstance(data, dict) else getattr(model, "elements", None)
-    return bool(elements)
+    # Standard element-based diagrams accept the v4 ``nodes`` shape. The
+    # editor migrator at ``packages/library/lib/utils/versionConverter.ts``
+    # is the only place v3 is converted to v4 in the system; the backend
+    # never sees v3.
+    if isinstance(data, dict):
+        nodes = data.get("nodes")
+    else:
+        nodes = getattr(model, "nodes", None)
+    if nodes:
+        return True
+
+    # An agent diagram may hold only off-canvas ``components`` (intents,
+    # LLMs, RAG databases, ...) and no canvas nodes yet; it is still a model.
+    if diagram_type == "AgentDiagram":
+        components = data.get("components") if isinstance(data, dict) else getattr(model, "components", None)
+        return bool(components)
+    return False
 
 
 def _collect_valid_diagrams(project):
@@ -233,7 +247,13 @@ def json_to_buml_project(project):
             obj_class_diag = diagrams["ClassDiagram"][0]
         if obj_class_diag:
             obj_domain_model = _get_or_process_class_diagram(obj_class_diag)
-            object_model = process_object_diagram(obj_diag.model_dump(), obj_domain_model)
+            obj_json = obj_diag.model_dump()
+            # Stored object diagrams carry no reference data (the migration
+            # drops develop's embedded copy): resolve ``classId`` against the
+            # referenced class diagram so it wins over a missing/stale className.
+            if not obj_json["model"].get("referenceDiagramData"):
+                obj_json["model"]["referenceDiagramData"] = obj_class_diag.model_dump()["model"]
+            object_model = process_object_diagram(obj_json, obj_domain_model)
             model_list.append(object_model)
         else:
             logger.warning(

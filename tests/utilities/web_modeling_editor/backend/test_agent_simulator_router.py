@@ -41,39 +41,30 @@ def _run(coro):
 # ---------------------------------------------------------------------------
 
 def _agent_model(actions: Optional[Dict[str, Dict[str, Any]]] = None) -> Dict[str, Any]:
-    """Minimal AgentDiagram: initial node -> one state, with optional action elements."""
-    elements: Dict[str, Any] = {
-        "init-node": {"id": "init-node", "type": "StateInitialNode", "name": ""},
-        "state-1": {
+    """Minimal v4 AgentDiagram: one initial state with optional inline action rows."""
+    return {
+        "version": "4.0.0",
+        "type": "AgentDiagram",
+        "nodes": [{
             "id": "state-1",
             "type": "AgentState",
-            "name": "Greet",
-            "actions": list((actions or {}).keys()),
-        },
-    }
-    elements.update(actions or {})
-    return {
-        "type": "AgentDiagram",
-        "elements": elements,
-        "relationships": {
-            "trans-init": {
-                "type": "AgentStateTransitionInit",
-                "name": "",
-                "source": {"element": "init-node"},
-                "target": {"element": "state-1"},
-            },
-        },
+            "position": {"x": 0, "y": 0},
+            "width": 160,
+            "height": 100,
+            "data": {"name": "Greet", "initial": True, "bodies": list((actions or {}).values()),
+                     "fallbackBodies": []},
+        }],
+        "edges": [],
+        "components": {},
     }
 
 
 def _text_reply_model() -> Dict[str, Any]:
-    return _agent_model({"a1": {"id": "a1", "type": "AgentStateBody", "actionType": "TextReplyAction",
-                                "name": "Hello there"}})
+    return _agent_model({"a1": {"id": "a1", "actionType": "TextReplyAction", "name": "Hello there"}})
 
 
 def _custom_code_model(code: str) -> Dict[str, Any]:
-    return _agent_model({"a1": {"id": "a1", "type": "AgentStateBody", "actionType": "CustomCodeAction",
-                                "name": code}})
+    return _agent_model({"a1": {"id": "a1", "actionType": "CustomCodeAction", "name": code}})
 
 
 def _session_payload(model: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -288,6 +279,45 @@ def test_create_session_requires_auth(simulator, fast_generation):
 
 def test_create_session_rejects_restricted_custom_code(simulator):
     model = _custom_code_model("def act(session):\n    session.reply('hi')\n")
+    resp = _request("POST", f"{BASE}/sessions", ALICE, json=_session_payload(model))
+    assert resp.status_code == 403
+    assert simulator.requests == []
+
+
+def _hybrid_model(**v4_actions) -> Dict[str, Any]:
+    """v4 nodes plus a v3-style ``elements`` map; it passes the legacy-format guard
+    because it has ``nodes``. The ``elements`` carry code that must never run."""
+    model = _agent_model(v4_actions or None)
+    model["elements"] = {
+        "smuggled-code": {"id": "smuggled-code", "type": "AgentStateBody", "actionType": "CustomCodeAction",
+                          "name": "def act(session):\n    SMUGGLED_MARKER = 1\n", "owner": "state-1"},
+        "smuggled-tool": {"id": "smuggled-tool", "type": "AgentTool", "name": "smuggled_tool",
+                          "code": "def smuggled_tool():\n    SMUGGLED_MARKER = 2\n"},
+    }
+    return model
+
+
+def test_hybrid_payload_elements_never_reach_the_simulator(simulator):
+    """The restriction checks v4 bodies only, so a v3 ``elements`` map next to
+    ``nodes`` must not be read by the converter either."""
+    resp = _request("POST", f"{BASE}/sessions", ALICE, json=_session_payload(_hybrid_model()))
+    assert resp.status_code == 200, resp.text
+    [sent] = simulator.requests
+    assert "SMUGGLED_MARKER" not in sent.content.decode()
+
+
+def test_converter_ignores_hybrid_payload_elements():
+    """A v3 AgentTool in ``elements`` used to become a generated tool, whose code
+    the custom-code restriction never checks."""
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.agent_diagram_processor import (
+        process_agent_diagram,
+    )
+    agent = process_agent_diagram({"title": "Agent", "model": _hybrid_model()})
+    assert [tool.name for tool in agent.tools] == []
+
+
+def test_hybrid_payload_with_v4_custom_code_is_still_restricted(simulator):
+    model = _hybrid_model(a1={"id": "a1", "actionType": "CustomCodeAction", "name": "def act(session): pass"})
     resp = _request("POST", f"{BASE}/sessions", ALICE, json=_session_payload(model))
     assert resp.status_code == 403
     assert simulator.requests == []

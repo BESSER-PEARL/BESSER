@@ -22,15 +22,19 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 
 
 def _diagram(method: dict) -> dict:
+    """A v4 class diagram with one ``Loan`` class holding the given method row."""
     return {
         "title": "T",
         "model": {
-            "elements": {
-                "c1": {"id": "c1", "type": "Class", "name": "Loan",
-                       "attributes": [], "methods": ["m1"]},
-                "m1": {"id": "m1", "type": "ClassMethod", **method},
-            },
-            "relationships": {},
+            "version": "4.0.0",
+            "type": "ClassDiagram",
+            "nodes": [
+                {"id": "c1", "type": "class",
+                 "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                 "data": {"name": "Loan", "stereotype": None, "attributes": [],
+                          "methods": [{"id": "m1", **method}]}},
+            ],
+            "edges": [],
         },
     }
 
@@ -92,3 +96,30 @@ def test_a_stale_type_property_does_not_sink_the_whole_diagram():
 
     assert method.name == "decrease_stock"
     assert method.type is None
+
+
+@pytest.mark.parametrize("field", ["returnType", "attributeType"])
+def test_the_any_placeholder_means_untyped(field):
+    """``any`` is the v4 editor's "no explicit return type" placeholder.
+
+    Every method the inspector creates carries ``returnType: "any"``, and
+    ``buml_to_json`` writes ``"any"`` for an untyped method, so reading it as
+    ``PrimitiveDataType('any')`` would type every default method (``-> any``,
+    ``Object`` instead of ``void``) and break JSON -> B-UML -> JSON -> B-UML
+    idempotence. See ``docs/source/migrations/uml-v4-shape.md``.
+    """
+    method = _only_method(_diagram({"name": "renew", field: "any"}))
+
+    assert method.type is None
+
+
+def test_an_untyped_method_stays_untyped_across_a_round_trip():
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+        class_buml_to_json,
+    )
+
+    domain = process_class_diagram(_diagram({"name": "renew", "returnType": "any", "attributeType": "any"}))
+    again = process_class_diagram({"title": "T", "model": class_buml_to_json(domain)})
+    cls = next(c for c in again.get_classes() if c.name == "Loan")
+
+    assert next(iter(cls.methods)).type is None

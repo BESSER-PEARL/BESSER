@@ -53,34 +53,51 @@ MajorityPolicy mergePolicy {
 GW = "gw1"
 
 
+def _node(node_id, node_type, parent_id, **data):
+    """A v4 BPMN node; ``parent_id`` is the containing pool / lane."""
+    node = {"id": node_id, "type": node_type, "position": {"x": 0, "y": 0},
+            "width": 100, "height": 60, "data": {"name": node_id, **data}}
+    if parent_id is not None:
+        node["parentId"] = parent_id
+    return node
+
+
 def _lane(lane_id, ref=None):
-    lane = {"id": lane_id, "name": lane_id, "type": "BPMNSwimlane", "owner": "pool"}
+    data = {}
     if ref is not None:
-        lane.update(isAgentic=True, role="solution", agentDiagramRef=ref)
-    return lane
+        data.update(isAgentic=True, role="solution", agentDiagramRef=ref)
+    return _node(lane_id, "bpmnSwimlane", "pool", **data)
 
 
 def _task(task_id, owner):
-    return {"id": task_id, "name": task_id, "type": "BPMNTask", "owner": owner}
+    return _node(task_id, "bpmnTask", owner)
+
+
+def _start(start_id, owner):
+    return _node(start_id, "bpmnStartEvent", owner, name="")
 
 
 def _gateway(gateway_id, owner, governance=GOV):
-    return {"id": gateway_id, "name": gateway_id, "type": "BPMNGateway", "owner": owner,
-            "gatewayType": "parallel", "isAgentic": True, "gatewayRole": "merging",
-            "governanceDsl": governance}
+    return _node(gateway_id, "bpmnGateway", owner, gatewayType="parallel", isAgentic=True,
+                 gatewayRole="merging", governanceDsl=governance)
+
+
+_FLOW_EDGE_TYPES = {"sequence": "BPMNSequenceFlow", "message": "BPMNMessageFlow"}
 
 
 def _flow(flow_id, source, target, flow_type="sequence"):
-    return {"id": flow_id, "name": "", "type": "BPMNFlow", "flowType": flow_type,
-            "source": {"element": source}, "target": {"element": target}}
+    return {"id": flow_id, "type": _FLOW_EDGE_TYPES[flow_type], "source": source,
+            "target": target, "sourceHandle": "right", "targetHandle": "left",
+            "data": {"name": "", "points": []}}
 
 
 def _model(elements: list, flows: list):
-    pool = {"id": "pool", "name": "Swarm", "type": "BPMNPool", "owner": None}
+    pool = _node("pool", "bpmnPool", None, name="Swarm")
     payload = {"title": "Swarm", "model": {
+        "version": "4.0.0",
         "type": "BPMNDiagram",
-        "elements": {e["id"]: e for e in [pool] + elements},
-        "relationships": {f["id"]: f for f in flows},
+        "nodes": [pool] + elements,
+        "edges": flows,
     }}
     return process_bpmn_diagram(payload)
 
@@ -206,7 +223,7 @@ def test_producer_edge_into_a_governed_gateway_is_tagged():
 def test_start_event_lane_is_human_facing_even_when_it_owns_a_merge():
     model = _model(
         [_lane("laneC", "refC"), _lane("laneR", "refR"), _task("taskC", "laneC"),
-         {"id": "start", "name": "", "type": "BPMNStartEvent", "owner": "laneR"},
+         _start("start", "laneR"),
          _gateway(GW, "laneR")],
         [_flow("f1", "taskC", GW)],
     )
@@ -219,7 +236,7 @@ def test_start_event_lane_is_human_facing_even_when_it_owns_a_merge():
 def test_start_event_outside_lanes_marks_the_lane_it_starts():
     model = _model(
         [_lane("laneR", "refR"), _task("taskR", "laneR"),
-         {"id": "start", "name": "", "type": "BPMNStartEvent", "owner": "pool"}],
+         _start("start", "pool")],
         [_flow("f1", "start", "taskR")],
     )
     agents = _agents()

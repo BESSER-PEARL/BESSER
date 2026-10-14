@@ -24,7 +24,7 @@ from besser.generators.terraform import TerraformGenerator
 from besser.generators.testgen import TestCaseGenerator
 from besser.generators.bpmn import BPMNGenerator
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    BPMN_DIAGRAM_TYPE,
+    BPMN_PROJECT_DIAGRAM_KEY,
     DEPLOYMENT_DIAGRAM_TYPE,
 )
 from besser.generators.docker_compose import DockerComposeGenerator
@@ -229,7 +229,8 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         file_extension=".bpmn",
         category="business_process",
         requires_class_diagram=False,
-        required_diagram_type=BPMN_DIAGRAM_TYPE,
+        # Project bucket key ("BPMN"); the model inside has type "BPMNDiagram".
+        required_diagram_type=BPMN_PROJECT_DIAGRAM_KEY,
     ),
 
     # Docker Compose generator (UML Deployment diagram based). A ZIP holding
@@ -322,12 +323,12 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "flutter_app.zip"
     elif generator_type == "terraform":
         return "terraform.zip"
+    elif generator_type == "bpmn":
+        return "bpmn_diagram.bpmn"
     elif generator_type == "pytorch":
         return "pytorch_nn.py"
     elif generator_type == "tensorflow":
         return "tf_nn.py"
-    elif generator_type == "bpmn":
-        return "bpmn_diagram.bpmn"
     elif generator_type == "docker_compose":
         return "docker_compose.zip"
     else:

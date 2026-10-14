@@ -109,36 +109,46 @@ def test_no_suggestion_for_unrelated_error_text():
 # End-to-end: process_class_diagram -> conversion_issues["reason"]
 # ---------------------------------------------------------------------------
 
+def _hotel_class(node_id, name, x):
+    return {"id": node_id, "type": "class",
+            "position": {"x": x, "y": 0}, "width": 160, "height": 100,
+            "data": {"name": name, "stereotype": None, "attributes": [], "methods": []}}
+
+
 def _hotel_diagram_json(booking_inv: str, room_inv: str):
+    """v4 hotel diagram: free-standing ``ClassOCLConstraint`` nodes carry the
+    invariants' full text (the context comes from the text itself)."""
     return {
         "id": "hotel-diagram",
         "title": "HotelTest",
         "model": {
-            "elements": {
-                "cls-Booking": {"id": "cls-Booking", "name": "Booking", "type": "Class"},
-                "cls-Guest": {"id": "cls-Guest", "name": "Guest", "type": "Class"},
-                "cls-Room": {"id": "cls-Room", "name": "Room", "type": "Class"},
-                "ocl-guests": {
-                    "id": "ocl-guests", "type": "ClassOCLConstraint",
-                    "constraint": booking_inv,
-                },
-                "ocl-bookings": {
-                    "id": "ocl-bookings", "type": "ClassOCLConstraint",
-                    "constraint": room_inv,
-                },
-            },
-            "relationships": {
-                "rel-guests": {
-                    "id": "rel-guests", "type": "ClassBidirectional", "name": "guests",
-                    "source": {"element": "cls-Guest", "role": "", "multiplicity": "1..*"},
-                    "target": {"element": "cls-Booking", "role": "guests", "multiplicity": "0..*"},
-                },
-                "rel-rooms": {
-                    "id": "rel-rooms", "type": "ClassBidirectional", "name": "rooms",
-                    "source": {"element": "cls-Booking", "role": "", "multiplicity": "0..*"},
-                    "target": {"element": "cls-Room", "role": "rooms", "multiplicity": "1..*"},
-                },
-            },
+            "version": "4.0.0",
+            "type": "ClassDiagram",
+            "nodes": [
+                _hotel_class("cls-Booking", "Booking", 0),
+                _hotel_class("cls-Guest", "Guest", 300),
+                _hotel_class("cls-Room", "Room", 600),
+                {"id": "ocl-guests", "type": "ClassOCLConstraint",
+                 "position": {"x": 0, "y": 200}, "width": 210, "height": 90,
+                 "data": {"expression": booking_inv}},
+                {"id": "ocl-bookings", "type": "ClassOCLConstraint",
+                 "position": {"x": 300, "y": 200}, "width": 210, "height": 90,
+                 "data": {"expression": room_inv}},
+            ],
+            "edges": [
+                {"id": "rel-guests", "type": "ClassBidirectional",
+                 "source": "cls-Guest", "target": "cls-Booking",
+                 "data": {"name": "guests",
+                          "sourceRole": "", "sourceMultiplicity": "1..*",
+                          "targetRole": "guests", "targetMultiplicity": "0..*",
+                          "points": []}},
+                {"id": "rel-rooms", "type": "ClassBidirectional",
+                 "source": "cls-Booking", "target": "cls-Room",
+                 "data": {"name": "rooms",
+                          "sourceRole": "", "sourceMultiplicity": "0..*",
+                          "targetRole": "rooms", "targetMultiplicity": "1..*",
+                          "points": []}},
+            ],
         },
     }
 

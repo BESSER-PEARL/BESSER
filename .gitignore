@@ -39,6 +39,9 @@ besser/utilities/web_modeling_editor/backend/output
 besser/utilities/web_modeling_editor/backend/feedback_data
 output_backend/
 
+# BAF logger output (written by tests and local agent runs)
+application.log
+
 # pylint
 .pylintrc
 
@@ -55,6 +58,10 @@ node_modules/
 
 reviews/
 .vscode/
+/output/
+
+# Local transfer artifacts (never commit)
+*.bundle
 
 # Corporate proxy CA certs for building behind TLS inspection (site-internal, do not commit)
 ca-certs-extra/*.crt

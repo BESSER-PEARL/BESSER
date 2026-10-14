@@ -44,6 +44,9 @@ services:
     build:
       context: ./besser/utilities/web_modeling_editor/frontend
       dockerfile: Dockerfile
+      args:
+        BACKEND_URL: ${BACKEND_URL:-http://localhost:9000/besser_api}
+        DEPLOYMENT_URL: ${DEPLOYMENT_URL:-http://localhost:8080}
     container_name: besser-wme-frontend
     env_file:
       - ./besser/utilities/web_modeling_editor/frontend/packages/webapp/webpack/.env

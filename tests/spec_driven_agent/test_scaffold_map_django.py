@@ -914,14 +914,17 @@ def test_installed_apps_split_over_lists_and_modules(tmp_path):
 def test_list_insert_points_stay_inside_the_list(workspace):
     settings = workspace / ROOT / "myproject" / "settings.py"
     text = settings.read_text(encoding="utf-8")
-    assert "    'myapp',\n]" in text and 'XFrameOptionsMiddleware",\n]' in text
+    # startproject double-quotes settings.py only when black is on PATH.
+    last_middleware = re.search(r"XFrameOptionsMiddleware(['\"]),\n\]", text)
+    assert "    'myapp',\n]" in text and last_middleware
+    q = last_middleware.group(1)
     # The closing bracket on the last entry's line: the new entry goes BEFORE that entry.
     settings.write_text(text.replace("    'myapp',\n]", "    'myapp']").replace(
-        'XFrameOptionsMiddleware",\n]', 'XFrameOptionsMiddleware"]'), encoding="utf-8")
+        last_middleware.group(0), f"XFrameOptionsMiddleware{q}]"), encoding="utf-8")
     anchors = _anchors(_only(workspace))
     apps, middleware = anchors["django:installed_apps_end"], anchors["django:middleware_end"]
     assert apps.quote == "    'myapp']" and "BEFORE" in apps.hint and "end the new entry with a comma" in apps.hint
-    assert middleware.quote.endswith('XFrameOptionsMiddleware"]') and "BEFORE" in middleware.hint
+    assert middleware.quote.endswith(f"XFrameOptionsMiddleware{q}]") and "BEFORE" in middleware.hint
     _assert_quotes_valid(workspace, [apps, middleware])
 
     # No trailing comma on the last entry: AFTER it, with a warning about string concatenation.

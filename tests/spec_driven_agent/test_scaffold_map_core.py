@@ -80,9 +80,9 @@ def test_hidden_and_dependency_directories_are_skipped(tmp_path):
 
 
 def test_lines_split_like_read_file_and_a_bom_is_not_code(tmp_path):
-    (tmp_path / "a.py").write_text("﻿x = ' '\r\ny = 2\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text("﻿x = ' '\r\ny = 2\n", encoding="utf-8", newline="")
     index = SourceIndex(str(tmp_path))
-    assert index.lines("a.py") == ["x = ' '", "y = 2"]
+    assert index.lines("a.py") ==["x = ' '", "y = 2"]
     assert index.python_ast("a.py") is not None and not index.syntax_errors
 
 

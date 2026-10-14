@@ -93,6 +93,46 @@ def test_ocl_multiplication_translates_with_correct_precedence():
     assert alloy == "fact{ all self:this/A|(add[self.A_z, mul[div[6, 2], 3]] > 10)}"
 
 
+@pytest.mark.parametrize(
+    ("operator", "expected"),
+    [
+        ("and", "(isTrue[self.B_a] and isTrue[self.B_b])"),
+        ("or", "(isTrue[self.B_a] or isTrue[self.B_b])"),
+        ("implies", "(isTrue[self.B_a] => isTrue[self.B_b])"),
+        (
+            "xor",
+            "(((isTrue[self.B_a]) and not (isTrue[self.B_b])) or "
+            "(not (isTrue[self.B_a]) and (isTrue[self.B_b])))",
+        ),
+    ],
+)
+def test_ocl_logical_operators_translate_boolean_attributes(operator, expected):
+    alloy = ocl_to_alloy(
+        {"B": ["_"]},
+        {"B": ["a:bool", "b:bool"]},
+        f"self.a {operator} self.b",
+        context_name="B",
+    )
+
+    assert alloy == f"fact{{ all self:this/B|{expected}}}"
+
+
+def test_ocl_logical_operators_follow_documented_precedence():
+    alloy = ocl_to_alloy(
+        {"B": ["_"]},
+        {"B": ["a:bool", "b:bool"]},
+        "self.a or self.b xor self.a and self.b implies self.a",
+        context_name="B",
+    )
+
+    assert alloy == (
+        "fact{ all self:this/B|((isTrue[self.B_a] or "
+        "(((isTrue[self.B_b]) and not ((isTrue[self.B_a] and isTrue[self.B_b]))) "
+        "or (not (isTrue[self.B_b]) and ((isTrue[self.B_a] and isTrue[self.B_b]))))) "
+        "=> isTrue[self.B_a])}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------

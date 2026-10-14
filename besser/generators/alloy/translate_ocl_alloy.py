@@ -293,7 +293,7 @@ def tokenize_tree(tree, parser) -> list[Token]:
         "includesall", "includes", "excludes", "excludesall", "closure",
         "union", "intersection",
     }
-    _OPERATORS = {">", "<", ">=", "<=", "=", "+", "-", "*", "/", "and", "or", "not", "implies"}
+    _OPERATORS = {">", "<", ">=", "<=", "=", "+", "-", "*", "/", "and", "xor", "or", "not", "implies"}
     _PUNCTUATION = {"(", ")", "{", "}", ",", ":"}
 
     def _classify_terminal(txt: str) -> None:
@@ -961,14 +961,28 @@ def parse_predicate(tokens: list[Token]):
             left = BinaryOp(op, left, parse_compare())
         return left
 
-    def parse_or():
+    def parse_xor():
         left = parse_and()
-        while peek() and peek()[0] == "operator" and peek()[1] in ("or", "implies"):
+        while peek() and peek()[0] == "operator" and peek()[1] == "xor":
             op = consume("operator")[1]
             left = BinaryOp(op, left, parse_and())
         return left
 
-    return parse_or()
+    def parse_or():
+        left = parse_xor()
+        while peek() and peek()[0] == "operator" and peek()[1] == "or":
+            op = consume("operator")[1]
+            left = BinaryOp(op, left, parse_xor())
+        return left
+
+    def parse_implies():
+        left = parse_or()
+        if peek() and peek()[0] == "operator" and peek()[1] == "implies":
+            op = consume("operator")[1]
+            return BinaryOp(op, left, parse_implies())
+        return left
+
+    return parse_implies()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1175,14 +1189,28 @@ def _translate_ifthenelse(node: IfThenElse, inherits_from: dict, state: Translat
 
 # ── 8c. Binary operator ───────────────────────────────────────────────────────
 
-_MAP_OPS: dict[str, str] = {"<>": "!=", "!=": "!=", "and": "&&", "or": "||", "implies": "=>"}
+_MAP_OPS: dict[str, str] = {
+    "<>": "!=", "!=": "!=", "and": "and", "xor": "xor", "or": "or", "implies": "=>"
+}
 
 
-def _normalize_boolean(val: str, op: str) -> str:
+def _is_boolean_field(val: str, data: dict) -> bool:
+    field_reference = val.rsplit(".", 1)[-1]
+    for class_name, fields in data.items():
+        for field in fields:
+            field_name, field_type = field.split(":", 1)
+            if field_type == "bool" and field_reference == f"{class_name}_{field_name}":
+                return True
+    return False
+
+
+def _normalize_boolean(val: str, op: str, data: dict) -> str:
     if op in {"=", "!="} and val == "isTrue[True]":
         return "True"
     if op in {"=", "!="} and val == "isFalse[False]":
         return "False"
+    if op in {"and", "xor", "or", "=>"} and _is_boolean_field(val, data):
+        return f"isTrue[{val}]"
     return val
 
 
@@ -1219,8 +1247,8 @@ def _translate_binaryop_date(
 
 def _translate_binaryop(node: BinaryOp, inherits_from: dict, state: TranslatorState) -> str:
     op = _MAP_OPS.get(node.op, node.op)
-    left = _normalize_boolean(ast_to_alloy(node.left, inherits_from, state), op)
-    right = _normalize_boolean(ast_to_alloy(node.right, inherits_from, state), op)
+    left = _normalize_boolean(ast_to_alloy(node.left, inherits_from, state), op, state.data)
+    right = _normalize_boolean(ast_to_alloy(node.right, inherits_from, state), op, state.data)
 
     left_lit = is_date(left)
     right_lit = is_date(right)
@@ -1256,6 +1284,9 @@ def _translate_binaryop(node: BinaryOp, inherits_from: dict, state: TranslatorSt
 
     if op == "+":
         return f"add[{left}, {right}]"
+
+    if op == "xor":
+        return f"((({left}) and not ({right})) or (not ({left}) and ({right})))"
 
     if op == "!=" and right == "null":
         return f"(! no({left}))"

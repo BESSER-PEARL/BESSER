@@ -226,3 +226,11 @@ def test_a_file_changed_just_now_always_forces_a_rebuild(backend, monkeypatch):
     scaffold_overview(str(backend))      # files were written moments ago: not settled
     scaffold_overview(str(backend))
     assert len(builds) == 2
+
+
+def test_an_empty_workspace_points_at_the_generators(tmp_path):
+    # Eval evidence: "no scaffold structure recognised" made luna hand-write the
+    # whole backend (2 of 3 runs) instead of calling generate_fastapi_backend.
+    answer = locate(str(tmp_path))
+    assert answer["count"] == 0
+    assert "generate_" in answer["locations"]

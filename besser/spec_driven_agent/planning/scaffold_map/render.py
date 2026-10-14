@@ -401,5 +401,10 @@ def render_locate(
         result["missing"] = {k: v for k, v in missing.items()
                              if not entity or k.lower() == entity.strip().lower()}
     if not ws.maps:
-        result["locations"] = "no scaffold structure recognised in this workspace"
+        # "No scaffold" alone made the model hand-write the app instead of generating it.
+        result["locations"] = (
+            "no generated scaffold in this workspace yet. If a generate_* tool covers "
+            "the requested stack (e.g. generate_fastapi_backend), call it first, then "
+            "use locate_code to find where to extend what it wrote."
+        )
     return result

@@ -89,7 +89,7 @@ one sig {{ literals | join(',\n') | indent(8) }} extends {{ e.name }} {}
 {% endfor %}
 {% set valid_sigsnv = [] -%}
 {% for sig in sigsnv | unique -%}
-{% if sig not in ['bool', 'int', 'float', 'Integer'] -%}
+{% if sig not in ['bool', 'int', 'float', 'Integer','String','string','str','Str'] -%}
 {% do valid_sigsnv.append(sig) -%}
 {% endif -%}
 {% endfor -%}

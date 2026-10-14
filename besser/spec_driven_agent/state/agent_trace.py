@@ -51,9 +51,15 @@ _HASH_LEN = 12
 # Files above this size, and files that are not UTF-8 text, are not attributed:
 # a line-level trace of a minified bundle or a binary says nothing useful.
 _MAX_FILE_BYTES = 2 * 1024 * 1024
+# The line diff is quadratic on long repetitive files (60k lines took minutes);
+# above this many lines only the unchanged head and tail keep their contributor.
+_MAX_DIFF_LINES = 5_000
 # Never attributed: the trace itself, the provenance file, run internals.
 _ALWAYS_SKIPPED_DIRS = {TRACE_DIRNAME, ".git"}
 _ALWAYS_SKIPPED_FILES = {"BESSER_GENERATION.md"}
+# The model source a GitHub push adds after the run's state is saved: not run
+# output, and attributing it would credit it to a human on continue-from-GitHub.
+_SKIPPED_ROOT_DIRS = {"buml"}
 
 # Contributor kinds, recorded in the state file (``kind``) and mapped onto the
 # Agent Trace contributor types when the record is built.
@@ -168,13 +174,19 @@ class AttributionState:
                     hashes_blob[i:i + _HASH_LEN]
                     for i in range(0, len(hashes_blob), _HASH_LEN)
                 ]
-                owners: list[int] = []
-                for index, count in entry["runs"]:
-                    if not 0 <= int(index) < len(contributors):
-                        return None
-                    owners.extend([int(index)] * int(count))
-                if len(owners) != len(hashes):
+                runs = entry["runs"]
+                # The file may come from an imported repo: check the counts
+                # before allocating them.
+                if not isinstance(runs, list) or not all(
+                    isinstance(run, list) and len(run) == 2
+                    and all(type(n) is int for n in run)
+                    and 0 <= run[0] < len(contributors) and run[1] >= 0
+                    for run in runs
+                ) or sum(count for _, count in runs) != len(hashes):
                     return None
+                owners: list[int] = []
+                for index, count in runs:
+                    owners.extend([index] * count)
                 state.files[str(rel)] = (hashes, owners)
             return state
         except Exception:
@@ -232,13 +244,30 @@ class AttributionState:
             return 0
         owners = [index] * len(new_hashes)
         kept = 0
-        matcher = difflib.SequenceMatcher(None, old_hashes, new_hashes, autojunk=False)
-        for block in matcher.get_matching_blocks():
-            for offset in range(block.size):
-                owners[block.b + offset] = old_owners[block.a + offset]
-            kept += block.size
+        if max(len(old_hashes), len(new_hashes)) > _MAX_DIFF_LINES:
+            blocks = _head_and_tail(old_hashes, new_hashes)
+        else:
+            blocks = difflib.SequenceMatcher(
+                None, old_hashes, new_hashes, autojunk=False
+            ).get_matching_blocks()
+        for a, b, size in blocks:
+            for offset in range(size):
+                owners[b + offset] = old_owners[a + offset]
+            kept += size
         self.files[rel] = (new_hashes, owners)
         return len(new_hashes) - kept
+
+
+def _head_and_tail(old: list[str], new: list[str]) -> list[tuple[int, int, int]]:
+    """The unchanged first and last lines, as ``(a, b, size)`` matching blocks."""
+    limit = min(len(old), len(new))
+    head = 0
+    while head < limit and old[head] == new[head]:
+        head += 1
+    tail = 0
+    while tail < limit - head and old[-1 - tail] == new[-1 - tail]:
+        tail += 1
+    return [(0, 0, head), (len(old) - tail, len(new) - tail, tail)]
 
 
 def _run_lengths(owners: list[int]) -> list[list[int]]:
@@ -265,8 +294,8 @@ def iter_attributable_files(
     """Workspace-relative paths (``/``-separated) of the files a trace covers.
 
     ``excluded`` holds directory names and file globs, the same set the
-    packaging walk uses; internals, the trace directory and the provenance
-    file are always skipped.
+    packaging walk uses; internals, the trace directory, the provenance
+    file and the pushed model source (``buml/``) are always skipped.
     """
     excluded_set = set(excluded or ()) | _ALWAYS_SKIPPED_DIRS
     file_globs = [p for p in excluded_set if "*" in p or "?" in p]
@@ -274,6 +303,7 @@ def iter_attributable_files(
         dirs[:] = sorted(
             d for d in dirs
             if d not in excluded_set
+            and not (root == workspace and d in _SKIPPED_ROOT_DIRS)
             and not d.startswith(".besser_")
             and not os.path.islink(os.path.join(root, d))
         )

@@ -2,8 +2,14 @@
 
 import json
 import os
+import shutil
+import time
+import tracemalloc
 
 from besser.spec_driven_agent.state import agent_trace as at
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+    scrub_secret_files,
+)
 
 
 def _write(root, rel, text):
@@ -116,6 +122,31 @@ def test_human_edits_between_runs_are_attributed_to_a_human(tmp_path):
     assert _ranges(record, "notes.md") == [(1, 1, "human", None)]
 
 
+def test_files_a_github_push_adds_are_not_credited_to_a_human(tmp_path):
+    # The push copies the run's state, then writes buml/ and scrubs secrets;
+    # continuing from that repo must not credit any of it to a person.
+    run, repo = str(tmp_path / "run"), str(tmp_path / "repo")
+    _write(run, "main.py", "g1\n")
+    _write(run, "app/buml/kept.py", "x\n")
+    _write(run, ".env.example", "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz\n")
+    at.record_generated_files(run, ["main.py"], "backend")
+    at.reconcile_workspace(run, at.ai_contributor("m", "r"))
+    scrub_secret_files(run)                          # the run's own packaging scrub
+    at.reconcile_workspace(run, at.generator_contributor("secret_redaction"))
+
+    shutil.copytree(run, repo)
+    _write(repo, "buml/domain_model.py", "domain = DomainModel('Library')\n")
+    _write(repo, "buml/diagrams.json", '{"project": {}}\n')
+    scrub_secret_files(repo)                         # the push's scrub
+    at.seed_attribution(repo)
+
+    state = at.AttributionState.load(repo)
+    assert not any(p.startswith("buml/") for p in state.files)
+    assert "app/buml/kept.py" in state.files         # only the top-level model dir
+    kinds = {state.contributors[i]["kind"] for _, owners in state.files.values() for i in owners}
+    assert at.KIND_HUMAN not in kinds
+
+
 def test_a_seed_without_attribution_is_unknown(tmp_path):
     root = str(tmp_path)
     _write(root, "main.py", "old\n")
@@ -160,6 +191,43 @@ def test_a_corrupt_state_file_is_ignored(tmp_path):
     root = str(tmp_path)
     _write(root, at.ATTRIBUTION_FILENAME, '{"contributors": [{"kind": "ai"}], "files": {"a": {"hashes": "x", "runs": [[5, 1]]}}}')
     assert at.AttributionState.load(root) is None
+
+
+def test_a_crafted_run_count_is_rejected_before_it_is_allocated(tmp_path):
+    # An imported repo's state file is untrusted: a one-line file claiming
+    # millions of lines used to allocate them before checking the hash count.
+    root = str(tmp_path)
+    state = {"contributors": [{"kind": "ai"}], "files": {"a": {"hashes": "x" * 12, "runs": [[0, 20_000_000]]}}}
+    _write(root, at.ATTRIBUTION_FILENAME, json.dumps(state))
+    tracemalloc.start()
+    try:
+        assert at.AttributionState.load(root) is None
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 10_000_000
+    for runs in ([[0, 2], [0, -1]], [[0, 1.0]], [[0, "1"]], [[0, True]], [[0]]):
+        state["files"]["a"]["runs"] = runs
+        _write(root, at.ATTRIBUTION_FILENAME, json.dumps(state))
+        assert at.AttributionState.load(root) is None, runs
+    state["files"]["a"]["runs"] = [[0, 1]]
+    _write(root, at.ATTRIBUTION_FILENAME, json.dumps(state))
+    assert at.AttributionState.load(root).files["a"] == (["x" * 12], [0])
+
+
+def test_a_long_repetitive_file_reconciles_quickly(tmp_path):
+    # The line diff is quadratic here: 60k lines took minutes in _package_result.
+    root = str(tmp_path)
+    lines = ["{", "  x", "}"] * 20_000
+    _write(root, "big.json", "\n".join(lines) + "\n")
+    at.record_generated_files(root, ["big.json"], "backend")
+    lines[30_000] = "  changed"
+    _write(root, "big.json", "\n".join(lines) + "\n")
+    started = time.monotonic()
+    state = at.reconcile_workspace(root, at.ai_contributor("m", "r"))
+    assert time.monotonic() - started < 3
+    kinds = [state.contributors[i]["kind"] for i in state.files["big.json"][1]]
+    assert kinds.count("ai") == 1 and kinds[30_000] == "ai"
 
 
 def test_model_ids_use_the_provider_prefix():

@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
+import pytest
+
 
 RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
 EX = "http://example.org/"
@@ -95,16 +97,23 @@ def test_llm_clean_kg_returns_issue_list(client, monkeypatch):
     assert isinstance(body["kgSignature"], str) and body["kgSignature"]
 
 
-def test_llm_clean_kg_rejects_empty_description(client):
-    response = client.post(
-        "/besser_api/llm-clean-kg",
-        data={
-            "diagram": json.dumps(_kg_diagram()),
-            "description": "   ",
-            "api_key": "sk-test",
-        },
-    )
-    assert response.status_code == 400
+@pytest.mark.parametrize("description", [None, "", "   "])
+def test_llm_clean_kg_description_is_optional(client, monkeypatch, description):
+    """Issues routed from the Automatic tab need no user-written context."""
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):  # noqa: A002
+        captured["user"] = json["messages"][-1]["content"]
+        return _FakeResp(_llm_payload([]))
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    data = {"diagram": json.dumps(_kg_diagram()), "api_key": "sk-test"}
+    if description is not None:
+        data["description"] = description
+    response = client.post("/besser_api/llm-clean-kg", data=data)
+    assert response.status_code == 200, response.text
+    assert "infer the target domain" in captured["user"]
 
 
 def test_llm_clean_kg_rejects_non_kg_payload(client, monkeypatch):
@@ -497,3 +506,24 @@ def test_502_for_a_json_error_object_is_also_sanitised(client, monkeypatch):
 
     assert response.status_code == 502
     assert "org-internal" not in response.json()["detail"]
+
+
+def test_classify_orphans_with_llm_description_is_optional(client, monkeypatch):
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):  # noqa: A002
+        captured["user"] = json["messages"][-1]["content"]
+        return _FakeResp(_llm_payload([]))
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    response = client.post(
+        "/besser_api/classify-orphans-with-llm",
+        data={
+            "diagram": json.dumps(_kg_with_orphan_diagram()),
+            "api_key": "sk-test",
+            "node_ids": json.dumps(["ghost1"]),
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert "infer the target domain" in captured["user"]

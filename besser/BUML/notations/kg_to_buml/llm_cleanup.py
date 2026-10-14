@@ -1,8 +1,9 @@
 """LLM-driven KG cleanup: ask GPT-4o to suggest schema-oriented edits.
 
-The user supplies a natural-language description of the system they want
-to build. We send that description plus a compact snapshot of the KG to
-GPT-4o, parse its JSON response into the same :class:`KGIssue` /
+The user may supply a natural-language description of the system they want
+to build; it is optional context. Without one the model infers the domain
+from the KG itself. We send the description (if any) plus a compact snapshot
+of the KG to GPT-4o, parse its JSON response into the same :class:`KGIssue` /
 :class:`KGAction` shape used by the rule-based preflight, and return a
 :class:`KGPreflightReport` so the frontend can render it through the
 existing accept/skip UI.
@@ -516,15 +517,32 @@ def _issue_node_priority(
 # ----------------------------------------------------------------------
 
 
-def _build_prompt(snapshot: Dict[str, Any], description: str) -> Tuple[str, str]:
+_NO_DESCRIPTION_NOTE = (
+    "(none provided - infer the target domain from the Knowledge Graph itself: its "
+    "classes, labels and IRIs. Without an explicit target, be extra conservative: "
+    "only propose edits that fix clear structural problems, and do not drop "
+    "entities merely because they look peripheral.)"
+)
+
+
+def _description_section(description: Optional[str]) -> str:
+    """The prompt block carrying the user's optional system description."""
+    text = (description or "").strip()
+    if text:
+        return f"=== Target system description ===\n{text}\n\n"
+    return f"=== Target system description (optional) ===\n{_NO_DESCRIPTION_NOTE}\n\n"
+
+
+def _build_prompt(snapshot: Dict[str, Any], description: Optional[str]) -> Tuple[str, str]:
     """Compose the system + user messages for GPT-4o."""
     allowed = sorted(LLM_ALLOWED_KEYS)
     system = (
         "You are a senior software architect helping clean up a Knowledge Graph (KG) "
         "so it can be transformed into a UML class diagram for a specific software "
-        "system. The user describes the system they want to build; you propose "
+        "system. The user may describe the system they want to build; if they do "
+        "not, work out what the KG is about from its own content. You propose "
         "concrete edits to the KG that remove noise, fix misclassifications, and "
-        "drop entities unrelated to the described system.\n\n"
+        "drop entities unrelated to the (described or inferred) system.\n\n"
         "You MUST return a single JSON object — no prose, no markdown fences — "
         "with this exact shape:\n"
         "{\n"
@@ -574,7 +592,7 @@ def _build_prompt(snapshot: Dict[str, Any], description: str) -> Tuple[str, str]
     )
 
     user = (
-        f"=== Target system description ===\n{description.strip()}\n\n"
+        f"{_description_section(description)}"
         f"=== Knowledge Graph snapshot ===\n"
         f"{json.dumps(snapshot, indent=2, default=str)}\n"
     )
@@ -583,13 +601,17 @@ def _build_prompt(snapshot: Dict[str, Any], description: str) -> Tuple[str, str]
 
 def analyze_kg_with_description(
     kg: KnowledgeGraph,
-    description: str,
+    description: Optional[str],
     api_key: str,
     model: str = DEFAULT_OPENAI_MODEL,
     *,
     _http_post: Optional[Callable[..., Any]] = None,
 ) -> KGPreflightReport:
     """Call GPT-4o for KG cleanup suggestions and wrap them in a preflight report.
+
+    ``description`` is optional context (``None`` or blank means "infer the
+    domain from the KG"); callers that need the user to state the target
+    system, such as the standalone AI refine tab, enforce that themselves.
 
     The ``_http_post`` keyword is for tests — production callers should leave
     it ``None`` so the transport looks up :func:`requests.post` at call time
@@ -601,8 +623,6 @@ def analyze_kg_with_description(
     """
     if not isinstance(kg, KnowledgeGraph):
         raise TypeError("analyze_kg_with_description expects a KnowledgeGraph instance.")
-    if not description or not description.strip():
-        raise ValueError("A non-empty system description is required.")
     if not api_key or not api_key.strip():
         raise ValueError("A non-empty OpenAI API key is required.")
 
@@ -683,7 +703,7 @@ def _build_orphan_node_snapshot(node: KGNode, kg: KnowledgeGraph) -> Dict[str, A
 def _build_orphan_classification_prompt(
     classes: List[Dict[str, Any]],
     orphans: List[Dict[str, Any]],
-    description: str,
+    description: Optional[str],
 ) -> Tuple[str, str]:
     """Compose the system + user messages for per-node orphan classification."""
     allowed = sorted(ORPHAN_ALLOWED_KEYS)
@@ -736,7 +756,7 @@ def _build_orphan_classification_prompt(
         "4. Output ONLY valid JSON. No prose, no markdown.\n"
     )
     user = (
-        f"=== Target system description ===\n{description.strip()}\n\n"
+        f"{_description_section(description)}"
         f"=== Existing classes ===\n{json.dumps(classes, indent=2, default=str)}\n\n"
         f"=== Orphan nodes to classify ===\n"
         f"{json.dumps(orphans, indent=2, default=str)}\n"
@@ -769,7 +789,7 @@ def _synthesize_drop_node_issue(node: KGNode) -> KGIssue:
 def classify_orphan_nodes_with_llm(
     kg: KnowledgeGraph,
     node_ids: List[str],
-    description: str,
+    description: Optional[str],
     api_key: str,
     model: str = DEFAULT_OPENAI_MODEL,
     *,
@@ -796,8 +816,6 @@ def classify_orphan_nodes_with_llm(
         raise TypeError(
             "classify_orphan_nodes_with_llm expects a KnowledgeGraph instance."
         )
-    if not description or not description.strip():
-        raise ValueError("A non-empty system description is required.")
     if not api_key or not api_key.strip():
         raise ValueError("A non-empty OpenAI API key is required.")
     if not isinstance(node_ids, list):

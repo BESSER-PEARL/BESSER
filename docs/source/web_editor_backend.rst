@@ -387,8 +387,8 @@ Refine KG dialog that precedes it.
 - ``POST /analyze-kg-for-buml-conversion`` -- Preflight report: every KG element with no clean 1-to-1 BUML mapping, each with a recommended and a skip action
 - ``POST /check-kg-consistency`` -- OWL 2 + SHACL validation (pyshacl with OWL2-RL inference)
 - ``POST /apply-kg-refinement`` -- Apply Refine KG decisions (``source`` selects the static analyzer or the LLM suggestions) and return the cleaned KG
-- ``POST /llm-clean-kg`` -- LLM-suggested cleanup targeted at a described system (requires OpenAI API key)
-- ``POST /classify-orphans-with-llm`` -- Per-node classification for orphan nodes deferred from the Refine dialog
+- ``POST /llm-clean-kg`` -- LLM-suggested cleanup of the graph (requires OpenAI API key); the optional ``description`` form field adds context, otherwise the model infers the domain from the KG
+- ``POST /classify-orphans-with-llm`` -- Per-node classification for orphan nodes deferred from the Refine dialog (``description`` is optional here too)
 
 Validation
 ^^^^^^^^^^

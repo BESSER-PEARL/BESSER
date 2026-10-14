@@ -453,9 +453,34 @@ def test_analyze_kg_with_description_raises_on_http_error():
 def test_analyze_kg_with_description_validates_inputs():
     kg = _small_kg()
     with pytest.raises(ValueError):
-        analyze_kg_with_description(kg, "", "sk-test", _http_post=lambda *a, **kw: None)
-    with pytest.raises(ValueError):
         analyze_kg_with_description(kg, "desc", "", _http_post=lambda *a, **kw: None)
+
+
+@pytest.mark.parametrize("description", [None, "", "  "])
+def test_analyze_kg_without_description_asks_the_model_to_infer_the_domain(description):
+    captured: Dict[str, Any] = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):  # noqa: A002
+        captured["user"] = json["messages"][-1]["content"]
+        return _FakeResponse(_llm_completion({"suggestions": []}))
+
+    report = analyze_kg_with_description(_small_kg(), description, "sk-test", _http_post=fake_post)
+
+    assert report.issue_count == 0
+    assert "infer the target domain" in captured["user"]
+
+
+def test_analyze_kg_with_description_forwards_it_verbatim():
+    captured: Dict[str, Any] = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):  # noqa: A002
+        captured["user"] = json["messages"][-1]["content"]
+        return _FakeResponse(_llm_completion({"suggestions": []}))
+
+    analyze_kg_with_description(_small_kg(), "  A library system.  ", "sk-test", _http_post=fake_post)
+
+    assert "A library system." in captured["user"]
+    assert "infer the target domain" not in captured["user"]
 
 
 def test_analyze_kg_with_description_drops_disallowed_in_e2e():
@@ -613,8 +638,6 @@ def test_classify_orphan_nodes_with_llm_drops_disallowed_action():
 
 def test_classify_orphan_nodes_with_llm_validates_inputs():
     kg = _kg_with_orphans_and_class()
-    with pytest.raises(ValueError):
-        classify_orphan_nodes_with_llm(kg, ["ghost1"], "", "sk-test")
     with pytest.raises(ValueError):
         classify_orphan_nodes_with_llm(kg, ["ghost1"], "desc", "")
     with pytest.raises(TypeError):

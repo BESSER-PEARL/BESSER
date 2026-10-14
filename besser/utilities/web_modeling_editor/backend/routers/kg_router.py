@@ -506,20 +506,19 @@ def _apply_llm_decisions(
 @handle_endpoint_errors("llm_clean_kg")
 async def llm_clean_kg_endpoint(
     diagram: str = Form(...),
-    description: str = Form(...),
+    description: str = Form(""),
     api_key: str = Form(...),
     model: str = Form(DEFAULT_KG_LLM_MODEL),
 ):
     """Ask GPT-4o for KG cleanup suggestions targeted at a described system.
 
     The frontend POSTs the active KG diagram (JSON-encoded as the ``diagram``
-    field), the natural-language description of the system the user wants
-    to build, and an OpenAI API key. The response is a
+    field), an OpenAI API key and, optionally, a natural-language description
+    of the system the user wants to build (when omitted the model infers the
+    domain from the KG). The response is a
     :class:`KGPreflightReport`-shaped JSON the frontend renders through the
     existing accept/skip suggestion UI.
     """
-    if not description or not description.strip():
-        raise HTTPException(status_code=400, detail="A non-empty description is required.")
     if not api_key or not api_key.strip():
         raise HTTPException(status_code=400, detail="An OpenAI API key is required.")
     try:
@@ -627,7 +626,7 @@ async def apply_kg_refinement_endpoint(input_data: DiagramInput):
 @handle_endpoint_errors("classify_orphans_with_llm")
 async def classify_orphans_with_llm_endpoint(
     diagram: str = Form(...),
-    description: str = Form(...),
+    description: str = Form(""),
     api_key: str = Form(...),
     node_ids: str = Form(...),
     model: str = Form(DEFAULT_KG_LLM_MODEL),
@@ -639,8 +638,6 @@ async def classify_orphans_with_llm_endpoint(
     response has the same ``KGPreflightReport`` shape so the AI tab can
     render it through the existing accept/skip UI.
     """
-    if not description or not description.strip():
-        raise HTTPException(status_code=400, detail="A non-empty description is required.")
     if not api_key or not api_key.strip():
         raise HTTPException(status_code=400, detail="An OpenAI API key is required.")
     try:

@@ -1,4 +1,3 @@
-
 import copy
 import os
 import tempfile
@@ -8,6 +7,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import (
     DomainModel,
     Enumeration,
+    AssociationClass,
 )
 from besser.generators import GeneratorInterface
 from besser.generators.alloy.alloy_utils_generator import (
@@ -23,7 +23,10 @@ from besser.generators.alloy.translate_ocl_alloy import (
     DATES_DICT,
     resolve_ocl_date_literals,
 )
-
+from besser.generators.alloy.alloy_utils_generator import (
+    replace_association_classes,
+    derive_alloy_rules_for_association_classes
+)
 
 class AlloyGenerator(GeneratorInterface):
     """
@@ -73,13 +76,14 @@ class AlloyGenerator(GeneratorInterface):
         self.file_path = self.build_generation_path(file_name="model.als")
 
         model = copy.deepcopy(self.model)
-
+        associations_class_rules = derive_alloy_rules_for_association_classes(model)
+        model = replace_association_classes(model)
         sanitize_model_names(model)
 
         inherits_from, data, basic_signatures, sigs_nv = (
             build_inheritance_and_attribute_maps(model)
         )
-        facts_rules = process_associations(model, data)
+        facts_rules = process_associations(model, data) + associations_class_rules
 
         enum_types = {el for el in model.elements if isinstance(el, Enumeration)}
         enums = {e.name: {lit.name for lit in (e.literals or set())} for e in enum_types}
@@ -88,7 +92,6 @@ class AlloyGenerator(GeneratorInterface):
         date_block = generate_date_block(status, basic_signatures, self.scope)
         if status.dates and DATES_DICT:
             resolve_ocl_date_literals(model.constraints)
-
         has_string_sigs = bool(status.strings)
         has_str_types = any(t in {"str", "string", "Str"} for t in basic_signatures)
         needs_str_ops = has_str_types
@@ -96,12 +99,14 @@ class AlloyGenerator(GeneratorInterface):
         needs_date_ops = bool(status.dates) or ("date" in basic_signatures)
         classes = model.classes_sorted_by_inheritance()
         associations_by_class = {c.name: [] for c in classes}
+       
         for assoc in model.associations:
             for end in assoc.ends:
                 if end.type.name in associations_by_class:
                     if assoc not in associations_by_class[end.type.name]:
                         associations_by_class[end.type.name].append(assoc)
 
+ 
         maxseq = max(self.scope, status.maxseq)
         use_str = has_str_types
         int_bitwidth = max(self.scope, maxseq.bit_length() + 1) if use_str else self.scope

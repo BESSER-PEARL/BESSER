@@ -72,6 +72,27 @@ def test_collect_including_flattens_relation_before_union():
 
     assert "image[ collect[toSeq[self,Author_books],Book_authors]] + self" in alloy
 
+
+def test_ocl_multiplication_translates_with_correct_precedence():
+    attributes = {"A": ["z:Integer"]}
+
+    alloy = ocl_to_alloy({}, attributes, "self.z * 2 > 10", context_name="A")
+    assert alloy == "fact{ all self:this/A|(mul[self.A_z, 2] > 10)}"
+
+    alloy = ocl_to_alloy(
+        {}, attributes, "self.z + 2 * 3 > 10", context_name="A"
+    )
+    assert alloy == "fact{ all self:this/A|(add[self.A_z, mul[2, 3]] > 10)}"
+
+    alloy = ocl_to_alloy({}, attributes, "self.z / 2 > 10", context_name="A")
+    assert alloy == "fact{ all self:this/A|(div[self.A_z, 2] > 10)}"
+
+    alloy = ocl_to_alloy(
+        {}, attributes, "self.z + 6 / 2 * 3 > 10", context_name="A"
+    )
+    assert alloy == "fact{ all self:this/A|(add[self.A_z, mul[div[6, 2], 3]] > 10)}"
+
+
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------

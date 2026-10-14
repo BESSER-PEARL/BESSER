@@ -9,6 +9,7 @@ sanitization utilities for Alloy-compatible identifiers.
 import re
 from collections import defaultdict
 from pathlib import Path
+from typing import List
 
 from besser.BUML.metamodel.structural import DomainModel, Enumeration
 from besser.generators.alloy.translate_ocl_alloy import (
@@ -29,6 +30,187 @@ ALLOY_KEYWORDS = {
     "no", "none", "not", "one", "open", "or", "pred", "run", "seq",
     "set", "sig", "some", "sum", "univ"
 }
+#---------------------------------------------------------------------
+
+import copy
+from besser.BUML.metamodel.structural import (
+    DomainModel,
+    Class,
+    Property,
+    BinaryAssociation,
+    AssociationClass,
+    Multiplicity
+)
+
+def derive_alloy_rules_for_association_classes(model: DomainModel) -> List[str]:
+    """
+    Extracts the Alloy facts and funs needed to preserve the UML semantics
+    of association classes (uniqueness and end multiplicities).
+    
+    Uses the <ClassName>_<role> naming convention (e.g., C_aes, C_bes).
+    Must be executed ON THE ORIGINAL MODEL before calling transform_association_classes.
+    """
+    association_facts_rules: List[str] = []
+
+    association_classes = [
+        t for t in model.types 
+        if isinstance(t, AssociationClass)
+    ]
+
+    for assoc_class in association_classes:
+        nombre_c = assoc_class.name
+        asociacion_original = assoc_class.association
+        ends = list(asociacion_original.ends)
+
+        if len(ends) == 2:
+            end_a = ends[0]
+            end_b = ends[1]
+
+            clase_a = end_a.type
+            clase_b = end_b.type
+            role_a = end_a.name  
+            role_b = end_b.name  
+            field_ca = f"{nombre_c}_{role_a}"  
+            field_cb = f"{nombre_c}_{role_b}"  
+
+            fun_b = f"fun {role_b}[x : {clase_a.name}] : set {clase_b.name} {{ x.~{field_ca}.{field_cb} }}"
+            fun_a = f"fun {role_a}[y : {clase_b.name}] : set {clase_a.name} {{ y.~{field_cb}.{field_ca} }}"
+            association_facts_rules.extend([fun_b, fun_a])
+
+            fact_unicidad = (
+                f"fact UniqueLinkPerPair_{nombre_c} {{\n"
+                f"  all disj c1, c2 : {nombre_c} | not (c1.{field_ca} = c2.{field_ca} and c1.{field_cb} = c2.{field_cb})\n"
+                f"}}"
+            )
+            association_facts_rules.append(fact_unicidad)
+
+            condiciones_b = _gen_muliplicity_fact_assoc_class(f"{role_b}[x]", end_b.multiplicity)
+            if condiciones_b:
+                fact_mult_b = (
+                    f"fact multiplicity_{role_b.capitalize()} {{\n"
+                    f"  all x : {clase_a.name} | {condiciones_b}\n"
+                    f"}}"
+                )
+                association_facts_rules.append(fact_mult_b)
+
+            condiciones_a = _gen_muliplicity_fact_assoc_class(f"{role_a}[y]", end_a.multiplicity)
+            if condiciones_a:
+                fact_mult_a = (
+                    f"fact multiplicity_{role_a.capitalize()} {{\n"
+                    f"  all y : {clase_b.name} | {condiciones_a}\n"
+                    f"}}"
+                )
+                association_facts_rules.append(fact_mult_a)
+
+            association_facts_rules.append("")  
+
+    return association_facts_rules
+
+
+def _gen_muliplicity_fact_assoc_class(target_expr: str, multiplicity: Multiplicity) -> str:
+    """
+    Translate  BESSER multiplicities(min, max) to Alloy fact  for  associations class.
+    """
+    min_val = multiplicity.min
+    max_val = multiplicity.max
+
+    # If 0..* or 0..9999, it does not impose restrictions in Alloy
+    if min_val == 0 and (max_val == "*" or max_val >= 9999):
+        return ""
+
+    conditions = []
+
+    # Exact (example: 2 or 2..2)    
+    if min_val == max_val and min_val != "*":
+        return f"#{target_expr} = {min_val}"
+
+    # lower bound   (min > 0)
+    if min_val > 0:
+        conditions.append(f"#{target_expr} >= {min_val}")
+
+    # upper bound (max != *)
+    if max_val != "*" and max_val < 9999:
+        conditions.append(f"#{target_expr} =< {max_val}")
+
+    return " and ".join(conditions)
+
+
+def replace_association_classes(model: DomainModel) -> DomainModel:
+    """
+    Transforms all AssociationClasses in a DomainModel:
+    1. Converts AssociationClass C to a standard Class, keeping its attributes.
+    2. Adds  two new BinaryAssociations, linking class C to A and B.
+    3. Removes the original A-B relationship.
+    """
+    new_model = copy.deepcopy(model)
+    
+    association_classes = [
+        t for t in new_model.types 
+        if isinstance(t, AssociationClass)
+    ]
+
+    for assoc_class in association_classes:
+        assoc_class_name = assoc_class.name
+        new_class = Class(name=assoc_class_name)
+        new_class.attributes = set(assoc_class.attributes)
+
+        original_assoc = assoc_class.association
+        ends = list(original_assoc.ends)
+
+        if len(ends) == 2:
+            end_a = ends[0]
+            end_b = ends[1]
+
+            class_a = end_a.type
+            class_b = end_b.type
+
+            role_a_name = end_a.name  
+            role_b_name = end_b.name  
+
+            # New relationship betwen  A --- C
+            relation_a = BinaryAssociation(
+                name=f"{assoc_class_name}",
+                ends={
+                    Property(
+                        name=f"{role_a_name}",  
+                        type=class_a,
+                        multiplicity=Multiplicity(1, 1)
+                    ),
+                    Property(
+                        name=f"{assoc_class_name.lower()}",
+                        type=new_class,
+                        multiplicity=Multiplicity(0, "*")
+                    )
+                }
+            )
+
+            #  # New relationship betwen  B --- C
+            relation_b = BinaryAssociation(
+                name=f"{assoc_class_name}",
+                ends={
+                    Property(
+                        name=f"{role_b_name}", 
+                        type=class_b,
+                        multiplicity=Multiplicity(1, 1)
+                    ),
+                    Property(
+                        name=f"{assoc_class_name.lower()}", 
+                        type=new_class,
+                        multiplicity=Multiplicity(0, "*")
+                    )
+                }
+            )
+
+            new_model.types.remove(assoc_class)
+            new_model.types.add(new_class)
+
+            if original_assoc in new_model.associations:
+                new_model.associations.remove(original_assoc)
+
+            new_model.associations.add(relation_a)
+            new_model.associations.add(relation_b)
+
+    return new_model
 
 
 def sanitize_alloy_name(name: str) -> str:

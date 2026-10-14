@@ -933,11 +933,18 @@ def parse_predicate(tokens: list[Token]):
             return UnaryOp(op, parse_unary())
         return parse_primary()
 
-    def parse_additive():
+    def parse_multiplicative():
         left = parse_unary()
-        while peek() and peek()[0] == "operator" and peek()[1] in ("+", "-"):
+        while peek() and peek()[0] == "operator" and peek()[1] in ("*", "/"):
             op = consume("operator")[1]
             left = BinaryOp(op, left, parse_unary())
+        return left
+
+    def parse_additive():
+        left = parse_multiplicative()
+        while peek() and peek()[0] == "operator" and peek()[1] in ("+", "-"):
+            op = consume("operator")[1]
+            left = BinaryOp(op, left, parse_multiplicative())
         return left
 
     def parse_compare():
@@ -1142,7 +1149,7 @@ def subtypes(subject_class: str, inherits_from: dict) -> list[str]:
 
 def _translate_simple(node) -> str:
     if isinstance(node, BLiteral):
-        return "isTrue[True]" if node.val == "True" else "isFalse[False]"
+        return "isTrue[True]" if (node.val == "True" or node.val == "true" ) else "not isTrue[True]"
     if isinstance(node, Literal):
         return node.val
     if isinstance(node, Var):
@@ -1240,7 +1247,10 @@ def _translate_binaryop(node: BinaryOp, inherits_from: dict, state: TranslatorSt
             str_result = state.string_ops.translate_binary("<>", left, right)
         if str_result is not None:
             return str_result
-
+    if op == "*":
+        return f"mul[{left}, {right}]"
+    if op == "/":
+        return f"div[{left}, {right}]"
     if op == "-":
         return left if right.lower() == "null" else f"minus[{left}, {right}]"
 

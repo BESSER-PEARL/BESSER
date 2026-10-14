@@ -30,7 +30,7 @@ class _FakeAgentGenerator:
         # Mimic BAFGenerator's default when output_dir is None: <cwd>/output.
         out = self.output_dir or os.path.join(os.getcwd(), "output")
         os.makedirs(os.path.join(out, "skills"), exist_ok=True)
-        with open(os.path.join(out, "agent.py"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(out, "agent.py"), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(f"# language={self.config.get('language')}\n")
         with open(os.path.join(out, "skills", "skill.py"), "w", encoding="utf-8") as fh:
             fh.write("pass\n")

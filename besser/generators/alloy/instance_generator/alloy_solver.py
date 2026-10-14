@@ -16,7 +16,7 @@ class AlloySolver:
 
     def __init__(self, model: DomainModel, output_dir: str | None = None, scope: int = 5):
         if output_dir is None:
-            self._temp_dir = tempfile.TemporaryDirectory(prefix="alloy_")
+            self._temp_dir = tempfile.TemporaryDirectory()
             output_dir = self._temp_dir.name
         self.scope = scope
         self.model = model

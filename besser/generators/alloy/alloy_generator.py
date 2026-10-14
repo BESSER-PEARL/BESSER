@@ -1,6 +1,7 @@
 
 import copy
 import os
+import tempfile
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -46,6 +47,9 @@ class AlloyGenerator(GeneratorInterface):
         """
             Constructor for AlloyGenerator. Takes the domain model, output directory, and scope as parameters.
         """
+        if output_dir is None:
+            self._temp_dir = tempfile.TemporaryDirectory()
+            output_dir = self._temp_dir.name
         super().__init__(model, output_dir)
         self.scope = scope
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
@@ -66,7 +70,7 @@ class AlloyGenerator(GeneratorInterface):
 
         Stores the generated specification in a file named model.als
         """
-        file_path = self.build_generation_path(file_name="model.als")
+        self.file_path = self.build_generation_path(file_name="model.als")
 
         model = copy.deepcopy(self.model)
 
@@ -118,16 +122,22 @@ class AlloyGenerator(GeneratorInterface):
             date_ops=needs_date_ops,
         )
 
-        with open(file_path, mode="w", encoding="utf-8") as f:
+        with open(self.file_path, mode="w", encoding="utf-8") as f:
             f.write(spec)
-        generate_utils_module(os.path.dirname(file_path))
+        generate_utils_module(os.path.dirname(self.file_path))
 
         if needs_str_ops:
             status.string_ops.generate_str_ops_model(
-                os.path.dirname(file_path), string_block
+                os.path.dirname(self.file_path), string_block
             )
 
         if needs_date_ops:
             status.date_ops.generate_date_ops_model(
-                os.path.dirname(file_path), date_block
+                os.path.dirname(self.file_path), date_block
             )
+
+    def get_specification_path(self) -> str:
+        """
+        Returns the path to the generated Alloy specification file.
+        """
+        return self.file_path

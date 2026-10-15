@@ -34,7 +34,7 @@ from besser.BUML.metamodel.kg.constants import (
 from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
 from besser.BUML.notations.kg_to_buml.owl2uml import plan_domain_model
 from besser.BUML.notations.kg_to_buml.to_buml import build_domain_model
-from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
 SH = "http://www.w3.org/ns/shacl#"
 EX = "http://ex.org/"

@@ -27,7 +27,7 @@ from besser.utilities.kg_to_owl import (
     knowledge_graph_to_rdf,
     serialize_knowledge_graph,
 )
-from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
 
 TTL_FIXTURE = """
@@ -121,7 +121,7 @@ _:b0 a :Person .
 
 def test_sh_class_round_trips_through_all_values_from(tmp_path: Path):
     """sh:class means "every value is of this type" (forall) and decodes to
-    the allValuesFrom spec kind (see owl_to_buml._SHACL_PROPERTY_COMPONENTS);
+    the allValuesFrom spec kind (see owl_to_kg._SHACL_PROPERTY_COMPONENTS);
     exporting that spec back with vocab="shacl" must re-emit sh:class, not
     silently drop the constraint or mis-emit it as something else."""
     ttl = """

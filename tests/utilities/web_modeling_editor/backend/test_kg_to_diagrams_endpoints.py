@@ -117,11 +117,11 @@ def test_class_endpoint_emits_ocl_constraint_for_constraint_bearing_kg(client):
                 {"id": "e2", "source": "name", "target": "xsd_str", "iri": RDFS + "range"},
                 {
                     "id": "e3", "source": "pc1", "target": "name",
-                    "iri": "http://besser.local/kg#constraintTargetProperty",
+                    "iri": "http://besser-pearl.org/kg#constraintTargetProperty",
                 },
                 {
                     "id": "e4", "source": "PersonShape", "target": "Person",
-                    "iri": "http://besser.local/kg#constraintTargetClass",
+                    "iri": "http://besser-pearl.org/kg#constraintTargetClass",
                 },
                 {
                     "id": "e5", "source": "PersonShape", "target": "pc1",

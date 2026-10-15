@@ -27,7 +27,7 @@ from besser.BUML.metamodel.kg import (
     SubPropertyOfAxiom,
 )
 from besser.BUML.metamodel.kg.constants import CONSTRAINT_TARGET_CLASS
-from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
 
 def _write_ttl(tmp_path: Path, content: str, name: str = "ontology.ttl") -> str:
@@ -648,3 +648,65 @@ def test_punned_class_and_shape_round_trip_through_rdf(tmp_path: Path):
     assert (person, RDF.type, OWL.Class) in exported
     assert (person, RDFS.subClassOf, URIRef("http://ex.org/Agent")) in exported
     assert (person, URIRef(SH + "targetClass"), person) in exported
+
+
+# ---------------------------------------------------------------------------
+# Anomalies the importer skips are reported, not swallowed
+# ---------------------------------------------------------------------------
+
+_BAD_QUALIFIED_COUNT_TTL = """
+@prefix : <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+:Person a owl:Class . :Pet a owl:Class .
+:owns a owl:ObjectProperty ; rdfs:domain :Person ; rdfs:range :Pet .
+:PersonShape a sh:NodeShape ; sh:targetClass :Person ;
+  sh:property [ sh:path :owns ; sh:qualifiedValueShape [ sh:class :Pet ] ;
+                sh:qualifiedMinCount "many" ; sh:qualifiedMaxCount "2"^^xsd:integer ] .
+"""
+
+
+def test_a_qualified_count_that_is_not_an_integer_is_reported(tmp_path: Path):
+    warnings: list = []
+
+    owl_file_to_knowledge_graph(_write_ttl(tmp_path, _BAD_QUALIFIED_COUNT_TTL), warnings)
+
+    assert [w["code"] for w in warnings] == ["SHACL_QUALIFIED_COUNT_INVALID"]
+    assert "sh:qualifiedMinCount" in warnings[0]["message"] and "'many'" in warnings[0]["message"]
+
+
+def test_the_message_names_the_property_not_a_random_blank_node(tmp_path: Path):
+    warnings: list = []
+
+    owl_file_to_knowledge_graph(_write_ttl(tmp_path, _BAD_QUALIFIED_COUNT_TTL), warnings)
+
+    assert warnings[0]["message"] == (
+        "Ignored sh:qualifiedMinCount 'many' on the shape for http://ex.org/owns: not an integer."
+    )
+
+
+def test_the_valid_half_of_a_qualified_pair_is_kept(tmp_path: Path):
+    """Only the unreadable count is dropped; the max count of 2 still constrains the model."""
+    from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
+
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, _BAD_QUALIFIED_COUNT_TTL), [])
+    result = kg_to_class_diagram(kg)
+
+    bodies = [c.expression for c in result.domain_model.constraints]
+    assert any("->size() <= 2" in b for b in bodies), bodies
+    assert not any(">=" in b for b in bodies), bodies
+
+
+def test_a_clean_ontology_reports_nothing(tmp_path: Path):
+    warnings: list = []
+
+    owl_file_to_knowledge_graph(_write_ttl(tmp_path, "@prefix : <http://ex.org/> .\n:A a <http://www.w3.org/2002/07/owl#Class> ."), warnings)
+
+    assert warnings == []
+
+
+def test_the_warnings_argument_is_optional(tmp_path: Path):
+    owl_file_to_knowledge_graph(_write_ttl(tmp_path, _BAD_QUALIFIED_COUNT_TTL))

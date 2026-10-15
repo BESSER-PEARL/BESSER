@@ -79,7 +79,7 @@ CONSTRAINT_VOCAB_MAP: Dict[str, List[str]] = {
     # decodes to allValuesFrom (forall), not someValuesFrom (exists) — so
     # someValuesFrom is owl-only.
     "someValuesFrom": ["owl"],
-    # sh:class also decodes to this kind (see owl_to_buml._SHACL_PROPERTY_COMPONENTS).
+    # sh:class also decodes to this kind (see owl_to_kg._SHACL_PROPERTY_COMPONENTS).
     "allValuesFrom": ["owl", "shacl"],
     "hasValue": ["owl", "shacl"],
     "hasSelf": ["owl"],

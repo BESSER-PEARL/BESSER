@@ -28,7 +28,7 @@ from besser.BUML.notations.kg_to_buml.owl2uml._plan import (
     PlannedInvariant,
 )
 from besser.BUML.notations.kg_to_buml.to_buml import build_domain_model
-from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
 
 def _write_ttl(tmp_path: Path, content: str) -> str:
@@ -82,9 +82,10 @@ def _enum(name, literals):
     return PlannedEnumeration(name=name, literals=list(literals))
 
 
-def _assoc(name, source, target, role, *, source_navigable=False):
+def _assoc(name, source, target, role, *, source_navigable=False, tgt_mult=(0, "*")):
     return PlannedAssociation(
         name=name, source=source, target=target, role=role, navigable_source=source_navigable,
+        tgt_mult=tgt_mult,
     )
 
 
@@ -179,6 +180,42 @@ def test_zero_upper_bound_is_clamped():
     nickname = next(a for a in _classes(result)["Person"].attributes if a.name == "nickname")
     assert nickname.multiplicity.max == 1
     assert "MULTIPLICITY_CLAMPED" in _codes(warnings)
+
+
+def _expressions(result):
+    return [c.expression for c in result.domain_model.constraints]
+
+
+def test_clamped_attribute_keeps_the_constraint_that_forbids_the_value():
+    """The clamp alone would let the model hold the one value the ontology rules out.
+
+    The data-property rule pairs the ``(0, 0)`` with ``size() <= 0``; the lowering
+    must carry that constraint through next to the clamp.
+    """
+    model = _model(_cls(
+        "Person", _attr("nickname", "str", 0, 0),
+        invariants=[_inv("Person", "self.nickname->size() <= 0")],
+    ))
+    result, warnings = _lower(model)
+
+    nickname = next(a for a in _classes(result)["Person"].attributes if a.name == "nickname")
+    assert nickname.multiplicity.max == 1 and "MULTIPLICITY_CLAMPED" in _codes(warnings)
+    assert any("size() <= 0" in e for e in _expressions(result)), _expressions(result)
+
+
+def test_clamped_association_end_keeps_the_constraint_that_forbids_every_link():
+    """Same for an object property: ``owl:maxCardinality 0`` becomes ``0..1`` plus ``isEmpty()``."""
+    model = _model(
+        _cls("Person", invariants=[_inv("Person", "self.owns->isEmpty()")]),
+        _cls("Pet"),
+        _assoc("owns", "Person", "Pet", "owns", tgt_mult=(0, 0)),
+    )
+    result, warnings = _lower(model)
+
+    ends = {e.name: e for a in result.domain_model.associations for e in a.ends}
+    assert ends["owns"].multiplicity.max == 1
+    assert "MULTIPLICITY_CLAMPED" in _codes(warnings)
+    assert any("isEmpty()" in e for e in _expressions(result)), _expressions(result)
 
 
 def test_unbounded_upper_becomes_the_buml_sentinel():
@@ -407,6 +444,56 @@ def test_an_aux_class_invariant_resolves_through_its_own_declaration():
     assert [a.name for a in lowered_person.attributes] == []
     assert [a.name for a in lowered_person.all_attributes()] == ["name"]
     assert "ATTR_INHERITED_SHADOWED" in _codes(warnings)
+
+
+def test_inherited_attribute_is_found_through_a_grandparent_whatever_the_names_sort_like():
+    """The ancestor's copy wins however far up it is and whichever class sorts first.
+
+    The lowering fills classes ancestors-first and asks the metamodel what a class
+    already inherits, so neither the depth nor the alphabetical order may matter.
+    """
+    model = _model(
+        _cls("A_Child", _attr("name"), _attr("age", "int")),   # sorts before its ancestors
+        _cls("M_Middle"),                                       # declares nothing itself
+        _cls("Z_Top", _attr("name", "str", 1, 1)),
+        _gen("A_Child", "M_Middle"),
+        _gen("M_Middle", "Z_Top"),
+    )
+    result, warnings = _lower(model)
+
+    classes = _classes(result)
+    assert [a.name for a in classes["A_Child"].attributes] == ["age"]       # `name` is inherited
+    assert sorted(a.name for a in classes["A_Child"].all_attributes()) == ["age", "name"]
+    assert [a.name for a in classes["Z_Top"].attributes] == ["name"]
+    shadowed = [w for w in warnings if w.code == "ATTR_INHERITED_SHADOWED"]
+    assert len(shadowed) == 1 and "A_Child.name" in shadowed[0].message
+
+
+def test_an_attribute_no_ancestor_declares_is_kept():
+    model = _model(
+        _cls("Child", _attr("nickname")),
+        _cls("Parent", _attr("name")),
+        _gen("Child", "Parent"),
+    )
+    result, warnings = _lower(model)
+
+    assert [a.name for a in _classes(result)["Child"].attributes] == ["nickname"]
+    assert "ATTR_INHERITED_SHADOWED" not in _codes(warnings)
+
+
+def test_attribute_warnings_come_out_in_class_name_order_not_fill_order():
+    """Fill order is ancestors-first; the warnings must not reveal it."""
+    model = _model(
+        _cls("B_Child", _attr("x", "str", 0, "*"), _attr("y", "nosuchtype")),
+        _cls("A_Other", _attr("z", "nosuchtype")),
+        _cls("Top", _attr("x")),
+        _gen("B_Child", "Top"),
+    )
+    _, warnings = _lower(model)
+
+    messages = [w.message for w in warnings if w.code in {"TYPE_UNRESOLVED", "ATTR_INHERITED_SHADOWED"}]
+    assert len(messages) == 3, messages          # A_Other.z, B_Child.x shadowed, B_Child.y
+    assert "A_Other" in messages[0] and all("B_Child" in m for m in messages[1:]), messages
 
 
 def test_an_invariant_naming_a_feature_only_a_subclass_has_is_dropped():

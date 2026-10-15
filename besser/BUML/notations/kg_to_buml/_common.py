@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
-import keyword
-import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
 from besser.BUML.metamodel.kg import KGEdge, KGNode, KnowledgeGraph
+from besser.BUML.metamodel.kg.ids import short_digest
+from besser.utilities.identifiers import sanitize_identifier
 from besser.BUML.metamodel.kg.iri import local_name as _local_name
 from besser.BUML.metamodel.kg.constants import (
     OWL as OWL_NS,
@@ -71,9 +70,10 @@ def acknowledge_issue(kg: KnowledgeGraph, issue_id: str, affected_node_ids: List
     owner = kg.get_node(affected_node_ids[0]) if affected_node_ids else None
     if owner is None or not issue_id:
         return
-    acknowledged = owner.metadata.setdefault(ACKNOWLEDGED_ISSUES_KEY, [])
+    acknowledged = list(owner.metadata.get(ACKNOWLEDGED_ISSUES_KEY, ()))
     if issue_id not in acknowledged:
         acknowledged.append(issue_id)
+        owner.set_metadata_item(ACKNOWLEDGED_ISSUES_KEY, acknowledged)
 
 
 def is_issue_acknowledged(kg: KnowledgeGraph, issue_id: str, affected_node_ids: List[str]) -> bool:
@@ -130,10 +130,6 @@ def normalize_predicate(iri_or_label: Optional[str]) -> Optional[str]:
 local_name = _local_name
 
 
-_IDENT_FIRST_CHAR = re.compile(r"[^A-Za-z_]")
-_IDENT_OTHER = re.compile(r"[^A-Za-z0-9_]")
-
-
 def sanitize_python_identifier(
     label: Optional[str],
     fallback_prefix: str,
@@ -148,15 +144,14 @@ def sanitize_python_identifier(
 
     The chosen name is added to ``used_names`` before returning.
     """
-    base = (label or "").strip()
-    if not base:
-        base = fallback_prefix
-    base = _IDENT_OTHER.sub("_", base)
-    if not base or _IDENT_FIRST_CHAR.match(base[0]) or base[0].isdigit():
-        base = f"{fallback_prefix}_{base.lstrip('_')}" if base.lstrip("_") else fallback_prefix
-    base = base.strip("_") or fallback_prefix
-    if keyword.iskeyword(base):
-        base = f"{base}_"
+    base = sanitize_identifier(
+        (label or "").strip() or fallback_prefix,
+        ascii_only=True,
+        strip_underscores=True,
+        digit_prefix=f"{fallback_prefix}_",
+        empty=fallback_prefix,
+        escape_keywords=True,
+    )
 
     candidate = base
     suffix = 2
@@ -203,20 +198,6 @@ def build_indexes(kg: KnowledgeGraph) -> GraphIndexes:
         idx.out_edges[edge.source.id].append(edge)
         idx.in_edges[edge.target.id].append(edge)
     return idx
-
-
-def short_digest(raw: str, length: int, *, algo: str = "sha1") -> str:
-    """Hex digest of ``raw``, truncated to ``length`` characters.
-
-    The shared tail of every id/signature helper in the KG code. What goes into
-    ``raw`` (separators, sort order) and the ``algo``/``length`` are deliberately
-    left to each caller: those ids are echoed to the editor and back (issue ids,
-    ``kgSignature``), so changing one invalidates a round-trip.
-
-    Encoding uses ``errors="replace"`` so a lone surrogate in a client-supplied
-    id degrades to ``?`` instead of raising ``UnicodeEncodeError`` (a 500).
-    """
-    return hashlib.new(algo, raw.encode("utf-8", errors="replace")).hexdigest()[:length]
 
 
 def sorted_by_id(items):

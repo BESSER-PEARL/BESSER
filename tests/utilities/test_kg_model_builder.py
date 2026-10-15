@@ -11,12 +11,11 @@ from __future__ import annotations
 
 import pytest
 
+from tests.BUML.metamodel.kg.axiom_samples import AXIOM_SAMPLES
 from besser.BUML.metamodel.kg import (
-    DisjointClassesAxiom,
     EquivalentClassesAxiom,
-    HasKeyAxiom,
     ImportAxiom,
-    InversePropertiesAxiom,
+    KGAxiom,
     KGBlank,
     KGClass,
     KGEdge,
@@ -26,8 +25,6 @@ from besser.BUML.metamodel.kg import (
     KGProperty,
     KGPropertyConstraint,
     KnowledgeGraph,
-    PropertyChainAxiom,
-    SubPropertyOfAxiom,
 )
 from besser.utilities.buml_code_builder.kg_model_builder import kg_model_to_code
 from besser.utilities.web_modeling_editor.backend.services.converters import (
@@ -139,32 +136,34 @@ def test_constraint_specs_survive_the_round_trip(tmp_path):
 
 
 def test_all_axiom_kinds_round_trip(tmp_path):
+    """Every axiom class, with every field value, survives builder -> reader.
+
+    Driven by ``KGAxiom.__subclasses__()`` (through the shared samples) so a new
+    class is covered the day it is added, and compares the values, not just the
+    kinds.
+    """
+    assert set(AXIOM_SAMPLES) == set(KGAxiom.__subclasses__())
     kg = KnowledgeGraph(name="axioms")
     kg.add_node(KGClass(id="c1", label="A"))
-    for axiom in (
-        EquivalentClassesAxiom(class_ids=["c1"]),
-        DisjointClassesAxiom(class_ids=["c1"]),
-        SubPropertyOfAxiom(sub_property_id="p1", super_property_id="p2"),
-        InversePropertiesAxiom(property_a_id="p1", property_b_id="p2"),
-        PropertyChainAxiom(property_id="p1", chain_property_ids=["p2", "p3"]),
-        HasKeyAxiom(class_id="c1", property_ids=["p1"]),
-        ImportAxiom(target_iri="http://ex.org/other", source_ontology_iri=None),
-    ):
-        kg.add_axiom(axiom)
+    for axiom_cls, kwargs in AXIOM_SAMPLES.items():
+        kg.add_axiom(axiom_cls(**kwargs))
 
     model = _round_trip(kg, tmp_path)
-    kinds = sorted(a["kind"] for a in model["axioms"])
-    assert kinds == [
-        "DisjointClassesAxiom",
-        "EquivalentClassesAxiom",
-        "HasKeyAxiom",
-        "ImportAxiom",
-        "InversePropertiesAxiom",
-        "PropertyChainAxiom",
-        "SubPropertyOfAxiom",
-    ]
-    chain = next(a for a in model["axioms"] if a["kind"] == "PropertyChainAxiom")
-    assert chain["chain_property_ids"] == ["p2", "p3"]
+
+    expected = sorted(
+        ({"kind": cls.__name__, **kwargs} for cls, kwargs in AXIOM_SAMPLES.items()),
+        key=lambda a: (a["kind"], str(a)),
+    )
+    assert sorted(model["axioms"], key=lambda a: (a["kind"], str(a))) == expected
+
+
+def test_an_axiom_with_no_source_ontology_round_trips(tmp_path):
+    kg = KnowledgeGraph(name="axioms")
+    kg.add_axiom(ImportAxiom(target_iri="http://ex.org/other", source_ontology_iri=None))
+
+    (axiom,) = _round_trip(kg, tmp_path)["axioms"]
+
+    assert axiom == {"kind": "ImportAxiom", "target_iri": "http://ex.org/other", "source_ontology_iri": None}
 
 
 # ----------------------------------------------------------------------
@@ -246,7 +245,7 @@ def test_non_finite_floats_round_trip(tmp_path):
     """
     kg = KnowledgeGraph(name="floats")
     node = KGIndividual(id="measurement", label="Measurement")
-    node.metadata["readings"] = [float("nan"), float("inf"), float("-inf"), 1.5]
+    node.set_metadata_item("readings", [float("nan"), float("inf"), float("-inf"), 1.5])
     kg.add_node(node)
 
     model = _round_trip(kg, tmp_path)

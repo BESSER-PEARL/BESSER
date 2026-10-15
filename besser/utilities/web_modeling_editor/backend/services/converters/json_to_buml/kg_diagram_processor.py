@@ -88,7 +88,8 @@ def _build_axiom(raw: Dict[str, Any]):
     payload = {k: v for k, v in raw.items() if k != "kind"}
     try:
         return cls(**payload)
-    except TypeError as exc:
+    except (TypeError, ValueError) as exc:
+        # TypeError: an unknown or duplicated field; ValueError: a field of the wrong type.
         raise ConversionError(f"Malformed '{kind}' axiom: {exc}") from exc
 
 

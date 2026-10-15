@@ -20,7 +20,6 @@ OWL/OWL2 constructs into structured annotations:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -49,6 +48,7 @@ from besser.BUML.metamodel.kg import (
     PropertyChainAxiom,
     SubPropertyOfAxiom,
 )
+from besser.BUML.metamodel.kg.ids import short_digest
 from besser.BUML.metamodel.kg.iri import local_name as _local_name
 from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_CLASS,
@@ -135,8 +135,7 @@ def _is_datatype_iri(iri: str) -> bool:
 def _literal_id(lit: Literal) -> str:
     """Stable id for a literal based on lexical form + datatype."""
     raw = f"{lit}\0{lit.datatype or ''}\0{lit.language or ''}"
-    digest = hashlib.sha1(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
-    return f"lit:{digest}"
+    return f"lit:{short_digest(raw, 16)}"
 
 
 def _term_str(term) -> Optional[str]:
@@ -661,9 +660,17 @@ def _detect_punning(g: rdflib.Graph, classes: Set[URIRef]) -> Set[URIRef]:
 # ----------------------------------------------------------------------
 
 
+def _warn(warnings: Optional[List[Dict[str, str]]], code: str, message: str) -> None:
+    """Log an import anomaly and, when the caller collects them, record it for the user."""
+    logger.warning("%s: %s", code, message)
+    if warnings is not None:
+        warnings.append({"code": code, "message": message})
+
+
 def _decode_shacl_shapes(
     g: rdflib.Graph,
     lists: Dict[BNode, List[Any]],
+    warnings: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[Any, Dict[str, Any]]:
     """Decode SHACL shapes (NodeShape / PropertyShape) into structured payloads.
 
@@ -830,6 +837,9 @@ def _decode_shacl_shapes(
             continue
         q_min = next(g.objects(s, SH.qualifiedMinCount), None)
         q_max = next(g.objects(s, SH.qualifiedMaxCount), None)
+        # Name the shape by its path: a blank node's label is random per import.
+        path = next(g.objects(s, SH.path), None)
+        where = f"the shape for {path}" if path is not None else "an anonymous shape"
         entry = {"value_shape_term": o}
         if q_min is not None:
             try:
@@ -837,15 +847,17 @@ def _decode_shacl_shapes(
             except (TypeError, ValueError):
                 # Dropped silently before: the constraint then simply did not
                 # exist in the imported model, with nothing to explain it.
-                logger.warning(
-                    "Ignoring sh:qualifiedMinCount %r on %s: not an integer.", q_min, s
+                _warn(
+                    warnings, "SHACL_QUALIFIED_COUNT_INVALID",
+                    f"Ignored sh:qualifiedMinCount {str(q_min)!r} on {where}: not an integer.",
                 )
         if q_max is not None:
             try:
                 entry["max_count"] = int(str(q_max))
             except (TypeError, ValueError):
-                logger.warning(
-                    "Ignoring sh:qualifiedMaxCount %r on %s: not an integer.", q_max, s
+                _warn(
+                    warnings, "SHACL_QUALIFIED_COUNT_INVALID",
+                    f"Ignored sh:qualifiedMaxCount {str(q_max)!r} on {where}: not an integer.",
                 )
         out[s]["qualified"].append(entry)
 
@@ -1354,7 +1366,10 @@ def _lift_to_constraint_nodes(
         edges_by_id.update({e.id: e for e in kg.edges})
 
 
-def owl_file_to_knowledge_graph(path: str) -> KnowledgeGraph:
+def owl_file_to_knowledge_graph(
+    path: str,
+    warnings: Optional[List[Dict[str, str]]] = None,
+) -> KnowledgeGraph:
     """Parse an OWL/RDF file and return a populated ``KnowledgeGraph``.
 
     Every triple becomes a ``KGEdge`` (including ``rdf:type`` triples) so the
@@ -1365,6 +1380,9 @@ def owl_file_to_knowledge_graph(path: str) -> KnowledgeGraph:
             ``.owl`` (RDF/XML), ``.rdf``, ``.xml``, ``.ttl``, ``.nt``, ``.n3``.
             The format is auto-detected via ``rdflib.util.guess_format``;
             ``.owl`` defaults to ``xml`` when guess fails.
+        warnings: Optional list the importer appends ``{"code", "message"}``
+            entries to for anything it had to skip (e.g. a SHACL count that is
+            not an integer), so the caller can show them. They are logged either way.
     """
     g = rdflib.Graph()
     fmt = rdflib.util.guess_format(path)
@@ -1406,7 +1424,7 @@ def owl_file_to_knowledge_graph(path: str) -> KnowledgeGraph:
     combinator_payloads = _decode_class_combinators(g, list_resolutions)
     descriptions = _collect_descriptions(g)
     punned = _detect_punning(g, classes)
-    shacl_payloads = _decode_shacl_shapes(g, list_resolutions)
+    shacl_payloads = _decode_shacl_shapes(g, list_resolutions, warnings)
 
     # Second pass: build nodes.
     nodes_by_key: Dict[str, KGNode] = {}
@@ -1415,21 +1433,21 @@ def owl_file_to_knowledge_graph(path: str) -> KnowledgeGraph:
         # Common: rdfs:comment / isDefinedBy → metadata.
         desc = descriptions.get(term)
         if desc:
-            node.metadata.update(desc)
+            node.update_metadata(desc)
         # KGProperty: characteristics + kind.
         if isinstance(node, KGProperty):
             entry = property_kinds.get(term) if isinstance(term, URIRef) else None
             if entry:
                 if entry.get("characteristics"):
-                    node.metadata["characteristics"] = list(entry["characteristics"])
+                    node.set_metadata_item("characteristics", list(entry["characteristics"]))
                 if entry.get("kind"):
-                    node.metadata["kind"] = entry["kind"]
+                    node.set_metadata_item("kind", entry["kind"])
         # KGBlank: restriction or class-expression payload.
         if isinstance(node, KGBlank) and isinstance(term, BNode):
             if term in restriction_payloads:
-                node.metadata.update(restriction_payloads[term])
+                node.update_metadata(restriction_payloads[term])
             elif term in combinator_payloads:
-                node.metadata.update(combinator_payloads[term])
+                node.update_metadata(combinator_payloads[term])
 
     def _get_or_create_node(term) -> KGNode:
         kind = _classify(term, classes, properties)
@@ -1476,7 +1494,7 @@ def owl_file_to_knowledge_graph(path: str) -> KnowledgeGraph:
         nodes_by_key[twin_id] = twin
         punned_twins[str(iri_term)] = twin
         # Cross-link from the class side too.
-        cls_node.metadata["punned_with"] = twin_id
+        cls_node.set_metadata_item("punned_with", twin_id)
 
     edges = []
     edge_counter = 0

@@ -21,6 +21,7 @@ from besser.BUML.notations.kg_to_buml.kg_to_class_diagram import (
 from besser.BUML.notations.kg_to_buml.llm_cleanup import (
     LLM_ALLOWED_KEYS,
     ORPHAN_ALLOWED_KEYS,
+    Completer,
     analyze_kg_with_description,
     build_kg_snapshot,
     classify_orphan_nodes_with_llm,
@@ -57,6 +58,7 @@ __all__ = [
     "dispatch_decision",
     "LLM_ALLOWED_KEYS",
     "ORPHAN_ALLOWED_KEYS",
+    "Completer",
     "analyze_kg_with_description",
     "build_kg_snapshot",
     "classify_orphan_nodes_with_llm",

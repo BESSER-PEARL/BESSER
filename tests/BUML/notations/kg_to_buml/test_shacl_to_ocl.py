@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
-from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
 
 PREAMBLE = """
@@ -337,3 +337,38 @@ def test_each_rule_survives_the_editor_round_trip(tmp_path: Path, shape_body: st
         )
         assert not errors, f"{constraint.name}: {constraint.expression} -> {errors}"
         assert len(recovered) == 1, constraint.expression
+
+
+# ---------------------------------------------------------------------------
+# A count or length that is not a whole number is dropped with a warning
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("predicate", ["sh:minCount", "sh:maxCount", "sh:minLength", "sh:maxLength"])
+def test_a_non_numeric_count_or_length_is_skipped_with_a_warning(tmp_path: Path, predicate: str):
+    """``size() >= 'lots'`` parses, so it used to ship as a meaningless invariant."""
+    result = _convert(tmp_path, f'    sh:property [ sh:path :owns ; {predicate} "lots" ] .')
+
+    assert not any("'lots'" in b for b in _bodies(result)), _bodies(result)
+    warning = next(w for w in result.warnings if w.code == "SHACL_COUNT_INVALID")
+    assert predicate in warning.message and "'lots'" in warning.message and "owns" in warning.message
+
+
+def test_a_string_typed_whole_number_is_read_as_a_number(tmp_path: Path):
+    """``sh:minCount "2"`` (a plain string) was rendered as ``>= '2'``; it means 2."""
+    result = _convert(tmp_path, '    sh:property [ sh:path :owns ; sh:minCount "2" ] .')
+
+    _assert_body(result, "self.owns->size() >= 2")
+    assert not any(w.code == "SHACL_COUNT_INVALID" for w in result.warnings)
+
+
+def test_the_qualified_pair_keeps_the_readable_half(tmp_path: Path):
+    result = _convert(
+        tmp_path,
+        '    sh:property [ sh:path :owns ; sh:qualifiedValueShape [ sh:class :Pet ] ;\n'
+        '                  sh:qualifiedMinCount "many" ; sh:qualifiedMaxCount 3 ] .',
+    )
+
+    _assert_body(result, "->select(v | v.oclIsKindOf(Pet))->size() <= 3")
+    assert not any(">=" in b for b in _bodies(result)), _bodies(result)
+    assert any(w.code == "SHACL_COUNT_INVALID" for w in result.warnings)

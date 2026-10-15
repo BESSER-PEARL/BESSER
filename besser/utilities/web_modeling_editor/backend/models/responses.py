@@ -93,11 +93,9 @@ class SimulationLimitsResponse(BaseModel):
 #
 # These pin the wire shape the editor already consumes, field for field, so
 # the frontend contract is declared in one place and visible in /openapi.json.
-# Note the deliberate casing split: preflight/refinement payloads are camelCase,
-# while each issue in a consistency report keeps its dataclass's snake_case
-# field names, which the editor reads (KgConsistencyConfirmModal /
-# KgRefineModal). Standardising that is a coordinated frontend change, not
-# something to do silently here.
+# All fields are camelCase, like the rest of the API; the Python dataclasses
+# behind them (e.g. ``ConsistencyIssue``) stay snake_case and are mapped
+# explicitly in ``services/kg/payloads.py``.
 # ---------------------------------------------------------------------------
 
 
@@ -129,17 +127,17 @@ class KGPreflightReportResponse(BaseModel):
 
 
 class KGConsistencyIssueResponse(BaseModel):
-    """One OWL/SHACL finding. Field names are snake_case on purpose (see above)."""
+    """One OWL/SHACL finding."""
     id: str
     code: str
     severity: str
     message: str
-    affected_node_ids: List[str] = Field(default_factory=list)
-    affected_edge_ids: List[str] = Field(default_factory=list)
-    constraint_node_id: Optional[str] = None
-    spec_kind: Optional[str] = None
-    path_iri: Optional[str] = None
-    constraint_label: Optional[str] = None
+    affectedNodeIds: List[str] = Field(default_factory=list)
+    affectedEdgeIds: List[str] = Field(default_factory=list)
+    constraintNodeId: Optional[str] = None
+    specKind: Optional[str] = None
+    pathIri: Optional[str] = None
+    constraintLabel: Optional[str] = None
 
 
 class KGConsistencyReportResponse(BaseModel):

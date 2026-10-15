@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     kg_to_json,
     process_kg_diagram,
@@ -124,6 +124,17 @@ def test_malformed_axiom_raises_instead_of_vanishing():
     with pytest.raises(ConversionError, match="Malformed"):
         process_kg_diagram(
             {"model": {**base, "axioms": [{"kind": "HasKeyAxiom", "bogus_field": 1}]}}
+        )
+
+    # A known field of the wrong type is as malformed as an unknown one: the
+    # axiom's validating setters reject it, and it must not vanish either.
+    with pytest.raises(ConversionError, match="Malformed 'HasKeyAxiom'.*class_id"):
+        process_kg_diagram(
+            {"model": {**base, "axioms": [{"kind": "HasKeyAxiom", "class_id": 7}]}}
+        )
+    with pytest.raises(ConversionError, match="Malformed 'EquivalentClassesAxiom'.*list of str"):
+        process_kg_diagram(
+            {"model": {**base, "axioms": [{"kind": "EquivalentClassesAxiom", "class_ids": "AB"}]}}
         )
 
 
@@ -383,3 +394,24 @@ def test_import_owl_still_accepts_a_plain_ontology(client, ttl_path: Path):
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["diagramType"] == "KnowledgeGraphDiagram"
+
+
+def test_import_owl_returns_the_anomalies_it_skipped(client):
+    from tests.utilities.test_owl_importer_constructs import _BAD_QUALIFIED_COUNT_TTL
+
+    resp = client.post(
+        "/besser_api/import-owl",
+        files={"owl_file": ("bad.ttl", _BAD_QUALIFIED_COUNT_TTL.encode("utf-8"), "text/turtle")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert [w["code"] for w in resp.json()["warnings"]] == ["SHACL_QUALIFIED_COUNT_INVALID"]
+
+
+def test_import_owl_has_an_empty_warning_list_when_nothing_was_skipped(client, ttl_path: Path):
+    resp = client.post(
+        "/besser_api/import-owl",
+        files={"owl_file": ("tiny.ttl", ttl_path.read_bytes(), "text/turtle")},
+    )
+
+    assert resp.json()["warnings"] == []

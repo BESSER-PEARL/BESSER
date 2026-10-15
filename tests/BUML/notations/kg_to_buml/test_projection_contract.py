@@ -35,7 +35,7 @@ from rdflib.compare import isomorphic
 
 from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
 from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
-from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
 SH = Namespace("http://www.w3.org/ns/shacl#")
 

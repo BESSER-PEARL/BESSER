@@ -1,9 +1,9 @@
-"""LLM-driven KG cleanup: ask GPT-4o to suggest schema-oriented edits.
+"""LLM-driven KG cleanup: ask an LLM to suggest schema-oriented edits.
 
 The user may supply a natural-language description of the system they want
 to build; it is optional context. Without one the model infers the domain
 from the KG itself. We send the description (if any) plus a compact snapshot
-of the KG to GPT-4o, parse its JSON response into the same :class:`KGIssue` /
+of the KG to the model, parse its JSON response into the same :class:`KGIssue` /
 :class:`KGAction` shape used by the rule-based preflight, and return a
 :class:`KGPreflightReport` so the frontend can render it through the
 existing accept/skip UI.
@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator, model_validator
 
 from besser.BUML.metamodel.kg import (
     KGBlank,
@@ -56,6 +58,7 @@ __all__ = [
     "ORPHAN_CONTEXT_NEIGHBORS",
     "build_kg_snapshot",
     "parse_llm_suggestions",
+    "Completer",
     "analyze_kg_with_description",
     "classify_orphan_nodes_with_llm",
 ]
@@ -124,36 +127,89 @@ OPENAI_ENDPOINT = OPENAI_CHAT_ENDPOINT
 # ----------------------------------------------------------------------
 
 
-#: Sentinel distinguishing "the key was absent" (None, fine) from "the key held
-#: something that is not an id" (skip the suggestion).
-_INVALID_ID = object()
+# LLM output is untrusted *in shape* as well as in content: a model can answer
+# with a list where an id belongs, or a number where a string does. The suggestion
+# is therefore read through these models, one item at a time, so a wrongly typed
+# item is skipped on its own and never takes the others (or the request) with it.
+#
+# Everything past the shape -- that an id names a live node, that the action fits
+# the node's kind, dedupe, ordering, the cap -- is checked in ``parse_llm_suggestions``,
+# because it needs the graph.
+
+#: Parameters the resolutions read as ids or fixed words; each must be a string if present.
+_STRING_PARAMETERS = ("node_id", "edge_id", "class_id", "target_kind")
 
 
-def _as_id(value: Any):
-    """Return a non-empty id string, ``None`` if absent, ``_INVALID_ID`` else.
-
-    LLM output is untrusted *in shape* as well as in content.
-    """
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value or None
-    return _INVALID_ID
+def _str_or_none(value: Any) -> Optional[str]:
+    """``value`` when it is a string, else ``None`` (free text the model got wrong is ignored)."""
+    return value if isinstance(value, str) else None
 
 
-def _as_id_list(value: Any) -> Optional[List[str]]:
-    """Return a list of id strings, or ``None`` when the value is not one.
+class _LLMAction(BaseModel):
+    """The ``recommended_action`` of one suggestion."""
 
-    ``list()`` of a str would have yielded one entry per character, and of a
-    dict its keys -- both plausible-looking nonsense.
-    """
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        return None
-    if not all(isinstance(v, str) for v in value):
-        return None
-    return list(value)
+    model_config = ConfigDict(extra="ignore")
+
+    key: StrictStr
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    label: Optional[str] = None
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def _label_is_text(cls, value: Any) -> Optional[str]:
+        return _str_or_none(value)
+
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def _missing_parameters_are_empty(cls, value: Any) -> Any:
+        return {} if value is None else value
+
+    @field_validator("parameters")
+    @classmethod
+    def _id_parameters_are_strings(cls, value: Dict[str, Any]) -> Dict[str, Any]:
+        for name in _STRING_PARAMETERS:
+            if value.get(name) is not None and not isinstance(value[name], str):
+                raise ValueError(f"parameter {name!r} must be a string")
+        return value
+
+
+class _LLMSuggestion(BaseModel):
+    """One entry of the model's ``suggestions`` list."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    code: Optional[str] = None
+    description: Optional[str] = None
+    affected_node_ids: List[StrictStr] = Field(default_factory=list)
+    affected_edge_ids: List[StrictStr] = Field(default_factory=list)
+    confidence: float = 0.5
+    recommended_action: _LLMAction
+
+    @field_validator("code", "description", mode="before")
+    @classmethod
+    def _free_text_is_text(cls, value: Any) -> Optional[str]:
+        return _str_or_none(value)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_the_action_alias(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            return {**data, "recommended_action": data.get("recommended_action") or data.get("action") or {}}
+        return data
+
+    @field_validator("affected_node_ids", "affected_edge_ids", mode="before")
+    @classmethod
+    def _missing_id_lists_are_empty(cls, value: Any) -> Any:
+        # A string would otherwise be read as a sequence of one-character ids.
+        return [] if value is None else value
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _unreadable_confidence_is_neutral(cls, value: Any) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.5
 
 
 def build_kg_snapshot(kg: KnowledgeGraph) -> Dict[str, Any]:
@@ -281,26 +337,8 @@ def _edges_histogram(kg: KnowledgeGraph) -> List[Dict[str, Any]]:
 
 
 def _axiom_to_dict(axiom: Any) -> Dict[str, Any]:
-    """Best-effort dict view of an axiom dataclass."""
-    payload: Dict[str, Any] = {"kind": type(axiom).__name__}
-    for field_name in (
-        "class_ids",
-        "property_ids",
-        "chain_property_ids",
-        "part_class_ids",
-        "union_class_id",
-        "sub_property_id",
-        "super_property_id",
-        "property_a_id",
-        "property_b_id",
-        "property_id",
-        "class_id",
-        "target_iri",
-        "source_ontology_iri",
-    ):
-        if hasattr(axiom, field_name):
-            payload[field_name] = getattr(axiom, field_name)
-    return payload
+    """Dict view of an axiom for the LLM snapshot."""
+    return {"kind": type(axiom).__name__, **axiom.to_dict()}
 
 
 # ----------------------------------------------------------------------
@@ -362,35 +400,23 @@ def parse_llm_suggestions(
     seen_keys: Set[Tuple] = set()
 
     for item in raw_suggestions:
-        if not isinstance(item, dict):
+        try:
+            suggestion = _LLMSuggestion.model_validate(item)
+        except ValidationError:
             continue
-        recommended = item.get("recommended_action") or item.get("action") or {}
-        if not isinstance(recommended, dict):
-            continue
-        action_key = recommended.get("key")
+        recommended = suggestion.recommended_action
+        action_key = recommended.key
         if action_key not in keys:
             continue
-        parameters = recommended.get("parameters") or {}
-        if not isinstance(parameters, dict):
-            continue
-        # Every id below comes from LLM output, so its type is not guaranteed.
-        # These used to be read straight out of the JSON: a model that answered
-        # with a *list* `node_id` made `node_id not in live_node_ids` raise
-        # TypeError (unhashable), i.e. one odd completion returned a 500.
-        affected_node_ids = _as_id_list(item.get("affected_node_ids"))
-        affected_edge_ids = _as_id_list(item.get("affected_edge_ids"))
-        if affected_node_ids is None or affected_edge_ids is None:
-            continue
+        parameters = recommended.parameters
+        affected_node_ids = list(suggestion.affected_node_ids)
+        affected_edge_ids = list(suggestion.affected_edge_ids)
 
-        # node_id parameters must reference a real node.
-        node_id_param = _as_id(parameters.get("node_id"))
-        if node_id_param is _INVALID_ID:
-            continue
+        # node_id / edge_id parameters must reference a real node / edge.
+        node_id_param = parameters.get("node_id") or None
         if node_id_param and node_id_param not in live_node_ids:
             continue
-        edge_id_param = _as_id(parameters.get("edge_id"))
-        if edge_id_param is _INVALID_ID:
-            continue
+        edge_id_param = parameters.get("edge_id") or None
         if edge_id_param and edge_id_param not in live_edge_ids:
             continue
         # affected_*_ids must reference real ids.
@@ -442,9 +468,9 @@ def parse_llm_suggestions(
             continue
         seen_keys.add(dedup)
 
-        code = item.get("code") or _default_code_for(action_key)
-        description = item.get("description") or recommended.get("label") or code
-        label = recommended.get("label") or description
+        code = suggestion.code or _default_code_for(action_key)
+        description = suggestion.description or recommended.label or code
+        label = recommended.label or description
 
         issue = KGIssue(
             id=_llm_issue_id(action_key, affected_node_ids, affected_edge_ids),
@@ -456,10 +482,7 @@ def parse_llm_suggestions(
             skip_action=KGAction(key="noop", parameters={}, label="Keep as-is"),
         )
 
-        try:
-            confidence = float(item.get("confidence", 0.5))
-        except (TypeError, ValueError):
-            confidence = 0.5
+        confidence = suggestion.confidence
         kind_priority = _issue_node_priority(affected_node_ids, nodes_by_id, action_key)
         candidates.append((issue, kind_priority, confidence, code))
 
@@ -534,7 +557,7 @@ def _description_section(description: Optional[str]) -> str:
 
 
 def _build_prompt(snapshot: Dict[str, Any], description: Optional[str]) -> Tuple[str, str]:
-    """Compose the system + user messages for GPT-4o."""
+    """Compose the system + user messages for the model."""
     allowed = sorted(LLM_ALLOWED_KEYS)
     system = (
         "You are a senior software architect helping clean up a Knowledge Graph (KG) "
@@ -599,15 +622,44 @@ def _build_prompt(snapshot: Dict[str, Any], description: Optional[str]) -> Tuple
     return system, user
 
 
+#: One model call: ``(system prompt, user prompt) -> the model's text reply``.
+#: The default speaks to OpenAI; the web backend passes one that speaks to
+#: whichever provider the user's key belongs to (the notations layer must not
+#: import the backend or the Spec-Driven Agent's provider clients).
+Completer = Callable[[str, str], str]
+
+
+def _resolve_completer(
+    api_key: Optional[str],
+    model: str,
+    complete: Optional[Completer],
+    http_post: Optional[Callable[..., Any]],
+) -> Completer:
+    """The caller's ``complete``, else an OpenAI one built from ``api_key``."""
+    if complete is not None:
+        return complete
+    if not api_key or not api_key.strip():
+        raise ValueError("A non-empty API key is required.")
+
+    def _openai(system_msg: str, user_msg: str) -> str:
+        return call_openai_chat_json(api_key, model, system_msg, user_msg, http_post=http_post)
+
+    return _openai
+
+
 def analyze_kg_with_description(
     kg: KnowledgeGraph,
     description: Optional[str],
-    api_key: str,
+    api_key: Optional[str] = None,
     model: str = DEFAULT_OPENAI_MODEL,
     *,
+    complete: Optional[Completer] = None,
     _http_post: Optional[Callable[..., Any]] = None,
 ) -> KGPreflightReport:
-    """Call GPT-4o for KG cleanup suggestions and wrap them in a preflight report.
+    """Ask an LLM for KG cleanup suggestions and wrap them in a preflight report.
+
+    The model is reached through ``complete`` when given; otherwise through
+    OpenAI with ``api_key`` / ``model``.
 
     ``description`` is optional context (``None`` or blank means "infer the
     domain from the KG"); callers that need the user to state the target
@@ -623,17 +675,14 @@ def analyze_kg_with_description(
     """
     if not isinstance(kg, KnowledgeGraph):
         raise TypeError("analyze_kg_with_description expects a KnowledgeGraph instance.")
-    if not api_key or not api_key.strip():
-        raise ValueError("A non-empty OpenAI API key is required.")
+    complete = _resolve_completer(api_key, model, complete, _http_post)
 
     snapshot = build_kg_snapshot(kg)
     system_msg, user_msg = _build_prompt(snapshot, description)
 
-    raw_content = call_openai_chat_json(
-        api_key, model, system_msg, user_msg, http_post=_http_post,
-    )
+    raw_content = complete(system_msg, user_msg)
     if not raw_content:
-        raise LLMUpstreamError("OpenAI returned an empty completion.")
+        raise LLMUpstreamError("The model returned an empty completion.")
 
     issues = parse_llm_suggestions(raw_content, kg)
     return KGPreflightReport(
@@ -790,12 +839,16 @@ def classify_orphan_nodes_with_llm(
     kg: KnowledgeGraph,
     node_ids: List[str],
     description: Optional[str],
-    api_key: str,
+    api_key: Optional[str] = None,
     model: str = DEFAULT_OPENAI_MODEL,
     *,
+    complete: Optional[Completer] = None,
     _http_post: Optional[Callable[..., Any]] = None,
 ) -> KGPreflightReport:
     """Per-node LLM classification for a batch of orphan nodes.
+
+    ``complete`` / ``api_key`` / ``model`` select the model exactly as in
+    :func:`analyze_kg_with_description`.
 
     For each orphan in ``node_ids`` the LLM gets a focused mini-snapshot
     (label, IRI, kind, a few incident edges, plus the full class list) and
@@ -816,8 +869,7 @@ def classify_orphan_nodes_with_llm(
         raise TypeError(
             "classify_orphan_nodes_with_llm expects a KnowledgeGraph instance."
         )
-    if not api_key or not api_key.strip():
-        raise ValueError("A non-empty OpenAI API key is required.")
+    complete = _resolve_completer(api_key, model, complete, _http_post)
     if not isinstance(node_ids, list):
         raise TypeError("node_ids must be a list.")
     if not node_ids:
@@ -863,9 +915,7 @@ def classify_orphan_nodes_with_llm(
             orphans=snaps,
             description=description,
         )
-        raw_content = call_openai_chat_json(
-            api_key, model, system_msg, user_msg, http_post=_http_post,
-        )
+        raw_content = complete(system_msg, user_msg)
         if not raw_content:
             continue
 

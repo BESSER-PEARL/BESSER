@@ -90,6 +90,7 @@ class ShaclMapper:
     def run(self) -> None:
         # Sorted throughout: invariant *order* within a context class is
         # observable output, and rdflib returns result sets in hash order.
+        """Map every ``sh:NodeShape`` property shape onto OCL invariants of its target classes."""
         for shape in sorted(set(self.g.subjects(RDF.type, SH.NodeShape)), key=str):
             targets = self._targets(shape)
             for ctx in targets:
@@ -283,14 +284,32 @@ class ShaclMapper:
         if not chk:
             return []
         out = []
-        qmin = self.g.value(ps, SH.qualifiedMinCount)
-        qmax = self.g.value(ps, SH.qualifiedMaxCount)
+        qmin = self._whole_number(self.g.value(ps, SH.qualifiedMinCount), "sh:qualifiedMinCount", pname)
+        qmax = self._whole_number(self.g.value(ps, SH.qualifiedMaxCount), "sh:qualifiedMaxCount", pname)
         sel = f"self.{pname}->select(v | {chk})->size()"
         if qmin is not None:
-            out.append((f"{sel} >= {self.m.ocl_literal(qmin)}", "qualifiedMinCount"))
+            out.append((f"{sel} >= {qmin}", "qualifiedMinCount"))
         if qmax is not None:
-            out.append((f"{sel} <= {self.m.ocl_literal(qmax)}", "qualifiedMaxCount"))
+            out.append((f"{sel} <= {qmax}", "qualifiedMaxCount"))
         return out
+
+    def _whole_number(self, value, predicate: str, pname: str) -> str | None:
+        """``value`` as a bare OCL integer, or ``None`` (with a warning) when it is not one.
+
+        A count or length compared with a quoted string (``size() >= 'many'``) parses
+        but means nothing, so a value that is not a whole number drops the constraint
+        and says so instead.
+        """
+        if value is None:
+            return None
+        try:
+            return str(int(str(value)))
+        except ValueError:
+            self.m.warn(
+                "SHACL_COUNT_INVALID",
+                f"Skipping {predicate} {str(value)!r} on {pname}: not a whole number.",
+            )
+            return None
 
     # ---- scalar / literal resolvers --------------------------------------
     def _c_datatype(self, ps, pname):
@@ -298,11 +317,15 @@ class ShaclMapper:
         return [(f"self.{pname}->forAll(v | v.oclIsTypeOf({t}))", "datatype")]
 
     def _c_count(self, ps, pname, pred, op):
-        n = self.m.ocl_literal(self.g.value(ps, pred))
+        n = self._whole_number(self.g.value(ps, pred), f"sh:{pred.split('#')[-1]}", pname)
+        if n is None:
+            return []
         return [(f"self.{pname}->size() {op} {n}", pred.split("#")[-1])]
 
     def _c_length(self, ps, pname, pred, op):
-        n = self.m.ocl_literal(self.g.value(ps, pred))
+        n = self._whole_number(self.g.value(ps, pred), f"sh:{pred.split('#')[-1]}", pname)
+        if n is None:
+            return []
         return [(f"self.{pname}->forAll(v | v.size() {op} {n})", pred.split("#")[-1])]
 
     def _c_range(self, ps, pname, pred, op):

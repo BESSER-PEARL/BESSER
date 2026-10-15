@@ -7,7 +7,7 @@ import os
 import tempfile
 
 from besser.BUML.notations.kg_to_buml.preflight import analyze_kg_for_class_diagram
-from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
 _SYMMETRIC_INVERSES_TTL = """
 @prefix owl: <http://www.w3.org/2002/07/owl#> .

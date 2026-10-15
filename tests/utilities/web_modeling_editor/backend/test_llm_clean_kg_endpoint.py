@@ -1,9 +1,10 @@
 """End-to-end tests for the LLM-cleanup endpoints.
 
 We mock ``requests.post`` so no real network call is made. The tests
-exercise the full FastAPI request → response pipeline including
-multipart-form parsing for ``/llm-clean-kg`` and JSON-body parsing for
-``/apply-kg-refinement``.
+exercise the full FastAPI request → response pipeline, with JSON bodies for
+all of ``/llm-clean-kg``, ``/classify-orphans-with-llm`` and
+``/apply-kg-refinement``. The OpenAI path is the one mocked here; the other
+providers are covered in ``test_kg_llm_providers.py``.
 """
 
 from __future__ import annotations
@@ -81,8 +82,8 @@ def test_llm_clean_kg_returns_issue_list(client, monkeypatch):
 
     response = client.post(
         "/besser_api/llm-clean-kg",
-        data={
-            "diagram": json.dumps(_kg_diagram()),
+        json={
+            "diagram": _kg_diagram(),
             "description": "I want to track people.",
             "api_key": "sk-test",
         },
@@ -108,10 +109,10 @@ def test_llm_clean_kg_description_is_optional(client, monkeypatch, description):
 
     monkeypatch.setattr("requests.post", fake_post)
 
-    data = {"diagram": json.dumps(_kg_diagram()), "api_key": "sk-test"}
+    body = {"diagram": _kg_diagram(), "api_key": "sk-test"}
     if description is not None:
-        data["description"] = description
-    response = client.post("/besser_api/llm-clean-kg", data=data)
+        body["description"] = description
+    response = client.post("/besser_api/llm-clean-kg", json=body)
     assert response.status_code == 200, response.text
     assert "infer the target domain" in captured["user"]
 
@@ -123,8 +124,8 @@ def test_llm_clean_kg_rejects_non_kg_payload(client, monkeypatch):
     }
     response = client.post(
         "/besser_api/llm-clean-kg",
-        data={
-            "diagram": json.dumps(payload),
+        json={
+            "diagram": payload,
             "description": "Build a system.",
             "api_key": "sk-test",
         },
@@ -141,8 +142,8 @@ def test_llm_clean_kg_propagates_openai_error(client, monkeypatch):
     )
     response = client.post(
         "/besser_api/llm-clean-kg",
-        data={
-            "diagram": json.dumps(_kg_diagram()),
+        json={
+            "diagram": _kg_diagram(),
             "description": "build it",
             "api_key": "sk-test",
         },
@@ -346,11 +347,11 @@ def test_classify_orphans_with_llm_returns_per_node_issues(client, monkeypatch):
 
     response = client.post(
         "/besser_api/classify-orphans-with-llm",
-        data={
-            "diagram": json.dumps(diagram),
+        json={
+            "diagram": diagram,
             "description": "Track people.",
             "api_key": "sk-test",
-            "node_ids": json.dumps(["ghost1", "ghost2"]),
+            "node_ids": ["ghost1", "ghost2"],
         },
     )
     assert response.status_code == 200, response.text
@@ -367,11 +368,11 @@ def test_classify_orphans_with_llm_rejects_empty_node_ids(client):
     diagram = _kg_with_orphan_diagram()
     response = client.post(
         "/besser_api/classify-orphans-with-llm",
-        data={
-            "diagram": json.dumps(diagram),
+        json={
+            "diagram": diagram,
             "description": "Track people.",
             "api_key": "sk-test",
-            "node_ids": json.dumps([]),
+            "node_ids": [],
         },
     )
     assert response.status_code == 400
@@ -381,28 +382,30 @@ def test_classify_orphans_with_llm_rejects_missing_api_key(client):
     diagram = _kg_with_orphan_diagram()
     response = client.post(
         "/besser_api/classify-orphans-with-llm",
-        data={
-            "diagram": json.dumps(diagram),
+        json={
+            "diagram": diagram,
             "description": "Track people.",
             "api_key": "   ",
-            "node_ids": json.dumps(["ghost1"]),
+            "node_ids": ["ghost1"],
         },
     )
     assert response.status_code == 400
 
 
-def test_classify_orphans_with_llm_rejects_invalid_node_ids_json(client):
+def test_classify_orphans_with_llm_rejects_node_ids_that_are_not_a_list(client):
+    """A wrong *type* is a request-shape error (FastAPI's 422); the semantic
+    checks (empty, over the cap, blank key) are 400s with readable messages."""
     diagram = _kg_with_orphan_diagram()
     response = client.post(
         "/besser_api/classify-orphans-with-llm",
-        data={
-            "diagram": json.dumps(diagram),
+        json={
+            "diagram": diagram,
             "description": "desc",
             "api_key": "sk-test",
-            "node_ids": "not_json",
+            "node_ids": "not_a_list",
         },
     )
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 # --------------------------------------------------------------------------
@@ -427,11 +430,11 @@ def test_classify_orphans_rejects_an_oversized_node_list(client, monkeypatch):
 
     response = client.post(
         "/besser_api/classify-orphans-with-llm",
-        data={
-            "diagram": json.dumps(_kg_with_orphan_diagram()),
+        json={
+            "diagram": _kg_with_orphan_diagram(),
             "description": "Track people.",
             "api_key": "sk-test",
-            "node_ids": json.dumps([f"ghost{i}" for i in range(MAX_ORPHAN_CLASSIFY_NODES + 1)]),
+            "node_ids": [f"ghost{i}" for i in range(MAX_ORPHAN_CLASSIFY_NODES + 1)],
         },
     )
 
@@ -468,8 +471,8 @@ def test_502_detail_does_not_echo_the_upstream_body_or_key(client, monkeypatch, 
     with caplog.at_level(logging.WARNING):
         response = client.post(
             "/besser_api/llm-clean-kg",
-            data={
-                "diagram": json.dumps(_kg_diagram()),
+            json={
+                "diagram": _kg_diagram(),
                 "description": "build it",
                 "api_key": "sk-live-ABCDEF",
             },
@@ -497,8 +500,8 @@ def test_502_for_a_json_error_object_is_also_sanitised(client, monkeypatch):
     monkeypatch.setattr("requests.post", lambda *a, **kw: _Resp())
     response = client.post(
         "/besser_api/llm-clean-kg",
-        data={
-            "diagram": json.dumps(_kg_diagram()),
+        json={
+            "diagram": _kg_diagram(),
             "description": "build it",
             "api_key": "sk-live-ABCDEF",
         },
@@ -519,10 +522,10 @@ def test_classify_orphans_with_llm_description_is_optional(client, monkeypatch):
 
     response = client.post(
         "/besser_api/classify-orphans-with-llm",
-        data={
-            "diagram": json.dumps(_kg_with_orphan_diagram()),
+        json={
+            "diagram": _kg_with_orphan_diagram(),
             "api_key": "sk-test",
-            "node_ids": json.dumps(["ghost1"]),
+            "node_ids": ["ghost1"],
         },
     )
     assert response.status_code == 200, response.text

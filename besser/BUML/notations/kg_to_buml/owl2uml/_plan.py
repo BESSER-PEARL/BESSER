@@ -79,6 +79,7 @@ class PlannedClass:
     invariants: list[PlannedInvariant] = field(default_factory=list)
 
     def stereotypes(self) -> list[str]:
+        """list[str]: Get the stereotypes the class carries: ``aux``, ``external`` (a stub or foreign class) and ``deprecated``."""
         s: list[str] = []
         if self.is_auxiliary:
             s.append("aux")
@@ -128,6 +129,7 @@ class ModelPlan:
         )
 
     def ocl_constraints(self) -> list[PlannedInvariant]:
+        """list[PlannedInvariant]: Get every invariant in the plan, class invariants first, then datatype invariants."""
         out: list[PlannedInvariant] = []
         for cls in self.classes.values():
             out.extend(cls.invariants)

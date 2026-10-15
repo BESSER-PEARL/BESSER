@@ -2,12 +2,11 @@
 
 import pytest
 
+from tests.BUML.metamodel.kg.axiom_samples import AXIOM_SAMPLES
 from besser.BUML.metamodel.kg import (
     DisjointClassesAxiom,
     EquivalentClassesAxiom,
-    HasKeyAxiom,
     ImportAxiom,
-    InversePropertiesAxiom,
     KGAxiom,
     KGBlank,
     KGClass,
@@ -16,8 +15,6 @@ from besser.BUML.metamodel.kg import (
     KGLiteral,
     KGProperty,
     KnowledgeGraph,
-    PropertyChainAxiom,
-    SubPropertyOfAxiom,
 )
 
 
@@ -68,8 +65,7 @@ def test_graph_name_rejects_spaces():
 def test_kgnode_metadata_defaults_to_empty_dict():
     n = KGClass(id="c1", label="C1")
     assert n.metadata == {}
-    # Mutating the dict in place is the supported workflow.
-    n.metadata["kind"] = "restriction"
+    n.set_metadata_item("kind", "restriction")
     assert n.metadata == {"kind": "restriction"}
 
 
@@ -140,19 +136,78 @@ def test_axioms_setter_rejects_non_list_and_bad_elements():
         kg.axioms = ["not an axiom"]  # type: ignore[list-item]
 
 
-def test_each_axiom_subclass_round_trips():
-    """Smoke-test that every axiom subclass instantiates and stores cleanly."""
+def test_every_axiom_class_has_a_sample():
+    """Guard for the tests below: a new axiom class must come with an example."""
+    assert set(AXIOM_SAMPLES) == set(KGAxiom.__subclasses__())
+
+
+@pytest.mark.parametrize("axiom_cls", AXIOM_SAMPLES, ids=lambda c: c.__name__)
+def test_each_axiom_class_stores_and_reports_its_fields(axiom_cls):
+    kwargs = AXIOM_SAMPLES[axiom_cls]
+    assert tuple(kwargs) == axiom_cls.FIELDS, "the sample must name every field, in constructor order"
+
+    axiom = axiom_cls(**kwargs)
     kg = KnowledgeGraph(name="graph")
-    kg.add_axiom(EquivalentClassesAxiom(class_ids=["a", "b"]))
-    kg.add_axiom(DisjointClassesAxiom(class_ids=["a", "c"]))
-    kg.add_axiom(SubPropertyOfAxiom(sub_property_id="hasFather", super_property_id="hasParent"))
-    kg.add_axiom(InversePropertiesAxiom(property_a_id="hasParent", property_b_id="hasChild"))
-    kg.add_axiom(PropertyChainAxiom(property_id="hasUncle", chain_property_ids=["hasParent", "hasBrother"]))
-    kg.add_axiom(HasKeyAxiom(class_id="Person", property_ids=["ssn"]))
-    kg.add_axiom(ImportAxiom(target_iri="http://xmlns.com/foaf/0.1/"))
-    assert len(kg.axioms) == 7
-    # Every entry is a KGAxiom.
-    assert all(isinstance(a, KGAxiom) for a in kg.axioms)
+    kg.add_axiom(axiom)
+
+    assert kg.axioms == [axiom]
+    for name, value in kwargs.items():
+        assert getattr(axiom, name) == value
+    assert axiom.to_dict() == kwargs
+    assert axiom_cls(*kwargs.values()) == axiom, "positional order is FIELDS order"
+    assert axiom_cls(**kwargs) is not axiom and axiom_cls(**kwargs) == axiom
+    assert repr(axiom).startswith(f"{axiom_cls.__name__}(")
+    assert all(repr(v) in repr(axiom) for v in kwargs.values())
+
+
+@pytest.mark.parametrize("axiom_cls", AXIOM_SAMPLES, ids=lambda c: c.__name__)
+def test_axiom_equality_is_by_value_and_type(axiom_cls):
+    kwargs = AXIOM_SAMPLES[axiom_cls]
+    other = axiom_cls(**kwargs)
+    first_field = axiom_cls.FIELDS[0]
+    setattr(other, first_field, [*kwargs[first_field], "x"] if isinstance(kwargs[first_field], list) else "x")
+
+    assert axiom_cls(**kwargs) != other
+    assert axiom_cls(**kwargs) != "not an axiom"
+    with pytest.raises(TypeError):
+        hash(axiom_cls(**kwargs))
+
+
+@pytest.mark.parametrize("axiom_cls", AXIOM_SAMPLES, ids=lambda c: c.__name__)
+def test_axiom_fields_reject_values_of_the_wrong_type(axiom_cls):
+    axiom = axiom_cls(**AXIOM_SAMPLES[axiom_cls])
+
+    for name, sample in AXIOM_SAMPLES[axiom_cls].items():
+        before = getattr(axiom, name)
+        bad_values = ["abc", ["ok", 3], 7] if isinstance(sample, list) else [7, ["x"]]
+        for bad in bad_values:
+            with pytest.raises(ValueError, match=name):
+                setattr(axiom, name, bad)
+        assert getattr(axiom, name) == before, "a rejected assignment leaves the field unchanged"
+    with pytest.raises(ValueError):
+        axiom_cls(**{**AXIOM_SAMPLES[axiom_cls], axiom_cls.FIELDS[0]: 7})
+    with pytest.raises(TypeError):
+        axiom_cls(not_a_field="x")
+
+
+@pytest.mark.parametrize("axiom_cls", [c for c, kw in AXIOM_SAMPLES.items()
+                                       if any(isinstance(v, list) for v in kw.values())],
+                         ids=lambda c: c.__name__)
+def test_axiom_lists_are_copied_in_and_out(axiom_cls):
+    kwargs = {k: (list(v) if isinstance(v, list) else v) for k, v in AXIOM_SAMPLES[axiom_cls].items()}
+    list_field = next(k for k, v in kwargs.items() if isinstance(v, list))
+    axiom = axiom_cls(**kwargs)
+
+    kwargs[list_field].append("mutated-by-caller")           # the caller's list is not aliased
+    getattr(axiom, list_field).append("mutated-via-getter")  # nor is the one handed out
+
+    assert getattr(axiom, list_field) == AXIOM_SAMPLES[axiom_cls][list_field]
+
+
+def test_the_optional_import_field_accepts_none():
+    assert ImportAxiom(target_iri="http://ex.org/o").source_ontology_iri is None
+    with pytest.raises(ValueError):
+        ImportAxiom(target_iri=None)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -232,3 +287,111 @@ def test_local_name(iri, expected):
     from besser.BUML.metamodel.kg.iri import local_name
 
     assert local_name(iri) == expected
+
+
+# ---------------------------------------------------------------------------
+# metadata is a read-only view; changes go through the validating setter
+# ---------------------------------------------------------------------------
+
+from besser.BUML.metamodel.kg import KGNodeConstraint, KGPropertyConstraint  # noqa: E402
+
+_VALID_SPEC = {"kind": "minCardinality", "vocab": ["owl", "shacl"], "params": {"value": 1}}
+
+
+@pytest.mark.parametrize("make", [
+    lambda: KGClass(id="c1", label="C"),
+    lambda: KGNodeConstraint(id="nc", label="N"),
+    lambda: KGPropertyConstraint(id="pc", label="P"),
+    lambda: KGEdge(id="e", source=KGClass(id="a"), target=KGClass(id="b")),
+], ids=["class", "node_constraint", "property_constraint", "edge"])
+def test_metadata_cannot_be_written_through_the_getter(make):
+    thing = make()
+
+    with pytest.raises(TypeError):
+        thing.metadata["constraintSpecs"] = [{"kind": "nonsense"}]
+    with pytest.raises(AttributeError):
+        thing.metadata.update({"x": 1})
+    assert thing.metadata == {}
+
+
+def test_set_metadata_item_and_update_metadata_change_a_plain_node():
+    node = KGClass(id="c1", label="C", metadata={"keep": 1})
+
+    node.set_metadata_item("kind", "restriction")
+    node.update_metadata({"a": 1, "b": 2})
+
+    assert dict(node.metadata) == {"keep": 1, "kind": "restriction", "a": 1, "b": 2}
+
+
+def test_a_constraint_node_rejects_an_invalid_spec_however_it_arrives():
+    node = KGNodeConstraint(id="nc", label="N", metadata={"constraintSpecs": [_VALID_SPEC]})
+
+    with pytest.raises(ValueError, match="invalid"):
+        node.set_metadata_item("constraintSpecs", [{"kind": "nonsense"}])
+    with pytest.raises(ValueError, match="invalid"):
+        node.update_metadata({"constraintSpecs": [_VALID_SPEC, {"kind": "nonsense"}]})
+    with pytest.raises(ValueError, match="must be a list"):
+        node.set_metadata_item("constraintSpecs", "not-a-list")
+    assert node.get_specs() == [_VALID_SPEC], "a rejected change leaves the node as it was"
+
+
+def test_other_metadata_keys_can_change_on_a_constraint_node():
+    node = KGPropertyConstraint(id="pc", label="P", metadata={"constraintSpecs": [_VALID_SPEC]})
+
+    node.set_metadata_item("source", "owl")
+
+    assert node.metadata["source"] == "owl" and node.get_specs() == [_VALID_SPEC]
+
+
+def test_editing_the_specs_you_read_does_not_change_the_node():
+    node = KGNodeConstraint(id="nc", label="N", metadata={"constraintSpecs": [_VALID_SPEC]})
+
+    node.metadata["constraintSpecs"].append({"kind": "nonsense"})        # a copy
+    node.metadata["constraintSpecs"][0]["params"]["value"] = 99          # a deep copy
+    node.get_specs()[0]["kind"] = "other"
+
+    assert node.get_specs() == [_VALID_SPEC]
+
+
+def test_the_specs_you_pass_in_are_copied_too():
+    mine = [dict(_VALID_SPEC, params={"value": 1})]
+    node = KGNodeConstraint(id="nc", label="N", metadata={"constraintSpecs": mine})
+
+    mine.append({"kind": "nonsense"})
+    mine[0]["params"]["value"] = 99
+
+    assert node.get_specs() == [_VALID_SPEC]
+
+
+def test_add_and_remove_spec_still_work():
+    node = KGNodeConstraint(id="nc", label="N")
+
+    node.add_spec(_VALID_SPEC)
+    node.add_spec(dict(_VALID_SPEC, params={"value": 2}))
+    node.remove_spec(0)
+
+    assert [s["params"]["value"] for s in node.get_specs()] == [2]
+    with pytest.raises(ValueError):
+        node.add_spec({"kind": "nonsense"})
+
+
+def test_validate_reports_a_constraint_spec_that_got_around_the_setter():
+    kg = KnowledgeGraph(name="graph")
+    node = KGNodeConstraint(id="nc", label="N", metadata={"constraintSpecs": [_VALID_SPEC]})
+    kg.add_node(node)
+    # State the setter never saw, e.g. a graph unpickled from before it validated.
+    node._KGNode__metadata["constraintSpecs"] = [{"kind": "nonsense"}]
+
+    result = kg.validate(raise_exception=False)
+
+    assert not result["success"]
+    assert "invalid constraint spec at index 0" in result["errors"][0]
+    assert "'nc'" in result["errors"][0]
+
+
+def test_a_mapping_is_accepted_wherever_a_dict_was():
+    source = KGBlank(id="_:b", label="", metadata={"kind": "restriction"})
+
+    copy_of = KGBlank(id="_:c", label="", metadata=source.metadata)   # the view itself
+
+    assert dict(copy_of.metadata) == {"kind": "restriction"}

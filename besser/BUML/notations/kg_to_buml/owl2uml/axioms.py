@@ -6,7 +6,9 @@ poking at ``graph.triples(...)`` directly.
 """
 from __future__ import annotations
 
-from rdflib import Graph, URIRef, Literal
+from collections.abc import Iterator
+
+from rdflib import BNode, Graph, Literal, URIRef
 from rdflib.namespace import OWL, RDF, RDFS
 
 from besser.BUML.notations.kg_to_buml.datatype_mapping import xsd_to_primitive
@@ -71,53 +73,65 @@ class AxiomIndex:
         self.sorted_datatypes = tuple(sorted(self._datatypes, key=str))
 
     # ---- declarations ----------------------------------------------------
-    def ontology(self):
+    def ontology(self) -> URIRef | BNode | None:
+        """Return the ontology header node (the first ``owl:Ontology`` subject by IRI), or ``None``."""
         return next(iter(sorted(self.g.subjects(RDF.type, OWL.Ontology), key=str)), None)
 
-    def named_classes(self):
+    def named_classes(self) -> set:
+        """Return the set of classes declared with an IRI (anonymous class expressions excluded)."""
         return self._named_classes
 
-    def datatypes(self):
+    def datatypes(self) -> set:
+        """Return the set of custom ``rdfs:Datatype`` IRIs declared in the ontology."""
         return self._datatypes
 
     # ---- property classification ----------------------------------------
     def is_object_property(self, p) -> bool:
+        """Return whether ``p`` is declared an ``owl:ObjectProperty``."""
         return p in self.object_props
 
     def is_data_property(self, p) -> bool:
+        """Return whether ``p`` is declared an ``owl:DatatypeProperty``."""
         return p in self.data_props
 
     def is_annotation_only(self, p) -> bool:
+        """Return whether ``p`` is an ``owl:AnnotationProperty`` and neither an object nor a data property."""
         return (p in self.annotation_props
                 and p not in self.object_props
                 and p not in self.data_props)
 
-    def domains(self, p):
+    def domains(self, p) -> list:
+        """Return the ``rdfs:domain`` values of ``p``, sorted by IRI."""
         return sorted(self.g.objects(p, RDFS.domain), key=str)
 
-    def ranges(self, p):
+    def ranges(self, p) -> list:
+        """Return the ``rdfs:range`` values of ``p``, sorted by IRI."""
         return sorted(self.g.objects(p, RDFS.range), key=str)
 
     def has_type(self, s, t) -> bool:
+        """Return whether the graph asserts ``s rdf:type t``."""
         return (s, RDF.type, t) in self.g
 
     def is_functional(self, p) -> bool:
+        """Return whether ``p`` is an ``owl:FunctionalProperty``."""
         return self.has_type(p, OWL.FunctionalProperty)
 
     def is_inverse_functional(self, p) -> bool:
+        """Return whether ``p`` is an ``owl:InverseFunctionalProperty``."""
         return self.has_type(p, OWL.InverseFunctionalProperty)
 
     # ---- class-level axioms ---------------------------------------------
-    def subclass_axioms(self):
+    def subclass_axioms(self) -> Iterator[tuple]:
         """Yield (sub, super) where sub is a URIRef (named class)."""
         for s, o in _sorted_pairs(self.g.subject_objects(RDFS.subClassOf)):
             if isinstance(s, URIRef):
                 yield s, o
 
-    def equivalent_classes(self):
+    def equivalent_classes(self) -> list:
+        """Return the ``owl:equivalentClass`` ``(subject, object)`` pairs, sorted."""
         return _sorted_pairs(self.g.subject_objects(OWL.equivalentClass))
 
-    def inverse_pairs(self):
+    def inverse_pairs(self) -> list:
         """Unordered ``owl:inverseOf`` pairs, deduplicated and sorted.
 
         The reference iterates the raw ``subject_objects`` result, so whichever
@@ -132,16 +146,18 @@ class AxiomIndex:
         }
         return _sorted_pairs(canonical)
 
-    def sub_property_axioms(self):
+    def sub_property_axioms(self) -> Iterator[tuple]:
+        """Yield ``(sub, super)`` for each ``rdfs:subPropertyOf`` between two IRI-named properties, sorted."""
         for s, o in _sorted_pairs(self.g.subject_objects(RDFS.subPropertyOf)):
             if isinstance(s, URIRef) and isinstance(o, URIRef):
                 yield s, o
 
     def is_deprecated(self, s) -> bool:
+        """Return whether ``s`` carries ``owl:deprecated true``."""
         return (s, OWL.deprecated, Literal(True)) in self.g
 
     # ---- individuals -----------------------------------------------------
-    def classifier_of(self, ind):
+    def classifier_of(self, ind) -> URIRef | None:
         """Most specific declared class asserted for an individual (D39)."""
         types = [t for t in self.g.objects(ind, RDF.type)
                  if isinstance(t, URIRef) and t not in _META_TYPES]
@@ -153,14 +169,14 @@ class AxiomIndex:
             return len(list(self.g.transitive_objects(t, RDFS.subClassOf)))
         return sorted(types, key=lambda t: (-depth(t), str(t)))[0]
 
-    def data_assertions(self, ind):
+    def data_assertions(self, ind) -> Iterator[tuple]:
         """(property, literal) data-property assertions on an individual."""
         for p, o in _sorted_pairs(self.g.predicate_objects(ind)):
             if isinstance(o, Literal) and (p in self.data_props
                                            or local_name(p) == "name"):
                 yield p, o
 
-    def object_assertions(self, ind):
+    def object_assertions(self, ind) -> Iterator[tuple]:
         """(property, individual) object-property assertions on an individual."""
         for p, o in _sorted_pairs(self.g.predicate_objects(ind)):
             if p in self.object_props and o in self.individuals:

@@ -41,7 +41,7 @@ def _run_all(kg) -> None:
 
 @pytest.mark.parametrize("path", SEEDS, ids=lambda p: p.name)
 def test_seed_fixture(path: Path):
-    from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+    from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
     _run_all(owl_file_to_knowledge_graph(str(path)))
 
@@ -50,7 +50,7 @@ def test_seed_bibo_with_shapes(tmp_path: Path):
     """bibo + its SHACL shapes in one graph, as the determinism test builds it."""
     from rdflib import Graph
 
-    from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+    from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
     graph = Graph()
     graph.parse(str(_KG / "fixtures" / "bibo" / "bibo.ttl"), format="turtle")

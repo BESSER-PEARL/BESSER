@@ -6,11 +6,8 @@ The aux-class names follow the tokens used in ``conversion_kg2uml.tex`` exactly:
 """
 from __future__ import annotations
 
-import re
-
 from besser.BUML.metamodel.kg.iri import local_name as _local_name
-
-_INVALID = re.compile(r"[^0-9A-Za-z_]")
+from besser.utilities.identifiers import sanitize_identifier
 
 
 # ``local_name`` lives in the metamodel package so every layer can share it.
@@ -18,13 +15,13 @@ local_name = _local_name
 
 
 def sanitize(name: str) -> str:
-    """Turn an arbitrary label into a valid UML/PlantUML identifier."""
-    s = _INVALID.sub("_", name)
-    if not s:
-        s = "_"
-    if s[0].isdigit():
-        s = "_" + s
-    return s
+    """Turn an arbitrary label into a valid UML/PlantUML identifier.
+
+    ASCII only: the names reach OCL, whose identifier token is ASCII (see
+    :mod:`besser.utilities.identifiers`). Underscores are kept as they are, because the
+    auxiliary class names below start with one.
+    """
+    return sanitize_identifier(name, ascii_only=True)
 
 
 def namespace_hint(iri: str) -> str:
@@ -46,18 +43,22 @@ def namespace_hint(iri: str) -> str:
 # --- auxiliary-class names ------------------------------------------------
 
 def union_name(operands: list[str]) -> str:
+    """Name of the auxiliary class for a union of ``operands``."""
     return "_" + "_".join(operands) + "_Union"
 
 
 def intersection_name(operands: list[str]) -> str:
+    """Name of the auxiliary class for an intersection of ``operands``."""
     return "_" + "_".join(operands) + "_Intersection"
 
 
 def one_of_name(individuals: list[str]) -> str:
+    """Name of the auxiliary class for an enumeration of ``individuals``."""
     return "_" + "_".join(individuals) + "_OneOf"
 
 
 def not_name(cls: str) -> str:
+    """Name of the auxiliary class for the complement of ``cls``."""
     return f"_not_{cls}"
 
 

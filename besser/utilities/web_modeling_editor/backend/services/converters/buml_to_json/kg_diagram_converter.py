@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from dataclasses import asdict, is_dataclass
 
 from besser.BUML.metamodel.kg import (
     KGAxiom,
@@ -155,11 +154,8 @@ def _edge_to_dict(e: KGEdge) -> Dict[str, Any]:
 
 
 def _axiom_to_dict(a: KGAxiom) -> Dict[str, Any]:
-    """Serialise an axiom dataclass with its concrete subclass name."""
-    payload: Dict[str, Any] = {"kind": type(a).__name__}
-    if is_dataclass(a):
-        payload.update(asdict(a))
-    return payload
+    """Serialise an axiom with its concrete subclass name."""
+    return {"kind": type(a).__name__, **a.to_dict()}
 
 
 def _sorted_nodes(nodes):

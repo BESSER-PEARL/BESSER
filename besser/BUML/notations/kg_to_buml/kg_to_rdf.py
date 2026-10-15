@@ -374,7 +374,7 @@ def _pass_b_lists(g, nodes, edges, terms, default_ns, warnings) -> None:
 def _member_key(node: KGNode) -> str:
     """The string the importer recorded for this node in ``metadata['members']``.
 
-    Mirrors ``owl_to_buml._term_str(m) or str(m)``: an IRI for named terms, the
+    Mirrors ``owl_to_kg._term_str(m) or str(m)``: an IRI for named terms, the
     lexical form for literals, the label for blank nodes.
     """
     if isinstance(node, KGLiteral):

@@ -6,8 +6,7 @@ so a renamed or dropped field is a silent frontend break. The response models
 in ``models/responses.py`` declare the contract; these tests make sure the
 endpoints actually emit exactly that.
 
-Casing is deliberately mixed -- see the note above the KG models in
-``models/responses.py``.
+Every field is camelCase, including the issues of a consistency report.
 """
 
 from __future__ import annotations
@@ -34,8 +33,8 @@ CONSISTENCY_KEYS = {
     "exportedAt", "version",
 }
 CONSISTENCY_ISSUE_KEYS = {
-    "id", "code", "severity", "message", "affected_node_ids", "affected_edge_ids",
-    "constraint_node_id", "spec_kind", "path_iri", "constraint_label",
+    "id", "code", "severity", "message", "affectedNodeIds", "affectedEdgeIds",
+    "constraintNodeId", "specKind", "pathIri", "constraintLabel",
 }
 REFINEMENT_KEYS = {
     "title", "model", "diagramType", "kgSignature", "pendingOrphanClassification",
@@ -65,19 +64,18 @@ def test_llm_clean_and_classify_share_the_preflight_shape(client, monkeypatch):
         "recommended_action": {"key": "drop_class", "parameters": {"node_id": "Car"}, "label": "Drop"},
     }]})}}]}
     monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResp(reply))
-    diagram = json.dumps(_kg_diagram())
-    common = {"diagram": diagram, "description": "people", "api_key": "sk-x"}
+    common = {"diagram": _kg_diagram(), "description": "people", "api_key": "sk-x"}
 
-    clean = client.post(f"{_API}/llm-clean-kg", data=common).json()
+    clean = client.post(f"{_API}/llm-clean-kg", json=common).json()
     classify = client.post(
-        f"{_API}/classify-orphans-with-llm", data={**common, "node_ids": json.dumps(["alice"])},
+        f"{_API}/classify-orphans-with-llm", json={**common, "node_ids": ["alice"]},
     ).json()
 
     _assert_preflight_shape(clean)
     _assert_preflight_shape(classify)
 
 
-def test_consistency_response_keeps_snake_case_issue_fields(client):
+def test_consistency_response_is_camel_case_throughout(client):
     imported = client.post(
         f"{_API}/import-owl",
         files={"owl_file": ("d.ttl", DISJOINT_TTL.encode(), "text/turtle")},
@@ -90,7 +88,6 @@ def test_consistency_response_keeps_snake_case_issue_fields(client):
     assert set(body) == CONSISTENCY_KEYS
     assert body["issues"], "fixture should violate disjointness"
     for issue in body["issues"]:
-        # snake_case inside a camelCase envelope: the editor depends on both.
         assert set(issue) == CONSISTENCY_ISSUE_KEYS
 
 

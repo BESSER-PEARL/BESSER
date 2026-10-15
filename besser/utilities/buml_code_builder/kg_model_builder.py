@@ -31,9 +31,8 @@ special-cases the one place ``repr`` is not valid Python: a non-finite float,
 whose ``repr`` is the undefined name ``nan`` / ``inf``.
 """
 
-import hashlib
 import math
-from typing import Any, Dict, List, Set, TextIO
+from typing import Any, Dict, List, Mapping, Set, TextIO
 
 from besser.BUML.metamodel.kg import (
     KGBlank,
@@ -46,6 +45,7 @@ from besser.BUML.metamodel.kg import (
     KGPropertyConstraint,
     KnowledgeGraph,
 )
+from besser.BUML.metamodel.kg.ids import short_digest
 from besser.utilities.buml_code_builder.common import _comment_safe, safe_var_name
 
 
@@ -65,7 +65,7 @@ _NODE_CLASSES = (
     KGPropertyConstraint,
 )
 
-#: Every axiom dataclass the metamodel defines, imported by the generated code.
+#: Every axiom class the metamodel defines, imported by the generated code.
 _AXIOM_NAMES = [
     "EquivalentClassesAxiom",
     "EquivalentPropertiesAxiom",
@@ -217,9 +217,8 @@ def _node_class_name(node: KGNode) -> str:
 
 
 def _axiom_expr(axiom: Any) -> str:
-    """Render one axiom dataclass as a keyword-argument constructor call."""
-    fields = getattr(axiom, "__dataclass_fields__", {})
-    args = [f"{name}={_literal(getattr(axiom, name))}" for name in fields]
+    """Render one axiom as a keyword-argument constructor call."""
+    args = [f"{name}={_literal(getattr(axiom, name))}" for name in axiom.FIELDS]
     return f"{type(axiom).__name__}({', '.join(args)})"
 
 
@@ -246,7 +245,7 @@ def _literal(value: Any) -> str:
         return repr(value)
     if isinstance(value, str):
         return repr(value)
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):      # includes the read-only view node.metadata returns
         items = ", ".join(f"{_literal(k)}: {_literal(v)}" for k, v in value.items())
         return "{" + items + "}"
     if isinstance(value, (list, tuple, set)):
@@ -277,7 +276,7 @@ def _unique_var(prefix: str, hint: str, used: Set[str]) -> str:
 
 
 def _short_hash(value: str) -> str:
-    return hashlib.sha1(value.encode("utf-8")).hexdigest()[:8]
+    return short_digest(value, 8)
 
 
 def _sorted_nodes(nodes):

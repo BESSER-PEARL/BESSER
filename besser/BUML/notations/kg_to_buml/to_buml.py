@@ -112,9 +112,11 @@ def build_domain_model(
 
     classes = _build_classes(model, renames, out)
     enumerations = _build_enumerations(model, renames, out.warnings)
-    _build_attributes(model, renames, classes, enumerations, generalizations, out)
-
+    # Generalizations before attributes: which attributes a class already
+    # inherits is read off the metamodel, which knows its ancestors only once
+    # they exist. They still come before associations (see the module docstring).
     buml_generalizations = _build_generalizations(generalizations, classes)
+    _build_attributes(model, renames, classes, enumerations, out)
     associations = _build_associations(model, renames, classes, buml_generalizations, out)
 
     domain_model = DomainModel(
@@ -388,17 +390,47 @@ def _multiplicity(lower: int, upper, warnings, *, label: str) -> Multiplicity:
 # ----------------------------------------------------------------------
 
 
-def _build_attributes(model: ModelPlan, renames, classes, enumerations,
-                      generalizations, out: ClassConversionResult) -> None:
-    inherited = _inherited_attribute_names(model, renames, generalizations)
+def _build_attributes(model: ModelPlan, renames, classes, enumerations, out: ClassConversionResult) -> None:
+    """Attach every class's attributes, ancestors first.
+
+    A restriction over a data property declares the attribute on the auxiliary
+    class it materialises, above the class it constrains -- the mirror of what an
+    object restriction does with the association. The constrained class usually
+    declares the same attribute itself, from the property's own ``rdfs:domain``,
+    and then ``all_attributes()`` would hand every consumer the name twice.
+
+    The ancestor's copy is the one to keep (the auxiliary class carries the
+    tighter multiplicity and type), as association ends already do
+    (``_ancestors_first``, ``ASSOC_INHERITED_SHADOWED``). So classes are filled in
+    ancestor-first order and each asks the metamodel what it already inherits
+    (``Class.inherited_attributes()``).
+
+    Warnings are collected per class and emitted in class-name order, so they do
+    not depend on the fill order.
+    """
+    by_name: Dict[str, Tuple[Class, Any]] = {}
     for name in sorted(model.classes):
         uml_class = model.classes[name]
-        safe = _resolve(name, renames)
-        buml_class = classes.get(safe)
-        if buml_class is None or not uml_class.attributes:
-            continue
+        buml_class = classes.get(_resolve(name, renames))
+        if buml_class is not None and uml_class.attributes:
+            by_name[name] = (buml_class, uml_class)
+
+    depths: Dict[Class, int] = {}
+
+    def depth(cls: Class) -> int:
+        if cls not in depths:
+            depths[cls] = max((depth(parent) + 1 for parent in cls.parents()), default=0)
+        return depths[cls]
+
+    warnings_of: Dict[str, List[KGConversionWarning]] = {}
+    for name in sorted(by_name, key=lambda n: (depth(by_name[n][0]), n)):
+        buml_class, uml_class = by_name[name]
+        warnings_of[name] = []
+        inherited = {attribute.name for attribute in buml_class.inherited_attributes()}
         _attach_attributes(buml_class, uml_class.attributes, renames, classes, enumerations,
-                           out, inherited.get(safe, set()))
+                           out, inherited, warnings=warnings_of[name])
+    for name in by_name:                      # `by_name` is in sorted-name order
+        out.warnings.extend(warnings_of[name])
 
     # Materialised data ranges carry a single `value` attribute (O01-O05).
     for name in sorted(model.datatypes):
@@ -412,35 +444,10 @@ def _build_attributes(model: ModelPlan, renames, classes, enumerations,
         _attach_attributes(buml_class, datatype.attributes, renames, classes, enumerations, out)
 
 
-def _inherited_attribute_names(model: ModelPlan, renames, generalizations) -> Dict[str, Set[str]]:
-    """Attribute names each class already inherits from an ancestor.
-
-    A restriction over a data property declares the attribute on the auxiliary
-    class it materialises, above the class it constrains — the mirror of what an
-    object restriction does with the association. The constrained class usually
-    declares the same attribute itself, from the property's own ``rdfs:domain``,
-    and then ``all_attributes()`` would hand every consumer the name twice.
-
-    Association ends already resolve this the same way (``_ancestors_first``,
-    ``ASSOC_INHERITED_SHADOWED``): the ancestor's copy is the one to keep, since
-    the auxiliary class carries the tighter multiplicity and type.
-    """
-    declared: Dict[str, Set[str]] = {}
-    for name, uml_class in model.classes.items():
-        declared[_resolve(name, renames)] = {
-            naming.sanitize(a.name) or "_" for a in uml_class.attributes
-        }
-    parents: Dict[str, List[str]] = {}
-    for sub, sup in generalizations:
-        parents.setdefault(sub, []).append(sup)
-    return {
-        name: set().union(*(declared.get(a, set()) for a in _closure(name, parents)) or [set()])
-        for name in declared
-    }
-
-
 def _attach_attributes(buml_class, attributes, renames, classes, enumerations, out,
-                       inherited: Optional[Set[str]] = None) -> None:
+                       inherited: Optional[Set[str]] = None, *,
+                       warnings: Optional[List[KGConversionWarning]] = None) -> None:
+    warnings = out.warnings if warnings is None else warnings
     built: List[Property] = []
     taken: Set[str] = set(inherited or ())
     for attribute in attributes:
@@ -448,7 +455,7 @@ def _attach_attributes(buml_class, attributes, renames, classes, enumerations, o
         if attr_name in taken:
             if inherited and attr_name in inherited:
                 add_warning(
-                    out.warnings,
+                    warnings,
                     "ATTR_INHERITED_SHADOWED",
                     f"{buml_class.name}.{attr_name} is already inherited from an ancestor "
                     f"that constrains it; the redundant declaration was dropped.",
@@ -458,11 +465,11 @@ def _attach_attributes(buml_class, attributes, renames, classes, enumerations, o
         prop = Property(
             name=attr_name,
             type=_lower_type(
-                attribute.type, renames, classes, enumerations, out.warnings,
+                attribute.type, renames, classes, enumerations, warnings,
                 label=f"Attribute {buml_class.name}.{attr_name}",
             ),
             multiplicity=_multiplicity(
-                attribute.lower, attribute.upper, out.warnings,
+                attribute.lower, attribute.upper, warnings,
                 label=f"Attribute {buml_class.name}.{attr_name}",
             ),
             metadata=Metadata(uri=attribute.uri) if attribute.uri else None,
@@ -578,58 +585,25 @@ def _widest(bounds: Sequence[Tuple[int, Any]]) -> Tuple[int, Any]:
     return lower, max(int(b[1]) for b in bounds)
 
 
-class _EndNameSpace:
-    """Mirrors BUML's association-end-name rule so we never trip it.
+def _navigable_names(cls: Class) -> Set[str]:
+    """End names already navigable anywhere in ``cls``'s hierarchy.
 
-    ``Association.ends`` validates each end against the *other* end's owning
-    class: for an association ``(S:A, T:B)`` it requires ``T`` to be unused
-    across ``A``, ``A``'s ancestors and ``A``'s descendants, and ``S`` to be
-    unused across ``B``'s. "Used" means appearing in ``Class.association_ends()``,
-    which returns the *opposite* ends — i.e. the names that class can navigate.
-    Attribute names do not participate.
+    BUML's association-end-name rule (``Class._validate_unique_end_names``)
+    requires a new end name to be unused across the class, its ancestors and its
+    descendants, where "used" means appearing in ``Class.association_ends()`` --
+    the *opposite* ends, i.e. the names that class can navigate. Attribute names
+    do not participate. Reading that off the metamodel, instead of keeping a
+    parallel table, keeps this check in step with the rule it guards: it lets the
+    lowering rename the free end before construction instead of catching a
+    ``ValueError`` afterwards and losing the association.
 
-    Tracking this here lets us rename the free end before construction instead
-    of catching a ``ValueError`` afterwards and losing the association.
+    The hierarchy is acyclic here (``_break_cycles`` has run), so the metamodel's
+    ``all_parents`` / ``all_specializations`` terminate.
     """
-
-    def __init__(self, classes, generalizations):
-        parents: Dict[str, List[str]] = {}
-        children: Dict[str, List[str]] = {}
-        for generalization in generalizations:
-            sub, sup = generalization.specific.name, generalization.general.name
-            parents.setdefault(sub, []).append(sup)
-            children.setdefault(sup, []).append(sub)
-        self._closures = {
-            name: _closure(name, parents) | _closure(name, children) | {name}
-            for name in classes
-        }
-        self._visible: Dict[str, Set[str]] = {name: set() for name in classes}
-
-    def blocked(self, class_name: str) -> Set[str]:
-        """Names already navigable anywhere in ``class_name``'s hierarchy."""
-        names: Set[str] = set()
-        for relative in self._closures.get(class_name, {class_name}):
-            names |= self._visible.get(relative, set())
-        return names
-
-    def register(self, source: str, target: str, source_role: str, target_role: str) -> None:
-        self._visible.setdefault(source, set()).add(target_role)
-        self._visible.setdefault(target, set()).add(source_role)
-        if source == target:
-            # A self-association keeps both ends navigable on the same class.
-            self._visible[source].add(source_role)
-
-
-def _closure(start: str, adjacency: Dict[str, List[str]]) -> Set[str]:
-    seen: Set[str] = set()
-    stack = list(adjacency.get(start, []))
-    while stack:
-        current = stack.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        stack.extend(adjacency.get(current, []))
-    return seen
+    names = {end.name for end in cls.association_ends()}
+    for relative in cls.all_parents() | cls.all_specializations():
+        names |= {end.name for end in relative.association_ends()}
+    return names
 
 
 def _ancestors_first(planned, generalizations):
@@ -666,7 +640,6 @@ def _ancestors_first(planned, generalizations):
 def _instantiate_associations(planned, classes, generalizations, out: ClassConversionResult):
     associations: List[BinaryAssociation] = []
     used_names: Set[str] = set()
-    namespace = _EndNameSpace(classes, generalizations)
     attribute_names = {
         name: {attribute.name for attribute in buml_class.attributes}
         for name, buml_class in classes.items()
@@ -678,7 +651,7 @@ def _instantiate_associations(planned, classes, generalizations, out: ClassConve
             continue
 
         target_role = assoc.role
-        if target_role in namespace.blocked(assoc.source):
+        if target_role in _navigable_names(source_class):
             # The role name is already navigable from this class (usually via an
             # ancestor that declares the same property). The inherited feature
             # satisfies every ``self.<role>`` reference, so the duplicate is
@@ -702,7 +675,7 @@ def _instantiate_associations(planned, classes, generalizations, out: ClassConve
         # invalidating the generated OCL.
         source_role = _unique_name(
             assoc.source_role or _default_source_role(assoc),
-            namespace.blocked(assoc.target) | {target_role},
+            _navigable_names(target_class) | {target_role},
         )
 
         source_end = Property(
@@ -731,7 +704,6 @@ def _instantiate_associations(planned, classes, generalizations, out: ClassConve
                 f"({assoc.source} -> {assoc.target}): {exc}",
             )
             continue
-        namespace.register(assoc.source, assoc.target, source_role, target_role)
         associations.append(association)
         out.assoc_source_end[id(association)] = source_end
         if assoc.uri:

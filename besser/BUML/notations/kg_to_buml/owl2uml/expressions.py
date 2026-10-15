@@ -53,6 +53,14 @@ class ExpressionResolver:
 
     # ---- class expressions ----------------------------------------------
     def resolve_class(self, node, subsuming: str | None = None) -> str:
+        """Return the plan name of a class expression.
+
+        Handles a named class, ``unionOf``, ``intersectionOf``, ``oneOf``, ``complementOf`` and ``owl:Restriction`` (materialising auxiliary classes where needed); anything else is ``owl:Thing``.
+
+        Args:
+            node: The class IRI or anonymous expression node.
+            subsuming: A class name to make a superclass of the result, when the result is a class.
+        """
         if isinstance(node, URIRef):
             name = self.m.ensure_class(node)
             return self._finish(name, subsuming)

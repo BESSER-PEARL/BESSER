@@ -9,10 +9,15 @@ constructs that ``pyshacl + owlrl`` doesn't translate into validation
 violations on its own (notably ``owl:disjointWith``,
 ``owl:complementOf``, ``owl:FunctionalProperty``).
 
+The whole export is the *data* (and ontology) graph. The *shapes* graph is a
+separate one, built by :func:`_extract_shapes` from the shapes BESSER itself
+writes and nothing else, so a construct an imported ontology carries beyond
+BESSER's constraint vocabulary is never read as a shape.
+
 The validation report is parsed back into our
 :class:`ConsistencyIssue` shape, with focus-node IRIs mapped to KG
 node ids. The shim shapes never escape this module — they live only
-in the in-memory graph passed to pyshacl.
+in the in-memory graphs passed to pyshacl.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import pyshacl
 import rdflib
 from rdflib import BNode, Literal, RDF, URIRef, XSD
-from rdflib.namespace import OWL
+from rdflib.namespace import OWL, RDFS
 
 from besser.BUML.metamodel.kg.iri import local_name as _local_name
 from besser.BUML.metamodel.kg import (
@@ -35,7 +40,14 @@ from besser.BUML.metamodel.kg import (
 )
 from besser.BUML.notations.kg_to_buml._common import short_digest
 from besser.BUML.notations.kg_to_buml.preflight import kg_signature
-from besser.utilities.kg_to_owl import DEFAULT_NAMESPACE, _slugify, knowledge_graph_to_rdf
+from besser.utilities.kg_to_owl import (
+    DEFAULT_NAMESPACE,
+    SHACL_LOGICAL_KINDS,
+    SHACL_NODE_KINDS,
+    SHACL_PROPERTY_KINDS,
+    _slugify,
+    knowledge_graph_to_rdf,
+)
 from besser.BUML.metamodel.kg.constants import (
     SH as SH_NS,
 )
@@ -79,6 +91,29 @@ _EXECUTABLE_SHACL_TYPES = frozenset({
     SH.JSRule, SH.JSConstraint, SH.JSTarget, SH.JSTargetType,
     SH.JSFunction, SH.JSValidator, SH.JSLibrary,
 })
+
+
+# The shapes the validator is allowed to read. Stripping the constructs above
+# from the KG leaves a *blacklist*; this is the allowlist behind it. Only what
+# BESSER itself writes as a shape is copied into the shapes graph: the predicates
+# of its constraint vocabulary (the exporter's three kind tables) and the
+# structural ones that attach a shape to its targets and to its property shapes
+# (the OWL -> SHACL shim below uses exactly these). Any other triple in an
+# imported ontology stays in the *data* graph, where it is just data.
+_SHAPE_STRUCTURE_PREDICATES = frozenset({
+    SH.path, SH.property, SH.targetClass, SH.targetSubjectsOf, SH.qualifiedValueShape,
+})
+_SHAPE_PREDICATES = frozenset(
+    {*SHACL_PROPERTY_KINDS.values(), *SHACL_NODE_KINDS.values(), *SHACL_LOGICAL_KINDS.values()}
+    | _SHAPE_STRUCTURE_PREDICATES
+)
+_SHAPE_TYPES = frozenset({SH.NodeShape, SH.PropertyShape})
+# Predicates whose object is itself a shape, so the walk follows it.
+_SHAPE_VALUED = frozenset({SH.property, SH.qualifiedValueShape, SH["not"]})
+# Predicates whose object is an rdf:List: copied as a list, and followed into
+# the members when they are shapes.
+_SHAPE_LISTS = frozenset({SH["and"], SH["or"], SH.xone})
+_VALUE_LISTS = frozenset({SH["in"], SH.languageIn, SH.ignoredProperties})
 
 
 # ---------------------------------------------------------------------------
@@ -182,17 +217,20 @@ def check_kg_consistency(
     _augment_with_owl_shim(data_graph)
     _strip_executable_shacl(data_graph)
 
-    # ``advanced=False`` (pyshacl's own default) is load-bearing, not a tuning
-    # knob: the KG doubles as the shapes graph here, so with SHACL-AF enabled a
-    # sh:SPARQLRule in an imported ontology would be executed by the validator.
-    # It gates exactly three features -- sh:Function/sh:expression, sh:Rule and
-    # custom sh:target -- none of which BESSER's constraint model can express.
-    # Implicit class targeting, which BESSER's shapes DO rely on, is a separate
-    # always-on code path and keeps working. ``_strip_executable_shacl`` above
-    # removes the same constructs from the graph as defence in depth.
+    # The validator reads its shapes from a graph of its own, holding only what
+    # BESSER writes as a shape (see ``_SHAPE_PREDICATES``), so nothing an imported
+    # ontology carries beyond that is ever a shape, let alone one that runs.
+    shapes_graph = _extract_shapes(data_graph)
+
+    # ``advanced=False`` (pyshacl's own default) stays as a second line of defence:
+    # it gates SHACL-AF features (sh:Function/sh:expression, sh:Rule, custom
+    # sh:target) that BESSER's constraint model cannot express. Implicit class
+    # targeting, which BESSER's shapes DO rely on, is a separate always-on code
+    # path and keeps working. ``_strip_executable_shacl`` above removes the same
+    # constructs from the data graph as a third.
     _conforms, results_graph, _results_text = pyshacl.validate(
         data_graph,
-        shacl_graph=data_graph,
+        shacl_graph=shapes_graph,
         ont_graph=data_graph,
         inference=inference,
         allow_warnings=True,
@@ -216,6 +254,60 @@ def check_kg_consistency(
 # ---------------------------------------------------------------------------
 # Graph pre-processing
 # ---------------------------------------------------------------------------
+
+
+def _extract_shapes(data_graph: rdflib.Graph) -> rdflib.Graph:
+    """The shapes graph: every BESSER-written shape in ``data_graph``, and nothing else.
+
+    Walks from each ``sh:NodeShape`` / ``sh:PropertyShape`` and copies the triples
+    whose predicate is in ``_SHAPE_PREDICATES``, following the shapes they point
+    at (``sh:property``, ``sh:not``, ``sh:qualifiedValueShape``, the members of
+    ``sh:and`` / ``sh:or`` / ``sh:xone``) and copying the list spines of the list
+    valued ones. A shape node's class type (``rdfs:Class`` / ``owl:Class``) is
+    kept too: that is how SHACL spots a shape that is also a class, whose
+    instances it targets.
+    """
+    shapes = rdflib.Graph()
+    todo: List[Any] = [
+        node for shape_type in _SHAPE_TYPES for node in data_graph.subjects(RDF.type, shape_type)
+    ]
+    seen: Set[Any] = set()
+
+    def copy_list(head: Any) -> List[Any]:
+        members: List[Any] = []
+        node = head
+        while node is not None and node != RDF.nil and node not in seen:
+            seen.add(node)
+            first = data_graph.value(node, RDF.first)
+            rest = data_graph.value(node, RDF.rest)
+            if first is None or rest is None:
+                break
+            shapes.add((node, RDF.first, first))
+            shapes.add((node, RDF.rest, rest))
+            members.append(first)
+            node = rest
+        return members
+
+    while todo:
+        node = todo.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for predicate, obj in data_graph.predicate_objects(node):
+            if predicate == RDF.type:
+                if obj in _SHAPE_TYPES or obj in (RDFS.Class, OWL.Class):
+                    shapes.add((node, predicate, obj))
+                continue
+            if predicate not in _SHAPE_PREDICATES:
+                continue
+            shapes.add((node, predicate, obj))
+            if predicate in _SHAPE_VALUED:
+                todo.append(obj)
+            elif predicate in _SHAPE_LISTS:
+                todo.extend(copy_list(obj))
+            elif predicate in _VALUE_LISTS:
+                copy_list(obj)
+    return shapes
 
 
 def _strip_executable_shacl(g: rdflib.Graph) -> int:

@@ -19,7 +19,7 @@ from besser.BUML.notations.kg_to_buml import (
     analyze_kg_for_class_diagram,
     kg_signature,
 )
-from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
 
 def _write_ttl(tmp_path: Path, content: str) -> str:

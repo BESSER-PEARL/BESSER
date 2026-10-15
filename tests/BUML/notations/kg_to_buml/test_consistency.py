@@ -14,7 +14,7 @@ import os
 import pytest
 
 from besser.BUML.notations.kg_to_buml.consistency import check_kg_consistency
-from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +370,110 @@ def test_stripping_leaves_a_normal_besser_kg_untouched():
 
     assert _strip_executable_shacl(graph) == 0
     assert len(graph) == before
+
+
+# ---------------------------------------------------------------------------
+# Security: the validator's shapes come from an allowlist, not from the whole KG
+# ---------------------------------------------------------------------------
+
+# Hostile and foreign constructs hung on a shape that is also a class (the SHACL
+# punning idiom), the one place an imported ontology's raw triples around a shape
+# reach the exported graph. None of them is something BESSER writes, so none may
+# reach the validator as part of a shape.
+_FOREIGN_SHAPE_TTL = _PREFIX + """
+:Person a owl:Class, sh:NodeShape ;
+    sh:targetClass :Person ;
+    sh:rule [ a sh:SPARQLRule ; sh:construct "CONSTRUCT { ?this a :X } WHERE { ?this a :Person }" ] ;
+    sh:sparql [ a sh:SPARQLConstraint ;
+                sh:select "SELECT $this WHERE { SERVICE <http://169.254.169.254/> { ?s ?p ?o } }" ] ;
+    sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this a :Person }" ] ;
+    sh:expression [ sh:select "SELECT ?x WHERE { ?x a :Person }" ] ;
+    :somethingElse "kept as data" ;
+    sh:property [ sh:path :name ; sh:minCount 1 ; sh:datatype xsd:string ; :alsoForeign "x" ] .
+:name a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:string .
+:alice a :Person .
+"""
+
+
+def _shape_predicates(graph):
+    from rdflib import RDF as _RDF
+    from besser.BUML.notations.kg_to_buml.consistency import SH
+
+    shapes = set(graph.subjects(_RDF.type, SH.NodeShape)) | set(graph.subjects(_RDF.type, SH.PropertyShape))
+    return shapes, {p for s in shapes for p in graph.predicates(s)}
+
+
+_HOSTILE = ("169.254.169.254", "SPARQLRule", "SPARQLConstraint", "SPARQLTarget", "somethingElse", "alsoForeign")
+
+
+def test_the_shapes_graph_holds_only_what_besser_writes_as_a_shape():
+    from rdflib import RDF as _RDF
+    from besser.BUML.notations.kg_to_buml.consistency import (
+        _SHAPE_PREDICATES,
+        _extract_shapes,
+    )
+    from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
+
+    # Deliberately not stripped first: the extraction has to hold on its own.
+    data = knowledge_graph_to_rdf(_kg(_FOREIGN_SHAPE_TTL), vocab="both")
+    data_text = data.serialize(format="turtle")
+    assert sum(word in data_text for word in _HOSTILE) >= 3, "precondition: the foreign triples do reach the export"
+
+    shapes = _extract_shapes(data)
+
+    permitted = set(_SHAPE_PREDICATES) | {_RDF.type, _RDF.first, _RDF.rest}
+    assert {p for _, p, _ in shapes} <= permitted
+    text = shapes.serialize(format="turtle")
+    for word in _HOSTILE:
+        assert word not in text, word
+    # What BESSER wrote survives: the shape, its target, and its property constraints.
+    assert "minCount" in text and "datatype" in text and "targetClass" in text
+
+
+def test_checking_a_graph_with_foreign_shape_constructs_still_works_and_stays_offline(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "rdflib.plugins.sparql.evaluate.urlopen",
+        lambda *a, **k: calls.append(a) or (_ for _ in ()).throw(AssertionError("fetched a URL")),
+        raising=True,
+    )
+
+    report = check_kg_consistency(_kg(_FOREIGN_SHAPE_TTL))
+
+    assert calls == []
+    # BESSER's own constraint on the same shape is still enforced: alice has no :name.
+    assert [(i.code, i.spec_kind, i.affected_node_ids) for i in report.issues] == [
+        ("MinCountConstraintComponent", "minCardinality", ["http://example.org/alice"]),
+    ]
+
+
+@pytest.mark.parametrize("fixture", [
+    "tests/fixtures/complex_kg.ttl",
+    "tests/BUML/notations/kg_to_buml/fixtures/bibo/bibo.ttl",
+])
+def test_every_shape_triple_the_exporter_writes_reaches_the_validator(fixture):
+    """The allowlist is derived from the exporter's own tables; this proves it is complete.
+
+    A predicate the exporter writes on a shape but the allowlist misses would silently
+    stop being validated, which is the failure the golden consistency reports also guard.
+    """
+    from pathlib import Path
+    from rdflib import RDF as _RDF
+    from besser.BUML.notations.kg_to_buml.consistency import _extract_shapes
+    from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
+
+    root = Path(__file__).resolve().parents[4]
+    kg = owl_file_to_knowledge_graph(str(root / fixture))
+    exported = knowledge_graph_to_rdf(kg, vocab="shacl")
+    shapes = _extract_shapes(exported)
+
+    shape_nodes, _ = _shape_predicates(exported)
+    assert shape_nodes, "the fixture should produce shapes"
+    missing = [
+        (s, p, o) for s in shape_nodes for p, o in exported.predicate_objects(s)
+        if p != _RDF.type and (s, p, o) not in shapes
+    ]
+    assert missing == []
 
 
 # ---------------------------------------------------------------------------

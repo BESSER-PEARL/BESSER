@@ -720,3 +720,96 @@ def test_parse_llm_suggestions_drops_wrongly_typed_affected_lists(affected):
     raw = json.dumps({"suggestions": [bad]})
 
     assert parse_llm_suggestions(raw, kg) == []
+
+
+# ---------------------------------------------------------------------------
+# The suggestion is read through typed models, one item at a time
+# ---------------------------------------------------------------------------
+
+
+def _good():
+    return _suggestion(parameters={"node_id": "Person"}, affected_node_ids=["Person"])
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda s: s["recommended_action"].update(key=["drop_class"]),                 # was TypeError: unhashable
+        lambda s: s["recommended_action"].update(key=7),
+        lambda s: s["recommended_action"].update(parameters="node_id=Person"),
+        lambda s: s["recommended_action"].update(parameters=["Person"]),
+        lambda s: s.update(recommended_action="drop_class"),
+        lambda s: s.update(recommended_action=None, action=None),
+        lambda s: s.update(affected_edge_ids={"e": 1}),
+    ],
+    ids=["list_key", "int_key", "str_parameters", "list_parameters", "str_action", "no_action", "dict_edges"],
+)
+def test_a_suggestion_of_the_wrong_shape_is_skipped_alone(mutate):
+    """One malformed item is dropped; its neighbours still come through."""
+    bad = _good()
+    mutate(bad)
+    raw = json.dumps({"suggestions": [bad, _suggestion(parameters={"node_id": "Car"}, affected_node_ids=["Car"])]})
+
+    issues = parse_llm_suggestions(raw, _small_kg())
+
+    assert [i.recommended_action.parameters["node_id"] for i in issues] == ["Car"]
+
+
+@pytest.mark.parametrize("parameters", [
+    {"node_id": "alice", "class_id": ["Person"]},      # was TypeError: unhashable
+    {"node_id": "alice", "class_id": 3},
+])
+def test_a_non_string_class_id_is_skipped_not_a_crash(parameters):
+    raw = json.dumps({"suggestions": [_suggestion(key="type_individual_as_class", parameters=parameters)]})
+
+    assert parse_llm_suggestions(raw, _small_kg()) == []
+
+
+@pytest.mark.parametrize("target_kind", [5, ["class"], {"k": "class"}])
+def test_a_non_string_target_kind_is_skipped_not_a_crash(target_kind):
+    """``(5 or "").lower()`` used to raise AttributeError."""
+    raw = json.dumps({"suggestions": [_suggestion(
+        key="reclassify_node", parameters={"node_id": "alice", "target_kind": target_kind},
+    )]})
+
+    assert parse_llm_suggestions(raw, _small_kg()) == []
+
+
+@pytest.mark.parametrize("confidence, expected", [("0.8", 0.8), ("high", 0.5), (None, 0.5), ([1], 0.5)])
+def test_unreadable_confidence_falls_back_to_neutral(confidence, expected):
+    suggestion = _good()
+    suggestion["confidence"] = confidence
+    other = _suggestion(parameters={"node_id": "Car"}, affected_node_ids=["Car"], confidence=0.6)
+
+    issues = parse_llm_suggestions(json.dumps({"suggestions": [suggestion, other]}), _small_kg())
+
+    assert len(issues) == 2
+    # Ordering is by confidence within a bucket, so the fallback is observable.
+    order = [i.recommended_action.parameters["node_id"] for i in issues]
+    assert order == (["Person", "Car"] if expected > 0.6 else ["Car", "Person"])
+
+
+def test_free_text_of_the_wrong_type_is_ignored_not_fatal():
+    suggestion = _good()
+    suggestion.update(code=["x"], description={"a": 1})
+    suggestion["recommended_action"]["label"] = 9
+
+    (issue,) = parse_llm_suggestions(json.dumps({"suggestions": [suggestion]}), _small_kg())
+
+    assert issue.code == "LLM_DROP_CLASS"          # the action's default code
+    assert issue.description == "LLM_DROP_CLASS"   # no usable text anywhere
+
+
+def test_the_edits_key_and_the_action_alias_still_work():
+    item = _good()
+    item["action"] = item.pop("recommended_action")
+
+    issues = parse_llm_suggestions(json.dumps({"edits": [item]}), _small_kg())
+
+    assert len(issues) == 1
+
+
+def test_items_that_are_not_objects_are_skipped():
+    raw = json.dumps({"suggestions": ["drop Car", 3, None, [1], _good()]})
+
+    assert len(parse_llm_suggestions(raw, _small_kg())) == 1

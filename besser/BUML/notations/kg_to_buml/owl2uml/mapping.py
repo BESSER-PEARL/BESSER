@@ -73,6 +73,11 @@ class Mapper:
     #  orchestration
     # =====================================================================
     def run(self) -> ModelPlan:
+        """Run every mapping phase over the graph and return the finished plan.
+
+        Returns:
+            ModelPlan: The classes, associations, generalizations and invariants the rules produced.
+        """
         self._map_datatypes()         # D09, D37
         self._map_classes()           # D08
         self._map_class_axioms()      # D26, D27(via canon), O06, O16, O17, restriction †
@@ -142,6 +147,10 @@ class Mapper:
     #  helpers used by the resolver + rules
     # =====================================================================
     def ensure_class(self, iri) -> str:
+        """Return the plan name of the class ``iri``, declaring it on first use.
+
+        An IRI the ontology never declares becomes a stub (carried as ``external``).
+        """
         name = self.canon.name(iri)
         if name in self.model.classes:
             return name
@@ -158,11 +167,13 @@ class Mapper:
         return name
 
     def make_aux_class(self, base_name: str, abstract: bool = False) -> str:
+        """Declare an auxiliary class (union, restriction, ...) under a fresh reserved name and return it."""
         name = self.canon.reserve(base_name)
         self.model.classes[name] = PlannedClass(name=name, is_auxiliary=True, is_abstract=abstract)
         return name
 
     def make_enum(self, literals: list[str], hint: str) -> str:
+        """Declare an enumeration of ``literals`` (duplicates dropped, order kept) under a name reserved from ``hint``, and return it."""
         name = self.canon.reserve(hint)
         seen, lits = set(), []
         for literal in literals:
@@ -172,10 +183,12 @@ class Mapper:
         self.model.enumerations[name] = PlannedEnumeration(name=name, literals=lits)
         return name
 
-    def iri_for_name(self, name: str):
+    def iri_for_name(self, name: str) -> URIRef | None:
+        """Return the IRI a plan name was minted for, or ``None`` for one with no IRI (an auxiliary class)."""
         return self._name_to_iri.get(name)
 
     def add_generalization(self, sub: str, sup: str) -> None:
+        """Record ``sub`` as a subclass of ``sup``; a self-pair or a repeat is ignored."""
         if sub == sup or (sub, sup) in self._gen_seen:
             return
         self._gen_seen.add((sub, sup))
@@ -184,6 +197,16 @@ class Mapper:
     def add_association(self, source_type: str, target_type: str, role: str,
                         src_mult=(0, "*"), tgt_mult=(0, "*"), name: str | None = None,
                         source_role: str | None = None, uri: str | None = None) -> None:
+        """Record a binary association ``source_type --role--> target_type``.
+
+        Args:
+            role: The target end's name.
+            src_mult: ``(lower, upper)`` of the source end.
+            tgt_mult: ``(lower, upper)`` of the target end.
+            name: Association name; defaults to ``role``.
+            source_role: The reverse end's name. Giving one makes that end navigable.
+            uri: IRI of the property the association came from.
+        """
         self.model.associations.append(PlannedAssociation(
             name=name or role,
             source=source_type,
@@ -215,6 +238,12 @@ class Mapper:
 
     def add_ocl(self, context: str, body: str, origin: str = "",
                 name: str | None = None) -> None:
+        """Attach an OCL invariant ``body`` to ``context``, declaring the context as a stub if it does not exist.
+
+        Args:
+            origin: Id of the mapping rule that produced it.
+            name: Optional constraint name.
+        """
         if context not in self.model.classes:
             # context must exist to carry the note (e.g. Thing)
             self.model.classes[context] = PlannedClass(name=context, is_stub=True)
@@ -265,6 +294,7 @@ class Mapper:
         return name
 
     def classifier_name(self, iri) -> str:
+        """Return the plan name of the class an individual is asserted to be, falling back to ``owl:Thing``."""
         cls = self.ax.classifier_of(iri)
         return self.ensure_class(cls) if cls is not None else self.ensure_class(OWL.Thing)
 
@@ -303,11 +333,16 @@ class Mapper:
         return "'" + text + "'"
 
     def register_primitive(self, name: str) -> str:
+        """Declare the primitive datatype ``name`` once and return it."""
         if name not in self.model.datatypes:
             self.model.datatypes[name] = PlannedDataType(name=name, is_primitive=True)
         return name
 
     def resolve_data_range(self, node) -> str:
+        """Return the plan name of the data range ``node``.
+
+        Handles a custom ``rdfs:Datatype``, a standard XSD IRI (mapped to a BUML primitive), and an anonymous data-range expression (materialised, once per node). ``None`` and anything else fall back to a primitive.
+        """
         if node is None:
             return self.register_primitive(primitive_for(None))
         if isinstance(node, URIRef):
@@ -427,6 +462,7 @@ class Mapper:
         return name
 
     def satisfies(self, dr: str, var: str) -> str:
+        """Return the OCL test that ``var`` conforms to the data range ``dr``."""
         return f"{var}.oclIsKindOf({dr})"
 
     # =====================================================================

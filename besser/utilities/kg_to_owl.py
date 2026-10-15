@@ -2,7 +2,7 @@
 
 Deterministic, offline serializer that converts the typed KG metamodel back
 into an ``rdflib.Graph`` and emits Turtle or RDF/XML. Designed to round-trip
-with :mod:`besser.utilities.owl_to_buml`: import an OWL/TTL file, edit the KG
+with :mod:`besser.BUML.notations.owl_to_kg.owl_to_kg`: import an OWL/TTL file, edit the KG
 in the web editor, then export and the resulting RDF should be isomorphic to
 the original.
 
@@ -47,6 +47,7 @@ from besser.BUML.metamodel.kg.constraint_specs import LOGICAL_KINDS
 from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_CLASS,
     CONSTRAINT_TARGET_PROPERTY,
+    BESSER_KG_NS,
     SH as SH_NS,
     SH_PROPERTY,
 )
@@ -59,7 +60,8 @@ __all__ = [
 ]
 
 
-DEFAULT_NAMESPACE = "http://besser-pearl.org/kg#"
+#: Base for the IRIs the exporter mints: BESSER's one namespace.
+DEFAULT_NAMESPACE = BESSER_KG_NS
 SH = Namespace(SH_NS)
 
 logger = logging.getLogger(__name__)
@@ -74,7 +76,7 @@ _INTERNAL_PREDICATES: Set[str] = {
 # OWL predicates whose value must be a single rdf:List, never repeated flat
 # triples. The importer represents these in the KG editor as direct
 # subject->member edges (one per member, for visibility/editability — see
-# owl_to_buml._flatten_owl_list_valued_triples), which must NOT be re-emitted
+# owl_to_kg._flatten_owl_list_valued_triples), which must NOT be re-emitted
 # as-is here (that would produce invalid multi-object owl:unionOf or
 # owl:hasKey triples). Skipped in the generic edge loop below; re-emitted
 # properly as a single rdf:List via the dedicated passes that follow it.

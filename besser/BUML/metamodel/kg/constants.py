@@ -28,7 +28,13 @@ __all__ = [
 ]
 
 
-BESSER_KG_NS = "http://besser.local/kg#"
+# BESSER's one namespace. It names the vocabulary BESSER owns -- the internal
+# edges that link a reified constraint node to its class or property, which are
+# never written to RDF -- and it is the base for the IRIs the exporter has to
+# *mint* (a node with no IRI of its own, a synthesised shape), which do appear in
+# exported files. The frontend declares the same constraint-link IRIs
+# (``KG_CONSTRAINT_TARGET_*`` in ``shared/types/project.ts``); keep them in step.
+BESSER_KG_NS = "http://besser-pearl.org/kg#"
 SH = "http://www.w3.org/ns/shacl#"
 OWL = "http://www.w3.org/2002/07/owl#"
 RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"

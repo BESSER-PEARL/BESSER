@@ -44,6 +44,10 @@ param
 typeRef
     : primitiveType
     | collectionType
+    // `date` is a keyword token, but it is also BUML's DateType name, so
+    // `oclIsTypeOf(date)` must name a type here. See BESSER-PEARL/BESSER#198
+    // for the same collision on `size`.
+    | DATE
     | ID
     ;
 
@@ -87,6 +91,9 @@ expression
     | expression DOT ID LPAREN argList? RPAREN                                      #dotMethodCall
     | expression DOT ID                                                             #dotNavigation
     | expression DOT SIZE                                                           #dotSizeNavigation
+    // Same fallback for `date`: it is a keyword token, so `dotNavigation`
+    // (which expects ID) never matches an attribute literally named `date`.
+    | expression DOT DATE                                                           #dotDateNavigation
     | expression DOT ALLINSTANCES LPAREN RPAREN                                     #allInstancesExp
 
     // --- Postfix: arrow operations ---

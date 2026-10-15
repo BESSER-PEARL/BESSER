@@ -12,7 +12,8 @@ _SIG_RE = re.compile(
     re.MULTILINE,
 )
 
-_FACT_RE = re.compile(r"^[ \t]*fact\b\s*\w*\s*\{", re.MULTILINE)
+# Not anchored to the line start: OCL facts may follow an auxiliary ``fun`` on the same line.
+_FACT_RE = re.compile(r"\bfact\b\s*\w*\s*\{")
 
 _RUN_RE = re.compile(r"^[ \t]*run\s+(?P<pred>\w+)\s+for\s+(?P<scopes>.+)$", re.MULTILINE)
 

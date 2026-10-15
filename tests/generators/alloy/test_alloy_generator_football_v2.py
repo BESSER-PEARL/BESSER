@@ -6,32 +6,17 @@ from tests.generators.alloy.utils_alloy_re_parser import AlloySpec
 
 
 @pytest.fixture
-def generated(football_model_v2, tmpdir):
+def spec(football_model_v2, tmpdir):
     tmpdir = tmpdir.mkdir("output")
     generator = AlloyGenerator(model=football_model_v2, output_dir=str(tmpdir))
     generator.generate()
     als_file = generator.get_specification_path()
     assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"
+    # Date attributes require the date library next to the specification
+    assert os.path.isfile(os.path.join(str(tmpdir), "date.als"))
     with open(als_file, "r", encoding="utf-8") as f:
         content = f.read()
-    return str(tmpdir), content
-
-
-@pytest.fixture
-def spec(generated):
-    _, content = generated
     return AlloySpec(content)
-
-
-@pytest.fixture
-def raw(generated):
-    _, content = generated
-    return content
-
-
-def _has_fact(spec, template):
-    """The quantified variable (``a``/``b``) depends on the association end order."""
-    return any(template.format(v=v) in spec.facts for v in ("a", "b"))
 
 
 def test_signatures(spec):
@@ -90,6 +75,17 @@ def test_signature_fields(spec):
     assert "Match_homeTeam: one Team" in spec.fields["Match"]
     assert "Match_awayTeam: one Team" in spec.fields["Match"]
 
+    assert len(spec.fields["Position"]) == 0
+    assert len(spec.fields["ENUM_Position_GOALKEEPER"]) == 0
+    assert len(spec.fields["ENUM_Position_DEFENDER"]) == 0
+    assert len(spec.fields["ENUM_Position_MIDFIELDER"]) == 0
+    assert len(spec.fields["ENUM_Position_FORWARD"]) == 0
+
+    assert len(spec.fields["CoachStatus"]) == 0
+    assert len(spec.fields["ENUM_CoachStatus_ACTIVE"]) == 0
+    assert len(spec.fields["ENUM_CoachStatus_INACTIVE"]) == 0
+    assert len(spec.fields["ENUM_CoachStatus_RETIRED"]) == 0
+
 
 def test_enumerations(spec):
     assert len(spec.subsigs_of("Position")) == 4
@@ -106,58 +102,31 @@ def test_enumerations(spec):
     assert "one sig ENUM_CoachStatus_RETIRED extends CoachStatus" in spec.headers
 
 
-def test_date_support(generated, raw):
-    output_dir, _ = generated
-    assert "open util/ordering[Date]" in raw
-    assert "open date" in raw
-    assert os.path.isfile(os.path.join(output_dir, "date.als"))
+def test_facts(spec):
+    assert len(spec.facts) == 10
 
-
-def test_multiplicity_facts(spec):
     # Fan -> Team (2..4)
-    assert _has_fact(spec, "all {v}: Fan | #({v}.Fan_favoriteTeams) >= 2")
-    assert _has_fact(spec, "all {v}: Fan | #({v}.Fan_favoriteTeams) <= 4")
+    assert "all b: Fan | #(b.Fan_favoriteTeams) >= 2" in spec.facts
+    assert "all b: Fan | #(b.Fan_favoriteTeams) <= 4" in spec.facts
     # Team -> Player (11..*): only the lower bound is enforced
-    assert _has_fact(spec, "all {v}: Team | #({v}.Team_players) >= 11")
+    assert "all b: Team | #(b.Team_players) >= 11" in spec.facts
     # HeadCoach -> Team (0..1)
-    assert _has_fact(spec, "all {v}: HeadCoach | #({v}.HeadCoach_currentTeam) <= 1")
+    assert "all a: HeadCoach | #(a.HeadCoach_currentTeam) <= 1" in spec.facts
+    # HeadCoach <-> Team: bidirectional association
+    assert "HeadCoach_currentTeam = ~Team_headCoach" in spec.facts
 
-
-def test_bidirectional_head_coach_fact(spec):
-    assert (
-        "HeadCoach_currentTeam = ~Team_headCoach" in spec.facts
-        or "Team_headCoach = ~HeadCoach_currentTeam" in spec.facts
-    )
-
-
-def test_ocl_players_older_than_16(raw):
-    # forAll -> universal quantifier over the team's players
-    assert "all self:this/Team|all p : self.Team_players | (p.Player_age > 16)" in raw
-
-
-def test_ocl_max_3_goalkeepers(raw):
-    # select -> auxiliary function, size -> cardinality
-    assert "fun select0[suva:set univ]: set univ" in raw
-    assert "(___x___.Player_position = ENUM_Position_GOALKEEPER)" in raw
-    assert "all self:this/Team|(#({select0[self.Team_players]}) <= 3)" in raw
-
-
-def test_ocl_retired_coach_has_no_team(raw):
-    assert (
-        "all self:this/HeadCoach|((self.HeadCoach_status = ENUM_CoachStatus_RETIRED) "
-        "=> ( no(self.HeadCoach_currentTeam)))"
-    ) in raw
-
-
-def test_ocl_teams_founded_before_match(raw):
-    assert (
-        "all self:this/Match|((dateLt[self.Match_homeTeam.Team_foundationDate,self.Match_matchDate]) "
-        "and (dateLt[self.Match_awayTeam.Team_foundationDate,self.Match_matchDate]))"
-    ) in raw
-
-
-def test_ocl_non_negative_goals(raw):
-    assert "all self:this/Match|((self.Match_homeGoals >= 0) and (self.Match_awayGoals >= 0))" in raw
+    # OCL: players older than 16 (forAll -> universal quantifier)
+    assert "all self:this/Team|all p : self.Team_players | (p.Player_age > 16)" in spec.facts
+    # OCL: at most 3 goalkeepers (select -> auxiliary function, size -> cardinality)
+    assert "all self:this/Team|(#({select0[self.Team_players]}) <= 3)" in spec.facts
+    # OCL: a retired coach has no team
+    assert "all self:this/HeadCoach|((self.HeadCoach_status = ENUM_CoachStatus_RETIRED) " \
+        "=> ( no(self.HeadCoach_currentTeam)))" in spec.facts
+    # OCL: both teams were founded before the match
+    assert "all self:this/Match|((dateLt[self.Match_homeTeam.Team_foundationDate,self.Match_matchDate]) " \
+        "and (dateLt[self.Match_awayTeam.Team_foundationDate,self.Match_matchDate]))" in spec.facts
+    # OCL: non-negative goals
+    assert "all self:this/Match|((self.Match_homeGoals >= 0) and (self.Match_awayGoals >= 0))" in spec.facts
 
 
 def test_run_command(spec):

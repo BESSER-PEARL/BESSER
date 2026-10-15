@@ -170,6 +170,8 @@ class AttributionState:
             state.contributors = contributors
             for rel, entry in data["files"].items():
                 hashes_blob = entry["hashes"]
+                if not isinstance(hashes_blob, str) or len(hashes_blob) % _HASH_LEN:
+                    return None
                 hashes = [
                     hashes_blob[i:i + _HASH_LEN]
                     for i in range(0, len(hashes_blob), _HASH_LEN)

@@ -31,6 +31,12 @@ The three phases
    between the scaffold and the request and produces the task list; when it
    judges the scaffold already sufficient, Phase 2 is skipped entirely.
 
+   Both the planning call and the loop get a *scaffold map* of the generated
+   code: per entity, where its code lives, and the named places new code
+   goes (the route table, the ``include_router`` block, a model method's
+   stub). The ``locate_code`` tool resolves any of them to current line
+   numbers (see :ref:`spec-driven-scaffold-map`).
+
    A request for something users interact with (an app, web app, UI,
    website, dashboard or portal) gets a frontend even without a GUI model:
    the FastAPI scaffold, plus a React frontend the LLM writes in Phase 2. An

@@ -2,7 +2,7 @@
 
 The model's shell writes the workspace; the harness reads it unsandboxed and
 pastes what it finds into the prompt (scaffold snapshot, inventory symbols,
-endpoint manifest, design CSS, compaction summary), copies it (Phase 3
+endpoint manifest, scaffold map and locate_code, design CSS, compaction summary), copies it (Phase 3
 snapshot, probe scratch copies) or cites it (requirements ledger). One
 ``ln -s /proc/self/environ app/leak.py`` then puts the worker's keys in front
 of the model. Each reader below is pointed at a workspace holding such a link
@@ -15,7 +15,7 @@ import pytest
 from besser.BUML.metamodel.structural import Class, DomainModel
 from besser.spec_driven_agent.agent import compaction, design_system, prompt_builder
 from besser.spec_driven_agent.execution.workspace_fs import copytree_plain, walk_plain
-from besser.spec_driven_agent.planning import requirements_ledger
+from besser.spec_driven_agent.planning import requirements_ledger, scaffold_map
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
@@ -99,6 +99,8 @@ READERS = {
     "phase3_snapshot": _snapshot_tree,
     "probe_scratch_copy": _copied_tree,
     "walk_plain": lambda ws: repr(list(walk_plain(str(ws)))),
+    "scaffold_map_overview": lambda ws: scaffold_map.scaffold_overview(str(ws)),
+    "locate_code": lambda ws: repr(scaffold_map.locate(str(ws))) + repr(scaffold_map.locate(str(ws), query=CANARY)),
 }
 
 

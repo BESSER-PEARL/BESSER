@@ -14,7 +14,7 @@ would immediately fail.
      - Tools
    * - Files
      - ``list_files``, ``read_file``, ``write_file``, ``modify_file``, ``replace_file_lines``,
-       ``search_in_files``, ``delete_file``
+       ``search_in_files``, ``locate_code``, ``delete_file``
    * - Model queries
      - ``query_class``, ``list_classes_with``, ``get_constraints_for``
    * - Validation / bookkeeping
@@ -27,6 +27,68 @@ would immediately fail.
 The model-query tools give the LLM random access into your domain model
 (attributes, flattened inherited methods, association ends, OCL constraints)
 without holding the whole serialized model in context.
+
+.. _spec-driven-scaffold-map:
+
+Where new code goes: the scaffold map
+-------------------------------------
+
+The deterministic scaffold has fixed places for each kind of change, and code
+added elsewhere often never runs: an ``@app`` route registered after the
+routers is shadowed by the generated one, a static route placed after
+``/book/{book_id}/`` is captured by the path parameter, a page without a
+``<Route>`` is unreachable. The *scaffold map* (``planning/scaffold_map``)
+reads the files on disk, never the generator templates, and records for each
+application root and each domain entity where its code lives and where new
+code belongs:
+
+- **FastAPI backends** (``generate_fastapi_backend``, and ``web_app/backend``):
+  per entity, the ORM class, the Pydantic schemas, every route of its router
+  and methods router, and the HTTP 501 stubs of its model methods; app-level
+  anchors such as the router imports, the ``include_router`` block, the
+  middleware and ``requirements.txt``; and per router the route to insert
+  static routes *before*.
+- **React frontends** (``web_app/frontend``, ``react/``, or one the LLM wrote):
+  the ``<Routes>`` table resolved to page files, the place to insert a new
+  ``<Route>``, the data blocks bound on each page, the API base URLs, and the
+  shared runtime components that are configured through props, not edited.
+- **Django projects**: per model, its class, admin registration, views and
+  URLs; ``INSTALLED_APPS`` and ``urlpatterns``.
+- **Anything else** (agent, Qiskit, BPMN, neural-network, standalone class
+  scaffolds): top-level definitions and placeholder bodies to implement.
+
+For every entity in the domain model the map also names the pieces that do
+not exist on disk yet (a class added in a modify run has no router), and it
+lists files that do not parse, to fix first.
+
+The LLM sees the map twice:
+
+- **In the system prompt and the planning call**, as a line-free overview
+  ("Where to add code"): files, symbols, anchor ids, the pitfalls found in
+  this code and a recipe per common change. Line numbers are left out because
+  the prompt is built once per run and would go stale after the first edit.
+  The overview is budgeted (4,000 characters; 1,500 for 32k-context models).
+  ``BESSER_LLM_SCAFFOLD_MAP=0`` switches off the overview and the tool below.
+- **Through** ``locate_code``, a read-only tool that rebuilds the map from
+  disk on every call. Filtered by ``entity``, ``path`` or ``query`` (words
+  matched against anchor ids, routes and function names), it returns each
+  place's current line range, the ``read_file`` offset and limit that read
+  exactly it, one verbatim line that is unique in the file to quote as
+  ``modify_file``'s ``old_text`` (indentation included; it occurs exactly
+  once in the file), and who owns the region: the generator, this run, an
+  earlier AI run, a human edit, or unknown (code with no attribution on
+  record, e.g. from a repository pushed before attribution existed), from the
+  run's line attribution (see :ref:`spec-driven-agent-trace`). Ownership is
+  advisory. The map is cached per workspace and rebuilt when a file changes;
+  dependency, build and hidden directories are skipped, and only the 2,000
+  shallowest source files are mapped (the answer says when that cap applied).
+
+Whether the map makes runs better is measured, not assumed:
+``tests/live/scaffold_map_ab.py`` runs the same requests with the map and
+without it (``BESSER_LLM_SCAFFOLD_MAP=0``), boots each delivered backend and
+checks every requested behaviour over HTTP, and compares the arms on those
+checks and on turns, failed edits, cost and blockers left. It makes real,
+paid LLM calls; ``--dry-run`` exercises it offline.
 
 File edits and checklist evidence
 ---------------------------------

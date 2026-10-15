@@ -133,6 +133,9 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
   routing, free-tier fallback chain.
 - `planning/gap_analyzer.py` — produces the Phase 2 checklist. Its return value is load-bearing: `None` =
   analysis failed, `[]` = scaffold already sufficient (Phase 2 may be skipped), a list = the tasks.
+- `planning/scaffold_map/` — where the generated code lives and where new code goes, read from disk
+  (extractors `fastapi.py`, `react.py`, `django.py`, `generic.py`): a line-free overview for the prompt
+  and the planner, and the read-only `locate_code` tool for current lines, quotes and ownership.
 - `validation/` — code checks; `validation/issues.py::_classify_issue` assigns severity.
 - `state/checkpoint.py`, `state/tracing.py` — per-run checkpoint and trace files.
 - `state/agent_trace.py` — line-level attribution (`.besser_attribution.json`: line hashes per contributor,

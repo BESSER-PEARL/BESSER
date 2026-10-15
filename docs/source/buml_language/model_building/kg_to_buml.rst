@@ -102,7 +102,7 @@ invariants over the classes the OWL phase produced.
 .. code-block:: python
 
     from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
-    from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+    from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
     kg = owl_file_to_knowledge_graph("ontology.ttl")
     result = kg_to_class_diagram(kg, model_name="MyDomain")
@@ -150,7 +150,17 @@ identical model.
     give a class two identically-named ends, clamping an out-of-range
     multiplicity, breaking an inheritance cycle — it records a
     ``KGConversionWarning`` on ``result.warnings`` rather than failing or
-    silently dropping the construct.
+    silently dropping the construct. A SHACL count or length that is not a
+    whole number (``sh:minCount "lots"``) is skipped with a
+    ``SHACL_COUNT_INVALID`` warning instead of becoming a meaningless
+    comparison.
+
+.. note::
+
+    Names reach OCL, whose identifiers are ASCII (``[a-zA-Z_][a-zA-Z0-9_]*``), so
+    the conversion maps every other character of a class, property or role name
+    to ``_`` (``Café`` becomes ``Caf_``). A name that kept its accent would make
+    ``self.café`` unparseable and the invariant would be dropped.
 
 Before converting, the KG can be checked with
 ``analyze_kg_for_class_diagram()``, which reports ambiguities (a property with

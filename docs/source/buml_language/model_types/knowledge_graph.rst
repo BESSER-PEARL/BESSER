@@ -51,8 +51,11 @@ Edges and axioms
 constructs relate *sets* or *ordered lists* of elements and so fit on neither a
 single node nor a single edge — ``owl:equivalentClass``, ``owl:disjointUnionOf``,
 ``owl:propertyChainAxiom``, ``owl:hasKey`` and friends. Those are recorded as
-``KGAxiom`` dataclasses on ``KnowledgeGraph.axioms``, referencing node ids
-rather than node objects so they stay serialisable.
+``KGAxiom`` records on ``KnowledgeGraph.axioms``, referencing node ids
+rather than node objects so they stay serialisable. Like the rest of the
+metamodel they validate on assignment: an id must be a ``str`` and a list of ids
+a list of ``str``. Each class lists its fields in ``FIELDS``, and
+``to_dict()`` gives the plain-dict form the converters serialise.
 
 Example
 -------
@@ -78,7 +81,7 @@ Building and consuming a KG
 ---------------------------
 
 * Import an ontology with
-  :func:`besser.utilities.owl_to_buml.owl_file_to_knowledge_graph`.
+  :func:`besser.BUML.notations.owl_to_kg.owl_to_kg.owl_file_to_knowledge_graph`.
 * Export one with
   :func:`besser.utilities.kg_to_owl.serialize_knowledge_graph` (Turtle or
   RDF/XML, with OWL restrictions, SHACL shapes, or both).

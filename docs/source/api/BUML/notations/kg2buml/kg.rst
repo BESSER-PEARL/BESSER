@@ -64,7 +64,7 @@ Preflight, resolutions and consistency
 OWL / RDF import and export
 ---------------------------
 
-.. automodule:: besser.utilities.owl_to_buml
+.. automodule:: besser.BUML.notations.owl_to_kg.owl_to_kg
    :members:
    :undoc-members:
    :show-inheritance:

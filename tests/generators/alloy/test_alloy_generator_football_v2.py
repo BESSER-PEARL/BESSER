@@ -152,12 +152,12 @@ def test_ocl_retired_coach_has_no_team(raw):
 def test_ocl_teams_founded_before_match(raw):
     assert (
         "all self:this/Match|((dateLt[self.Match_homeTeam.Team_foundationDate,self.Match_matchDate]) "
-        "&& (dateLt[self.Match_awayTeam.Team_foundationDate,self.Match_matchDate]))"
+        "and (dateLt[self.Match_awayTeam.Team_foundationDate,self.Match_matchDate]))"
     ) in raw
 
 
 def test_ocl_non_negative_goals(raw):
-    assert "all self:this/Match|((self.Match_homeGoals >= 0) && (self.Match_awayGoals >= 0))" in raw
+    assert "all self:this/Match|((self.Match_homeGoals >= 0) and (self.Match_awayGoals >= 0))" in raw
 
 
 def test_run_command(spec):

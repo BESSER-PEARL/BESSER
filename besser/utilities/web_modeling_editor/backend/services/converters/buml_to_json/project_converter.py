@@ -9,7 +9,10 @@ import logging
 import uuid
 import re
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Optional, Tuple
+
+from besser.BUML.metamodel.structural import DomainModel
+from besser.utilities.buml_code_builder.project_builder import is_user_reference_domain_model
 
 from .class_diagram_converter import parse_buml_content, class_buml_to_json
 from .state_machine_converter import state_machine_to_json
@@ -21,9 +24,6 @@ from .nn_diagram_converter import nn_buml_to_json
 from .bpmn_diagram_converter import bpmn_buml_to_json
 from .component_diagram_converter import component_buml_to_json
 from .deployment_diagram_converter import deployment_buml_to_json
-from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
-    domain_model as _user_reference_domain_model,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -51,25 +51,20 @@ _USER_OBJECT_MODEL_ASSIGN = re.compile(
     r'^user_object_model(?:_\d+)?\s*(?::[^=\n]*)?=(?!=)', re.MULTILINE,
 )
 _OBJECT_MODEL_NAME = re.compile(r'ObjectModel\(\s*name\s*=\s*"((?:[^"\\]|\\.)*)"')
-_USER_REFERENCE_CLASS_NAMES = frozenset(
-    cls.name for cls in _user_reference_domain_model.get_classes()
-)
-
-
-def _is_user_reference_section(section_code: str) -> bool:
-    """Return True if a STRUCTURAL section is the user reference domain model.
+def _parse_user_reference_section(section_code: str) -> Optional[DomainModel]:
+    """Return the parsed model if a STRUCTURAL section is the user reference domain model, else ``None``.
 
     Older exports also bound an ordinary class diagram that merely has a class
     named ``User`` to ``user_model``; such a section has other classes and is
     imported as a class diagram.
     """
     if not _USER_MODEL_ASSIGN.search(section_code):
-        return False
+        return None
     try:
         domain_model = parse_buml_content(section_code)
     except Exception:  # noqa: BLE001 -- unparsable: let the class-diagram path report it
-        return False
-    return {cls.name for cls in domain_model.get_classes()} == _USER_REFERENCE_CLASS_NAMES
+        return None
+    return domain_model if is_user_reference_domain_model(domain_model) else None
 
 
 def _object_model_title(section_code: str) -> str:
@@ -522,22 +517,25 @@ def project_to_json(content: str) -> Dict[str, Any]:
 
     # UserDiagrams: the user reference domain model is context, not a class
     # diagram, and each user_object_model section becomes a UserDiagram.
-    user_reference_sections = [
-        section for section in domain_sections if _is_user_reference_section(section[1])
-    ]
-    domain_sections = [s for s in domain_sections if s not in user_reference_sections]
+    user_reference_models: List[DomainModel] = []
+    class_sections: List[Tuple[str, str]] = []
+    for section in domain_sections:
+        reference_model = _parse_user_reference_section(section[1])
+        if reference_model is None:
+            class_sections.append(section)
+        else:
+            user_reference_models.append(reference_model)
+    domain_sections = class_sections
     user_object_sections: List[Tuple[str, str]] = []
     user_reference_json: Dict[str, Any] = {}
     if base_names & {"object_model", "user_object_model"}:
         object_sections = _extract_all_sections(content, SECTION_CONFIG["object_model"][0])
-        if user_reference_sections:
+        if user_reference_models:
             user_object_sections = [
                 section for section in object_sections
                 if _USER_OBJECT_MODEL_ASSIGN.search(section[1])
             ]
-            user_reference_json = class_buml_to_json(
-                parse_buml_content(user_reference_sections[0][1])
-            )
+            user_reference_json = class_buml_to_json(user_reference_models[0])
     # Without the reference model, a user_object_model section instantiates an
     # ordinary class diagram (older exports) and is imported as an object diagram.
     model_aliases = {"user_model": "domain_model"}

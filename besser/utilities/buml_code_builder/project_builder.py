@@ -41,7 +41,7 @@ except ImportError:
     reference_user_domain_model = None
 
 
-def _is_user_reference_domain_model(model: DomainModel) -> bool:
+def is_user_reference_domain_model(model: DomainModel) -> bool:
     """Return True if *model* is the user reference domain model (User Modeling Language).
 
     It is the model itself, or a model with exactly its classes (the
@@ -162,12 +162,12 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     if reference_user_domain_model is not None:
         user_reference_classes.update(reference_user_domain_model.get_classes())
     for model in project.models:
-        if isinstance(model, DomainModel) and _is_user_reference_domain_model(model):
+        if isinstance(model, DomainModel) and is_user_reference_domain_model(model):
             user_reference_classes.update(model.get_classes())
 
     for model in project.models:
         if isinstance(model, DomainModel):
-            if _is_user_reference_domain_model(model):
+            if is_user_reference_domain_model(model):
                 user_domain_models.append(model)
             else:
                 domain_models.append(model)

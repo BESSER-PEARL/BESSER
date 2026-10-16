@@ -47,7 +47,8 @@ export interface CreatedRecord {
   label: string;
 }
 
-const humanizeName = (value: string): string =>
+// Shared with TableComponent: one copy of each form helper below
+export const humanize = (value: string): string =>
   (value || "")
     .replace(/[_-]+/g, " ")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
@@ -66,7 +67,7 @@ export const normalizeNestedCreate = (raw: any): NestedCreateMeta | undefined =>
       const isLookup = col.column_type === "lookup";
       return {
         field: isLookup && col.path ? col.path : col.field,
-        label: humanizeName(col.label || col.field),
+        label: humanize(col.label || col.field),
         type: col.type || "string",
         columnType: col.column_type,
         path: col.path,
@@ -132,7 +133,7 @@ export const missingNestedFields = (meta: NestedCreateMeta, drafts: NestedDraft[
 };
 
 // HTML selects store strings: convert numeric keys only (Room.number='001' stays a string)
-const coerceTarget = (col: NestedCreateColumn, value: any): string | number | null => {
+export const coerceLookupTarget = (col: { targetType?: string }, value: any): string | number | null => {
   if (value === undefined || value === null || value === "") return null;
   const type = (col.targetType ?? "int").toLowerCase();
   if (!["int", "integer", "float", "double", "number"].includes(type)) return String(value);
@@ -140,6 +141,35 @@ const coerceTarget = (col: NestedCreateColumn, value: any): string | number | nu
   if (!Number.isFinite(numeric) || (["int", "integer"].includes(type) && !Number.isInteger(numeric))) return null;
   return numeric;
 };
+
+// A form value converted to its attribute type (date, datetime, time and text stay strings)
+export const coerceFieldValue = (type: string | undefined, value: any): any => {
+  if (type === "list") {
+    return typeof value === "string"
+      ? value.split(",").map((item) => item.trim()).filter((item) => item !== "")
+      : (Array.isArray(value) ? value : []);
+  }
+  if (type === "int") {
+    const intValue = parseInt(value, 10);
+    return isNaN(intValue) ? 0 : intValue;
+  }
+  if (type === "float") {
+    const floatValue = parseFloat(value);
+    return isNaN(floatValue) ? 0 : floatValue;
+  }
+  if (type === "bool" || type === "boolean") {
+    return Boolean(value);
+  }
+  return value;
+};
+
+// The <input type> of an attribute type
+export const inputTypeFor = (type: string | undefined): string =>
+  type === "int" || type === "float" ? "number" :
+  type === "date" ? "date" :
+  type === "datetime" ? "datetime-local" :
+  type === "time" ? "time" :
+  "text";
 
 // The create payload of one draft, its back-reference pointing at the parent
 export const nestedDraftPayload = (meta: NestedCreateMeta, draft: NestedDraft, parentKey: any): Record<string, any> => {
@@ -150,10 +180,10 @@ export const nestedDraftPayload = (meta: NestedCreateMeta, draft: NestedDraft, p
       const key = col.path || col.field;
       if (col.type === "list") {
         payload[key] = Array.isArray(value)
-          ? value.map((v) => coerceTarget(col, v)).filter((v) => v !== null)
+          ? value.map((v) => coerceLookupTarget(col, v)).filter((v) => v !== null)
           : [];
       } else {
-        payload[key] = coerceTarget(col, value);
+        payload[key] = coerceLookupTarget(col, value);
       }
       return;
     }
@@ -161,21 +191,7 @@ export const nestedDraftPayload = (meta: NestedCreateMeta, draft: NestedDraft, p
       // No literal chosen: the backend applies the attribute's default
       return;
     }
-    if (col.type === "list") {
-      payload[col.field] = typeof value === "string"
-        ? value.split(",").map((item) => item.trim()).filter((item) => item !== "")
-        : (Array.isArray(value) ? value : []);
-    } else if (col.type === "int") {
-      const intValue = parseInt(value, 10);
-      payload[col.field] = isNaN(intValue) ? 0 : intValue;
-    } else if (col.type === "float") {
-      const floatValue = parseFloat(value);
-      payload[col.field] = isNaN(floatValue) ? 0 : floatValue;
-    } else if (col.type === "bool" || col.type === "boolean") {
-      payload[col.field] = Boolean(value);
-    } else {
-      payload[col.field] = value;
-    }
+    payload[col.field] = coerceFieldValue(col.type, value);
   });
   payload[meta.backReference] = parentKey;
   return payload;
@@ -285,7 +301,7 @@ const optionLabel = (col: NestedCreateColumn, option: any): string =>
   String((col.lookupField && option?.[col.lookupField]) || option?.name || option?.title || `ID: ${option?.id}`);
 
 export const NestedCreateSection: React.FC<SectionProps> = ({ parentField, label, meta, drafts, onChange, lookupOptions }) => {
-  const entityLabel = humanizeName(meta.entity);
+  const entityLabel = humanize(meta.entity);
   const update = (index: number, field: string, value: any) => {
     onChange(drafts.map((draft, i) => (i === index ? { ...draft, [field]: value } : draft)));
   };
@@ -411,13 +427,7 @@ export const NestedCreateSection: React.FC<SectionProps> = ({ parentField, label
                   {fieldLabel}
                   <input
                     id={inputId}
-                    type={
-                      col.type === "int" || col.type === "float" ? "number" :
-                      col.type === "date" ? "date" :
-                      col.type === "datetime" ? "datetime-local" :
-                      col.type === "time" ? "time" :
-                      "text"
-                    }
+                    type={inputTypeFor(col.type)}
                     step={col.type === "float" ? "any" : undefined}
                     value={value ?? ""}
                     onChange={(e) => update(index, col.field, e.target.value)}

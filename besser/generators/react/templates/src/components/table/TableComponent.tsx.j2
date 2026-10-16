@@ -9,8 +9,13 @@ import {
   NestedCreateMeta,
   NestedCreateSection,
   NestedDraft,
+  coerceFieldValue,
+  coerceLookupTarget,
   createNestedRecords,
+  describeApiError,
   entityFromResponse,
+  humanize,
+  inputTypeFor,
   missingNestedFields,
   normalizeNestedCreate,
   recordUrl,
@@ -79,18 +84,6 @@ interface Props {
 // formColumns memo chain on every render and re-trigger the modal effects.
 const EMPTY_COLUMNS: any[] = [];
 
-const humanize = (value: string): string => {
-  if (!value) {
-    return "";
-  }
-  return value
-    .replace(/[_-]+/g, " ")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^./, (str) => str.toUpperCase());
-};
-
 const formatCellValue = (value: any): string => {
   if (value === null || value === undefined) {
     return "";
@@ -122,17 +115,6 @@ const getRowKey = (row: any, keyFields?: string[]): string | undefined => {
   return parts.every((part) => typeof part === 'string' || typeof part === 'number')
     ? JSON.stringify(parts)
     : undefined;
-};
-
-// HTML selects store strings. Convert numeric keys only; e.g. Room.number='001'
-// is a string identifier and must never become the different identifier 1.
-const coerceLookupTarget = (column: TableColumn, value: any): string | number | null => {
-  if (value === undefined || value === null || value === '') return null;
-  const type = (column.targetType ?? 'int').toLowerCase();
-  if (!['int', 'integer', 'float', 'double', 'number'].includes(type)) return String(value);
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || (['int', 'integer'].includes(type) && !Number.isInteger(numeric))) return null;
-  return numeric;
 };
 
 export const TableComponent: React.FC<Props> = ({
@@ -1106,26 +1088,7 @@ export const TableComponent: React.FC<Props> = ({
                         // attribute's default (or reports it missing) instead of rejecting ""
                         return;
                       }
-                      if (col.type === 'list') {
-                        // Convert comma-separated string to array
-                        processedValues[col.field] = typeof value === 'string' 
-                          ? value.split(',').map(item => item.trim()).filter(item => item !== '')
-                          : (Array.isArray(value) ? value : []);
-                      } else if (col.type === 'int') {
-                        // Convert to integer
-                        const intValue = parseInt(value, 10);
-                        processedValues[col.field] = isNaN(intValue) ? 0 : intValue;
-                      } else if (col.type === 'float') {
-                        // Convert to float
-                        const floatValue = parseFloat(value);
-                        processedValues[col.field] = isNaN(floatValue) ? 0 : floatValue;
-                      } else if (col.type === 'bool' || col.type === 'boolean') {
-                        // Convert to boolean
-                        processedValues[col.field] = Boolean(value);
-                      } else {
-                        // Keep as string (includes date, datetime, time, text)
-                        processedValues[col.field] = value;
-                      }
+                      processedValues[col.field] = coerceFieldValue(col.type, value);
                     }
                   });
                   
@@ -1136,30 +1099,7 @@ export const TableComponent: React.FC<Props> = ({
                       createResponse = await axios.post(url, processedValues);
                     } catch (err) {
                       console.error("Error saving data:", err);
-                      if (axios.isAxiosError(err) && err.response) {
-                        console.error("Response data:", err.response.data);
-                        // Parse and display validation errors from backend (Pydantic/FastAPI)
-                        const detail = err.response.data?.detail;
-                        if (detail) {
-                          if (Array.isArray(detail)) {
-                            const errorMessages = detail.map((e: any) => {
-                              const field = e.loc ? e.loc[e.loc.length - 1] : 'field';
-                              return `${field}: ${e.msg}`;
-                            }).join('; ');
-                            setValidationError(errorMessages);
-                          } else if (typeof detail === 'string') {
-                            setValidationError(detail);
-                          } else {
-                            setValidationError(JSON.stringify(detail));
-                          }
-                        } else if (err.response.data?.message) {
-                          setValidationError(err.response.data.message);
-                        } else {
-                          setValidationError('Failed to save. Please check your input.');
-                        }
-                      } else {
-                        setValidationError('Network error. Please try again.');
-                      }
+                      setValidationError(describeApiError(err, 'Failed to save. Please check your input.'));
                       return; // Keep modal open on error
                     }
 
@@ -1174,8 +1114,11 @@ export const TableComponent: React.FC<Props> = ({
                       const parent = entityFromResponse(createResponse?.data, parentMeta.parentResponseKey);
                       const parentKey = parent?.[parentMeta.parentKeyField];
                       if (parentKey === undefined || parentKey === null) {
+                        // The record exists now: close the dialog so submitting again
+                        // cannot create it a second time, and report on the table.
                         await fetchTableData();
-                        setValidationError(`The ${dataBinding?.entity || 'record'} was saved, but its key was not returned, so the new related records were not created.`);
+                        setShowModal(false);
+                        setRowActionError(`The ${dataBinding?.entity || 'record'} was saved, but its key was not returned, so the new related records were not created.`);
                         return;
                       }
                       const created: CreatedRecord[] = [
@@ -1211,28 +1154,7 @@ export const TableComponent: React.FC<Props> = ({
                       setShowModal(false);
                     } catch (err) {
                       console.error("Error updating data:", err);
-                      if (axios.isAxiosError(err) && err.response) {
-                        const detail = err.response.data?.detail;
-                        if (detail) {
-                          if (Array.isArray(detail)) {
-                            const errorMessages = detail.map((e: any) => {
-                              const field = e.loc ? e.loc[e.loc.length - 1] : 'field';
-                              return `${field}: ${e.msg}`;
-                            }).join('; ');
-                            setValidationError(errorMessages);
-                          } else if (typeof detail === 'string') {
-                            setValidationError(detail);
-                          } else {
-                            setValidationError(JSON.stringify(detail));
-                          }
-                        } else if (err.response.data?.message) {
-                          setValidationError(err.response.data.message);
-                        } else {
-                          setValidationError('Failed to update. Please check your input.');
-                        }
-                      } else {
-                        setValidationError('Network error. Please try again.');
-                      }
+                      setValidationError(describeApiError(err, 'Failed to update. Please check your input.'));
                       return; // Keep modal open on error
                     }
                   }
@@ -1470,13 +1392,7 @@ export const TableComponent: React.FC<Props> = ({
                                         {linkLabel}
                                         <input
                                           id={linkInputId}
-                                          type={
-                                            linkField.type === 'int' || linkField.type === 'float' ? 'number' :
-                                            linkField.type === 'date' ? 'date' :
-                                            linkField.type === 'datetime' ? 'datetime-local' :
-                                            linkField.type === 'time' ? 'time' :
-                                            'text'
-                                          }
+                                          type={inputTypeFor(linkField.type)}
                                           step={linkField.type === 'float' ? 'any' : undefined}
                                           value={linkValue ?? ""}
                                           onChange={e => setLinkAttrValue(col.field, String(targetId), linkField.name, e.target.value)}
@@ -1616,13 +1532,7 @@ export const TableComponent: React.FC<Props> = ({
                       </label>
                       <input
                         id={`modal-input-${col.field}`}
-                        type={
-                          col.type === 'int' || col.type === 'float' ? 'number' : 
-                          col.type === 'date' ? 'date' : 
-                          col.type === 'datetime' ? 'datetime-local' : 
-                          col.type === 'time' ? 'time' : 
-                          'text'
-                        }
+                        type={inputTypeFor(col.type)}
                         step={col.type === 'float' ? 'any' : undefined}
                         value={formValues[col.field] ?? ""}
                         onChange={e => setFormValues(fv => ({ ...fv, [col.field]: e.target.value }))}

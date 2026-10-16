@@ -100,7 +100,7 @@ Who wrote which lines (Agent Trace)
 -----------------------------------
 
 Every run ships an `Agent Trace <https://agent-trace.dev/>`_ record (spec
-``0.1.0``, MIME type ``application/vnd.agent-trace.record+json``) at
+version ``0.1``, MIME type ``application/vnd.agent-trace.record+json``) at
 ``.agent-trace/<run id>.json``, in the download ZIP and in the GitHub push. It
 lists each text file of the delivered tree with line ranges and who wrote them:
 
@@ -140,6 +140,15 @@ that record goes to the LLM. A line keeps its contributor however often the
 file was edited, as long as the line itself is unchanged. The record holds
 hashes only, never content, and is pushed to GitHub beside the recipe, so a
 continue-from-GitHub run can tell a person's edits from the AI's. Binary files
-and files over 2 MB are not attributed. The record carries no ``vcs`` revision:
+and files over 2 MB are not attributed. In files longer than 5,000 lines only
+the unchanged lines at the start and the end keep their contributor: a change
+in the middle gives every line from the first change to the last one to the
+new contributor (a full line diff of such files is too slow).
+
+When attribution cannot be trusted (the state file is unreadable, or a
+generator's update failed), the run ships without a record and without
+``.besser_attribution.json``, rather than with a record that credits someone
+else's lines to the AI; the next run on that code then starts from
+``unknown``. The record carries no ``vcs`` revision:
 it is part of the commit it would have to name. Older traces in the repository
 are kept, and their ranges refer to the revision they were written for.

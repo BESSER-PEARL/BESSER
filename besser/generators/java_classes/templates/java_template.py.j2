@@ -184,6 +184,13 @@ public class {{ class_obj.name }} {{ extends }}{
         this.{{ attribs[i+1] }} = {{ attribs[i+1] }};
     }
 {% endfor %}
+{# Element types held by more than one collection (e.g. Country holding the Observations
+   of both Observation.reporter and Observation.partner): their add helpers are named after
+   the role (addToObservationsAsPartner), or the class would declare addObservation twice. #}
+{% set list_types = [] %}
+{% for i in range(0, assocs|length, 2) %}
+    {% if assocs[i][:4] == "List" %}{% do list_types.append(assocs[i][5:-1]) %}{% endif %}
+{% endfor %}
 {% for i in range(0, assocs|length, 2) %}
 {% set aname = assocs[i+1][0]|upper ~ assocs[i+1][1:] %}
 
@@ -193,7 +200,7 @@ public class {{ class_obj.name }} {{ extends }}{
         return this.{{ assocs[i+1] }};
     }
 
-    {% if assocs[i+1] in self_assoc_names %}
+    {% if assocs[i+1] in self_assoc_names or list_types.count(element_type) > 1 %}
     public void addTo{{ aname }}({{ element_type }} {{ element_type|lower }}) {
         this.{{ assocs[i+1] }}.add({{ element_type|lower }});
     }
@@ -216,7 +223,7 @@ public class {{ class_obj.name }} {{ extends }}{
 {% for i in range(0, assocs|length, 2) %}
     {% if assocs[i][:4] == "List" %}
         {% set element_type = assocs[i][5:-1] %}
-        {% if assocs[i+1] in self_assoc_names %}
+        {% if assocs[i+1] in self_assoc_names or list_types.count(element_type) > 1 %}
             {% do generated_assoc_methods.append('addTo' ~ assocs[i+1][0]|upper ~ assocs[i+1][1:]) %}
         {% else %}
             {% do generated_assoc_methods.append('add' + element_type) %}

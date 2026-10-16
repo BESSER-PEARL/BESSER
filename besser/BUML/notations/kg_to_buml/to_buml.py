@@ -473,6 +473,8 @@ def _attach_attributes(buml_class, attributes, renames, classes, enumerations, o
                 label=f"Attribute {buml_class.name}.{attr_name}",
             ),
             metadata=Metadata(uri=attribute.uri) if attribute.uri else None,
+            is_id=attribute.is_id,
+            is_derived=attribute.is_derived,
         )
         built.append(prop)
         if attribute.uri:
@@ -692,6 +694,7 @@ def _instantiate_associations(planned, classes, generalizations, out: ClassConve
             multiplicity=_multiplicity(
                 *assoc.tgt_mult, out.warnings, label=f"Association end {assoc.target}.{target_role}"
             ),
+            is_derived=assoc.derived,
         )
         name = _unique_association_name(assoc, used_names)
         try:

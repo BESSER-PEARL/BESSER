@@ -162,6 +162,33 @@ identical model.
     to ``_`` (``Café`` becomes ``Caf_``). A name that kept its accent would make
     ``self.café`` unparseable and the invariant would be dropped.
 
+Coverage and deviations
+~~~~~~~~~~~~~~~~~~~~~~~
+
+The conversion is TBox-only: it produces a class diagram, so rules that act on
+individuals (``NamedIndividual``, ``ClassAssertion``, property assertions and
+their negative forms) are not translated. Where B-UML has no counterpart for
+what a rule asks for, the conversion makes these choices:
+
+* **Custom datatypes are classes.** B-UML has nine fixed primitives and a
+  ``DataType`` cannot own attributes, so a custom ``rdfs:Datatype``, a
+  datatype restriction (facets become an OCL invariant on its ``value``) and a
+  typed data ``owl:oneOf`` become a class carrying one ``value`` attribute and
+  an invariant. A ``oneOf`` over plain strings becomes an ``Enumeration``.
+* **A named class that is exactly a ``oneOf`` of individuals is an
+  enumeration.** Properties ranging over it become attributes typed by it. If
+  the class also takes part in other axioms it stays a class and a
+  ``ONEOF_CLASS_KEPT`` warning is recorded.
+* **``owl:hasKey``** becomes a uniqueness invariant; a single functional key
+  that is an attribute of the class is also marked ``is_id``.
+* **Derived properties.** B-OCL has no ``def`` form, so a property chain
+  (``owl:propertyChainAxiom``) or a data property that only its
+  sub-properties feed is stated as an invariant, and its association end or
+  attribute is marked ``is_derived``. Such a property is "exclusively derived"
+  when no individual asserts it directly; otherwise the chain only implies it.
+* **Disjointness** is emitted as pairwise OCL invariants. No
+  ``GeneralizationSet`` is built.
+
 Before converting, the KG can be checked with
 ``analyze_kg_for_class_diagram()``, which reports ambiguities (a property with
 no domain, a class referenced but never declared, …) together with the

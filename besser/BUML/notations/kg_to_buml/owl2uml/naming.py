@@ -72,3 +72,12 @@ def restriction_name(kind: str, prop: str, filler: str, n: int | None = None) ->
     if n is not None:
         return f"_{kind}_{n}_{prop}_{filler}"
     return f"_{kind}_{prop}_{filler}"
+
+
+def regex_literal(text: str) -> str:
+    """OCL single-quoted string literal for a regex (``sh:pattern``, ``xsd:pattern``).
+
+    Backslashes are left literal (not doubled) so ``^\\d{9}$`` renders as
+    ``'^\\d{9}$'`` -- regex fidelity matters more than OCL string-escape purity here.
+    """
+    return "'" + text.replace("'", "\\'").replace("\n", " ") + "'"

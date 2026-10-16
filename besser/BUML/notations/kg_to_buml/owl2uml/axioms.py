@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from rdflib import BNode, Graph, Literal, URIRef
+from rdflib.collection import Collection as RDFList
 from rdflib.namespace import OWL, RDF, RDFS
 
 from besser.BUML.notations.kg_to_buml.datatype_mapping import xsd_to_primitive
@@ -151,6 +152,43 @@ class AxiomIndex:
         for s, o in _sorted_pairs(self.g.subject_objects(RDFS.subPropertyOf)):
             if isinstance(s, URIRef) and isinstance(o, URIRef):
                 yield s, o
+
+    def property_chains(self) -> list[tuple]:
+        """``(property, [p1, ..., pn])`` for each ``owl:propertyChainAxiom``, sorted by property IRI."""
+        out = []
+        for p, head in _sorted_pairs(self.g.subject_objects(OWL.propertyChainAxiom)):
+            chain = list(RDFList(self.g, head))
+            if isinstance(p, URIRef) and chain and all(isinstance(c, URIRef) for c in chain):
+                out.append((p, chain))
+        return out
+
+    def has_keys(self) -> list[tuple]:
+        """``(class, [key properties])`` for each ``owl:hasKey`` on a named class, sorted by class IRI."""
+        out = []
+        for c, head in _sorted_pairs(self.g.subject_objects(OWL.hasKey)):
+            keys = [k for k in RDFList(self.g, head) if isinstance(k, URIRef)]
+            if isinstance(c, URIRef) and keys:
+                out.append((c, keys))
+        return out
+
+    def all_disjoint_properties(self) -> list[list]:
+        """Member lists of every ``owl:AllDisjointProperties`` axiom, in a stable order."""
+        out = []
+        for node in sorted(self.g.subjects(RDF.type, OWL.AllDisjointProperties), key=str):
+            head = self.g.value(node, OWL.members)
+            if head is not None:
+                members = [m for m in RDFList(self.g, head) if isinstance(m, URIRef)]
+                if members:
+                    out.append(members)
+        return out
+
+    def has_assertions(self, p) -> bool:
+        """Whether any individual carries an assertion on property ``p``.
+
+        Separates a property that is *exclusively derived* (O19, O27 derivation)
+        from one that may also be asserted directly (O20).
+        """
+        return any(s in self.individuals for s in self.g.subjects(p, None))
 
     def is_deprecated(self, s) -> bool:
         """Return whether ``s`` carries ``owl:deprecated true``."""

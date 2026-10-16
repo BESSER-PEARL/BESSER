@@ -9,7 +9,7 @@ back into.
 from __future__ import annotations
 
 from rdflib import URIRef, BNode, Literal
-from rdflib.namespace import OWL, RDF
+from rdflib.namespace import OWL, RDF, RDFS, XSD
 
 from besser.BUML.metamodel.structural import data_types as _buml_data_types
 from besser.BUML.notations.kg_to_buml._common import KGConversionWarning
@@ -58,6 +58,7 @@ class Mapper:
         self._handled_props: set = set()          # object props consumed by inverse pairs
         self._datarange_cache: dict = {}          # BNode -> DataType name (dedup shared anon data ranges)
         self._composite_datarange_cache: dict = {}  # (kind, members) -> DataType name (dedup by structure)
+        self._enum_defs: dict[URIRef, BNode] = {}  # D20: named class -> the oneOf node it is an enumeration of
         self.resolver = ExpressionResolver(self)
 
         primary = (list(self.ax.sorted_named_classes) + list(self.ax.sorted_object_props)
@@ -78,13 +79,16 @@ class Mapper:
         Returns:
             ModelPlan: The classes, associations, generalizations and invariants the rules produced.
         """
-        self._map_datatypes()         # D09, D37
+        self._map_enum_classes()      # D20
+        self._map_datatypes()         # D09, D17, D37, O04, O05
         self._map_classes()           # D08
         self._map_class_axioms()      # D26, D27(via canon), O06, O16, O17, restriction †
         self._map_object_properties() # D10, D29, D30-D32, O22
         self._map_data_properties()   # D11, D34-D36
         self._map_sub_properties()    # O18, O27
-        self._map_property_characteristics()  # O21, O23-O26
+        self._map_property_chains()   # O19, O20
+        self._map_property_characteristics()  # O21, O23-O26, O28
+        self._map_keys()              # D38
         self._map_individuals()       # D13, D39, D40, D41
         if self.shapes is not None:
             self._map_shacl()         # SHACL -> OCL (Table tab:shacl-ocl)
@@ -152,7 +156,7 @@ class Mapper:
         An IRI the ontology never declares becomes a stub (carried as ``external``).
         """
         name = self.canon.name(iri)
-        if name in self.model.classes:
+        if name in self.model.classes or name in self.model.enumerations:
             return name
         rep = URIRef(self.canon.rep(iri))
         declared = rep in self.ax.named_classes()
@@ -172,9 +176,14 @@ class Mapper:
         self.model.classes[name] = PlannedClass(name=name, is_auxiliary=True, is_abstract=abstract)
         return name
 
-    def make_enum(self, literals: list[str], hint: str) -> str:
-        """Declare an enumeration of ``literals`` (duplicates dropped, order kept) under a name reserved from ``hint``, and return it."""
-        name = self.canon.reserve(hint)
+    def make_enum(self, literals: list[str], hint: str, exact_name: str | None = None) -> str:
+        """Declare an enumeration of ``literals`` (duplicates dropped, order kept) and return its name.
+
+        The name is reserved from ``hint``, unless ``exact_name`` is given: the
+        canonicaliser already reserved it for a named class or datatype that
+        becomes the enumeration itself (D20, D37).
+        """
+        name = exact_name or self.canon.reserve(hint)
         seen, lits = set(), []
         for literal in literals:
             if literal not in seen:
@@ -218,6 +227,18 @@ class Mapper:
             navigable_source=source_role is not None,
             uri=uri,
         ))
+
+    def add_feature(self, source: str, target: str, role: str, *, src_mult=(0, "*"), tgt_mult=(0, "*"),
+                    uri: str | None = None, **association) -> None:
+        """Link ``source`` to ``target`` through ``role``: an association, or an attribute when ``target`` is an enumeration (D20).
+
+        An enumeration is a type, not a class: it has no end to navigate back
+        from, so a property ranging over one is an attribute of its source.
+        """
+        if target in self.model.enumerations:
+            self.add_attribute(source, role, target, tgt_mult, uri=uri)
+        else:
+            self.add_association(source, target, role, src_mult, tgt_mult, uri=uri, **association)
 
     def add_attribute(self, ctx: str, pname: str, dtype: str,
                       mult=(0, "*"), uri: str | None = None) -> None:
@@ -320,7 +341,7 @@ class Mapper:
         Numbers and booleans are bare, exactly as in :meth:`literal_value`;
         strings are single-quoted because ``STRING_LITERAL`` in ``BOCL.g4``
         accepts no other quote character. Backslash and quote are escaped —
-        unlike :func:`~besser.BUML.notations.kg_to_buml.owl2uml.shacl._regex_literal`,
+        unlike :func:`~besser.BUML.notations.kg_to_buml.owl2uml.naming.regex_literal`,
         which deliberately keeps backslashes raw so regexes survive intact.
         """
         if isinstance(node, Literal):
@@ -341,15 +362,15 @@ class Mapper:
     def resolve_data_range(self, node) -> str:
         """Return the plan name of the data range ``node``.
 
-        Handles a custom ``rdfs:Datatype``, a standard XSD IRI (mapped to a BUML primitive), and an anonymous data-range expression (materialised, once per node). ``None`` and anything else fall back to a primitive.
+        Handles a custom ``rdfs:Datatype`` (with its definition, D37), a standard XSD IRI (mapped to a BUML primitive), and an anonymous data-range expression (materialised, once per node). ``None`` and anything else fall back to a primitive.
         """
         if node is None:
             return self.register_primitive(primitive_for(None))
         if isinstance(node, URIRef):
             if node in self.ax.datatypes():          # custom rdfs:Datatype (D09/D37)
                 dt = self.canon.name(node)
-                if dt not in self.model.datatypes:
-                    self.model.datatypes[dt] = PlannedDataType(name=dt, uri=str(node))
+                if dt not in self.model.datatypes and dt not in self.model.enumerations:
+                    self._define_datatype(node, dt)
                 self._name_to_iri.setdefault(dt, node)
                 return dt
             return self.register_primitive(primitive_for(node))
@@ -361,26 +382,41 @@ class Mapper:
             return name
         return self.register_primitive("String")
 
-    def _materialize_data_range(self, node) -> str:
+    def _datatype_definition(self, dt):
+        """The data range a custom datatype is defined as (D37), or ``None`` for a bare declaration."""
+        for definition in sorted(self.g.objects(dt, OWL.equivalentClass), key=str):
+            if isinstance(definition, BNode) or definition in self.ax.datatypes() \
+                    or str(definition).startswith(str(XSD)):
+                return definition
+        return None
+
+    def _define_datatype(self, node, name: str) -> None:
+        """Declare the custom datatype ``node`` under ``name`` (D09), materialising its definition (D37).
+
+        The datatype keeps its own name, so every attribute typed by it reads
+        ``Age18`` and not ``_int_restricted``. A definition that is just another
+        datatype becomes a ``value`` slot of that type, with no invariant.
+        """
+        definition = self._datatype_definition(node)
+        if isinstance(definition, BNode):
+            self._materialize_data_range(definition, name=name)
+        elif definition is not None:
+            target = self.resolve_data_range(definition)
+            dt = PlannedDataType(name=name)
+            dt.attributes.append(PlannedAttribute(name="value", type=target, lower=0, upper="*"))
+            self.model.datatypes[name] = dt
+        else:
+            self.model.datatypes[name] = PlannedDataType(name=name)
+        defined = self.model.datatypes.get(name) or self.model.enumerations.get(name)
+        if defined is not None:
+            defined.uri = str(node)
+
+    def _materialize_data_range(self, node, name: str | None = None) -> str:
+        """Materialise the anonymous data range ``node`` (O01-O05, D17), under ``name`` when one is given."""
+        from rdflib.collection import Collection as RDFList
         base = self.g.value(node, OWL.onDatatype)
         if base is not None:                          # DatatypeRestriction (O05)
-            base_name = self.resolve_data_range(base)
-            facets: list[str] = []
-            restr = self.g.value(node, OWL.withRestrictions)
-            if restr is not None:
-                from rdflib.collection import Collection as RDFList
-                for f in RDFList(self.g, restr):
-                    for fp, fo in self.g.predicate_objects(f):
-                        facets.append(f"{naming.local_name(fp)} {self.literal_value(fo)}")
-            key = ("restriction", base_name, tuple(facets))
-            cached = self._composite_datarange_cache.get(key)
-            if cached:
-                return cached
-            name = self.canon.reserve(f"_{base_name}_restricted")
-            self.model.datatypes[name] = PlannedDataType(name=name, facets=facets)
-            self._composite_datarange_cache[key] = name
-            return name
-        from rdflib.collection import Collection as RDFList
+            return self._restricted_datatype(node, base, name)
         # O01-O03: resolve every operand so structurally-identical data ranges
         # (a repeated "unionOf(xsd:dateTime, xsd:date)" range, re-wrapped in a
         # *fresh* blank node per property, is the common case) collapse onto
@@ -389,18 +425,108 @@ class Mapper:
         lst = self.g.value(node, OWL.unionOf)
         if lst is not None:                            # O02 DataUnionOf
             members = [self.resolve_data_range(m) for m in RDFList(self.g, lst)]
-            return self.composite_datarange(members, "union")
+            return self.composite_datarange(members, "union", name=name)
         lst = self.g.value(node, OWL.intersectionOf)
         if lst is not None:                            # O01 DataIntersectionOf
             members = [self.resolve_data_range(m) for m in RDFList(self.g, lst)]
-            return self.composite_datarange(members, "intersection")
+            return self.composite_datarange(members, "intersection", name=name)
         comp = self.g.value(node, OWL.datatypeComplementOf)
         if comp is not None:                           # O03 DataComplementOf
-            return self.composite_datarange([self.resolve_data_range(comp)], "complement")
-        # owl:oneOf of typed literals (O04) or anything unrecognised -> generic fallback
-        return self.composite_datarange([], "opaque")
+            return self.composite_datarange([self.resolve_data_range(comp)], "complement", name=name)
+        lst = self.g.value(node, OWL.oneOf)
+        if lst is not None:                            # D17 / O04 DataOneOf
+            return self._data_one_of(list(RDFList(self.g, lst)), name)
+        return self.composite_datarange([], "opaque", name=name)
 
-    def composite_datarange(self, members: list[str], kind: str) -> str:
+    #: XSD facets with an OCL reading, as ``(operator, operand form)``. ``size``
+    #: facets compare ``v.size()``; the others compare ``v`` itself.
+    _FACET_OPS = {
+        "minInclusive": (">=", False), "maxInclusive": ("<=", False),
+        "minExclusive": (">", False), "maxExclusive": ("<", False),
+        "length": ("=", True), "minLength": (">=", True), "maxLength": ("<=", True),
+    }
+
+    def _facet_ocl(self, facet: str, node, var: str = "v") -> str | None:
+        """OCL test of one XSD facet (O05) against ``var``, or ``None`` when it has no reading."""
+        if facet == "pattern":
+            return f"{var}.matches({naming.regex_literal(str(node))})"
+        spec = self._FACET_OPS.get(facet)
+        if spec is None:
+            return None
+        op, on_size = spec
+        subject = f"{var}.size()" if on_size else var
+        return f"{subject} {op} {self.ocl_literal(node)}"
+
+    def _restricted_datatype(self, node, base, name: str | None) -> str:
+        """O05: ``owl:onDatatype`` + ``owl:withRestrictions`` -> a datatype carrying the facets as an invariant."""
+        from rdflib.collection import Collection as RDFList
+        base_name = self.resolve_data_range(base)
+        facets: list[str] = []
+        tests: list[str] = []
+        restr = self.g.value(node, OWL.withRestrictions)
+        if restr is not None:
+            for f in RDFList(self.g, restr):
+                for fp, fo in sorted(self.g.predicate_objects(f), key=lambda t: (str(t[0]), str(t[1]))):
+                    local = naming.local_name(fp)
+                    facets.append(f"{local} {self.literal_value(fo)}")
+                    test = self._facet_ocl(local, fo)
+                    if test:
+                        tests.append(test)
+                    else:
+                        self.warn("DATATYPE_FACET_UNSUPPORTED",
+                                  f"Facet '{local}' on a restriction of {base_name} has no OCL equivalent; ignored.")
+        if name is None:
+            key = ("restriction", base_name, tuple(facets))
+            cached = self._composite_datarange_cache.get(key)
+            if cached:
+                return cached
+            name = self.canon.reserve(f"_{base_name}_restricted")
+            self._composite_datarange_cache[key] = name
+        dt = PlannedDataType(name=name, facets=facets)
+        # The facets constrain the datatype's own value, as for O01-O03.
+        value_type = base_name if base_name in _PRIMITIVES else "any"
+        dt.attributes.append(PlannedAttribute(name="value", type=value_type, lower=0, upper="*"))
+        if tests:
+            dt.invariants.append(PlannedInvariant(
+                context=name, body=f"self.value->forAll(v | {' and '.join(tests)})",
+                name="facet_invariant", origin_rule="O05",
+            ))
+        self.model.datatypes[name] = dt
+        return name
+
+    def _data_one_of(self, literals: list, name: str | None) -> str:
+        """D17 / O04: ``owl:oneOf`` over literals.
+
+        Plain and ``xsd:string`` literals become an enumeration (D17). Any other
+        literal type cannot be an enumeration literal name, so it becomes a
+        datatype whose ``value`` is restricted to the listed values (O04).
+        """
+        literals = [lit for lit in literals if isinstance(lit, Literal)]
+        if not literals:
+            return self.composite_datarange([], "opaque", name=name)
+        if all(lit.datatype in (None, XSD.string, RDF.langString) for lit in literals):
+            hint = naming.one_of_name([naming.sanitize(str(lit)) for lit in literals])
+            return self.make_enum([self.literal_value(lit) for lit in literals], hint=hint, exact_name=name)
+        types = {primitive_for(lit.datatype) for lit in literals}
+        value_type = types.pop() if len(types) == 1 else "any"
+        key = ("oneOf", tuple(sorted((str(lit), str(lit.datatype)) for lit in literals)))
+        if name is None:
+            cached = self._composite_datarange_cache.get(key)
+            if cached:
+                return cached
+            name = self.canon.reserve(naming.one_of_name([naming.sanitize(str(lit)) for lit in literals]))
+            self._composite_datarange_cache[key] = name
+        dt = PlannedDataType(name=name)
+        dt.attributes.append(PlannedAttribute(name="value", type=value_type, lower=0, upper="*"))
+        choices = " or ".join(f"v = {self.ocl_literal(lit)}" for lit in literals)
+        dt.invariants.append(PlannedInvariant(
+            context=name, body=f"self.value->forAll(v | {choices})",
+            name="oneOf_invariant", origin_rule="O04",
+        ))
+        self.model.datatypes[name] = dt
+        return name
+
+    def composite_datarange(self, members: list[str], kind: str, name: str | None = None) -> str:
         """Materialise (or reuse) the DataType for a union/intersection/complement
         data-range expression (O01-O03).
 
@@ -420,6 +546,9 @@ class Mapper:
         DataType itself — verifying that attribute's type membership. Classes
         using this DataType need no invariant of their own; the guarantee lives
         where the constraint actually belongs.
+
+        A ``name`` makes it a named datatype definition (D37): the type is built
+        under that name and bypasses the structural cache.
         """
         # BUML's datatype vocabulary is coarser than the paper's (anyURI,
         # gYear and gYearMonth all collapse onto ``str``), so an OWL union of
@@ -428,18 +557,20 @@ class Mapper:
         # reads "... or v.oclIsTypeOf(str) or v.oclIsTypeOf(str)".
         members = list(dict.fromkeys(members))
         key = (kind, tuple(sorted(set(members))))
-        cached = self._composite_datarange_cache.get(key)
-        if cached:
-            return cached
-        if kind == "union":
-            hint = naming.union_name(members)
-        elif kind == "intersection":
-            hint = naming.intersection_name(members)
-        elif kind == "complement" and members:
-            hint = naming.not_name(members[0])
-        else:
-            hint = "_DataRange"
-        name = self.canon.reserve(hint)
+        if name is None:
+            cached = self._composite_datarange_cache.get(key)
+            if cached:
+                return cached
+            if kind == "union":
+                hint = naming.union_name(members)
+            elif kind == "intersection":
+                hint = naming.intersection_name(members)
+            elif kind == "complement" and members:
+                hint = naming.not_name(members[0])
+            else:
+                hint = "_DataRange"
+            name = self.canon.reserve(hint)
+            self._composite_datarange_cache[key] = name
         dt = PlannedDataType(name=name)
         if kind in ("union", "intersection", "complement") and members:
             # "any" (lowercase) is the BUML primitive; see ``axioms.primitive_for``.
@@ -458,7 +589,6 @@ class Mapper:
                 name=f"{kind}_invariant", origin_rule=origin,
             ))
         self.model.datatypes[name] = dt
-        self._composite_datarange_cache[key] = name
         return name
 
     def satisfies(self, dr: str, var: str) -> str:
@@ -474,13 +604,68 @@ class Mapper:
                 continue
             self.resolve_data_range(dt)
 
+    #: What a named class may say about itself and still be replaced by the
+    #: enumeration it is equivalent to (D20): its definition, annotations, being
+    #: a range, and having individuals.
+    _ENUM_SUBJECT_PREDICATES = frozenset({
+        RDF.type, RDFS.label, RDFS.comment, RDFS.isDefinedBy, OWL.deprecated,
+        OWL.equivalentClass, RDFS.subClassOf,
+    })
+    _ENUM_OBJECT_PREDICATES = frozenset({RDF.type, RDFS.range})
+
+    def _map_enum_classes(self) -> None:
+        """D20: a named class that is exactly a ``oneOf`` of symbolic individuals *is* an enumeration.
+
+        The enumeration takes the class's own name, and every property ranging
+        over the class becomes an attribute typed by it. A class that also takes
+        part in anything an enumeration cannot (a generalization, a domain, a
+        restriction, a union operand, ...) stays a class, with a warning, and
+        the ``oneOf`` is materialised beside it as before.
+        """
+        from rdflib.collection import Collection as RDFList
+        for c in self.ax.sorted_named_classes:
+            if self.canon.is_alias(c):
+                continue
+            defs = [o for p, o in self.g.predicate_objects(c) if p in (OWL.equivalentClass, RDFS.subClassOf)]
+            one_ofs = [o for o in defs if isinstance(o, BNode) and (o, OWL.oneOf, None) in self.g]
+            if not one_ofs:
+                continue
+            if len(defs) != 1:
+                self.warn("ONEOF_CLASS_KEPT",
+                          f"Class '{naming.local_name(c)}' is a oneOf enumeration but also takes part in "
+                          f"other axioms; kept as a class.")
+                continue
+            head = self.g.value(defs[0], OWL.oneOf)
+            members = list(RDFList(self.g, head)) if head is not None else []
+            if not members or any(not isinstance(m, Literal) and self.resolver._is_relational(m) for m in members):
+                continue
+            standalone = (
+                all(p in self._ENUM_SUBJECT_PREDICATES for p in self.g.predicates(c, None))
+                and all(p in self._ENUM_OBJECT_PREDICATES for _s, p in self.g.subject_predicates(c))
+            )
+            if not standalone:
+                self.warn("ONEOF_CLASS_KEPT",
+                          f"Class '{naming.local_name(c)}' is a oneOf enumeration but also takes part in "
+                          f"other axioms; kept as a class.")
+                continue
+            self._enum_defs[c] = defs[0]
+            name = self.canon.name(c)
+            labels = [self.literal_value(m) if isinstance(m, Literal) else naming.sanitize(naming.local_name(m))
+                      for m in members]
+            self.make_enum(labels, hint=name, exact_name=name)
+            self.model.enumerations[name].uri = str(c)
+
     def _map_classes(self) -> None:
         for c in self.ax.sorted_named_classes:
+            if c in self._enum_defs:
+                continue
             self.ensure_class(c)
 
     def _map_class_axioms(self) -> None:
         # D26 subClassOf (named or expression); restriction/union superclasses via resolver
         for sub, sup in self.ax.subclass_axioms():
+            if self._enum_defs.get(sub) == sup:
+                continue                           # D20: the class is the enumeration
             sub_name = self.ensure_class(sub)
             if isinstance(sup, URIRef):
                 self.add_generalization(sub_name, self.ensure_class(sup))
@@ -488,6 +673,8 @@ class Mapper:
                 self.resolver.resolve_class(sup, subsuming=sub_name)
         # equivalentClass to an anonymous expression -> treat like subclass wiring
         for s, o in self.ax.equivalent_classes():
+            if self._enum_defs.get(s) == o or s in self.ax.datatypes():
+                continue                           # D20 / D37: an enumeration or a datatype definition
             if isinstance(s, URIRef) and isinstance(o, BNode):
                 self.resolver.resolve_class(o, subsuming=self.ensure_class(s))
         # O16 DisjointClasses (pairwise OCL)
@@ -579,11 +766,23 @@ class Mapper:
                 continue
             if a in self._handled_props or b in self._handled_props:
                 continue
-            self._handled_props.update({a, b})
             src = self._combine(self._group_domains(a) or self._group_ranges(b))
             tgt = self._combine(self._group_ranges(a) or self._group_domains(b))
-            self.add_association(src, tgt, role=self.canon.name(a),
-                                 source_role=self.canon.name(b), uri=str(a))
+            if src in self.model.enumerations or tgt in self.model.enumerations:
+                continue                          # an enumeration has no end to navigate back from
+            self._handled_props.update({a, b})
+            aname, bname = self.canon.name(a), self.canon.name(b)
+            # D32 / O22 for both halves of the pair: a functional property bounds
+            # the end it points at, an inverse-functional one bounds the end it
+            # starts from, and each is the other's mirror image.
+            tgt_mult = (0, 1) if self.ax.is_functional(a) or self.ax.is_inverse_functional(b) else (0, "*")
+            src_mult = (0, 1) if self.ax.is_functional(b) or self.ax.is_inverse_functional(a) else (0, "*")
+            self.add_association(src, tgt, role=aname, source_role=bname,
+                                 src_mult=src_mult, tgt_mult=tgt_mult, uri=str(a))
+            if self.ax.is_inverse_functional(a):     # O22
+                self._add_inverse_functional_ocl(src, tgt, aname)
+            if self.ax.is_inverse_functional(b):     # O22, from the other side
+                self._add_inverse_functional_ocl(tgt, src, bname)
         # remaining object properties
         for p in self.ax.sorted_object_props:
             if self.canon.is_alias(p) or p in self._handled_props:
@@ -594,12 +793,15 @@ class Mapper:
             tgt_mult = (0, 1) if self.ax.is_functional(p) else (0, "*")
             src_mult = (0, 1) if self.ax.is_inverse_functional(p) else (0, "*")
             pname = self.canon.name(p)
-            self.add_association(src, tgt, role=pname,
-                                 src_mult=src_mult, tgt_mult=tgt_mult, uri=str(p))
-            if self.ax.is_inverse_functional(p):     # O22
-                self.add_ocl(tgt, f"{tgt}.allInstances()->forAll(d | {src}.allInstances()"
-                                  f"->select(c | c.{pname}->includes(d))->size() <= 1)",
-                             origin="O22")
+            self.add_feature(src, tgt, pname, src_mult=src_mult, tgt_mult=tgt_mult, uri=str(p))
+            if self.ax.is_inverse_functional(p) and tgt not in self.model.enumerations:     # O22
+                self._add_inverse_functional_ocl(src, tgt, pname)
+
+    def _add_inverse_functional_ocl(self, src: str, tgt: str, role: str) -> None:
+        """O22: no ``tgt`` instance is the ``role`` of more than one ``src`` instance."""
+        self.add_ocl(tgt, f"{tgt}.allInstances()->forAll(d | {src}.allInstances()"
+                          f"->select(c | c.{role}->includes(d))->size() <= 1)",
+                     origin="O22")
 
     def _map_data_properties(self) -> None:
         for p in self.ax.sorted_data_props:
@@ -680,6 +882,69 @@ class Mapper:
                     continue
                 self.add_ocl(ctx, f"self.{subn}->asSet()->forAll(v | self.{supn}->asSet()->includes(v))",
                              origin="O27")
+        self._derive_data_superproperties()
+
+    def _derive_data_superproperties(self) -> None:
+        """O27: a data property that only its sub-properties feed is their union.
+
+        Needs two or more sub-properties of one super-property and no assertion
+        on the super-property itself, the same "exclusively derived" test as O19.
+        With a single sub-property the inclusion O27 already emitted is all
+        there is to say.
+        """
+        subs_of: dict = {}
+        for sub, sup in self.ax.sub_property_axioms():
+            if self.ax.is_data_property(sub) and sub != sup and self.canon.name(sub) != self.canon.name(sup):
+                subs_of.setdefault(sup, []).append(sub)
+        for sup, subs in sorted(subs_of.items(), key=lambda t: str(t[0])):
+            subs = sorted({self.canon.name(x) for x in subs})
+            supn = self.canon.name(sup)
+            if len(subs) < 2 or self.ax.has_assertions(sup):
+                continue
+            domains = self._group_domains(sup)
+            ctx = self._combine(domains) if domains else self.ensure_class(OWL.Thing)
+            missing = [n for n in [supn, *subs] if not self._has_property(ctx, n)]
+            if missing:
+                self.warn("DERIVATION_SKIPPED",
+                          f"Cannot derive '{supn}' from its sub-properties: {', '.join(missing)} "
+                          f"is not available on {ctx}.")
+                continue
+            union = "->union(".join(f"self.{n}->asSet()" for n in subs) + ")" * (len(subs) - 1)
+            self.add_ocl(ctx, f"self.{supn}->asSet() = {union}", origin="O27", name="derived")
+            for attr in self.model.classes[ctx].attributes:
+                if attr.name == supn:
+                    attr.is_derived = True
+
+    def _map_property_chains(self) -> None:
+        """O19 / O20: ``owl:propertyChainAxiom``.
+
+        A property that no individual asserts directly is *exclusively derived*
+        by its chain (O19): its association is marked derived and the chain
+        both implies and is implied by it. Otherwise the chain only implies the
+        property (O20). B-OCL has no ``def`` form, so the derivation is stated
+        as an invariant rather than as ``/OPE : Set(T) = ...``.
+        """
+        for p, chain in self.ax.property_chains():
+            if self.canon.is_alias(p):
+                continue
+            pn = self.canon.name(p)
+            names = [self.canon.name(c) for c in chain]
+            domains = self._group_domains(p) or self._group_domains(chain[0])
+            ctx = self._combine(domains) if domains else self.ensure_class(OWL.Thing)
+            if not self._has_property(ctx, pn) or not self._has_property(ctx, names[0]):
+                self.warn("CHAIN_SKIPPED",
+                          f"Property chain for '{pn}' skipped: '{pn}' or '{names[0]}' is not available on {ctx}.")
+                continue
+            walk = "self." + ".".join(names)
+            body = f"{walk}->forAll(o | self.{pn}->includes(o))"
+            if self.ax.has_assertions(p):                                         # O20
+                self.add_ocl(ctx, body, origin="O20", name="chain")
+                continue
+            body += f" and self.{pn}->forAll(o | {walk}->includes(o))"          # O19
+            self.add_ocl(ctx, body, origin="O19", name="derived")
+            for assoc in self.model.associations:
+                if assoc.uri == str(p):
+                    assoc.derived = True
 
     def _map_property_characteristics(self) -> None:
         rules = [
@@ -696,13 +961,50 @@ class Mapper:
                 ctx = self._combine(self._group_domains(p)) if self._group_domains(p) \
                     else self.ensure_class(OWL.Thing)
                 self.add_ocl(ctx, tmpl.format(p=pname), origin=origin)
-        # O21 DisjointObjectProperties (pairwise)
-        for a, b in _sorted_pairs(self.g.subject_objects(OWL.propertyDisjointWith)):
-            if isinstance(a, URIRef) and isinstance(b, URIRef) and self.ax.is_object_property(a):
-                an, bn = self.canon.name(a), self.canon.name(b)
-                ctx = self._combine(self._group_domains(a)) if self._group_domains(a) \
-                    else self.ensure_class(OWL.Thing)
+        # O21 / O28 DisjointObjectProperties / DisjointDataProperties (pairwise)
+        pairs = {(a, b) for a, b in self.g.subject_objects(OWL.propertyDisjointWith)}
+        for members in self.ax.all_disjoint_properties():       # the n-ary form is every pair
+            pairs.update((a, b) for i, a in enumerate(members) for b in members[i + 1:])
+        for a, b in sorted(pairs, key=lambda t: (str(t[0]), str(t[1]))):
+            if not (isinstance(a, URIRef) and isinstance(b, URIRef)):
+                continue
+            an, bn = self.canon.name(a), self.canon.name(b)
+            ctx = self._combine(self._group_domains(a)) if self._group_domains(a) \
+                else self.ensure_class(OWL.Thing)
+            if self.ax.is_object_property(a) and self.ax.is_object_property(b):
                 self.add_ocl(ctx, f"self.{an}->forAll(o | self.{bn}->excludes(o))", origin="O21")
+            elif self.ax.is_data_property(a) and self.ax.is_data_property(b):
+                self.add_ocl(ctx, f"self.{an}->asSet()->intersection(self.{bn}->asSet())->isEmpty()", origin="O28")
+
+    def _map_keys(self) -> None:
+        """D38: ``owl:hasKey`` -> a uniqueness invariant, plus an identifier for a single functional key.
+
+        The invariant says no two instances share all their key values. A key
+        that is a single single-valued attribute of the class itself is also
+        marked ``is_id``, which is what generators read as the primary key; a
+        class may have only one, so the first one wins.
+        """
+        for cls_iri, keys in self.ax.has_keys():
+            if self.canon.is_alias(cls_iri):
+                continue
+            cname = self.ensure_class(cls_iri)
+            names = [self.canon.name(k) for k in keys]
+            missing = [n for n in names if not self._has_property(cname, n)]
+            if missing or cname not in self.model.classes:
+                self.warn("KEY_SKIPPED",
+                          f"Key of '{cname}' skipped: {', '.join(missing) or cname} is not modelled as a feature.")
+                continue
+            if len(names) == 1:
+                body = f"{cname}.allInstances()->isUnique({names[0]})"
+            else:
+                differ = " or ".join(f"a.{n} <> b.{n}" for n in names)
+                body = (f"{cname}.allInstances()->forAll(a | {cname}.allInstances()"
+                        f"->forAll(b | a <> b implies ({differ})))")
+            self.add_ocl(cname, body, origin="D38", name="key")
+            cls = self.model.classes[cname]
+            attr = next((a for a in cls.attributes if len(names) == 1 and a.name == names[0]), None)
+            if attr is not None and attr.upper == 1 and not any(a.is_id for a in cls.attributes):
+                attr.is_id = True
 
     def _map_individuals(self) -> None:
         for i in self.ax.sorted_individuals:

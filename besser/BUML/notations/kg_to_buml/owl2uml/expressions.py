@@ -121,7 +121,9 @@ class ExpressionResolver:
                                      naming.one_of_name(names))
             if is_new:
                 for i in items:
-                    self.m.ensure_instance(i)
+                    # One association per individual, to the class it is an instance of.
+                    role = self.m.ensure_instance(i)
+                    self.m.add_association(name, self.m.classifier_name(i), role, (0, "*"), (1, 1))
             return name
         return self.m.make_enum(names, hint=naming.one_of_name(names))         # D20
 
@@ -188,7 +190,7 @@ class ExpressionResolver:
             d = self.resolve_class(val)
             name, new = self._aux(("some", p, d, True), naming.restriction_name("some", p, d))
             if new:
-                self.m.add_association(name, d, p, (0, "*"), (1, "*"))
+                self.m.add_feature(name, d, p, tgt_mult=(1, "*"))
         else:
             dr = self.m.resolve_data_range(val)
             name, new = self._aux(("some", p, dr, False), naming.restriction_name("some", p, dr))
@@ -202,8 +204,9 @@ class ExpressionResolver:
             d = self.resolve_class(val)
             name, new = self._aux(("all", p, d, True), naming.restriction_name("all", p, d))
             if new:
-                self.m.add_association(name, d, p, (0, "*"), (0, "*"))
-                self.m.add_ocl(name, f"self.{p}->forAll(o | o.oclIsKindOf({d}))", origin="O07")
+                self.m.add_feature(name, d, p, tgt_mult=(0, "*"))
+                if d not in self.m.model.enumerations:    # an enumeration-typed attribute needs no check
+                    self.m.add_ocl(name, f"self.{p}->forAll(o | o.oclIsKindOf({d}))", origin="O07")
         else:
             dr = self.m.resolve_data_range(val)
             name, new = self._aux(("all", p, dr, False), naming.restriction_name("all", p, dr))
@@ -242,8 +245,8 @@ class ExpressionResolver:
             d = self.resolve_class(filler) if filler is not None else self._range_filler(prop)
             name, new = self._aux((kind, p, d, k, True), naming.restriction_name(kind, p, d, n=k))
             if new:
-                self.m.add_association(name, d, p, (0, "*"), _CARD_MULT[kind](k))
-                if kind == "max" and k == 0:
+                self.m.add_feature(name, d, p, tgt_mult=_CARD_MULT[kind](k))
+                if k == 0 and kind in ("max", "exact"):
                     # BUML's Multiplicity cannot express an upper bound of 0, so
                     # the (0, 0) above is clamped to (0, 1) downstream -- the
                     # model would then permit exactly what the ontology forbids.

@@ -259,6 +259,10 @@ _OWL_LIST_VALUED_PREDICATES = (
 _LIST_VALUED_PREDICATES = _OWL_LIST_VALUED_PREDICATES + (SH["and"], SH["or"], SH.xone)
 
 
+# n-ary disjointness axioms keep their operands in an ``owl:members`` list.
+_ALL_DISJOINT_TYPES = (OWL.AllDisjointClasses, OWL.AllDisjointProperties)
+
+
 def _flatten_owl_list_valued_triples(
     g: rdflib.Graph, list_resolutions: Dict[BNode, List[Any]]
 ) -> List[Tuple[Any, str, List[Any]]]:
@@ -274,12 +278,13 @@ def _flatten_owl_list_valued_triples(
                 members = list_resolutions.get(o, [])
                 if members:
                     out.append((s, str(pred), members))
-    for axiom_node, _, _ in g.triples((None, RDF.type, OWL.AllDisjointClasses)):
-        members_head = next(g.objects(axiom_node, OWL.members), None)
-        if isinstance(members_head, BNode):
-            members = list_resolutions.get(members_head, [])
-            if members:
-                out.append((axiom_node, str(OWL.members), members))
+    for axiom_type in _ALL_DISJOINT_TYPES:
+        for axiom_node, _, _ in g.triples((None, RDF.type, axiom_type)):
+            members_head = next(g.objects(axiom_node, OWL.members), None)
+            if isinstance(members_head, BNode):
+                members = list_resolutions.get(members_head, [])
+                if members:
+                    out.append((axiom_node, str(OWL.members), members))
     return out
 
 
@@ -299,10 +304,11 @@ def _consumed_list_heads(g: rdflib.Graph) -> Set[BNode]:
         for _, _, o in g.triples((None, pred, None)):
             if isinstance(o, BNode):
                 heads.add(o)
-    for axiom_node, _, _ in g.triples((None, RDF.type, OWL.AllDisjointClasses)):
-        members_head = next(g.objects(axiom_node, OWL.members), None)
-        if isinstance(members_head, BNode):
-            heads.add(members_head)
+    for axiom_type in _ALL_DISJOINT_TYPES:
+        for axiom_node, _, _ in g.triples((None, RDF.type, axiom_type)):
+            members_head = next(g.objects(axiom_node, OWL.members), None)
+            if isinstance(members_head, BNode):
+                heads.add(members_head)
     return heads
 
 
@@ -1315,7 +1321,12 @@ def _lift_to_constraint_nodes(
         if subj_node is None:
             continue
         for member_term in member_terms:
-            mem_id = f"_:{str(member_term)}" if isinstance(member_term, BNode) else str(member_term)
+            if isinstance(member_term, BNode):
+                mem_id = f"_:{str(member_term)}"
+            elif isinstance(member_term, Literal):
+                mem_id = _literal_id(member_term)   # a literal's node id is not its lexical form
+            else:
+                mem_id = str(member_term)
             mem_node = nodes_by_id.get(mem_id)
             if mem_node is None:
                 continue

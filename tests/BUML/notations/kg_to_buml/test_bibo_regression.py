@@ -127,7 +127,7 @@ def test_uml_model_counts(uml_model):
     assert sum(1 for c in uml_model.classes.values() if c.is_auxiliary) == 13
     assert len(uml_model.generalizations) == 81
     assert len(uml_model.associations) == 62
-    assert len(uml_model.ocl_constraints()) == 127
+    assert len(uml_model.ocl_constraints()) == 128
     assert len(uml_model.enumerations) == 0
 
 
@@ -142,7 +142,7 @@ def test_invariant_origins_match_the_rule_census(uml_model):
         "O02": 1,
         "O07": 9,
         "O18": 20,
-        "O27": 25,
+        "O27": 26,
         "S-and": 1,
         "S-class": 2,
         "S-datatype": 14,
@@ -184,21 +184,21 @@ def test_domain_model_counts(result):
     assert sum(1 for c in classes if c.is_abstract) == 2
     assert len(domain_model.generalizations) == 81
     assert len(domain_model.associations) == 62
-    # 127 emitted, 20 dropped — see test_only_domainless_properties_are_dropped.
-    assert len(domain_model.constraints) == 107
+    # 128 emitted, 20 dropped — see test_only_domainless_properties_are_dropped.
+    assert len(domain_model.constraints) == 108
     assert len([t for t in domain_model.types if isinstance(t, Enumeration)]) == 0
 
 
 def test_refined_domain_model_keeps_every_constraint(refined_result):
     """Accepting the recommendations costs nothing structurally and loses no
     invariant: the same 81 classes and 62 associations, 13 more generalizations
-    (the top-level classes now inherit from ``Thing``), and all 127 invariants."""
+    (the top-level classes now inherit from ``Thing``), and all 128 invariants."""
     domain_model = refined_result.domain_model
     classes = [t for t in domain_model.types if isinstance(t, Class)]
     assert len(classes) == 81
     assert len(domain_model.associations) == 62
     assert len(domain_model.generalizations) == 94
-    assert len(domain_model.constraints) == 127
+    assert len(domain_model.constraints) == 128
 
 
 def test_no_construct_is_dropped(refined_result):

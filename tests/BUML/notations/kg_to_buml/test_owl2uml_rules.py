@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from besser.BUML.metamodel.structural import Class, Enumeration
 from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
 from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
@@ -370,3 +371,260 @@ def test_object_max_cardinality_zero_emits_an_ocl_constraint(tmp_path: Path):
 
     all_bodies = [c.expression for c in result.domain_model.constraints]
     assert any("self.owns->isEmpty()" in b for b in all_bodies), all_bodies
+
+
+# ---------------------------------------------------------------------------
+# Rules added after the paper audit: D17, D20, D21, D32, D37, D38, O04, O05,
+# O19-O21, O27, O28
+# ---------------------------------------------------------------------------
+
+_PREFIXES = """
+@prefix : <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+"""
+
+
+def _convert(tmp_path: Path, body: str):
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, _PREFIXES + body))
+    return kg_to_class_diagram(kg)
+
+
+def _constraints(result, ctx_name: str):
+    return [c.expression for c in result.domain_model.constraints if c.context.name == ctx_name]
+
+
+def _attr(result, class_name: str, attr_name: str):
+    return next(a for a in _class(result.domain_model, class_name).attributes if a.name == attr_name)
+
+
+def _end(result, assoc_name: str, end_name: str):
+    association = next(a for a in result.domain_model.associations if a.name == assoc_name)
+    return next(e for e in association.ends if e.name == end_name)
+
+
+def test_d37_datatype_definition_keeps_its_name_and_facets(tmp_path: Path):
+    """A datatype defined by restriction is one type, named as declared -- not a ghost class beside a facet-less one."""
+    result = _convert(tmp_path, """
+    :Person a owl:Class .
+    :Age18 a rdfs:Datatype ; owl:equivalentClass [
+        a rdfs:Datatype ; owl:onDatatype xsd:integer ;
+        owl:withRestrictions ( [ xsd:minInclusive 18 ] [ xsd:maxInclusive 120 ] ) ] .
+    :adultAge a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range :Age18 .
+    """)
+    names = [t.name for t in result.domain_model.types]
+    assert names.count("Age18") == 1
+    assert "external" not in result.class_stereotypes.get("Age18", [])
+    assert _attr(result, "Person", "adultAge").type.name == "Age18"
+    assert _attr(result, "Age18", "value").type.name == "int"
+    assert any("v >= 18 and v <= 120" in b for b in _constraints(result, "Age18"))
+
+
+def test_d37_datatype_defined_as_another_datatype_carries_its_type(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :Person a owl:Class .
+    :Alias a rdfs:Datatype ; owl:equivalentClass xsd:string .
+    :alias a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range :Alias .
+    """)
+    assert _attr(result, "Alias", "value").type.name == "str"
+    assert _attr(result, "Person", "alias").type.name == "Alias"
+
+
+def test_o05_anonymous_datatype_restriction_emits_facet_invariant(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :Person a owl:Class .
+    :code a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range [
+        a rdfs:Datatype ; owl:onDatatype xsd:string ;
+        owl:withRestrictions ( [ xsd:pattern "[A-Z]+" ] [ xsd:minLength 2 ] ) ] .
+    """)
+    restricted = _attr(result, "Person", "code").type
+    bodies = _constraints(result, restricted.name)
+    assert any("v.matches('[A-Z]+') and v.size() >= 2" in b for b in bodies), bodies
+
+
+def test_o05_unsupported_facet_is_reported(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :Person a owl:Class .
+    :price a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range [
+        a rdfs:Datatype ; owl:onDatatype xsd:decimal ;
+        owl:withRestrictions ( [ xsd:totalDigits 5 ] ) ] .
+    """)
+    assert any(w.code == "DATATYPE_FACET_UNSUPPORTED" for w in result.warnings)
+
+
+def test_d17_data_one_of_strings_becomes_an_enumeration(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :Shirt a owl:Class .
+    :size a owl:DatatypeProperty ; rdfs:domain :Shirt ;
+        rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "S" "M" "L" ) ] .
+    """)
+    size = _attr(result, "Shirt", "size").type
+    assert {lit.name for lit in size.literals} == {"S", "M", "L"}
+
+
+def test_o04_data_one_of_typed_literals_restricts_the_value(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :Shirt a owl:Class .
+    :level a owl:DatatypeProperty ; rdfs:domain :Shirt ;
+        rdfs:range [ a rdfs:Datatype ; owl:oneOf ( 1 2 3 ) ] .
+    """)
+    level = _attr(result, "Shirt", "level").type
+    assert _attr(result, level.name, "value").type.name == "int"
+    assert any("v = 1 or v = 2 or v = 3" in b for b in _constraints(result, level.name))
+
+
+def test_d20_named_one_of_class_is_the_enumeration(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :Color a owl:Class ; owl:equivalentClass [ a owl:Class ; owl:oneOf ( :red :green ) ] .
+    :red a owl:NamedIndividual, :Color . :green a owl:NamedIndividual, :Color .
+    :Car a owl:Class .
+    :hasColor a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain :Car ; rdfs:range :Color .
+    """)
+    color = next(t for t in result.domain_model.types if t.name == "Color")
+    assert isinstance(color, Enumeration)
+    assert {lit.name for lit in color.literals} == {"red", "green"}
+    assert [t.name for t in result.domain_model.types].count("Color") == 1
+    has_color = _attr(result, "Car", "hasColor")
+    assert has_color.type is color and has_color.multiplicity.max == 1
+    assert not any(a.name == "hasColor" for a in result.domain_model.associations)
+
+
+def test_d20_one_of_class_with_other_axioms_stays_a_class(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :Pet a owl:Class .
+    :Sized a owl:Class ; owl:equivalentClass [ owl:oneOf ( :s1 ) ] ; rdfs:subClassOf :Pet .
+    :s1 a owl:NamedIndividual .
+    """)
+    assert isinstance(_class(result.domain_model, "Sized"), Class)
+    assert _generalizes_to(result.domain_model, "Sized", "Pet")
+    assert any(w.code == "ONEOF_CLASS_KEPT" for w in result.warnings)
+
+
+def test_d21_relational_one_of_links_every_individual(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :Star a owl:Class . :Planet a owl:Class ; owl:equivalentClass [ owl:oneOf ( :earth :mars ) ] .
+    :orbits a owl:ObjectProperty ; rdfs:domain :Planet ; rdfs:range :Star .
+    :sun a owl:NamedIndividual, :Star .
+    :earth a owl:NamedIndividual, :Planet ; :orbits :sun .
+    :mars a owl:NamedIndividual, :Planet ; :orbits :sun .
+    """)
+    aux = "_earth_mars_OneOf"
+    assert _generalizes_to(result.domain_model, "Planet", aux)
+    for role in ("earth", "mars"):
+        end = next(e for a in result.domain_model.associations for e in a.ends if e.name == role)
+        assert end.type.name == "Planet" and (end.multiplicity.min, end.multiplicity.max) == (1, 1)
+
+
+def test_d32_functional_and_inverse_functional_on_an_inverse_pair(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :A a owl:Class . :B a owl:Class .
+    :p a owl:ObjectProperty, owl:FunctionalProperty ; rdfs:domain :A ; rdfs:range :B ; owl:inverseOf :q .
+    :q a owl:ObjectProperty, owl:InverseFunctionalProperty ; rdfs:domain :B ; rdfs:range :A .
+    """)
+    assert _end(result, "p", "p").multiplicity.max == 1                     # p is functional
+    assert _end(result, "p", "q").multiplicity.max == 9999                  # nothing bounds q's side
+    assert any("c.q->includes(d)" in b for b in _constraints(result, "A"))  # O22 for q
+
+
+def test_d38_single_functional_key_is_unique_and_an_identifier(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :P a owl:Class ; owl:hasKey ( :ssn ) .
+    :ssn a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain :P ; rdfs:range xsd:string .
+    """)
+    assert any("P.allInstances()->isUnique(ssn)" in b for b in _constraints(result, "P"))
+    assert _attr(result, "P", "ssn").is_id is True
+
+
+def test_d38_compound_key_is_an_invariant_only(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :P a owl:Class ; owl:hasKey ( :ssn :passport ) .
+    :ssn a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain :P ; rdfs:range xsd:string .
+    :passport a owl:DatatypeProperty, owl:FunctionalProperty ; rdfs:domain :P ; rdfs:range xsd:string .
+    """)
+    assert any("a.ssn <> b.ssn or a.passport <> b.passport" in b for b in _constraints(result, "P"))
+    assert not _attr(result, "P", "ssn").is_id and not _attr(result, "P", "passport").is_id
+
+
+def test_o19_chain_of_an_unasserted_property_derives_it(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :P a owl:Class .
+    :hasParent a owl:ObjectProperty ; rdfs:domain :P ; rdfs:range :P .
+    :hasGrandparent a owl:ObjectProperty ; rdfs:domain :P ; rdfs:range :P ;
+        owl:propertyChainAxiom ( :hasParent :hasParent ) .
+    """)
+    bodies = _constraints(result, "P")
+    assert any("self.hasParent.hasParent->forAll(o | self.hasGrandparent->includes(o)) and "
+               "self.hasGrandparent->forAll(o | self.hasParent.hasParent->includes(o))" in b for b in bodies), bodies
+    assert _end(result, "hasGrandparent", "hasGrandparent").is_derived is True
+    assert _end(result, "hasParent", "hasParent").is_derived is False
+
+
+def test_o20_chain_of_an_asserted_property_only_implies_it(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :P a owl:Class .
+    :hasParent a owl:ObjectProperty ; rdfs:domain :P ; rdfs:range :P .
+    :hasUncle a owl:ObjectProperty ; rdfs:domain :P ; rdfs:range :P ;
+        owl:propertyChainAxiom ( :hasParent :hasParent ) .
+    :x a owl:NamedIndividual, :P ; :hasUncle :x .
+    """)
+    bodies = _constraints(result, "P")
+    assert any(b.endswith("self.hasParent.hasParent->forAll(o | self.hasUncle->includes(o))") for b in bodies), bodies
+    assert _end(result, "hasUncle", "hasUncle").is_derived is False
+
+
+def test_o21_all_disjoint_properties_is_every_pair(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :P a owl:Class .
+    :a1 a owl:ObjectProperty ; rdfs:domain :P ; rdfs:range :P .
+    :a2 a owl:ObjectProperty ; rdfs:domain :P ; rdfs:range :P .
+    :a3 a owl:ObjectProperty ; rdfs:domain :P ; rdfs:range :P .
+    [ a owl:AllDisjointProperties ; owl:members ( :a1 :a2 :a3 ) ] .
+    """)
+    bodies = " ".join(_constraints(result, "P"))
+    for pair in ("self.a1->forAll(o | self.a2->excludes(o))",
+                 "self.a1->forAll(o | self.a3->excludes(o))",
+                 "self.a2->forAll(o | self.a3->excludes(o))"):
+        assert pair in bodies
+
+
+def test_o27_union_of_sub_properties_derives_the_super_property(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :P a owl:Class .
+    :name a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range xsd:string .
+    :given a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range xsd:string ; rdfs:subPropertyOf :name .
+    :family a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range xsd:string ; rdfs:subPropertyOf :name .
+    """)
+    assert any("self.name->asSet() = self.family->asSet()->union(self.given->asSet())" in b
+               for b in _constraints(result, "P"))
+    assert _attr(result, "P", "name").is_derived is True
+
+
+def test_o27_single_sub_property_is_not_a_derivation(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :P a owl:Class .
+    :name a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range xsd:string .
+    :given a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range xsd:string ; rdfs:subPropertyOf :name .
+    """)
+    assert _attr(result, "P", "name").is_derived is False
+
+
+def test_o28_disjoint_data_properties(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :P a owl:Class .
+    :a a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range xsd:string .
+    :b a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range xsd:string ; owl:propertyDisjointWith :a .
+    """)
+    assert any("self.b->asSet()->intersection(self.a->asSet())->isEmpty()" in x
+               or "self.a->asSet()->intersection(self.b->asSet())->isEmpty()" in x
+               for x in _constraints(result, "P"))
+
+
+def test_exact_cardinality_zero_on_an_object_property_emits_is_empty(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :Pet a owl:Class . :Person a owl:Class .
+    :owns a owl:ObjectProperty ; rdfs:domain :Person ; rdfs:range :Pet .
+    :Free a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :owns ;
+        owl:cardinality "0"^^xsd:nonNegativeInteger ] .
+    """)
+    assert any("self.owns->isEmpty()" in c.expression for c in result.domain_model.constraints)

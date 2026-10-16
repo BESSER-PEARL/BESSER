@@ -19,6 +19,7 @@ from __future__ import annotations
 from rdflib import Namespace, URIRef, Literal
 from rdflib.namespace import RDF
 from rdflib.collection import Collection as RDFList
+from . import naming
 from besser.BUML.metamodel.kg.constants import (
     SH as SH_NS,
 )
@@ -26,13 +27,7 @@ from besser.BUML.metamodel.kg.constants import (
 SH = Namespace(SH_NS)
 
 
-def _regex_literal(s: str) -> str:
-    """OCL single-quoted string literal for a ``sh:pattern`` regex.
-
-    Backslashes are left literal (not doubled) so ``^\\d{9}$`` renders as
-    ``'^\\d{9}$'`` — regex fidelity matters more than OCL string-escape purity here.
-    """
-    return "'" + s.replace("'", "\\'").replace("\n", " ") + "'"
+_regex_literal = naming.regex_literal
 
 
 # SHACL rows with no OCL equivalent (see the note at the end of

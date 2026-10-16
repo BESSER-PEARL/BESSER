@@ -51,6 +51,7 @@ from besser.BUML.metamodel.kg.constants import (
     SH_TARGET_CLASS,
 )
 from rdflib import Literal, URIRef
+from rdflib.collection import Collection as RDFCollection
 from rdflib.namespace import OWL, RDF, RDFS
 
 from besser.BUML.metamodel.kg import (
@@ -63,6 +64,7 @@ from besser.BUML.metamodel.kg import (
     KGProperty,
     KGPropertyConstraint,
     KnowledgeGraph,
+    PropertyChainAxiom,
 )
 from besser.utilities.kg_to_owl import (
     DEFAULT_NAMESPACE,
@@ -176,6 +178,7 @@ def kg_to_rdf(
     _pass_a_raw_edges(g, edges, terms, default_namespace, warnings)
     _pass_a2_declarations(g, nodes, edges, terms, default_namespace, warnings)
     _pass_b_lists(g, nodes, edges, terms, default_namespace, warnings)
+    _pass_b2_property_chains(g, kg)
     indexes = _build_constraint_indexes(edges, terms)
     _pass_c_constraint_structure(g, nodes, terms, indexes, warnings)
     _pass_d_spec_backfill(g, nodes, terms, indexes, default_namespace, warnings)
@@ -369,6 +372,27 @@ def _pass_b_lists(g, nodes, edges, terms, default_ns, warnings) -> None:
         members = [terms[e.target.id] for e in group if terms.get(e.target.id) is not None]
         if members:
             g.add((subject, URIRef(predicate), emit_rdf_list(g, members)))
+
+
+def _pass_b2_property_chains(g, kg: KnowledgeGraph) -> None:
+    """Rebuild every ``owl:propertyChainAxiom`` from the typed axiom records.
+
+    Pass B can only see the flattened subject→member edges, and a KG holds one
+    edge per ``(subject, member, predicate)``: ``hasParent∘hasParent`` — the
+    textbook chain — would come back as the one-element ``(hasParent)``. The
+    axiom record keeps the chain in order, repeats included, so it wins.
+    """
+    for axiom in kg.axioms:
+        if not isinstance(axiom, PropertyChainAxiom):
+            continue
+        chain = [str(c) for c in axiom.chain_property_ids or []]
+        if not axiom.property_id or not chain:
+            continue
+        subject = URIRef(str(axiom.property_id))
+        for head in list(g.objects(subject, OWL.propertyChainAxiom)):
+            RDFCollection(g, head).clear()
+            g.remove((subject, OWL.propertyChainAxiom, head))
+        g.add((subject, OWL.propertyChainAxiom, emit_rdf_list(g, [URIRef(c) for c in chain])))
 
 
 def _member_key(node: KGNode) -> str:

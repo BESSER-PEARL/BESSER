@@ -553,3 +553,55 @@ def test_projection_is_semantically_isomorphic(tmp_path: Path, dataset: str):
     direct = _model_from_ttl(*sources)
     via_kg = _model_via_kg(*sources, tmp_path=tmp_path)
     assert _digest(via_kg) == _digest(direct)
+
+
+# ---------------------------------------------------------------------------
+# List-valued constructs that used to come out of the projection incomplete
+# ---------------------------------------------------------------------------
+
+
+_LIST_TTL = """
+@prefix : <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+:P a owl:Class .
+:c a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "S" "M" 3 ) ] .
+:hasParent a owl:ObjectProperty ; rdfs:domain :P ; rdfs:range :P .
+:hasGrandparent a owl:ObjectProperty ; rdfs:domain :P ; rdfs:range :P ;
+    owl:propertyChainAxiom ( :hasParent :hasParent ) .
+:a1 a owl:ObjectProperty . :a2 a owl:ObjectProperty .
+[ a owl:AllDisjointProperties ; owl:members ( :a1 :a2 ) ] .
+"""
+
+
+def _projected(tmp_path: Path) -> Graph:
+    graph, _ = kg_to_rdf(owl_file_to_knowledge_graph(_write_ttl(tmp_path, _LIST_TTL)))
+    return graph
+
+
+def test_data_range_one_of_keeps_its_literals(tmp_path: Path):
+    from rdflib.collection import Collection
+
+    graph = _projected(tmp_path)
+    ranges = [r for r in graph.objects(URIRef(EX + "c"), RDFS.range)]
+    members = [list(Collection(graph, graph.value(r, OWL.oneOf))) for r in ranges if graph.value(r, OWL.oneOf)]
+    assert len(members) == 1
+    assert sorted(str(m) for m in members[0]) == ["3", "M", "S"]
+
+
+def test_property_chain_keeps_a_repeated_property(tmp_path: Path):
+    from rdflib.collection import Collection
+
+    graph = _projected(tmp_path)
+    head = graph.value(URIRef(EX + "hasGrandparent"), OWL.propertyChainAxiom)
+    assert list(Collection(graph, head)) == [URIRef(EX + "hasParent"), URIRef(EX + "hasParent")]
+    assert len(list(graph.objects(URIRef(EX + "hasGrandparent"), OWL.propertyChainAxiom))) == 1
+
+
+def test_all_disjoint_properties_members_are_the_properties_themselves(tmp_path: Path):
+    from rdflib.collection import Collection
+
+    graph = _projected(tmp_path)
+    (axiom,) = list(graph.subjects(RDF.type, OWL.AllDisjointProperties))
+    assert sorted(Collection(graph, graph.value(axiom, OWL.members))) == [URIRef(EX + "a1"), URIRef(EX + "a2")]

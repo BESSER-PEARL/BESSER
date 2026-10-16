@@ -64,6 +64,8 @@ class PlannedAttribute:
     lower: int = 0
     upper: Upper = "*"
     uri: str | None = None
+    is_id: bool = False             # D38: single-property owl:hasKey
+    is_derived: bool = False        # O27: union of the sub-properties
 
 
 @dataclass
@@ -108,6 +110,7 @@ class PlannedAssociation:
     tgt_mult: tuple[int, Upper] = (0, "*")
     navigable_source: bool = False  # whether the reverse end is navigable
     uri: str | None = None
+    derived: bool = False           # O19: the target end is derived from a property chain
 
 
 @dataclass

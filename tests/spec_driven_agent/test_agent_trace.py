@@ -312,3 +312,30 @@ def test_model_ids_use_the_provider_prefix():
     assert at.normalize_model_id("anthropic", "anthropic/claude") == "anthropic/claude"
     assert at.normalize_model_id("free", "qwen-coder") == "qwen-coder"
     assert at.normalize_model_id("openai", "") is None
+
+
+def test_a_generator_rerun_does_not_take_over_the_models_files(tmp_path):
+    # Through ToolExecutor: a Phase 2 re-run writes into a folder that also
+    # holds a file the model added; only the generator's own output is its.
+    from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+
+    root = str(tmp_path)
+    executor = ToolExecutor(workspace=root)
+    out = executor._gen_dir("python")
+    _write(root, "python/classes.py", "class A:\n    pass\n")
+    executor._track_generated_files(out)
+
+    _write(root, "python/extra.py", "def helper():\n    return 1\n")   # the model's file
+    out = executor._gen_dir("python")                                 # re-run
+    _write(root, "python/classes.py", "class A:\n    x = 1\n")
+    files = executor._track_generated_files(out)
+
+    assert {f["path"] for f in files} == {"python/classes.py", "python/extra.py"}
+    assert "python/extra.py" not in executor._generator_files
+    assert "python/classes.py" in executor._generator_files
+    _, record = _record(root)
+    assert _ranges(record, "python/classes.py") == [(1, 2, "unknown", None)]
+    assert _ranges(record, "python/extra.py") == [(1, 2, "ai", "openai/gpt-4o")]
+    classes = next(f for f in record["files"] if f["path"] == "python/classes.py")
+    (related,) = classes["conversations"][0]["related"]
+    assert related["url"].startswith("urn:besser:generator:python")

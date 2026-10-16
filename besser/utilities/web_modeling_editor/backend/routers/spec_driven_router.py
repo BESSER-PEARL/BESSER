@@ -38,6 +38,7 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 
+from besser.spec_driven_agent.state.agent_trace import ATTRIBUTION_FILENAME
 from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_CANCEL_ABANDONED_RUNS,
@@ -1023,7 +1024,7 @@ async def push_spec_driven_to_github(
         ) as workdir:
             # ---- 3. Copy the stored tree, dropping build/dep dirs and
             # `.besser_*` internal files (checkpoint / snapshot). The
-            # recipe is the one internal file we KEEP: a repo imported
+            # recipe is one internal file we KEEP: a repo imported
             # back via continue-from-GitHub re-hydrates the seed's
             # generator name and run history from it — without it the
             # modify run loses the framework guard and gap analysis
@@ -1032,9 +1033,14 @@ async def push_spec_driven_to_github(
             copytree_no_links(
                 entry.temp_dir, workdir, [*_EXCLUDED_OUTPUT_DIRS, ".besser_*"],
             )
-            _recipe_src = os.path.join(entry.temp_dir, ".besser_recipe.json")
-            if os.path.isfile(_recipe_src) and is_plain_entry(_recipe_src):
-                shutil.copy2(_recipe_src, os.path.join(workdir, ".besser_recipe.json"))
+            # The same goes for the line attribution state: the next
+            # continue-from-GitHub run diffs the repo against it to tell
+            # lines a person edited in between from the AI's and the
+            # generator's. It holds line hashes only, never content.
+            for _internal in (".besser_recipe.json", ATTRIBUTION_FILENAME):
+                _src = os.path.join(entry.temp_dir, _internal)
+                if os.path.isfile(_src) and is_plain_entry(_src):
+                    shutil.copy2(_src, os.path.join(workdir, _internal))
             scrubbed = _scrub_secret_env_files(workdir)
             if scrubbed:
                 logger.info(

@@ -32,7 +32,7 @@ Upper = int | Literal["*"]
 
 @dataclass
 class PlannedInvariant:
-    """An OCL invariant/definition rendered as a PlantUML note."""
+    """An OCL invariant/definition, lowered to a B-UML ``Constraint`` by ``to_buml``."""
 
     context: str
     body: str

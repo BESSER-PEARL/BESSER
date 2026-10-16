@@ -11,7 +11,7 @@ restriction declares it there (``add_attribute``). Without that, the invariant
 the auxiliary class carries names a feature declared only on its subclasses, and
 OCL resolves ``self.<p>`` by walking a context's ancestors, never its subclasses.
 
-The resolver mutates the :class:`~owl2uml.model.UMLModel` owned by the
+The resolver mutates the ``ModelPlan`` owned by the
 ``Mapper`` it is bound to, via the mapper's ``ensure_*`` / ``add_*`` helpers.
 Aux classes are de-duplicated by content *signature*.
 ``min 1 hasPart`` restrictions collapse to one aux class that every subsuming

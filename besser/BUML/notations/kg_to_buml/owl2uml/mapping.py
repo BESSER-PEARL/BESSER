@@ -1,5 +1,5 @@
 """The transformation engine: applies rules D01-D41 and O01-O30 to build a
-:class:`~owl2uml.model.UMLModel` from a parsed OWL-2 graph.
+``ModelPlan`` from a parsed OWL-2 graph.
 
 The :class:`Mapper` both orchestrates the phases (schema -> classes ->
 properties -> restrictions -> individuals) and exposes the ``ensure_*`` /
@@ -838,7 +838,7 @@ class Mapper:
         domain-less property falls back to it (see ``_map_data_properties`` /
         ``_map_object_properties``), so the property does exist in the model.
         Whether the context can actually *navigate* it is a different question,
-        answered against the finished model by ``to_buml._reachable_features``:
+        answered against the finished model by ``to_buml._parses_against_model``:
         Thing is only an ancestor if the user accepted the ``attach_to_thing``
         recommendation for it (see ``_complete_thing_hierarchy``).
         """

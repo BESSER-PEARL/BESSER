@@ -1,4 +1,4 @@
-"""Lower the intermediate :class:`UMLModel` onto a BUML ``DomainModel``.
+"""Lower the intermediate ``ModelPlan`` onto a BUML ``DomainModel``.
 
 The paper's rules are expressed against plain UML, which is more permissive
 than BUML's metamodel. This module is where every BUML-specific concession

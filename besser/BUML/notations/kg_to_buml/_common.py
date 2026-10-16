@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from besser.BUML.metamodel.kg import KGEdge, KGNode, KnowledgeGraph
 from besser.BUML.metamodel.kg.ids import short_digest
@@ -200,7 +200,7 @@ def build_indexes(kg: KnowledgeGraph) -> GraphIndexes:
     return idx
 
 
-def sorted_by_id(items):
+def sorted_by_id(items: Iterable[Any]) -> List[Any]:
     """Stable sort by ``.id`` for deterministic output."""
     return sorted(items, key=lambda x: x.id)
 
@@ -258,6 +258,12 @@ def add_warning(
     node_id: Optional[str] = None,
     edge_id: Optional[str] = None,
 ) -> None:
+    """Append a :class:`KGConversionWarning` to ``warnings``.
+
+    ``code`` is the stable machine-readable identifier the editor keys on,
+    ``message`` the human text; ``node_id`` / ``edge_id`` point at the KG element
+    concerned, when there is one.
+    """
     warnings.append(KGConversionWarning(code=code, message=message, node_id=node_id, edge_id=edge_id))
 
 

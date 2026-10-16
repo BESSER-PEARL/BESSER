@@ -79,6 +79,9 @@ def test_user_diagram_comments_do_not_leak_between_requests():
 
     # The second result carries nothing from the first request.
     assert "first request comment" not in _descriptions(second)
+    # Each comment is kept on its own request's object model, not dropped.
+    assert first.metadata.description == "first request comment"
+    assert second.metadata.description == "second request comment"
 
     # The shared reference model is untouched.
     assert _metadata_snapshot(user_reference_domain_model) == before

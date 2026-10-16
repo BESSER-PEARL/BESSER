@@ -12,6 +12,9 @@ from besser.BUML.metamodel.object.builder import ObjectBuilder
 from besser.BUML.metamodel.object import Link, LinkEnd
 from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import parse_attribute
+from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
+    domain_model as user_reference_domain_model,
+)
 from datetime import datetime, timedelta
 
 
@@ -91,12 +94,6 @@ def _is_shared_domain_model(domain_model) -> bool:
     The user reference domain model is a module-level global, so per-request
     processing must never mutate it.
     """
-    try:
-        from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
-            domain_model as user_reference_domain_model,
-        )
-    except ImportError:  # pragma: no cover - the constants module ships with the backend
-        return False
     return domain_model is user_reference_domain_model
 
 
@@ -445,25 +442,22 @@ def process_object_diagram(json_data, domain_model):
     # Comments linked to objects are recorded on the object's class. A class of a
     # shared domain model (the module-level user reference model behind
     # UserDiagrams) is never annotated: mutating it would leak this request's
-    # comments into every later and concurrent request. (Objects cannot carry
+    # comments into every later and concurrent request, so such a comment is
+    # kept on this request's object model instead. (Objects cannot carry
     # metadata themselves: their attribute access is mapped onto slots/links.)
     annotate_classifiers = not _is_shared_domain_model(domain_model)
     for comment_id, comment_text in comment_elements.items():
-        if comment_id in comment_links:
-            # Comment is linked to specific objects
-            for linked_element_id in comment_links[comment_id]:
-                obj = objects_by_id.get(linked_element_id)
-                if not obj:
-                    continue
-                if annotate_classifiers:
-                    _append_description(obj.classifier, comment_text)
-                else:
-                    logger.debug(
-                        "Comment on object '%s' not attached to shared class '%s'",
-                        obj.name_, obj.classifier.name,
-                    )
-        else:
-            # Comment is not linked, add to object model metadata
+        linked_objects = [
+            objects_by_id[element_id]
+            for element_id in comment_links.get(comment_id, ())
+            if element_id in objects_by_id
+        ]
+        if linked_objects and annotate_classifiers:
+            for obj in linked_objects:
+                _append_description(obj.classifier, comment_text)
+        elif comment_id not in comment_links or linked_objects:
+            # Unlinked, or linked to objects of a shared model: keep it once
+            # on the object model.
             _append_description(object_model, comment_text)
 
     return object_model

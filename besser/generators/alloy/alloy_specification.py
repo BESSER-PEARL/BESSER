@@ -72,6 +72,7 @@ class AlloySpecification:
         self._signatures: list[Signature] = []
         self._signatures_by_label: dict[str, Signature] = {}
         self._enumerations: dict[str, Enumeration] = {}
+        self._strings: dict[str, str] = {}  # value -> label of its constant
         self._functions: list[Function] = []
         self._facts: list[Fact] = []
         self._predicates: list[Predicate] = []
@@ -104,6 +105,25 @@ class AlloySpecification:
         self._enumerations[label] = enumeration
         self._declare(Signature(self, [label], is_abstract=True))
         self._declare(Signature(self, enumeration.value_names(), multiplicity="one", extends=label))
+
+    def add_string(self, value: str) -> str:
+        """Declares the string constant *value*, once, and returns its Alloy name.
+
+        The constant is a singleton ``Str`` of the strings library, ``Str<n>``, whose characters
+        are fixed by a fact.  Characters other than the library's lowercase letters are declared
+        as singleton ``Char`` signatures ``c<code>``.
+        """
+        if value not in self._strings:
+            label = f"Str{len(self._strings)}"
+            self._strings[value] = label
+            self._declare(Signature(self, [label], multiplicity="one", extends="Str"))
+            data = f"{self.signature_name(label)}.{LibraryFactory().create('Str').field_name('Str', 'data')}"
+            characters = [self._character(character) for character in value]
+            if characters:
+                self.add_fact(f"{data} = {' + '.join(f'{i}->{c}' for i, c in enumerate(characters))}", ["Str"])
+            else:
+                self.add_fact(f"no {data}", ["Str"])
+        return self.signature_name(self._strings[value])
 
     def add_field(self, signature: str, label: str, type: str, multiplicity: str = "") -> None:
         """Adds the field *label* of type *type* (a label) to the declared *signature*."""
@@ -221,6 +241,15 @@ class AlloySpecification:
                 raise ValueError(f"Signature '{label}' is already declared in '{self.name}'")
             self._signatures_by_label[label] = signature
         self._signatures.append(signature)
+
+    def _character(self, character: str) -> str:
+        """The Alloy name of the ``Char`` of *character*, declared unless the strings library does."""
+        if character in ascii_lowercase:
+            return character
+        label = f"c{ord(character)}"
+        if label not in self._signatures_by_label:
+            self._declare(Signature(self, [label], multiplicity="one", extends="Char"))
+        return self.signature_name(label)
 
     def _field(self, signature: str, label: str) -> "Field":
         found = self.signature(signature).find_field(label)
@@ -410,15 +439,27 @@ class DateLibrary(AlloySpecification):
 
 
 class StringsLibrary(AlloySpecification):
-    """Strings: sequences of lowercase characters."""
+    """Strings: sequences of lowercase characters, with their length, concatenation, substrings
+    and (in)equality."""
 
     def __init__(self):
         super().__init__("strings")
+        self._opens.append("util/integer")
         self.add_signature("Char", is_abstract=True)
         for character in ascii_lowercase:
             self.add_signature(character, multiplicity="one", extends="Char")
         self.add_signature("Str")
         self.add_field("Str", "data", "Char", "seq")
+        data = self.field_name("Str", "data")
+        self.add_function("len", {"s": "Str"}, "Int", f"#(s.{data})")
+        self.add_function("concat", {"s": "Str", "m": "Str"}, "Str",
+                          f"{{ res: Str | res.{data} = s.{data}.append[m.{data}] }}")
+        self.add_function("substring", {"s": "Str", "i": "Int", "j": "Int"}, "Str",
+                          f"{{ res: Str | res.{data} = s.{data}.subseq[i,j] }}")
+        strings = {"a": "Str", "b": "Str"}
+        self.add_predicate("strEq", ["eq[len[a], len[b]]", f"all i: a.{data}.inds | a.{data}[i] = b.{data}[i]"],
+                           strings)
+        self.add_predicate("strNe", ["not strEq[a,b]"], strings)
 
 
 class LibraryFactory:

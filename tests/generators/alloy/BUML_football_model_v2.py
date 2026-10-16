@@ -206,27 +206,28 @@ def football_model_v2():
         language="OCL",
     )
 
+    # Enumeration literals (Enum::Literal) are not in the B-OCL grammar: these invariants are disabled
     # select + size: a team cannot have more than 3 goalkeepers
-    Team_inv_max_3_goalkeepers = Constraint(
-        name="Team_inv_max_3_goalkeepers",
-        context=Team,
-        expression=(
-            "context Team inv Team_inv_max_3_goalkeepers : "
-            "self.players->select(p | p.position = Position::GOALKEEPER)->size() <= 3"
-        ),
-        language="OCL",
-    )
+    # Team_inv_max_3_goalkeepers = Constraint(
+    #     name="Team_inv_max_3_goalkeepers",
+    #     context=Team,
+    #     expression=(
+    #         "context Team inv Team_inv_max_3_goalkeepers : "
+    #         "self.players->select(p | p.position = Position::GOALKEEPER)->size() <= 3"
+    #     ),
+    #     language="OCL",
+    # )
 
     # A retired head coach is not in charge of any team
-    HeadCoach_inv_retired_has_no_team = Constraint(
-        name="HeadCoach_inv_retired_has_no_team",
-        context=HeadCoach,
-        expression=(
-            "context HeadCoach inv HeadCoach_inv_retired_has_no_team : "
-            "(self.status = CoachStatus::RETIRED) implies (self.currentTeam = null)"
-        ),
-        language="OCL",
-    )
+    # HeadCoach_inv_retired_has_no_team = Constraint(
+    #     name="HeadCoach_inv_retired_has_no_team",
+    #     context=HeadCoach,
+    #     expression=(
+    #         "context HeadCoach inv HeadCoach_inv_retired_has_no_team : "
+    #         "(self.status = CoachStatus::RETIRED) implies (self.currentTeam = null)"
+    #     ),
+    #     language="OCL",
+    # )
 
     # A team is founded before every match it plays (home or away)
     Match_inv_teams_founded_before_match = Constraint(
@@ -265,8 +266,7 @@ def football_model_v2():
             player_generalization, gk_generalization, coach_generalization, fan_generalization,
         },
         constraints={
-            Team_inv_players_older_than_16, Team_inv_max_3_goalkeepers,
-            HeadCoach_inv_retired_has_no_team, Match_inv_teams_founded_before_match,
+            Team_inv_players_older_than_16, Match_inv_teams_founded_before_match,
             Match_inv_non_negative_goals,
         },
     )

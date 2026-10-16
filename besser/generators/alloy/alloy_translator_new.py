@@ -22,19 +22,7 @@ from besser.BUML.metamodel.structural import (
     Type,
 )
 from besser.generators.alloy.alloy_specification import AlloySpecification
-from besser.generators.alloy.ocl_translator import OclToAlloy
-
-# Alloy types of B-UML primitive types; the others (``time``, ``timedelta`` and ``any``) are not supported.
-_PRIMITIVE_TYPES = {
-    "int": "Int",
-    "integer": "Int",
-    "float": "Int",
-    "bool": "Bool",
-    "str": "Str",
-    "string": "Str",
-    "date": "Date",
-    "datetime": "Date",
-}
+from besser.generators.alloy.ocl_translator_new import Literals, OclToAlloy
 
 
 class BumlToAlloy:
@@ -48,6 +36,7 @@ class BumlToAlloy:
     """
 
     def __init__(self, model: DomainModel, scope: int):
+        self.model = model
         self.scope = scope
         self.classes = sorted(model.get_classes(), key=lambda cls: cls.name)
         self.enumerations = sorted(model.get_enumerations(), key=lambda enum: enum.name)
@@ -73,9 +62,9 @@ class BumlToAlloy:
         for association in self.associations:
             self._add_multiplicity_facts(spec, association)
             self._add_inverse_fact(spec, association)
-        self._add_invariants(spec)
+        literals = self._add_invariants(spec)
         self._add_instance_predicate(spec)
-        self._set_run_command(spec)
+        self._set_run_command(spec, literals)
         return spec
 
     # ------------------------------------------------------------------
@@ -138,11 +127,12 @@ class BumlToAlloy:
             to_second = spec.field_name(first.type.name, second.name)
             spec.add_fact(f"{to_first} = ~{to_second}")
 
-    def _add_invariants(self, spec: AlloySpecification) -> None:
-        """Adds a fact per OCL invariant of the model."""
-        ocl = OclToAlloy(spec)
+    def _add_invariants(self, spec: AlloySpecification) -> Literals:
+        """Adds a fact per OCL invariant of the model; returns the literals of the invariants."""
+        ocl = OclToAlloy(spec, self.model)
         for constraint in self.constraints:
-            ocl.add_invariant(constraint.context.name, constraint.expression)
+            ocl.add_invariant(constraint)
+        return ocl.literals
 
     def _add_instance_predicate(self, spec: AlloySpecification) -> None:
         """Adds the ``instance_model`` predicate, requiring an instance of every signature."""
@@ -150,19 +140,20 @@ class BumlToAlloy:
             "instance_model", [f"some {spec.signature_name(label)}" for label in self._instance_signatures()]
         )
 
-    def _set_run_command(self, spec: AlloySpecification) -> None:
+    def _set_run_command(self, spec: AlloySpecification, literals: Literals) -> None:
         """Sets the ``run`` command of ``instance_model``.
 
-        Strings are sequences of characters, so ``seq`` bounds their length.  Without OCL
-        string literals that length is the scope, and the integer bitwidth must be able to
-        index it.
+        Strings are sequences of characters, so ``seq`` bounds their length: the scope, or the
+        length of the longest OCL string literal when longer.  The integer bitwidth must be
+        able to index it and to hold the largest OCL integer literal.
         """
         scopes = {label: self.scope for label in self._instance_signatures()}
-        if "Str" in self.attribute_types:
-            maxseq = self.scope
-            scopes.update({"Int": max(self.scope, maxseq.bit_length() + 1), "Str": self.scope, "seq": maxseq})
-        elif "Int" in self.attribute_types:
-            scopes["Int"] = self.scope
+        bitwidth = max(self.scope, literals.largest_integer().bit_length() + 1)
+        if "Str" in self.attribute_types or literals.strings():
+            maxseq = max(self.scope, literals.longest_string())
+            scopes.update({"Int": max(bitwidth, maxseq.bit_length() + 1), "Str": self.scope, "seq": maxseq})
+        elif "Int" in self.attribute_types or literals.integers():
+            scopes["Int"] = bitwidth
         spec.set_run("instance_model", scopes)
 
     # ------------------------------------------------------------------
@@ -196,3 +187,16 @@ class BumlToAlloy:
         """The two ends of *association*, ordered by name."""
         first, second = sorted(association.ends, key=lambda end: end.name)
         return first, second
+
+
+# Alloy types of B-UML primitive types; the others (``time``, ``timedelta`` and ``any``) are not supported.
+_PRIMITIVE_TYPES = {
+    "int": "Int",
+    "integer": "Int",
+    "float": "Int",
+    "bool": "Bool",
+    "str": "Str",
+    "string": "Str",
+    "date": "Date",
+    "datetime": "Date",
+}

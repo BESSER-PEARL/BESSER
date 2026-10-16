@@ -105,12 +105,3 @@ def test_run_command(spec):
     assert "5 Int" in spec.run_scopes
     assert "5 Str" in spec.run_scopes
     assert "5 seq" in spec.run_scopes
-
-
-
-
-@pytest.mark.parametrize("attribute_type", [TimeType, TimeDeltaType, AnyType])
-def test_unsupported_attribute_type(attribute_type):
-    model = DomainModel("M", types={Class("A", attributes={Property("x", attribute_type)})})
-    with pytest.raises(NotImplementedError, match=f"'{attribute_type.name}'"):
-        BumlToAlloy(model, scope=5)

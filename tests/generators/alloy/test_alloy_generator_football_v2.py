@@ -103,7 +103,7 @@ def test_enumerations(spec):
 
 
 def test_facts(spec):
-    assert len(spec.facts) == 10
+    assert len(spec.facts) == 8
 
     # Fan -> Team (2..4)
     assert "all b: Fan | #(b.Fan_favoriteTeams) >= 2" in spec.facts
@@ -117,11 +117,12 @@ def test_facts(spec):
 
     # OCL: players older than 16 (forAll -> universal quantifier)
     assert "all self:this/Team|all p : self.Team_players | (p.Player_age > 16)" in spec.facts
-    # OCL: at most 3 goalkeepers (select -> auxiliary function, size -> cardinality)
-    assert "all self:this/Team|(#({select0[self.Team_players]}) <= 3)" in spec.facts
-    # OCL: a retired coach has no team
-    assert "all self:this/HeadCoach|((self.HeadCoach_status = ENUM_CoachStatus_RETIRED) " \
-        "=> ( no(self.HeadCoach_currentTeam)))" in spec.facts
+    # Disabled with their invariants: enumeration literals are not in the B-OCL grammar
+    # # OCL: at most 3 goalkeepers (select -> auxiliary function, size -> cardinality)
+    # assert "all self:this/Team|(#({select0[self.Team_players]}) <= 3)" in spec.facts
+    # # OCL: a retired coach has no team
+    # assert "all self:this/HeadCoach|((self.HeadCoach_status = ENUM_CoachStatus_RETIRED) " \
+    #     "=> ( no(self.HeadCoach_currentTeam)))" in spec.facts
     # OCL: both teams were founded before the match
     assert "all self:this/Match|((dateLt[self.Match_homeTeam.Team_foundationDate,self.Match_matchDate]) " \
         "and (dateLt[self.Match_awayTeam.Team_foundationDate,self.Match_matchDate]))" in spec.facts

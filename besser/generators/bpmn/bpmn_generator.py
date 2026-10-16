@@ -13,6 +13,7 @@ See ``docs/source/generators/bpmn.rst`` for the design and the known
 limitations (multi-process ``dataStoreReference``, sub-process artifact hoisting).
 """
 
+import math
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -163,6 +164,127 @@ def _emit_agentic_extension(host_el, obj) -> None:
         ET.SubElement(ext_el, _qname("agentic", "governance")).text = gov
 
 # ---------------------------------------------------------------------------
+# Edge geometry (BPMN DI waypoints)
+# ---------------------------------------------------------------------------
+
+# How far (px) an edge end may sit from its shape's bounds and still count as
+# attached. Editor ports sit on the bounds; a little slack absorbs rounding.
+_ATTACH_TOLERANCE = 5.0
+
+
+def _fmt_coord(value) -> str:
+    """Render a coordinate without a spurious ``.0`` and with at most 2 decimals."""
+    try:
+        number = round(float(value), 2)
+    except (TypeError, ValueError, OverflowError):
+        return "0"
+    if math.isnan(number) or math.isinf(number):
+        return "0"
+    return str(int(number)) if number.is_integer() else str(number)
+
+
+def _to_float(value) -> Optional[float]:
+    """``float(value)`` for finite numbers, ``None`` otherwise (``None`` counts as 0)."""
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _bounds_of(obj) -> Optional[tuple]:
+    """``(x, y, width, height)`` of ``obj``'s on-canvas bounds, or ``None``."""
+    bounds = (getattr(obj, "layout", None) or {}).get("bounds")
+    if not isinstance(bounds, dict):
+        return None
+    values = tuple(_to_float(bounds.get(key)) for key in ("x", "y", "width", "height"))
+    return None if any(v is None for v in values) else values
+
+
+def _path_points(path, dx: float = 0.0, dy: float = 0.0) -> Optional[list]:
+    """Convert a WME ``path`` (list of ``{"x", "y"}``) to ``(x, y)`` tuples shifted by
+    ``(dx, dy)``; ``None`` when the path has fewer than two usable points."""
+    if not isinstance(path, list) or len(path) < 2:
+        return None
+    points = []
+    for point in path:
+        if not isinstance(point, dict):
+            return None
+        x, y = _to_float(point.get("x")), _to_float(point.get("y"))
+        if x is None or y is None:
+            return None
+        points.append((x + dx, y + dy))
+    return points
+
+
+def _touches(point: tuple, bounds: tuple) -> bool:
+    """Whether ``point`` lies on, inside, or within ``_ATTACH_TOLERANCE`` of ``bounds``."""
+    x, y, w, h = bounds
+    px, py = point
+    dist_x = max(x - px, 0.0, px - (x + w))
+    dist_y = max(y - py, 0.0, py - (y + h))
+    return dist_x <= _ATTACH_TOLERANCE and dist_y <= _ATTACH_TOLERANCE
+
+
+def _route_between(source: tuple, target: tuple) -> list:
+    """Orthogonal route from ``source``'s boundary to ``target``'s boundary.
+
+    The dominant axis between the two centres picks the sides (right/left or
+    bottom/top); a non-aligned pair gets a two-bend elbow through the midpoint,
+    like the editor's own layouter draws.
+    """
+    sx, sy, sw, sh = source
+    tx, ty, tw, th = target
+    scx, scy = sx + sw / 2, sy + sh / 2
+    tcx, tcy = tx + tw / 2, ty + th / 2
+    if abs(tcx - scx) >= abs(tcy - scy):
+        start = (sx + sw, scy) if tcx >= scx else (sx, scy)
+        end = (tx, tcy) if tcx >= scx else (tx + tw, tcy)
+        if start[1] == end[1]:
+            return [start, end]
+        mid_x = (start[0] + end[0]) / 2
+        return [start, (mid_x, start[1]), (mid_x, end[1]), end]
+    start = (scx, sy + sh) if tcy >= scy else (scx, sy)
+    end = (tcx, ty) if tcy >= scy else (tcx, ty + th)
+    if start[0] == end[0]:
+        return [start, end]
+    mid_y = (start[1] + end[1]) / 2
+    return [start, (start[0], mid_y), (end[0], mid_y), end]
+
+
+def _edge_waypoints(flow) -> Optional[list]:
+    """Absolute DI waypoints for ``flow``, or ``None`` when nothing can be placed.
+
+    The Web Modeling Editor stores a relationship's ``path`` *relative to the
+    relationship's own* ``bounds``, so the stored points are shifted by
+    ``bounds.x/y`` first. The result is kept only when it starts on the source
+    shape and ends on the target shape. Otherwise -- placeholder geometry (the
+    modeling assistant creates flows with a dummy ``(0,0)->(100,0)`` path that
+    only the editor's layouter replaces), a stale path, or no path at all -- the
+    edge is re-routed between the two shapes so BPMN tools (Camunda Modeler,
+    bpmn-js) draw it connected instead of at a fixed spot on the canvas.
+    """
+    layout = getattr(flow, "layout", None) or {}
+    rel_bounds = layout.get("bounds") if isinstance(layout.get("bounds"), dict) else {}
+    off_x = _to_float(rel_bounds.get("x")) or 0.0
+    off_y = _to_float(rel_bounds.get("y")) or 0.0
+    candidates = [_path_points(layout.get("path"), off_x, off_y)]
+    if off_x or off_y:
+        # Tolerate producers that already stored absolute points.
+        candidates.append(_path_points(layout.get("path")))
+
+    source_bounds = _bounds_of(flow.source)
+    target_bounds = _bounds_of(flow.target)
+    if source_bounds is None or target_bounds is None:
+        # No shapes to attach to: keep whatever path there is (best effort).
+        return candidates[0]
+    for points in candidates:
+        if points and _touches(points[0], source_bounds) and _touches(points[-1], target_bounds):
+            return points
+    return _route_between(source_bounds, target_bounds)
+
+
+# ---------------------------------------------------------------------------
 # BPMNGenerator
 # ---------------------------------------------------------------------------
 
@@ -183,9 +305,15 @@ class BPMNGenerator(GeneratorInterface):
         # repeated calls on the same instance produce identical output.
         self._id_for: dict = {}
         self._used_ids: set = set()
-        # Helper id counters for non-metamodel ids (LaneSet, DataObjectRef,
-        # DataStoreRef, BPMNDiagram, BPMNPlane, Shape, Edge). Per-call.
+        # Helper id counters for non-metamodel ids (LaneSet, BPMNDiagram,
+        # BPMNPlane, Shape, Edge). Per-call.
         self._fresh_counter: dict = {}
+        # DataStore -> id of its definitions-level ``<bpmn:dataStore>``. The
+        # metamodel object's own id (``_id_for_obj``) goes to the visual
+        # ``<bpmn:dataStoreReference>``, which is what DI shapes and data
+        # associations must point at (bpmn-js / Camunda Modeler only render
+        # references). Per-call.
+        self._data_store_def_id: dict = {}
 
     # --- public API ---------------------------------------------------------
 
@@ -199,6 +327,7 @@ class BPMNGenerator(GeneratorInterface):
         self._id_for = {}
         self._used_ids = set()
         self._fresh_counter = {}
+        self._data_store_def_id = {}
 
         output_dir = self.build_generation_dir()
         output_path = os.path.join(output_dir, self._file_name)
@@ -215,12 +344,17 @@ class BPMNGenerator(GeneratorInterface):
             },
         )
 
-        # 1. Root-level data stores (BPMN 2.0.2 §10.3).
+        # 1. Root-level data stores (BPMN 2.0.2 §10.3). The DataStore's own id
+        #    is reserved for its <bpmn:dataStoreReference> (the visual element);
+        #    the definition gets a derived ``DataStore_<ref-id>`` id, mirroring
+        #    the Web Modeling Editor's own exporter.
         for ds in sort_by_timestamp(self.model.data_stores):
+            ref_id = self._id_for_obj(ds, "DataStoreReference")
+            def_id = self._derived_id(f"DataStore_{ref_id}")
+            self._data_store_def_id[ds] = def_id
             ET.SubElement(
                 definitions, _qname("bpmn", "dataStore"),
-                attrib={"id": self._id_for_obj(ds, "DataStore"),
-                        "name": ds.name or ""},
+                attrib={"id": def_id, "name": ds.name or ""},
             )
 
         # 2. One <bpmn:process> per Process.
@@ -271,6 +405,16 @@ class BPMNGenerator(GeneratorInterface):
         self._id_for[obj] = candidate
         return candidate
 
+    def _derived_id(self, candidate: str) -> str:
+        """Reserve ``candidate`` (suffixed ``_N`` on collision) as an XML-only id."""
+        base = candidate
+        suffix = 1
+        while candidate in self._used_ids:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        self._used_ids.add(candidate)
+        return candidate
+
     def _fresh_id(self, prefix: str) -> str:
         """Mint a deterministic id for an XML-only construct (LaneSet, Shape, …)."""
         n = self._fresh_counter.get(prefix, 0) + 1
@@ -319,25 +463,33 @@ class BPMNGenerator(GeneratorInterface):
             self._emit_sequence_flow(process_el, flow)
 
         # 2d. Data store references — emit only in the first process (§11.1).
+        #     The reference carries the DataStore's own id so DI shapes and
+        #     data associations resolve to the visual element.
         if is_first_process:
             for ds in sort_by_timestamp(self.model.data_stores):
                 ET.SubElement(
                     process_el, _qname("bpmn", "dataStoreReference"),
-                    attrib={"id": self._fresh_id("DataStoreRef"),
+                    attrib={"id": self._id_for_obj(ds, "DataStoreReference"),
                             "name": ds.name or "",
-                            "dataStoreRef": self._id_for_obj(ds, "DataStore")},
+                            "dataStoreRef": self._data_store_def_id[ds]},
                 )
 
-        # 2e. Data objects + their reference siblings (per spec).
+        # 2e. Data objects + their reference siblings (per spec). As for data
+        #     stores, the metamodel object's id goes to the
+        #     <bpmn:dataObjectReference> -- the element bpmn-js / Camunda
+        #     Modeler draw -- and the semantic <bpmn:dataObject> gets a derived
+        #     ``DataObject_<ref-id>`` id. A DI shape or data association that
+        #     pointed at the bare <bpmn:dataObject> would not be rendered.
         for do in sort_by_timestamp(process.data_objects):
-            do_id = self._id_for_obj(do, "DataObject")
+            ref_id = self._id_for_obj(do, "DataObjectReference")
+            do_id = self._derived_id(f"DataObject_{ref_id}")
             ET.SubElement(
                 process_el, _qname("bpmn", "dataObject"),
                 attrib={"id": do_id},
             )
             ET.SubElement(
                 process_el, _qname("bpmn", "dataObjectReference"),
-                attrib={"id": self._fresh_id("DataObjectRef"),
+                attrib={"id": ref_id,
                         "name": do.name or "",
                         "dataObjectRef": do_id},
             )
@@ -574,21 +726,21 @@ class BPMNGenerator(GeneratorInterface):
                         "height": str(bounds.get("height", 0))},
             )
 
-        # One BPMNEdge per connecting object with a path.
+        # One BPMNEdge per connecting object whose route is known: its stored
+        # path, or one routed between its endpoints' shapes.
         for flow in sort_by_timestamp(self.model.all_connecting_objects()):
-            path = (getattr(flow, "layout", None) or {}).get("path")
-            if not path:
+            waypoints = _edge_waypoints(flow)
+            if not waypoints:
                 continue
             edge = ET.SubElement(
                 plane, _qname("bpmndi", "BPMNEdge"),
                 attrib={"id": self._fresh_id("Edge"),
                         "bpmnElement": self._id_for_obj(flow, type(flow).__name__)},
             )
-            for point in path:
+            for x, y in waypoints:
                 ET.SubElement(
                     edge, _qname("di", "waypoint"),
-                    attrib={"x": str(point.get("x", 0)),
-                            "y": str(point.get("y", 0))},
+                    attrib={"x": _fmt_coord(x), "y": _fmt_coord(y)},
                 )
 
     def _shape_iter(self):

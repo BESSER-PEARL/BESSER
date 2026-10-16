@@ -36,8 +36,8 @@ from besser.utilities.buml_code_builder.common import (
     bind_association_end,
     bind_data_source,
     bind_domain_field,
+    attribute_var_name,
     build_data_binding,
-    safe_class_name,
 )
 from besser.BUML.metamodel.gui.dashboard import (
     AgentComponent,
@@ -62,7 +62,11 @@ from besser.BUML.metamodel.gui.events_actions import (
 )
 from besser.BUML.metamodel.gui.style import Layout, LayoutType, PositionType, Styling
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    SAFE_DATETIME_MODULE,
     safe_load_buml,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+    fresh_primitive_types,
 )
 
 # Namespace root used to decide which objects a GUI BUML section may name.
@@ -208,9 +212,8 @@ def _bind_domain_aliases(namespace: Dict[str, Any]) -> None:
             attributes = get_attrs()
         except Exception:  # pragma: no cover - defensive
             continue
-        class_name = safe_class_name(domain_class.name)
         for attribute in attributes:
-            namespace.setdefault(f"{class_name}_{attribute.name}", attribute)
+            namespace.setdefault(attribute_var_name(domain_class.name, attribute.name), attribute)
 
 
 def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Optional[GUIModel]:
@@ -244,7 +247,11 @@ def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Option
         # safe loader as every other uploaded section.
         context_names: Dict[str, Any] = {
             **_structural_namespace(),
+            # Not the process-wide StringType & co., which an upload could rename.
+            **fresh_primitive_types(),
             "UNLIMITED_MAX_MULTIPLICITY": _structural_module.UNLIMITED_MAX_MULTIPLICITY,
+            # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
+            "datetime": SAFE_DATETIME_MODULE,
             "set": set,
             "list": list,
             "dict": dict,

@@ -366,16 +366,34 @@ def get_api_root():
     }
 
 
-# Main application entry point
-if __name__ == "__main__":
+def run(host: str = "0.0.0.0", port: int = 9000, log_level: str = "info") -> None:
+    """Serve ``app`` with uvicorn until interrupted."""
     import uvicorn
     # Single process on purpose: the agent simulator router keeps its rate
     # limiter, per-actor session cap and session-ownership map in memory.
     # Adding workers would give each worker its own copy of that state.
     uvicorn.run(
         app,
-        host="0.0.0.0",
-        port=9000,
-        log_level="info"
+        host=host,
+        port=port,
+        log_level=log_level,
     )
+
+
+def main(argv: Optional[list] = None) -> None:
+    """Parse ``--host`` / ``--port`` / ``--log-level`` and run the server.
+
+    The ``besser-wme-backend`` console script goes through
+    :func:`besser.utilities.web_modeling_editor.backend.cli.main`, which adds
+    a readable message when the backend dependencies are not installed.
+    """
+    from besser.utilities.web_modeling_editor.backend.cli import build_parser
+
+    args = build_parser().parse_args(argv)
+    run(host=args.host, port=args.port, log_level=args.log_level)
+
+
+# Main application entry point
+if __name__ == "__main__":
+    main()
 #The editor is available at: https://editor.besser-pearl.org

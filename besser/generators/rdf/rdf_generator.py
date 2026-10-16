@@ -1,7 +1,10 @@
+import logging
 import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+
+logger = logging.getLogger(__name__)
 
 
 class RDFGenerator(GeneratorInterface):
@@ -45,4 +48,4 @@ class RDFGenerator(GeneratorInterface):
         with open(file_path, mode="w") as f:
             generated_code = template.render(model=self.model, types=self.TYPES)
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.info("Code generated in the location: %s", file_path)

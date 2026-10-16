@@ -24,6 +24,7 @@ from besser.generators.terraform import TerraformGenerator
 from besser.generators.testgen import TestCaseGenerator
 from besser.generators.bpmn import BPMNGenerator
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    AGENT_OUTPUT_FILENAME,
     BPMN_DIAGRAM_TYPE,
     DEPLOYMENT_DIAGRAM_TYPE,
 )
@@ -52,6 +53,14 @@ class GeneratorInfo(NamedTuple):
     # project endpoint to dispatch to the right diagram without branching
     # on generator-name string literals.
     required_diagram_type: Optional[str] = None
+    # Name of the downloaded file (``Content-Disposition``). ``None`` falls
+    # back to ``<generator_type>_output<file_extension>``; see
+    # ``get_filename_for_generator``.
+    download_filename: Optional[str] = None
+    # Single-file generators only: ship the file under the name the generator
+    # chose instead of ``download_filename`` (e.g. Supabase's migration-style
+    # ``<timestamp>_<slug>.sql``, whose name is meaningful).
+    keep_generated_filename: bool = False
 
 
 # Generator configuration mapping
@@ -59,6 +68,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # Object-oriented generators (class diagram based)
     "python": GeneratorInfo(
         generator_class=PythonGenerator,
+        download_filename="classes.py",
         output_type="file",
         file_extension=".py",
         category="object_oriented",
@@ -66,6 +76,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     "java": GeneratorInfo(
         generator_class=JavaGenerator,
+        download_filename="java_classes.zip",
         output_type="zip",
         file_extension=".zip",
         category="object_oriented",
@@ -73,6 +84,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     "pydantic": GeneratorInfo(
         generator_class=PydanticGenerator,
+        download_filename="pydantic_classes.py",
         output_type="file",
         file_extension=".py",
         category="object_oriented",
@@ -81,6 +93,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
 
     "test_case": GeneratorInfo(
         generator_class=TestCaseGenerator,
+        download_filename="test_hypothesis.py",
         output_type="file",
         file_extension=".py",
         category="object_oriented",
@@ -90,6 +103,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # Web framework generators (class diagram based)
     "django": GeneratorInfo(
         generator_class=DjangoGenerator,
+        download_filename="django_project.zip",
         output_type="zip",
         file_extension=".zip",
         category="web_framework",
@@ -97,6 +111,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     "spring": GeneratorInfo(
         generator_class=SpringBackendGenerator,
+        download_filename="spring_boot_project.zip",
         output_type="zip",
         file_extension=".zip",
         category="web_framework",
@@ -104,6 +119,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     "backend": GeneratorInfo(
         generator_class=BackendGenerator,
+        download_filename="fastapi_backend.zip",
         output_type="zip",
         file_extension=".zip",
         category="web_framework",
@@ -111,6 +127,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     "web_app": GeneratorInfo(
         generator_class=WebAppGenerator,
+        download_filename="web_app.zip",
         output_type="zip",
         file_extension=".zip",
         category="web_framework",
@@ -120,6 +137,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # Database generators (class diagram based)
     "sqlalchemy": GeneratorInfo(
         generator_class=SQLAlchemyGenerator,
+        download_filename="sql_alchemy.py",
         output_type="file",
         file_extension=".py",
         category="database",
@@ -127,6 +145,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     "sql": GeneratorInfo(
         generator_class=SQLGenerator,
+        download_filename="tables.sql",
         output_type="file",
         file_extension=".sql",
         category="database",
@@ -134,6 +153,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     "supabase": GeneratorInfo(
         generator_class=SupabaseGenerator,
+        keep_generated_filename=True,
         output_type="file",
         file_extension=".sql",
         category="database",
@@ -145,6 +165,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # There is no separate "smartdata" generator entry; the mode is passed via config.
     "jsonschema": GeneratorInfo(
         generator_class=JSONSchemaGenerator,
+        download_filename="json_schema.json",
         output_type="file",  # file for regular mode, zip for smart_data mode
         file_extension=".json",
         category="data_format",
@@ -152,6 +173,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     "jsonobject": GeneratorInfo(
         generator_class=JSONObjectGenerator,
+        download_filename="object_model.json",
         output_type="file",
         file_extension=".json",
         category="object_model",
@@ -161,6 +183,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # AI/Agent generators (agent diagram based)
     "agent": GeneratorInfo(
         generator_class=BAFGenerator,
+        download_filename=AGENT_OUTPUT_FILENAME,
         output_type="zip",
         file_extension=".zip",
         category="ai_agent",
@@ -170,6 +193,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # Quantum generators
     "qiskit": GeneratorInfo(
         generator_class=QiskitGenerator,
+        download_filename="qiskit_circuit.py",
         output_type="file",
         file_extension=".py",
         category="quantum",
@@ -180,6 +204,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # RDF generator (class diagram based)
     "rdf": GeneratorInfo(
         generator_class=RDFGenerator,
+        download_filename="vocabulary.ttl",
         output_type="file",
         file_extension=".ttl",
         category="data_format",
@@ -189,6 +214,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # REST API generator (class diagram based)
     "rest_api": GeneratorInfo(
         generator_class=RESTAPIGenerator,
+        download_filename="rest_api.zip",
         output_type="zip",
         file_extension=".zip",
         category="web_framework",
@@ -198,6 +224,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # React generator (requires class diagram + GUI model)
     "react": GeneratorInfo(
         generator_class=ReactGenerator,
+        download_filename="react_app.zip",
         output_type="zip",
         file_extension=".zip",
         category="frontend",
@@ -207,6 +234,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # Flutter generator (requires class diagram + GUI model)
     "flutter": GeneratorInfo(
         generator_class=FlutterGenerator,
+        download_filename="flutter_app.zip",
         output_type="zip",
         file_extension=".zip",
         category="frontend",
@@ -216,6 +244,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # Terraform generator (deployment model based)
     "terraform": GeneratorInfo(
         generator_class=TerraformGenerator,
+        download_filename="terraform.zip",
         output_type="zip",
         file_extension=".zip",
         category="deployment",
@@ -225,6 +254,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # BPMN generator (vendor-neutral BPMN 2.0 XML; reads BPMNDiagram)
     "bpmn": GeneratorInfo(
         generator_class=BPMNGenerator,
+        download_filename="bpmn_diagram.bpmn",
         output_type="file",
         file_extension=".bpmn",
         category="business_process",
@@ -236,6 +266,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # docker-compose.yml plus one baked BAF build context per linked agent.
     "docker_compose": GeneratorInfo(
         generator_class=DockerComposeGenerator,
+        download_filename="docker_compose.zip",
         output_type="zip",
         file_extension=".zip",
         category="deployment",
@@ -249,6 +280,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
 if PytorchGenerator is not None:
     SUPPORTED_GENERATORS["pytorch"] = GeneratorInfo(
         generator_class=PytorchGenerator,
+        download_filename="pytorch_nn.py",
         output_type="file",
         file_extension=".py",
         category="neural_network",
@@ -259,6 +291,7 @@ if PytorchGenerator is not None:
 if TFGenerator is not None:
     SUPPORTED_GENERATORS["tensorflow"] = GeneratorInfo(
         generator_class=TFGenerator,
+        download_filename="tf_nn.py",
         output_type="file",
         file_extension=".py",
         category="neural_network",
@@ -292,46 +325,16 @@ def get_generator_info(generator_type: str) -> GeneratorInfo | None:
 
 
 def get_filename_for_generator(generator_type: str, base_name: str = "output") -> str:
-    """Get the appropriate filename for a generator."""
+    """Return the download filename for a generator.
+
+    Uses ``GeneratorInfo.download_filename`` when set, otherwise
+    ``<generator_type>_output<file_extension>``; an unknown generator gets
+    ``<base_name>.txt``.
+    """
     info = get_generator_info(generator_type)
     if not info:
         return f"{base_name}.txt"
-    if generator_type == "python":
-        return "classes.py"
-    elif generator_type == "test_case":
-        return "test_hypothesis.py"
-    elif generator_type == "pydantic":
-        return "pydantic_classes.py"
-    elif generator_type == "sqlalchemy":
-        return "sql_alchemy.py"
-    elif generator_type == "sql":
-        return "tables.sql"
-    elif generator_type == "jsonschema":
-        return "json_schema.json"
-    elif generator_type == "jsonobject":
-        return "object_model.json"
-    elif generator_type == "qiskit":
-        return "qiskit_circuit.py"
-    elif generator_type == "rdf":
-        return "vocabulary.ttl"
-    elif generator_type == "rest_api":
-        return "rest_api.zip"
-    elif generator_type == "react":
-        return "react_app.zip"
-    elif generator_type == "flutter":
-        return "flutter_app.zip"
-    elif generator_type == "terraform":
-        return "terraform.zip"
-    elif generator_type == "pytorch":
-        return "pytorch_nn.py"
-    elif generator_type == "tensorflow":
-        return "tf_nn.py"
-    elif generator_type == "bpmn":
-        return "bpmn_diagram.bpmn"
-    elif generator_type == "docker_compose":
-        return "docker_compose.zip"
-    else:
-        return f"{generator_type}_output{info.file_extension}"
+    return info.download_filename or f"{generator_type}_output{info.file_extension}"
 
 
 def is_generator_supported(generator_type: str) -> bool:

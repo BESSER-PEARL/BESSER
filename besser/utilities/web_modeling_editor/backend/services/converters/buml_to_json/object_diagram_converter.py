@@ -16,17 +16,67 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
 )
 
 
-def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, Any]:
+#: Element types per diagram type: (object element, attribute element).
+#: A UserDiagram is an object diagram over the user reference domain model; the
+#: editor gives its objects and criteria their own element types, which
+#: ``json_to_buml.object_diagram_processor`` reads back the same way.
+_ELEMENT_TYPES = {
+    "ObjectDiagram": ("ObjectName", "ObjectAttribute"),
+    "UserDiagram": ("UserModelName", "UserModelAttribute"),
+}
+
+
+def _attribute_value(node: ast.AST):
+    """Return the value an ``.attributes(name=<node>)`` keyword carries, or None.
+
+    Mirrors what ``object_model_to_code`` writes: literals (including negative
+    numbers), enumeration literals as ``Enum.LITERAL`` (read back as the literal
+    name) and datetimes as ``datetime.datetime.fromisoformat("...")`` (read
+    back as the ISO string).
+    """
+    try:
+        return ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        pass
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        return node.attr
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "fromisoformat"
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Constant)
+    ):
+        return node.args[0].value
+    return None
+
+
+def object_buml_to_json(
+    content: str,
+    domain_json: Dict[str, Any],
+    diagram_type: str = "ObjectDiagram",
+) -> Dict[str, Any]:
     """
     Convert an object model Python file content to JSON format matching the frontend structure.
 
     Args:
         content: Object model Python code as string
         domain_json: Reference domain model JSON for class mapping
+        diagram_type: ``"ObjectDiagram"`` (default) or ``"UserDiagram"``. A
+            UserDiagram uses ``UserModelName`` / ``UserModelAttribute``
+            elements (equality criteria, ``attributeOperator`` ``"=="``) and
+            names each object's class in ``className``; it carries no
+            ``referenceDiagramData``, since the editor supplies the user
+            reference model itself.
 
     Returns:
         Dictionary representing the object diagram in JSON format
     """
+    if diagram_type not in _ELEMENT_TYPES:
+        raise ValueError(f"Unsupported object diagram type: {diagram_type}")
+    is_user_diagram = diagram_type == "UserDiagram"
+    object_element_type, attribute_element_type = _ELEMENT_TYPES[diagram_type]
+
     elements = {}
     relationships = {}
 
@@ -129,8 +179,9 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                             # Reverse to get the correct order
                             call_chain.reverse()
 
-                            # Check if this matches the fluent pattern
-                            if len(call_chain) >= 3 and call_chain[-1] == "build":
+                            # Check if this matches the fluent pattern; an object
+                            # without slots is just ClassName("ObjectName").build()
+                            if len(call_chain) >= 2 and call_chain[-1] == "build":
                                 class_name = call_chain[0]
                                 if class_name in class_name_to_id:
                                     # Extract object name and attributes
@@ -153,8 +204,9 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                                         if isinstance(attr_call.func, ast.Attribute) and attr_call.func.attr == "attributes":
                                             # Extract attributes from keyword arguments
                                             for kw in attr_call.keywords:
-                                                if isinstance(kw.value, ast.Constant):
-                                                    attributes[kw.arg] = kw.value.value
+                                                value = _attribute_value(kw.value)
+                                                if value is not None:
+                                                    attributes[kw.arg] = value
                                             break
                                         attr_call = attr_call.func.value if isinstance(attr_call.func, ast.Attribute) else None
                                         if not attr_call:
@@ -201,9 +253,11 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                                         )
 
         # Create object elements in JSON format
+        object_var_to_id = {}  # object variable name -> element ID
         for obj_name, obj_info in objects_by_name.items():
             x, y = get_position()
             object_id = str(uuid.uuid4())
+            object_var_to_id[obj_name] = object_id
 
             # Create object attribute elements
             object_attribute_ids = []
@@ -229,7 +283,7 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                 attr_element = {
                     "id": attr_id,
                     "name": f"{attr_name} = {formatted_value}",
-                    "type": "ObjectAttribute",
+                    "type": attribute_element_type,
                     "owner": object_id,
                     "bounds": {
                         "x": x + 0.5,
@@ -240,6 +294,10 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                     "attributeId": class_attr_id,
                     "attributeType": attr_type,
                 }
+                if is_user_diagram:
+                    # A BUML slot is an equality criterion; the comparator of a
+                    # non-equality criterion ("age < 18") is not in the metamodel.
+                    attr_element["attributeOperator"] = "=="
                 if class_attr_info and class_attr_info.get("defaultValue") is not None:
                     attr_element["defaultValue"] = class_attr_info["defaultValue"]
                 elements[attr_id] = attr_element
@@ -248,10 +306,10 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
             # Calculate object height based on attributes
             object_height = max(70, 40 + len(object_attribute_ids) * 30)
 
-            elements[object_id] = {
+            object_element = {
                 "id": object_id,
                 "name": obj_info["instance_name"],
-                "type": "ObjectName",
+                "type": object_element_type,
                 "owner": None,
                 "bounds": {
                     "x": x,
@@ -263,6 +321,13 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                 "methods": [],
                 "classId": class_id
             }
+            if is_user_diagram:
+                # The editor resolves user-model classes from its own copy of
+                # the user metamodel, whose class IDs differ from the ones
+                # generated here; the class name is the stable key.
+                object_element["classId"] = None
+                object_element["className"] = obj_info["class_name"]
+            elements[object_id] = object_element
 
         # Look for object links/relationships
         association_id_map = {}
@@ -274,68 +339,66 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                     association_id_map[f"{source_role}-{target_role}"] = rel_id
 
         for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                # Look for assignments like: obj1.relationship = obj2
-                for target in node.targets:
-                    if isinstance(target, ast.Attribute):
-                        obj_name = target.value.id if isinstance(target.value, ast.Name) else None
-                        relationship_name = target.attr
+            if not isinstance(node, ast.Assign):
+                continue
+            # Look for assignments like: obj1.end = obj2 (or {obj2, obj3} for a
+            # to-many end, as object_model_to_code writes them)
+            if isinstance(node.value, ast.Name):
+                target_vars = [node.value.id]
+            elif isinstance(node.value, ast.Set):
+                target_vars = [elt.id for elt in node.value.elts if isinstance(elt, ast.Name)]
+            else:
+                continue
+            for target in node.targets:
+                if not isinstance(target, ast.Attribute):
+                    continue
+                obj_name = target.value.id if isinstance(target.value, ast.Name) else None
+                relationship_name = target.attr
+                source_id = object_var_to_id.get(obj_name)
+                if not source_id:
+                    continue
 
-                        if obj_name in objects_by_name:
-                            # Get the target object
-                            if isinstance(node.value, ast.Name) and node.value.id in objects_by_name:
-                                target_obj = node.value.id
+                # Find corresponding association ID
+                assoc_id = None
+                for key, aid in association_id_map.items():
+                    if relationship_name in key:
+                        assoc_id = aid
+                        break
 
-                                # Create a link relationship
-                                rel_id = str(uuid.uuid4())
-
-                                # Find the object IDs
-                                source_id = None
-                                target_id = None
-
-                                for elem_id, elem in elements.items():
-                                    if elem["type"] == "ObjectName" and elem["name"] == objects_by_name[obj_name]["instance_name"]:
-                                        source_id = elem_id
-                                    if elem["type"] == "ObjectName" and elem["name"] == objects_by_name[target_obj]["instance_name"]:
-                                        target_id = elem_id
-
-                                if source_id and target_id:
-                                    # Find corresponding association ID
-                                    assoc_id = None
-                                    for key, aid in association_id_map.items():
-                                        if relationship_name in key:
-                                            assoc_id = aid
-                                            break
-
-                                    relationships[rel_id] = {
-                                        "id": rel_id,
-                                        "name": f"{relationship_name}",
-                                        "type": "ObjectLink",
-                                        "owner": None,
-                                        "bounds": {
-                                            "x": -260,
-                                            "y": -315,
-                                            "width": 300,
-                                            "height": 80
-                                        },
-                                        "path": [
-                                            {"x": 0, "y": 80},
-                                            {"x": 40, "y": 80},
-                                            {"x": 40, "y": 0},
-                                            {"x": 300, "y": 0},
-                                            {"x": 300, "y": 65}
-                                        ],
-                                        "source": {
-                                            "direction": "Right",
-                                            "element": source_id
-                                        },
-                                        "target": {
-                                            "direction": "Topleft",
-                                            "element": target_id
-                                        },
-                                        "isManuallyLayouted": False,
-                                        "associationId": assoc_id
-                                    }
+                for target_obj in target_vars:
+                    target_id = object_var_to_id.get(target_obj)
+                    if not target_id:
+                        continue
+                    rel_id = str(uuid.uuid4())
+                    relationships[rel_id] = {
+                        "id": rel_id,
+                        "name": f"{relationship_name}",
+                        "type": "ObjectLink",
+                        "owner": None,
+                        "bounds": {
+                            "x": -260,
+                            "y": -315,
+                            "width": 300,
+                            "height": 80
+                        },
+                        "path": [
+                            {"x": 0, "y": 80},
+                            {"x": 40, "y": 80},
+                            {"x": 40, "y": 0},
+                            {"x": 300, "y": 0},
+                            {"x": 300, "y": 65}
+                        ],
+                        "source": {
+                            "direction": "Right",
+                            "element": source_id
+                        },
+                        "target": {
+                            "direction": "Topleft",
+                            "element": target_id
+                        },
+                        "isManuallyLayouted": False,
+                        "associationId": assoc_id
+                    }
 
         # Position for comments
         comment_x = -970
@@ -360,14 +423,6 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
             comment_y += 130
 
         # 2. Object comments (linked to objects)
-        object_var_to_id = {}  # Map object variable names to their element IDs
-        for obj_name, obj_info in objects_by_name.items():
-            # Find the object ID for this object
-            for elem_id, elem in elements.items():
-                if elem.get("type") == "ObjectName" and elem.get("name") == obj_info["instance_name"]:
-                    object_var_to_id[obj_name] = elem_id
-                    break
-
         for obj_var, comment_text in object_comments.items():
             if obj_var in object_var_to_id:
                 comment_id = str(uuid.uuid4())
@@ -439,16 +494,18 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
 
                 comment_y += 130
 
-        return {
+        result = {
             "version": "3.0.0",
-            "type": "ObjectDiagram",
+            "type": diagram_type,
             "size": default_size,
             "interactive": {"elements": {}, "relationships": {}},
             "elements": elements,
             "relationships": relationships,
             "assessments": {},
-            "referenceDiagramData": reference_diagram_json
         }
+        if not is_user_diagram:
+            result["referenceDiagramData"] = reference_diagram_json
+        return result
 
     except Exception as e:
         logger.error("Error parsing object BUML content: %s", e, exc_info=True)

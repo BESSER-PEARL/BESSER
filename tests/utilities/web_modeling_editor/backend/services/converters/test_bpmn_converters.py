@@ -165,6 +165,26 @@ def subprocess_json():
     return _envelope(elements, relationships, title="Subprocess")
 
 
+@pytest.fixture
+def data_elements_json():
+    """Start -> Task -> End, with a data object read by the task (data input) and a
+    data store written by it (data output) -- the shape of issue #627's request."""
+    elements = {
+        "s1": _node("s1", "BPMNStartEvent", "Cell production started", eventType="default"),
+        "t1": _node("t1", "BPMNTask", "Stack electrodes", taskType="default", marker="none"),
+        "e1": _node("e1", "BPMNEndEvent", "Cell ready", eventType="default"),
+        "d1": _node("d1", "BPMNDataObject", "Electrode sheets"),
+        "ds1": _node("ds1", "BPMNDataStore", "MES"),
+    }
+    relationships = {
+        "f1": _flow("f1", "s1", "t1"),
+        "f2": _flow("f2", "t1", "e1"),
+        "a1": _flow("a1", "d1", "t1", flow_type="data association"),
+        "a2": _flow("a2", "t1", "ds1", flow_type="data association"),
+    }
+    return _envelope(elements, relationships, title="Data elements")
+
+
 # ---------------------------------------------------------------------------
 # 1. process_bpmn_diagram — JSON → BUML
 # ---------------------------------------------------------------------------
@@ -227,6 +247,14 @@ class TestProcessBpmnDiagram:
         assert sub in outer.flow_nodes
         # The inner sequence flow is in the subprocess, not in the outer process.
         assert all(f.source.container is sub for f in sub.sequence_flows)
+
+    def test_data_elements_and_associations(self, data_elements_json):
+        model = process_bpmn_diagram(data_elements_json)
+        (process,) = model.processes
+        assert {d.name for d in process.data_objects} == {"Electrode sheets"}
+        assert {d.name for d in model.data_stores} == {"MES"}
+        links = sorted((da.source.name, da.target.name) for da in process.data_associations)
+        assert links == [("Electrode sheets", "Stack electrodes"), ("Stack electrodes", "MES")]
 
     def test_dangling_endpoint_logs_and_skips(self, caplog):
         elements = {"t1": _node("t1", "BPMNTask", "A", taskType="default", marker="none")}
@@ -350,7 +378,7 @@ class TestRoundTripIdentity:
     @pytest.mark.parametrize(
         "fixture_name",
         ["poolless_start_task_end_json", "two_pool_collaboration_json",
-         "gateway_with_default_json", "subprocess_json"],
+         "gateway_with_default_json", "subprocess_json", "data_elements_json"],
     )
     def test_load_bearing_fields_preserved(self, request, fixture_name):
         json_in = request.getfixturevalue(fixture_name)
@@ -499,7 +527,7 @@ class TestBpmnToJsonWrapper:
     @pytest.mark.parametrize(
         "fixture_name",
         ["poolless_start_task_end_json", "two_pool_collaboration_json",
-         "gateway_with_default_json", "subprocess_json"],
+         "gateway_with_default_json", "subprocess_json", "data_elements_json"],
     )
     def test_full_round_trip_via_builder(self, request, fixture_name):
         # JSON → BUML model → emitted .py → exec → BPMNModel → JSON.
@@ -519,6 +547,25 @@ class TestBpmnToJsonWrapper:
         in_el_no_id = sorted(t[1:] for t in in_el)
         out_el_no_id = sorted(t[1:] for t in out_el)
         assert in_el_no_id == out_el_no_id
+
+    def test_data_elements_survive_code_round_trip(self, data_elements_json):
+        # Regression: the builder emitted model-level data stores AFTER the
+        # processes, so a data association targeting a data store raised
+        # NameError when the generated code was executed.
+        model = process_bpmn_diagram(data_elements_json)
+        json_out = bpmn_buml_to_json(bpmn_model_to_code(model))
+
+        names_by_type = sorted((e["type"], e["name"]) for e in json_out["elements"].values())
+        assert ("BPMNDataObject", "Electrode sheets") in names_by_type
+        assert ("BPMNDataStore", "MES") in names_by_type
+        name_of = {eid: e["name"] for eid, e in json_out["elements"].items()}
+        data_links = sorted(
+            (name_of[r["source"]["element"]], name_of[r["target"]["element"]])
+            for r in json_out["relationships"].values()
+            if r["flowType"] == "data association"
+        )
+        assert data_links == [("Electrode sheets", "Stack electrodes"),
+                              ("Stack electrodes", "MES")]
 
     def test_exec_failure_raises_conversion_error(self):
         # A NameError is one of the documented failure modes the wrapper catches

@@ -598,35 +598,6 @@ class GuiSerializationMixin:
             binding = getattr(element, "data_binding", None)
             domain_concept = getattr(binding, "domain_concept", None) if binding else None
             if domain_concept:
-                attributes = list(domain_concept.all_attributes())
-                attributes = sort_by_timestamp(attributes) if attributes else []
-                for attr in attributes:
-                    if is_server_owned_attribute(attr):
-                        continue
-                    field_type = getattr(attr, "type", None)
-                    column_dict = {
-                        "column_type": "field",
-                        "field": attr.name,
-                        "label": attr.name,
-                        "type": "str",
-                        "required": False,
-                        "defaultValue": getattr(attr, "default_value", None),
-                    }
-
-                    if isinstance(field_type, Enumeration):
-                        column_dict["type"] = "enum"
-                        column_dict["options"] = sorted([literal.name for literal in field_type.literals])
-                    elif field_type and getattr(field_type, "name", None):
-                        column_dict["type"] = field_type.name
-
-                    is_optional = getattr(attr, "is_optional", False)
-                    if not is_optional:
-                        multiplicity = getattr(attr, "multiplicity", None)
-                        if multiplicity and getattr(multiplicity, "min", 0) > 0:
-                            column_dict["required"] = True
-
-                    form_columns.append(column_dict)
-
                 # Display fields the user configured on the table's lookup columns:
                 # the dialog's selects should show the same values as the table.
                 configured_lookup_fields = {
@@ -634,75 +605,7 @@ class GuiSerializationMixin:
                     for c in columns
                     if c.get("column_type") == "lookup" and c.get("path") and c.get("field")
                 }
-
-                is_association_row = isinstance(domain_concept, AssociationClass)
-                ends = list(
-                    domain_concept.association.ends if is_association_row
-                    else domain_concept.all_association_ends()
-                )
-                ends = sort_by_timestamp(ends) if ends else []
-                domain_model = getattr(self, "model", None)
-                fkeys = get_foreign_keys(domain_model) if domain_model is not None else {}
-                link_associations = set(self._association_class_index())
-                for end in ends:
-                    if not is_association_row and hasattr(end, "is_navigable") and not end.is_navigable:
-                        continue
-                    # An end the backend's Create schema has no field for (the
-                    # non-owning side of a 1:1) would be sent and silently dropped.
-                    if not is_association_row and not create_schema_accepts_end(end, fkeys, link_associations):
-                        continue
-
-                    target = getattr(end, "type", None)
-                    target_attrs = []
-                    if target and hasattr(target, "all_attributes"):
-                        target_attrs = sort_by_timestamp(list(target.all_attributes()))
-                    lookup_field = (
-                        configured_lookup_fields.get(end.name)
-                        or self._select_display_field(target_attrs)
-                    )
-                    # The identifying attribute of the target class: option values,
-                    # payload ids and edit prefill key on it, while lookup_field
-                    # stays the human-readable label source.
-                    target_field = next(
-                        (a.name for a in target_attrs if getattr(a, "is_id", False)), "id"
-                    )
-                    target_attribute = next(
-                        (attr for attr in target_attrs if attr.name == target_field), None
-                    )
-                    target_type = getattr(getattr(target_attribute, "type", None), "name", "int")
-
-                    max_mult = getattr(getattr(end, "multiplicity", None), "max", None)
-                    # One association-class row always selects exactly one entity
-                    # at each end, irrespective of the relationship multiplicity.
-                    is_list = not is_association_row and (
-                        max_mult == "*" or (isinstance(max_mult, int) and max_mult > 1)
-                    )
-
-                    column_dict = {
-                        "column_type": "lookup",
-                        "path": end.name,
-                        "field": end.name,
-                        "lookup_field": lookup_field,
-                        "target_field": target_field,
-                        "target_type": target_type,
-                        "entity": getattr(target, "name", "") if target else "",
-                        "type": "list" if is_list else "str",
-                        "required": False,
-                    }
-
-                    multiplicity = getattr(end, "multiplicity", None)
-                    if is_association_row or multiplicity and getattr(multiplicity, "min", 0) > 0:
-                        column_dict["required"] = True
-
-                    # List ends whose association is materialized by an association class
-                    # carry the association class attributes so the create/edit form can
-                    # collect them per selected target.
-                    if is_list:
-                        association_class_meta = self._association_class_metadata(end)
-                        if association_class_meta:
-                            column_dict["association_class"] = association_class_meta
-
-                    form_columns.append(column_dict)
+                form_columns = self._table_form_columns(domain_concept, configured_lookup_fields)
 
             if form_columns:
                 node["chart"]["formColumns"] = form_columns
@@ -789,6 +692,185 @@ class GuiSerializationMixin:
             node["data_binding"] = binding_data
 
         return self._clean_dict(node)
+
+    def _table_form_columns(
+        self,
+        domain_concept: Any,
+        configured_lookup_fields: Optional[Dict[str, str]] = None,
+        with_nested: bool = True,
+        skip_end: Any = None,
+    ) -> List[Dict[str, Any]]:
+        """Columns of a table's create/edit form: every attribute and association
+        end the backend ``<Class>Create`` schema accepts.
+
+        ``skip_end`` leaves one association end out (the back-reference of a
+        nested form, filled in from the parent record); ``with_nested=False``
+        stops nested-creation metadata from recursing into a nested form.
+        """
+        configured_lookup_fields = configured_lookup_fields or {}
+        form_columns: List[Dict[str, Any]] = []
+        attributes = list(domain_concept.all_attributes())
+        attributes = sort_by_timestamp(attributes) if attributes else []
+        for attr in attributes:
+            if is_server_owned_attribute(attr):
+                continue
+            field_type = getattr(attr, "type", None)
+            column_dict = {
+                "column_type": "field",
+                "field": attr.name,
+                "label": attr.name,
+                "type": "str",
+                "required": False,
+                "defaultValue": getattr(attr, "default_value", None),
+            }
+
+            if isinstance(field_type, Enumeration):
+                column_dict["type"] = "enum"
+                column_dict["options"] = sorted([literal.name for literal in field_type.literals])
+            elif field_type and getattr(field_type, "name", None):
+                column_dict["type"] = field_type.name
+
+            is_optional = getattr(attr, "is_optional", False)
+            if not is_optional:
+                multiplicity = getattr(attr, "multiplicity", None)
+                if multiplicity and getattr(multiplicity, "min", 0) > 0:
+                    column_dict["required"] = True
+
+            form_columns.append(column_dict)
+
+        is_association_row = isinstance(domain_concept, AssociationClass)
+        ends = list(
+            domain_concept.association.ends if is_association_row
+            else domain_concept.all_association_ends()
+        )
+        ends = sort_by_timestamp(ends) if ends else []
+        domain_model = getattr(self, "model", None)
+        fkeys = get_foreign_keys(domain_model) if domain_model is not None else {}
+        link_associations = set(self._association_class_index())
+        for end in ends:
+            if end is skip_end:
+                continue
+            if not is_association_row and hasattr(end, "is_navigable") and not end.is_navigable:
+                continue
+            # An end the backend's Create schema has no field for (the
+            # non-owning side of a 1:1) would be sent and silently dropped.
+            if not is_association_row and not create_schema_accepts_end(end, fkeys, link_associations):
+                continue
+
+            target = getattr(end, "type", None)
+            target_attrs = []
+            if target and hasattr(target, "all_attributes"):
+                target_attrs = sort_by_timestamp(list(target.all_attributes()))
+            lookup_field = (
+                configured_lookup_fields.get(end.name)
+                or self._select_display_field(target_attrs)
+            )
+            # The identifying attribute of the target class: option values,
+            # payload ids and edit prefill key on it, while lookup_field
+            # stays the human-readable label source.
+            target_field = next(
+                (a.name for a in target_attrs if getattr(a, "is_id", False)), "id"
+            )
+            target_attribute = next(
+                (attr for attr in target_attrs if attr.name == target_field), None
+            )
+            target_type = getattr(getattr(target_attribute, "type", None), "name", "int")
+
+            max_mult = getattr(getattr(end, "multiplicity", None), "max", None)
+            # One association-class row always selects exactly one entity
+            # at each end, irrespective of the relationship multiplicity.
+            is_list = not is_association_row and (
+                max_mult == "*" or (isinstance(max_mult, int) and max_mult > 1)
+            )
+
+            column_dict = {
+                "column_type": "lookup",
+                "path": end.name,
+                "field": end.name,
+                "lookup_field": lookup_field,
+                "target_field": target_field,
+                "target_type": target_type,
+                "entity": getattr(target, "name", "") if target else "",
+                "type": "list" if is_list else "str",
+                "required": False,
+            }
+
+            multiplicity = getattr(end, "multiplicity", None)
+            if is_association_row or multiplicity and getattr(multiplicity, "min", 0) > 0:
+                column_dict["required"] = True
+
+            # List ends whose association is materialized by an association class
+            # carry the association class attributes so the create/edit form can
+            # collect them per selected target.
+            if is_list:
+                association_class_meta = self._association_class_metadata(end)
+                if association_class_meta:
+                    column_dict["association_class"] = association_class_meta
+                elif with_nested and not is_association_row:
+                    nested = self._nested_create_metadata(end, fkeys, link_associations, domain_concept)
+                    if nested:
+                        column_dict["nested_create"] = nested
+
+            form_columns.append(column_dict)
+        return form_columns
+
+    def _nested_create_metadata(self, end: Any, fkeys: Dict[str, List[str]],
+                                link_associations: set,
+                                owner: Any = None) -> Optional[Dict[str, Any]]:
+        """Nested-creation metadata for the to-many ``end`` of a table's class.
+
+        ``owner`` is the table's class. It may be a subclass of the class that
+        declares the association (which inherits ``end``): the parent record
+        is then created through the subclass's endpoint, so its response key
+        and key field are the subclass's. The back-reference keeps the name of
+        the association end, the field of the child's Create schema; with
+        joined-table inheritance the subclass row's key is also the key of its
+        row in the declaring class's table, which the foreign key targets.
+
+        The parts of a composition (and, likewise, the children of a 1:N
+        association whose back-reference is mandatory) cannot be picked from
+        existing records: each existing one already belongs to another parent.
+        The create form therefore lets the user fill them in alongside the
+        parent. The generated backend creates them through their own endpoint
+        once the parent exists, with the back-reference set to the parent's
+        key, so this is only offered when that endpoint can do so: the child
+        holds the foreign key, its Create schema has the back-reference field,
+        and it is a concrete class. Returns ``None`` otherwise.
+        """
+        association = getattr(end, "owner", None)
+        ends = list(getattr(association, "ends", []) or [])
+        if len(ends) != 2 or getattr(association, "name", None) in link_associations:
+            return None
+        near = ends[0] if ends[1] is end else ends[1]
+        child, declaring = getattr(end, "type", None), getattr(near, "type", None)
+        parent = owner if isinstance(owner, Class) else declaring
+        if not isinstance(child, Class) or not isinstance(declaring, Class) or child is declaring:
+            return None
+        if parent is not declaring and declaring not in parent.all_parents():
+            return None  # ``end`` is not an end of the table's class
+        if getattr(child, "is_abstract", False) or getattr(parent, "is_abstract", False):
+            return None
+        if near.multiplicity.max != 1:
+            return None  # N:M: the child does not belong to a single parent
+        if not (near.is_composite or near.multiplicity.min >= 1):
+            return None  # an optional parent: existing children can be picked
+        if fkeys.get(association.name, [""])[0] != child.name:
+            return None
+        if not create_schema_accepts_end(near, fkeys, link_associations):
+            return None  # BookCreate has no `library` field to set
+
+        return {
+            "entity": child.name,
+            "endpoint": f"/{child.name.lower()}/",
+            # Create endpoints answer either the entity or {"<class>": entity, ...}
+            "response_key": child.name.lower(),
+            "key_field": (self._row_key_fields(child) or ["id"])[0],
+            "back_reference": near.name,
+            "parent_response_key": parent.name.lower(),
+            "parent_key_field": (self._row_key_fields(parent) or ["id"])[0],
+            "composition": bool(near.is_composite),
+            "form_columns": self._table_form_columns(child, with_nested=False, skip_end=near),
+        }
 
     @staticmethod
     def _form_input_binding(form: Form, input_field: InputField) -> Dict[str, Any]:

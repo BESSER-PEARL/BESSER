@@ -4,6 +4,7 @@ Splits rendering and serialization logic into mixins for clarity.
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from typing import Any, Dict, Tuple
@@ -16,6 +17,8 @@ from besser.generators import GeneratorInterface
 
 from .page_builder import PageBuilderMixin
 from .serialization import GuiSerializationMixin
+
+logger = logging.getLogger(__name__)
 
 
 def _copy_template_file(src: str, dest: str) -> None:
@@ -83,7 +86,7 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
                 with open(file_path, mode="w", encoding="utf-8", newline="\n") as f:
                     f.write(generated_code)
             except Exception as exc:
-                print(f"Error generating {file_path} from {rel_template_path}: {exc}")
+                logger.error("Error generating %s from %s: %s", file_path, rel_template_path, exc)
                 raise
 
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
@@ -130,6 +133,7 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
             "RadialBarChart": ["RadialBarChartComponent.tsx.j2"],
             "Table": [
                 "TableComponent.tsx.j2",
+                "NestedCreateSection.tsx.j2",
                 "TableComponent.css.j2",
                 "ColumnFilter.tsx.j2",
                 "ColumnSort.tsx.j2",

@@ -22,6 +22,9 @@ from collections import defaultdict
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Set
 
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    USER_PROFILE_TEMP_DIR_PREFIX,
+)
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
@@ -250,7 +253,7 @@ def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[s
         model_section.setdefault("type", "UserDiagram")
 
     try:
-        with tempfile.TemporaryDirectory(prefix=f"user_profile_{uuid.uuid4().hex}_") as temp_dir:
+        with tempfile.TemporaryDirectory(prefix=f"{USER_PROFILE_TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
             object_model = process_object_diagram(prepared_payload, user_reference_domain_model)
             generator_info = get_generator_info("jsonobject")
             if not generator_info:

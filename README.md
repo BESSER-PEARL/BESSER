@@ -46,11 +46,15 @@ If you are interested in developing new code generators or designing BESSER exte
 
 ### Step 2: Create a virtual environment
 
-Run the setup script to create a virtual environment (if not already created), install the requirements, and configure the ``PYTHONPATH``. This ensures compatibility with IDEs (like VSCode) that may not automatically set the ``PYTHONPATH`` for recognizing *besser* as an importable module.
+Create a virtual environment and install BESSER in editable mode. The editable install (`pip install -e .`) is what makes *besser* importable from anywhere, including in IDEs such as VS Code, without configuring the `PYTHONPATH`.
 
     $ python -m venv venv
-    $ venv/Scripts/activate
-    $ pip install -r requirements.txt
+    $ source venv/bin/activate        # Windows: venv\Scripts\activate
+    $ pip install -e .
+
+To run or test the Web Modeling Editor backend, also install its requirements:
+
+    $ pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
 
 ### Step 3: Run an example
 

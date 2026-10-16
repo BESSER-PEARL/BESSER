@@ -11,20 +11,10 @@ from besser.BUML.metamodel.state_machine.state_machine import (
     StateMachine, Body, Event, Condition, CustomCodeAction,
 )
 from besser.BUML.metamodel.structural import Metadata
+from besser.utilities.buml_code_builder.common import _sanitize_identifier
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 logger = logging.getLogger(__name__)
-
-
-def _sanitize_identifier(name: str) -> str:
-    """Sanitize a string to be a valid Python identifier.
-
-    Replaces any non-alphanumeric character (except underscore) with underscore,
-    and strips leading digits.
-    """
-    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
-    sanitized = re.sub(r'^[^a-zA-Z_]+', '', sanitized)
-    return sanitized or 'unnamed'
 
 
 def process_state_machine(json_data):

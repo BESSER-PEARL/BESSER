@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import uuid
+from contextlib import asynccontextmanager
 from typing import Dict, List
 
 import uvicorn
@@ -100,12 +101,34 @@ def _is_valid_session_id(session_id: str) -> bool:
         return False
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Prepare the sessions root, run the self-checks, run the periodic cleanup."""
+    _ensure_sessions_root_permissions()
+    _remove_stale_session_dirs()
+    if not os.environ.get(API_TOKEN_ENV):
+        logger.error("AGENT_SIMULATOR_API_TOKEN is not set: every request will be refused with 503")
+    sandbox_error = sandbox_selftest_error(session_module.UID_POOL[0])
+    if sandbox_error:
+        logger.error("Agent sandbox unavailable (%s): sessions will be refused", sandbox_error)
+    cleanup_task = asyncio.create_task(_periodic_cleanup(), name="agent-simulator-session-cleanup")
+
+    yield
+
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+
+
 app = FastAPI(
     title="BESSER Agent Simulator API",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
     dependencies=[Depends(require_api_token)],
+    lifespan=lifespan,
 )
 
 # ---------------------------------------------------------------------------
@@ -351,20 +374,8 @@ async def _report_start_failure(websocket: WebSocket, session: Session) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Startup and background cleanup
+# Startup and background cleanup (run from ``lifespan`` above)
 # ---------------------------------------------------------------------------
-
-
-@app.on_event("startup")
-async def _start_cleanup_task():
-    _ensure_sessions_root_permissions()
-    _remove_stale_session_dirs()
-    if not os.environ.get(API_TOKEN_ENV):
-        logger.error("AGENT_SIMULATOR_API_TOKEN is not set: every request will be refused with 503")
-    sandbox_error = sandbox_selftest_error(session_module.UID_POOL[0])
-    if sandbox_error:
-        logger.error("Agent sandbox unavailable (%s): sessions will be refused", sandbox_error)
-    asyncio.create_task(_periodic_cleanup())
 
 
 def _ensure_sessions_root_permissions() -> None:

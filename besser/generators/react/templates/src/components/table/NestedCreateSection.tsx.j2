@@ -1,0 +1,462 @@
+import React from "react";
+import axios from "axios";
+
+// Nested creation from a table's "Add" dialog.
+//
+// The parts of a composition (Library 1 -- * Book) cannot be picked from the
+// existing records: each existing Book already belongs to another Library.
+// The dialog therefore lets the user fill in new parts alongside the parent.
+// The backend creates each part through its own create endpoint, with the
+// back-reference (Book.library) set to the key of the parent just created;
+// if one of them is refused, the records created so far are deleted again so
+// a failed save leaves nothing behind.
+
+export interface NestedCreateColumn {
+  field: string;
+  label: string;
+  type?: string;
+  columnType?: string;
+  path?: string;
+  entity?: string;
+  options?: string[];
+  required?: boolean;
+  lookupField?: string;
+  targetField?: string;
+  targetType?: string;
+  defaultValue?: any;
+}
+
+export interface NestedCreateMeta {
+  entity: string;
+  endpoint: string;
+  // Create endpoints answer the entity itself or { "<class>": entity, "<end>_ids": [...] }
+  responseKey: string;
+  keyField: string;
+  backReference: string;
+  parentResponseKey: string;
+  parentKeyField: string;
+  composition: boolean;
+  columns: NestedCreateColumn[];
+}
+
+export type NestedDraft = Record<string, any>;
+
+// A record created while saving, deleted again if a later step fails
+export interface CreatedRecord {
+  url: string;
+  label: string;
+}
+
+// Shared with TableComponent: one copy of each form helper below
+export const humanize = (value: string): string =>
+  (value || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^./, (str) => str.toUpperCase());
+
+export const normalizeNestedCreate = (raw: any): NestedCreateMeta | undefined => {
+  if (!raw || typeof raw !== "object" || !raw.entity || !(raw.back_reference ?? raw.backReference)) {
+    return undefined;
+  }
+  const rawColumns: any[] = Array.isArray(raw.form_columns ?? raw.formColumns) ? (raw.form_columns ?? raw.formColumns) : [];
+  const columns: NestedCreateColumn[] = rawColumns
+    .filter((col) => col && typeof col === "object" && col.field && !(col.readOnly ?? col.read_only))
+    .map((col) => {
+      const isLookup = col.column_type === "lookup";
+      return {
+        field: isLookup && col.path ? col.path : col.field,
+        label: humanize(col.label || col.field),
+        type: col.type || "string",
+        columnType: col.column_type,
+        path: col.path,
+        entity: col.entity,
+        options: col.options,
+        required: col.required ?? false,
+        lookupField: isLookup ? (col.lookup_field ?? col.lookupField ?? col.field) : undefined,
+        targetField: isLookup ? (col.target_field ?? col.targetField) : undefined,
+        targetType: isLookup ? (col.target_type ?? col.targetType) : undefined,
+        defaultValue: col.defaultValue ?? col.default_value,
+      };
+    });
+  return {
+    entity: raw.entity,
+    endpoint: raw.endpoint || `/${String(raw.entity).toLowerCase()}/`,
+    responseKey: raw.response_key ?? raw.responseKey ?? String(raw.entity).toLowerCase(),
+    keyField: raw.key_field ?? raw.keyField ?? "id",
+    backReference: raw.back_reference ?? raw.backReference,
+    parentResponseKey: raw.parent_response_key ?? raw.parentResponseKey ?? "",
+    parentKeyField: raw.parent_key_field ?? raw.parentKeyField ?? "id",
+    composition: Boolean(raw.composition),
+    columns,
+  };
+};
+
+const isLookup = (col: NestedCreateColumn) => col.columnType === "lookup" && Boolean(col.entity);
+const isBool = (col: NestedCreateColumn) => !isLookup(col) && (col.type === "bool" || col.type === "boolean");
+
+export const emptyNestedDraft = (meta: NestedCreateMeta): NestedDraft => {
+  const draft: NestedDraft = {};
+  meta.columns.forEach((col) => {
+    if (isLookup(col) && col.type === "list") {
+      draft[col.field] = [];
+    } else if (isBool(col)) {
+      draft[col.field] = typeof col.defaultValue === "boolean"
+        ? col.defaultValue
+        : String(col.defaultValue).toLowerCase() === "true";
+    } else if (!isLookup(col) && col.defaultValue !== undefined && col.defaultValue !== null) {
+      draft[col.field] = String(col.defaultValue);
+    } else {
+      draft[col.field] = "";
+    }
+  });
+  return draft;
+};
+
+// Labels of the required fields a draft leaves empty, e.g. "Books #2 - Title"
+export const missingNestedFields = (meta: NestedCreateMeta, drafts: NestedDraft[], label: string): string[] => {
+  const missing: string[] = [];
+  drafts.forEach((draft, index) => {
+    meta.columns.forEach((col) => {
+      if (!col.required || isBool(col)) {
+        return;
+      }
+      const value = draft[col.field];
+      const empty = Array.isArray(value) ? value.length === 0 : value === undefined || value === null || value === "";
+      if (empty) {
+        missing.push(`${label} #${index + 1} - ${col.label}`);
+      }
+    });
+  });
+  return missing;
+};
+
+// HTML selects store strings: convert numeric keys only (Room.number='001' stays a string)
+export const coerceLookupTarget = (col: { targetType?: string }, value: any): string | number | null => {
+  if (value === undefined || value === null || value === "") return null;
+  const type = (col.targetType ?? "int").toLowerCase();
+  if (!["int", "integer", "float", "double", "number"].includes(type)) return String(value);
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || (["int", "integer"].includes(type) && !Number.isInteger(numeric))) return null;
+  return numeric;
+};
+
+// A form value converted to its attribute type (date, datetime, time and text stay strings)
+export const coerceFieldValue = (type: string | undefined, value: any): any => {
+  if (type === "list") {
+    return typeof value === "string"
+      ? value.split(",").map((item) => item.trim()).filter((item) => item !== "")
+      : (Array.isArray(value) ? value : []);
+  }
+  if (type === "int") {
+    const intValue = parseInt(value, 10);
+    return isNaN(intValue) ? 0 : intValue;
+  }
+  if (type === "float") {
+    const floatValue = parseFloat(value);
+    return isNaN(floatValue) ? 0 : floatValue;
+  }
+  if (type === "bool" || type === "boolean") {
+    return Boolean(value);
+  }
+  return value;
+};
+
+// The <input type> of an attribute type
+export const inputTypeFor = (type: string | undefined): string =>
+  type === "int" || type === "float" ? "number" :
+  type === "date" ? "date" :
+  type === "datetime" ? "datetime-local" :
+  type === "time" ? "time" :
+  "text";
+
+// The create payload of one draft, its back-reference pointing at the parent
+export const nestedDraftPayload = (meta: NestedCreateMeta, draft: NestedDraft, parentKey: any): Record<string, any> => {
+  const payload: Record<string, any> = {};
+  meta.columns.forEach((col) => {
+    const value = draft[col.field];
+    if (isLookup(col)) {
+      const key = col.path || col.field;
+      if (col.type === "list") {
+        payload[key] = Array.isArray(value)
+          ? value.map((v) => coerceLookupTarget(col, v)).filter((v) => v !== null)
+          : [];
+      } else {
+        payload[key] = coerceLookupTarget(col, value);
+      }
+      return;
+    }
+    if (col.type === "enum" && (value === undefined || value === null || value === "")) {
+      // No literal chosen: the backend applies the attribute's default
+      return;
+    }
+    payload[col.field] = coerceFieldValue(col.type, value);
+  });
+  payload[meta.backReference] = parentKey;
+  return payload;
+};
+
+// The created entity of a create response ({ "<class>": entity, ... } or the entity)
+export const entityFromResponse = (data: any, responseKey: string): any => {
+  const wrapped = data && typeof data === "object" ? data[responseKey] : undefined;
+  return wrapped && typeof wrapped === "object" && !Array.isArray(wrapped) ? wrapped : data;
+};
+
+// Readable message of a failed request (FastAPI/Pydantic `detail` included)
+export const describeApiError = (err: unknown, fallback: string): string => {
+  if (axios.isAxiosError(err) && err.response) {
+    const detail = err.response.data?.detail;
+    if (Array.isArray(detail)) {
+      return detail.map((e: any) => `${e.loc ? e.loc[e.loc.length - 1] : "field"}: ${e.msg}`).join("; ");
+    }
+    if (typeof detail === "string") {
+      return detail;
+    }
+    if (detail) {
+      return JSON.stringify(detail);
+    }
+    if (err.response.data?.message) {
+      return String(err.response.data.message);
+    }
+    return fallback;
+  }
+  return "Network error. Please try again.";
+};
+
+export const recordUrl = (backendBase: string, endpoint: string, key: any): string => {
+  const base = endpoint.startsWith("/") ? `${backendBase}${endpoint}` : endpoint;
+  return `${base.replace(/\/$/, "")}/${encodeURIComponent(String(key))}/`;
+};
+
+// Create every draft of one nested column under the parent. Records created
+// are appended to `created` (in creation order) so the caller can undo them.
+export const createNestedRecords = async (
+  backendBase: string,
+  meta: NestedCreateMeta,
+  drafts: NestedDraft[],
+  parentKey: any,
+  label: string,
+  created: CreatedRecord[],
+): Promise<string | null> => {
+  for (let index = 0; index < drafts.length; index += 1) {
+    const url = meta.endpoint.startsWith("/") ? `${backendBase}${meta.endpoint}` : meta.endpoint;
+    try {
+      const response = await axios.post(url, nestedDraftPayload(meta, drafts[index], parentKey));
+      const entity = entityFromResponse(response.data, meta.responseKey);
+      const key = entity?.[meta.keyField];
+      if (key !== undefined && key !== null) {
+        created.push({ url: recordUrl(backendBase, meta.endpoint, key), label: `${meta.entity} ${key}` });
+      }
+    } catch (err) {
+      return `${label} #${index + 1}: ${describeApiError(err, `Failed to create ${meta.entity}.`)}`;
+    }
+  }
+  return null;
+};
+
+// Delete the records of a failed save, newest first (parts before their parent).
+// Returns the records that could not be deleted.
+export const rollbackCreatedRecords = async (created: CreatedRecord[]): Promise<string[]> => {
+  const leftovers: string[] = [];
+  for (const record of [...created].reverse()) {
+    try {
+      await axios.delete(record.url);
+    } catch (err) {
+      console.error(`Could not undo the creation of ${record.label}:`, err);
+      leftovers.push(record.label);
+    }
+  }
+  return leftovers;
+};
+
+interface SectionProps {
+  parentField: string;
+  label: string;
+  meta: NestedCreateMeta;
+  drafts: NestedDraft[];
+  onChange: (drafts: NestedDraft[]) => void;
+  lookupOptions: Record<string, any[]>;
+}
+
+const inputStyle: React.CSSProperties = {
+  padding: "6px 10px",
+  borderRadius: "6px",
+  border: "1px solid #cbd5f5",
+  fontSize: "14px",
+  color: "#1e293b",
+  background: "#ffffff",
+};
+
+const optionValue = (col: NestedCreateColumn, option: any): string => {
+  for (const key of [col.targetField, "id", col.lookupField]) {
+    if (key && option?.[key] !== undefined && option?.[key] !== null) {
+      return String(option[key]);
+    }
+  }
+  return "";
+};
+
+const optionLabel = (col: NestedCreateColumn, option: any): string =>
+  String((col.lookupField && option?.[col.lookupField]) || option?.name || option?.title || `ID: ${option?.id}`);
+
+export const NestedCreateSection: React.FC<SectionProps> = ({ parentField, label, meta, drafts, onChange, lookupOptions }) => {
+  const entityLabel = humanize(meta.entity);
+  const update = (index: number, field: string, value: any) => {
+    onChange(drafts.map((draft, i) => (i === index ? { ...draft, [field]: value } : draft)));
+  };
+
+  return (
+    <div
+      data-nested-create={meta.entity}
+      style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "4px" }}
+    >
+      <span style={{ fontSize: "12px", color: "#64748b" }}>
+        {meta.composition
+          ? `New ${entityLabel.toLowerCase()} records are created as part of this record.`
+          : `New ${entityLabel.toLowerCase()} records are created and linked to this record.`}
+      </span>
+      {drafts.map((draft, index) => (
+        <div
+          key={`${parentField}-${index}`}
+          style={{
+            padding: "10px 12px",
+            border: "1px solid #dbe3f0",
+            borderLeft: "3px solid #10b981",
+            borderRadius: "8px",
+            background: "#ffffff",
+            display: "flex",
+            flexDirection: "column",
+            gap: "10px",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontWeight: 600, fontSize: "13px", color: "#0f172a" }}>
+              New {entityLabel} {index + 1}
+            </span>
+            <button
+              type="button"
+              onClick={() => onChange(drafts.filter((_, i) => i !== index))}
+              style={{ border: "none", background: "transparent", color: "#ef4444", cursor: "pointer", fontSize: "13px" }}
+            >
+              Remove
+            </button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px 14px" }}>
+            {meta.columns.map((col) => {
+              const inputId = `nested-${parentField}-${index}-${col.field}`;
+              const value = draft[col.field];
+              const fieldLabel = (
+                <label htmlFor={inputId} style={{ fontWeight: 500, color: "#334155", fontSize: "13px" }}>
+                  {col.label}
+                  {col.required && !isBool(col) && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
+                </label>
+              );
+
+              if (isLookup(col)) {
+                const options = lookupOptions[(col.entity || "").toLowerCase()] || [];
+                if (col.type === "list") {
+                  const selected: string[] = Array.isArray(value) ? value : [];
+                  return (
+                    <div key={inputId} style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: "4px" }}>
+                      {fieldLabel}
+                      <select
+                        id={inputId}
+                        multiple
+                        value={selected}
+                        onChange={(e) => update(index, col.field, Array.from(e.target.selectedOptions).map((o) => o.value))}
+                        style={{ ...inputStyle, minHeight: "72px" }}
+                      >
+                        {options.map((option: any) => (
+                          <option key={optionValue(col, option)} value={optionValue(col, option)}>
+                            {optionLabel(col, option)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={inputId} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    {fieldLabel}
+                    <select id={inputId} value={value ?? ""} onChange={(e) => update(index, col.field, e.target.value)} style={inputStyle}>
+                      <option value="">-- Select {col.label} --</option>
+                      {options.map((option: any) => (
+                        <option key={optionValue(col, option)} value={optionValue(col, option)}>
+                          {optionLabel(col, option)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              }
+
+              if (col.type === "enum" && col.options && col.options.length > 0) {
+                return (
+                  <div key={inputId} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    {fieldLabel}
+                    <select id={inputId} value={value ?? ""} onChange={(e) => update(index, col.field, e.target.value)} style={inputStyle}>
+                      <option value="">-- Select {col.label} --</option>
+                      {col.options.map((option: string) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              }
+
+              if (isBool(col)) {
+                return (
+                  <div key={inputId} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <input
+                      id={inputId}
+                      type="checkbox"
+                      checked={Boolean(value)}
+                      onChange={(e) => update(index, col.field, e.target.checked)}
+                      style={{ width: "16px", height: "16px", cursor: "pointer" }}
+                    />
+                    {fieldLabel}
+                  </div>
+                );
+              }
+
+              return (
+                <div key={inputId} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                  {fieldLabel}
+                  <input
+                    id={inputId}
+                    type={inputTypeFor(col.type)}
+                    step={col.type === "float" ? "any" : undefined}
+                    value={value ?? ""}
+                    onChange={(e) => update(index, col.field, e.target.value)}
+                    style={inputStyle}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      <button
+        type="button"
+        data-nested-add={meta.entity}
+        onClick={() => onChange([...drafts, emptyNestedDraft(meta)])}
+        style={{
+          alignSelf: "flex-start",
+          padding: "6px 12px",
+          borderRadius: "6px",
+          border: "1px dashed #10b981",
+          background: "#ecfdf5",
+          color: "#047857",
+          fontSize: "13px",
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        + New {entityLabel.toLowerCase()} ({label.toLowerCase()})
+      </button>
+    </div>
+  );
+};

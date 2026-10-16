@@ -5,18 +5,10 @@ Generates Python code from a StateMachine metamodel instance.
 The generated code can be exec()'d to recreate the StateMachine.
 """
 
-import re
 from besser.BUML.metamodel.state_machine.state_machine import (
     StateMachine, CustomCodeAction,
 )
-from besser.utilities.buml_code_builder.common import _escape_python_string, buml_header
-
-
-def _sanitize_identifier(name: str) -> str:
-    """Sanitize a string to be a valid Python identifier."""
-    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
-    sanitized = re.sub(r'^[^a-zA-Z_]+', '', sanitized)
-    return sanitized or 'unnamed'
+from besser.utilities.buml_code_builder.common import _escape_python_string, _sanitize_identifier, buml_header
 
 
 def state_machine_to_code(model: StateMachine, file_path: str = None,

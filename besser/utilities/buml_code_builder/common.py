@@ -1,6 +1,7 @@
 """
 Common utilities for BUML code builders
 """
+import hashlib
 import keyword
 import re
 from typing import TYPE_CHECKING, Any, Iterable, Optional
@@ -84,10 +85,18 @@ PRIMITIVE_TYPE_MAPPING = {
     'any': 'AnyType'
 }
 
-# Reserved names that need special handling. ``datetime`` is the module the
-# generated code imports to rebuild element timestamps (and object slot values),
-# so a class of that name must not shadow it.
-RESERVED_NAMES = ['Class', 'Property', 'Method', 'Parameter', 'Enumeration', 'datetime']
+# Names a generated structural script imports (plus ``datetime``, which rebuilds
+# element timestamps and object slot values). A class or enumeration variable
+# with one of these names would shadow the import, so it gets a suffix.
+RESERVED_NAMES = [
+    'Class', 'Property', 'Method', 'Parameter',
+    'BinaryAssociation', 'Generalization', 'DomainModel',
+    'Enumeration', 'EnumerationLiteral', 'Multiplicity',
+    'StringType', 'IntegerType', 'FloatType', 'BooleanType',
+    'TimeType', 'DateType', 'DateTimeType', 'TimeDeltaType',
+    'AnyType', 'Constraint', 'AssociationClass', 'Metadata', 'MethodImplementationType',
+    'ObjectModel', 'datetime',
+]
 
 
 def timestamp_expr(element: Any) -> Optional[str]:
@@ -153,6 +162,22 @@ def safe_var_name(name: str, lowercase: bool = True) -> str:
     return safe_name
 
 
+def identifier_part(name: str) -> str:
+    """Return ``name`` when it is a valid identifier, else a sanitised one.
+
+    ``NamedElement.name`` only rejects spaces and hyphens, so a name can hold
+    ``;``, ``(`` or a newline. Writing such a name as a variable would let it
+    escape into executable code when the generated file runs. A valid name is
+    kept unchanged, so ordinary models generate the same code as before; any
+    other name gets its invalid characters replaced and a short hash of the
+    original appended, so two different names never map to the same variable.
+    """
+    if name.isidentifier():
+        return name
+    digest = hashlib.sha1(name.encode('utf-8')).hexdigest()[:6]
+    return f"{_sanitize_identifier(name)}_{digest}"
+
+
 def safe_class_name(name):
     """
     Add a suffix to class names that match reserved keywords or BUML metaclass names.
@@ -168,6 +193,7 @@ def safe_class_name(name):
     if not name:
         return "unnamed_class"
 
+    name = identifier_part(name)
     if keyword.iskeyword(name):
         return f"{name}_"
     if name.endswith('_'):
@@ -181,6 +207,25 @@ def safe_class_name(name):
         return name
 
 
+def attribute_var_name(class_name: str, attribute_name: str) -> str:
+    """Variable the domain builder binds an attribute to: ``<Class>_<attribute>``.
+
+    Other builders and converters that refer to an attribute variable (GUI
+    table columns, the GUI converter's namespace) must use this helper too.
+    """
+    return f"{safe_class_name(class_name)}_{identifier_part(attribute_name)}"
+
+
+def method_var_name(class_name: str, method_name: str) -> str:
+    """Variable the domain builder binds a method to: ``<Class>_m_<method>``.
+
+    ``method_name`` may carry a signature (``total(x: int)``); only the part
+    before ``(`` is used.
+    """
+    base = method_name.split('(')[0] if '(' in method_name else method_name
+    return f"{safe_class_name(class_name)}_m_{safe_var_name(base, lowercase=False)}"
+
+
 class NameDispenser:
     """Mint one unique Python variable name per metamodel object.
 
@@ -190,11 +235,18 @@ class NameDispenser:
     every later reference (relationship endpoints, containment calls) resolves
     to the same identifier. ``reserve`` blocks names the caller already uses,
     such as the model variable itself.
+
+    ``type_prefix=False`` drops the metamodel-class prefix and
+    ``lowercase=False`` keeps the user's casing, for scripts whose variables
+    should read like the element names (the domain model builder).
     """
 
-    def __init__(self, reserved: Iterable[str] = ()):
+    def __init__(self, reserved: Iterable[str] = (), *, type_prefix: bool = True,
+                 lowercase: bool = True):
         self._used: set = set(reserved)
         self._for_obj: dict = {}
+        self._type_prefix = type_prefix
+        self._lowercase = lowercase
 
     def reserve(self, name: str) -> None:
         """Mark ``name`` as taken so no element is given it."""
@@ -204,12 +256,16 @@ class NameDispenser:
         """Return the variable name for ``obj``, minting it on first use."""
         if obj in self._for_obj:
             return self._for_obj[obj]
-        prefix = type(obj).__name__.lower()
-        base = safe_var_name(obj.name, lowercase=True)
-        candidate = prefix if base == prefix else f"{prefix}_{base}"
+        base = safe_var_name(obj.name, lowercase=self._lowercase)
+        if self._type_prefix:
+            prefix = type(obj).__name__.lower()
+            stem = f"{prefix}_{base}"
+            candidate = prefix if base == prefix else stem
+        else:
+            stem = candidate = base
         suffix = 1
         while candidate in self._used:
-            candidate = f"{prefix}_{base}_{suffix}"
+            candidate = f"{stem}_{suffix}"
             suffix += 1
         self._used.add(candidate)
         self._for_obj[obj] = candidate

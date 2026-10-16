@@ -7,7 +7,7 @@ This module generates Python code for BUML domain models and object models.
 import keyword
 import logging
 import os
-from typing import Iterable, Optional
+from typing import Optional
 from besser.BUML.metamodel.structural.structural import (
     Class,
     DomainModel,
@@ -19,9 +19,14 @@ from besser.BUML.metamodel.object.object import ObjectModel
 from besser.utilities import sort_by_timestamp as sort
 from besser.utilities.buml_code_builder.common import (
     PRIMITIVE_TYPE_MAPPING,
+    RESERVED_NAMES,
+    NameDispenser,
     _comment_safe,
     buml_header,
     _escape_python_string,
+    attribute_var_name,
+    identifier_part,
+    method_var_name,
     safe_class_name,
     safe_var_name,
     timestamp_expr,
@@ -47,61 +52,34 @@ def _timestamp_line(element) -> str:
 
 
 # Every name the generated script binds or reads besides its own element
-# variables: the structural imports, ``datetime`` (timestamps), ``ObjectModel``,
-# the ``set()`` builtin and the names read inside the ``except NameError``
-# guards. An element variable with one of these names would shadow it.
-_SCRIPT_NAMES = frozenset({
-    "Class", "Property", "Method", "Parameter",
-    "BinaryAssociation", "Generalization", "DomainModel",
-    "Enumeration", "EnumerationLiteral", "Multiplicity",
-    "StringType", "IntegerType", "FloatType", "BooleanType",
-    "TimeType", "DateType", "DateTimeType", "TimeDeltaType",
-    "AnyType", "Constraint", "AssociationClass", "Metadata", "MethodImplementationType",
-    "datetime", "ObjectModel", "set", "NameError", "sm", "qc", "nn_model",
-})
+# variables: the imports (``RESERVED_NAMES``), the ``set()`` builtin and the
+# names read inside the ``except NameError`` guards. An association or
+# constraint variable with one of these names would shadow it.
+_SCRIPT_NAMES = frozenset(RESERVED_NAMES) | {"set", "NameError", "sm", "qc", "nn_model"}
 
 
-class _ElementVarNames:
-    """One unique, non-shadowing Python variable per association / constraint.
+def _generalization_var_name(gen) -> str:
+    """Variable for a generalization: ``gen_<specific>_<general>``."""
+    return f"gen_{identifier_part(gen.specific.name)}_{identifier_part(gen.general.name)}"
 
-    Their names are user-typed and were written raw, so an association named
-    ``datetime`` (or ``Multiplicity``, ``set``, ``class``, or the same name as a
-    class) broke or silently corrupted the script. Names are minted on first use
-    and cached per element, so the declaration and every later reference agree.
+
+def _object_var_name(obj) -> str:
+    """Python variable for an object instance: ``<safe name>_obj``.
+
+    Object names are user-controlled and may hold spaces, colons or other
+    characters that are not valid in an identifier, so they go through
+    ``safe_var_name``. Every reference to the object's variable must use
+    this helper so definitions and references stay in sync.
     """
-
-    def __init__(self, taken: Iterable[str]):
-        self._taken = set(taken)
-        self._by_element: dict = {}
-
-    def name_for(self, element) -> str:
-        key = id(element)
-        if key in self._by_element:
-            return self._by_element[key]
-        base = safe_var_name(element.name, lowercase=False)
-        if keyword.iskeyword(base) or base in _SCRIPT_NAMES:
-            base = f"{base}_"
-        candidate, suffix = base, 2
-        while candidate in self._taken or keyword.iskeyword(candidate):
-            candidate = f"{base}_{suffix}"
-            suffix += 1
-        self._taken.add(candidate)
-        self._by_element[key] = candidate
-        return candidate
+    return f"{safe_var_name(obj.name_)}_obj"
 
 
-def _method_var_name(method) -> str:
-    """Sanitize a method's name for use as a Python identifier.
-
-    Method variables are emitted as ``<class_var>_m_<method_var>`` and
-    later referenced bare in the generated source (e.g. for
-    ``method.add_pre(...)`` calls). ``method.name`` is user-controlled,
-    so it MUST go through ``safe_var_name`` — using the raw name (or a
-    half-sanitized ``.replace('-', '_')``) is a code-injection vector
-    via the intentional ``exec()`` of builder output.
-    """
-    base = method.name.split('(')[0] if '(' in method.name else method.name
-    return safe_var_name(base, lowercase=False)
+def _require_identifier(name: str, what: str) -> str:
+    """Return ``name`` if it can be written as a Python keyword argument or
+    attribute; raise ``ValueError`` otherwise, rather than emit it raw."""
+    if not name.isidentifier() or keyword.iskeyword(name):
+        raise ValueError(f"{what} '{name}' is not a valid Python identifier and cannot be written to B-UML code.")
+    return name
 
 
 _IMPLEMENTATION_TYPE_VALUE_TO_NAME = {
@@ -305,14 +283,13 @@ def domain_model_to_code(
                         default_value_str = f', default_value={attr.default_value}'
                 else:
                     default_value_str = ""
-                f.write(f"{cls_var_name}_{attr.name}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
+                f.write(f"{attribute_var_name(cls.name, attr.name)}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
                        f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}{is_derived_str}"
                        f"{default_value_str}{timestamp_kwarg(attr)})\n")
 
             # Write methods
             for method in sort(cls.methods):
-                # Sanitize the method name for safe use as a Python identifier.
-                method_var_name = _method_var_name(method)
+                method_var = method_var_name(cls.name, method.name)
 
                 method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                 visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
@@ -336,37 +313,37 @@ def domain_model_to_code(
                 params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
 
                 if method_type:
-                    f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{_escape_python_string(method.name)}\""
+                    f.write(f"{method_var}: Method = Method(name=\"{_escape_python_string(method.name)}\""
                            f"{visibility_str}, parameters={params_str}, type={method_type}{impl_str}{timestamp_kwarg(method)})\n")
                 else:
-                    f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{_escape_python_string(method.name)}\""
+                    f.write(f"{method_var}: Method = Method(name=\"{_escape_python_string(method.name)}\""
                            f"{visibility_str}, parameters={params_str}{impl_str}{timestamp_kwarg(method)})\n")
                 if method_code:
                     code_literal = _format_method_code_literal(method_code)
-                    f.write(f"{cls_var_name}_m_{method_var_name}.code = {code_literal}\n")
+                    f.write(f"{method_var}.code = {code_literal}\n")
                 if impl_type == MethodImplementationType.STATE_MACHINE:
                     f.write("try:\n")
-                    f.write(f"    {cls_var_name}_m_{method_var_name}.state_machine = sm\n")
+                    f.write(f"    {method_var}.state_machine = sm\n")
                     f.write("except NameError:\n")
                     f.write("    pass\n")
                 if impl_type == MethodImplementationType.QUANTUM_CIRCUIT:
                     f.write("try:\n")
-                    f.write(f"    {cls_var_name}_m_{method_var_name}.quantum_circuit = qc\n")
+                    f.write(f"    {method_var}.quantum_circuit = qc\n")
                     f.write("except NameError:\n")
                     f.write("    pass\n")
                 if impl_type == MethodImplementationType.NEURAL_NETWORK:
                     f.write("try:\n")
-                    f.write(f"    {cls_var_name}_m_{method_var_name}.neural_network = nn_model\n")
+                    f.write(f"    {method_var}.neural_network = nn_model\n")
                     f.write("except NameError:\n")
                     f.write("    pass\n")
 
             # Write assignments
             if sort(cls.attributes):
-                attrs_str = ", ".join(sorted([f"{cls_var_name}_{attr.name}" for attr in cls.attributes]))
+                attrs_str = ", ".join(sorted([attribute_var_name(cls.name, attr.name) for attr in cls.attributes]))
                 f.write(f"{cls_var_name}.attributes={{{attrs_str}}}\n")
             if sort(cls.methods):
                 methods_str = ", ".join(sorted(
-                    f"{cls_var_name}_m_{_method_var_name(method)}"
+                    method_var_name(cls.name, method.name)
                     for method in cls.methods
                 ))
                 f.write(f"{cls_var_name}.methods={{{methods_str}}}\n")
@@ -376,16 +353,14 @@ def domain_model_to_code(
         # the script binds or reads.
         taken = set(_SCRIPT_NAMES) | {model_var_name, metadata_var_name, object_model_var_name}
         for type_ in model.types:
-            if isinstance(type_, (Class, Enumeration)):
-                type_var = safe_class_name(type_.name)
-                taken.add(type_var)
-                for attr in getattr(type_, "attributes", None) or ():
-                    taken.add(f"{type_var}_{attr.name}")
-                for method in getattr(type_, "methods", None) or ():
-                    taken.add(f"{type_var}_m_{_method_var_name(method)}")
-        for gen in model.generalizations:
-            taken.add(f"gen_{gen.specific.name}_{gen.general.name}")
-        element_vars = _ElementVarNames(taken)
+            if isinstance(type_, Enumeration):
+                taken.add(safe_class_name(type_.name))
+            elif isinstance(type_, Class):
+                taken.add(safe_class_name(type_.name))
+                taken.update(attribute_var_name(type_.name, attr.name) for attr in type_.attributes)
+                taken.update(method_var_name(type_.name, method.name) for method in type_.methods)
+        taken.update(_generalization_var_name(gen) for gen in model.generalizations)
+        element_vars = NameDispenser(taken, type_prefix=False, lowercase=False)
 
         # Get the associations that are not part of association classes
         association_class_associations = [ac.association for ac in association_classes]
@@ -468,14 +443,13 @@ def domain_model_to_code(
                             default_value_str = f', default_value={attr.default_value}'
                     else:
                         default_value_str = ""
-                    f.write(f"{ac_var_name}_{attr.name}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
+                    f.write(f"{attribute_var_name(ac.name, attr.name)}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
                            f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}{is_derived_str}"
                            f"{default_value_str}{timestamp_kwarg(attr)})\n")
 
                 # Write methods for the association class
                 for method in sort(ac.methods):
-                    # Sanitize the method name for safe use as a Python identifier.
-                    method_var_name = _method_var_name(method)
+                    method_var = method_var_name(ac.name, method.name)
 
                     method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                     visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
@@ -499,27 +473,27 @@ def domain_model_to_code(
                     params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
 
                     if method_type:
-                        f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{_escape_python_string(method.name)}\""
+                        f.write(f"{method_var}: Method = Method(name=\"{_escape_python_string(method.name)}\""
                                f"{visibility_str}, parameters={params_str}, type={method_type}{impl_str}{timestamp_kwarg(method)})\n")
                     else:
-                        f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{_escape_python_string(method.name)}\""
+                        f.write(f"{method_var}: Method = Method(name=\"{_escape_python_string(method.name)}\""
                                f"{visibility_str}, parameters={params_str}{impl_str}{timestamp_kwarg(method)})\n")
                     if method_code:
                         code_literal = _format_method_code_literal(method_code)
-                        f.write(f"{ac_var_name}_m_{method_var_name}.code = {code_literal}\n")
+                        f.write(f"{method_var}.code = {code_literal}\n")
                     if impl_type == MethodImplementationType.STATE_MACHINE:
                         f.write("try:\n")
-                        f.write(f"    {ac_var_name}_m_{method_var_name}.state_machine = sm\n")
+                        f.write(f"    {method_var}.state_machine = sm\n")
                         f.write("except NameError:\n")
                         f.write("    pass\n")
                     if impl_type == MethodImplementationType.QUANTUM_CIRCUIT:
                         f.write("try:\n")
-                        f.write(f"    {ac_var_name}_m_{method_var_name}.quantum_circuit = qc\n")
+                        f.write(f"    {method_var}.quantum_circuit = qc\n")
                         f.write("except NameError:\n")
                         f.write("    pass\n")
                     if impl_type == MethodImplementationType.NEURAL_NETWORK:
                         f.write("try:\n")
-                        f.write(f"    {ac_var_name}_m_{method_var_name}.neural_network = nn_model\n")
+                        f.write(f"    {method_var}.neural_network = nn_model\n")
                         f.write("except NameError:\n")
                         f.write("    pass\n")
 
@@ -527,14 +501,14 @@ def domain_model_to_code(
                 # association class without attributes gets an empty set.
                 attributes_str = "attributes=set(), "
                 if sort(ac.attributes):
-                    attrs_str = ", ".join(sorted([f"{ac_var_name}_{attr.name}" for attr in ac.attributes]))
+                    attrs_str = ", ".join(sorted([attribute_var_name(ac.name, attr.name) for attr in ac.attributes]))
                     attributes_str = f"attributes={{{attrs_str}}}, "
 
                 # Create methods set string if methods exist
                 methods_str = ""
                 if sort(ac.methods):
                     methods_list = ", ".join(sorted(
-                        f"{ac_var_name}_m_{_method_var_name(method)}"
+                        method_var_name(ac.name, method.name)
                         for method in ac.methods
                     ))
                     methods_str = f", methods={{{methods_list}}}"
@@ -552,7 +526,7 @@ def domain_model_to_code(
             for gen in sort(model.generalizations):
                 specific_var_name = safe_class_name(gen.specific.name)
                 general_var_name = safe_class_name(gen.general.name)
-                f.write(f"gen_{gen.specific.name}_{gen.general.name} = Generalization"
+                f.write(f"{_generalization_var_name(gen)} = Generalization"
                         f"(general={general_var_name}, specific={specific_var_name}{timestamp_kwarg(gen)})\n")
             f.write("\n")
 
@@ -604,8 +578,7 @@ def domain_model_to_code(
                 # escape into executable code at ``exec()`` time.
                 _emit_constraint_decl(constraint, element_vars.name_for(constraint))
             for constraint, method, kind, cls in method_contracts:
-                cls_var = safe_class_name(cls.name)
-                method_var = f"{cls_var}_m_{_method_var_name(method)}"
+                method_var = method_var_name(cls.name, method.name)
                 contract_var = element_vars.name_for(constraint)
                 _emit_constraint_decl(constraint, contract_var)
                 f.write(f"{method_var}.add_{kind}({contract_var})\n")
@@ -645,7 +618,7 @@ def domain_model_to_code(
         if hasattr(model, 'constraints') and model.constraints:
             constraints_str = ', '.join(element_vars.name_for(c) for c in sort(model.constraints))
             f.write(f"    constraints={{{constraints_str}}},\n")
-        gen_names = ', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))
+        gen_names = ', '.join(_generalization_var_name(gen) for gen in sort(model.generalizations))
         f.write(f"    generalizations={_set_literal(gen_names)},\n")
         model_timestamp = timestamp_expr(model)
         if model_timestamp:
@@ -699,7 +672,7 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
 
     # Write object instances using fluent API
     for obj in sorted(objectmodel.objects, key=lambda x: x.name_):
-        obj_var_name = f"{obj.name_.lower()}_obj"
+        obj_var_name = _object_var_name(obj)
         classifier_var_name = safe_class_name(obj.classifier.name)
 
         # Start the fluent API call using the proper syntax: Class("name")
@@ -709,7 +682,7 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
         if obj.slots:
             attributes_dict = {}
             for slot in obj.slots:
-                attr_name = slot.attribute.name
+                attr_name = _require_identifier(slot.attribute.name, "Attribute")
 
                 # Format the value based on type
                 if isinstance(slot.value.value, str):
@@ -718,9 +691,9 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
                     value_str = f'datetime.datetime.fromisoformat("{slot.value.value.isoformat()}")'
                 elif hasattr(slot.value.value, 'owner') and hasattr(slot.value.value.owner, 'name'):
                     # This is an enumeration literal - generate the proper reference
-                    enum_name = slot.value.value.owner.name
-                    literal_name = slot.value.value.name
-                    value_str = f"{enum_name}.{literal_name}"
+                    enum_var = safe_class_name(slot.value.value.owner.name)
+                    literal_name = _require_identifier(slot.value.value.name, "Enumeration literal")
+                    value_str = f"{enum_var}.{literal_name}"
                 else:
                     value_str = str(slot.value.value)
 
@@ -744,9 +717,9 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
         for link in objectmodel.links:
             if len(link.connections) == 2:
                 end1, end2 = link.connections
-                obj1_var = f"{end1.object.name_.lower()}_obj"
-                obj2_var = f"{end2.object.name_.lower()}_obj"
-                end2_name = end2.association_end.name
+                obj1_var = _object_var_name(end1.object)
+                obj2_var = _object_var_name(end2.object)
+                end2_name = _require_identifier(end2.association_end.name, "Association end")
 
                 key = (obj1_var, end2_name)
                 grouped_links.setdefault(key, set()).add(obj2_var)
@@ -764,7 +737,7 @@ def _write_object_model_section(f, objectmodel: ObjectModel, object_model_var_na
 
     # Create the object model instance
     f.write("# Object Model instance\n")
-    objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
+    objects_str = ", ".join([_object_var_name(obj) for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
     f.write(f"{object_model_var_name}: ObjectModel = ObjectModel(\n")
     f.write(f"    name=\"{_escape_python_string(objectmodel.name)}\",\n")
     f.write(f"    objects={_set_literal(objects_str)}")

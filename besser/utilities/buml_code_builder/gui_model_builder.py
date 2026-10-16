@@ -8,7 +8,8 @@ It creates executable Python code that can recreate the GUI model programmatical
 import os
 from besser.BUML.metamodel.gui import GUIModel
 from besser.utilities.buml_code_builder.common import (
-    _comment_safe, _escape_python_string, buml_header, safe_class_name, safe_var_name,
+    _comment_safe, _escape_python_string, attribute_var_name, buml_header, identifier_part, method_var_name,
+    safe_class_name, safe_var_name,
 )
 from besser.BUML.metamodel.gui.graphical_ui import (
     ViewContainer,
@@ -485,11 +486,8 @@ def _write_button(f, var_name, button, created_vars, pending_button_events):
 
     # Add new button properties for method execution and CRUD
     if hasattr(button, 'method_btn') and button.method_btn:
-        # Reference the actual method object using the same naming convention as domain_model_builder
-        # Use safe_class_name for the class (preserves case) and raw method name (split at '(' if present)
-        class_var = safe_class_name(button.method_btn.owner.name)
-        method_name = button.method_btn.name.split('(')[0] if '(' in button.method_btn.name else button.method_btn.name
-        method_var = f"{class_var}_m_{method_name}"
+        # Reference the method variable the domain model builder emitted.
+        method_var = method_var_name(button.method_btn.owner.name, button.method_btn.name)
         params.append(f'method_btn={method_var}')
 
     if hasattr(button, 'entity_class') and button.entity_class:
@@ -994,16 +992,13 @@ def _write_table(f, var_name, chart):
                 owner = getattr(col.field, 'owner', None)
                 binding = getattr(chart, 'data_binding', None)
                 if owner is not None and getattr(owner, 'name', None):
-                    class_name = safe_class_name(owner.name)
+                    field_var = attribute_var_name(owner.name, field_ref)
                 elif binding and hasattr(binding, 'domain_concept') and binding.domain_concept:
-                    class_name = safe_class_name(binding.domain_concept.name)
-                else:
-                    class_name = None
-                if class_name:
-                    f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={class_name}_{field_ref})\n')
+                    field_var = attribute_var_name(binding.domain_concept.name, field_ref)
                 else:
                     # Fallback: reference the property variable by bare name
-                    f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={field_ref})\n')
+                    field_var = identifier_part(field_ref)
+                f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={field_var})\n')
             elif isinstance(col, LookupColumn):
                 # path is an association end Property (defined inline in BinaryAssociation)
                 # field is a Property on the target class
@@ -1016,11 +1011,11 @@ def _write_table(f, var_name, chart):
                 field_owner = getattr(col.field, 'owner', None)
                 path_type = getattr(col.path, 'type', None)
                 if field_owner is not None and getattr(field_owner, 'name', None):
-                    field_ref = f'{safe_class_name(field_owner.name)}_{field_name}'
+                    field_ref = attribute_var_name(field_owner.name, field_name)
                 elif path_type and hasattr(path_type, 'name'):
-                    field_ref = f'{safe_class_name(path_type.name)}_{field_name}'
+                    field_ref = attribute_var_name(path_type.name, field_name)
                 else:
-                    field_ref = field_name
+                    field_ref = identifier_part(field_name)
                 # Path property lives inside a BinaryAssociation's ends, not as a standalone variable.
                 # Generate a runtime lookup via domain_model.
                 path_var = f'{col_var}_path'

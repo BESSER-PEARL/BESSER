@@ -36,8 +36,8 @@ from besser.utilities.buml_code_builder.common import (
     bind_association_end,
     bind_data_source,
     bind_domain_field,
+    attribute_var_name,
     build_data_binding,
-    safe_class_name,
 )
 from besser.BUML.metamodel.gui.dashboard import (
     AgentComponent,
@@ -212,9 +212,8 @@ def _bind_domain_aliases(namespace: Dict[str, Any]) -> None:
             attributes = get_attrs()
         except Exception:  # pragma: no cover - defensive
             continue
-        class_name = safe_class_name(domain_class.name)
         for attribute in attributes:
-            namespace.setdefault(f"{class_name}_{attribute.name}", attribute)
+            namespace.setdefault(attribute_var_name(domain_class.name, attribute.name), attribute)
 
 
 def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Optional[GUIModel]:

@@ -23,6 +23,12 @@ keeps its contributor however often the file was edited, as long as the line
 itself is unchanged. The state file holds only hashes and contributor labels,
 never file content, so it can ride along with the GitHub push (a later
 continue-from-GitHub run reads it back to detect human edits).
+
+The workspace is written by model-authored commands, so every read and write
+here goes through :mod:`~besser.spec_driven_agent.execution.workspace_fs`:
+a link planted at the state file, a source file or ``.agent-trace/`` is never
+followed. Parallel generator calls update the state concurrently; a module lock
+serializes each load-update-save cycle.
 """
 
 from __future__ import annotations
@@ -33,15 +39,25 @@ import hashlib
 import json
 import logging
 import os
+import stat
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
+
+from besser.spec_driven_agent.execution.workspace_fs import (
+    is_plain_entry,
+    open_plain,
+    walk_plain,
+    write_atomic_plain,
+)
+from besser.utilities.provenance import PROVENANCE_FILENAME
 
 logger = logging.getLogger(__name__)
 
 ATTRIBUTION_FILENAME = ".besser_attribution.json"
 TRACE_DIRNAME = ".agent-trace"
-AGENT_TRACE_VERSION = "0.1.0"
+AGENT_TRACE_VERSION = "0.1"
 AGENT_TRACE_MIME_TYPE = "application/vnd.agent-trace.record+json"
 TOOL_NAME = "BESSER Spec-Driven Agent"
 METADATA_KEY = "org.besser-pearl"
@@ -56,10 +72,24 @@ _MAX_FILE_BYTES = 2 * 1024 * 1024
 _MAX_DIFF_LINES = 5_000
 # Never attributed: the trace itself, the provenance file, run internals.
 _ALWAYS_SKIPPED_DIRS = {TRACE_DIRNAME, ".git"}
-_ALWAYS_SKIPPED_FILES = {"BESSER_GENERATION.md"}
+_ALWAYS_SKIPPED_FILES = {PROVENANCE_FILENAME}
 # The model source a GitHub push adds after the run's state is saved: not run
 # output, and attributing it would credit it to a human on continue-from-GitHub.
 _SKIPPED_ROOT_DIRS = {"buml"}
+
+# Generator tools run in parallel threads and each one loads, updates and saves
+# the state: without the lock, the last save drops the others' files, which
+# packaging then credits to the AI. Re-entrant: seeding reconciles under it.
+_STATE_LOCK = threading.RLock()
+
+
+class AttributionStateError(Exception):
+    """The workspace has an attribution state that cannot be trusted.
+
+    Raised for an unreadable or malformed state file, a link planted in its
+    place, or a state marked broken after a failed update. A record built on
+    it would credit someone else's lines to whoever writes next.
+    """
 
 # Contributor kinds, recorded in the state file (``kind``) and mapped onto the
 # Agent Trace contributor types when the record is built.
@@ -118,14 +148,13 @@ def _line_hash(line: str) -> str:
     return hashlib.sha256(line.encode("utf-8")).hexdigest()[:_HASH_LEN]
 
 
-def _read_lines(path: str) -> Optional[list[str]]:
-    """The file's lines without line endings, or None when it is not attributable."""
+def _read_lines(workspace: str, rel: str) -> Optional[list[str]]:
+    """The file's lines without line endings, or None when it is not attributable
+    (absent, a link or reached through one, special, too large, or not text)."""
     try:
-        if os.path.islink(path) or not os.path.isfile(path):
-            return None
-        if os.path.getsize(path) > _MAX_FILE_BYTES:
-            return None
-        with open(path, "rb") as handle:
+        with open_plain(os.path.join(workspace, rel), "rb", root=workspace) as handle:
+            if os.fstat(handle.fileno()).st_size > _MAX_FILE_BYTES:
+                return None
             data = handle.read()
     except OSError:
         return None
@@ -154,44 +183,67 @@ class AttributionState:
 
     @classmethod
     def load(cls, workspace: str) -> Optional["AttributionState"]:
-        """The workspace's stored state, or None when absent or unreadable."""
+        """The workspace's stored state, or None when there is none.
+
+        Raises :class:`AttributionStateError` when a state is there but cannot
+        be trusted, rather than silently starting over.
+        """
         path = os.path.join(workspace, ATTRIBUTION_FILENAME)
-        if os.path.islink(path) or not os.path.isfile(path):
-            return None
         try:
-            with open(path, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-            state = cls()
-            contributors = data["contributors"]
-            if not isinstance(contributors, list) or not all(
-                isinstance(c, dict) and c.get("kind") for c in contributors
-            ):
-                return None
-            state.contributors = contributors
-            for rel, entry in data["files"].items():
-                hashes_blob = entry["hashes"]
-                hashes = [
-                    hashes_blob[i:i + _HASH_LEN]
-                    for i in range(0, len(hashes_blob), _HASH_LEN)
-                ]
-                runs = entry["runs"]
-                # The file may come from an imported repo: check the counts
-                # before allocating them.
-                if not isinstance(runs, list) or not all(
-                    isinstance(run, list) and len(run) == 2
-                    and all(type(n) is int for n in run)
-                    and 0 <= run[0] < len(contributors) and run[1] >= 0
-                    for run in runs
-                ) or sum(count for _, count in runs) != len(hashes):
-                    return None
-                owners: list[int] = []
-                for index, count in runs:
-                    owners.extend([index] * count)
-                state.files[str(rel)] = (hashes, owners)
-            return state
-        except Exception:
-            logger.debug("Unreadable attribution state at %s", path, exc_info=True)
+            mode = os.lstat(path).st_mode
+        except FileNotFoundError:
             return None
+        except OSError as exc:
+            raise AttributionStateError(f"cannot stat {path}: {exc}") from exc
+        if not stat.S_ISREG(mode):
+            raise AttributionStateError(f"not a regular file (link or special): {path}")
+        try:
+            with open_plain(path, "r", root=workspace, encoding="utf-8") as handle:
+                data = json.load(handle)
+            state = cls._from_payload(data)
+        except AttributionStateError:
+            raise
+        except Exception as exc:
+            raise AttributionStateError(f"unreadable attribution state at {path}: {exc}") from exc
+        if state is None:
+            raise AttributionStateError(f"malformed attribution state at {path}")
+        return state
+
+    @classmethod
+    def _from_payload(cls, data: Any) -> Optional["AttributionState"]:
+        """The state a parsed state file describes, or None when it is malformed."""
+        if data.get("broken"):
+            raise AttributionStateError("attribution state was marked broken by a failed update")
+        state = cls()
+        contributors = data["contributors"]
+        if not isinstance(contributors, list) or not all(
+            isinstance(c, dict) and c.get("kind") for c in contributors
+        ):
+            return None
+        state.contributors = contributors
+        for rel, entry in data["files"].items():
+            hashes_blob = entry["hashes"]
+            if not isinstance(hashes_blob, str) or len(hashes_blob) % _HASH_LEN:
+                return None
+            hashes = [
+                hashes_blob[i:i + _HASH_LEN]
+                for i in range(0, len(hashes_blob), _HASH_LEN)
+            ]
+            runs = entry["runs"]
+            # The file may come from an imported repo: check the counts
+            # before allocating them.
+            if not isinstance(runs, list) or not all(
+                isinstance(run, list) and len(run) == 2
+                and all(type(n) is int for n in run)
+                and 0 <= run[0] < len(contributors) and run[1] >= 0
+                for run in runs
+            ) or sum(count for _, count in runs) != len(hashes):
+                return None
+            owners: list[int] = []
+            for index, count in runs:
+                owners.extend([index] * count)
+            state.files[str(rel)] = (hashes, owners)
+        return state
 
     def save(self, workspace: str) -> None:
         files: dict[str, dict] = {}
@@ -208,11 +260,11 @@ class AttributionState:
             "contributors": [self.contributors[i] for i in used],
             "files": files,
         }
-        path = os.path.join(workspace, ATTRIBUTION_FILENAME)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, separators=(",", ":"), sort_keys=True)
-        os.replace(tmp, path)
+        write_atomic_plain(
+            os.path.join(workspace, ATTRIBUTION_FILENAME),
+            json.dumps(payload, separators=(",", ":"), sort_keys=True),
+            root=workspace,
+        )
 
     # -- updates -----------------------------------------------------------
 
@@ -299,13 +351,12 @@ def iter_attributable_files(
     """
     excluded_set = set(excluded or ()) | _ALWAYS_SKIPPED_DIRS
     file_globs = [p for p in excluded_set if "*" in p or "?" in p]
-    for root, dirs, names in os.walk(workspace):
+    for root, dirs, names in walk_plain(workspace):
         dirs[:] = sorted(
             d for d in dirs
             if d not in excluded_set
             and not (root == workspace and d in _SKIPPED_ROOT_DIRS)
             and not d.startswith(".besser_")
-            and not os.path.islink(os.path.join(root, d))
         )
         for name in sorted(names):
             if _skipped_file(name, file_globs):
@@ -317,6 +368,33 @@ def _load_or_new(workspace: str) -> AttributionState:
     return AttributionState.load(workspace) or AttributionState()
 
 
+def _mark_broken(workspace: str) -> None:
+    """Replace the state with a marker that makes every later load fail.
+
+    A failed generator update leaves the state without that generator's
+    files, so the packaging reconcile would credit them to the AI; the marker
+    makes the run drop its record instead.
+    """
+    try:
+        write_atomic_plain(
+            os.path.join(workspace, ATTRIBUTION_FILENAME),
+            json.dumps({"version": _STATE_VERSION, "broken": True}),
+            root=workspace,
+        )
+    except OSError:
+        logger.warning("Could not mark the attribution state of %s broken", workspace, exc_info=True)
+
+
+def discard_attribution(workspace: str) -> None:
+    """Remove the workspace's attribution state (a link there is removed, not followed)."""
+    try:
+        os.unlink(os.path.join(workspace, ATTRIBUTION_FILENAME))
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.warning("Could not remove the attribution state of %s", workspace, exc_info=True)
+
+
 def record_generated_files(
     workspace: str,
     rel_paths: Iterable[str],
@@ -325,23 +403,28 @@ def record_generated_files(
 ) -> None:
     """Attribute the files a BESSER generator just wrote to that generator.
 
-    Best-effort: attribution never breaks a generator call.
+    Best-effort: attribution never breaks a generator call. On failure the
+    state is marked broken, so the run ships no record rather than a wrong one.
     """
-    try:
-        state = _load_or_new(workspace)
-        contributor = generator_contributor(generator, besser_version)
-        for rel in rel_paths:
-            rel = str(rel).replace("\\", "/")
-            if rel.split("/", 1)[0] in _ALWAYS_SKIPPED_DIRS:
-                continue
-            lines = _read_lines(os.path.join(workspace, rel))
-            if lines is None:
-                state.files.pop(rel, None)
-            else:
-                state.set_file(rel, lines, contributor)
-        state.save(workspace)
-    except Exception:
-        logger.debug("Recording generator attribution failed", exc_info=True)
+    with _STATE_LOCK:
+        try:
+            state = _load_or_new(workspace)
+            contributor = generator_contributor(generator, besser_version)
+            for rel in rel_paths:
+                rel = str(rel).replace("\\", "/")
+                if rel.split("/", 1)[0] in _ALWAYS_SKIPPED_DIRS:
+                    continue
+                lines = _read_lines(workspace, rel)
+                if lines is None:
+                    state.files.pop(rel, None)
+                else:
+                    state.set_file(rel, lines, contributor)
+            state.save(workspace)
+        except AttributionStateError as exc:
+            logger.warning("Generator attribution skipped: %s", exc)
+        except Exception:
+            logger.warning("Recording generator attribution failed", exc_info=True)
+            _mark_broken(workspace)
 
 
 def reconcile_workspace(
@@ -354,9 +437,20 @@ def reconcile_workspace(
 
     With ``paths``, only those files are reconciled. Files that are gone (or
     no longer attributable) are dropped from the state. Saves and returns the
-    state.
+    state. Raises :class:`AttributionStateError` when the stored state cannot
+    be trusted.
     """
-    state = _load_or_new(workspace)
+    with _STATE_LOCK:
+        return _reconcile(_load_or_new(workspace), workspace, contributor, excluded, paths)
+
+
+def _reconcile(
+    state: AttributionState,
+    workspace: str,
+    contributor: dict,
+    excluded: Optional[Iterable[str]],
+    paths: Optional[Iterable[str]],
+) -> AttributionState:
     if paths is None:
         current = set(iter_attributable_files(workspace, excluded))
         for rel in list(state.files):
@@ -366,7 +460,7 @@ def reconcile_workspace(
     else:
         targets = sorted({str(p).replace("\\", "/") for p in paths})
     for rel in targets:
-        lines = _read_lines(os.path.join(workspace, rel))
+        lines = _read_lines(workspace, rel)
         if lines is None:
             state.files.pop(rel, None)
             continue
@@ -375,24 +469,32 @@ def reconcile_workspace(
     return state
 
 
-def seed_attribution(workspace: str, excluded: Optional[Iterable[str]] = None) -> None:
+def seed_attribution(workspace: str, excluded: Optional[Iterable[str]] = None) -> bool:
     """Bring a freshly seeded workspace's attribution up to date.
 
     The seed carries the previous run's state when it has one (a run seeded
     from an earlier run, or a GitHub repo a run was pushed to): any line that
     no longer matches it was edited by a person in between. A seed without a
-    state (a repo pushed before attribution existed) has no record of who
-    wrote anything, so its lines are ``unknown``.
+    state (a repo pushed before attribution existed), or with one that cannot
+    be trusted, has no record of who wrote anything, so its lines are
+    ``unknown``.
+
+    Returns False when attribution failed: the run must then ship no record,
+    or the person's edits would be credited to the AI.
     """
-    try:
-        has_state = AttributionState.load(workspace) is not None
-        reconcile_workspace(
-            workspace,
-            human_contributor() if has_state else unknown_contributor(),
-            excluded,
-        )
-    except Exception:
-        logger.debug("Seeding attribution failed", exc_info=True)
+    with _STATE_LOCK:
+        try:
+            try:
+                state = AttributionState.load(workspace)
+            except AttributionStateError as exc:
+                logger.warning("Seed attribution state ignored: %s", exc)
+                state = None
+            contributor = human_contributor() if state is not None else unknown_contributor()
+            _reconcile(state or AttributionState(), workspace, contributor, excluded, None)
+            return True
+        except Exception:
+            logger.warning("Seeding attribution failed", exc_info=True)
+            return False
 
 
 # ---------------------------------------------------------------------
@@ -445,7 +547,7 @@ def build_trace_record(
     files: list[dict] = []
     totals = {KIND_GENERATOR: 0, KIND_AI: 0, KIND_HUMAN: 0, KIND_UNKNOWN: 0}
     for rel in sorted(state.files):
-        lines = _read_lines(os.path.join(workspace, rel))
+        lines = _read_lines(workspace, rel)
         hashes, owners = state.files[rel]
         if lines is None or len(lines) != len(owners) or not owners:
             continue
@@ -497,13 +599,19 @@ def build_trace_record(
 
 
 def write_trace_record(workspace: str, record: dict, run_id: str) -> str:
-    """Write ``.agent-trace/<run id>.json``; returns its path."""
+    """Write ``.agent-trace/<run id>.json``; returns its path.
+
+    A link planted at ``.agent-trace`` is replaced by a real directory, and
+    the record replaces rather than follows a link at its own path.
+    """
     directory = os.path.join(workspace, TRACE_DIRNAME)
+    if os.path.lexists(directory) and not is_plain_entry(directory):
+        if not os.path.islink(directory):
+            raise PermissionError(f"not a directory: {directory}")
+        os.unlink(directory)
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, f"{run_id}.json")
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(record, handle, indent=2)
-        handle.write("\n")
+    write_atomic_plain(path, json.dumps(record, indent=2) + "\n", root=workspace)
     return path
 
 

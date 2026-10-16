@@ -2,9 +2,13 @@
 
 import json
 import os
+import re
 import shutil
+import threading
 import time
 import tracemalloc
+
+import pytest
 
 from besser.spec_driven_agent.state import agent_trace as at
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
@@ -76,7 +80,8 @@ def test_record_has_the_required_agent_trace_fields(tmp_path):
     root = str(tmp_path)
     _write(root, "main.py", "print('hi')\n")
     _, record = _record(root)
-    assert record["version"] == at.AGENT_TRACE_VERSION
+    # The schema's own pattern (agent-trace.dev, schemas/v1/trace-record.json).
+    assert re.fullmatch(r"[0-9]+\.[0-9]+", record["version"])
     assert record["id"] and record["timestamp"]
     assert record["tool"] == {"name": at.TOOL_NAME, "version": "9.9.9"}
     (rng,) = record["files"][0]["conversations"][0]["ranges"]
@@ -187,10 +192,80 @@ def test_deleted_files_drop_out_and_state_round_trips(tmp_path):
     ]
 
 
-def test_a_corrupt_state_file_is_ignored(tmp_path):
+def test_a_corrupt_state_file_is_refused_not_silently_replaced(tmp_path):
     root = str(tmp_path)
+    _write(root, "a.py", "1\n")
     _write(root, at.ATTRIBUTION_FILENAME, '{"contributors": [{"kind": "ai"}], "files": {"a": {"hashes": "x", "runs": [[5, 1]]}}}')
-    assert at.AttributionState.load(root) is None
+    with pytest.raises(at.AttributionStateError):
+        at.AttributionState.load(root)
+    # Packaging must drop the record rather than credit every line to the AI.
+    with pytest.raises(at.AttributionStateError):
+        at.reconcile_workspace(root, at.ai_contributor("m", "r"))
+
+
+def test_a_hash_blob_that_is_not_whole_hashes_is_refused(tmp_path):
+    root = str(tmp_path)
+    state = {"contributors": [{"kind": "ai"}], "files": {"a": {"hashes": "x" * 13, "runs": [[0, 2]]}}}
+    _write(root, at.ATTRIBUTION_FILENAME, json.dumps(state))
+    with pytest.raises(at.AttributionStateError):
+        at.AttributionState.load(root)
+    state["files"]["a"]["hashes"] = ["x" * 12]
+    _write(root, at.ATTRIBUTION_FILENAME, json.dumps(state))
+    with pytest.raises(at.AttributionStateError):
+        at.AttributionState.load(root)
+
+
+def test_a_seed_with_an_untrusted_state_is_unknown(tmp_path):
+    root = str(tmp_path)
+    _write(root, "main.py", "old\n")
+    _write(root, at.ATTRIBUTION_FILENAME, "not json")
+    assert at.seed_attribution(root) is True
+    _write(root, "main.py", "old\nnew\n")
+    _, record = _record(root)
+    assert _ranges(record, "main.py") == [(1, 1, "unknown", None), (2, 2, "ai", "openai/gpt-4o")]
+
+
+def test_a_failed_generator_update_makes_the_run_drop_its_record(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    _write(root, "main.py", "g\n")
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(at.AttributionState, "set_file", boom)
+    at.record_generated_files(root, ["main.py"], "backend")   # never raises
+    monkeypatch.undo()
+    # The generator's lines are missing from the state: reconciling now
+    # would credit them to the AI, so the state refuses to load.
+    with pytest.raises(at.AttributionStateError):
+        at.reconcile_workspace(root, at.ai_contributor("m", "r"))
+    at.discard_attribution(root)
+    assert not os.path.exists(os.path.join(root, at.ATTRIBUTION_FILENAME))
+
+
+def test_parallel_generators_keep_every_file(tmp_path):
+    # Generator tools run in parallel threads; each one used to load, update
+    # and save the state unlocked, so the last save dropped the others' files.
+    root = str(tmp_path)
+    generators = [f"g{i}" for i in range(6)]
+    for name in generators:
+        for k in range(40):
+            _write(root, f"{name}/f{k}.py", "x = 1\n" * 50)
+    threads = [
+        threading.Thread(
+            target=at.record_generated_files,
+            args=(root, [f"{name}/f{k}.py" for k in range(40)], name),
+        )
+        for name in generators
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    state = at.AttributionState.load(root)
+    assert len(state.files) == 6 * 40
+    for rel, (_hashes, owners) in state.files.items():
+        assert {state.contributors[i]["generator"] for i in owners} == {rel.split("/")[0]}
 
 
 def test_a_crafted_run_count_is_rejected_before_it_is_allocated(tmp_path):
@@ -201,7 +276,8 @@ def test_a_crafted_run_count_is_rejected_before_it_is_allocated(tmp_path):
     _write(root, at.ATTRIBUTION_FILENAME, json.dumps(state))
     tracemalloc.start()
     try:
-        assert at.AttributionState.load(root) is None
+        with pytest.raises(at.AttributionStateError):
+            at.AttributionState.load(root)
         peak = tracemalloc.get_traced_memory()[1]
     finally:
         tracemalloc.stop()
@@ -209,7 +285,8 @@ def test_a_crafted_run_count_is_rejected_before_it_is_allocated(tmp_path):
     for runs in ([[0, 2], [0, -1]], [[0, 1.0]], [[0, "1"]], [[0, True]], [[0]]):
         state["files"]["a"]["runs"] = runs
         _write(root, at.ATTRIBUTION_FILENAME, json.dumps(state))
-        assert at.AttributionState.load(root) is None, runs
+        with pytest.raises(at.AttributionStateError):
+            at.AttributionState.load(root)
     state["files"]["a"]["runs"] = [[0, 1]]
     _write(root, at.ATTRIBUTION_FILENAME, json.dumps(state))
     assert at.AttributionState.load(root).files["a"] == (["x" * 12], [0])

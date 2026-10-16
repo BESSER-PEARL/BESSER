@@ -1039,6 +1039,9 @@ class SmartGenerationRunner:
         self._t_model_switched_to: Optional[str] = None
         # The model shown on the start event; the Agent Trace record's model_id.
         self._llm_model: Optional[str] = None
+        # False once seeding the line attribution failed: the run then ships
+        # no Agent Trace record (a person's edits would read as the AI's).
+        self._attribution_ok = True
         self._t_blockers_found: Optional[int] = None
         self._t_stream_aborted: Optional[str] = None
 
@@ -1249,7 +1252,7 @@ class SmartGenerationRunner:
                         self._seeded = True
                         # Lines that changed since the base run (a person
                         # editing the pushed repo) are attributed to a human.
-                        await _run_blocking(
+                        self._attribution_ok = await _run_blocking(
                             agent_trace.seed_attribution,
                             self.temp_dir,
                             _EXCLUDED_OUTPUT_DIRS,
@@ -2248,7 +2251,7 @@ class SmartGenerationRunner:
         # Every line that differs from the scaffold (or from the seed) was
         # written by the LLM; attribute it before the deterministic packaging
         # steps below change anything.
-        attribution_ok = self._reconcile_attribution(
+        attribution_ok = self._attribution_ok and self._reconcile_attribution(
             result_path, agent_trace.ai_contributor(self._trace_model_id(), self.run_id),
         )
 
@@ -2302,6 +2305,11 @@ class SmartGenerationRunner:
         ai_share = None
         if attribution_ok:
             ai_share = self._write_agent_trace(result_path, recipe)
+        if ai_share is None:
+            # No record: drop the state too, so a GitHub push or a modify
+            # seed never carries hashes taken before the scrub, or a state
+            # that misses someone's lines. The next run starts as "unknown".
+            agent_trace.discard_attribution(result_path)
         try:
             verification = build_verification_report(recipe)
         except Exception:

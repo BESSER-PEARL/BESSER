@@ -6,7 +6,7 @@ import logging
 import json
 
 logger = logging.getLogger(__name__)
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from besser.BUML.metamodel.gui import (
     Alignment, BarChart, DataBinding, LineChart,
     PieChart, RadarChart, RadialBarChart, Table,
@@ -39,21 +39,35 @@ def _apply_chart_level_binding(chart, attrs: Dict[str, Any], class_model, domain
     ``data-field`` attributes; without this the binding was dropped on re-import
     whenever the chart had no series.
     """
-    if chart is None or getattr(chart, "data_binding", None) is not None or not attrs.get('data-source'):
+    if chart.data_binding is not None or not attrs.get('data-source'):
         return
-    domain_class, label_field, data_field, label_path, data_path = _parse_chart_data_binding(
-        attrs, class_model, domain_model)
+    data_binding = _build_data_binding(attrs, class_model, domain_model)
+    if data_binding is not None:
+        chart.data_binding = data_binding
+
+
+def _build_data_binding(binding_attrs: Dict[str, Any], class_model, domain_model,
+                        *aggregation_fallbacks: Dict[str, Any]) -> Optional[DataBinding]:
+    """Build the ``DataBinding`` described by a series' (or a chart's own) attributes.
+
+    Returns ``None`` when the data source does not resolve to a domain class. The
+    aggregation falls back to ``aggregation_fallbacks`` (the chart's attributes for
+    a series) when ``binding_attrs`` has none.
+    """
+    domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(
+        binding_attrs, class_model, domain_model)
     if not domain_class:
-        return
-    filter_expr = attrs.get('filter')
-    chart.data_binding = DataBinding(
+        return None
+    raw_filter = binding_attrs.get('filter')
+    data_filter = raw_filter.strip() if isinstance(raw_filter, str) and raw_filter.strip() else None
+    return DataBinding(
         domain_concept=domain_class,
         label_field=label_field,
         data_field=data_field,
-        label_field_path=label_path,
-        data_field_path=data_path,
-        filter_expression=filter_expr.strip() if isinstance(filter_expr, str) and filter_expr.strip() else None,
-        aggregation=_parse_aggregation(attrs),
+        label_field_path=label_field_path,
+        data_field_path=data_field_path,
+        filter_expression=data_filter,
+        aggregation=_parse_aggregation(binding_attrs, *aggregation_fallbacks),
     )
 
 
@@ -190,26 +204,7 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
             s_attrs = s if isinstance(s, dict) else {}
             s_raw_name = s_attrs.get('name', 'Series')
             s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-
-            # Extract filter from series attributes
-            series_filter = s_attrs.get('filter')
-            if series_filter and isinstance(series_filter, str) and series_filter.strip():
-                data_filter = series_filter.strip()
-            else:
-                data_filter = None
-
-            data_binding = None
-            if domain_class:
-                data_binding = DataBinding(
-                    domain_concept=domain_class,
-                    label_field=label_field,
-                    data_field=data_field,
-                    label_field_path=label_field_path,
-                    data_field_path=data_field_path,
-                    filter_expression=data_filter,
-                    aggregation=_parse_aggregation(s_attrs, attrs),
-                )
+            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
 
             # Extract color from series attributes and create styling
             styling = None
@@ -285,26 +280,7 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
             s_attrs = s if isinstance(s, dict) else {}
             s_raw_name = s_attrs.get('name', 'Series')
             s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-
-            # Extract filter from series attributes
-            series_filter = s_attrs.get('filter')
-            if series_filter and isinstance(series_filter, str) and series_filter.strip():
-                data_filter = series_filter.strip()
-            else:
-                data_filter = None
-
-            data_binding = None
-            if domain_class:
-                data_binding = DataBinding(
-                    domain_concept=domain_class,
-                    label_field=label_field,
-                    data_field=data_field,
-                    label_field_path=label_field_path,
-                    data_field_path=data_field_path,
-                    filter_expression=data_filter,
-                    aggregation=_parse_aggregation(s_attrs, attrs),
-                )
+            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
 
             # Extract color from series attributes and create styling
             styling = None
@@ -381,26 +357,7 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
             s_attrs = s if isinstance(s, dict) else {}
             s_raw_name = s_attrs.get('name', 'Series')
             s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-
-            # Extract filter from series attributes
-            series_filter = s_attrs.get('filter')
-            if series_filter and isinstance(series_filter, str) and series_filter.strip():
-                data_filter = series_filter.strip()
-            else:
-                data_filter = None
-
-            data_binding = None
-            if domain_class:
-                data_binding = DataBinding(
-                    domain_concept=domain_class,
-                    label_field=label_field,
-                    data_field=data_field,
-                    label_field_path=label_field_path,
-                    data_field_path=data_field_path,
-                    filter_expression=data_filter,
-                    aggregation=_parse_aggregation(s_attrs, attrs),
-                )
+            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
             styling = None
             if 'styling' in s_attrs:
                 from .styling import styling_from_css
@@ -488,26 +445,7 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
             s_attrs = s if isinstance(s, dict) else {}
             s_raw_name = s_attrs.get('name', 'Series')
             s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-
-            # Extract filter from series attributes
-            series_filter = s_attrs.get('filter')
-            if series_filter and isinstance(series_filter, str) and series_filter.strip():
-                data_filter = series_filter.strip()
-            else:
-                data_filter = None
-
-            data_binding = None
-            if domain_class:
-                data_binding = DataBinding(
-                    domain_concept=domain_class,
-                    label_field=label_field,
-                    data_field=data_field,
-                    label_field_path=label_field_path,
-                    data_field_path=data_field_path,
-                    filter_expression=data_filter,
-                    aggregation=_parse_aggregation(s_attrs, attrs),
-                )
+            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
             styling = None
             if 'styling' in s_attrs:
                 from .styling import styling_from_css

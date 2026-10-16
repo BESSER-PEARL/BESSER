@@ -229,17 +229,18 @@ def football_model_v2():
     #     language="OCL",
     # )
 
+    # Date ordering comparisons are not supported by the Alloy translator: this invariant is disabled
     # A team is founded before every match it plays (home or away)
-    Match_inv_teams_founded_before_match = Constraint(
-        name="Match_inv_teams_founded_before_match",
-        context=Match,
-        expression=(
-            "context Match inv Match_inv_teams_founded_before_match : "
-            "(self.homeTeam.foundationDate < self.matchDate) "
-            "and (self.awayTeam.foundationDate < self.matchDate)"
-        ),
-        language="OCL",
-    )
+    # Match_inv_teams_founded_before_match = Constraint(
+    #     name="Match_inv_teams_founded_before_match",
+    #     context=Match,
+    #     expression=(
+    #         "context Match inv Match_inv_teams_founded_before_match : "
+    #         "(self.homeTeam.foundationDate < self.matchDate) "
+    #         "and (self.awayTeam.foundationDate < self.matchDate)"
+    #     ),
+    #     language="OCL",
+    # )
 
     # Goals scored by each side are never negative
     Match_inv_non_negative_goals = Constraint(
@@ -266,7 +267,8 @@ def football_model_v2():
             player_generalization, gk_generalization, coach_generalization, fan_generalization,
         },
         constraints={
-            Team_inv_players_older_than_16, Match_inv_teams_founded_before_match,
+            Team_inv_players_older_than_16,
+            # Match_inv_teams_founded_before_match,
             Match_inv_non_negative_goals,
         },
     )

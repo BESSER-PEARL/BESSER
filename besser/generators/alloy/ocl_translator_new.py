@@ -15,7 +15,8 @@ characters that cannot be part of an Alloy identifier (literals name their const
 :class:`OclTranslationError`.
 
 A date literal is a string literal compared with a date; it must be an ISO date (``'1950-01-01'``).
-Dates support comparisons only: ``Date::today()``, ``addDays`` and date arithmetic are unsupported.
+Dates support ``=`` and ``<>`` only: ordering comparisons, ``Date::today()``, ``addDays`` and date
+arithmetic are unsupported.
 The invariants are assumed to be type checked before their translation.
 """
 
@@ -52,8 +53,8 @@ class UnsupportedOclError(OclTranslationError):
     """Raised for valid OCL constructs that have no Alloy translation yet."""
 
 
-# Alloy predicates of the date library comparing two dates.
-_DATE_COMPARISONS = {"<": "dateLt", "<=": "dateLte", ">": "dateGt", ">=": "dateGte"}
+# Alloy predicates of the date library comparing two dates (as for strings, (in)equality only).
+_DATE_COMPARISONS = {"=": "dateEq", "<>": "dateNe"}
 
 # Alloy predicates of the strings library comparing two strings.
 _STRING_COMPARISONS = {"=": "strEq", "<>": "strNe"}
@@ -241,7 +242,9 @@ class OclToAlloy:
                 f"'{pretty_print(node)}' is not supported: comparing a collection that may contain "
                 "duplicates (a Bag) needs asSet() first"
             )
-        if left.type == right.type == "Date" and operator in _DATE_COMPARISONS:
+        if left.type == right.type == "Date":
+            if operator not in _DATE_COMPARISONS:
+                raise UnsupportedOclError(f"Date comparison '{operator}' is not supported by the Alloy translator yet")
             return Term(f"({_DATE_COMPARISONS[operator]}[{left.text},{right.text}])")
         if left.type == right.type == "Str":
             if operator not in _STRING_COMPARISONS:

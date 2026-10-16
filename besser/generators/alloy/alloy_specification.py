@@ -398,14 +398,20 @@ class BooleanLibrary(AlloySpecification):
         self.add_signature("False", multiplicity="one", extends="Bool")
 
 
-class DateLibrary(AlloySpecification):
-    """Dates: totally ordered atoms, with the comparisons used by OCL translations."""
+class UninterpretedDateLibrary(AlloySpecification):
+    """Dates: totally ordered atoms, with (in)equality and order comparisons.
+
+    OCL translations use (in)equality only; the order comparisons state the chronological
+    order of the dates declared by the specification using the library.
+    """
 
     def __init__(self):
         super().__init__("date")
         self._opens.append("util/ordering[Date]")
         self.add_signature("Date")
         dates = {"a": "Date", "b": "Date"}
+        self.add_predicate("dateEq", ["a = b"], dates)
+        self.add_predicate("dateNe", ["a != b"], dates)
         self.add_predicate("dateLt", ["a in prevs[b]"], dates)
         self.add_predicate("dateLte", ["a = b or a in prevs[b]"], dates)
         self.add_predicate("dateGt", ["a in nexts[b]"], dates)
@@ -441,7 +447,7 @@ class LibraryFactory:
         if type_name == "Bool":
             return BooleanLibrary()
         elif type_name == "Date":
-            return DateLibrary()
+            return UninterpretedDateLibrary()
         elif type_name == "Str":
             return UninterpretedStringsLibrary()
         else:

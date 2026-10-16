@@ -32,8 +32,8 @@ def library_with_ocl_v2():
       and Author 1..* -- 0..* Book;
     - String, Integer, Float, Date and enumeration attributes;
     - OCL invariants using integer bounds, String ``size()``, collection
-      ``size()``, ``forAll`` with date comparison, ``implies`` with string
-      literals, ``if-then-else`` with ``select``.
+      ``size()``, ``implies`` with string literals, ``if-then-else`` with
+      ``select`` (``forAll`` with date comparison is disabled: date ordering is unsupported).
     """
     # --- Enumeration ---
     genre_literals = {
@@ -177,16 +177,17 @@ def library_with_ocl_v2():
     #     language="OCL",
     # )
 
+    # Date ordering comparisons are not supported by the Alloy translator: this invariant is disabled
     # forAll + date comparison: books are released after the author's birth
-    Author_inv_8_1 = Constraint(
-        name="Author_inv_8_1",
-        context=Author,
-        expression=(
-            "context Author inv Author_inv_8_1 : "
-            "self.books->forAll(b |b.release>=self.birth)"
-        ),
-        language="OCL",
-    )
+    # Author_inv_8_1 = Constraint(
+    #     name="Author_inv_8_1",
+    #     context=Author,
+    #     expression=(
+    #         "context Author inv Author_inv_8_1 : "
+    #         "self.books->forAll(b |b.release>=self.birth)"
+    #     ),
+    #     language="OCL",
+    # )
 
     # implies + string literal: 'borges' has written at least one book
     Author_inv_9_1 = Constraint(
@@ -231,7 +232,8 @@ def library_with_ocl_v2():
         constraints={
             book_positive_pages, book_nonneg_stock, book_nonneg_price, library_has_books,
             # book_has_title, library_named, author_named,
-            Author_inv_8_1, Author_inv_9_1, Author_inv_10_1,
+            # Author_inv_8_1,
+            Author_inv_9_1, Author_inv_10_1,
         },
     )
     return model

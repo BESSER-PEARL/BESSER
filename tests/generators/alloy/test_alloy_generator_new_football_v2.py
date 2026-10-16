@@ -115,7 +115,7 @@ def test_enumerations(spec):
 
 
 def test_facts(spec):
-    assert len(spec.facts) == 13
+    assert len(spec.facts) == 12
 
     # Fan -> Team (2..4)
     assert "all a: Fan | #(a.Fan_favoriteTeams) >= 2" in spec.facts
@@ -144,9 +144,9 @@ def test_facts(spec):
     # # OCL: a retired coach has no team
     # assert "all self:this/HeadCoach|((self.HeadCoach_status = ENUM_CoachStatus_RETIRED) " \
     #     "=> ( no(self.HeadCoach_currentTeam)))" in spec.facts
-    # OCL: both teams were founded before the match
-    assert "all self:this/Match|((dateLt[self.Match_homeTeam.Team_foundationDate,self.Match_matchDate]) " \
-        "and (dateLt[self.Match_awayTeam.Team_foundationDate,self.Match_matchDate]))" in spec.facts
+    # OCL: both teams were founded before the match, disabled with its invariant: date ordering is unsupported
+    # assert "all self:this/Match|((dateLt[self.Match_homeTeam.Team_foundationDate,self.Match_matchDate]) " \
+    #     "and (dateLt[self.Match_awayTeam.Team_foundationDate,self.Match_matchDate]))" in spec.facts
     # OCL: non-negative goals
     assert "all self:this/Match|((self.Match_homeGoals >= 0) and (self.Match_awayGoals >= 0))" in spec.facts
 

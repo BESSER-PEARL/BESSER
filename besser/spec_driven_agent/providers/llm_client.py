@@ -1047,9 +1047,11 @@ class ClaudeLLMClient(LLMProvider):
                     "max_tokens": self._max_tokens,
                     "system": _with_cache_control(system),
                     "messages": _with_message_cache(messages),
-                    "tools": _with_tool_cache(request_tools),
                     **extra,
                 }
+                # A text-only call (no tools) must not send an empty list.
+                if request_tools:
+                    request_kwargs["tools"] = _with_tool_cache(request_tools)
                 response = self._client.messages.create(**request_kwargs)
                 # Track usage (billed at the effective model's pricing)
                 self.usage.record(response.usage, model=model_override)

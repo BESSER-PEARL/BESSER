@@ -18,3 +18,4 @@ Model types
   model_types/feature_model
   model_types/nn
   model_types/quantum
+  model_types/knowledge_graph

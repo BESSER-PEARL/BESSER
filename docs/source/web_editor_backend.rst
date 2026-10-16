@@ -14,6 +14,7 @@ services. Endpoints are organized by concern:
 
 - **``routers/generation_router.py``** -- Code generation (single-diagram and project-based) and agent-configuration recommendation
 - **``routers/conversion_router.py``** -- BUML import/export, CSV reverse engineering, image-to-model, SVG rendering
+- **``routers/kg_router.py``** -- Knowledge Graph endpoints: OWL/RDF import and export, KG-to-class-diagram conversion with its preflight and Refine-KG flow, consistency checking, and the LLM cleanup endpoints (see `Knowledge Graph Diagrams`_)
 - **``routers/validation_router.py``** -- Diagram validation (metamodel + OCL constraints)
 - **``routers/deployment_router.py``** -- Docker deployment and feedback
 - **``routers/spec_driven_router.py``** -- The :doc:`Spec-Driven Agent <spec_driven_agent/index>`: SSE generation runs, preview, config, durable run status and event replay, resume, cancel, download, and GitHub push/import
@@ -32,9 +33,11 @@ Additional infrastructure:
 - **``services/cleanup.py``** -- Background temp-file cleanup (removes stale directories every hour)
 - **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError`` and ``ConfigurationError``.
   ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
+- **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions) and ``llm.py`` (reaching the user's own LLM provider)
 - **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``sse_events.py`` (the typed event schema), ``secret_redaction.py``, ``telemetry.py``, ``incidents.py``
 - **``constants/constants.py``** -- API version, temp prefixes, generator defaults, CORS origins, and the ``BESSER_LLM_*`` caps and feature flags
 - **``models/responses.py``** -- Standardized Pydantic response models
+- **``models/kg.py``** -- Request models of the KG endpoints: ``KGDiagramInput`` (a ``DiagramInput`` plus the refinement fields) and the LLM requests (provider, model, and the key as a ``SecretStr``)
 - **``models/spec_driven.py``** -- Request/response models for the spec-driven endpoints (the API key is a ``SecretStr``; the caps are clamped by field validators)
 
 Multi-Diagram Projects
@@ -49,8 +52,8 @@ auto-converted by a Pydantic model validator for backward compatibility.
 Supported diagram types (the project keys): ``ClassDiagram``, ``ObjectDiagram``,
 ``StateMachineDiagram``, ``AgentDiagram``, ``GUINoCodeDiagram``,
 ``QuantumCircuitDiagram``, ``UserDiagram``, ``NNDiagram``, ``BPMN``,
-``ComponentDiagram``, and ``DeploymentDiagram``. A single BPMN diagram payload
-has type ``BPMNDiagram``.
+``ComponentDiagram``, ``DeploymentDiagram``, and ``KnowledgeGraphDiagram``. A
+single BPMN diagram payload has type ``BPMNDiagram``.
 
 
 Neural Network Diagrams
@@ -95,6 +98,65 @@ escaping the processor is mapped to a generic HTTP 500 by
 identical BUML NN models across runs — element IDs are derived from a
 thread-local counter via ``uuid.uuid5`` under a fixed namespace.
 
+
+Knowledge Graph Diagrams
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+``KnowledgeGraphDiagram`` is a self-contained diagram type: its payload holds
+``nodes``, ``edges`` and ``axioms`` and needs no cross-diagram reference. The
+backend maps it to a ``KnowledgeGraph`` (see
+:doc:`the KG metamodel <buml_language/model_types/knowledge_graph>`).
+
+**Import and export.** ``/import-owl`` parses an OWL/RDF ontology into the
+diagram JSON, and ``/export-kg-rdf/{fmt}`` writes it back as Turtle or RDF/XML.
+Imports go through the upload checks described under *File Upload Limits*.
+
+**JSON ↔ BUML.** ``/export-buml`` writes executable BUML Python
+(``knowledge_graph.py``) through ``kg_model_to_code``. ``/get-json-model``
+auto-detects KG content and reads it back; the file is validated by an AST
+allowlist (``safe_load_buml``) and is never passed to ``exec``.
+
+**Conversion.** ``/analyze-kg-for-buml-conversion`` reports every element with
+no clean 1-to-1 B-UML mapping, each with a recommended and a skip action;
+``/kg-to-class-diagram`` then produces the ``ClassDiagram``, applying the
+chosen resolutions. See :doc:`buml_language/model_building/kg_to_buml`.
+
+**Validation.** ``/validate-diagram`` runs the same preflight and OWL/SHACL
+consistency checks as the editor's Refine KG dialog and reports findings only.
+
+**LLM endpoints.** ``/llm-clean-kg`` and ``/classify-orphans-with-llm`` take a
+JSON body: the ``diagram``, an optional ``description``, the ``provider``
+(``anthropic``, ``openai`` -- the default -- ``mistral`` or ``nebius``), an
+optional ``llm_model`` (the provider's default otherwise) and the caller's own
+``api_key``. ``/classify-orphans-with-llm`` also takes ``node_ids`` (at most 400
+per request). The key is a ``SecretStr`` and is never logged. OpenAI is reached
+through the transport in ``besser.utilities.llm_utils``; the other providers go
+through the Spec-Driven Agent's provider clients. The server-paid tiers and the
+providers that need a ``base_url`` are not offered, so the server never opens a
+URL the caller chose. A provider failure is an HTTP 502 whose message names the
+provider but never carries the provider's response, which can echo part of the
+key; the detail is logged instead. Request-shape errors (a missing field, an
+unknown provider) are FastAPI's 422; blank keys and empty or oversized
+``node_ids`` are 400s.
+
+**Consistency report.** ``/check-kg-consistency`` returns ``issues`` whose
+fields are camelCase like the rest of the API (``affectedNodeIds``,
+``constraintNodeId``, ``specKind``, ``pathIri``, ``constraintLabel``, ...).
+The validator reads its shapes from a graph built only from the shapes BESSER
+itself writes (the constraint vocabulary of the RDF exporter, plus the shapes
+the check adds for OWL disjointness and functional properties); every other
+triple of an imported ontology is data, never a shape. SPARQL- and
+JavaScript-based SHACL constructs are therefore never executed, and the server
+never opens a URL the KG author chose.
+
+**Import warnings.** ``/import-owl`` returns a ``warnings`` list of
+``{code, message}`` entries for anything the importer had to skip (for example
+``SHACL_QUALIFIED_COUNT_INVALID``, a ``sh:qualifiedMinCount`` that is not an
+integer). The editor shows them as toasts. ``/kg-to-class-diagram`` returns its
+own, for example ``SHACL_COUNT_INVALID`` when a ``sh:minCount`` or
+``sh:maxLength`` is not a whole number and the constraint is skipped.
+
+**Determinism.** Identical input yields identical output, including issue ids.
 
 BPMN Diagrams
 ^^^^^^^^^^^^^
@@ -346,10 +408,28 @@ Conversion
 - ``POST /transform-agent-model-json`` -- Agent model transformation with personalization
 - ``POST /get-svg`` -- B-UML class-diagram file to an auto-laid-out SVG. Rendering is delegated to the WME Node server (``WME_NODE_SERVER_URL``, default ``http://localhost:8080``), which runs ELK auto-layout headlessly.
 
+Knowledge Graph
+^^^^^^^^^^^^^^^
+
+The KG editor's own endpoints. ``/import-owl`` and ``/export-kg-rdf`` are the
+ontology round trip; the rest support the KG-to-ClassDiagram conversion and the
+Refine KG dialog that precedes it.
+
+- ``POST /import-owl`` -- OWL/RDF ontology file (``.owl``/``.ttl``/``.rdf``/``.xml``/``.nt``/``.n3``) to KnowledgeGraphDiagram JSON
+- ``POST /export-kg-rdf/{fmt}`` -- KnowledgeGraphDiagram to Turtle (``ttl``) or RDF/XML (``owl``); the body's ``vocab`` field selects OWL restrictions, SHACL shapes, or both
+- ``POST /kg-to-class-diagram`` -- KnowledgeGraphDiagram to ClassDiagram JSON with OCL constraints, applying any preflight resolutions
+- ``POST /analyze-kg-for-buml-conversion`` -- Preflight report: every KG element with no clean 1-to-1 BUML mapping, each with a recommended and a skip action
+- ``POST /check-kg-consistency`` -- OWL 2 + SHACL validation (pyshacl with OWL2-RL inference)
+- ``POST /apply-kg-refinement`` -- Apply Refine KG decisions (``source`` selects the static analyzer or the LLM suggestions) and return the cleaned KG
+- ``POST /llm-clean-kg`` -- LLM-suggested cleanup of the graph, using the caller's own LLM key (see below); the optional ``description`` adds context, otherwise the model infers the domain from the KG
+- ``POST /classify-orphans-with-llm`` -- Per-node classification for orphan nodes deferred from the Refine dialog (``description`` is optional here too)
+
 Validation
 ^^^^^^^^^^
 
 - ``POST /validate-diagram`` -- Unified diagram validation (metamodel + OCL constraints)
+  For a ``KnowledgeGraphDiagram`` this runs the same preflight and OWL/SHACL
+  consistency checks as the editor's Refine KG dialog, reporting findings only.
 - ``POST /check-ocl`` -- **Deprecated.** Kept for backwards compatibility; delegates to ``/validate-diagram``.
 
 Deployment
@@ -470,6 +550,13 @@ File Upload Limits
 - CSV files: 5 MB max
 - Images: 10 MB max
 - BUML Python files: 2 MB max
+- OWL/RDF ontologies (``.owl``, ``.ttl``, ``.rdf``, ``.xml``, ``.nt``,
+  ``.n3``): 5 MB max
+
+OWL/RDF uploads that declare a DTD (``<!DOCTYPE`` / ``<!ENTITY``) are rejected
+with HTTP 400 before parsing. The XML parser underneath applies no
+entity-expansion limit, so a small file of nested entities would otherwise
+expand far enough to exhaust server resources; no ontology needs a DTD.
 
 
 Environment Variables
@@ -485,6 +572,9 @@ Environment Variables
 - ``OPENAI_API_KEY`` -- OpenAI key consumed by several features:
 
   - image-to-model and knowledge-graph-to-model conversion,
+  - the Refine KG LLM endpoints (``/llm-clean-kg`` and
+    ``/classify-orphans-with-llm``) use the key in the request body instead,
+    so they need no server key and also accept Anthropic, Mistral and Nebius keys,
   - the :doc:`LLM-based agent recommendation <generators/agent_personalization>`
     endpoint (``/recommend-agent-config-llm``),
   - the BAF generator's personalization pipeline when ``agentLanguage`` /

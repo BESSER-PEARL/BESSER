@@ -46,9 +46,13 @@ python tests/BUML/metamodel/structural/library/library.py           # standalone
 ### Linting
 ```bash
 # Exactly what CI runs. A bare `ruff check .` uses a different rule set and will disagree.
-ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741 \
-  --ignore E501 --exclude "*/BESSERActionLanguageParser.py"
+ruff check besser/ --select F841,F401,F541,F811,F821,E711,E721,E731,E741 \
+  --ignore E501 --exclude "*/BESSERActionLanguageParser.py" \
+  --per-file-ignores "besser/BUML/notations/mockup_to_buml/llm_assistant/**:F821"
 ```
+`F821` (undefined names) is on because `from __future__ import annotations` hides them from every other
+rule here. The `mockup_to_buml/llm_assistant` prompt examples are few-shot snippets, not importable
+modules, so they alone are exempt from it.
 
 ### Documentation
 ```bash
@@ -83,7 +87,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | Path | What |
 |------|------|
 | `besser/BUML/metamodel/` | Abstract syntax: `structural/` (DomainModel, Class, Property, associations, generalization), `state_machine/`, `gui/`, `action_language/` (BAL), `bpmn/`, `deployment/`, `feature_model/`, `nn/`, `object/`, `ocl/`, `project/`, `quantum/` |
-| `besser/BUML/notations/` | ANTLR-based parsers (PlantUML class/object, OCL, NN, deployment, BAL), draw.io import, LLM-assisted mockup → model |
+| `besser/BUML/notations/` | ANTLR-based parsers (PlantUML class/object, OCL, NN, deployment, BAL), draw.io import, LLM-assisted mockup → model, OWL/RDF → knowledge graph (`owl_to_kg/`), KG → class diagram (`kg_to_buml/`) |
 | `besser/utilities/image_to_buml.py`, `kg_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram |
 | `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/` |
@@ -92,10 +96,11 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `…/backend/routers/` | One router per concern (generation, conversion, validation, deployment, spec_driven, telemetry, agent_simulator); `error_handler.py` has `@handle_endpoint_errors` |
 | `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` registry (`GeneratorInfo`) + `get_filename_for_generator` |
 | `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins, most `BESSER_LLM_*` caps and flags |
-| `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`) |
+| `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`) |
 | `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
 | `…/backend/services/validators/ocl_checker.py` | Metamodel + OCL validation behind `/validate-diagram` |
 | `…/backend/services/deployment/` | Docker Compose deploy, GitHub OAuth / deploy (these routers are registered from here, not `routers/`) |
+| `…/backend/services/kg/` | Knowledge Graph service layer behind `routers/kg_router.py`: request parsing, Refine-KG decisions, the user's-own-LLM adapter |
 | `…/backend/services/spec_driven/` | Spec-Driven service layer (see below) |
 | `…/backend/services/exceptions.py` | `BesserError` → `ConversionError`, `ValidationError` (incl. `CodeValidationError` → 400), `GenerationError`, `ConfigurationError` |
 | `…/web_modeling_editor/agent_simulator/` | Separate container that runs generated BAF agents in a bubblewrap sandbox; only `agent_simulator_router.py` talks to it |

@@ -4,6 +4,7 @@ Common utilities for BUML code builders
 import keyword
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
+from besser.utilities.identifiers import sanitize_identifier
 from besser.utilities.provenance import get_besser_version
 
 if TYPE_CHECKING:
@@ -90,26 +91,18 @@ def safe_var_name(name: str, lowercase: bool = True) -> str:
     Returns:
         Safe variable name
     """
-    if not name:
-        return "unnamed"
-    # Replace spaces and special characters with underscores
-    safe_name = ''.join(c if c.isalnum() or c == '_' else '_' for c in name)
-    # Remove leading digits
-    if safe_name and safe_name[0].isdigit():
-        safe_name = f"_{safe_name}"
-    # Remove consecutive underscores
-    while '__' in safe_name:
-        safe_name = safe_name.replace('__', '_')
-    safe_name = safe_name.strip('_') or "unnamed"
-    if lowercase:
-        safe_name = safe_name.lower()
-    # Only escape names that are *actually* reserved Python keywords. Python
-    # keywords are all lowercase (``class``, ``from``, ``return``, ...), so a
-    # PascalCase identifier like ``Class`` is a perfectly valid attribute or
-    # variable name and should round-trip unchanged when ``lowercase=False``.
-    if keyword.iskeyword(safe_name):
-        safe_name = f"{safe_name}_"
-    return safe_name
+    return sanitize_identifier(
+        name,
+        collapse_underscores=True,
+        strip_underscores=True,
+        lowercase=lowercase,
+        empty="unnamed",
+        # Only names that are *actually* reserved Python keywords are escaped.
+        # Python keywords are all lowercase (``class``, ``from``, ``return``, ...),
+        # so a PascalCase identifier like ``Class`` is a perfectly valid attribute
+        # or variable name and round-trips unchanged when ``lowercase=False``.
+        escape_keywords=True,
+    )
 
 
 def safe_class_name(name):

@@ -4,6 +4,7 @@ from typing import Optional
 from besser.BUML.metamodel.uml_component import AgentCategory, AgenticEdgeKind
 from besser.BUML.metamodel.uml_component import Locality as ComponentLocality
 from besser.BUML.metamodel.uml_deployment import NodeKind
+from besser.utilities.llm_utils import DEFAULT_OPENAI_MODEL
 from besser.generators.spring.spring_backend_generator import (
     DEFAULT_JAVA_VERSION as _SPRING_DEFAULT_JAVA_VERSION,
     DEFAULT_SPRING_APP_NAME as _SPRING_DEFAULT_APP_NAME,
@@ -19,6 +20,32 @@ TEMP_DIR_PREFIX = "besser_"
 AGENT_TEMP_DIR_PREFIX = "besser_agent_"
 CSV_TEMP_DIR_PREFIX = "besser_csv_"
 LLM_TEMP_DIR_PREFIX = "besser_llm_"
+
+# ---------------------------------------------------------------------
+# Knowledge Graph (KG) endpoints
+# ---------------------------------------------------------------------
+# Model the Refine-KG LLM endpoints use when the request names none. The
+# frontend never sends one, so in production this *is* the model. It follows
+# the shared OpenAI default rather than restating it.
+DEFAULT_KG_LLM_MODEL = DEFAULT_OPENAI_MODEL
+
+# Upload ceiling for an OWL/RDF ontology (``/import-owl``).
+MAX_OWL_SIZE = 5 * 1024 * 1024  # 5 MB
+
+# How far into an OWL/RDF upload to look for a DTD declaration. A DTD is only
+# legal in the prolog, so the head of the document is the only place it can
+# appear; scanning the whole 5 MB would just be wasted work.
+KG_DTD_PROBE_CHARS = 4096
+
+# Largest number of orphan nodes one ``/classify-orphans-with-llm`` call may
+# carry. The classifier sends one blocking OpenAI request per 40 nodes with no
+# internal ceiling, so an unbounded list turns a single request into an
+# arbitrarily long chain of upstream calls.
+MAX_ORPHAN_CLASSIFY_NODES = 400
+
+# Accepted upload extensions.
+ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}
+ALLOWED_OWL_EXTENSIONS = {".owl", ".ttl", ".rdf", ".xml", ".nt", ".n3"}
 
 # ---------------------------------------------------------------------
 # LLM spec-driven generation caps & feature flags

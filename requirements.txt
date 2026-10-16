@@ -27,3 +27,8 @@ bocl==1.0.1
 # compaction.py falls back to len(text)//4, which OVER-reports code
 # by ~21% (measured 4.83 chars/token), tripping compaction early.
 tiktoken>=0.7,<1
+# RDF graph handling for the Knowledge Graph metamodel and its OWL/TTL
+# importers, which are part of the library surface (besser.BUML.metamodel.kg).
+# pyshacl lives in the backend requirements instead: it is only reached from
+# lazily imported web-editor code, so the library does not need it installed.
+rdflib>=7.0.0

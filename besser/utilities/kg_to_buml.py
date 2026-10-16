@@ -2,6 +2,7 @@ import requests
 import json
 from besser.BUML.metamodel.structural import data_types
 from besser.BUML.metamodel.structural import DomainModel
+from besser.utilities.llm_utils import DEFAULT_OPENAI_MODEL, clean_json_response, parse_json_safely
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import process_class_diagram
 
 
@@ -10,22 +11,6 @@ def clean_plantuml_response(response: str) -> str:
     start_position = response.find("@startuml")
     end_position = response.find("@enduml", start_position)
     return response[start_position:end_position + len("@enduml")]
-
-def clean_json_response(response: str) -> str:
-    """Clean JSON response from LLM (remove markdown formatting)"""
-    json_text = response.strip()
-    if json_text.startswith('```json'):
-        json_text = json_text[7:]
-    if json_text.endswith('```'):
-        json_text = json_text[:-3]
-    return json_text.strip()
-
-def parse_json_safely(json_text: str):
-    """Parse JSON with error handling"""
-    try:
-        return json.loads(json_text)
-    except json.JSONDecodeError:
-        return None
 
 def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
     """
@@ -167,7 +152,7 @@ def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
     return apollon_buml_json
 
 
-def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
+def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = DEFAULT_OPENAI_MODEL):
     """
     Transform a Knowledge Graph (KG) into a PlantUML class diagram.
 
@@ -289,7 +274,7 @@ def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"
     plant_uml_chunk = clean_plantuml_response(message)
     return plant_uml_chunk
 
-def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
+def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = DEFAULT_OPENAI_MODEL):
     """
     Convert a Knowledge Graph (KG) into a B-UML class diagram.
 
@@ -314,7 +299,7 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
     openai_token : str
         Your OpenAI API token.
     openai_model : str, optional
-        Model name to use, by default "gpt-4o".
+        Model name to use, by default :data:`~besser.utilities.llm_utils.DEFAULT_OPENAI_MODEL`.
 
     Returns
     -------

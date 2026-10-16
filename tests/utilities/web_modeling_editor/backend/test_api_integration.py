@@ -18,16 +18,16 @@ import zipfile
 from typing import Any, Dict
 
 import pytest
-import httpx
-from httpx._transports.asgi import ASGITransport
 
-from besser.utilities.web_modeling_editor.backend.backend import app
+from tests.utilities.web_modeling_editor.backend.conftest import AsgiClient
 
 # ---------------------------------------------------------------------------
 # Test-client helper
 # ---------------------------------------------------------------------------
 
-BASE_URL = "http://testserver"
+# One client for the whole directory; see conftest.py for why it is not
+# starlette's TestClient.
+client = AsgiClient()
 
 
 def _run(coro):
@@ -35,35 +35,9 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-class _Client:
-    """Thin synchronous wrapper around httpx.AsyncClient for ASGI testing."""
-
-    def __init__(self):
-        self._transport = ASGITransport(app=app)
-
-    async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        async with httpx.AsyncClient(transport=self._transport, base_url=BASE_URL) as ac:
-            return await ac.request(method, url, **kwargs)
-
-    def get(self, url: str, **kwargs) -> httpx.Response:
-        return _run(self._request("GET", url, **kwargs))
-
-    def post(self, url: str, **kwargs) -> httpx.Response:
-        return _run(self._request("POST", url, **kwargs))
-
-
-client = _Client()
-
-
 # ---------------------------------------------------------------------------
 # Fixtures -- minimal valid diagram payloads
 # ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def isolate_backend_test_artifacts(tmp_path, monkeypatch):
-    """Keep generated test artifacts out of the repository root."""
-    monkeypatch.chdir(tmp_path)
-
 
 @pytest.fixture
 def class_diagram_model():

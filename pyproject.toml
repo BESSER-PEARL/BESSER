@@ -6,6 +6,9 @@ build-backend = "setuptools.build_meta"
 # Use importlib mode to avoid namespace collisions between test and source packages
 # that share the same directory hierarchy (e.g., tests/utilities/... vs besser/utilities/...)
 addopts = "--import-mode=importlib"
+markers = [
+    "slow: tests that take noticeably long (subprocess or large-ontology runs); deselect with -m 'not slow'",
+]
 
 [tool.pylint.'FORMAT']
 max-line-length = 120

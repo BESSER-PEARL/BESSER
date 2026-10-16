@@ -32,6 +32,11 @@ class BOCLVisitorImpl(BOCLVisitor):
             context_class = self.context_class
         if context_class is None:
             return None
+        if not hasattr(context_class, "all_attributes"):
+            # An iterator variable over a primitive-typed collection
+            # (``self.title->forAll(v | ...)``) is typed with a PrimitiveDataType,
+            # which has no properties to navigate. That is "not found", not a crash.
+            return None
         for attr in context_class.all_attributes():
             if attr.name == name:
                 return attr
@@ -143,18 +148,39 @@ class BOCLVisitorImpl(BOCLVisitor):
         named ``size`` fails to parse even though the metamodel allows it
         (see BESSER-PEARL/BESSER#198).
         """
+        return self._navigate_keyword_property(ctx, "size")
+
+    def visitDotDateNavigation(self, ctx: BOCLParser.DotDateNavigationContext):
+        """Resolve ``self.date`` as a property when no parens follow.
+
+        Same collision as ``size`` above: ``date`` is a reserved keyword (it
+        opens ``Date::now()``), so the lexer always tokenizes it as ``DATE``
+        and ``dotNavigation`` (which expects ``ID``) never matches. BUML's own
+        ``DateType`` is named ``date``, and ontologies routinely declare a
+        ``date`` property, so without this fallback neither can be navigated.
+        """
+        return self._navigate_keyword_property(ctx, ctx.DATE().getText())
+
+    def _navigate_keyword_property(self, ctx, name: str):
+        """Resolve ``<expression>.<name>`` where ``name`` is a lexer keyword.
+
+        Shared by :meth:`visitDotSizeNavigation` and :meth:`visitDotDateNavigation`,
+        which differ only in which keyword token they were reached through.
+        Resolution order: the receiver's own type, then the context class, then
+        the enclosing iterators.
+        """
         receiver = self.visit(ctx.expression())
         prop = None
         target_type = self._receiver_type(receiver)
         if target_type is not None:
-            prop = self._resolve_property("size", target_type)
+            prop = self._resolve_property(name, target_type)
         if prop is None:
-            prop = self._resolve_property("size")
+            prop = self._resolve_property(name)
         if prop is None:
-            prop = self._resolve_property_in_iterators("size")
+            prop = self._resolve_property_in_iterators(name)
         if prop is None:
             raise Exception(
-                f"Property 'size' not found in context "
+                f"Property '{name}' not found in context "
                 f"'{self.context_class.name if self.context_class else '?'}'"
             )
         if isinstance(receiver, VariableExp):

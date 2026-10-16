@@ -26,6 +26,16 @@ class GenerationError(BesserError):
     pass
 
 
+class UpstreamServiceError(BesserError):
+    """Raised when a third-party service the request depends on fails.
+
+    Mapped to HTTP 502 by ``@handle_endpoint_errors``. The message is shown to
+    the client verbatim, so it must be written for an end user and must never
+    contain the upstream response body.
+    """
+    pass
+
+
 class ConfigurationError(BesserError):
     """Raised when configuration is invalid."""
     pass

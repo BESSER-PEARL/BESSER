@@ -9,6 +9,7 @@ import tempfile
 import uuid
 import shutil
 from besser.BUML.metamodel.structural.structural import DomainModel
+from besser.BUML.metamodel.kg import KnowledgeGraph
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
@@ -25,6 +26,7 @@ from besser.utilities.buml_code_builder.domain_model_builder import (
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
+from besser.utilities.buml_code_builder.kg_model_builder import kg_model_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
 from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
@@ -93,6 +95,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     agent_models = []
     gui_models = []
     quantum_models = []
+    kg_models = []
     state_machine_models = []   # StateMachine models
     nn_models = []
     bpmn_models = []
@@ -146,6 +149,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             nn_models.append(model)
         elif BPMNModel and isinstance(model, BPMNModel):
             bpmn_models.append(model)
+        elif isinstance(model, KnowledgeGraph):
+            kg_models.append(model)
         elif isinstance(model, ComponentModel):
             component_models.append(model)
         elif isinstance(model, DeploymentModel):
@@ -187,6 +192,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     n_agent = len(agent_models)
     n_gui = len(gui_models)
     n_quantum = len(quantum_models)
+    n_kg = len(kg_models)
     n_sm = len(state_machine_models)
     n_nn = len(nn_models)
     n_bpmn = len(bpmn_models)
@@ -353,6 +359,26 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 tmp_path = os.path.join(temp_dir, f"quantum_model_{idx}.py")
                 quantum_model_to_code(
                     model=qm,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f, section_header=section)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
+            # KNOWLEDGE GRAPH MODELS                                     #
+            # ---------------------------------------------------------- #
+            for idx, kgm in enumerate(kg_models, start=1):
+                var_name = _suffixed_name("kg_model", idx, n_kg)
+
+                section = ""
+                if n_kg > 1:
+                    label = _comment_safe(getattr(kgm, "name", "")) or f"Knowledge Graph {idx}"
+                    section = f"# KNOWLEDGE_GRAPH MODEL {idx}: \"{label}\" #\n\n"
+
+                tmp_path = os.path.join(temp_dir, f"kg_model_{idx}.py")
+                kg_model_to_code(
+                    model=kgm,
                     file_path=tmp_path,
                     model_var_name=var_name,
                 )

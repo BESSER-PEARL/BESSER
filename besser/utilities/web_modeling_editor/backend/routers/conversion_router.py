@@ -28,7 +28,13 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
 
 # BESSER image-to-UML and BUML utilities
 from besser.utilities.image_to_buml import image_to_buml
-from besser.utilities.kg_to_buml import kg_to_buml
+
+# BESSER KG → B-UML (deterministic, offline)
+
+# Custom exception types translated to HTTP codes by @handle_endpoint_errors.
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
+)
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
@@ -37,6 +43,7 @@ from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
+from besser.utilities.buml_code_builder.kg_model_builder import kg_model_to_code
 from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
 from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
 
@@ -55,6 +62,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_object_diagram,
     process_nn_diagram,
     process_bpmn_diagram,
+    process_kg_diagram,
     process_component_diagram,
     process_deployment_diagram,
     json_to_buml_project,
@@ -67,6 +75,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     project_to_json,
     nn_buml_to_json,
     bpmn_buml_to_json,
+    kg_buml_to_json,
     component_buml_to_json,
     deployment_buml_to_json,
 )
@@ -100,14 +109,12 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_MODEL_FILENAME,
     BPMN_DIAGRAM_TYPE,
     DEPLOYMENT_DIAGRAM_TYPE,
+    KG_DTD_PROBE_CHARS,
 )
 
 # Centralized error handling
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
-)
-from besser.utilities.web_modeling_editor.backend.services.exceptions import (
-    ConversionError,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,13 +126,13 @@ MAX_CSV_SIZE = 5 * 1024 * 1024       # 5 MB
 MAX_IMAGE_SIZE = 10 * 1024 * 1024     # 10 MB
 MAX_BUML_SIZE = 2 * 1024 * 1024       # 2 MB
 
+
 # ---------------------------------------------------------------------------
 # Allowed MIME / extension sets per upload type
 # ---------------------------------------------------------------------------
 ALLOWED_SPREADSHEET_EXTENSIONS = {".csv", ".xlsx"}
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 ALLOWED_BUML_EXTENSIONS = {".py"}
-ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}
 
 
 def _validate_upload(file: UploadFile, *, max_size: int, allowed_extensions: set[str], content: bytes) -> None:
@@ -218,6 +225,33 @@ def _validate_file_content(content: bytes, filename: str) -> None:
                     status_code=400,
                     detail="File content does not match JPEG format (invalid magic bytes).",
                 )
+
+    elif ext in (".owl", ".ttl", ".rdf", ".xml", ".nt", ".n3"):
+        # RDF / OWL: must be non-empty and decodable as UTF-8. The real parser
+        # (rdflib) performs the structural validation.
+        if not content.strip():
+            raise HTTPException(status_code=400, detail="OWL/RDF file is empty.")
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="OWL/RDF file is not valid UTF-8 text.")
+
+        # Reject a DTD before rdflib sees it. rdflib's RDF/XML parser builds its
+        # parser with xml.sax.make_parser() and never disables entity
+        # resolution, and stock expat has no expansion limit -- so a few hundred
+        # bytes of nested internal entities ("billion laughs") expand into
+        # minutes of CPU inside the request. No ontology BESSER imports needs a
+        # DTD, so this costs nothing real.
+        probe = text.lstrip()[:KG_DTD_PROBE_CHARS].upper()
+        if "<!DOCTYPE" in probe or "<!ENTITY" in probe:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "OWL/RDF file declares a DTD (<!DOCTYPE/<!ENTITY), which is "
+                    "not accepted: entity expansion can be used to exhaust server "
+                    "resources. Please re-export the ontology without a DTD."
+                ),
+            )
 
 
 async def _read_file(path: str, mode: str = "r", **kwargs) -> str | bytes:
@@ -409,6 +443,25 @@ async def export_buml(input_data: DiagramInput):
                 headers={"Content-Disposition": 'attachment; filename="nn_model.py"'},
             )
 
+        elif elements_data.get("type") == "KnowledgeGraphDiagram":
+            try:
+                kg_model = process_kg_diagram(json_data)
+            except (KeyError, TypeError, AttributeError) as exc:
+                raise ConversionError(
+                    f"Malformed Knowledge Graph diagram payload: {exc}"
+                ) from exc
+            output_file_path = os.path.join(temp_dir, "knowledge_graph.py")
+            # ``model_var_name`` must stay "kg_model": ``project_to_json``'s
+            # SECTION_CONFIG keys on that name, so any other value makes the
+            # emitted section unreadable on the way back in.
+            kg_model_to_code(model=kg_model, file_path=output_file_path, model_var_name="kg_model")
+            file_content = await _read_file(output_file_path, "rb")
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={"Content-Disposition": 'attachment; filename="knowledge_graph.py"'},
+            )
+
         elif elements_data.get("type") == "ComponentDiagram":
             try:
                 component_model = process_component_diagram(json_data)
@@ -518,6 +571,10 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         'bpmnmodel(', '.add_process(', '.add_flow_node(', '.add_sequence_flow('
     ])
 
+    is_kg = any(keyword in content_lower for keyword in [
+        'knowledgegraph(', 'kgclass(', 'kgproperty(', 'kgindividual('
+    ])
+
     # UML Component / Deployment markers: only calls specific to one of the two
     # builders (both emit `.add_relationship(`, so it identifies neither).
     is_uml_component = any(keyword in content_lower for keyword in [
@@ -553,6 +610,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                     model.get("elements")
                     or model.get("relationships")
                     or model.get("pages")
+                    or model.get("nodes")  # KnowledgeGraphDiagram
                 )
 
             def _pick_entry(dtype):
@@ -571,7 +629,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             for dtype in (
                 "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
                 "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
-                "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE, "ComponentDiagram",
+                "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE,
+                "KnowledgeGraphDiagram", "ComponentDiagram",
                 DEPLOYMENT_DIAGRAM_TYPE,
             ):
                 if dtype not in priority:
@@ -666,6 +725,16 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         except Exception as bpmn_error:
             logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
 
+    elif is_kg:
+        # A ConversionError from the converter names the actual problem and is
+        # reported as such (HTTP 400) rather than as "format not recognized".
+        logger.info("Detected Knowledge Graph diagram, parsing...")
+        diagram_data = {
+            "title": diagram_title,
+            "model": kg_buml_to_json(buml_content),
+        }
+        diagram_type = "KnowledgeGraphDiagram"
+
     elif is_uml_component:
         # A ConversionError from the converter names the actual problem and is
         # reported as such (HTTP 400) rather than as "format not recognized".
@@ -689,7 +758,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
             "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, "
-            "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, ComponentDiagram, DeploymentDiagram, or Project."
+            "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, "
+            "KnowledgeGraphDiagram, ComponentDiagram, DeploymentDiagram, or Project."
         )
 
     # Return the diagram in the format expected by the frontend
@@ -880,47 +950,6 @@ async def get_json_model_from_image(
             "exportedAt": datetime.now(timezone.utc).isoformat(),
             "version": API_VERSION,
         }
-
-@router.post("/get-json-model-from-kg", response_model=DiagramExportResponse)
-@handle_endpoint_errors("get_json_model_from_kg")
-async def get_json_model_from_kg(
-    kg_file: UploadFile = File(...),
-    api_key: str = Form(...)
-):
-    """
-    Accepts an .TTL, .RDF, or .JSON knowledge graphs and an OpenAI API key, uses BESSER's kgtouml feature to transform the kg into a BUML class diagram in JSON.
-    """
-    # Save uploaded KG to a temp folder
-    kg_content = await kg_file.read()
-    _validate_upload(kg_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_KG_EXTENSIONS, content=kg_content)
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        safe_filename = os.path.basename(kg_file.filename)
-        kg_path = os.path.join(temp_dir, safe_filename)
-        await _write_file(kg_path, kg_content)
-        # Create a folder for the kg as expected by mockup_to_buml
-        kg_folder = os.path.join(temp_dir, "kgs")
-        os.makedirs(kg_folder, exist_ok=True)
-        os.rename(kg_path, os.path.join(kg_folder, safe_filename))
-        # Use kg_to_buml to generate DomainModel from kg and API key
-        # Find the kg file path
-        kg_files = [f for f in os.listdir(kg_folder) if f.lower().endswith(('.ttl', '.json', '.rdf'))]
-        if not kg_files:
-            raise HTTPException(status_code=400, detail="No valid KG file found.")
-        kg_path = os.path.join(kg_folder, kg_files[0])
-        domain_model = kg_to_buml(kg_path=kg_path, openai_token=api_key)
-        diagram_json = class_buml_to_json(domain_model)
-
-        diagram_title = diagram_json.get("title", "Imported Class Diagram")
-        diagram_type = "ClassDiagram"
-        return {
-            "title": diagram_title,
-            "model": {**diagram_json, "type": diagram_type},
-            "diagramType": diagram_type,
-            "exportedAt": datetime.now(timezone.utc).isoformat(),
-            "version": API_VERSION,
-        }
-
 
 @router.post("/transform-agent-model-json")
 @handle_endpoint_errors("transform_agent_model_json")

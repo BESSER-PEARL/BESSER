@@ -66,6 +66,7 @@ from besser.utilities.web_modeling_editor.backend.services.deployment import (
 from besser.utilities.web_modeling_editor.backend.routers import (
     generation_router,
     conversion_router,
+    kg_router,
     validation_router,
     deployment_router,
     spec_driven_router,
@@ -296,6 +297,7 @@ app.include_router(github_deploy_router, prefix="/besser_api")
 # Include application routers
 app.include_router(generation_router.router)
 app.include_router(conversion_router.router)
+app.include_router(kg_router.router)
 app.include_router(validation_router.router)
 app.include_router(deployment_router.router)
 app.include_router(spec_driven_router.router)

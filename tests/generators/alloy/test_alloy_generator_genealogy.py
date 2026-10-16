@@ -26,11 +26,11 @@ def spec(tmpdir):
 
 
 def test_signatures(spec):
-    assert "abstract sig Person" in spec.headers
-    assert "sig Man extends Person" in spec.headers
-    assert "sig Woman extends Person" in spec.headers
-    assert "sig Adam extends Man" in spec.headers
-    assert "sig Eve extends Woman" in spec.headers
+    assert "abstract sig Person" in spec.sigs
+    assert "sig Man extends Person" in spec.sigs
+    assert "sig Woman extends Person" in spec.sigs
+    assert "sig Adam extends Man" in spec.sigs
+    assert "sig Eve extends Woman" in spec.sigs
 
 
 def test_signature_fields(spec):

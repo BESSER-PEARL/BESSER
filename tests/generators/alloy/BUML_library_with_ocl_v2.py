@@ -134,13 +134,14 @@ def library_with_ocl_v2():
         language="OCL",
     )
 
+    # Uninterpreted strings have no length: this invariant is disabled
     # String size(): a book has a non-empty title
-    book_has_title = Constraint(
-        name="book_has_title",
-        context=Book,
-        expression="context Book inv book_has_title: self.title.size() > 0",
-        language="OCL",
-    )
+    # book_has_title = Constraint(
+    #     name="book_has_title",
+    #     context=Book,
+    #     expression="context Book inv book_has_title: self.title.size() > 0",
+    #     language="OCL",
+    # )
 
     # Price is never negative
     book_nonneg_price = Constraint(
@@ -158,21 +159,23 @@ def library_with_ocl_v2():
         language="OCL",
     )
 
+    # Uninterpreted strings have no length: this invariant is disabled
     # String size(): a library has a non-empty name
-    library_named = Constraint(
-        name="library_named",
-        context=Library,
-        expression="context Library inv library_named: self.name.size() > 0",
-        language="OCL",
-    )
+    # library_named = Constraint(
+    #     name="library_named",
+    #     context=Library,
+    #     expression="context Library inv library_named: self.name.size() > 0",
+    #     language="OCL",
+    # )
 
+    # Uninterpreted strings have no length: this invariant is disabled
     # String size(): an author has a non-empty name
-    author_named = Constraint(
-        name="author_named",
-        context=Author,
-        expression="context Author inv author_named: self.name.size() > 0",
-        language="OCL",
-    )
+    # author_named = Constraint(
+    #     name="author_named",
+    #     context=Author,
+    #     expression="context Author inv author_named: self.name.size() > 0",
+    #     language="OCL",
+    # )
 
     # forAll + date comparison: books are released after the author's birth
     Author_inv_8_1 = Constraint(
@@ -226,8 +229,8 @@ def library_with_ocl_v2():
         types={Book, Library, Author, Genre},
         associations={library_books, author_books},
         constraints={
-            book_positive_pages, book_nonneg_stock, book_has_title, book_nonneg_price,
-            library_has_books, library_named, author_named,
+            book_positive_pages, book_nonneg_stock, book_nonneg_price, library_has_books,
+            # book_has_title, library_named, author_named,
             Author_inv_8_1, Author_inv_9_1, Author_inv_10_1,
         },
     )

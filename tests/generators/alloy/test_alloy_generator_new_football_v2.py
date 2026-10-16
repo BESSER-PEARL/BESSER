@@ -12,22 +12,26 @@ def spec(football_model_v2, tmpdir):
     generator.generate()
     als_file = generator.get_specification_path()
     assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"
-    # Date attributes require the date library next to the specification
     with open(als_file, "r", encoding="utf-8") as f:
         content = f.read()
     return AlloySpec(content)
 
 
 def test_signatures(spec):
-    assert "sig Country" in spec.headers
-    assert "sig Team" in spec.headers
-    assert "abstract sig Person" in spec.headers
-    assert "sig Player extends Person" in spec.headers
-    assert "sig GoalKeeper extends Player" in spec.headers
-    assert "sig HeadCoach extends Person" in spec.headers
-    assert "sig Fan extends Person" in spec.headers
-    assert "sig Championship" in spec.headers
-    assert "sig Match" in spec.headers
+    assert "sig Country" in spec.sigs
+    assert "sig Team" in spec.sigs
+    assert "abstract sig Person" in spec.sigs
+    assert "sig Player extends Person" in spec.sigs
+    assert "sig GoalKeeper extends Player" in spec.sigs
+    assert "sig HeadCoach extends Person" in spec.sigs
+    assert "sig Fan extends Person" in spec.sigs
+    assert "sig Championship" in spec.sigs
+    assert "sig Match" in spec.sigs
+    assert "one sig Str_str0 extends Str" in spec.sigs
+    assert "one sig Str_str1 extends Str" in spec.sigs
+    assert "one sig Str_str2 extends Str" in spec.sigs
+    assert "one sig Str_str3 extends Str" in spec.sigs
+    assert "one sig Str_str4 extends Str" in spec.sigs
 
 
 def test_signature_fields(spec):
@@ -88,17 +92,17 @@ def test_signature_fields(spec):
 
 def test_enumerations(spec):
     assert len(spec.subsigs_of("Position")) == 4
-    assert "abstract sig Position" in spec.headers
-    assert "one sig ENUM_Position_GOALKEEPER extends Position" in spec.headers
-    assert "one sig ENUM_Position_DEFENDER extends Position" in spec.headers
-    assert "one sig ENUM_Position_MIDFIELDER extends Position" in spec.headers
-    assert "one sig ENUM_Position_FORWARD extends Position" in spec.headers
+    assert "abstract sig Position" in spec.sigs
+    assert "one sig ENUM_Position_GOALKEEPER extends Position" in spec.sigs
+    assert "one sig ENUM_Position_DEFENDER extends Position" in spec.sigs
+    assert "one sig ENUM_Position_MIDFIELDER extends Position" in spec.sigs
+    assert "one sig ENUM_Position_FORWARD extends Position" in spec.sigs
 
     assert len(spec.subsigs_of("CoachStatus")) == 3
-    assert "abstract sig CoachStatus" in spec.headers
-    assert "one sig ENUM_CoachStatus_ACTIVE extends CoachStatus" in spec.headers
-    assert "one sig ENUM_CoachStatus_INACTIVE extends CoachStatus" in spec.headers
-    assert "one sig ENUM_CoachStatus_RETIRED extends CoachStatus" in spec.headers
+    assert "abstract sig CoachStatus" in spec.sigs
+    assert "one sig ENUM_CoachStatus_ACTIVE extends CoachStatus" in spec.sigs
+    assert "one sig ENUM_CoachStatus_INACTIVE extends CoachStatus" in spec.sigs
+    assert "one sig ENUM_CoachStatus_RETIRED extends CoachStatus" in spec.sigs
 
 
 def test_facts(spec):
@@ -150,4 +154,3 @@ def test_run_command(spec):
     # The OCL literal 16 (p.age > 16) needs 6 bits: a 5-bit Int only goes up to 15
     assert "6 Int" in spec.run_scopes
     assert "5 Str" in spec.run_scopes
-    assert "5 seq" in spec.run_scopes

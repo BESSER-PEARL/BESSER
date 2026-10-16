@@ -63,6 +63,7 @@ class BumlToAlloy:
             self._add_multiplicity_facts(spec, association)
             self._add_inverse_fact(spec, association)
         literals = self._add_invariants(spec)
+        self._add_strings(spec, literals)
         self._add_instance_predicate(spec)
         self._set_run_command(spec, literals)
         return spec
@@ -134,6 +135,19 @@ class BumlToAlloy:
             ocl.add_invariant(constraint)
         return ocl.literals
 
+    def _add_strings(self, spec: AlloySpecification, literals: Literals) -> None:
+        """Declares the strings: a singleton ``Str`` per OCL string literal, then singletons
+        ``Str_str0``, ``Str_str1``, ... (skipping the names taken) filling the scope up."""
+        if not self._uses_strings(literals):
+            return
+        for label in literals.string_labels().values():
+            spec.add_signature(label, multiplicity="one", extends="Str")
+        index = 0
+        for _ in range(max(0, self.scope - len(literals.strings()))):
+            while spec.has_signature(f"Str_str{index}"):
+                index += 1
+            spec.add_signature(f"Str_str{index}", multiplicity="one", extends="Str")
+
     def _add_instance_predicate(self, spec: AlloySpecification) -> None:
         """Adds the ``instance_model`` predicate, requiring an instance of every signature."""
         spec.add_predicate(
@@ -143,22 +157,24 @@ class BumlToAlloy:
     def _set_run_command(self, spec: AlloySpecification, literals: Literals) -> None:
         """Sets the ``run`` command of ``instance_model``.
 
-        Strings are sequences of characters, so ``seq`` bounds their length: the scope, or the
-        length of the longest OCL string literal when longer.  The integer bitwidth must be
-        able to index it and to hold the largest OCL integer literal.
+        The scope of ``Str`` is the number of its declared singletons: the scope, or the number
+        of OCL string literals when larger.  The integer bitwidth must be able to hold the
+        largest OCL integer literal.
         """
         scopes = {label: self.scope for label in self._instance_signatures()}
-        bitwidth = max(self.scope, literals.largest_integer().bit_length() + 1)
-        if "Str" in self.attribute_types or literals.strings():
-            maxseq = max(self.scope, literals.longest_string())
-            scopes.update({"Int": max(bitwidth, maxseq.bit_length() + 1), "Str": self.scope, "seq": maxseq})
-        elif "Int" in self.attribute_types or literals.integers():
-            scopes["Int"] = bitwidth
+        if self._uses_strings(literals):
+            scopes["Str"] = max(self.scope, len(literals.strings()))
+        if "Int" in self.attribute_types or literals.integers():
+            scopes["Int"] = max(self.scope, literals.largest_integer().bit_length() + 1)
         spec.set_run("instance_model", scopes)
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _uses_strings(self, literals: Literals) -> bool:
+        """Whether the specification uses strings: string attributes or OCL string literals."""
+        return "Str" in self.attribute_types or bool(literals.strings())
 
     def _instance_signatures(self) -> list[str]:
         """Signatures that must have instances: classes and dates."""

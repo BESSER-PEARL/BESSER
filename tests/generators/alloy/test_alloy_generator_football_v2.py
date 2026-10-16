@@ -20,15 +20,15 @@ def spec(football_model_v2, tmpdir):
 
 
 def test_signatures(spec):
-    assert "sig Country" in spec.headers
-    assert "sig Team" in spec.headers
-    assert "abstract sig Person" in spec.headers
-    assert "sig Player extends Person" in spec.headers
-    assert "sig GoalKeeper extends Player" in spec.headers
-    assert "sig HeadCoach extends Person" in spec.headers
-    assert "sig Fan extends Person" in spec.headers
-    assert "sig Championship" in spec.headers
-    assert "sig Match" in spec.headers
+    assert "sig Country" in spec.sigs
+    assert "sig Team" in spec.sigs
+    assert "abstract sig Person" in spec.sigs
+    assert "sig Player extends Person" in spec.sigs
+    assert "sig GoalKeeper extends Player" in spec.sigs
+    assert "sig HeadCoach extends Person" in spec.sigs
+    assert "sig Fan extends Person" in spec.sigs
+    assert "sig Championship" in spec.sigs
+    assert "sig Match" in spec.sigs
 
 
 def test_signature_fields(spec):
@@ -89,17 +89,17 @@ def test_signature_fields(spec):
 
 def test_enumerations(spec):
     assert len(spec.subsigs_of("Position")) == 4
-    assert "abstract sig Position" in spec.headers
-    assert "one sig ENUM_Position_GOALKEEPER extends Position" in spec.headers
-    assert "one sig ENUM_Position_DEFENDER extends Position" in spec.headers
-    assert "one sig ENUM_Position_MIDFIELDER extends Position" in spec.headers
-    assert "one sig ENUM_Position_FORWARD extends Position" in spec.headers
+    assert "abstract sig Position" in spec.sigs
+    assert "one sig ENUM_Position_GOALKEEPER extends Position" in spec.sigs
+    assert "one sig ENUM_Position_DEFENDER extends Position" in spec.sigs
+    assert "one sig ENUM_Position_MIDFIELDER extends Position" in spec.sigs
+    assert "one sig ENUM_Position_FORWARD extends Position" in spec.sigs
 
     assert len(spec.subsigs_of("CoachStatus")) == 3
-    assert "abstract sig CoachStatus" in spec.headers
-    assert "one sig ENUM_CoachStatus_ACTIVE extends CoachStatus" in spec.headers
-    assert "one sig ENUM_CoachStatus_INACTIVE extends CoachStatus" in spec.headers
-    assert "one sig ENUM_CoachStatus_RETIRED extends CoachStatus" in spec.headers
+    assert "abstract sig CoachStatus" in spec.sigs
+    assert "one sig ENUM_CoachStatus_ACTIVE extends CoachStatus" in spec.sigs
+    assert "one sig ENUM_CoachStatus_INACTIVE extends CoachStatus" in spec.sigs
+    assert "one sig ENUM_CoachStatus_RETIRED extends CoachStatus" in spec.sigs
 
 
 def test_facts(spec):

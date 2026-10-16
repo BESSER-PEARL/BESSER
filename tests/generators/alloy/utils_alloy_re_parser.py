@@ -42,7 +42,7 @@ def _brace_body(text: str, open_idx: int) -> str:
 class AlloySpec:
     """Signatures, facts and run command of an Alloy specification.
 
-    - ``headers``: normalized declarations, e.g. ``"one sig ENUM_Position_FORWARD extends Position"``
+    - ``sigs``:    normalized declarations, e.g. ``"one sig ENUM_Position_FORWARD extends Position"``
     - ``fields``:  signature name -> normalized field declarations, e.g. ``{"Team_country: one Country"}``
     - ``parents``: signature name -> the signature it extends (``None`` if it extends none)
     - ``facts``:   normalized fact bodies, e.g. ``{"all a: Fan | #(a.Fan_favoriteTeams) >= 2"}``
@@ -51,7 +51,7 @@ class AlloySpec:
     """
 
     def __init__(self, text: str):
-        self.headers: Set[str] = set()
+        self.sigs: Set[str] = set()
         self.fields: Dict[str, Set[str]] = {}
         self.parents: Dict[str, Optional[str]] = {}
         self.facts: Set[str] = set()
@@ -78,7 +78,7 @@ class AlloySpec:
 
             for name in re.split(r"\s*,\s*", m.group("names")):
                 assert name not in self.fields, f"Signature {name} declared twice"
-                self.headers.add(" ".join(prefix + ["sig", name] + suffix))
+                self.sigs.add(" ".join(prefix + ["sig", name] + suffix))
                 self.fields[name] = set(fields)
                 self.parents[name] = m.group("parent")
 

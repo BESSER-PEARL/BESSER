@@ -26,9 +26,9 @@ def spec(library_with_ocl_v2, tmpdir):
 
 
 def test_signatures(spec):
-    assert "sig Library" in spec.headers
-    assert "sig Book" in spec.headers
-    assert "sig Author" in spec.headers
+    assert "sig Library" in spec.sigs
+    assert "sig Book" in spec.sigs
+    assert "sig Author" in spec.sigs
 
 
 def test_signature_fields(spec):
@@ -57,21 +57,21 @@ def test_signature_fields(spec):
 
 def test_enumerations(spec):
     assert len(spec.subsigs_of("Genre")) == 10
-    assert "abstract sig Genre" in spec.headers
-    assert "one sig ENUM_Genre_Poetry extends Genre" in spec.headers
-    assert "one sig ENUM_Genre_Thriller extends Genre" in spec.headers
-    assert "one sig ENUM_Genre_History extends Genre" in spec.headers
-    assert "one sig ENUM_Genre_Technology extends Genre" in spec.headers
-    assert "one sig ENUM_Genre_Romance extends Genre" in spec.headers
-    assert "one sig ENUM_Genre_Horror extends Genre" in spec.headers
-    assert "one sig ENUM_Genre_Adventure extends Genre" in spec.headers
-    assert "one sig ENUM_Genre_Philosophy extends Genre" in spec.headers
-    assert "one sig ENUM_Genre_Cookbooks extends Genre" in spec.headers
-    assert "one sig ENUM_Genre_Fantasy extends Genre" in spec.headers
+    assert "abstract sig Genre" in spec.sigs
+    assert "one sig ENUM_Genre_Poetry extends Genre" in spec.sigs
+    assert "one sig ENUM_Genre_Thriller extends Genre" in spec.sigs
+    assert "one sig ENUM_Genre_History extends Genre" in spec.sigs
+    assert "one sig ENUM_Genre_Technology extends Genre" in spec.sigs
+    assert "one sig ENUM_Genre_Romance extends Genre" in spec.sigs
+    assert "one sig ENUM_Genre_Horror extends Genre" in spec.sigs
+    assert "one sig ENUM_Genre_Adventure extends Genre" in spec.sigs
+    assert "one sig ENUM_Genre_Philosophy extends Genre" in spec.sigs
+    assert "one sig ENUM_Genre_Cookbooks extends Genre" in spec.sigs
+    assert "one sig ENUM_Genre_Fantasy extends Genre" in spec.sigs
 
 
 def test_facts(spec):
-    assert len(spec.facts) == 14
+    assert len(spec.facts) == 11
 
     # The quantified variable (a/b) and the side an inverse fact starts from
     # depend on the association end order
@@ -90,16 +90,16 @@ def test_facts(spec):
     assert "all self:this/Book|(self.Book_pages > 0)" in spec.facts
     # OCL: book_nonneg_stock (self.stock >= 0)
     assert "all self:this/Book|(self.Book_stock >= 0)" in spec.facts
-    # OCL: book_has_title (String size() -> len)
-    assert "all self:this/Book|(len[self.Book_title] > 0)" in spec.facts
+    # OCL: book_has_title (String size() -> len), disabled in the model
+    # assert "all self:this/Book|(len[self.Book_title] > 0)" in spec.facts
     # OCL: book_nonneg_price (self.price >= 0)
     assert "all self:this/Book|(self.Book_price >= 0)" in spec.facts
     # OCL: library_has_books (collection size() -> cardinality)
     assert "all self:this/Library|(#(self.Library_books) > 0)" in spec.facts
-    # OCL: library_named (String size() -> len)
-    assert "all self:this/Library|(len[self.Library_name] > 0)" in spec.facts
-    # OCL: author_named (String size() -> len)
-    assert "all self:this/Author|(len[self.Author_name] > 0)" in spec.facts
+    # OCL: library_named (String size() -> len), disabled in the model
+    # assert "all self:this/Library|(len[self.Library_name] > 0)" in spec.facts
+    # OCL: author_named (String size() -> len), disabled in the model
+    # assert "all self:this/Author|(len[self.Author_name] > 0)" in spec.facts
     # OCL: Author_inv_8_1, books released after the author's birth (forAll + date comparison)
     assert "all self:this/Author|all b : self.Author_books | " \
         "(dateGte[b.Book_release,self.Author_birth])" in spec.facts

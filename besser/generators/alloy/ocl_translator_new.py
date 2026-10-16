@@ -8,8 +8,10 @@ the specification.  Enumeration literals ``Enumeration::Literal`` are not in the
 yet, so invariants using them cannot be translated.
 
 Constructs without a faithful translation raise :class:`UnsupportedOclError` rather than being
-approximated: e.g. real division, arithmetic on collections, and ``size()`` or ``=`` on Bags
-(Alloy relations are sets, so a Bag would lose its duplicates).  Invalid OCL raises
+approximated: e.g. real division, arithmetic on collections, ``size()`` or ``=`` on Bags
+(Alloy relations are sets, so a Bag would lose its duplicates), string operations other
+than ``=`` and ``<>`` (strings are uninterpreted), and string literals with
+characters that cannot be part of an Alloy identifier (literals name their constants).  Invalid OCL raises
 :class:`OclTranslationError`.
 """
 
@@ -64,6 +66,9 @@ _CONNECTIVES = {"and": "and", "or": "or", "implies": "=>"}
 
 # Escape sequence of a string literal: a backslash and the escaped character.
 _STRING_ESCAPE = re.compile(r"\\(.)")
+
+# Characters that cannot be part of an Alloy identifier, hence of the name of a string literal's constant.
+_INVALID_IDENTIFIER_CHARACTERS = re.compile(r"[^A-Za-z0-9_]")
 
 # Type of the OCL null value.
 _NULL = "null"
@@ -165,8 +170,7 @@ class OclToAlloy:
     def _string(self, node: StringLiteralExpression) -> "Term":
         value = _STRING_ESCAPE.sub(r"\1", node.value)
         self._types.add("Str")
-        self.literals.add_string(value)
-        return Term(self._spec.add_string(value), "Str")
+        return Term(self.literals.add_string(value), "Str")
 
     # ------------------------------------------------------------------
     # Operations
@@ -244,10 +248,10 @@ class OclToAlloy:
     # ------------------------------------------------------------------
 
     def _size(self, node: OperationCallExpression) -> "Term":
-        """``size()`` is the length of a string, the cardinality of anything else."""
+        """``size()`` is the cardinality of its source; strings are uninterpreted, so they have no length."""
         source = self._translate(node.source)
         if source.type == "Str" and not source.is_set:
-            return Term(f"len[{source.text}]", "Int")
+            raise UnsupportedOclError(f"'{pretty_print(node)}' is not supported: strings are uninterpreted")
         if source.is_bag:
             raise UnsupportedOclError(
                 f"'{pretty_print(node)}' is not supported: the size of a collection that may contain "
@@ -457,16 +461,33 @@ class Term:
 
 
 class Literals:
-    """The literals of the translated invariants, each once, in the order they were found."""
+    """The literals of the translated invariants, each once, in the order they were found.
+
+    Each string literal is named by the label of its Alloy constant, ``Str_<value>``.
+    """
 
     def __init__(self):
-        self._strings: list[str] = []
+        self._strings: dict[str, str] = {}  # value -> label of its constant
         self._integers: list[int] = []
         self._dates: list[str] = []
 
-    def add_string(self, value: str) -> None:
-        if value not in self._strings:
-            self._strings.append(value)
+    def add_string(self, value: str) -> str:
+        """Adds the string literal *value*; returns the label of its constant.
+
+        The label is ``Str_<value>`` (``Str_`` for the empty string): the value has only
+        identifier characters, so distinct values have distinct labels.
+
+        Raises:
+            UnsupportedOclError: when *value* has characters that cannot be part of an Alloy identifier.
+        """
+        invalid = dict.fromkeys(_INVALID_IDENTIFIER_CHARACTERS.findall(value))
+        if invalid:
+            raise UnsupportedOclError(
+                f"String '{value}' is not supported: the translation of the characters "
+                f"{', '.join(repr(character) for character in invalid)} is unsupported"
+            )
+        self._strings.setdefault(value, f"Str_{value}")
+        return self._strings[value]
 
     def add_integer(self, value: int) -> None:
         if value not in self._integers:
@@ -479,15 +500,15 @@ class Literals:
     def strings(self) -> list[str]:
         return list(self._strings)
 
+    def string_labels(self) -> dict[str, str]:
+        """The labels of the constants of the string literals, by value."""
+        return dict(self._strings)
+
     def integers(self) -> list[int]:
         return list(self._integers)
 
     def dates(self) -> list[str]:
         return list(self._dates)
-
-    def longest_string(self) -> int:
-        """The length of the longest string literal, 0 when there is none."""
-        return max((len(value) for value in self._strings), default=0)
 
     def largest_integer(self) -> int:
         """The largest absolute value of the integer literals, 0 when there is none."""

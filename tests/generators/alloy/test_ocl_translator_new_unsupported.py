@@ -16,6 +16,10 @@ from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2
     ("Library", "self.books.pages + 1 > 0", "single integers"),
     ("Book", "self.title > 3", "single integers"),
     ("Book", "self.title < self.title", "String comparison"),
+    # uninterpreted strings have no length
+    ("Book", "self.title.size() > 0", "strings are uninterpreted"),
+    # string literals name their constants, so their characters must be valid in identifiers
+    ("Author", "self.name = 'van gogh'", "the translation of the characters ' ' is unsupported"),
     # type operations on collections collect their results
     ("Library", "self.books.oclIsKindOf(Book)", "collections"),
 ])

@@ -1,5 +1,6 @@
-"""A class associated with itself (Product.parent / Product.children) generates
-mappers SQLAlchemy can configure: the many-to-one end carries ``remote_side``."""
+"""A class associated with itself (Product.parent / Product.children, or a 1:1
+Person.mentor / Person.mentee) generates mappers SQLAlchemy can configure: only
+the end that owns the FK column carries ``remote_side``."""
 
 import importlib.util
 import os
@@ -22,8 +23,17 @@ def _hierarchy_model() -> DomainModel:
     return DomainModel(name="Catalog", types={product}, associations={hierarchy})
 
 
-def _generate_and_import(tmp_path, module_name: str):
-    SQLAlchemyGenerator(model=_hierarchy_model(), output_dir=str(tmp_path)).generate(dbms="sqlite")
+def _mentoring_model() -> DomainModel:
+    person = Class(name="Person", attributes={Property(name="name", type=StringType)})
+    mentor = Property(name="mentor", type=person, multiplicity=Multiplicity(0, 1))
+    mentee = Property(name="mentee", type=person, multiplicity=Multiplicity(0, 1))
+    mentoring = BinaryAssociation(name="Person_mentoring", ends={mentor, mentee})
+    return DomainModel(name="School", types={person}, associations={mentoring})
+
+
+def _generate_and_import(tmp_path, module_name: str, model: DomainModel = None):
+    model = model or _hierarchy_model()
+    SQLAlchemyGenerator(model=model, output_dir=str(tmp_path)).generate(dbms="sqlite")
     path = os.path.join(str(tmp_path), "sql_alchemy.py")
     spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
@@ -53,3 +63,29 @@ def test_self_association_mappers_configure_and_round_trip(tmp_path):
         session.commit()
         assert session.get(module.Product, leaf.id).parent.code == "22"
         assert [c.code for c in session.get(module.Product, root.id).children] == ["2204"]
+
+
+def test_one_to_one_self_association_sets_remote_side_on_one_end(tmp_path):
+    path, _ = _generate_and_import(tmp_path, "self_assoc_one_to_one_code", _mentoring_model())
+    with open(path, encoding="utf-8") as f:
+        code = f.read()
+    # Both ends set remote_side before, which SQLAlchemy rejects as
+    # "both of the same direction MANYTOONE".
+    assert code.count("remote_side=[Person.id]") == 1
+
+
+def test_one_to_one_self_association_mappers_configure_and_round_trip(tmp_path):
+    _, module = _generate_and_import(tmp_path, "self_assoc_one_to_one", _mentoring_model())
+    configure_mappers()
+
+    engine = create_engine("sqlite://")
+    module.Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        teacher = module.Person(name="Ada")
+        student = module.Person(name="Alan")
+        # Whichever end holds the FK, setting one side must be readable from the other.
+        teacher.mentee = student
+        session.add_all([teacher, student])
+        session.commit()
+        assert session.get(module.Person, teacher.id).mentee.name == "Alan"
+        assert session.get(module.Person, student.id).mentor.name == "Ada"

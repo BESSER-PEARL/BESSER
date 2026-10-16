@@ -186,7 +186,7 @@ public class {{ class_obj.name }} {{ extends }}{
 {% endfor %}
 {# Element types held by more than one collection (e.g. Country holding the Observations
    of both Observation.reporter and Observation.partner): their add helpers are named after
-   the role (addToObservationsAsPartner), or the class would declare addObservation twice. #}
+   the role (addTo + the collection name, e.g. addToObservations_as_partner), or the class would declare addObservation twice. #}
 {% set list_types = [] %}
 {% for i in range(0, assocs|length, 2) %}
     {% if assocs[i][:4] == "List" %}{% do list_types.append(assocs[i][5:-1]) %}{% endif %}

@@ -263,6 +263,7 @@ export const AgentComponent: React.FC<Props> = ({
     borderRadius: "12px",
     maxWidth: "70%",
     wordWrap: "break-word",
+    whiteSpace: "pre-wrap", // keep the line breaks of multi-line agent replies
     alignSelf: sender === "user" ? "flex-end" : "flex-start",
     backgroundColor: sender === "user" ? "#007bff" : "#e9ecef",
     color: sender === "user" ? "#fff" : "#333",

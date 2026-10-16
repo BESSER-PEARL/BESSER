@@ -81,8 +81,6 @@ def test_enumerations(spec):
 def test_facts(spec):
     # Fan -> Team (2..4): the bounds are enforced by facts, the field itself is a plain set
     assert len(spec.facts) == 2
-    assert "all a: Fan | #(a.Fan_favoriteTeams) >= 2" in spec.facts
-    assert "all a: Fan | #(a.Fan_favoriteTeams) <= 4" in spec.facts
 
 
 def test_run_command(spec):

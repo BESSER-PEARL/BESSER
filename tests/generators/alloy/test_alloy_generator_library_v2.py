@@ -71,7 +71,7 @@ def test_enumerations(spec):
 
 
 def test_facts(spec):
-    assert len(spec.facts) == 11
+    assert len(spec.facts) == 10
 
     # The quantified variable (a/b) and the side an inverse fact starts from
     # depend on the association end order
@@ -100,9 +100,10 @@ def test_facts(spec):
     # assert "all self:this/Library|(len[self.Library_name] > 0)" in spec.facts
     # OCL: author_named (String size() -> len), disabled in the model
     # assert "all self:this/Author|(len[self.Author_name] > 0)" in spec.facts
-    # OCL: Author_inv_8_1, books released after the author's birth (forAll + date comparison)
-    assert "all self:this/Author|all b : self.Author_books | " \
-        "(dateGte[b.Book_release,self.Author_birth])" in spec.facts
+    # OCL: Author_inv_8_1, books released after the author's birth (forAll + date comparison),
+    # disabled with its invariant: date ordering is unsupported
+    # assert "all self:this/Author|all b : self.Author_books | " \
+    #     "(dateGte[b.Book_release,self.Author_birth])" in spec.facts
     # OCL: Author_inv_9_1, 'borges' (Str1) has written at least one book
     assert "all self:this/Author|((strEq[self.Author_name,Str1]) => " \
         "(#(self.Author_books) > 0))" in spec.facts

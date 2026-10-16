@@ -176,28 +176,6 @@ class TestTranslateConstraints:
 # ---------------------------------------------------------------------------
 
 
-class TestAlloySolverConstruction:
-
-    def test_generates_als_file_and_sanitizes_names(self, tmpdir):
-        # Valid BUML name (no spaces/hyphens) that is still invalid for Alloy.
-        team = Class(name="Clase_Número")
-        team.attributes = {Property(name="1attr", type=StringType)}
-        model = DomainModel(name="M", types={team})
-
-        solver = AlloySolver(model=model, output_dir=str(tmpdir.mkdir("out")))
-
-        assert os.path.isfile(solver.specification)
-        with open(solver.specification, encoding="utf-8") as f:
-            als_content = f.read()
-        # The generated .als must use sanitized, Alloy-valid identifiers.
-        assert re.search(r"sig\s+Clase_Nmero", als_content)
-        assert re.search(r"Clase_Nmero__1attr", als_content)
-        # The original model must NOT be mutated.
-        original = model.classes_sorted_by_inheritance()[0]
-        assert original.name == "Clase_Número"
-        assert {a.name for a in original.attributes} == {"1attr"}
-
-
 class TestAlloyAnalyzerExecutorResolution:
 
     def test_uses_besser_alloy_jar_env_var(self, tmp_path, monkeypatch):

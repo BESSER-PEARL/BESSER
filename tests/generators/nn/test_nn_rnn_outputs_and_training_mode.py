@@ -29,6 +29,12 @@ def test_rnn_returning_one_tensor_needs_no_input_var(layer_cls, return_type, tmp
     if return_type == "last":
         assert "x = x[:, -1, :]" in code
 
+    tf_code = (tmp_path / "tf" / "tf_nn_subclassing.py").read_text(encoding="utf-8")
+    assert "x = self.rnn(x)" in tf_code     # one tensor: no unpacking of hidden states
+    assert "x = self.out(x)" in tf_code
+    assert ("return_sequences=True" in tf_code) == (return_type == "full")
+    assert "return_state=True" not in tf_code
+
 
 @pytest.mark.parametrize("return_type", ["hidden", "both"])
 def test_rnn_returning_several_tensors_still_needs_input_var(return_type):

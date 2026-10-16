@@ -4227,9 +4227,12 @@ class NN(BehaviorImplementation):
         if module is None:
             return False
 
-        # RNN layers return (output, hidden) or (output, hidden, cell)
+        # RNN layers returning their hidden states ('hidden', and 'both':
+        # output and hidden) give several tensors; 'last' and 'full' give
+        # one (the generators write `x, _ = rnn(x)`), so the next module
+        # can consume it without naming an input_var.
         if isinstance(module, (SimpleRNNLayer, LSTMLayer, GRULayer)):
-            return True
+            return module.return_type in ("hidden", "both")
 
         # Split tensorop returns multiple outputs
         return isinstance(module, TensorOp) and module.tns_type == 'split'

@@ -56,6 +56,16 @@ const resolveColor = (
   (styles && (styles as any)["--chart-bar-color"]) ||
   "#7f56d9";
 
+// Readable axes: large numbers in compact form (25B, 1.5M), long category labels shortened.
+const compactNumber = (value: unknown): string =>
+  typeof value === "number" && Math.abs(value) >= 10000
+    ? new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value)
+    : String(value ?? "");
+const shortLabel = (value: unknown, max = 26): string => {
+  const text = String(value ?? "");
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+};
+
 export const BarChartComponent: React.FC<Props> = ({
   id,
   title,
@@ -97,7 +107,8 @@ export const BarChartComponent: React.FC<Props> = ({
 
   const containerStyle: CSSProperties = {
     width: "100%",
-    height: "400px",
+    // Grows with the chart: horizontal bar charts get taller with more categories.
+    minHeight: "400px",
     marginBottom: "20px",
     ...styles,
   };
@@ -150,7 +161,10 @@ export const BarChartComponent: React.FC<Props> = ({
   return (
     <div id={id} className={className} style={containerStyle}>
       {title && <h3 style={{ textAlign: "center", marginBottom: "10px" }}>{title}</h3>}
-      <ResponsiveContainer width="100%" height={360}>
+      <ResponsiveContainer
+        width="100%"
+        height={orientation === "horizontal" ? Math.max(360, (chartData?.length ?? 0) * 28 + 60) : 360}
+      >
         <BarChart
           data={chartData}
           margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
@@ -164,12 +178,17 @@ export const BarChartComponent: React.FC<Props> = ({
           <XAxis
             type={orientation === "horizontal" ? "number" : "category"}
             dataKey={orientation === "horizontal" ? actualDataField : actualLabelField}
+            tickFormatter={orientation === "horizontal" ? compactNumber : (v: unknown) => shortLabel(v, 14)}
           />
           <YAxis
             type={orientation === "horizontal" ? "category" : "number"}
             dataKey={orientation === "horizontal" ? actualLabelField : undefined}
+            width={orientation === "horizontal" ? 190 : 64}
+            interval={0}
+            tick={{ fontSize: 12 }}
+            tickFormatter={orientation === "horizontal" ? (v: unknown) => shortLabel(v, 24) : compactNumber}
           />
-          {showTooltip && <Tooltip />}
+          {showTooltip && <Tooltip formatter={(v: unknown) => (typeof v === "number" ? v.toLocaleString("en-US", { maximumFractionDigits: 2 }) : String(v ?? ""))} />}
           {showLegend && <Legend verticalAlign={legendPosition} content={renderLegend} />}
           {series && series.length > 0 ? (
             series.map((s, index) => (

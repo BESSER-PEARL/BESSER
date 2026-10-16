@@ -341,6 +341,7 @@ test_loader = torch.utils.data.DataLoader(
 
 {%- macro train_model(model, prediction_task) -%}
 print('##### Training the model')
+{{ model.name }}.train()  # dropout and batch norm in training mode
 for epoch in range({{ model.configuration.epochs }}):
     # Initialize the running loss for the current epoch
     running_loss = 0.0
@@ -353,7 +354,8 @@ for epoch in range({{ model.configuration.epochs }}):
         outputs = {{ model.name }}(inputs)
         # Compute the loss 
         {%- if prediction_task == "regression" %}
-        labels = labels.unsqueeze(1)
+        if labels.dim() == 1:  # one target per row; several targets keep their shape
+            labels = labels.unsqueeze(1)
         {% elif prediction_task == "binary" %}
         outputs = outputs.squeeze()
         labels = labels.float()
@@ -378,6 +380,7 @@ print('Training finished')
 
 {% macro evaluate_model(model, prediction_task) -%}
 print('##### Evaluating the model')
+{{ model.name }}.eval()  # dropout off, batch norm on its running statistics
 # Disable gradient calculation during inference
 with torch.no_grad():
     # Initialize lists to store predicted and true labels
@@ -398,7 +401,8 @@ with torch.no_grad():
         _, predicted = torch.max(outputs.data, 1) 
         {%- else -%}
         predicted = outputs.numpy()
-        labels = labels.unsqueeze(1)
+        if labels.dim() == 1:  # one target per row; several targets keep their shape
+            labels = labels.unsqueeze(1)
         {%- endif %}
         predicted_labels.extend(predicted)
         test_loss += criterion(outputs, labels).item()
@@ -441,6 +445,7 @@ print("The model is saved successfully")
 
 {%- macro train_model_body(model, prediction_task) -%}
 print('##### Training the model')
+model.train()  # dropout and batch norm in training mode
 for epoch in range(epochs):
     # Initialize the running loss for the current epoch
     running_loss = 0.0
@@ -453,7 +458,8 @@ for epoch in range(epochs):
         outputs = model(inputs)
         # Compute the loss
         {%- if prediction_task == "regression" %}
-        labels = labels.unsqueeze(1)
+        if labels.dim() == 1:  # one target per row; several targets keep their shape
+            labels = labels.unsqueeze(1)
         {% elif prediction_task == "binary" %}
         outputs = outputs.squeeze()
         labels = labels.float()
@@ -479,6 +485,7 @@ print('Training finished')
 
 {% macro evaluate_model_body(model, prediction_task) -%}
 print('##### Evaluating the model')
+model.eval()  # dropout off, batch norm on its running statistics
 # Disable gradient calculation during inference
 with torch.no_grad():
     # Initialize lists to store predicted and true labels
@@ -499,7 +506,8 @@ with torch.no_grad():
         _, predicted = torch.max(outputs.data, 1)
         {%- else -%}
         predicted = outputs.numpy()
-        labels = labels.unsqueeze(1)
+        if labels.dim() == 1:  # one target per row; several targets keep their shape
+            labels = labels.unsqueeze(1)
         {%- endif %}
         predicted_labels.extend(predicted)
         test_loss += criterion(outputs, labels).item()

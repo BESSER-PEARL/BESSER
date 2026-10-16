@@ -8,8 +8,12 @@ their Alloy names.
 
 The metamodel stores classes, attributes, literals, associations, association ends and
 constraints in sets, so every collection is iterated in sorted order to make the output
-deterministic.
+deterministic.  The dates filling the scope are random, drawn from a generator seeded by the
+caller.
 """
+
+import random
+from datetime import date, timedelta
 
 from besser.BUML.metamodel.structural import (
     UNLIMITED_MAX_MULTIPLICITY,
@@ -22,7 +26,7 @@ from besser.BUML.metamodel.structural import (
     Type,
 )
 from besser.generators.alloy.alloy_specification import AlloySpecification
-from besser.generators.alloy.ocl_translator_new import Literals, OclToAlloy
+from besser.generators.alloy.ocl_translator_new import Literals, OclToAlloy, date_label
 
 
 class BumlToAlloy:
@@ -31,13 +35,15 @@ class BumlToAlloy:
     The specification has a signature per class (fields for its attributes and navigable
     association ends), a signature hierarchy per enumeration, facts for the association
     multiplicities that field declarations cannot express, facts relating the two fields of
-    bidirectional associations, a fact per OCL invariant, and an ``instance_model`` predicate
-    with its ``run`` command.
+    bidirectional associations, a fact per OCL invariant, a singleton per string and date, and
+    an ``instance_model`` predicate with its ``run`` command.  *seed* seeds the random dates
+    filling the scope.
     """
 
-    def __init__(self, model: DomainModel, scope: int):
+    def __init__(self, model: DomainModel, scope: int, seed: int = 0):
         self.model = model
         self.scope = scope
+        self._random = random.Random(seed)
         self.classes = sorted(model.get_classes(), key=lambda cls: cls.name)
         self.enumerations = sorted(model.get_enumerations(), key=lambda enum: enum.name)
         self.associations = sorted(
@@ -51,6 +57,8 @@ class BumlToAlloy:
             for cls in self.classes for attr in cls.attributes
             if not isinstance(attr.type, Enumeration)
         })
+        # Dates declared by the specification: the OCL date literals and the random dates filling the scope
+        self.dates: set[date] = set()
 
     def translate(self) -> AlloySpecification:
         """Returns the Alloy specification of the model."""
@@ -64,6 +72,7 @@ class BumlToAlloy:
             self._add_inverse_fact(spec, association)
         literals = self._add_invariants(spec)
         self._add_strings(spec, literals)
+        self._add_dates(spec, literals)
         self._add_instance_predicate(spec)
         self._set_run_command(spec, literals)
         return spec
@@ -148,22 +157,47 @@ class BumlToAlloy:
                 index += 1
             spec.add_signature(f"Str_str{index}", multiplicity="one", extends="Str")
 
+    def _add_dates(self, spec: AlloySpecification, literals: Literals) -> None:
+        """Declares the dates: a singleton ``Date_YYYY_MM_DD`` per OCL date literal, then per random
+        date filling the scope up, with a fact ordering them chronologically, as ``Date`` is ordered.
+
+        The declared dates are kept in :attr:`dates`.
+        """
+        if not self._uses_dates(literals):
+            return
+        self.dates = literals.dates()
+        while len(self.dates) < self.scope:
+            self.dates.add(_FIRST_DATE + timedelta(days=self._random.randint(0, (_LAST_DATE - _FIRST_DATE).days)))
+        labels = [date_label(value) for value in sorted(self.dates)]
+        for label in labels:
+            spec.add_signature(label, multiplicity="one", extends="Date")
+        if len(labels) > 1:
+            spec.add_fact(
+                " and ".join(
+                    f"dateLt[{spec.signature_name(earlier)}, {spec.signature_name(later)}]"
+                    for earlier, later in zip(labels, labels[1:])
+                ),
+                ["Date"],
+            )
+
     def _add_instance_predicate(self, spec: AlloySpecification) -> None:
-        """Adds the ``instance_model`` predicate, requiring an instance of every signature."""
-        spec.add_predicate(
-            "instance_model", [f"some {spec.signature_name(label)}" for label in self._instance_signatures()]
-        )
+        """Adds the ``instance_model`` predicate, requiring an instance of every class.
+        """
+        spec.add_predicate("instance_model", [f"some {spec.signature_name(cls.name)}" for cls in self.classes])
 
     def _set_run_command(self, spec: AlloySpecification, literals: Literals) -> None:
         """Sets the ``run`` command of ``instance_model``.
 
-        The scope of ``Str`` is the number of its declared singletons: the scope, or the number
-        of OCL string literals when larger.  The integer bitwidth must be able to hold the
-        largest OCL integer literal.
+        The scopes of ``Str`` and ``Date`` are the numbers of their declared singletons: for
+        ``Str``, the scope, or the number of OCL string literals when larger; for ``Date``, the
+        number of declared dates, :attr:`dates`, which :meth:`_add_dates` filled up to the scope.  The
+        integer bitwidth must be able to hold the largest OCL integer literal.
         """
-        scopes = {label: self.scope for label in self._instance_signatures()}
+        scopes = {cls.name: self.scope for cls in self.classes}
         if self._uses_strings(literals):
             scopes["Str"] = max(self.scope, len(literals.strings()))
+        if self._uses_dates(literals):
+            scopes["Date"] = len(self.dates)
         if "Int" in self.attribute_types or literals.integers():
             scopes["Int"] = max(self.scope, literals.largest_integer().bit_length() + 1)
         spec.set_run("instance_model", scopes)
@@ -176,12 +210,9 @@ class BumlToAlloy:
         """Whether the specification uses strings: string attributes or OCL string literals."""
         return "Str" in self.attribute_types or bool(literals.strings())
 
-    def _instance_signatures(self) -> list[str]:
-        """Signatures that must have instances: classes and dates."""
-        labels = [cls.name for cls in self.classes]
-        if "Date" in self.attribute_types:
-            labels.append("Date")
-        return labels
+    def _uses_dates(self, literals: Literals) -> bool:
+        """Whether the specification uses dates: date attributes or OCL date literals."""
+        return "Date" in self.attribute_types or bool(literals.dates())
 
     def _type(self, buml_type: Type) -> str:
         """The label of the Alloy type of a B-UML type."""
@@ -204,6 +235,10 @@ class BumlToAlloy:
         first, second = sorted(association.ends, key=lambda end: end.name)
         return first, second
 
+
+# Range of the random dates filling the scope.
+_FIRST_DATE = date(2000, 1, 1)
+_LAST_DATE = date(2038, 1, 1)
 
 # Alloy types of B-UML primitive types; the others (``time``, ``timedelta`` and ``any``) are not supported.
 _PRIMITIVE_TYPES = {

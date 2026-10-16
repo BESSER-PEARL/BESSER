@@ -46,4 +46,4 @@ def add_invariant_to_spec(model, context: str, expression: str) -> str:
             language="OCL",
         )
     }
-    return BumlToAlloy(model, scope=5).translate().render()
+    return BumlToAlloy(model, scope=5, seed=0).translate().render()

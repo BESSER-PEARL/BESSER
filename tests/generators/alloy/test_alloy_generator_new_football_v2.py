@@ -27,11 +27,20 @@ def test_signatures(spec):
     assert "sig Fan extends Person" in spec.sigs
     assert "sig Championship" in spec.sigs
     assert "sig Match" in spec.sigs
+    # 5 strings filling the scope, as there are no OCL string literals
+    assert len(spec.subsigs_of("Str")) == 5
     assert "one sig Str_str0 extends Str" in spec.sigs
     assert "one sig Str_str1 extends Str" in spec.sigs
     assert "one sig Str_str2 extends Str" in spec.sigs
     assert "one sig Str_str3 extends Str" in spec.sigs
     assert "one sig Str_str4 extends Str" in spec.sigs
+    # 5 dates, all random (seed 0) as there are no OCL date literals, sorted chronologically
+    assert len(spec.subsigs_of("Date")) == 5
+    assert "one sig Date_2001_10_25 extends Date" in spec.sigs
+    assert "one sig Date_2017_04_12 extends Date" in spec.sigs
+    assert "one sig Date_2018_11_12 extends Date" in spec.sigs
+    assert "one sig Date_2033_12_31 extends Date" in spec.sigs
+    assert "one sig Date_2037_11_17 extends Date" in spec.sigs
 
 
 def test_signature_fields(spec):
@@ -106,7 +115,7 @@ def test_enumerations(spec):
 
 
 def test_facts(spec):
-    assert len(spec.facts) == 12
+    assert len(spec.facts) == 13
 
     # Fan -> Team (2..4)
     assert "all a: Fan | #(a.Fan_favoriteTeams) >= 2" in spec.facts
@@ -123,6 +132,9 @@ def test_facts(spec):
     assert "all a: HeadCoach | #(a.HeadCoach_currentTeam) <= 1" in spec.facts
     # HeadCoach <-> Team: bidirectional association
     assert "HeadCoach_currentTeam = ~Team_headCoach" in spec.facts
+    # Dates: their chronological order in the Date ordering
+    assert "dateLt[Date_2001_10_25, Date_2017_04_12] and dateLt[Date_2017_04_12, Date_2018_11_12] " \
+        "and dateLt[Date_2018_11_12, Date_2033_12_31] and dateLt[Date_2033_12_31, Date_2037_11_17]" in spec.facts
 
     # OCL: players older than 16 (forAll -> universal quantifier)
     assert "all self:this/Team|all p : self.Team_players | (p.Player_age > 16)" in spec.facts

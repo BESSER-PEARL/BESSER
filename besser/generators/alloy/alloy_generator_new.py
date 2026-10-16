@@ -23,15 +23,16 @@ class AlloyGeneratorNew(GeneratorInterface):
         super().__init__(model, output_dir)
         self.file_path = None
 
-    def generate(self, scope: int = 5) -> None:
+    def generate(self, scope: int = 5, seed: int = 0) -> None:
         """Writes the Alloy specification of the model to ``<output_dir>/model.als``.
 
         Args:
             scope: the scope of each class signature in the specification's ``run`` command.
+            seed: the seed of the random dates filling the scope of ``Date``.
         """
         if any(isinstance(t, AssociationClass) for t in self.model.types):
             raise NotImplementedError("AlloyGeneratorNew does not support association classes yet")
-        specification = BumlToAlloy(self.model, scope).translate()
+        specification = BumlToAlloy(self.model, scope, seed).translate()
         self.file_path = specification.write(self.build_generation_dir())
 
     def get_specification_path(self) -> str:

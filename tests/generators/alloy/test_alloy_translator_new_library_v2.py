@@ -37,6 +37,13 @@ def test_signatures(spec):
     assert "one sig Str_str0 extends Str" in spec.sigs
     assert "one sig Str_str1 extends Str" in spec.sigs
     assert "one sig Str_str2 extends Str" in spec.sigs
+    # 5 dates, all random (seed 0) as there are no OCL date literals, sorted chronologically
+    assert len(spec.subsigs_of("Date")) == 5
+    assert "one sig Date_2001_10_25 extends Date" in spec.sigs
+    assert "one sig Date_2017_04_12 extends Date" in spec.sigs
+    assert "one sig Date_2018_11_12 extends Date" in spec.sigs
+    assert "one sig Date_2033_12_31 extends Date" in spec.sigs
+    assert "one sig Date_2037_11_17 extends Date" in spec.sigs
 
 
 def test_signature_fields(spec):
@@ -82,7 +89,7 @@ def test_enumerations(spec):
 
 
 def test_facts(spec):
-    assert len(spec.facts) == 11
+    assert len(spec.facts) == 12
 
     # Library <-> Book: a book is in at least one library (1..*)
     assert "all a: Book | #(a.Book_library) >= 1" in spec.facts
@@ -90,6 +97,9 @@ def test_facts(spec):
     # Author <-> Book: a book has at least one author (1..*)
     assert "all a: Book | #(a.Book_authors) >= 1" in spec.facts
     assert "Book_authors = ~Author_books" in spec.facts
+    # Dates: their chronological order in the Date ordering
+    assert "dateLt[Date_2001_10_25, Date_2017_04_12] and dateLt[Date_2017_04_12, Date_2018_11_12] " \
+        "and dateLt[Date_2018_11_12, Date_2033_12_31] and dateLt[Date_2033_12_31, Date_2037_11_17]" in spec.facts
 
     # String literals: uninterpreted constants have no characters
     # assert "Str_cortazar.Str_data = 0->c + 1->o + 2->r + 3->t + 4->a + 5->z + 6->a + 7->r" in spec.facts

@@ -11,5 +11,5 @@ def translate(model, classname: str, constraint: str, scope: int) -> AlloySpec:
             language="OCL",
         )
     }
-    spec = BumlToAlloy(model, scope=scope).translate()
+    spec = BumlToAlloy(model, scope=scope, seed=0).translate()
     return AlloySpec(spec.render())

@@ -13,12 +13,18 @@ approximated: e.g. real division, arithmetic on collections, ``size()`` or ``=``
 than ``=`` and ``<>`` (strings are uninterpreted), and string literals with
 characters that cannot be part of an Alloy identifier (literals name their constants).  Invalid OCL raises
 :class:`OclTranslationError`.
+
+A date literal is a string literal compared with a date; it must be an ISO date (``'1950-01-01'``).
+Dates support comparisons only: ``Date::today()``, ``addDays`` and date arithmetic are unsupported.
+The invariants are assumed to be type checked before their translation.
 """
 
 import re
+from datetime import date
 
 from besser.BUML.metamodel.ocl.ocl import (
     BooleanLiteralExpression,
+    DateLiteralExpression,
     IfExp,
     InfixOperator,
     IntegerLiteralExpression,
@@ -147,6 +153,8 @@ class OclToAlloy:
             return self._boolean(node)
         if isinstance(node, StringLiteralExpression):
             return self._string(node)
+        if isinstance(node, DateLiteralExpression):
+            raise UnsupportedOclError(f"Date expression '{node.value}' is not supported")
         if isinstance(node, IfExp):
             return self._if_then_else(node)
         if isinstance(node, LoopExp):
@@ -171,6 +179,16 @@ class OclToAlloy:
         value = _STRING_ESCAPE.sub(r"\1", node.value)
         self._types.add("Str")
         return Term(self.literals.add_string(value), "Str")
+
+    def _date(self, node: StringLiteralExpression) -> "Term":
+        """Translates the string literal *node*, compared with a date, as a date literal."""
+        value = _STRING_ESCAPE.sub(r"\1", node.value)
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError:
+            raise UnsupportedOclError(f"Date '{value}' is not supported: date literals must be ISO dates") from None
+        self._types.add("Date")
+        return Term(self.literals.add_date(parsed), "Date")
 
     # ------------------------------------------------------------------
     # Operations
@@ -215,7 +233,7 @@ class OclToAlloy:
         return Term(f"{function}[{left.text}, {right.text}]", "Int")
 
     def _comparison(self, node: OperationCallExpression, operator: str, left, right) -> "Term":
-        left, right = self._translate(left), self._translate(right)
+        left, right = self._comparison_operands(left, right)
         if left.is_null() or right.is_null():
             return self._null_comparison(left, right, operator)
         if left.is_bag or right.is_bag:
@@ -233,6 +251,16 @@ class OclToAlloy:
             self._require_integers(node, left, right)
         alloy_operator = "!=" if operator == "<>" else operator
         return Term(f"({left.text} {alloy_operator} {right.text})")
+
+    def _comparison_operands(self, left, right) -> tuple["Term", "Term"]:
+        """Translates the operands of a comparison: a string literal compared with a date is a date literal."""
+        if isinstance(left, StringLiteralExpression) and not isinstance(right, StringLiteralExpression):
+            right = self._translate(right)
+            return (self._date(left) if right.type == "Date" else self._translate(left)), right
+        if isinstance(right, StringLiteralExpression) and not isinstance(left, StringLiteralExpression):
+            left = self._translate(left)
+            return left, (self._date(right) if left.type == "Date" else self._translate(right))
+        return self._translate(left), self._translate(right)
 
     def _if_then_else(self, node: IfExp) -> "Term":
         condition = self._translate(node.ifCondition).operand()
@@ -460,16 +488,22 @@ class Term:
         return f"({self.formula()})" if self.open_ended else self.formula()
 
 
+def date_label(value: date) -> str:
+    """The label of the Alloy date of *value*, ``Date_YYYY_MM_DD``."""
+    return f"Date_{value:%Y_%m_%d}"
+
+
 class Literals:
     """The literals of the translated invariants, each once, in the order they were found.
 
-    Each string literal is named by the label of its Alloy constant, ``Str_<value>``.
+    Each string literal is named by the label of its Alloy constant, ``Str_<value>``, and each
+    date literal by the label of its Alloy date, ``Date_YYYY_MM_DD`` (see :func:`date_label`).
     """
 
     def __init__(self):
         self._strings: dict[str, str] = {}  # value -> label of its constant
         self._integers: list[int] = []
-        self._dates: list[str] = []
+        self._dates: dict[date, str] = {}  # value -> label of its date
 
     def add_string(self, value: str) -> str:
         """Adds the string literal *value*; returns the label of its constant.
@@ -493,9 +527,10 @@ class Literals:
         if value not in self._integers:
             self._integers.append(value)
 
-    def add_date(self, value: str) -> None:
-        if value not in self._dates:
-            self._dates.append(value)
+    def add_date(self, value: date) -> str:
+        """Adds the date literal *value*; returns the label of its date."""
+        self._dates.setdefault(value, date_label(value))
+        return self._dates[value]
 
     def strings(self) -> list[str]:
         return list(self._strings)
@@ -507,16 +542,16 @@ class Literals:
     def integers(self) -> list[int]:
         return list(self._integers)
 
-    def dates(self) -> list[str]:
-        return list(self._dates)
+    def dates(self) -> set[date]:
+        return set(self._dates)
+
+    def date_labels(self) -> dict[date, str]:
+        """The labels of the dates of the date literals, by value."""
+        return dict(self._dates)
 
     def largest_integer(self) -> int:
         """The largest absolute value of the integer literals, 0 when there is none."""
         return max((abs(value) for value in self._integers), default=0)
-
-    def date_count(self) -> int:
-        """The number of date literals."""
-        return len(self._dates)
 
 
 class Variables:

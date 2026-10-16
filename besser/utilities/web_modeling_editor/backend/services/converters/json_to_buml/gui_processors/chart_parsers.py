@@ -32,6 +32,31 @@ def _parse_aggregation(*sources: Dict[str, Any]):
     return None
 
 
+def _apply_chart_level_binding(chart, attrs: Dict[str, Any], class_model, domain_model) -> None:
+    """Rebuild a chart's own ``data_binding`` (as opposed to its series' bindings).
+
+    ``buml_to_json`` writes a chart-level binding as ``data-source`` / ``label-field`` /
+    ``data-field`` attributes; without this the binding was dropped on re-import
+    whenever the chart had no series.
+    """
+    if chart is None or getattr(chart, "data_binding", None) is not None or not attrs.get('data-source'):
+        return
+    domain_class, label_field, data_field, label_path, data_path = _parse_chart_data_binding(
+        attrs, class_model, domain_model)
+    if not domain_class:
+        return
+    filter_expr = attrs.get('filter')
+    chart.data_binding = DataBinding(
+        domain_concept=domain_class,
+        label_field=label_field,
+        data_field=data_field,
+        label_field_path=label_path,
+        data_field_path=data_path,
+        filter_expression=filter_expr.strip() if isinstance(filter_expr, str) and filter_expr.strip() else None,
+        aggregation=_parse_aggregation(attrs),
+    )
+
+
 def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) -> tuple:
     """
     Parse common chart data binding attributes.
@@ -90,7 +115,10 @@ def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) 
     # Resolve data source
     data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
     data_source_name = data_source_el.get('name') if data_source_el else None
-    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
+    if not data_source_name and isinstance(attrs.get('data-source'), str):
+        # Exported B-UML models (buml_to_json) name the class instead of its element id.
+        data_source_name = attrs.get('data-source')
+    domain_class = domain_model.get_class_by_name(data_source_name) if (data_source_name and domain_model) else None
 
     # Parse label and data fields
     label_field_raw = attrs.get('label-field')
@@ -98,6 +126,8 @@ def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) 
 
     label_field, label_field_path = parse_field_value(label_field_raw, domain_class)
     data_field, data_field_path = parse_field_value(data_field_raw, domain_class)
+    label_field_path = label_field_path or attrs.get('label-field-path') or None
+    data_field_path = data_field_path or attrs.get('data-field-path') or None
 
     return domain_class, label_field, data_field, label_field_path, data_field_path
 
@@ -209,6 +239,7 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
         title=title_value,
         primary_color=primary_color
     )
+    _apply_chart_level_binding(line_chart, attrs, class_model, domain_model)
     _attach_chart_metadata(line_chart, view_comp)
     return line_chart
 
@@ -304,6 +335,7 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
         title=title_value,
         primary_color=primary_color
     )
+    _apply_chart_level_binding(bar_chart, attrs, class_model, domain_model)
     _attach_chart_metadata(bar_chart, view_comp)
     return bar_chart
 
@@ -410,6 +442,7 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
         title=title_value,
         primary_color=primary_color
     )
+    _apply_chart_level_binding(pie_chart, attrs, class_model, domain_model)
     _attach_chart_metadata(pie_chart, view_comp)
     return pie_chart
 
@@ -495,6 +528,7 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
         title=title_value,
         primary_color=primary_color
     )
+    _apply_chart_level_binding(radar_chart, attrs, class_model, domain_model)
     _attach_chart_metadata(radar_chart, view_comp)
     return radar_chart
 
@@ -594,6 +628,7 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
         title=title_value,
         primary_color=primary_color
     )
+    _apply_chart_level_binding(radial_bar_chart, attrs, class_model, domain_model)
     _attach_chart_metadata(radial_bar_chart, view_comp)
     return radial_bar_chart
 
@@ -834,6 +869,7 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
             label_field=None,  # Metric cards don't need label field
             data_field=data_field,
             data_field_path=data_field_path,
+            label_field_path=attrs.get('label-field-path') or None,
             aggregation=_parse_aggregation(attrs),
         )
 

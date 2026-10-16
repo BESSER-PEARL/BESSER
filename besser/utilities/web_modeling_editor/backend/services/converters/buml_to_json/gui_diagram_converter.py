@@ -489,6 +489,17 @@ def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[s
     aggregation = getattr(binding, "aggregation", None)
     if aggregation is not None:
         attrs.setdefault("aggregation", aggregation.value)
+    # Nested paths have no class-diagram element to point at, so they travel as
+    # their own attributes (read back by chart_parsers).
+    label_path = getattr(binding, "label_field_path", None)
+    data_path = getattr(binding, "data_field_path", None)
+    if label_path and not label_name:
+        attrs.setdefault("label-field-path", label_path)
+    if data_path and not data_name:
+        attrs.setdefault("data-field-path", data_path)
+    filter_expression = getattr(binding, "filter_expression", None)
+    if filter_expression:
+        attrs.setdefault("filter", str(filter_expression))
 def _apply_button_attributes(button: Button, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("button-label", button.label or button.name or "Button")
     action_type = attrs.get("action-type")
@@ -630,7 +641,7 @@ def _apply_table_attributes(chart: Table, attrs: Dict[str, Any]) -> None:
         attrs["columns"] = columns_list
 def _apply_metric_card_attributes(card: MetricCard, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(card, attrs)
-    attrs.setdefault("metric-title", card.title or card.name)
+    attrs.setdefault("metric-title", card.metric_title or card.title or card.name)
     attrs.setdefault("format", getattr(card, "format", None) or "number")
     attrs.setdefault("value-color", getattr(card, "value_color", "#2c3e50"))
     attrs.setdefault("value-size", getattr(card, "value_size", 32))

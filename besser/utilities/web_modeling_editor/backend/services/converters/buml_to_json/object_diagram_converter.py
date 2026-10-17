@@ -15,6 +15,29 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
     calculate_path_points, calculate_relationship_bounds
 )
 
+_UNSUPPORTED = object()
+
+
+def _attribute_value(node: ast.expr) -> Any:
+    """Return the value of an ``attributes(...)`` keyword argument, as the editor shows it.
+
+    Handles the forms the B-UML exporter writes: literals (including negative numbers),
+    enumeration literals ``Enum.LITERAL`` (shown as ``LITERAL``) and dates
+    ``datetime.datetime.fromisoformat("...")`` (shown as the ISO string). Any other
+    expression yields ``_UNSUPPORTED``.
+    """
+    try:
+        return ast.literal_eval(node)
+    except (ValueError, TypeError):
+        pass
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        return node.attr
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "fromisoformat" and len(node.args) == 1
+            and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+        return node.args[0].value
+    return _UNSUPPORTED
+
 
 def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -129,8 +152,9 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                             # Reverse to get the correct order
                             call_chain.reverse()
 
-                            # Check if this matches the fluent pattern
-                            if len(call_chain) >= 3 and call_chain[-1] == "build":
+                            # Check if this matches the fluent pattern; an object without
+                            # attribute values is exported as ClassName("ObjectName").build()
+                            if len(call_chain) >= 2 and call_chain[-1] == "build":
                                 class_name = call_chain[0]
                                 if class_name in class_name_to_id:
                                     # Extract object name and attributes
@@ -153,8 +177,9 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                                         if isinstance(attr_call.func, ast.Attribute) and attr_call.func.attr == "attributes":
                                             # Extract attributes from keyword arguments
                                             for kw in attr_call.keywords:
-                                                if isinstance(kw.value, ast.Constant):
-                                                    attributes[kw.arg] = kw.value.value
+                                                value = _attribute_value(kw.value)
+                                                if value is not _UNSUPPORTED:
+                                                    attributes[kw.arg] = value
                                             break
                                         attr_call = attr_call.func.value if isinstance(attr_call.func, ast.Attribute) else None
                                         if not attr_call:
@@ -282,10 +307,18 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                         relationship_name = target.attr
 
                         if obj_name in objects_by_name:
-                            # Get the target object
-                            if isinstance(node.value, ast.Name) and node.value.id in objects_by_name:
-                                target_obj = node.value.id
+                            # Get the target objects: obj1.relationship = obj2, or
+                            # obj1.relationship = {obj2, obj3} for a many-valued end
+                            if isinstance(node.value, ast.Name):
+                                target_nodes = [node.value]
+                            elif isinstance(node.value, (ast.Set, ast.List, ast.Tuple)):
+                                target_nodes = node.value.elts
+                            else:
+                                target_nodes = []
+                            target_objs = [t.id for t in target_nodes
+                                           if isinstance(t, ast.Name) and t.id in objects_by_name]
 
+                            for target_obj in target_objs:
                                 # Create a link relationship
                                 rel_id = str(uuid.uuid4())
 

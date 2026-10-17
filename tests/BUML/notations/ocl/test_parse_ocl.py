@@ -1,9 +1,13 @@
 """Tests for besser.BUML.notations.ocl.api.parse_ocl."""
 
 import pytest
+from antlr4 import CommonTokenStream, InputStream
 
-from besser.BUML.metamodel.ocl.ocl import OCLConstraint
+from besser.BUML.metamodel.ocl.ocl import OCLConstraint, OperationCallExpression
 from besser.BUML.notations.ocl import parse_ocl, BOCLSyntaxError
+from besser.BUML.notations.ocl.BOCLLexer import BOCLLexer
+from besser.BUML.notations.ocl.BOCLParser import BOCLParser
+from besser.BUML.notations.ocl.error_handling import BOCLErrorListener
 
 
 def test_parse_returns_ocl_constraint(model):
@@ -60,6 +64,52 @@ def test_parse_iterator_constraint(model):
     )
     assert isinstance(result, OCLConstraint)
     assert result.context.name == "Department"
+
+
+def test_parse_union(model):
+    result = parse_ocl(
+        "context Department inv: self.employee->union(self.employee)->size() > 0",
+        model,
+    )
+    assert isinstance(result, OCLConstraint)
+    assert result.context.name == "Department"
+
+
+def test_parse_including_after_collect(model):
+    result = parse_ocl(
+        "context Department inv: self.employee->collect(e | e.employer)->including(self)->size() > 0",
+        model,
+    )
+
+    size = result.ast.arguments[0]
+    assert isinstance(size, OperationCallExpression)
+    assert size.operation == "Size"
+    assert size.source.operation == "INCLUDING"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "context Department inv: self.employee->closure(e | e.manager)",
+        "context Department inv: self.employee->closure(self.manager)",
+        "context Department inv: self.employee->including(self.employee)",
+        "context Department inv: self.employee->excluding(self.employee)",
+        "context Department inv: self.employee->intersection(self.employee)",
+        "context Department inv: self.employee->asSet()",
+    ],
+)
+def test_parser_accepts_new_collection_operations(text):
+    error_listener = BOCLErrorListener()
+    lexer = BOCLLexer(InputStream(text))
+    lexer.removeErrorListeners()
+    lexer.addErrorListener(error_listener)
+    parser = BOCLParser(CommonTokenStream(lexer))
+    parser.removeErrorListeners()
+    parser.addErrorListener(error_listener)
+
+    parser.oclFile()
+
+    assert not error_listener.has_errors()
 
 
 # Tests for OCLConstraint.ast / .expression separation (Pre-work B)

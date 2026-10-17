@@ -38,7 +38,7 @@ def model() -> DomainModel:
 
 @pytest.fixture()
 def object(model) -> ObjectModel:
-    """``child`` with parents ``mom`` and ``dad``; ``mom`` has a gender and a birth date, and
+    """``child`` with parents ``mom`` and ``dad``; ``mom`` has a gender, ``dad`` a birth date, and
     ``adam`` has no attribute values on purpose."""
     person = model.get_class_by_name("Person")
     gender = model.get_type_by_name("Gender")

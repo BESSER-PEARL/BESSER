@@ -18,10 +18,8 @@ fun {{ fun.header }} {
 {% endfor %}
 }
 {% endfor %}
-{% if facts %}
-
-{% endif %}
 {% for fact in facts %}
+
 fact { {{ fact }} }
 {% endfor %}
 {% for pred in predicates %}

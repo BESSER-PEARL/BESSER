@@ -1,8 +1,7 @@
 import pytest
 from besser.generators.alloy.ocl_translator_new import UnsupportedOclError
 from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2
-from tests.generators.alloy.utils_alloy_re_parser import AlloySpec
-from tests.generators.alloy.utils_alloy_translation import translate
+from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec, translate
 
 
 @pytest.mark.parametrize("value", ["01/02/2020", "Jan 5, 2020", "2020-02-30"])

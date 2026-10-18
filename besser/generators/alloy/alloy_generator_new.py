@@ -1,7 +1,6 @@
-import tempfile
-
 from besser.BUML.metamodel.structural.structural import AssociationClass, DomainModel
 from besser.generators import GeneratorInterface
+from besser.generators.alloy.alloy_specification import AlloySpecification
 from besser.generators.alloy.alloy_translator_new import BumlToAlloy
 
 
@@ -17,10 +16,8 @@ class AlloyGeneratorNew(GeneratorInterface):
     """
 
     def __init__(self, model: DomainModel, output_dir: str | None = None):
-        if output_dir is None:
-            self._temp_dir = tempfile.TemporaryDirectory()
-            output_dir = self._temp_dir.name
         super().__init__(model, output_dir)
+        self.specification_model: AlloySpecification | None = None
         self.file_path = None
 
     def generate(self, scope: int = 5, seed: int = 0) -> None:
@@ -32,8 +29,8 @@ class AlloyGeneratorNew(GeneratorInterface):
         """
         if any(isinstance(t, AssociationClass) for t in self.model.types):
             raise NotImplementedError("AlloyGeneratorNew does not support association classes yet")
-        specification = BumlToAlloy(self.model, scope, seed).translate()
-        self.file_path = specification.write(self.build_generation_dir())
+        self.specification_model = BumlToAlloy(self.model, scope, seed).translate()
+        self.file_path = self.specification_model.write(self.build_generation_dir())
 
     def get_specification_path(self) -> str:
         """Returns the path to the generated Alloy specification file."""

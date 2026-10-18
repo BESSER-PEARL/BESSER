@@ -1,22 +1,20 @@
 import os
 import pytest
 from tests.generators.alloy.BUML_football_model_v2 import football_model_v2
-from besser.generators.alloy.alloy_generator import AlloyGenerator
-from tests.generators.alloy.utils_alloy_re_parser import AlloySpec
+from besser.generators.alloy.alloy_generator_new import AlloyGeneratorNew
+from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec
 
 
 @pytest.fixture
 def spec(football_model_v2, tmpdir):
     tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGenerator(model=football_model_v2, output_dir=str(tmpdir))
+    generator = AlloyGeneratorNew(model=football_model_v2, output_dir=str(tmpdir))
     generator.generate()
     als_file = generator.get_specification_path()
     assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"
-    # Date attributes require the date library next to the specification
-    assert os.path.isfile(os.path.join(str(tmpdir), "date.als"))
     with open(als_file, "r", encoding="utf-8") as f:
         content = f.read()
-    return AlloySpec(content)
+    return AlloyTestSpec(content)
 
 
 def test_signatures(spec):
@@ -29,6 +27,20 @@ def test_signatures(spec):
     assert "sig Fan extends Person" in spec.sigs
     assert "sig Championship" in spec.sigs
     assert "sig Match" in spec.sigs
+    # 5 strings filling the scope, as there are no OCL string literals
+    assert len(spec.subsigs_of("Str")) == 5
+    assert "one sig Str_str0 extends Str" in spec.sigs
+    assert "one sig Str_str1 extends Str" in spec.sigs
+    assert "one sig Str_str2 extends Str" in spec.sigs
+    assert "one sig Str_str3 extends Str" in spec.sigs
+    assert "one sig Str_str4 extends Str" in spec.sigs
+    # 5 dates, all random (seed 0) as there are no OCL date literals, sorted chronologically
+    assert len(spec.subsigs_of("Date")) == 5
+    assert "one sig Date_2001_10_25 extends Date" in spec.sigs
+    assert "one sig Date_2017_04_12 extends Date" in spec.sigs
+    assert "one sig Date_2018_11_12 extends Date" in spec.sigs
+    assert "one sig Date_2033_12_31 extends Date" in spec.sigs
+    assert "one sig Date_2037_11_17 extends Date" in spec.sigs
 
 
 def test_signature_fields(spec):
@@ -103,7 +115,26 @@ def test_enumerations(spec):
 
 
 def test_facts(spec):
-    assert len(spec.facts) == 7
+    assert len(spec.facts) == 12
+
+    # Fan -> Team (2..4)
+    assert "all a: Fan | #(a.Fan_favoriteTeams) >= 2" in spec.facts
+    assert "all a: Fan | #(a.Fan_favoriteTeams) <= 4" in spec.facts
+    # Team -> Player (11..*): only the lower bound is enforced
+    assert "all a: Team | #(a.Team_players) >= 11" in spec.facts
+    # Player -> Team (1..1) and Match -> Championship (1..1) are not navigable, so there is no
+    # `one` field enforcing them: the bounds are checked navigating the opposite field backwards
+    assert "all a: Player | #(Team_players.a) >= 1" in spec.facts
+    assert "all a: Player | #(Team_players.a) <= 1" in spec.facts
+    assert "all a: Match | #(Championship_matches.a) >= 1" in spec.facts
+    assert "all a: Match | #(Championship_matches.a) <= 1" in spec.facts
+    # HeadCoach -> Team (0..1)
+    assert "all a: HeadCoach | #(a.HeadCoach_currentTeam) <= 1" in spec.facts
+    # HeadCoach <-> Team: bidirectional association
+    assert "HeadCoach_currentTeam = ~Team_headCoach" in spec.facts
+    # Dates: their chronological order in the Date ordering
+    assert "dateLt[Date_2001_10_25, Date_2017_04_12] and dateLt[Date_2017_04_12, Date_2018_11_12] " \
+        "and dateLt[Date_2018_11_12, Date_2033_12_31] and dateLt[Date_2033_12_31, Date_2037_11_17]" in spec.facts
 
     # OCL: players older than 16 (forAll -> universal quantifier)
     assert "all self:this/Team|all p : self.Team_players | (p.Player_age > 16)" in spec.facts
@@ -132,6 +163,6 @@ def test_run_command(spec):
     assert "5 Championship" in spec.run_scopes
     assert "5 Match" in spec.run_scopes
     assert "5 Date" in spec.run_scopes
-    assert "5 Int" in spec.run_scopes
+    # The OCL literal 16 (p.age > 16) needs 6 bits: a 5-bit Int only goes up to 15
+    assert "6 Int" in spec.run_scopes
     assert "5 Str" in spec.run_scopes
-    assert "5 seq" in spec.run_scopes

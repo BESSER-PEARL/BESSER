@@ -2,9 +2,8 @@ import os
 
 from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
     Multiplicity, BinaryAssociation, StringType, IntegerType, DateType
-from besser.BUML.metamodel.structural.structural import Constraint
 from besser.generators.alloy.instance_generator.alloy_analyzer_executor import AlloyResult
-from besser.generators.alloy.instance_generator import AlloySolver
+from besser.generators.alloy.instance_generator.alloy_solver_new import AlloySolverNew
 
 
 # Library attributes definition
@@ -39,44 +38,42 @@ written_by: Property = Property(name="writtenBy", type=author, multiplicity=Mult
 book_author_association: BinaryAssociation = BinaryAssociation(name="book_author_assoc", ends={written_by, publishes})
 
 
-book_has_title: Constraint = Constraint(
-    name="book_has_title",
-    context=book,
-    expression="context Book inv book_has_title: self.title.size() > 0",
-    language="OCL"
-)
-library_named: Constraint = Constraint(
-    name="library_named",
-    context=library,
-    expression="context Library inv library_named: self.name.size() > 0",
-    language="OCL"
-)
-author_named: Constraint = Constraint(
-    name="author_named",
-    context=author,
-    expression="context Author inv author_named: self.name.size() > 0",
-    language="OCL"
-)
+#book_has_title: Constraint = Constraint(
+#    name="book_has_title",
+#    context=book,
+#    expression="context Book inv book_has_title: self.title.size() > 0",
+#    language="OCL"
+#)
+#library_named: Constraint = Constraint(
+#    name="library_named",
+#    context=library,
+#    expression="context Library inv library_named: self.name.size() > 0",
+#    language="OCL"
+#)
+#author_named: Constraint = Constraint(
+#    name="author_named",
+#    context=author,
+#    expression="context Author inv author_named: self.name.size() > 0",
+#    language="OCL"
+#)
 
 # Domain model definition
 library_model: DomainModel = DomainModel(name="Library_model", types={library, book, author},
-                                         associations={lib_book_association, book_author_association},
-                                         constraints={book_has_title, library_named, author_named})
+                                         associations={lib_book_association, book_author_association})
+#                                         constraints={book_has_title, library_named, author_named})
 
 
 # Semantic consistency check
-solver = AlloySolver(library_model, output_dir="outdir", scope=3)
-result = solver.check_consistency()
+solver = AlloySolverNew(library_model, output_dir="outdir")
+result = solver.check_consistency(scope=3)
 assert result == AlloyResult.SAT, "The model is not consistent."
 
-# Generate four BUML object diagrams using Alloy
-solver = AlloySolver(library_model, output_dir="outdir", scope=3)
-(res, buml_instances) = solver.generate_object_diagrams(num_instances=4)
-assert res == AlloyResult.SAT, "The model is not consistent."
-assert len(buml_instances) == 4, "The number of generated instances is not correct."
+# Generate four BUML object models using Alloy
+result, object_models = solver.generate_object_models(scope=3, num_models=4)
+assert result == AlloyResult.SAT, "The model is not consistent."
+assert len(object_models) == 4, "The number of generated instances is not correct."
 
-# Generates a complete BUML project code including: The class diagram in BUML, and an instance 
-# automatically generated using Alloy.
-solver = AlloySolver(library_model, output_dir="outdir", scope=3)
-solver.generate_class_and_object_model()
+# Generates a complete BUML project code (outdir/alloy_project.py) including: The class diagram in BUML,
+# and an instance automatically generated using Alloy.
+result = solver.generate_project_file(scope=3)
 assert result == AlloyResult.SAT, "The model is not consistent."

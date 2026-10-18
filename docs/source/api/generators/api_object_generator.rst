@@ -1,7 +1,7 @@
 Object Diagram Generator
 ========================
 
-.. automodule:: besser.generators.alloy.instance_generator.alloy_solver
+.. automodule:: besser.utilities.web_modeling_editor.backend.services.validators.alloy.alloy_solver
    :members:
    :private-members:
    :undoc-members:

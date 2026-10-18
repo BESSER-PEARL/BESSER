@@ -6,9 +6,8 @@ from besser.BUML.metamodel.object import ObjectModel
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, BinaryAssociation, Multiplicity, Constraint, StringType, IntegerType,
 )
-from besser.generators.alloy.instance_generator import AlloySolver
-from besser.generators.alloy.instance_generator.alloy_analyzer_executor import AlloyResult
-from tests.generators.alloy.utils_alloy_translation import describe
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy import AlloyResult, AlloySolver
+from tests.utilities.web_modeling_editor.backend.services.validators.alloy.utils_alloy_solver import describe
 
 # The tests run the Alloy Analyzer, located through these environment variables
 pytestmark = pytest.mark.skipif(

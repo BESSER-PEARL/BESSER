@@ -5,9 +5,14 @@ from besser.BUML.metamodel.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural import DomainModel, Metadata
 from besser.generators.alloy.alloy_generator import AlloyGenerator
-from besser.generators.alloy.instance_generator.alloy_analyzer_executor import AlloyAnalyzerExecutor, AlloyResult
-from besser.generators.alloy.instance_generator.alloy_instance_to_object_model import AlloyInstanceToObjectModel
 from besser.utilities.buml_code_builder.project_builder import project_to_code
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy.alloy_analyzer_executor import (
+    AlloyAnalyzerExecutor,
+    AlloyResult,
+)
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy.alloy_instance_to_object_model import (
+    AlloyInstanceToObjectModel,
+)
 
 logger = logging.getLogger(__name__)
 

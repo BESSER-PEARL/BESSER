@@ -2,8 +2,7 @@ import os
 
 from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
     Multiplicity, BinaryAssociation, StringType, IntegerType, DateType
-from besser.generators.alloy.instance_generator.alloy_analyzer_executor import AlloyResult
-from besser.generators.alloy.instance_generator.alloy_solver import AlloySolver
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy import AlloyResult, AlloySolver
 
 
 # Library attributes definition

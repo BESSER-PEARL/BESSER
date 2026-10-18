@@ -1,7 +1,6 @@
 import re
 from typing import Dict, List, Optional, Set
 
-from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.structural.structural import Constraint, DomainModel
 from besser.generators.alloy.alloy_translator import BumlToAlloy
 
@@ -103,7 +102,7 @@ class AlloyTestSpec:
 
 
 # ---------------------------------------------------------------------------
-# Translation and object model helpers
+# Translation helpers
 # ---------------------------------------------------------------------------
 
 def translate(model: DomainModel, classname: str, constraint: str, scope: int) -> AlloyTestSpec:
@@ -117,18 +116,3 @@ def translate(model: DomainModel, classname: str, constraint: str, scope: int) -
     }
     spec = BumlToAlloy(model, scope=scope, seed=0).translate()
     return AlloyTestSpec(spec.render())
-
-
-def describe(object_model: ObjectModel) -> set[str]:
-    """The objects, attribute values and links of *object_model*, e.g., as ``Team_0: Team``,
-    ``Team_0.name = 'Barcelona'`` and ``Team_0.player = Player_0`` (a link, from each end)."""
-    description = set()
-    for obj in object_model.objects:
-        description.add(f"{obj.name_}: {obj.classifier.name}")
-        for slot in obj.slots:
-            description.add(f"{obj.name_}.{slot.attribute.name} = {slot.value.value!r}")
-    for link in object_model.links:
-        a, b = link.connections
-        description.add(f"{a.object.name_}.{b.name} = {b.object.name_}")
-        description.add(f"{b.object.name_}.{a.name} = {a.object.name_}")
-    return description

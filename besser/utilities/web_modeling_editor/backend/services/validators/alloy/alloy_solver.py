@@ -5,6 +5,7 @@ from besser.BUML.metamodel.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural import DomainModel, Metadata
 from besser.generators.alloy.alloy_generator import AlloyGenerator
+from besser.generators.alloy.alloy_specification import AlloyBounds
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy.alloy_analyzer_executor import (
     AlloyAnalyzerExecutor,
@@ -35,6 +36,10 @@ class AlloySolver:
         self.alloy_output_dir = os.path.join(self.output_dir, "alloy_output")
         self.generator = AlloyGenerator(model=self.model, output_dir=self.output_dir)
         self.executor = AlloyAnalyzerExecutor()
+
+    def get_scopes(self) -> AlloyBounds | None:
+        """Returns what the last analysis searched, ``None`` before any analysis."""
+        return self.generator.get_scopes()
 
     def check_consistency(self, scope: int = 5, seed: int = 0) -> AlloyResult:
         """Execute the Alloy Analyzer and check model satisfiability.

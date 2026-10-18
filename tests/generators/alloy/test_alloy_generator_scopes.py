@@ -1,5 +1,6 @@
 import os
 import pytest
+from besser.BUML.metamodel.structural import BooleanType, Class, DomainModel, Property
 from tests.generators.alloy.BUML_football_model import football_model
 from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2
 from besser.generators.alloy.alloy_generator import AlloyGenerator
@@ -78,3 +79,42 @@ def test_run_command_library_s1(library_spec_s1):
     assert "2 Str" in library_spec_s1.run_scopes  # the literals 'borges' and 'cortazar'
     assert "5 Int" in library_spec_s1.run_scopes  # the literal 10 needs 4 bits, plus the sign bit
     assert len(library_spec_s1.run_scopes) == 6
+
+
+@pytest.fixture
+def switch_model() -> DomainModel:
+    """``Switch(on: bool)``: a model without integers, strings or dates."""
+    switch = Class("Switch", attributes={Property("on", BooleanType)})
+    return DomainModel("Switch_model", types={switch})
+
+
+def test_scopes_football_s3(football_model, tmpdir):
+    generator = AlloyGenerator(model=football_model, output_dir=str(tmpdir))
+    generator.generate(scope=3)
+    scopes = generator.get_scopes()
+    assert scopes.objects == 3
+    assert scopes.bitwidth == 3
+    assert scopes.integers == (-4, 3)
+    assert scopes.strings == 3
+    assert scopes.dates is None
+
+
+def test_scopes_library_s1(library_with_ocl_v2, tmpdir):
+    generator = AlloyGenerator(model=library_with_ocl_v2, output_dir=str(tmpdir))
+    generator.generate(scope=1)
+    scopes = generator.get_scopes()
+    assert scopes.objects == 1
+    assert scopes.bitwidth == 5  # the literal 10 needs 4 bits, plus the sign bit
+    assert scopes.integers == (-16, 15)
+    assert scopes.strings == 2  # the literals 'borges' and 'cortazar'
+    assert scopes.dates == 1
+
+
+def test_scopes_without_values(switch_model, tmpdir):
+    generator = AlloyGenerator(model=switch_model, output_dir=str(tmpdir))
+    generator.generate(scope=3)
+    scopes = generator.get_scopes()
+    assert scopes.bitwidth is None
+    assert scopes.integers is None
+    assert scopes.strings is None
+    assert scopes.dates is None

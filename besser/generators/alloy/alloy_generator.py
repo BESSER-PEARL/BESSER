@@ -1,6 +1,6 @@
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
-from besser.generators.alloy.alloy_specification import AlloySpecification
+from besser.generators.alloy.alloy_specification import AlloyBounds, AlloySpecification
 from besser.generators.alloy.alloy_translator import BumlToAlloy
 
 
@@ -32,3 +32,7 @@ class AlloyGenerator(GeneratorInterface):
     def get_specification_path(self) -> str:
         """Returns the path to the generated Alloy specification file."""
         return self.file_path
+
+    def get_scopes(self) -> AlloyBounds | None:
+        """Returns what the generated specification searches, ``None`` before :meth:`generate`."""
+        return self.specification_model.get_scopes() if self.specification_model else None

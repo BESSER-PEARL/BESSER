@@ -65,3 +65,18 @@ def test_generate_object_models_inconsistent(inconsistent_model, tmp_path):
     result, object_models = solver.generate_object_models(scope=1)
     assert result == AlloyResult.UNSAT
     assert object_models == []
+
+
+def test_scopes_before_any_analysis(consistent_model, tmp_path):
+    solver = AlloySolver(consistent_model, output_dir=str(tmp_path))
+    assert solver.get_scopes() is None
+
+
+def test_scopes_of_the_last_analysis(consistent_model, tmp_path):
+    solver = AlloySolver(consistent_model, output_dir=str(tmp_path))
+    solver.generate_object_models(scope=1)
+    scopes = solver.get_scopes()
+    assert scopes.objects == 1
+    assert scopes.integers == (-4, 3)  # the literal 2 needs 2 bits, plus the sign bit
+    assert scopes.strings == 1  # the literal 'Barcelona'
+    assert scopes.dates is None

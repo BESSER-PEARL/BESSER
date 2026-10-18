@@ -26,7 +26,7 @@ from besser.BUML.metamodel.structural import (
     Property,
     Type,
 )
-from besser.generators.alloy.alloy_specification import AlloySpecification
+from besser.generators.alloy.alloy_specification import AlloyBounds, AlloySpecification
 from besser.generators.alloy.exceptions import AlloyTranslationError
 from besser.generators.alloy.ocl_translator import Literals, OclToAlloy, date_label
 
@@ -201,14 +201,16 @@ class BumlToAlloy:
         number of declared dates, :attr:`dates`, which :meth:`_add_dates` filled up to the scope.  The
         integer bitwidth must be able to hold the largest OCL integer literal.
         """
-        scopes = {cls.name: self.scope for cls in self.classes}
-        if self._uses_strings(literals):
-            scopes["Str"] = max(self.scope, len(literals.strings()))
-        if self._uses_dates(literals):
-            scopes["Date"] = len(self.dates)
+        strings = max(self.scope, len(literals.strings())) if self._uses_strings(literals) else None
+        dates = len(self.dates) if self._uses_dates(literals) else None
+        bitwidth = None
         if "Int" in self.attribute_types or literals.integers():
-            scopes["Int"] = max(self.scope, literals.largest_integer().bit_length() + 1)
-        spec.set_run("instance_model", scopes)
+            bitwidth = max(self.scope, literals.largest_integer().bit_length() + 1)
+        spec.set_run(
+            "instance_model",
+            [cls.name for cls in self.classes],
+            AlloyBounds(objects=self.scope, bitwidth=bitwidth, strings=strings, dates=dates),
+        )
 
     # ------------------------------------------------------------------
     # Helpers

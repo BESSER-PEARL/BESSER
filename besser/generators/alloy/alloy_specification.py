@@ -19,6 +19,7 @@ Formulas, expressions and parameters are Alloy text, written with those names.
 import os
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -40,6 +41,25 @@ _ALLOY_KEYWORDS = frozenset({
 })
 
 _INVALID_IDENTIFIER_CHARACTERS = re.compile(r"[^A-Za-z0-9_]")
+
+
+@dataclass(frozen=True)
+class AlloyBounds:
+    """What the ``run`` command of a specification searches: *objects* atoms per bounded signature, and
+    the values: *bitwidth* bits for ``Int``, *strings* ``Str`` and *dates* ``Date`` atoms, each ``None``
+    when the specification has no such values."""
+
+    objects: int
+    bitwidth: int | None = None
+    strings: int | None = None
+    dates: int | None = None
+
+    @property
+    def integers(self) -> tuple[int, int] | None:
+        """The range of the integers, ``None`` when there are none."""
+        if self.bitwidth is None:
+            return None
+        return -2 ** (self.bitwidth - 1), 2 ** (self.bitwidth - 1) - 1
 
 
 def _identifier(name: str) -> str:
@@ -124,9 +144,14 @@ class AlloySpecification:
         """Adds the predicate ``name[parameters]``, the conjunction of *formulas*."""
         self._predicates.append(Predicate(name, parameters or {}, formulas))
 
-    def set_run(self, predicate: str, scopes: dict[str, int]) -> None:
-        """Sets the ``run`` command of *predicate*, bounding each signature (a label) by its scope."""
-        self._run = RunCommand(self, predicate, scopes)
+    def set_run(self, predicate: str, signatures: Iterable[str], bounds: AlloyBounds) -> None:
+        """Sets the ``run`` command of *predicate*, bounding each of the *signatures* (labels) by
+        ``bounds.objects``, and ``Str``, ``Date`` and ``Int`` by the *bounds* that give them a value."""
+        self._run = RunCommand(self, predicate, signatures, bounds)
+
+    def get_scopes(self) -> AlloyBounds | None:
+        """The bounds of the ``run`` command, ``None`` before it is set."""
+        return self._run.bounds if self._run else None
 
     # ------------------------------------------------------------------
     # Names
@@ -373,10 +398,16 @@ class Predicate:
 class RunCommand:
     """A ``run`` command of a predicate, bounding signatures (labels) by their scopes."""
 
-    def __init__(self, specification: AlloySpecification, predicate: str, scopes: dict[str, int]):
+    def __init__(
+        self, specification: AlloySpecification, predicate: str, signatures: Iterable[str], bounds: AlloyBounds
+    ):
         self.specification = specification
         self.predicate = predicate
-        self._scopes = dict(scopes)
+        self.bounds = bounds
+        self._scopes = {label: bounds.objects for label in signatures}
+        for label, bound in (("Str", bounds.strings), ("Date", bounds.dates), ("Int", bounds.bitwidth)):
+            if bound is not None:
+                self._scopes[label] = bound
 
     @property
     def labels(self) -> list[str]:

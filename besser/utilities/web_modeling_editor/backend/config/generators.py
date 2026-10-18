@@ -28,6 +28,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEPLOYMENT_DIAGRAM_TYPE,
 )
 from besser.generators.docker_compose import DockerComposeGenerator
+from besser.generators.alloy import AlloyGenerator
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -242,6 +243,16 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         requires_class_diagram=False,
         required_diagram_type=DEPLOYMENT_DIAGRAM_TYPE,
     ),
+
+    # Formal methods (class diagram based). A ZIP holding the Alloy
+    # specification model.als plus the library modules it opens.
+    "alloy": GeneratorInfo(
+        generator_class=AlloyGenerator,
+        output_type="zip",
+        file_extension=".zip",
+        category="formal_methods",
+        requires_class_diagram=True,
+    ),
 }
 
 # Neural network generators are conditionally registered since they
@@ -300,6 +311,8 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "classes.py"
     elif generator_type == "test_case":
         return "test_hypothesis.py"
+    elif generator_type == "alloy":
+        return "alloy_specification.zip"
     elif generator_type == "pydantic":
         return "pydantic_classes.py"
     elif generator_type == "sqlalchemy":

@@ -18,3 +18,5 @@ Generators
    generators/api_pytorch
    generators/api_tf
    generators/api_baf
+   generators/api_alloy
+   generators/api_object_generator

@@ -27,4 +27,3 @@ bocl==1.0.1
 # compaction.py falls back to len(text)//4, which OVER-reports code
 # by ~21% (measured 4.83 chars/token), tripping compaction early.
 tiktoken>=0.7,<1
-python-dateutil>=2.9.0

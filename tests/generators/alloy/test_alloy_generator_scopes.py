@@ -2,13 +2,13 @@ import os
 import pytest
 from tests.generators.alloy.BUML_football_model import football_model
 from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2
-from besser.generators.alloy.alloy_generator_new import AlloyGeneratorNew
+from besser.generators.alloy.alloy_generator import AlloyGenerator
 from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec
 
 @pytest.fixture
 def football_spec_s3(football_model, tmpdir):
     tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGeneratorNew(model=football_model, output_dir=str(tmpdir))
+    generator = AlloyGenerator(model=football_model, output_dir=str(tmpdir))
     generator.generate(scope=3)
     als_file = generator.get_specification_path()
     assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"
@@ -34,7 +34,7 @@ def test_run_command_football_s3(football_spec_s3):
 @pytest.fixture
 def football_spec_s7(football_model, tmpdir):
     tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGeneratorNew(model=football_model, output_dir=str(tmpdir))
+    generator = AlloyGenerator(model=football_model, output_dir=str(tmpdir))
     generator.generate(scope=7)
     als_file = generator.get_specification_path()
     assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"
@@ -60,7 +60,7 @@ def test_run_command_football_s7(football_spec_s7):
 @pytest.fixture
 def library_spec_s1(library_with_ocl_v2, tmpdir):
     tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGeneratorNew(model=library_with_ocl_v2, output_dir=str(tmpdir))
+    generator = AlloyGenerator(model=library_with_ocl_v2, output_dir=str(tmpdir))
     generator.generate(scope=1)
     als_file = generator.get_specification_path()
     assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"

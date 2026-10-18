@@ -43,9 +43,10 @@ from besser.BUML.notations.ocl.api import parse_ocl
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 from besser.BUML.notations.ocl.pretty_printer import pretty_print
 from besser.generators.alloy.alloy_specification import AlloySpecification
+from besser.generators.alloy.exceptions import AlloyTranslationError
 
 
-class OclTranslationError(ValueError):
+class OclTranslationError(AlloyTranslationError):
     """Raised for OCL that cannot be translated: syntax errors, unknown names, type errors."""
 
 

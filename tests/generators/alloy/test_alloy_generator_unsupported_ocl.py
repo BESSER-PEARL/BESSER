@@ -1,7 +1,7 @@
 import pytest
 from besser.BUML.metamodel.structural import Constraint
-from besser.generators.alloy.alloy_translator_new import BumlToAlloy
-from besser.generators.alloy.ocl_translator_new import UnsupportedOclError
+from besser.generators.alloy.alloy_translator import BumlToAlloy
+from besser.generators.alloy.ocl_translator import UnsupportedOclError
 from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2 
 
 

@@ -2,15 +2,15 @@ import os
 import pytest
 from tests.generators.alloy.BUML_football_model import football_model
 from besser.BUML.metamodel.structural import AnyType, Class, DomainModel, Property, TimeDeltaType, TimeType
-from besser.generators.alloy.alloy_generator_new import AlloyGeneratorNew
-from besser.generators.alloy.alloy_translator_new import BumlToAlloy
+from besser.generators.alloy.alloy_generator import AlloyGenerator
+from besser.generators.alloy.alloy_translator import BumlToAlloy
 from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec
 
 
 @pytest.fixture
 def spec(football_model, tmpdir):
     tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGeneratorNew(model=football_model, output_dir=str(tmpdir))
+    generator = AlloyGenerator(model=football_model, output_dir=str(tmpdir))
     generator.generate()
     als_file = generator.get_specification_path()
     assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"

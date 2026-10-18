@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Set
 
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.structural.structural import Constraint, DomainModel
-from besser.generators.alloy.alloy_translator_new import BumlToAlloy
+from besser.generators.alloy.alloy_translator import BumlToAlloy
 
 
 # ---------------------------------------------------------------------------

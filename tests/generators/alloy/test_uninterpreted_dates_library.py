@@ -1,5 +1,5 @@
 import pytest
-from besser.generators.alloy.ocl_translator_new import UnsupportedOclError
+from besser.generators.alloy.ocl_translator import UnsupportedOclError
 from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2
 from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec, translate
 

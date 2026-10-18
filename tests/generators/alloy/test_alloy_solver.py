@@ -6,7 +6,7 @@ from besser.BUML.metamodel.object import ObjectModel
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, BinaryAssociation, Multiplicity, Constraint, StringType, IntegerType,
 )
-from besser.generators.alloy.instance_generator import AlloySolverNew
+from besser.generators.alloy.instance_generator import AlloySolver
 from besser.generators.alloy.instance_generator.alloy_analyzer_executor import AlloyResult
 from tests.generators.alloy.utils_alloy_translation import describe
 
@@ -44,7 +44,7 @@ def inconsistent_model() -> DomainModel:
 
 
 def test_generate_object_models_consistent(consistent_model, tmp_path):
-    solver = AlloySolverNew(consistent_model, output_dir=str(tmp_path))
+    solver = AlloySolver(consistent_model, output_dir=str(tmp_path))
     result, object_models = solver.generate_object_models(scope=1)
     assert result == AlloyResult.SAT
     assert len(object_models) == 1
@@ -62,7 +62,7 @@ def test_generate_object_models_consistent(consistent_model, tmp_path):
 
 
 def test_generate_object_models_inconsistent(inconsistent_model, tmp_path):
-    solver = AlloySolverNew(inconsistent_model, output_dir=str(tmp_path))
+    solver = AlloySolver(inconsistent_model, output_dir=str(tmp_path))
     result, object_models = solver.generate_object_models(scope=1)
     assert result == AlloyResult.UNSAT
     assert object_models == []

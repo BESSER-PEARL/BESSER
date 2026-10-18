@@ -2,7 +2,7 @@
 Conversion of Alloy instances into B-UML object models.
 
 An instance is the XML file the Alloy Analyzer writes for a solution of the specification
-:class:`AlloyGeneratorNew` generated from a domain model. The specification owns the naming
+:class:`AlloyGenerator` generated from a domain model. The specification owns the naming
 scheme from B-UML elements to Alloy names, so the conversion inverts it: it asks the
 specification for the Alloy name of every class, field and value of the domain model, instead
 of parsing the names found in the instance.

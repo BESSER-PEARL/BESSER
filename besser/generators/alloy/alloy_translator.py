@@ -17,6 +17,7 @@ from datetime import date, timedelta
 
 from besser.BUML.metamodel.structural import (
     UNLIMITED_MAX_MULTIPLICITY,
+    AssociationClass,
     BinaryAssociation,
     Class,
     DomainModel,
@@ -26,7 +27,8 @@ from besser.BUML.metamodel.structural import (
     Type,
 )
 from besser.generators.alloy.alloy_specification import AlloySpecification
-from besser.generators.alloy.ocl_translator_new import Literals, OclToAlloy, date_label
+from besser.generators.alloy.exceptions import AlloyTranslationError
+from besser.generators.alloy.ocl_translator import Literals, OclToAlloy, date_label
 
 
 class BumlToAlloy:
@@ -38,9 +40,15 @@ class BumlToAlloy:
     bidirectional associations, a fact per OCL invariant, a singleton per string and date, and
     an ``instance_model`` predicate with its ``run`` command.  *seed* seeds the random dates
     filling the scope.
+
+    Raises:
+        AlloyTranslationError: when the model has association classes or attributes of an
+            unsupported type, or when an OCL invariant cannot be translated.
     """
 
     def __init__(self, model: DomainModel, scope: int, seed: int = 0):
+        if any(isinstance(t, AssociationClass) for t in model.types):
+            raise AlloyTranslationError("Association classes are not supported by the Alloy translator yet")
         self.model = model
         self.scope = scope
         self._random = random.Random(seed)
@@ -219,7 +227,9 @@ class BumlToAlloy:
         if isinstance(buml_type, (Class, Enumeration)):
             return buml_type.name
         if buml_type.name not in _PRIMITIVE_TYPES:
-            raise NotImplementedError(f"BumlToAlloy does not support attributes of type '{buml_type.name}'")
+            raise AlloyTranslationError(
+                f"Attributes of type '{buml_type.name}' are not supported by the Alloy translator"
+            )
         return _PRIMITIVE_TYPES[buml_type.name]
 
     def _field_multiplicity(self, multiplicity: Multiplicity) -> str:

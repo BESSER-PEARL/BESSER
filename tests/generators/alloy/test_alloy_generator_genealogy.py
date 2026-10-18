@@ -1,14 +1,14 @@
 import os
 import pytest
 from tests.generators.alloy.BUML_genealogy_model import domain_model
-from besser.generators.alloy.alloy_generator_new import AlloyGeneratorNew
+from besser.generators.alloy.alloy_generator import AlloyGenerator
 from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec
 
 
 @pytest.fixture
 def spec(tmpdir):
     tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGeneratorNew(model=domain_model, output_dir=str(tmpdir))
+    generator = AlloyGenerator(model=domain_model, output_dir=str(tmpdir))
     generator.generate()
     als_file = generator.get_specification_path()
     assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"

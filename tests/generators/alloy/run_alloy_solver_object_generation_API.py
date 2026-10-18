@@ -3,7 +3,7 @@ import os
 from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
     Multiplicity, BinaryAssociation, StringType, IntegerType, DateType
 from besser.generators.alloy.instance_generator.alloy_analyzer_executor import AlloyResult
-from besser.generators.alloy.instance_generator.alloy_solver_new import AlloySolverNew
+from besser.generators.alloy.instance_generator.alloy_solver import AlloySolver
 
 
 # Library attributes definition
@@ -64,7 +64,7 @@ library_model: DomainModel = DomainModel(name="Library_model", types={library, b
 
 
 # Semantic consistency check
-solver = AlloySolverNew(library_model, output_dir="outdir")
+solver = AlloySolver(library_model, output_dir="outdir")
 result = solver.check_consistency(scope=3)
 assert result == AlloyResult.SAT, "The model is not consistent."
 

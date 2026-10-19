@@ -17,6 +17,7 @@ import uuid
 from typing import Any, Dict, List
 
 from besser.utilities.buml_code_builder.agent_model_builder import GUI_BUILDER_FUNCTION_PREFIX
+from ..json_to_buml.a2a_tags import format_a2a_line
 from .gui_diagram_converter import gui_buml_to_json
 from ._node_builders import make_edge, make_node
 from ...utils.layout_calculator import (
@@ -2357,4 +2358,46 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
     LLMs, RAG databases, tools, skills, workspaces and GUIs in the top-level
     ``components`` map.
     """
-    return _flat_to_v4(_agent_buml_to_flat_json(content))
+    model = _flat_to_v4(_agent_buml_to_flat_json(content))
+    _restore_a2a_tags(model, _read_a2a(content))
+    return model
+
+
+def _read_a2a(content: str) -> Dict[str, Any]:
+    """The ``<agent>._a2a = {...}`` literal ``agent_model_to_code`` writes, or {}."""
+    for node in ast.parse(content).body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Attribute) and node.targets[0].attr == "_a2a"):
+            try:
+                value = ast.literal_eval(node.value)
+            except (ValueError, SyntaxError):
+                return {}
+            return value if isinstance(value, dict) else {}
+    return {}
+
+
+def _restore_a2a_tags(model: Dict[str, Any], a2a: Dict[str, Any]) -> None:
+    """Put the a2a tags back where the editor keeps them: ``a2a:out`` lines on the
+    state's ``data.description``, ``a2a:in`` on the transition's ``data.name``."""
+    states = {n["id"]: n["data"] for n in model["nodes"] if n["type"] == "AgentState"}
+    by_name = {data.get("name"): data for data in states.values()}
+    if not all(isinstance(a2a.get(key) or [], list) for key in ("outbound", "inbound")):
+        return
+    for edge in a2a.get("outbound") or []:
+        line = format_a2a_line(edge)
+        data = by_name.get(edge.get("state")) if line else None
+        if data is not None:
+            data["description"] = f"{data['description']}\n{line}" if data.get("description") else line
+    for edge in a2a.get("inbound") or []:
+        line = format_a2a_line(edge)
+        if not line:
+            continue
+        for transition in model["edges"]:
+            data = transition["data"]
+            if (transition["type"] == "AgentStateTransition"
+                    and not str(data.get("name", "")).startswith("a2a:")
+                    and (states.get(transition["source"]) or {}).get("name") == edge.get("source_state")
+                    and (states.get(transition["target"]) or {}).get("name") == edge.get("target_state")
+                    and (data.get("predefined") or {}).get("intentName", "") == edge.get("intent", "")):
+                data["name"] = line
+                break

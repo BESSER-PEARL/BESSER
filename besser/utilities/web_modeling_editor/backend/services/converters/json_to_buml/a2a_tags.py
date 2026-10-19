@@ -72,6 +72,20 @@ def parse_a2a_line(line: str) -> Optional[dict]:
     }
 
 
+def format_a2a_line(edge: dict) -> Optional[str]:
+    """Inverse of `parse_a2a_line`: the wire tag for a parsed edge, or None without a peer."""
+    if not isinstance(edge, dict) or edge.get("dir") not in ("in", "out") or not edge.get("peer"):
+        return None
+    parts = [f"a2a:{edge['dir']}", f"peer={edge['peer']}", f"ref={edge.get('ref') or ''}"]
+    if edge.get("flow"):
+        parts.append(f"flow={edge['flow']}")
+    if isinstance(edge.get("order"), int) and edge["order"] != _ORDER_SENTINEL:
+        parts.append(f"order={edge['order']}")
+    if edge.get("kind") in _KINDS:
+        parts.append(f"kind={edge['kind']}")
+    return ";".join(parts)
+
+
 def parse_a2a_out_block(description: Optional[str]) -> list:
     """Parse an AgentState.description (possibly multi-line) into a list of out-edges,
     sorted by ascending `order`. Non-a2a lines (human comments) are ignored — a state

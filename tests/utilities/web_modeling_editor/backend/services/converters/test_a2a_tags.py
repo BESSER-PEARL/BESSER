@@ -202,3 +202,41 @@ def test_annotate_over_real_converter_keeps_intent_and_states():
     assert {"greeting", "write_code"} <= state_names
     assert any(i.name == "recv_AgentSupervisor_task" for i in agent.intents)
     assert agent._a2a["inbound"][0]["intent"] == "recv_AgentSupervisor_task"
+
+
+# ---------------------------------------------------------------------------
+# project .py round trip — the tags are written to B-UML and read back
+# ---------------------------------------------------------------------------
+
+def test_a2a_tags_survive_a_project_buml_round_trip(tmp_path, monkeypatch):
+    from besser.utilities.buml_code_builder.project_builder import project_to_code
+    from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.project_converter import (
+        project_to_json,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.project_converter import (
+        json_to_buml_project,
+    )
+    monkeypatch.chdir(tmp_path)
+    json_data = _tagged_diagram_json()
+    json_data["model"]["components"] = {
+        "i-recv": {"id": "i-recv", "type": "AgentIntent",
+                   "name": "recv_AgentSupervisor_task", "bodies": []},
+    }
+    project = {"id": "p", "type": "Project", "name": "Swarm", "createdAt": "2026-01-01T00:00:00Z",
+               "diagrams": {"AgentDiagram": [{"id": "diagram-coder", "title": "AgentCoder",
+                                              "model": json_data["model"]}]}}
+    out = tmp_path / "project.py"
+    project_to_code(json_to_buml_project(ProjectInput(**project)), str(out))
+    [entry] = project_to_json(out.read_text(encoding="utf-8"))["diagrams"]["AgentDiagram"]
+
+    expected = annotate_agent_with_a2a(_FakeAgent(), json_data)._a2a
+    assert annotate_agent_with_a2a(_FakeAgent(), entry)._a2a == expected
+    # The editor reads the tags from the state description and the transition name.
+    states = {n["data"]["name"]: n["data"] for n in entry["model"]["nodes"] if n["type"] == "AgentState"}
+    assert states["write_code"]["description"].splitlines() == [
+        "a2a:out;peer=AgentTester;ref=test-uuid;flow=flow-09;order=1;kind=delegates",
+        "a2a:out;peer=AgentReviewer;ref=rev-uuid;flow=flow-09;order=2;kind=supervises",
+    ]
+    [tagged] = [e for e in entry["model"]["edges"] if e["data"].get("name", "").startswith("a2a:")]
+    assert tagged["data"]["name"] == "a2a:in;peer=AgentSupervisor;ref=sup-uuid;flow=flow-09;kind=delegates"

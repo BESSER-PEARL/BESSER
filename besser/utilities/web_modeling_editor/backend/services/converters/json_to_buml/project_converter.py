@@ -18,6 +18,7 @@ from . import (
     process_component_diagram,
     process_deployment_diagram,
 )
+from .a2a_tags import annotate_agent_with_a2a
 from .method_nn_linker import link_method_neural_networks
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
@@ -287,7 +288,9 @@ def json_to_buml_project(project):
 
     # ── Process ALL AgentDiagrams ─────────────────────────────────────
     for agent_diag in diagrams.get("AgentDiagram", []):
-        agent_model = process_agent_diagram(agent_diag.model_dump())
+        agent_json = agent_diag.model_dump()
+        agent_model = process_agent_diagram(agent_json)
+        annotate_agent_with_a2a(agent_model, agent_json)
         model_list.append(agent_model)
         _remember(agent_model, "AgentDiagram", agent_diag)
         # Index by diagram UUID so an agentic task's agent_diagram_ref resolves.

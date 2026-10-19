@@ -651,4 +651,11 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
 
                 f.write("\n")
 
+        # The web editor's a2a: tags, parsed (see a2a_tags.annotate_agent_with_a2a);
+        # the Docker Compose generator reads them from the agent.
+        a2a = getattr(model, "_a2a", None)
+        if a2a:
+            f.write("# A2A WIRING\n")
+            f.write(f"{model_var_name}._a2a = {a2a!r}\n\n")
+
     logger.info("Agent model saved to %s", file_path)

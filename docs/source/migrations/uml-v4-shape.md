@@ -852,7 +852,9 @@ same fallthrough order:
   `AgentStateTransition`'s `data.name` an
   `a2a:in;peer=...;ref=...;flow=...;kind=...` tag, with the intent in
   `data.predefined.intentName`. v3 -> v4 keeps `AgentState.description` as
-  `data.description` and the transition `name` as `data.name`.
+  `data.description` and the transition `name` as `data.name`. A B-UML
+  export writes the parsed tags as `<agent>._a2a = {...}` (the form the
+  generator reads); the `.py` import writes them back to those two fields.
 
 ---
 

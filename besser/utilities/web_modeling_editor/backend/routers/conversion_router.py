@@ -53,6 +53,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_bpmn_diagram,
     process_state_machine,
     process_agent_diagram,
+    annotate_agent_with_a2a,
     process_object_diagram,
     process_nn_diagram,
     process_component_diagram,
@@ -370,6 +371,7 @@ async def export_buml(input_data: DiagramInput):
 
         elif elements_data.get("type") == "AgentDiagram":
             agent_model = process_agent_diagram(json_data)
+            annotate_agent_with_a2a(agent_model, json_data)
             output_file_path = os.path.join(temp_dir, "agent_buml.py")
             agent_model_to_code(agent_model, output_file_path)
             file_content = await _read_file(output_file_path, "rb")

@@ -6,7 +6,7 @@ Handles object diagram processing and attribute mapping.
 import ast
 import logging
 import uuid
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ def _attribute_value(node: ast.AST):
         and node.func.attr == "fromisoformat"
         and len(node.args) == 1
         and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
     ):
         return node.args[0].value
     return None
@@ -137,6 +138,34 @@ def object_buml_to_json(
                             "visibility": attr_visibility,
                         }
                 class_id_to_attributes[elem_id] = class_attributes
+
+        # Superclasses per class (ClassInheritance: source = specific, target = general)
+        parents_of: Dict[str, List[str]] = {}
+        for rel in reference_diagram_json["relationships"].values():
+            if rel.get("type") == "ClassInheritance":
+                parents_of.setdefault(rel["source"]["element"], []).append(rel["target"]["element"])
+
+        def lineage(class_id: str) -> List[str]:
+            """The class followed by all its ancestors, nearest first."""
+            seen, order, queue = set(), [], [class_id]
+            while queue:
+                current = queue.pop(0)
+                if current in seen:
+                    continue
+                seen.add(current)
+                order.append(current)
+                queue.extend(parents_of.get(current, []))
+            return order
+
+        # Inherited attributes resolve too; a class's own attribute wins over an ancestor's.
+        class_id_to_attributes = {
+            class_id: {
+                name: info
+                for ancestor in reversed(lineage(class_id))
+                for name, info in class_id_to_attributes.get(ancestor, {}).items()
+            }
+            for class_id in class_id_to_attributes
+        }
 
         # Parse the Python code to extract object instances
         try:
@@ -330,13 +359,25 @@ def object_buml_to_json(
             elements[object_id] = object_element
 
         # Look for object links/relationships
-        association_id_map = {}
-        for rel_id, rel in reference_diagram_json["relationships"].items():
-            if rel["type"] in ["ClassBidirectional", "ClassUnidirectional"]:
-                source_role = rel.get("source", {}).get("role", "")
-                target_role = rel.get("target", {}).get("role", "")
-                if source_role or target_role:
-                    association_id_map[f"{source_role}-{target_role}"] = rel_id
+        associations = [
+            (rel_id, rel.get("source", {}), rel.get("target", {}))
+            for rel_id, rel in reference_diagram_json["relationships"].items()
+            if rel["type"] in ["ClassBidirectional", "ClassUnidirectional"]
+        ]
+
+        def find_association(class_id: str, role: str):
+            """The association whose far end is ``role`` and whose near end is the
+            object's class or an ancestor; else any association with that end name."""
+            own = set(lineage(class_id)) if class_id else set()
+            fallback = None
+            for rel_id, source, target in associations:
+                if (target.get("role") == role and source.get("element") in own) or (
+                    source.get("role") == role and target.get("element") in own
+                ):
+                    return rel_id
+                if fallback is None and role in (source.get("role"), target.get("role")):
+                    fallback = rel_id
+            return fallback
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.Assign):
@@ -345,7 +386,7 @@ def object_buml_to_json(
             # to-many end, as object_model_to_code writes them)
             if isinstance(node.value, ast.Name):
                 target_vars = [node.value.id]
-            elif isinstance(node.value, ast.Set):
+            elif isinstance(node.value, (ast.Set, ast.List, ast.Tuple)):
                 target_vars = [elt.id for elt in node.value.elts if isinstance(elt, ast.Name)]
             else:
                 continue
@@ -358,12 +399,7 @@ def object_buml_to_json(
                 if not source_id:
                     continue
 
-                # Find corresponding association ID
-                assoc_id = None
-                for key, aid in association_id_map.items():
-                    if relationship_name in key:
-                        assoc_id = aid
-                        break
+                assoc_id = find_association(objects_by_name[obj_name]["class_id"], relationship_name)
 
                 for target_obj in target_vars:
                     target_id = object_var_to_id.get(target_obj)

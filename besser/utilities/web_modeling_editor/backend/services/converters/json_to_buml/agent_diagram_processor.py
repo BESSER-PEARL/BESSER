@@ -614,7 +614,14 @@ def process_agent_diagram(json_data):
     from ``model.components`` and the legacy locations merged by
     :func:`collect_agent_components`.
     """
-    config = json_data.get('config') or {}
+    # The diagram's config envelope is canonical (the editor writes it); a
+    # ``model.config`` from agent_buml_to_json is read underneath it.
+    model_config = (json_data.get('model') or {}).get('config')
+    envelope_config = json_data.get('config')
+    config = {
+        **(model_config if isinstance(model_config, dict) else {}),
+        **(envelope_config if isinstance(envelope_config, dict) else {}),
+    }
     lang_value = config.get('language', '')
     language = lang_value.lower() if isinstance(lang_value, str) and lang_value else None
     source_language = config.get('source_language')

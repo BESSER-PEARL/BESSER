@@ -158,3 +158,37 @@ def test_project_import_keeps_diagram_and_class_ids(tmp_path, monkeypatch):
     project = dict(imported, name="RoundTrip")
     reexported = json_to_buml_project(ProjectInput(**project))
     assert reexported._cross_diagram_errors["errors"] == []
+
+
+def test_agent_default_llm_survives_a_project_round_trip(tmp_path, monkeypatch):
+    from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.project_converter import (
+        json_to_buml_project,
+    )
+    from tests.utilities.web_modeling_editor.backend.services.converters.test_agent_converter_multi_llm import (
+        _multi_llm_payload,
+    )
+    monkeypatch.chdir(tmp_path)
+    payload = _multi_llm_payload()
+    diagrams = {"AgentDiagram": [{"id": "ag-1", "title": "Helper", "model": payload["model"],
+                                  "config": payload["config"]}]}
+    _, imported = _project_round_trip(diagrams, tmp_path)
+
+    [agent_entry] = imported["diagrams"]["AgentDiagram"]
+    # The editor reads the default LLM from the diagram's config envelope.
+    assert (agent_entry.get("config") or {}).get("default_llm_name") == "big"
+    agent = next(m for m in json_to_buml_project(ProjectInput(**dict(imported, name="RT"))).models
+                 if type(m).__name__ == "Agent")
+    assert agent.default_llm_name == "big"
+
+
+def test_agent_default_llm_is_read_from_the_model_config_too():
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.agent_diagram_processor import (
+        process_agent_diagram,
+    )
+    from tests.utilities.web_modeling_editor.backend.services.converters.test_agent_converter_multi_llm import (
+        _multi_llm_payload,
+    )
+    payload = _multi_llm_payload()
+    payload["model"]["config"] = payload.pop("config")
+    assert process_agent_diagram(payload).default_llm_name == "big"

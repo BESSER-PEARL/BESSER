@@ -327,12 +327,16 @@ def _convert_section(
             f"Failed to convert '{title}' section ({model_name}): {e}"
         ) from e
 
-    return {
+    entry = {
         "id": diagram_id,
         "title": title,
         "model": model,
         "lastUpdate": last_update,
     }
+    # The editor keeps an agent's default LLM on the diagram config envelope.
+    if model_name == "agent" and isinstance(model.get("config"), dict):
+        entry["config"] = model.pop("config")
+    return entry
 
 
 # Detection heuristics for single-diagram BUML files that omit the Project(...)

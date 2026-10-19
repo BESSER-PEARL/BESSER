@@ -607,8 +607,18 @@ placeholder `"AI response 🪄"`).
 ```ts
 type AgentDiagramModel = UMLModel & {
   components?: { [id: string]: AgentComponent };   // sibling of nodes / edges
-  config?: { default_llm_name?: string; [key: string]: unknown };
 };
+```
+
+The agent's settings, `default_llm_name` among them, live on the project
+diagram envelope (`project.diagrams.AgentDiagram[i].config`), which the editor
+reads and writes. `agent_buml_to_json` returns the default LLM on
+`model.config`; the project importer moves it onto the envelope (the
+single-file importer copies it there), and
+`process_agent_diagram` reads `model.config` underneath the envelope's
+`config`, so a model saved with it still works.
+
+```ts
 
 // Flat entry, no geometry (bounds / position). Identical to the v3
 // smart-generator `model.components` entry, so v3 and v4 share it verbatim.

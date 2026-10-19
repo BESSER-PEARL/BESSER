@@ -608,6 +608,10 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 "title": diagram_title,
                 "model": agent_json
             }
+            # The editor keeps the default LLM on the diagram config envelope;
+            # model.config stays too, the processor reads it underneath.
+            if isinstance(agent_json.get("config"), dict):
+                diagram_data["config"] = dict(agent_json["config"])
             diagram_type = "AgentDiagram"
         except Exception as agent_error:
             logger.error("Agent diagram parsing failed: %s", str(agent_error))

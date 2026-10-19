@@ -61,6 +61,8 @@ from besser.utilities.web_modeling_editor.backend.services.governance.swarm_bind
 
 # Backend services - Other services
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+    agent_diagram_without_states,
+    agent_without_states_message,
     collect_agents_from_diagrams,
     extract_openai_api_key,
     normalize_personalization_mapping,
@@ -809,6 +811,8 @@ async def _handle_deployment_project_generation(
         for entry in input_data.diagrams.get("AgentDiagram", []):
             entry_dict = entry.model_dump()
             model = entry_dict.get("model")
+            if agent_diagram_without_states(model):
+                raise HTTPException(status_code=400, detail=agent_without_states_message(entry_dict.get("title")))
             if not entry_dict.get("id") or not (isinstance(model, dict) and model.get("nodes")):
                 continue
             agent_config = entry_dict.get("config")

@@ -42,6 +42,8 @@ from besser.utilities.web_modeling_editor.backend.routers.generation_router impo
     sanitize_config,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+    agent_diagram_without_states,
+    agent_without_states_message,
     collect_agents_from_diagrams,
     extract_openai_api_key,
     normalize_personalization_mapping,
@@ -206,6 +208,11 @@ async def deploy_webapp_to_github(
                 )
 
             agent_model_payload = agent_diagram_data.get("model")
+            if agent_diagram_without_states(agent_model_payload):
+                raise HTTPException(
+                    status_code=400,
+                    detail=agent_without_states_message(agent_diagram_data.get("title")),
+                )
             if isinstance(agent_model_payload, dict) and not agent_model_payload.get("nodes"):
                 raise HTTPException(
                     status_code=400,
@@ -998,6 +1005,9 @@ async def _export_buml_files_to_repo(
             agent_diagrams = []
 
         for agent_data in agent_diagrams:
+            if agent_diagram_without_states(agent_data.get("model")):
+                logger.warning("Skipping B-UML export: %s", agent_without_states_message(agent_data.get("title")))
+                continue
             if not (agent_data and agent_data.get("model", {}).get("nodes")):
                 continue
             agent_model = process_agent_diagram(agent_data)

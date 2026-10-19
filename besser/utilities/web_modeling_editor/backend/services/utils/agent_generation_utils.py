@@ -442,6 +442,16 @@ def handle_personalized_agent(
     return zip_buffer, file_name
 
 
+def agent_diagram_without_states(model: Any) -> bool:
+    """True for an agent diagram that defines components (intents, LLMs, ...)
+    but no states: unlike an empty placeholder, it cannot become an agent."""
+    return isinstance(model, dict) and not model.get("nodes") and bool(model.get("components"))
+
+
+def agent_without_states_message(title: Any) -> str:
+    return f"Agent diagram '{title or 'Agent'}' has no states: add at least one state to generate the agent."
+
+
 def collect_agents_from_diagrams(
     agent_diagrams: List[Any],
     default_config: Any = None,
@@ -482,6 +492,8 @@ def collect_agents_from_diagrams(
             continue
         # The deploy endpoint additionally required a non-empty ``nodes`` list;
         # treat that as the unified contract so both paths reject blank diagrams.
+        if agent_diagram_without_states(model):
+            raise HTTPException(status_code=400, detail=agent_without_states_message(entry_dict.get("title")))
         if isinstance(model, dict) and not model.get("nodes"):
             continue
         agent_model = process_agent_diagram(entry_dict)

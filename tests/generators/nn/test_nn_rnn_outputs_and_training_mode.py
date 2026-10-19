@@ -36,6 +36,21 @@ def test_rnn_returning_one_tensor_needs_no_input_var(layer_cls, return_type, tmp
     assert "return_state=True" not in tf_code
 
 
+@pytest.mark.parametrize("layer_cls", [GRULayer, LSTMLayer, SimpleRNNLayer])
+@pytest.mark.parametrize("return_type", ["last", "full"])
+def test_pytorch_sequential_rejects_recurrent_layers(layer_cls, return_type, tmp_path):
+    # nn.Sequential(nn.LSTM(...), nn.Linear(...)) fails at runtime: the LSTM returns a tuple.
+    with pytest.raises(ValueError, match="recurrent layer 'rnn'"):
+        PytorchGenerator(rnn_then_linear(layer_cls, return_type), output_dir=str(tmp_path),
+                         generation_type="sequential")
+
+    TFGenerator(rnn_then_linear(layer_cls, return_type), output_dir=str(tmp_path),
+                generation_type="sequential").generate()
+    tf_code = (tmp_path / "tf_nn_sequential.py").read_text(encoding="utf-8")
+    assert "layers.Dense(units=2" in tf_code
+    assert "return_state=True" not in tf_code
+
+
 @pytest.mark.parametrize("return_type", ["hidden", "both"])
 def test_rnn_returning_several_tensors_still_needs_input_var(return_type):
     result = rnn_then_linear(LSTMLayer, return_type).validate(raise_exception=False)

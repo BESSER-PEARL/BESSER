@@ -70,6 +70,17 @@ def _parse_user_reference_section(section_code: str) -> Optional[DomainModel]:
     return domain_model if is_user_reference_domain_model(domain_model) else None
 
 
+def _string_kwarg(prefix: str, code: str) -> str:
+    """The string literal after ``<prefix> = `` in ``code`` (escapes decoded), or ''."""
+    match = re.search(prefix + r'\s*=\s*"((?:[^"\\]|\\.)*)"', code)
+    if not match:
+        return ""
+    try:
+        return ast.literal_eval(f'"{match.group(1)}"')
+    except (ValueError, SyntaxError):
+        return match.group(1)
+
+
 def _object_model_title(section_code: str) -> str:
     """Return the ``ObjectModel(name=...)`` of an object section, or ''."""
     match = _OBJECT_MODEL_NAME.search(section_code)
@@ -543,14 +554,13 @@ def project_to_json(content: str) -> Dict[str, Any]:
     model_names = re.findall(r'\b(\w+)\b', model_match.group(1))
     logger.debug("Detected model names in project: %s", model_names)
 
-    # Extract project metadata
-    project_name_match = re.search(r'Project\s*\(\s*name\s*=\s*"(.*?)"', content)
-    project_desc_match = re.search(r'Metadata\s*\(\s*description\s*=\s*"(.*?)"', content)
-    project_owner_match = re.search(r'owner\s*=\s*"(.*?)"', content)
-
-    project_name = project_name_match.group(1) if project_name_match else "Unnamed Project"
-    project_description = project_desc_match.group(1) if project_desc_match else "No description"
-    project_owner = project_owner_match.group(1) if project_owner_match else "Unknown"
+    # Extract project metadata from the project definition, not from the
+    # first Metadata(...) / owner= of some model section above it.
+    definition_start = content.rfind("# PROJECT DEFINITION")
+    definition = content[definition_start:] if definition_start != -1 else content
+    project_name = _string_kwarg(r'Project\s*\(\s*name', definition) or "Unnamed Project"
+    project_description = _string_kwarg(r'Metadata\s*\(\s*description', definition) or "No description"
+    project_owner = _string_kwarg(r'\bowner', definition) or "Unknown"
 
     # diagram_jsons maps diagram type -> list of diagram entries
     diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}

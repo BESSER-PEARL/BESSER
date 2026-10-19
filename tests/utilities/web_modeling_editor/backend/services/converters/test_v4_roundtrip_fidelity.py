@@ -224,3 +224,14 @@ def test_nn_metrics_and_sub_nn_reference_use_the_editor_formats():
     rebuilt = process_nn_diagram({"title": "net", "model": out})
     assert rebuilt.configuration.metrics == ["f1-score", "accuracy"]
     assert [m.name for m in rebuilt.modules if isinstance(m, NN)] == ["classifier"]
+
+
+def test_project_description_comes_from_the_project_definition(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    classes = _class_diagram([
+        _node("book", "class", {"name": "Book", "attributes": [], "methods": []}),
+        _node("note", "comment", {"name": "A printed work"}),
+    ], [{"id": "l", "type": "CommentLink", "source": "note", "target": "book", "data": {"points": []}}])
+    diagrams = {"ClassDiagram": [{"id": "cd-1", "title": "Library", "model": classes["model"]}]}
+    _, imported = _project_round_trip(diagrams, tmp_path, description='Lending "desk" app')
+    assert imported["description"] == 'Lending "desk" app'

@@ -31,26 +31,20 @@ TASK_ATTRIBUTES = [("title", "str"), ("status", "str"), ("hours", "float")]
 
 
 def _class_diagram():
-    """Apollon class diagram with one ``Task`` class (id ``cls-Task``, attribute
-    ids ``attr-Task-<name>``)."""
-    elements = {}
-    attribute_ids = []
-    for attr_name, attr_type in TASK_ATTRIBUTES:
-        attr_id = f"attr-Task-{attr_name}"
-        attribute_ids.append(attr_id)
-        elements[attr_id] = {
-            "id": attr_id, "name": attr_name, "type": "ClassAttribute", "owner": "cls-Task",
-            "bounds": {"x": 0, "y": 0, "width": 200, "height": 30}, "visibility": "public",
-            "attributeType": attr_type, "isOptional": False, "isDerived": False, "isId": False,
-        }
-    elements["cls-Task"] = {
-        "id": "cls-Task", "name": "Task", "type": "Class", "owner": None,
-        "bounds": {"x": 0, "y": 0, "width": 220, "height": 200},
-        "attributes": attribute_ids, "methods": [],
+    """v4 class diagram with one ``Task`` class (node id ``cls-Task``, attribute
+    row ids ``attr-Task-<name>``)."""
+    attributes = [
+        {"id": f"attr-Task-{attr_name}", "name": attr_name, "visibility": "public",
+         "attributeType": attr_type, "isOptional": False, "isDerived": False, "isId": False}
+        for attr_name, attr_type in TASK_ATTRIBUTES
+    ]
+    task = {
+        "id": "cls-Task", "type": "class", "position": {"x": 0, "y": 0},
+        "width": 220, "height": 200, "measured": {"width": 220, "height": 200},
+        "data": {"name": "Task", "attributes": attributes, "methods": []},
     }
-    return {"version": "3.0.0", "type": "ClassDiagram", "size": {"width": 2000, "height": 1000},
-            "interactive": {"elements": {}, "relationships": {}}, "elements": elements,
-            "relationships": {}, "assessments": {}}
+    return {"version": "4.0.0", "type": "ClassDiagram", "title": "Domain",
+            "nodes": [task], "edges": [], "assessments": {}}
 
 
 def _import(component_type, attrs):

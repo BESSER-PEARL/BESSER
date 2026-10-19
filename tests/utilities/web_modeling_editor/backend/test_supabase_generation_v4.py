@@ -10,6 +10,7 @@ with generator='supabase' and exercises the user_root config contract:
 """
 
 import asyncio
+import re
 
 import pytest
 import httpx
@@ -117,13 +118,13 @@ class TestSupabaseGenerateOutputV4:
         assert "supabase" in response.json()["supported_generators"]
 
     def test_generate_supabase_with_user_root(self, supabase_input):
-        """Valid user_root yields auth.users mirroring + RLS, stable filename."""
+        """Valid user_root yields auth.users mirroring + RLS, migration-style filename."""
         payload = {**supabase_input, "config": {"user_root": "User"}}
         response = _post("/besser_api/generate-output", json=payload)
         assert response.status_code == 200, response.text
 
         content_disp = response.headers.get("content-disposition", "")
-        assert 'filename="supabase_output.sql"' in content_disp
+        assert re.search(r'filename="\d{14}_supabasedemo\.sql"', content_disp), content_disp
 
         body = response.text
         assert "auth.users" in body

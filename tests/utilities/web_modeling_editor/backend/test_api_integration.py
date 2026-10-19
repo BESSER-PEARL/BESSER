@@ -55,6 +55,11 @@ class _Client:
 client = _Client()
 
 
+def _v4_node(node_id: str, node_type: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    return {"id": node_id, "type": node_type, "position": {"x": 0, "y": 0},
+            "width": 160, "height": 100, "data": data}
+
+
 # ---------------------------------------------------------------------------
 # Fixtures -- minimal valid diagram payloads
 # ---------------------------------------------------------------------------
@@ -820,38 +825,41 @@ class TestValidateDiagram:
     @classmethod
     def _conference_payload(cls, slot_role: str) -> Dict[str, Any]:
         """Event / Session / Room / ScheduleSlot (DateTime start/end) + the issue's invariant."""
-        elements: Dict[str, Any] = {}
+        nodes = []
         for cid, name, attrs in [
             ("c-event", "Event", [("title", "str")]),
             ("c-session", "Session", [("title", "str")]),
             ("c-room", "Room", [("name", "str")]),
-            ("c-slot", "ScheduleSlot", [("startTime", "DateTime"), ("endTime", "DateTime")]),
+            ("c-slot", "ScheduleSlot", [("startTime", "datetime"), ("endTime", "datetime")]),
         ]:
-            elements[cid] = {
-                "type": "Class", "name": name, "methods": [],
-                "attributes": [f"{cid}-{attr}" for attr, _ in attrs],
-            }
-            for attr, attr_type in attrs:
-                elements[f"{cid}-{attr}"] = {"type": "Attribute", "name": f"+ {attr}: {attr_type}"}
-        elements["ocl-1"] = {"type": "ClassOCLConstraint", "constraint": cls._OVERLAP_OCL}
+            nodes.append(_v4_node(cid, "class", {
+                "name": name, "methods": [],
+                "attributes": [
+                    {"id": f"{cid}-{attr}", "name": attr, "attributeType": attr_type,
+                     "visibility": "public"}
+                    for attr, attr_type in attrs
+                ],
+            }))
+        nodes.append(_v4_node("ocl-1", "ClassOCLConstraint", {"expression": cls._OVERLAP_OCL}))
 
         def _rel(rid, target, role):
             return {
-                "id": rid, "type": "ClassBidirectional", "name": rid,
-                "source": {"element": "c-session", "role": "", "multiplicity": "0..*"},
-                "target": {"element": target, "role": role, "multiplicity": "1"},
+                "id": rid, "type": "ClassBidirectional", "source": "c-session", "target": target,
+                "data": {"name": rid, "sourceRole": "", "sourceMultiplicity": "0..*",
+                         "targetRole": role, "targetMultiplicity": "1", "points": []},
             }
 
         return {
             "title": "Conference",
             "model": {
+                "version": "4.0.0",
                 "type": "ClassDiagram",
-                "elements": elements,
-                "relationships": {
-                    "SessionRoom": _rel("SessionRoom", "c-room", ""),
-                    "SessionSlot": _rel("SessionSlot", "c-slot", slot_role),
-                    "SessionEvent": _rel("SessionEvent", "c-event", ""),
-                },
+                "nodes": nodes,
+                "edges": [
+                    _rel("SessionRoom", "c-room", ""),
+                    _rel("SessionSlot", "c-slot", slot_role),
+                    _rel("SessionEvent", "c-event", ""),
+                ],
             },
         }
 

@@ -158,10 +158,18 @@ def parse_buml_content(content: str) -> DomainModel:
                     domain_timestamp = var_value.timestamp
 
         domain_model = DomainModel(domain_name, timestamp=domain_timestamp)
+        # Method pre/post contracts are Constraint variables too, but they
+        # belong to their method, not to the model's invariants.
+        method_contracts = {
+            id(c)
+            for value in local_vars.values() if isinstance(value, Class)
+            for method in value.methods
+            for c in list(method.pre) + list(method.post)
+        }
         for var_name, var_value in local_vars.items():
             if isinstance(var_value, (Class, Enumeration)):
                 domain_model.types.add(var_value)
-            elif isinstance(var_value, Constraint):
+            elif isinstance(var_value, Constraint) and id(var_value) not in method_contracts:
                 domain_model.constraints.add(var_value)
 
         for var_name, var_value in local_vars.items():

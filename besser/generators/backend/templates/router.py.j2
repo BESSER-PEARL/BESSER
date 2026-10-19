@@ -937,6 +937,13 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
     {% endif -%}
     {% endfor -%}
     {% endif %}
+    {# Self-association: the N:1 end of a 1:N is a FK column on this class -#}
+    {% for x in ns.one_to_many if x[0] == class.name %}
+    if {{ class.name | lower}}_data.{{x[1]}} is not None:
+        if not database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{ class.name | lower}}_data.{{x[1]}}).first():
+            raise HTTPException(status_code=400, detail="{{x[0]}} not found")
+    setattr(db_{{ class.name | lower }}, '{{x[1]}}_id', {{ class.name | lower }}_data.{{x[1]}})
+    {% endfor %}
     {# Update one-to-many relationships -#}
     {% if ns.one_to_many %}
     {% for x in ns.one_to_many %}
@@ -961,9 +968,10 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
             )
         {% endif %}
         {{x[2]}}_to_attach = requested_{{x[2]}} - current_{{x[2]}}
+        {% set related_var = ('related_' if x[0] == class.name else 'db_') ~ x[0] | lower %}
         for {{x[0] | lower}}_id in {{x[2]}}_to_attach:
-            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{x[0] | lower}}_id).first()
-            if not db_{{x[0] | lower}}:
+            {{ related_var }} = database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }} == {{x[0] | lower}}_id).first()
+            if not {{ related_var }}:
                 raise HTTPException(status_code=400, detail="{{x[0]}} with id " + str({{x[0] | lower}}_id) + " not found")
         if {{x[2]}}_to_attach:
             database.query({{x[0]}}).filter({{x[0]}}.{{ x[0] | pk }}.in_({{x[2]}}_to_attach)).update(

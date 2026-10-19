@@ -1,9 +1,11 @@
-"""Creating an entity of a self-associated class (Product.parent / Product.children).
+"""Creating and updating an entity of a self-associated class (Product.parent /
+Product.children).
 
 The create endpoint validated the ``children`` ids with a loop variable named
 ``db_product``, the same name as the entity being created, so
 ``POST /product/ {"children": [leaf]}`` made the leaf its own parent and
-returned the leaf. A ``parent`` sent on create was silently dropped.
+returned the leaf. A ``parent`` sent on create was silently dropped. The update
+endpoint had the same clash and also ignored ``parent``.
 """
 import json
 import subprocess
@@ -33,11 +35,19 @@ CLIENT_SCRIPT = textwrap.dedent("""
         leaf = client.post("/product/", json={"code": "2204", "parent": root["id"]}).json()["product"]
         orphan = client.post("/product/", json={"code": "2205"}).json()["product"]
         group = client.post("/product/", json={"code": "220", "children": [orphan["id"]]}).json()
+        leaf_after_create = product(client, leaf["id"])
+        loose = client.post("/product/", json={"code": "2206"}).json()["product"]
+        updated = client.put(f"/product/{root['id']}/",
+                             json={"code": "22", "children": [leaf["id"], loose["id"]]}).json()
+        moved = client.put(f"/product/{leaf['id']}/", json={"code": "2204", "parent": group["product"]["id"]})
         print(json.dumps({
             "root": root,
-            "leaf": product(client, leaf["id"]),
+            "leaf": leaf_after_create,
             "group": group,
             "orphan": product(client, orphan["id"]),
+            "loose": product(client, loose["id"]),
+            "updated": updated,
+            "moved": moved.json()["product"],
         }))
 """)
 
@@ -70,3 +80,14 @@ def test_create_with_children_returns_the_new_entity(created):
 
 def test_create_with_parent_sets_the_foreign_key(created):
     assert created["leaf"]["parent_id"] == created["root"]["id"]
+
+
+def test_update_with_children_keeps_the_updated_entity(created):
+    updated = created["updated"]["product"]
+    assert updated["id"] == created["root"]["id"]
+    assert updated["parent_id"] is None
+    assert created["loose"]["parent_id"] == created["root"]["id"]
+
+
+def test_update_with_parent_moves_the_entity(created):
+    assert created["moved"]["parent_id"] == created["group"]["product"]["id"]

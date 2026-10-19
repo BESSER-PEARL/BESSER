@@ -73,3 +73,15 @@ def test_chain_terminus_is_self_variable_expression(model):
     while isinstance(cur, PropertyCallExpression):
         cur = cur.source
     assert isinstance(cur, VariableExp) and cur.name == "self"
+
+
+def test_short_form_iterator_body_resolves_against_element_type(model):
+    """OCL 2.4 §7.8: in ``self.employee->forAll(age > 16)`` the implicit
+    source of ``age`` is the iterated Employee, not ``self`` (a Department).
+    ``name`` exists on both classes; the innermost scope (Employee) wins."""
+    for text in ("context Department inv: self.employee->forAll(age > 16)",
+                 "context Department inv: self.employee->forAll(name <> '')"):
+        loop = parse_ocl(text, model).ast
+        lhs = loop.body[0].arguments[0]
+        assert not isinstance(lhs, VariableExp)
+        assert lhs.owner.name == "Employee"

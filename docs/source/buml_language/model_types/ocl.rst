@@ -102,6 +102,7 @@ the interpreter would crash on them or return a wrong result:
 * ``self`` inside a loop body;
 * comparisons between objects (``s1 <> s2``, ``s1.room = s2.room``);
 * comparisons of ``Date``, ``DateTime`` or ``Time`` values.
+* the ``closure`` iterator (``self.parents->closure(parents)``).
 
 An invariant that uses any of them is listed as *Syntax valid; not evaluated
 against the object diagram*, and a warning names the construct. It is not

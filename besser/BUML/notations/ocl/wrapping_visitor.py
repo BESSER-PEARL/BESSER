@@ -29,15 +29,27 @@ should parse via ``WrappingVisitor`` (or via :func:`parse_ocl`, which uses it).
 
 from besser.BUML.metamodel.ocl.ocl import (
     BooleanLiteralExpression, IteratorExp, LoopExp, OperationCallExpression,
-    PropertyCallExpression, TypeExp, VariableExp,
+    OrderedSetType, PropertyCallExpression, SequenceType, SetType, TypeExp,
+    VariableExp,
 )
+from besser.BUML.metamodel.structural import Class, Property
 from besser.BUML.notations.ocl.BOCLParser import BOCLParser
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 from besser.BUML.notations.ocl.visitor import BOCLVisitorImpl
 
 
+# Operations whose result is a Sequence or an OrderedSet.
+_ORDERED_OPERATIONS = {"SUBSEQUENCE", "SUBORDEREDSET", "APPEND", "PREPEND"}
+
+
 class WrappingVisitor(BOCLVisitorImpl):
     """``BOCLVisitorImpl`` subclass that produces a chain-preserving AST."""
+
+    def __init__(self, dm, om, context_class):
+        super().__init__(dm, om, context_class)
+        # Element types of the enclosing short-form iterators (``src->op(body)``),
+        # innermost last: their implicit iterator is the body's implicit source.
+        self._implicit_iterator_types = []
 
     # ------------------------------------------------------------------
     # Helpers
@@ -50,6 +62,8 @@ class WrappingVisitor(BOCLVisitorImpl):
             return self.iterators_context.get(receiver.name)
         if isinstance(receiver, PropertyCallExpression):
             return receiver.property.type
+        if isinstance(receiver, Property):  # implicit-source navigation
+            return receiver.type
         return None
 
     def _infer_collection_element_type(self, source):
@@ -62,18 +76,55 @@ class WrappingVisitor(BOCLVisitorImpl):
         """
         if isinstance(source, PropertyCallExpression):
             return source.property.type
+        if isinstance(source, (VariableExp, Property)):
+            return self._receiver_type(source)
         if isinstance(source, OperationCallExpression):
             if source.operation == "ALLInstances":
                 type_exp = source.source
                 if isinstance(type_exp, TypeExp):
                     return self._get_class_by_name(type_exp.name)
-            if source.operation == "ASSET":
+            if source.operation == "ASSET" or source.operation in _ORDERED_OPERATIONS:
                 return self._infer_collection_element_type(source.source)
             return None
         if isinstance(source, LoopExp):
-            # select / reject / collect preserve element type.
+            # select / reject / collect / closure preserve element type.
             return self._infer_collection_element_type(source.source)
         return None
+
+    def _check_closure(self, loop):
+        """Validate a ``closure`` loop and set its result type.
+
+        OCL 2.4 §8.3.7 (IteratorExp closure): one iterator; the body yields
+        the source element type or a collection of it; the result is an
+        OrderedSet for a Sequence/OrderedSet source and a Set otherwise.
+        """
+        if len(loop.iterator) > 1:
+            raise BOCLSyntaxError(["'closure' takes exactly one iterator variable"])
+        element = self._infer_collection_element_type(loop.source)
+        body = loop.body[0]
+        if (isinstance(body, VariableExp) and body.name != "self"
+                and body.name not in self.iterators_context):
+            # ``visitIdExpr`` found no property of that name.
+            raise BOCLSyntaxError([
+                f"'{body.name}' in the 'closure' body is not a property of "
+                f"'{element.name if element is not None else '?'}'"
+            ])
+        body_type = None
+        if not (isinstance(body, LoopExp) and body.name == "collect"):
+            body_type = self._infer_collection_element_type(body)
+        if isinstance(element, Class) and body_type is not None and not (
+                body_type is element
+                or isinstance(body_type, Class) and element in body_type.all_parents()):
+            raise BOCLSyntaxError([
+                f"The 'closure' body must yield {element.name} or a collection "
+                f"of {element.name}, not {body_type.name}"
+            ])
+        ordered = (
+            isinstance(loop.source, OperationCallExpression)
+            and loop.source.operation in _ORDERED_OPERATIONS
+        ) or isinstance(getattr(loop.source, "type", None), (OrderedSetType, SequenceType))
+        kind, result_type = ("OrderedSet", OrderedSetType) if ordered else ("Set", SetType)
+        loop.type = result_type(f"{kind}({element.name})" if element is not None else kind)
 
     def _wrap_navigation(self, receiver, name, ctx):
         """Resolve `name` against the receiver's type, falling back to the
@@ -109,6 +160,10 @@ class WrappingVisitor(BOCLVisitorImpl):
     def visitDotDateNavigation(self, ctx):
         receiver = self.visit(ctx.expression())
         return self._wrap_navigation(receiver, ctx.DATE().getText(), ctx)
+
+    def visitDotClosureNavigation(self, ctx):
+        receiver = self.visit(ctx.expression())
+        return self._wrap_navigation(receiver, "closure", ctx)
 
     def visitBooleanLiteral(self, ctx):
         text = ctx.BOOLEAN_LITERAL().getText()
@@ -156,7 +211,33 @@ class WrappingVisitor(BOCLVisitorImpl):
 
         body = self.visit(ctx.expression(1))
         loop.add_body(body)
+        if op_name == "closure":
+            self._check_closure(loop)
 
         for var_name in registered:
             self.iterators_context.pop(var_name, None)
+        return loop
+
+    def visitIdExpr(self, ctx):
+        # OCL 2.4 §7.8: an implicit source resolves against the innermost
+        # implicit iterator before ``self``.
+        name = ctx.ID().getText()
+        if name not in self.iterators_context:
+            for element in reversed(self._implicit_iterator_types):
+                if isinstance(element, Class):
+                    prop = self._resolve_property(name, element)
+                    if prop is not None:
+                        return prop
+        return super().visitIdExpr(ctx)
+
+    def visitArrowIteratorShort(self, ctx: BOCLParser.ArrowIteratorShortContext):
+        source = self.visit(ctx.expression(0))
+        loop = LoopExp(ctx.iteratorOp().getText(), None)
+        loop.source = source
+
+        self._implicit_iterator_types.append(self._infer_collection_element_type(source))
+        loop.add_body(self.visit(ctx.expression(1)))
+        self._implicit_iterator_types.pop()
+        if loop.name == "closure":
+            self._check_closure(loop)
         return loop

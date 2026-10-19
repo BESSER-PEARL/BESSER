@@ -67,7 +67,7 @@ iteratorVarDecl
     ;
 
 iteratorOp
-    : FORALL | EXISTS | SELECT | REJECT | COLLECT
+    : FORALL | EXISTS | SELECT | REJECT | COLLECT | CLOSURE
     ;
 
 compOp
@@ -94,6 +94,8 @@ expression
     // Same fallback for `date`: it is a keyword token, so `dotNavigation`
     // (which expects ID) never matches an attribute literally named `date`.
     | expression DOT DATE                                                           #dotDateNavigation
+    // And for `closure`, the iterator keyword.
+    | expression DOT CLOSURE                                                        #dotClosureNavigation
     | expression DOT ALLINSTANCES LPAREN RPAREN                                     #allInstancesExp
 
     // --- Postfix: arrow operations ---
@@ -186,6 +188,7 @@ EXISTS     : 'exists' ;
 SELECT     : 'select' ;
 REJECT     : 'reject' ;
 COLLECT    : 'collect' ;
+CLOSURE    : 'closure' ;
 INTERSECTION: 'intersection';
 ISUNIQUE    : 'isUnique';
 ASSET       : 'asSet';

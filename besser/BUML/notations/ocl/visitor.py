@@ -161,6 +161,10 @@ class BOCLVisitorImpl(BOCLVisitor):
         """
         return self._navigate_keyword_property(ctx, ctx.DATE().getText())
 
+    def visitDotClosureNavigation(self, ctx: BOCLParser.DotClosureNavigationContext):
+        """Resolve ``self.closure`` as a property: ``closure`` is the iterator keyword."""
+        return self._navigate_keyword_property(ctx, "closure")
+
     def _navigate_keyword_property(self, ctx, name: str):
         """Resolve ``<expression>.<name>`` where ``name`` is a lexer keyword.
 

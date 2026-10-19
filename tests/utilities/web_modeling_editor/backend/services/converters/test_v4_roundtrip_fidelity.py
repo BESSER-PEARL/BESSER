@@ -235,3 +235,17 @@ def test_project_description_comes_from_the_project_definition(tmp_path, monkeyp
     diagrams = {"ClassDiagram": [{"id": "cd-1", "title": "Library", "model": classes["model"]}]}
     _, imported = _project_round_trip(diagrams, tmp_path, description='Lending "desk" app')
     assert imported["description"] == 'Lending "desk" app'
+
+
+def test_a_class_named_project_survives_a_buml_file_round_trip(tmp_path):
+    from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+        parse_buml_content,
+    )
+    diagram = _class_diagram([_node("p", "class", {"name": "Project", "methods": [], "attributes": [
+        {"id": "a", "name": "title", "attributeType": "str", "visibility": "public"},
+    ]})])
+    path = tmp_path / "model.py"
+    domain_model_to_code(process_class_diagram(diagram), str(path))
+    reloaded = parse_buml_content(path.read_text(encoding="utf-8"))
+    assert [a.name for a in reloaded.get_class_by_name("Project").attributes] == ["title"]

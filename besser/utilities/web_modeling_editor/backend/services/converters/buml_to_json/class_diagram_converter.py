@@ -8,6 +8,7 @@ intermediate; every node is built via ``make_node`` and every edge via
 """
 
 import logging
+import re
 import uuid
 from besser.BUML.metamodel.structural import (
     Class, Property, Method, Parameter as StructuralParameter, DomainModel,
@@ -145,6 +146,11 @@ def parse_buml_content(content: str) -> DomainModel:
                 continue
             cleaned_lines.append(line)
         cleaned_content = "\n".join(cleaned_lines)
+
+        # A class named ``Project`` is bound by the script itself; the stub
+        # would make the loader treat it as a shared object it may not modify.
+        if re.search(r"^Project\s*(?::[^=\n]*)?=(?!=)", cleaned_content, re.MULTILINE):
+            del allowed_names["Project"]
 
         # Execute the cleaned B-UML content through the safe AST-based loader.
         local_vars = safe_load_buml(cleaned_content, allowed_names)

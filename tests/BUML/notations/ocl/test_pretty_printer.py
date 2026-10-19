@@ -70,6 +70,7 @@ def test_pretty_print_size(model):
     "context Department inv: self.employee->includes(self)",
     "context Department inv: self.employee->excludes(self)",
     "context Department inv: self.employee->isUnique(name)",
+    "context Department inv: self.employee->notEmpty()",
     "context Department inv: self.employee->intersection(self.employee)->isEmpty()",
     "context Department inv: self.employee->union(self.employee)->size() > 0",
     "context Department inv: self.employee->first()",

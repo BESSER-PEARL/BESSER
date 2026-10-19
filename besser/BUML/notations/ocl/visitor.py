@@ -332,6 +332,12 @@ class BOCLVisitorImpl(BOCLVisitor):
         oce.source = source
         return oce
 
+    def visitArrowNotEmpty(self, ctx: BOCLParser.ArrowNotEmptyContext):
+        source = self.visit(ctx.expression())
+        oce = OperationCallExpression(name="NotEmpty", operation="NotEmpty", arguments=[])
+        oce.source = source
+        return oce
+
     def visitArrowasSet(self, ctx: BOCLParser.ArrowasSetContext):
         source = self.visit(ctx.expression())
         oce = OperationCallExpression(name="ASSET", operation="ASSET", arguments=[])

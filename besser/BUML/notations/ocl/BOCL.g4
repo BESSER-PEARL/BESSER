@@ -103,6 +103,7 @@ expression
     | expression ARROW iteratorOp LPAREN expression RPAREN                          #arrowIteratorShort
     | expression ARROW SIZE LPAREN RPAREN                                           #arrowSize
     | expression ARROW ISEMPTY LPAREN RPAREN                                        #arrowIsEmpty
+    | expression ARROW NOTEMPTY LPAREN RPAREN                                       #arrowNotEmpty
     | expression ARROW ASSET LPAREN RPAREN                                        #arrowasSet
     | expression ARROW SUM LPAREN RPAREN                                            #arrowSum
     | expression ARROW INCLUDES LPAREN expression RPAREN                            #arrowIncludes
@@ -196,6 +197,7 @@ ASSET       : 'asSet';
 // Collection/type operations
 SIZE               : 'size' ;
 ISEMPTY            : 'isEmpty' ;
+NOTEMPTY           : 'notEmpty' ;
 SUM                : 'sum' ;
 INCLUDES           : 'includes' ;
 EXCLUDES           : 'excludes' ;

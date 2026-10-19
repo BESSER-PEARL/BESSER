@@ -78,6 +78,10 @@ def _evaluation_limitation(ast) -> Optional[str]:
     reasons: dict[str, str] = {}  # kind -> message; first occurrence wins
     for node in walk(ast):
         if isinstance(node, LoopExp):
+            if node.name == "closure":
+                # bocl 1.0.1 has no closure: it yields True, ``()`` or a
+                # Python syntax error whatever the object diagram.
+                reasons.setdefault("closure", "the 'closure' iterator")
             names = [it.name for it in node.iterator]
             if len(names) > 1:
                 # The evaluator binds every iterator of a loop to the same

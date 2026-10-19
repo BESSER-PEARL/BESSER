@@ -448,3 +448,34 @@ def test_object_converter_refuses_v3_json():
     with pytest.raises(ConversionError):
         process_object_diagram({"title": "T", "model": _v3_model("ObjectDiagram")},
                                DomainModel(name="D", types={Class(name="A")}))
+
+
+_CLASS_B = {"id": "b", "type": "class", "data": {"name": "B"}}
+_MALFORMED_CLASS = {
+    "attrs_not_list": ({"nodes": [{"id": "a", "type": "class", "data": {
+        "name": "A", "attributes": "x", "methods": {"a": 1}}}]}, "must be a list of objects"),
+    "methods_not_list": ({"nodes": [{"id": "a", "type": "class", "data": {
+        "name": "A", "methods": {"a": 1}}}]}, "must be a list of objects"),
+    "attribute_row_not_object": ({"nodes": [{"id": "a", "type": "class", "data": {
+        "name": "A", "attributes": [1]}}]}, "must be a list of objects"),
+    "inherit_cycle": ({"nodes": [_CLASS_NODE, _CLASS_B], "edges": [
+        {"id": "e1", "type": "ClassInheritance", "source": "a", "target": "b", "data": {}},
+        {"id": "e2", "type": "ClassInheritance", "source": "b", "target": "a", "data": {}}]},
+        "Inheritance cycle"),
+}
+
+
+# Class-diagram content the v4 shape check lets through; a StateMachineDiagram
+# body sent to a class generator takes the same converter path.
+@pytest.mark.parametrize("diagram_type", ["ClassDiagram", "StateMachineDiagram"])
+@pytest.mark.parametrize("case", sorted(_MALFORMED_CLASS))
+def test_malformed_class_content_is_a_400(diagram_type, case):
+    parts, message = _MALFORMED_CLASS[case]
+    body = {"title": "T", "model": _v4(diagram_type, **parts)}
+    urls = [("/besser_api/generate-output", {"generator": "python"})]
+    if diagram_type == "ClassDiagram":
+        urls.append(("/besser_api/export-buml", {}))
+    for url, extra in urls:
+        response = _post(url, json={**body, **extra})
+        assert response.status_code == 400, (url, response.status_code, response.text[:200])
+        assert message in response.json()["detail"]

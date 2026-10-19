@@ -116,6 +116,16 @@ def _resolve_type(type_name: str, type_lookup: dict[str, Union[Class, Enumeratio
         )
 
 
+def _rows(data: dict, key: str, owner: str) -> list[dict]:
+    """``data[key]`` as a list of row objects; ``ConversionError`` for any other shape."""
+    rows = data.get(key)
+    if rows is None:
+        return []
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ConversionError(f"'{key}' of '{owner}' must be a list of objects.")
+    return rows
+
+
 def _class_v4_kind(node: dict) -> str:
     """Return the v3-flavoured kind for a v4 ``class`` node.
 
@@ -171,7 +181,7 @@ def _process_enumerations(
 
         literals = []
         seen_literal_names = set()
-        for literal in data.get("attributes") or []:
+        for literal in _rows(data, "attributes", element_name):
             literal_name = (literal.get("name") or "").strip()
             if not literal_name:
                 raise ConversionError(
@@ -267,7 +277,7 @@ def _process_classes(
             continue
 
         attribute_names: set[str] = set()
-        for attr in data.get("attributes") or []:
+        for attr in _rows(data, "attributes", class_name):
             # v4 attribute rows always carry visibility + attributeType
             # explicitly (see uml-v4-shape.md). Legacy "+ name: type"
             # inline parsing is no longer needed at this layer; the
@@ -307,7 +317,7 @@ def _process_classes(
             )
             cls.add_attribute(property_)
 
-        for method in data.get("methods") or []:
+        for method in _rows(data, "methods", class_name):
             visibility, name, parameters, return_type = parse_method(
                 method.get("name", ""), domain_model, type_lookup=type_lookup,
             )
@@ -677,6 +687,12 @@ def _process_relationships(
             layout_positions[f"rel_{association_name}"] = rel_layout
 
         elif rel_type == "ClassInheritance":
+            # The metamodel crashes on a cycle instead of rejecting it.
+            if target_class in source_class.all_specializations():
+                raise ConversionError(
+                    f"Inheritance cycle: '{source_class.name}' cannot inherit from "
+                    f"'{target_class.name}', which already inherits from it."
+                )
             generalization = Generalization(
                 general=target_class, specific=source_class,
                 timestamp=parse_iso_timestamp(edge_data.get("timestamp")),

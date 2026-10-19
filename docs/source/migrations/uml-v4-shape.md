@@ -301,6 +301,9 @@ legacy lowercase data). Map v3 element `type`:
   failing the conversion.
 - `path` becomes `edge.data.points`. If `isManuallyLayouted` is set, copy
   it through; otherwise omit.
+- A class description (`data.description`, or the text of `comment` nodes
+  linked to the class by `CommentLink` edges, joined by newlines on ingest)
+  is emitted once by BUML → JSON, as a linked `comment` node.
 - Element timestamps (optional ISO 8601 strings, written only when the
   B-UML element's timestamp is explicit; a missing or malformed value
   falls back to the creation time on ingest): `model.timestamp` (the

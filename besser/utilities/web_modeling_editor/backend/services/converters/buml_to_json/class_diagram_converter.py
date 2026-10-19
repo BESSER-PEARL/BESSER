@@ -387,8 +387,9 @@ def class_buml_to_json(domain_model):
 
         if isinstance(type_obj, Class) and getattr(type_obj, 'metadata', None):
             md = type_obj.metadata
+            # Emitted once, as a linked comment: re-import merges both
+            # data.description and linked comments into the description.
             if md.description:
-                data["description"] = md.description
                 comments_to_create.append((md.description, node_id))
             if md.uri:
                 data["uri"] = md.uri

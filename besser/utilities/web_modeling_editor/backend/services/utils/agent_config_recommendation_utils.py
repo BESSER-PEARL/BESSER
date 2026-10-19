@@ -13,7 +13,7 @@ RECOMMENDATION_ALLOWED_VALUES = {
     "agentStyle": ["original", "formal", "informal", "friendly", "technical"],
     "languageComplexity": ["original", "simple", "medium", "complex"],
     "sentenceLength": ["original", "concise", "verbose"],
-    "font": ["sans", "serif", "monospace", "neutral", "grotesque", "condensed"],
+    "font": ["sans", "serif", "monospace", "neutral", "grotesque", "condensed", "hyperlegible", "lexend", "dyslexia", "verdana"],
     "alignment": ["left", "center", "justify"],
     "color": [
         "var(--apollon-primary-contrast)",

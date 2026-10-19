@@ -222,6 +222,8 @@ def json_to_buml_project(project):
     # id(model) -> (diagram model type, WME diagram id, title); project_to_code
     # writes them so a .py import keeps the ids cross-diagram refs point at.
     diagram_ids: dict = {}
+    # id(object model) -> the editor ``references`` it was resolved with.
+    diagram_references: dict = {}
 
     def _remember(model, diagram_type: str, diag) -> None:
         if getattr(diag, "id", None):
@@ -264,6 +266,8 @@ def json_to_buml_project(project):
             object_model = process_object_diagram(obj_json, obj_domain_model)
             model_list.append(object_model)
             _remember(object_model, "ObjectDiagram", obj_diag)
+            if obj_class_diag.id:
+                diagram_references[id(object_model)] = {"ClassDiagram": obj_class_diag.id}
         else:
             logger.warning(
                 "ObjectDiagram '%s' skipped: no ClassDiagram reference found.",
@@ -407,6 +411,7 @@ def json_to_buml_project(project):
     if name != project.name:
         project_instance._display_name = project.name
     project_instance._diagram_ids = diagram_ids
+    project_instance._diagram_references = diagram_references
 
     # Project-level cross-diagram-reference promotion.
     # Classify the already-built models and promote dangling cross-refs

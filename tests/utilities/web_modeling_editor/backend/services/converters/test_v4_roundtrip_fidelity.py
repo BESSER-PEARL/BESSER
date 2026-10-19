@@ -274,3 +274,33 @@ def test_diagram_titles_survive_a_project_round_trip(tmp_path, monkeypatch):
     _, imported = _project_round_trip(diagrams, tmp_path)
     assert [d["title"] for d in imported["diagrams"]["AgentDiagram"]] == ["Front desk bot"]
     assert [d["title"] for d in imported["diagrams"]["BPMN"]] == ["Lending", "Returns \u2014 late"]
+
+
+def test_object_diagrams_import_against_their_referenced_class_diagram(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    def classes(node_id, name, attr):
+        return _class_diagram([_node(node_id, "class", {"name": name, "methods": [], "attributes": [
+            {"id": f"{node_id}-{attr}", "name": attr, "attributeType": "str", "visibility": "public"}]})])["model"]
+
+    def objects(class_id, class_name, attr):
+        return {"version": "4.0.0", "type": "ObjectDiagram", "edges": [], "nodes": [
+            _node(f"o-{class_id}", "objectName", {
+                "name": f"{class_name.lower()}1", "className": class_name, "classId": class_id,
+                "methods": [], "attributes": [
+                    {"id": "r", "name": attr, "attributeId": f"{class_id}-{attr}", "value": "v"}]})]}
+
+    diagrams = {
+        "ClassDiagram": [{"id": "cd-a", "title": "Books", "model": classes("ca", "Book", "title")},
+                         {"id": "cd-b", "title": "Cars", "model": classes("cb", "Car", "plate")}],
+        # Listed in the opposite order, so neither can rely on the first class diagram.
+        "ObjectDiagram": [{"id": "od-b", "title": "Fleet", "model": objects("cb", "Car", "plate"),
+                           "references": {"ClassDiagram": "cd-b"}},
+                          {"id": "od-a", "title": "Shelf", "model": objects("ca", "Book", "title"),
+                           "references": {"ClassDiagram": "cd-a"}}],
+    }
+    _, imported = _project_round_trip(diagrams, tmp_path)
+    by_id = {d["id"]: d for d in imported["diagrams"]["ObjectDiagram"]}
+    for od_id, cd_id, class_id in (("od-b", "cd-b", "cb"), ("od-a", "cd-a", "ca")):
+        assert by_id[od_id].get("references") == {"ClassDiagram": cd_id}
+        assert [n["data"]["classId"] for n in by_id[od_id]["model"]["nodes"]] == [class_id]

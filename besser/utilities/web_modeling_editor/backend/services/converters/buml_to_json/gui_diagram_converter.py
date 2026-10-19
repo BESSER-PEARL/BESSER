@@ -638,7 +638,9 @@ def _apply_table_attributes(chart: Table, attrs: Dict[str, Any]) -> None:
         attrs["columns"] = columns_list
 def _apply_metric_card_attributes(card: MetricCard, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(card, attrs)
-    attrs.setdefault("metric-title", card.metric_title or card.title or card.name)
+    # metric_title defaults to "Metric Title"; a card titled only via ``title`` keeps it.
+    metric_title = card.metric_title if card.metric_title != "Metric Title" else None
+    attrs.setdefault("metric-title", metric_title or card.title or card.metric_title or card.name)
     attrs.setdefault("format", getattr(card, "format", None) or "number")
     attrs.setdefault("value-color", getattr(card, "value_color", "#2c3e50"))
     attrs.setdefault("value-size", getattr(card, "value_size", 32))

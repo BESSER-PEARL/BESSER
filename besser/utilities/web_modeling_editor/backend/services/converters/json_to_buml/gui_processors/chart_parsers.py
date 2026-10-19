@@ -124,6 +124,11 @@ def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) 
                             return field_obj, None
                     # Return None for object if not found, but we can use the name as path
                     return None, field_name
+            elif domain_class:
+                # Exported B-UML models (buml_to_json) name the attribute instead of its element id.
+                field_obj = next((a for a in domain_class.all_attributes() if a.name == field_value), None)
+                if field_obj:
+                    return field_obj, None
             return None, None
 
     # Resolve data source
@@ -512,41 +517,13 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
             s_attrs = s if isinstance(s, dict) else {}
             s_raw_name = s_attrs.get('name', 'Series')
             s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            data_source_el = get_element_by_id(class_model, s_attrs.get('data-source'))
-            features_el = get_element_by_id(class_model, s_attrs.get('features')) or get_element_by_id(class_model, s_attrs.get('label-field'))
-            values_el = get_element_by_id(class_model, s_attrs.get('values')) or get_element_by_id(class_model, s_attrs.get('data-field'))
-            data_source_name = data_source_el.get('name') if data_source_el else None
-            features_name = features_el.get('name') if features_el else None
-            values_name = values_el.get('name') if values_el else None
-            if features_name:
-                features_name = clean_attribute_name(features_name)
-            if values_name:
-                values_name = clean_attribute_name(values_name)
-            domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
-            label_field = None
-            data_field = None
-            if domain_class:
-                if features_name:
-                    label_field = next((a for a in domain_class.attributes if a.name == features_name), None)
-                if values_name:
-                    data_field = next((a for a in domain_class.attributes if a.name == values_name), None)
-
-            # Extract filter from series attributes
-            series_filter = s_attrs.get('filter')
-            if series_filter and isinstance(series_filter, str) and series_filter.strip():
-                data_filter = series_filter.strip()
-            else:
-                data_filter = None
-
-            data_binding = None
-            if domain_class:
-                data_binding = DataBinding(
-                    domain_concept=domain_class,
-                    label_field=label_field,
-                    data_field=data_field,
-                    filter_expression=data_filter,
-                    aggregation=_parse_aggregation(s_attrs, attrs),
-                )
+            # Radial bar series name their fields ``features`` / ``values``.
+            binding_attrs = {
+                **s_attrs,
+                'label-field': s_attrs.get('features') or s_attrs.get('label-field'),
+                'data-field': s_attrs.get('values') or s_attrs.get('data-field'),
+            }
+            data_binding = _build_data_binding(binding_attrs, class_model, domain_model, attrs)
             styling = None
             if 'styling' in s_attrs:
                 from .styling import styling_from_css

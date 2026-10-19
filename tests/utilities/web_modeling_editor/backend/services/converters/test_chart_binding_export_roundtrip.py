@@ -6,10 +6,15 @@ A chart's own ``data_binding`` (a chart without series) was exported as
 ``data-source`` / ``label-field`` / ``data-field`` but never read back, and the
 exported ``data-source`` names the class where the parser only looked up element
 ids. Nested field paths and filters were not exported at all, and the metric card
-and table parsers ignored the exported ``filter``.
+and table parsers ignored the exported ``filter``. The exported ``label-field`` /
+``data-field`` name attributes too, and only element ids were resolved.
 """
+import pytest
+
 from besser.BUML.metamodel.gui.binding import DataBinding
-from besser.BUML.metamodel.gui.dashboard import BarChart, MetricCard, Table
+from besser.BUML.metamodel.gui.dashboard import (
+    BarChart, LineChart, MetricCard, PieChart, RadarChart, RadialBarChart, Table,
+)
 from besser.BUML.metamodel.structural import Class, FloatType, Property, StringType
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_class_diagram,
@@ -17,6 +22,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.gui_diagram_converter import (
     _apply_bar_chart_attributes,
+    _apply_component_specific_attributes,
     _apply_metric_card_attributes,
     _apply_table_attributes,
 )
@@ -82,20 +88,49 @@ def test_a_metric_card_exports_its_title():
     assert attrs["metric-title"] == "Total hours"
 
 
-def test_a_chart_level_binding_round_trips():
+def test_a_metric_card_titled_via_title_exports_it():
+    card = MetricCard(name="rev", title="Revenue")
+    attrs = {"id": "rev"}
+    _apply_metric_card_attributes(card, attrs)
+    assert attrs["metric-title"] == "Revenue"
+    assert _import("metric-card", attrs).metric_title == "Revenue"
+
+
+@pytest.mark.parametrize("component_class, component_type", [
+    (BarChart, "bar-chart"),
+    (LineChart, "line-chart"),
+    (PieChart, "pie-chart"),
+    (RadarChart, "radar-chart"),
+    (RadialBarChart, "radial-bar-chart"),
+    (MetricCard, "metric-card"),
+])
+def test_a_chart_level_binding_round_trips(component_class, component_type):
     task, status, hours = _task()
-    chart = BarChart(name="by_status")
-    chart.data_binding = DataBinding(domain_concept=task, label_field=status, data_field=hours,
-                                     filter_expression="hours > 0")
-    attrs = {"id": "by-status", "chart-title": "Hours by status"}
-    _apply_bar_chart_attributes(chart, attrs)
+    component = component_class(name="by_status")
+    component.data_binding = DataBinding(domain_concept=task, label_field=status, data_field=hours,
+                                         filter_expression="hours > 0")
+    attrs = {"id": "by-status"}
+    _apply_component_specific_attributes(component, attrs)
     assert attrs["data-source"] == "Task"
+    assert attrs["label-field"] == "status"
+    assert attrs["data-field"] == "hours"
     assert attrs["filter"] == "hours > 0"
 
-    binding = _import("bar-chart", attrs).data_binding
+    binding = _import(component_type, attrs).data_binding
     assert binding is not None
     assert binding.domain_concept.name == "Task"
+    assert binding.label_field is not None and binding.label_field.name == "status"
+    assert binding.data_field is not None and binding.data_field.name == "hours"
     assert binding.filter_expression == "hours > 0"
+
+
+def test_a_radial_bar_series_resolves_attribute_names():
+    series = {"name": "Tasks", "data-source": "Task", "features": "status", "values": "hours"}
+    attrs = {"id": "radial", "chart-title": "Radial", "series": [series]}
+    binding = _import("radial-bar-chart", attrs).series[0].data_binding
+    assert binding.domain_concept.name == "Task"
+    assert binding.label_field.name == "status"
+    assert binding.data_field.name == "hours"
 
 
 def test_nested_field_paths_round_trip():

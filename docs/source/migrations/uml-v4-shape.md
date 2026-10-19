@@ -1180,6 +1180,9 @@ One edge `type` per flow kind (v3 used a single `BPMNFlow` + `flowType`):
   space); the migrator also accepts `dataAssociation` / `data_association` /
   `data-association`, and a missing `flowType` means `sequence`. v3
   `isDefault: true` becomes `edge.data.isDefault: true`.
+- The backend rejects an edge whose `type` starts with `BPMN` but is none of
+  the four flow types (`ConversionError`, HTTP 400); any other edge type
+  (e.g. a `CommentLink`) is skipped with a warning.
 
 - `isDefault` is legal only on a sequence flow whose source is an activity or an
   exclusive / inclusive / complex gateway, and a source has at most one default

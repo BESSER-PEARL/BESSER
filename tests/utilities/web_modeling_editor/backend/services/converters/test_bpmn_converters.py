@@ -501,6 +501,14 @@ class TestErrorHandling:
                 _node("t", "bpmnTask", "X", taskType="default", marker="bogus")
             ))
 
+    def test_unknown_bpmn_edge_type_raises_end_to_end(self):
+        # An unrecognised BPMN flow type used to be dropped silently, losing
+        # the flow; development raised for an unknown flowType.
+        fixture = simple_process_fixture()
+        fixture["model"]["edges"].append(_edge("bogus", "BPMNBogusFlow", "start1", "task1"))
+        with pytest.raises(ConversionError, match="BPMNBogusFlow"):
+            process_bpmn_diagram(fixture)
+
     def test_bad_edge_type_raises(self):
         # A BPMN-flavoured but unrecognised edge ``type`` that reaches
         # ``_build_flow`` raises ConversionError. (A wholly foreign type like

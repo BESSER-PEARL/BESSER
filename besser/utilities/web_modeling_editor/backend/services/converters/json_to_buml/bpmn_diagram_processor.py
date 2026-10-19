@@ -429,7 +429,11 @@ def process_bpmn_diagram(json_data: dict) -> BPMNModel:
         edge_id = edge.get("id")
         edge_type = edge.get("type")
         if edge_type not in _FLOW_CLASS_FOR_EDGE_TYPE:
-            continue  # not a BPMN flow edge (e.g. a stray comment link) — skip quietly
+            if isinstance(edge_type, str) and edge_type.startswith("BPMN"):
+                # A BPMN flow we cannot build: fail rather than drop it.
+                raise ConversionError(f"Unknown BPMN edge type '{edge_type}' on edge '{edge_id}'.")
+            logger.warning("BPMN edge '%s' has non-flow type '%s'; skipping.", edge_id, edge_type)
+            continue
 
         source = obj_by_id.get(edge.get("source"))
         target = obj_by_id.get(edge.get("target"))

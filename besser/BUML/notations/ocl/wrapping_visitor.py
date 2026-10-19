@@ -106,6 +106,10 @@ class WrappingVisitor(BOCLVisitorImpl):
         receiver = self.visit(ctx.expression())
         return self._wrap_navigation(receiver, "size", ctx)
 
+    def visitDotDateNavigation(self, ctx):
+        receiver = self.visit(ctx.expression())
+        return self._wrap_navigation(receiver, ctx.DATE().getText(), ctx)
+
     def visitBooleanLiteral(self, ctx):
         text = ctx.BOOLEAN_LITERAL().getText()
         return BooleanLiteralExpression("NP", text == "true")

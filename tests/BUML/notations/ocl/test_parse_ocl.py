@@ -288,3 +288,18 @@ def test_arrow_isunique_with_collection_property(model):
         model,
     )
     assert isinstance(result, OCLConstraint)
+
+
+def test_unknown_property_inside_a_primitive_iterator_is_a_syntax_error_not_a_crash(model):
+    """``self.name->forAll(v | ...)`` types ``v`` as ``str``, a primitive with no
+    properties. Looking ``missing`` up on it used to raise ``AttributeError``
+    (``'PrimitiveDataType' object has no attribute 'all_attributes'``) instead of
+    the ``BOCLSyntaxError`` every other unresolved property gets."""
+    with pytest.raises(BOCLSyntaxError, match="Property 'missing' not found"):
+        parse_ocl("context Employee inv: self.name->forAll(v | self.missing > 0)", model)
+
+
+def test_known_property_inside_a_primitive_iterator_still_resolves(model):
+    constraint = parse_ocl("context Employee inv: self.name->forAll(v | self.age > 0)", model)
+
+    assert constraint.context.name == "Employee"

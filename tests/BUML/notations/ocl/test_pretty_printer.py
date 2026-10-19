@@ -59,3 +59,67 @@ def test_pretty_print_size(model):
         model,
     )
     assert pretty_print(constraint) == "context Department inv: self.employee->size() > 0"
+
+
+@pytest.mark.parametrize("source", [
+    # Collection operations reachable from the KG converter. Each of these used
+    # to come back as a method call named after the AST's internal operation
+    # constant — `self.employee.ASSET()`, `.INCLUDES(...)` — which re-parses as
+    # something entirely different instead of failing loudly.
+    "context Department inv: self.employee->asSet()->size() > 0",
+    "context Department inv: self.employee->includes(self)",
+    "context Department inv: self.employee->excludes(self)",
+    "context Department inv: self.employee->isUnique(name)",
+    "context Department inv: self.employee->intersection(self.employee)->isEmpty()",
+    "context Department inv: self.employee->union(self.employee)->size() > 0",
+    "context Department inv: self.employee->first()",
+    "context Department inv: self.employee->last()",
+    "context Department inv: self.employee->sum() > 0",
+    "context Department inv: self.employee->asSet()->forAll(e | e.age > 16)",
+    "context Employee inv: Employee::allInstances()->size() > 0",
+])
+def test_collection_operations_round_trip(source, model):
+    """``pretty_print`` must spell every arrow operation the way OCL does."""
+    assert pretty_print(parse_ocl(source, model)) == source
+
+
+def test_collection_operation_output_reparses(model):
+    """The printed form has to survive a second parse unchanged — a fixed point,
+    not merely something the grammar happens to accept."""
+    source = "context Department inv: self.employee->asSet()->forAll(e | self.employee->includes(e))"
+    once = pretty_print(parse_ocl(source, model))
+    twice = pretty_print(parse_ocl(once, model))
+    assert once == source
+    assert twice == once
+
+
+# ---------------------------------------------------------------------------
+# Attributes named after lexer keywords (`date`, `size`)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def keyword_model():
+    from besser.BUML.metamodel.structural import (
+        Class, DateType, DomainModel, IntegerType, Property,
+    )
+
+    record = Class(name="Record", attributes={
+        Property(name="date", type=DateType),
+        Property(name="size", type=IntegerType),
+        Property(name="pages", type=IntegerType),
+    })
+    return DomainModel(name="Library", types={record})
+
+
+@pytest.mark.parametrize("source", [
+    "context Record inv: self.date > 0",
+    "context Record inv: self.size > 0",
+    "context Record inv: self.date->asSet()->forAll(v | self.pages > 0)",
+])
+def test_keyword_named_attribute_round_trips(source, keyword_model):
+    """``date`` and ``size`` are lexer keywords; the parser resolves them as
+    properties and the printer must emit them back the same way, so the pair is
+    a faithful round trip rather than parse-only (as ``test_date_attribute`` is).
+    """
+    assert pretty_print(parse_ocl(source, keyword_model)) == source

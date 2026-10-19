@@ -48,6 +48,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.stereotype
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    reject_unreadable_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +68,7 @@ def process_deployment_diagram(json_data: dict) -> DeploymentModel:
         ConversionError: structural failures (missing ``model``, an element or
             relationship the metamodel rejects, a containment cycle).
     """
+    reject_unreadable_model(json_data, "DeploymentDiagram")
     if not isinstance(json_data, dict):
         raise ConversionError(
             f"Deployment diagram payload must be a dict, "

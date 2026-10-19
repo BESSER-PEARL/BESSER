@@ -18,6 +18,7 @@ never treated as legacy UML.
 from typing import Any, Iterable, Mapping, Optional
 
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
     LegacyDiagramFormatError,
 )
 
@@ -54,6 +55,39 @@ def is_legacy_v3_model(model: Any, diagram_type: Optional[str] = None) -> bool:
     if "nodes" in model:
         return False
     return "elements" in model or "relationships" in model
+
+
+def ensure_v4_shape(
+    model: Any,
+    diagram_type: Optional[str] = None,
+    title: Optional[str] = None,
+) -> None:
+    """Raise :class:`ConversionError` (HTTP 400) when a UML model's ``nodes`` /
+    ``edges`` are not lists of objects with a string ``id`` and an object
+    ``data``, or an edge's ``source`` / ``target`` is not a string. The
+    converters assume this shape and would otherwise fail with a 500."""
+    if not isinstance(model, Mapping):
+        return
+    if diagram_type in NON_UML_DIAGRAM_TYPES or model.get("type") in NON_UML_DIAGRAM_TYPES:
+        return
+    what = f"Diagram '{title}'" if title else "The diagram"
+    for key in ("nodes", "edges"):
+        if key not in model:
+            continue
+        items = model[key]
+        if not isinstance(items, list):
+            raise ConversionError(f"{what} is malformed: '{key}' must be a list.")
+        for item in items:
+            if not isinstance(item, Mapping) or not isinstance(item.get("id"), str):
+                raise ConversionError(
+                    f"{what} is malformed: every entry of '{key}' must be an object with a string 'id'."
+                )
+            if item.get("data") is not None and not isinstance(item["data"], Mapping):
+                raise ConversionError(f"{what} is malformed: {key[:-1]} '{item['id']}' has a non-object 'data'.")
+            if key == "edges" and not all(
+                isinstance(item.get(end), str) for end in ("source", "target") if item.get(end) is not None
+            ):
+                raise ConversionError(f"{what} is malformed: edge '{item['id']}' has a non-string source or target.")
 
 
 def legacy_v3_message(
@@ -121,9 +155,10 @@ def ensure_diagram_not_legacy(
     title: Optional[str] = None,
     reference: Any = None,
 ) -> None:
-    """Check one diagram: its model, the model's embedded
-    ``referenceDiagramData`` (object diagrams) and a sibling ``reference``."""
+    """Check one diagram: its model (legacy format and v4 shape), the model's
+    embedded ``referenceDiagramData`` (object diagrams) and a sibling ``reference``."""
     ensure_not_legacy_model(model, diagram_type, title)
+    ensure_v4_shape(model, diagram_type, title)
     if isinstance(model, Mapping):
         ensure_not_legacy_reference(model.get("referenceDiagramData"), title)
     ensure_not_legacy_reference(reference, title)

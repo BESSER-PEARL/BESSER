@@ -1352,7 +1352,13 @@ Model `type` on the wire and project bucket key: **`"DeploymentDiagram"`**
   user to open the diagram in the current editor, whose migrator upgrades it
   on load, or to re-export it from there. Saving a v3 project to GitHub is
   storage and still succeeds; `/github/project/save` skips the B-UML export
-  of its legacy diagrams.
+  of its legacy diagrams. Each `process_<diagram>` converter also refuses a
+  v3 model itself (`ConversionError`) instead of returning an empty model.
+- **Backend rejects malformed v4 on ingest.** The same validators check the
+  shape: `nodes` / `edges` are lists of objects with a string `id`, `data`
+  (when present) is an object, and an edge's `source` / `target` are
+  strings. Anything else is an HTTP 400 `ConversionError` naming the
+  offending entry, not a 500 from deep inside a converter.
 
 Round-trip tests must hold for **every diagram type** for at least:
 

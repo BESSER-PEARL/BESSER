@@ -25,6 +25,9 @@ from besser.utilities.web_modeling_editor.backend.constants.user_buml_model impo
     domain_model as user_reference_domain_model,
 )
 from datetime import datetime, timedelta
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    reject_unreadable_model,
+)
 
 # The React Flow frontend creates ``comment`` nodes tethered by
 # ``CommentLink`` edges; ``Comments`` / ``Link`` are the legacy spellings.
@@ -146,6 +149,7 @@ def _append_description(element, text):
 
 def process_object_diagram(json_data, domain_model):
     """Process an Object Diagram in the v4 wire shape and return an ObjectModel."""
+    reject_unreadable_model(json_data, "ObjectDiagram")
     if domain_model is None:
         raise ConversionError(
             "Object diagram processing requires a reference class diagram (domain model). "

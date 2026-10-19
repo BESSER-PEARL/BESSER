@@ -39,6 +39,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import (
     sanitize_name,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    reject_unreadable_model,
+)
 
 # Keep these aligned with the whitelists the NN metamodel setters enforce.
 _ALLOWED_POOLING_TYPES = (
@@ -525,6 +528,7 @@ def create_dataset(node_or_element: dict, elements: dict = None) -> Dataset:
 
 def process_nn_diagram(json_data):
     """Process a v4 NN Diagram JSON and return an NN model."""
+    reject_unreadable_model(json_data, "NNDiagram")
     if 'project' in json_data:
         project_data = json_data.get('project', {})
         diagrams = project_data.get('diagrams', {})

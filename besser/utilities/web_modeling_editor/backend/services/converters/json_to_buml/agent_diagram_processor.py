@@ -60,6 +60,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
 from besser.utilities.web_modeling_editor.backend.services.validators.python_code_validator import (
     validate_custom_code_action,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    reject_unreadable_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -616,6 +619,7 @@ def process_agent_diagram(json_data):
     """
     # The diagram's config envelope is canonical (the editor writes it); a
     # ``model.config`` from agent_buml_to_json is read underneath it.
+    reject_unreadable_model(json_data, "AgentDiagram")
     model_config = (json_data.get('model') or {}).get('config')
     envelope_config = json_data.get('config')
     config = {

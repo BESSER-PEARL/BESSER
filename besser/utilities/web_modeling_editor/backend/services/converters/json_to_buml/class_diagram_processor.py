@@ -29,6 +29,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 from besser.utilities.web_modeling_editor.backend.constants.constants import VALID_PRIMITIVE_TYPES
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 from besser.utilities.utils import parse_iso_timestamp
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    reject_unreadable_model,
+)
 
 # The React Flow frontend creates ``comment`` nodes tethered by
 # ``CommentLink`` edges; ``Comments`` / ``Link`` are the legacy v3-flavoured
@@ -1061,6 +1064,7 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     that lifts v3 to v4 in the system. See
     ``docs/source/migrations/uml-v4-shape.md``.
     """
+    reject_unreadable_model(json_data, "ClassDiagram")
     title = json_data.get('title', '')
     if ' ' in title:
         title = title.replace(' ', '_')

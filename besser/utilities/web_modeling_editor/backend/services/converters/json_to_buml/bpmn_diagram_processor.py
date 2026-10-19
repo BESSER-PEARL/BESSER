@@ -68,6 +68,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
     absolute_bounds, edge_layout, node_data,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    reject_unreadable_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +312,7 @@ def process_bpmn_diagram(json_data: dict) -> BPMNModel:
             strings, unknown BPMN edge type). Non-fatal cases (dangling flow
             endpoint, unknown node type, illegal ``isDefault``) log and skip.
     """
+    reject_unreadable_model(json_data, "BPMNDiagram")
     title = json_data.get('title') or 'Generated_BPMN_Model'
     if json_data.get('model') is None:
         raise ConversionError("BPMN diagram JSON is missing the 'model' key.")

@@ -392,3 +392,59 @@ def test_transform_agent_model_json_rejects_v3_user_profile_in_config():
     response = _post("/besser_api/transform-agent-model-json", json=payload)
     _assert_legacy_rejected(response)
     assert "config.userProfileModel" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Malformed v4 payloads are 400s, and the converters refuse v3 themselves
+# ---------------------------------------------------------------------------
+
+def _v4(diagram_type: str, **parts) -> Dict[str, Any]:
+    model = {"version": "4.0.0", "type": diagram_type, "nodes": [], "edges": []}
+    model.update(parts)
+    return model
+
+
+_CLASS_NODE = {"id": "a", "type": "class", "data": {"name": "A"}}
+_MALFORMED = {
+    "nodes_dict": {"nodes": {"a": {}}},
+    "nodes_strs": {"nodes": ["x", 1, None], "edges": ["y"]},
+    "node_data_list": {"nodes": [{"id": "a", "type": "class", "data": [1]}]},
+    "edge_data_list": {"nodes": [_CLASS_NODE], "edges": [
+        {"id": "e", "type": "ClassBidirectional", "source": "a", "target": "a", "data": [1]}]},
+    "edge_ids_unhashable": {"nodes": [{"id": ["a"], "type": "class", "data": {"name": "A"}}],
+                            "edges": [{"id": {}, "type": "ClassInheritance", "source": ["a"],
+                                       "target": {"x": 1}}]},
+}
+
+
+@pytest.mark.parametrize("diagram_type", ["ClassDiagram", "StateMachineDiagram", "AgentDiagram"])
+@pytest.mark.parametrize("case", sorted(_MALFORMED))
+def test_malformed_v4_payload_is_a_400(diagram_type, case):
+    body = {"title": "T", "model": _v4(diagram_type, **_MALFORMED[case])}
+    for url, extra in (("/besser_api/export-buml", {}),
+                       ("/besser_api/generate-output", {"generator": "python"})):
+        response = _post(url, json={**body, **extra})
+        assert response.status_code == 400, (url, response.status_code, response.text[:200])
+
+
+@pytest.mark.parametrize("process, diagram_type", [
+    ("process_class_diagram", "ClassDiagram"),
+    ("process_state_machine", "StateMachineDiagram"),
+    ("process_agent_diagram", "AgentDiagram"),
+    ("process_bpmn_diagram", "BPMNDiagram"),
+    ("process_component_diagram", "ComponentDiagram"),
+    ("process_deployment_diagram", "DeploymentDiagram"),
+    ("process_nn_diagram", "NNDiagram"),
+])
+def test_converters_refuse_v3_json(process, diagram_type):
+    from besser.utilities.web_modeling_editor.backend.services import converters
+    with pytest.raises(ConversionError):
+        getattr(converters, process)({"title": "T", "model": _v3_model(diagram_type)})
+
+
+def test_object_converter_refuses_v3_json():
+    from besser.BUML.metamodel.structural import Class, DomainModel
+    from besser.utilities.web_modeling_editor.backend.services.converters import process_object_diagram
+    with pytest.raises(ConversionError):
+        process_object_diagram({"title": "T", "model": _v3_model("ObjectDiagram")},
+                               DomainModel(name="D", types={Class(name="A")}))

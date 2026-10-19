@@ -17,6 +17,9 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import Con
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
     node_data,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    reject_unreadable_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,7 @@ def process_state_machine(json_data):
         json_data: Dictionary containing the state machine diagram JSON
             in the v4 wire shape (``model.nodes`` / ``model.edges``).
     """
+    reject_unreadable_model(json_data, "StateMachineDiagram")
     sm_name = json_data.get("title", "Generated_State_Machine")
     if ' ' in sm_name:
         sm_name = sm_name.replace(' ', '_')

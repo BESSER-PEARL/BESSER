@@ -83,3 +83,15 @@ def node_layout(node: dict, nodes_by_id: dict) -> dict:
         if style_key in data:
             layout[style_key] = data[style_key]
     return layout
+
+
+def reject_unreadable_model(json_data: object, diagram_type: str) -> None:
+    """Raise ``ConversionError`` for a legacy v3 or malformed diagram, which
+    would otherwise convert to an empty or broken model."""
+    # Lazy: the validators package imports modules that import the converters.
+    from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
+        ensure_diagram_not_legacy,
+    )
+    if isinstance(json_data, dict):
+        title = json_data.get("title") if isinstance(json_data.get("title"), str) else None
+        ensure_diagram_not_legacy(json_data.get("model"), diagram_type=diagram_type, title=title)

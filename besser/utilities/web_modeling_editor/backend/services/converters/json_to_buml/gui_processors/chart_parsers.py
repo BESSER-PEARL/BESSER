@@ -680,10 +680,8 @@ def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:
     """
     attrs = view_comp.get('attributes', {})
 
-    # Parse common data binding fields
-    domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(
-        attrs, class_model, domain_model
-    )
+    data_binding = _build_data_binding(attrs, class_model, domain_model)
+    domain_class = data_binding.domain_concept if data_binding else None
 
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
@@ -697,16 +695,6 @@ def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:
     primary_color = attrs.get('chart-color')
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
-
-    data_binding = None
-    if domain_class:
-        data_binding = DataBinding(
-            domain_concept=domain_class,
-            label_field=label_field,
-            data_field=data_field,
-            label_field_path=label_field_path,
-            data_field_path=data_field_path
-        )
 
     def _bool_attr(key: str, default: bool) -> bool:
         return parse_bool(attrs.get(key), default)
@@ -793,23 +781,9 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
     positive_color = attrs.get('positive-color', '#27ae60')
     negative_color = attrs.get('negative-color', '#e74c3c')
 
-    # Parse data binding
-    domain_class, _, data_field, _, data_field_path = _parse_chart_data_binding(attrs, class_model, domain_model)
-
-    # Create data binding if we have a domain class
-    data_binding = None
-    if domain_class:
-        # Use sanitized name for the DataBinding
-        binding_name = sanitize_name(f"{metric_title}_binding")
-        data_binding = DataBinding(
-            name=binding_name,
-            domain_concept=domain_class,
-            label_field=None,  # Metric cards don't need label field
-            data_field=data_field,
-            data_field_path=data_field_path,
-            label_field_path=attrs.get('label-field-path') or None,
-            aggregation=_parse_aggregation(attrs),
-        )
+    data_binding = _build_data_binding(attrs, class_model, domain_model)
+    if data_binding is not None:
+        data_binding.name = sanitize_name(f"{metric_title}_binding")
 
     # Create metric card
     metric_card = MetricCard(

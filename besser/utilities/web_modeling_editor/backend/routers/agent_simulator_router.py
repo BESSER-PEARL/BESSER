@@ -80,6 +80,9 @@ from besser.utilities.web_modeling_editor.backend.models import (
 from besser.utilities.web_modeling_editor.backend.routers.auth import require_github_session
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import handle_endpoint_errors
 from besser.utilities.web_modeling_editor.backend.services.converters import process_agent_diagram
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.agent_diagram_processor import (
+    STATE_ACTION_ROW_KEYS,
+)
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
     GenerationError,
@@ -292,15 +295,17 @@ def _spawn_background(coro) -> None:
 def _model_has_custom_code_action(model: Dict[str, Any]) -> bool:
     """Return True if any action row of the diagram model is a custom Python code action.
 
-    Action rows are inline on ``AgentState`` nodes (``data.bodies`` /
-    ``data.fallbackBodies``), the only bodies the converter reads.
+    Action rows are inline on ``AgentState`` nodes, under every key the
+    converter reads (``STATE_ACTION_ROW_KEYS``).
     """
     candidates = []
     for node in model.get("nodes") or []:
         if not isinstance(node, dict) or node.get("type") != "AgentState":
             continue
         data = node.get("data") or {}
-        for key in ("bodies", "fallbackBodies"):
+        if not isinstance(data, dict):
+            continue
+        for key in STATE_ACTION_ROW_KEYS:
             rows = data.get(key)
             if isinstance(rows, list):
                 candidates.extend(rows)

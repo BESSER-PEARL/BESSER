@@ -671,3 +671,17 @@ def test_ws_invalid_session_id_closes_4400(simulator, fake_ws_connect):
         await ws.expect_close(4400)
 
     _run(_scenario())
+
+
+@pytest.mark.parametrize("key", ["bodies", "actions", "fallbackBodies", "fallbackActions"])
+def test_custom_code_is_restricted_under_every_action_row_key(simulator, key):
+    """The converter reads ``actions`` / ``fallbackActions`` before the legacy
+    ``bodies`` / ``fallbackBodies``; the gate must check all four keys."""
+    model = _agent_model()
+    data = model["nodes"][0]["data"]
+    data["bodies"], data["fallbackBodies"] = [], []
+    data[key] = [{"id": "c1", "actionType": "CustomCodeAction",
+                  "code": "def act(session):\n    session.reply('CUSTOMMARK')\n"}]
+    resp = _request("POST", f"{BASE}/sessions", ALICE, json=_session_payload(model))
+    assert resp.status_code == 403
+    assert simulator.requests == []

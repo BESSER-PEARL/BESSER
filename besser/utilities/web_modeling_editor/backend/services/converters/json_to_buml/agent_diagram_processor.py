@@ -63,6 +63,21 @@ from besser.utilities.web_modeling_editor.backend.services.validators.python_cod
 
 logger = logging.getLogger(__name__)
 
+#: ``AgentState`` action-row keys in read order: ``actions`` wins over the
+#: legacy ``bodies`` (same for the fallback body). Shared with the simulator's
+#: custom-code gate, which must see every row the converter reads.
+STATE_BODY_KEYS = ("actions", "bodies")
+STATE_FALLBACK_BODY_KEYS = ("fallbackActions", "fallbackBodies")
+STATE_ACTION_ROW_KEYS = STATE_BODY_KEYS + STATE_FALLBACK_BODY_KEYS
+
+
+def _first_present(data: dict, keys: tuple):
+    """Value of the first key of ``keys`` present in ``data``, else None."""
+    for key in keys:
+        if key in data:
+            return data[key]
+    return None
+
 _DEFAULT_INPUT_PROMPT_MODE = "last_user_message"
 
 
@@ -885,7 +900,7 @@ def process_agent_diagram(json_data):
         agent_state = agent.new_state(name=state_name, initial=is_initial)
         states_by_id[node_id] = agent_state
         body = _build_body_from_action_rows(
-            f"{state_name}_body", data.get("actions", data.get("bodies")),
+            f"{state_name}_body", _first_present(data, STATE_BODY_KEYS),
             language, source_language, translate_text,
             build_db_reply_fn=build_db_reply, gui_defs_by_id=gui_defs_by_id,
         )
@@ -894,7 +909,7 @@ def process_agent_diagram(json_data):
         # Only attach a fallback body if fallbackBodyEnabled is absent (legacy) or True.
         if data.get("fallbackBodyEnabled", True):
             fallback_body = _build_body_from_action_rows(
-                f"{state_name}_fallback_body", data.get("fallbackActions", data.get("fallbackBodies")),
+                f"{state_name}_fallback_body", _first_present(data, STATE_FALLBACK_BODY_KEYS),
                 language, source_language, translate_text,
                 build_db_reply_fn=build_db_reply, gui_defs_by_id=gui_defs_by_id,
             )

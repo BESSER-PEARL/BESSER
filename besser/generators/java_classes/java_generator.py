@@ -1,9 +1,13 @@
+import logging
 import os
 
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
+
+logger = logging.getLogger(__name__)
+
 
 class JavaGenerator(GeneratorInterface):
 
@@ -25,7 +29,7 @@ class JavaGenerator(GeneratorInterface):
             template = env.get_template('java_enum_template.py.j2')
             with open(file_path, mode="w") as f:
                 f.write(template.render(enum_obj=enum_obj, package_name=package_name))
-                print("Code generated in the location: " + file_path)
+                logger.info("Code generated in the location: %s", file_path)
 
         processed_associations = []
         for class_obj in self.model.classes_sorted_by_inheritance():
@@ -36,4 +40,4 @@ class JavaGenerator(GeneratorInterface):
                                                  processed_associations=processed_associations,
                                                  package_name=package_name)
                 f.write(generated_code)
-                print("Code generated in the location: " + file_path)
+                logger.info("Code generated in the location: %s", file_path)

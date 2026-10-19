@@ -112,15 +112,10 @@ def _layout_dict(node: dict, raw_by_id: dict) -> dict:
 def _flow_layout_dict(edge: dict) -> dict:
     """Opaque layout passthrough for an edge (flow)."""
     layout = edge_layout(edge)
-    points = layout["points"]
-    # ``path`` (read by the BPMN generator for BPMNEdge DI) is the v3 shape:
-    # the absolute v4 points made relative to their bounding box.
-    path = None
-    if points:
-        min_x = min(p.get("x", 0) for p in points)
-        min_y = min(p.get("y", 0) for p in points)
-        path = [{"x": p.get("x", 0) - min_x, "y": p.get("y", 0) - min_y} for p in points]
-    layout["path"] = path
+    # ``path`` feeds the BPMN generator's BPMNEdge DI waypoints. With no
+    # ``bounds`` offset in the layout it is read as absolute, so the user's
+    # routing is kept whenever it starts and ends on the two shapes.
+    layout["path"] = list(layout["points"]) or None
     return layout
 
 

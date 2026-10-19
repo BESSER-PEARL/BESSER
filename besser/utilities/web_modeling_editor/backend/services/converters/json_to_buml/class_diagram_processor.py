@@ -28,6 +28,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import VALID_PRIMITIVE_TYPES
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
+from besser.utilities.utils import parse_iso_timestamp
 
 # The React Flow frontend creates ``comment`` nodes tethered by
 # ``CommentLink`` edges; ``Comments`` / ``Link`` are the legacy v3-flavoured
@@ -178,9 +179,14 @@ def _process_enumerations(
                     f"Duplicate enumeration literal '{literal_name}' in '{element_name}'."
                 )
             seen_literal_names.add(literal_name)
-            literals.append(EnumerationLiteral(name=literal_name))
+            literals.append(EnumerationLiteral(
+                name=literal_name, timestamp=parse_iso_timestamp(literal.get("timestamp"))
+            ))
 
-        enum = Enumeration(name=element_name, literals=set(literals))
+        enum = Enumeration(
+            name=element_name, literals=set(literals),
+            timestamp=parse_iso_timestamp(data.get("timestamp")),
+        )
         # Preserve insertion order from the JSON for round-trip fidelity.
         enum._ordered_literals = list(literals)
         try:
@@ -230,7 +236,10 @@ def _process_classes(
         if description or uri or icon:
             metadata = Metadata(description=description, uri=uri, icon=icon)
         try:
-            cls = Class(name=class_name, is_abstract=is_abstract, metadata=metadata)
+            cls = Class(
+                name=class_name, is_abstract=is_abstract, metadata=metadata,
+                timestamp=parse_iso_timestamp(data.get("timestamp")),
+            )
             domain_model.add_type(cls)
         except ValueError as e:
             raise ConversionError(str(e))
@@ -291,6 +300,7 @@ def _process_classes(
                 is_optional=is_optional, is_id=is_id,
                 is_external_id=is_external_id, is_derived=is_derived,
                 default_value=default_value,
+                timestamp=parse_iso_timestamp(attr.get("timestamp")),
             )
             cls.add_attribute(property_)
 
@@ -414,6 +424,7 @@ def _process_classes(
                 parameters=method_params,
                 code=method_code,
                 implementation_type=implementation_type,
+                timestamp=parse_iso_timestamp(method.get("timestamp")),
             )
 
             # Diagram references are resolved later by project-level
@@ -621,6 +632,7 @@ def _process_relationships(
                 type=source_class,
                 multiplicity=source_multiplicity,
                 is_navigable=source_navigable,
+                timestamp=parse_iso_timestamp(edge_data.get("sourceTimestamp")),
             )
 
             target_property = Property(
@@ -629,6 +641,7 @@ def _process_relationships(
                 multiplicity=target_multiplicity,
                 is_navigable=target_navigable,
                 is_composite=is_composite,
+                timestamp=parse_iso_timestamp(edge_data.get("targetTimestamp")),
             )
 
             association_name = edge_data.get("name") or f"{source_class.name}_{target_class.name}"
@@ -642,6 +655,7 @@ def _process_relationships(
             association = BinaryAssociation(
                 name=association_name,
                 ends={source_property, target_property},
+                timestamp=parse_iso_timestamp(edge_data.get("timestamp")),
             )
             domain_model.associations.add(association)
             association_by_id[rel_id] = association
@@ -660,7 +674,10 @@ def _process_relationships(
             layout_positions[f"rel_{association_name}"] = rel_layout
 
         elif rel_type == "ClassInheritance":
-            generalization = Generalization(general=target_class, specific=source_class)
+            generalization = Generalization(
+                general=target_class, specific=source_class,
+                timestamp=parse_iso_timestamp(edge_data.get("timestamp")),
+            )
             domain_model.generalizations.add(generalization)
             gen_layout: dict[str, Any] = {}
             if edge_data.get("points"):
@@ -702,10 +719,13 @@ def _process_association_classes(
         attributes = set(class_obj.attributes)
         methods = set(class_obj.methods)
 
+        # The promoted class is the same diagram element, so it keeps an
+        # explicit timestamp; a defaulted one is not copied (it would become explicit).
         association_class = AssociationClass(
             name=class_name,
             attributes=attributes,
             association=association,
+            timestamp=class_obj.timestamp if class_obj.has_explicit_timestamp else None,
         )
         if methods:
             association_class.methods = methods
@@ -982,6 +1002,11 @@ def _process_constraints(
             conversion_issues.append({**provenance(row, owner_class), "code": "parse_error", "reason": reason})
             continue
         all_warnings.extend(warnings)
+        # A box holding a single constraint is that constraint, so it carries
+        # the box's timestamp; split boxes keep their own creation times.
+        box_timestamp = parse_iso_timestamp(row.get("timestamp"))
+        if box_timestamp is not None and len(routing) == 1:
+            routing[0][1].timestamp = box_timestamp
         for issue in parser_issues:
             conversion_issues.append({
                 **provenance(row, owner_class, issue),
@@ -1040,8 +1065,8 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     if ' ' in title:
         title = title.replace(' ', '_')
 
-    domain_model = DomainModel(title)
     model_payload = json_data.get('model') or {}
+    domain_model = DomainModel(title, timestamp=parse_iso_timestamp(model_payload.get('timestamp')))
     nodes = model_payload.get('nodes') or []
     edges = model_payload.get('edges') or []
     if not isinstance(nodes, list):

@@ -11,20 +11,14 @@ Both emit the v4 wire shape directly (``{nodes, edges}``).
 """
 
 import uuid
-import re
 import ast
 from besser.BUML.metamodel.state_machine.state_machine import (
     StateMachine, CustomCodeAction,
 )
+from besser.utilities.buml_code_builder.common import _sanitize_identifier
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._node_builders import (
     make_node, make_edge,
 )
-
-
-def _sanitize_identifier(name: str) -> str:
-    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
-    sanitized = re.sub(r'^[^a-zA-Z_]+', '', sanitized)
-    return sanitized or 'unnamed'
 
 
 def state_machine_object_to_json(sm: StateMachine) -> dict:

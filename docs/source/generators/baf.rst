@@ -31,6 +31,14 @@ Optional constructor parameters:
   reachable from the network). The Docker Compose generator passes ``"0.0.0.0"``
   because a server bound to localhost inside a container cannot be reached
   through the published ports. A supplied ``config_yaml`` is written as-is.
+- ``default_db``: Connection properties for ``db1`` under ``db.sql`` in ``config.yaml``,
+  the database a ``DBReply`` with ``db_selection_type='default'`` queries (a ``custom``
+  selection queries the ``db.sql`` entry it names). BAF accepts a SQLite file
+  (``{"dialect": "sqlite", "file": "path/to/app.db"}``) or a server database
+  (``dialect``, ``host``, ``port``, ``database``, ``username``, ``password``). Without it
+  (the default) ``db1`` holds ``YOUR-DB-*`` placeholders to fill in. A supplied
+  ``config_yaml`` gets it only when its ``db1`` is missing or still holds ``YOUR-...``
+  placeholders. The :doc:`full_web_app` passes the web app's SQLite database here.
 - ``test_mode``: When ``True``, the agent is generated to be driven headlessly
   in an isolated test environment such as the Agent Simulator:
 

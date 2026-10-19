@@ -61,6 +61,54 @@ The optional **description** field next to the textbox accepts a plain-language
 explanation; the validator surfaces that text as the violation reason instead
 of the raw OCL when the constraint fails.
 
+Navigation uses the names of attributes and association ends exactly as they
+appear in the diagram, and names are case-sensitive. An association end drawn
+without a role name is named after its class **in lower case**: the end towards
+``ScheduleSlot`` is ``scheduleslot``, so ``s.scheduleSlot`` only resolves once
+that role is named ``scheduleSlot``. When a name differs only in case, the
+editor's warning suggests the existing one.
+
+Both ``Session::allInstances()`` and ``Session.allInstances()`` are accepted.
+Iterators may declare several variables (``forAll(s1, s2 | ...)``), and
+``Date``, ``DateTime`` and ``Time`` attributes can be compared with ``=``,
+``<>``, ``<``, ``<=``, ``>`` and ``>=``. For example, this invariant forbids two
+sessions in the same room at overlapping times:
+
+.. code-block:: text
+
+  context Session
+  inv NoRoomTimeOverlap:
+    Session.allInstances()->forAll(s1, s2 |
+      s1 <> s2 implies
+        s1.room <> s2.room or
+        s1.scheduleSlot.endTime <= s2.scheduleSlot.startTime or
+        s1.scheduleSlot.startTime >= s2.scheduleSlot.endTime
+    )
+
+Validating constraints against an object diagram
+------------------------------------------------
+
+On a class diagram, ``/validate-diagram`` checks that each constraint parses.
+On an object (or user) diagram it also evaluates each invariant on the objects
+with the `B-OCL Interpreter <https://github.com/BESSER-PEARL/B-OCL-Interpreter>`_
+(the ``bocl`` package). Preconditions and postconditions are only
+syntax-checked.
+
+The interpreter cannot yet evaluate the following constructs. They parse, but
+the interpreter would crash on them or return a wrong result:
+
+* a loop with several iterator variables (``forAll(s1, s2 | ...)``), or a
+  nested loop whose body refers to an outer iterator variable;
+* ``self`` inside a loop body;
+* comparisons between objects (``s1 <> s2``, ``s1.room = s2.room``);
+* comparisons of ``Date``, ``DateTime`` or ``Time`` values.
+* the ``closure`` iterator (``self.parents->closure(parents)``).
+
+An invariant that uses any of them is listed as *Syntax valid; not evaluated
+against the object diagram*, and a warning names the construct. It is not
+reported as violated. The ``NoRoomTimeOverlap`` example above uses all of them
+except ``self`` in a loop body, so it is checked on the class diagram only.
+
 Anchoring preconditions and postconditions on a method (Python API)
 -------------------------------------------------------------------
 

@@ -85,9 +85,44 @@ WebSocket services.
   frontend image. Each agent's Dockerfile rewrites the websocket and Streamlit ``host`` in
   its ``config.yaml`` to ``0.0.0.0`` so the published ports reach it; the ``config.yaml`` in
   the output keeps ``localhost`` for running the agent outside Docker.
+* **Database access** — every agent is connected to the web app's database, so a
+  ``DBReply`` action with the *default* database (``db_selection_type='default'``) queries
+  the data the backend serves. ``db1`` in the agent's ``config.yaml`` — the database such an
+  action uses — is the backend's SQLite file, and ``docker-compose.yml`` mounts the backend's
+  ``sqlite_data`` volume into each agent container:
+
+  .. code-block:: yaml
+
+     # agents/<slug>/config.yaml
+     db:
+       sql:
+         - db1:
+             dialect: "sqlite"
+             file: "/app/webapp_data/<ModelName>.db"
+
+     # docker-compose.yml
+     backend:
+       environment:
+         - DATABASE_URL=sqlite:///./data/<ModelName>.db   # /app/data/<ModelName>.db
+       volumes:
+         - sqlite_data:/app/data
+     <slug>_agent:
+       volumes:
+         - <slug>_agent_data:/app/data
+         - sqlite_data:/app/webapp_data
+
+  The volume is mounted read-write, since a ``DBReply`` may run ``insert``, ``update`` or
+  ``delete`` operations. The tables are created by the backend at start-up; the agent opens
+  the file on its first query. A ``config.yaml`` authored in the editor gets the same ``db1``
+  when its ``db1`` is missing or still holds ``YOUR-...`` placeholders; a ``db1`` you
+  configured yourself is kept. Pass ``link_agent_database=False`` to keep the placeholders
+  and the agents' volumes as they were (the Render deployment below does this). Standalone
+  agent generation (:doc:`baf`) is not affected.
 * **Render deployment** — the GitHub-deployment pipeline emits one ``type: web`` block per
   agent in ``render.yaml`` and a ``frontend/.env.production`` with the same ``VITE_AGENT_URLS``
-  JSON map pointing at each service's ``*.onrender.com`` URL.
+  JSON map pointing at each service's ``*.onrender.com`` URL. The backend and the agents run
+  as separate services without a shared disk there, so the agents' ``db1`` keeps its
+  placeholders.
 
 On the Python API side:
 

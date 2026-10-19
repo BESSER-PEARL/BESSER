@@ -204,7 +204,10 @@ order and the first one that matches wins:
 
 1. **Multi-language** — ``config["languages"]`` is a dict mapping language name
    to a per-language override. Each language becomes a sub-directory and every
-   message string is translated.
+   message string is translated. Each ``target`` entry must be a plain language
+   name or code (letters, optionally followed by ``-`` / ``_`` subtags, e.g.
+   ``french``, ``fr``, ``pt-BR``), unique and not ``default``; anything else is
+   rejected with HTTP 400, since it names files and ZIP folders.
 2. **Variations** — ``config["baseModel"]`` + ``config["variations"]`` — each
    variation produces a separate variant starting from the base agent model.
 3. **Configuration variants** — ``config["configurations"]`` is a list of

@@ -92,6 +92,13 @@ db:
     username: YOUR-DB-USERNAME
     password: YOUR-DB-PASSWORD
   sql:
+{% if default_db %}
+    # db1 is the database a DBReply with db_selection_type 'default' queries
+    - db1:
+{% for key, value in default_db.items() %}
+        {{ key }}: {{ value | yaml_scalar }}
+{% endfor %}
+{% else %}
     - db1:
         dialect: postgresql
         host: YOUR-DB-HOST
@@ -99,6 +106,7 @@ db:
         database: YOUR-DB-NAME
         username: YOUR-DB-USERNAME
         password: YOUR-DB-PASSWORD
+{% endif %}
     - db2:
         dialect: postgresql
         host: YOUR-DB-HOST

@@ -43,11 +43,41 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     RELATIONSHIP_TYPES,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    SAFE_DATETIME_MODULE,
     safe_load_buml,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.multiplicity_parser import (
     format_multiplicity_label,
 )
+from besser.utilities.utils import explicit_timestamp_iso
+
+
+def _set_timestamp(target: dict, element, key: str = "timestamp") -> dict:
+    """Record ``element.timestamp`` on ``target[key]`` as an ISO 8601 string.
+
+    Only an explicit timestamp is written (see ``Element.has_explicit_timestamp``),
+    so converting the same model twice gives the same JSON. ``json_to_buml``
+    falls back to the creation time when the field is absent.
+    """
+    iso = explicit_timestamp_iso(element)
+    if iso is not None:
+        target[key] = iso
+    return target
+
+
+def fresh_primitive_types() -> dict:
+    """Per-load copies of the primitive types, so an upload never holds the shared singletons."""
+    return {
+        "StringType": PrimitiveDataType("str"),
+        "IntegerType": PrimitiveDataType("int"),
+        "FloatType": PrimitiveDataType("float"),
+        "BooleanType": PrimitiveDataType("bool"),
+        "TimeType": PrimitiveDataType("time"),
+        "DateType": PrimitiveDataType("date"),
+        "DateTimeType": PrimitiveDataType("datetime"),
+        "TimeDeltaType": PrimitiveDataType("timedelta"),
+        "AnyType": PrimitiveDataType("any"),
+    }
 
 
 def parse_buml_content(content: str) -> DomainModel:
@@ -76,19 +106,13 @@ def parse_buml_content(content: str) -> DomainModel:
             "AssociationClass": AssociationClass,
             "Metadata": Metadata,
             "MethodImplementationType": MethodImplementationType,
+            # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
+            "datetime": SAFE_DATETIME_MODULE,
             "set": set,
             "list": list,
             "dict": dict,
             "tuple": tuple,
-            "StringType": PrimitiveDataType("str"),
-            "IntegerType": PrimitiveDataType("int"),
-            "FloatType": PrimitiveDataType("float"),
-            "BooleanType": PrimitiveDataType("bool"),
-            "TimeType": PrimitiveDataType("time"),
-            "DateType": PrimitiveDataType("date"),
-            "DateTimeType": PrimitiveDataType("datetime"),
-            "TimeDeltaType": PrimitiveDataType("timedelta"),
-            "AnyType": PrimitiveDataType("any"),
+            **fresh_primitive_types(),
             # No-op stub: project-exported files often end with a
             # `project = Project(name=..., models=[domain_model], ...)` tail.
             # The class converter only cares about the DomainModel; swallowing
@@ -126,11 +150,14 @@ def parse_buml_content(content: str) -> DomainModel:
         local_vars = safe_load_buml(cleaned_content, allowed_names)
 
         domain_name = "Imported_Domain_Model"
+        domain_timestamp = None
         for var_name, var_value in local_vars.items():
             if isinstance(var_value, DomainModel):
                 domain_name = var_value.name
+                if var_value.has_explicit_timestamp:
+                    domain_timestamp = var_value.timestamp
 
-        domain_model = DomainModel(domain_name)
+        domain_model = DomainModel(domain_name, timestamp=domain_timestamp)
         for var_name, var_value in local_vars.items():
             if isinstance(var_value, (Class, Enumeration)):
                 domain_model.types.add(var_value)
@@ -182,7 +209,7 @@ def _attr_row(attr: Property) -> dict:
     }
     if attr.default_value is not None:
         row["defaultValue"] = _json_safe_default(attr.default_value)
-    return row
+    return _set_timestamp(row, attr)
 
 
 def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> dict:
@@ -272,7 +299,7 @@ def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> d
         row.pop("quantumCircuitId", None)
     if not row.get("neuralNetworkId"):
         row.pop("neuralNetworkId", None)
-    return row
+    return _set_timestamp(row, method)
 
 
 def _member_label(row: dict, is_method: bool, stereotype) -> str:
@@ -347,12 +374,12 @@ def class_buml_to_json(domain_model):
             else:
                 literals_iter = sorted(type_obj.literals, key=lambda lit: lit.name)
             for literal in literals_iter:
-                attribute_rows.append({
+                attribute_rows.append(_set_timestamp({
                     "id": str(uuid.uuid4()),
                     "name": literal.name,
                     "attributeType": "str",
                     "visibility": "public",
-                })
+                }, literal))
 
         data: dict = {"name": type_obj.name, "stereotype": stereotype}
         data["attributes"] = attribute_rows
@@ -367,6 +394,7 @@ def class_buml_to_json(domain_model):
                 data["uri"] = md.uri
             if md.icon:
                 data["icon"] = md.icon
+        _set_timestamp(data, type_obj)
 
         width, height = _class_node_size(type_obj.name, stereotype, attribute_rows, method_rows)
         if saved_bounds:
@@ -403,6 +431,7 @@ def class_buml_to_json(domain_model):
         }
         if getattr(c, "description", None):
             data["description"] = c.description
+        _set_timestamp(data, c)
         node = make_node(
             node_id=node_id,
             type_="ClassOCLConstraint",
@@ -489,6 +518,9 @@ def class_buml_to_json(domain_model):
             }
             if "isManuallyLayouted" in saved_rel:
                 edge_data["isManuallyLayouted"] = saved_rel["isManuallyLayouted"]
+            _set_timestamp(edge_data, association)
+            _set_timestamp(edge_data, source_prop, "sourceTimestamp")
+            _set_timestamp(edge_data, target_prop, "targetTimestamp")
 
             edge = make_edge(
                 edge_id=str(uuid.uuid4()),
@@ -521,7 +553,7 @@ def class_buml_to_json(domain_model):
             source=class_id_map[generalization.specific],
             target=class_id_map[generalization.general],
             type_="ClassInheritance",
-            data={"points": saved_gen.get("path", [])},
+            data=_set_timestamp({"points": saved_gen.get("path", [])}, generalization),
         )
         edges.append(edge)
 
@@ -597,7 +629,7 @@ def class_buml_to_json(domain_model):
     grid_layout(auto_placed, origin=origin, columns=LAYOUT_MAX_COLUMNS, gap_y=LAYOUT_GAP_Y)
 
     default_size = {"width": LAYOUT_GRID_WIDTH, "height": LAYOUT_GRID_HEIGHT}
-    return {
+    result = {
         "version": "4.0.0",
         "type": "ClassDiagram",
         "title": getattr(domain_model, "name", "") or "",
@@ -607,3 +639,4 @@ def class_buml_to_json(domain_model):
         "interactive": {"elements": {}, "relationships": {}},
         "assessments": {},
     }
+    return _set_timestamp(result, domain_model)

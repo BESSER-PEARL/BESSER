@@ -8,6 +8,19 @@ from besser.generators import GeneratorInterface
 from besser.utilities.buml_code_builder.common import safe_var_name
 
 
+WEBAPP_DB_MOUNT = "/app/webapp_data"
+"""Where each agent container mounts the backend's ``sqlite_data`` volume.
+
+The backend keeps its SQLite file at ``/app/data/<model name>.db``; agents keep
+their own ``/app/data`` volume, so the shared one is mounted next to it.
+"""
+
+
+def webapp_database_file(model_name: str) -> str:
+    """Path of the web app's SQLite database inside an agent container."""
+    return f"{WEBAPP_DB_MOUNT}/{model_name}.db"
+
+
 def agent_slug(name) -> str:
     """Canonical filesystem slug for an agent.
 
@@ -66,14 +79,25 @@ class WebAppGenerator(GeneratorInterface):
             per agent to the underlying :class:`BAFGenerator`.
         agent_model: **Deprecated.** Single-agent back-compat shim. Prefer ``agent_models``.
         agent_config: **Deprecated.** Single-agent back-compat shim. Prefer ``agent_configs``.
+        agent_config_yamls (dict, optional): Mapping of ``agent.name`` -> user-authored
+            ``config.yaml`` text, written instead of the default agent config.
+        link_agent_database (bool, optional): Connect every agent to the web app's
+            database (default ``True``). The agent's ``db1`` -- the database a
+            ``DBReply`` with ``db_selection_type='default'`` queries -- becomes the
+            backend's SQLite file, and ``docker-compose.yml`` mounts the backend's
+            ``sqlite_data`` volume into each agent container at ``/app/webapp_data``.
+            A user-authored ``db1`` that holds no ``YOUR-...`` placeholder is kept.
+            Pass ``False`` when the services do not share a volume (e.g. separate
+            hosting services); the agent config then keeps its placeholders.
     """
 
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None,
                  agent_models=None, agent_configs=None,
                  agent_model=None, agent_config=None,
-                 agent_config_yamls=None):
+                 agent_config_yamls=None, link_agent_database: bool = True):
         super().__init__(model, output_dir)
         self.gui_model = gui_model
+        self.link_agent_database = link_agent_database
         if agent_model is not None and not agent_models:
             agent_models = [agent_model]
         if agent_config is not None and not agent_configs:
@@ -136,6 +160,7 @@ class WebAppGenerator(GeneratorInterface):
 
         agents_root = os.path.join(self.output_dir, "agents") if self.output_dir else "agents"
         os.makedirs(agents_root, exist_ok=True)
+        default_db = self.agent_default_db()
 
         seen_slugs = set()
         for agent in self.agent_models:
@@ -152,7 +177,18 @@ class WebAppGenerator(GeneratorInterface):
             os.makedirs(agent_dir, exist_ok=True)
             cfg = self.agent_configs.get(getattr(agent, "name", None))
             cfg_yaml = self.agent_config_yamls.get(getattr(agent, "name", None))
-            BAFGenerator(agent, output_dir=agent_dir, config=cfg, config_yaml=cfg_yaml).generate()
+            BAFGenerator(agent, output_dir=agent_dir, config=cfg, config_yaml=cfg_yaml,
+                         default_db=default_db).generate()
+
+    def agent_default_db(self):
+        """The ``db1`` entry pointing the agents at the web app's SQLite database.
+
+        Returns ``None`` when ``link_agent_database`` is off, so the agent config
+        keeps its placeholders.
+        """
+        if not self.link_agent_database:
+            return None
+        return {"dialect": "sqlite", "file": webapp_database_file(self.model.name)}
 
     def _generate_docker_files(self, env):
         """
@@ -171,6 +207,8 @@ class WebAppGenerator(GeneratorInterface):
                 # template fork that still reads ``agent_model`` keeps working.
                 agent_model=self.agent_models[0] if self.agent_models else None,
                 name=self.model.name,
+                link_agent_database=self.link_agent_database,
+                webapp_db_mount=WEBAPP_DB_MOUNT,
             ))
 
         # Generate frontend Dockerfile

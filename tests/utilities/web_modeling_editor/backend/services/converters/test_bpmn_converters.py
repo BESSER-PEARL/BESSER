@@ -213,6 +213,30 @@ def artifact_fixture():
     }
 
 
+def data_elements_fixture():
+    """Start -> Task -> End, with a data object read by the task (data input) and a
+    data store written by it (data output) -- the shape of issue #627's request."""
+    return {
+        "title": "Data elements",
+        "model": {
+            "type": "BPMNDiagram",
+            "nodes": [
+                _node("s1", "bpmnStartEvent", "Cell production started", eventType="default"),
+                _node("t1", "bpmnTask", "Stack electrodes", taskType="default", marker="none"),
+                _node("e1", "bpmnEndEvent", "Cell ready", eventType="default"),
+                _node("d1", "bpmnDataObject", "Electrode sheets"),
+                _node("ds1", "bpmnDataStore", "MES"),
+            ],
+            "edges": [
+                _edge("f1", "BPMNSequenceFlow", "s1", "t1"),
+                _edge("f2", "BPMNSequenceFlow", "t1", "e1"),
+                _edge("a1", "BPMNDataAssociationFlow", "d1", "t1"),
+                _edge("a2", "BPMNDataAssociationFlow", "t1", "ds1"),
+            ],
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # TestProcessBpmnDiagram  (json -> buml)
 # ---------------------------------------------------------------------------
@@ -278,6 +302,14 @@ class TestProcessBpmnDiagram:
         child_names = {n.name for n in sub.flow_nodes}
         assert child_names == {"SubStart", "Pack"}
         assert len(sub.sequence_flows) == 1
+
+    def test_data_elements_and_associations(self):
+        model = process_bpmn_diagram(data_elements_fixture())
+        (process,) = model.processes
+        assert {d.name for d in process.data_objects} == {"Electrode sheets"}
+        assert {d.name for d in model.data_stores} == {"MES"}
+        links = sorted((da.source.name, da.target.name) for da in process.data_associations)
+        assert links == [("Electrode sheets", "Stack electrodes"), ("Stack electrodes", "MES")]
 
     def test_dangling_flow_is_skipped(self):
         fixture = simple_process_fixture()
@@ -382,7 +414,8 @@ class TestBpmnObjectToJson:
 class TestRoundTripIdentity:
     @pytest.mark.parametrize(
         "fixture_fn",
-        [simple_process_fixture, pool_lane_fixture, subprocess_fixture, artifact_fixture],
+        [simple_process_fixture, pool_lane_fixture, subprocess_fixture, artifact_fixture,
+         data_elements_fixture],
     )
     def test_process_emit_process_is_stable(self, fixture_fn):
         json1 = bpmn_object_to_json(process_bpmn_diagram(fixture_fn()))
@@ -679,7 +712,7 @@ class TestPortedBumlWrapper:
     @pytest.mark.parametrize(
         "fixture_fn",
         [simple_process_fixture, pool_lane_fixture, subprocess_fixture, artifact_fixture,
-         two_pool_collaboration_fixture],
+         two_pool_collaboration_fixture, data_elements_fixture],
     )
     def test_full_round_trip_via_builder(self, fixture_fn):
         # JSON -> BUML model -> emitted .py -> safe loader -> BPMNModel -> JSON must agree
@@ -690,6 +723,22 @@ class TestPortedBumlWrapper:
         assert _type_name_pairs(json_out) == _type_name_pairs(direct)
         assert _containment_by_name(json_out) == _containment_by_name(direct)
         assert Counter(e["type"] for e in _edges(json_out)) == Counter(e["type"] for e in _edges(direct))
+
+    def test_data_elements_survive_code_round_trip(self):
+        # Regression: the builder emitted model-level data stores AFTER the
+        # processes, so a data association targeting a data store raised
+        # NameError when the generated code was executed.
+        model = process_bpmn_diagram(data_elements_fixture())
+        json_out = bpmn_buml_to_json(bpmn_model_to_code(model))
+        assert _type_name_pairs(json_out)[("bpmnDataObject", "Electrode sheets")] == 1
+        assert _type_name_pairs(json_out)[("bpmnDataStore", "MES")] == 1
+        name_of = {n["id"]: _data(n).get("name") for n in _nodes(json_out)}
+        data_links = sorted(
+            (name_of[e["source"]], name_of[e["target"]])
+            for e in _edges_by_type(json_out, "BPMNDataAssociationFlow")
+        )
+        assert data_links == [("Electrode sheets", "Stack electrodes"),
+                              ("Stack electrodes", "MES")]
 
     def test_exec_failure_raises_conversion_error(self):
         with pytest.raises(ConversionError, match="failed to execute"):
@@ -738,7 +787,8 @@ def _positioned_pool_fixture():
             ],
             "edges": [
                 _edge("sf1", "BPMNSequenceFlow", "t1", "e1",
-                      points=[{"x": 270, "y": 120}, {"x": 400, "y": 120}, {"x": 400, "y": 140}]),
+                      points=[{"x": 270, "y": 100}, {"x": 300, "y": 100}, {"x": 300, "y": 80},
+                              {"x": 330, "y": 80}]),
             ],
         },
     }
@@ -763,8 +813,9 @@ class TestDiagramInterchange:
         root = _generated_bpmn_root(tmp_path)
         (edge,) = root.iter(f"{_DI}BPMNEdge")
         waypoints = [(float(w.get("x")), float(w.get("y"))) for w in edge.iter(f"{_DD_DI}waypoint")]
-        # v3 ``path`` shape: the points relative to their bounding box.
-        assert waypoints == [(0, 0), (130, 0), (130, 20)]
+        # The user-routed absolute points start on the task and end on the
+        # event, so the generator keeps them instead of re-routing the edge.
+        assert waypoints == [(270, 100), (300, 100), (300, 80), (330, 80)]
 
     def test_generated_bpmn_shape_bounds_are_absolute(self, tmp_path):
         root = _generated_bpmn_root(tmp_path)

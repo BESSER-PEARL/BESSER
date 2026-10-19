@@ -24,11 +24,11 @@ it can be identified with certainty -- never a guess.
 """
 
 from besser.BUML.metamodel.structural import (
-    BinaryAssociation, Class, DomainModel, Multiplicity, Property,
+    BinaryAssociation, Class, DomainModel, Multiplicity, Property, StringType,
 )
 
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.ocl_parser import (
-    _suggest_property_fix,
+    _suggest_case_fix, _suggest_property_fix,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
     process_class_diagram,
@@ -185,3 +185,32 @@ def test_conversion_issue_reason_has_no_suggestion_for_unrelated_typo():
     dm = process_class_diagram(diagram)
     issues = {i["name"]: i for i in dm.conversion_issues}
     assert "did you mean" not in issues["typo"]["reason"]
+
+
+# ---------------------------------------------------------------------------
+# _suggest_case_fix — names that differ only in case (BESSER-PEARL/BESSER#400)
+# ---------------------------------------------------------------------------
+
+def test_case_fix_finds_lowercased_default_role_on_any_class():
+    """An unnamed end is named after the lower-cased class, so ``scheduleSlot``
+    fails where ``scheduleslot`` exists."""
+    session = Class("Session")
+    slot = Class("ScheduleSlot")
+    BinaryAssociation(name="SessionSlot", ends={
+        Property("scheduleslot", type=slot, multiplicity=Multiplicity(1, 1)),
+        Property("session", type=session, multiplicity=Multiplicity(0, 9999)),
+    })
+    model = DomainModel("Conference", types={session, slot})
+    assert _suggest_case_fix(
+        model, "Property 'scheduleSlot' not found in context 'Session'"
+    ) == "scheduleslot"
+
+
+def test_case_fix_ignores_ambiguous_or_unrelated_names():
+    book = Class("Book", attributes={Property("title", StringType)})
+    film = Class("Film", attributes={Property("Title", StringType)})
+    model = DomainModel("Media", types={book, film})
+    # Two distinct candidates ("title", "Title") -> no guess.
+    assert _suggest_case_fix(model, "Property 'TITLE' not found in context 'Book'") is None
+    assert _suggest_case_fix(model, "Property 'isbn' not found in context 'Book'") is None
+    assert _suggest_case_fix(model, "missing ')'.") is None

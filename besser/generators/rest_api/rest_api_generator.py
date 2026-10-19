@@ -1,3 +1,4 @@
+import logging
 import os
 
 from jinja2 import Environment, FileSystemLoader
@@ -7,6 +8,9 @@ from besser.generators import GeneratorInterface
 from besser.generators.structural_utils import normalize_method_code
 from besser.generators.action_language.RESTGenerator import bal_to_rest
 from besser.generators.pydantic_classes import PydanticGenerator
+
+logger = logging.getLogger(__name__)
+
 
 class RESTAPIGenerator(GeneratorInterface):
     """
@@ -35,8 +39,8 @@ class RESTAPIGenerator(GeneratorInterface):
         else:
             invalid_methods = [method for method in http_methods if method not in allowed_methods]
             if invalid_methods:
-                import logging
-                logging.warning(f"Invalid HTTP methods ignored: {invalid_methods}. Allowed methods are: {allowed_methods}")
+                logger.warning("Invalid HTTP methods ignored: %s. Allowed methods are: %s",
+                               invalid_methods, allowed_methods)
             http_methods = [method for method in http_methods if method in allowed_methods]
         self.http_methods = http_methods
         self.backend = backend
@@ -118,4 +122,4 @@ class RESTAPIGenerator(GeneratorInterface):
                     model=self.model
                 )
                 f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.info("Code generated in the location: %s", file_path)

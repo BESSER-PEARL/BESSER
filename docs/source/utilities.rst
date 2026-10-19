@@ -14,7 +14,9 @@ General Utilities
 -----------------
 
 * ``besser.utilities.utils`` provides shared helpers such as
-  ``sort_by_timestamp`` and the ``ModelSerializer`` class.
+  ``sort_by_timestamp``, ``timestamp_to_iso`` / ``parse_iso_timestamp``
+  (element timestamps as ISO 8601 strings, used by the code builder and the
+  editor converters) and the ``ModelSerializer`` class.
 * API reference: :doc:`Model serializer API <api/utilities/api_model_serializer>`.
 
 Model Building Helpers

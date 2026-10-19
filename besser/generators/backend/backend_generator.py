@@ -1,5 +1,6 @@
-import os
 import configparser
+import logging
+import os
 import docker
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
@@ -9,6 +10,9 @@ from besser.generators.pydantic_classes import PydanticGenerator
 from besser.generators.backend.api_generator import generate_modular_api
 from besser.generators.backend.docker_files import generate_docker_files
 from besser.generators.backend.nn_methods import NN_PACKAGE, TORCH_REQUIREMENT, generate_nn_methods
+
+logger = logging.getLogger(__name__)
+
 
 class BackendGenerator(GeneratorInterface):
     """
@@ -63,9 +67,9 @@ class BackendGenerator(GeneratorInterface):
             }
         else:
             if not self.docker_config_path:
-                print("No configuration docker file.")
+                logger.debug("No Docker configuration file provided.")
             else:
-                print(f"Configuration file not found at path: {self.docker_config_path}")
+                logger.warning("Docker configuration file not found at path: %s", self.docker_config_path)
             return None
 
     def generate(self):
@@ -79,11 +83,11 @@ class BackendGenerator(GeneratorInterface):
         if self.output_dir is not None:
             backend_folder_path = self.output_dir
             os.makedirs(backend_folder_path, exist_ok=True)
-            print(f"Backend folder created at {backend_folder_path}")
+            logger.info("Backend folder created at %s", backend_folder_path)
         else:
             backend_folder_path = os.path.join(os.path.abspath(''), "output_backend")
             os.makedirs(backend_folder_path, exist_ok=True)
-            print(f"Backend folder created at {backend_folder_path}")
+            logger.info("Backend folder created at %s", backend_folder_path)
 
         # An explicitly requested port wins over the docker configuration; 8000 is the fallback.
         docker_port = self.port or (self.config["docker_port"] if self.config else 8000)
@@ -176,7 +180,7 @@ class BackendGenerator(GeneratorInterface):
         )
 
         for log in build_logs:
-            print(log)
+            logger.info("%s", log)
 
         # Docker login
         username = self.config["docker_username"]
@@ -186,4 +190,4 @@ class BackendGenerator(GeneratorInterface):
         # Push Docker image
         resp = client.api.push(full_image_name, stream=True, decode=True)
         for line in resp:
-            print(line)
+            logger.info("%s", line)

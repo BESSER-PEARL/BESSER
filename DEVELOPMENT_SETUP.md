@@ -6,9 +6,11 @@ Complete guide to set up the BESSER development environment from scratch.
 
 ## Prerequisites
 
-### 1. Python 3.10, 3.11, or 3.12
+### 1. Python 3.11 or 3.12
 
-> **Python 3.13 is NOT supported** (some dependencies lack compatible wheels).
+> `setup.cfg` requires Python >= 3.11, and CI tests 3.11 and 3.12. **Installing on Python 3.13 currently fails**:
+> the `bocl==1.0.1` dependency pins `pydantic==2.6.3`, whose `pydantic-core` has no 3.13 wheels and does not build
+> from source on 3.13 (see `docs/source/troubleshooting.rst`).
 
 - Download from [python.org](https://www.python.org/downloads/)
 - During installation, check **"Add Python to PATH"** (Windows)
@@ -60,8 +62,14 @@ venv\Scripts\activate          # Windows
 # source venv/bin/activate     # Linux / macOS
 pip install -r requirements.txt
 pip install -e .
-python besser/utilities/web_modeling_editor/backend/backend.py
+pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
+besser-wme-backend
 ```
+
+`besser-wme-backend` (installed by `pip install -e .` or `pip install besser`)
+accepts `--host`, `--port` and `--log-level`; run it with `--help` for details.
+`python besser/utilities/web_modeling_editor/backend/backend.py` starts the
+same server.
 
 The backend runs on `http://localhost:9000/besser_api`. To use the
 Spec-Driven Agent's PIA or Local (e.g. Ollama) providers, set

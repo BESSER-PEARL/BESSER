@@ -21,6 +21,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
     node_data,
 )
+from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
+    domain_model as user_reference_domain_model,
+)
 from datetime import datetime, timedelta
 
 # The React Flow frontend creates ``comment`` nodes tethered by
@@ -120,6 +123,25 @@ def _reference_association_name(assoc_id: str, reference_data: dict) -> str:
             continue
         return (edge.get("data") or {}).get("name", "")
     return ""
+
+
+def _is_shared_domain_model(domain_model) -> bool:
+    """Return True if *domain_model* is a process-wide model shared across requests.
+
+    The user reference domain model is a module-level global, so per-request
+    processing must never mutate it.
+    """
+    return domain_model is user_reference_domain_model
+
+
+def _append_description(element, text):
+    """Append *text* to the metadata description of *element*."""
+    if not element.metadata:
+        element.metadata = Metadata(description=text)
+    elif element.metadata.description:
+        element.metadata.description += f"\n{text}"
+    else:
+        element.metadata.description = text
 
 
 def process_object_diagram(json_data, domain_model):
@@ -411,26 +433,25 @@ def process_object_diagram(json_data, domain_model):
                     f"Could not find association for link '{link_name}'. Please ensure all links correspond to valid associations in the class diagram."
                 )
 
-    # Apply comments.
+    # Comments linked to objects are recorded on the object's class. A class of a
+    # shared domain model (the module-level user reference model behind
+    # UserDiagrams) is never annotated: mutating it would leak this request's
+    # comments into every later and concurrent request, so such a comment is
+    # kept on this request's object model instead. (Objects cannot carry
+    # metadata themselves: their attribute access is mapped onto slots/links.)
+    annotate_classifiers = not _is_shared_domain_model(domain_model)
     for comment_id, comment_text in comment_nodes.items():
-        if comment_id in comment_links:
-            for linked_id in comment_links[comment_id]:
-                obj = objects_by_id.get(linked_id)
-                if obj:
-                    if not obj.classifier.metadata:
-                        obj.classifier.metadata = Metadata(description=comment_text)
-                    else:
-                        if obj.classifier.metadata.description:
-                            obj.classifier.metadata.description += f"\n{comment_text}"
-                        else:
-                            obj.classifier.metadata.description = comment_text
-        else:
-            if not object_model.metadata:
-                object_model.metadata = Metadata(description=comment_text)
-            else:
-                if object_model.metadata.description:
-                    object_model.metadata.description += f"\n{comment_text}"
-                else:
-                    object_model.metadata.description = comment_text
+        linked_objects = [
+            objects_by_id[element_id]
+            for element_id in comment_links.get(comment_id, ())
+            if element_id in objects_by_id
+        ]
+        if linked_objects and annotate_classifiers:
+            for obj in linked_objects:
+                _append_description(obj.classifier, comment_text)
+        elif comment_id not in comment_links or linked_objects:
+            # Unlinked, or linked to objects of a shared model: keep it once
+            # on the object model.
+            _append_description(object_model, comment_text)
 
     return object_model

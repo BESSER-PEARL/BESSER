@@ -7,7 +7,7 @@ import io
 import logging
 import os
 import re
-import sys
+import shutil
 import tempfile
 import zipfile
 
@@ -20,6 +20,10 @@ from fastapi import HTTPException
 from besser.generators.agents.baf_generator import GenerationMode
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    AGENT_TEMP_DIR_PREFIX,
+    OUTPUT_DIR_NAME,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters import process_agent_diagram
 from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
     ensure_not_legacy_model,
@@ -178,79 +182,156 @@ def normalize_personalization_mapping(
     json_data['config'] = config
 
 
+# A target language becomes a file name (``agent_model_<lang>.py``) and a ZIP
+# folder (``<lang>/...``), so it must be a plain language name or code: the
+# editor sends names such as ``french`` or ``luxembourgish``; codes such as
+# ``fr``, ``pt-BR`` or ``zh_Hant`` are accepted too. No separators, dots or
+# ``..``, which would let a request write outside its temp directory or plant
+# ``../`` entries in the archive (zip slip).
+_LANGUAGE_CODE_RE = re.compile(r'^[A-Za-z]{2,32}(?:[-_][A-Za-z0-9]{1,8}){0,4}$')
+
+# Folder of the language-less variant; a target with this name would overwrite it.
+_DEFAULT_VARIANT = 'default'
+
+
+def _validated_target_languages(target_langs: Any) -> List[str]:
+    """Return *target_langs* if every entry is a safe, unique language name or code.
+
+    Raises:
+        HTTPException: 400 naming the offending value otherwise.
+    """
+    if target_langs is None:
+        return []
+    if not isinstance(target_langs, list):
+        raise HTTPException(
+            status_code=400,
+            detail="languages.target must be a list of language names or codes",
+        )
+    seen: Set[str] = set()
+    for lang in target_langs:
+        if not isinstance(lang, str) or not _LANGUAGE_CODE_RE.fullmatch(lang):
+            shown = repr(lang)[:60]
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Invalid target language {shown}: use a language name or code "
+                    "made of letters, optionally with '-' or '_' subtags (e.g. 'french', 'fr', 'pt-BR')"
+                ),
+            )
+        folded = lang.lower()
+        if folded == _DEFAULT_VARIANT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid target language {lang!r}: the name is reserved for the default agent",
+            )
+        if folded in seen:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Duplicate target language {lang!r}",
+            )
+        seen.add(folded)
+    return target_langs
+
+
 async def handle_multi_language_generation(
     json_data: dict,
     config: dict,
     languages: dict,
     generate_agent_files_fn: Callable,
-    output_dir: str = "output",
+    output_dir: str = OUTPUT_DIR_NAME,
 ) -> Tuple[io.BytesIO, str]:
     """Generate a ZIP with one agent variant per target language.
+
+    The archive holds a ``default`` variant (the original model, without the
+    ``languages`` config entry) plus one folder per target language. Each
+    variant is generated into its own sub-directory of a single per-request
+    temp directory, so concurrent requests never share files and nothing is
+    written to the process working directory.
+
+    Args:
+        json_data: The agent diagram payload.
+        config: The request's agent configuration.
+        languages: ``{"source": ..., "target": [...]}`` mapping.
+        generate_agent_files_fn: Unused; kept for signature compatibility with
+            the other ``handle_*`` helpers.
+        output_dir: Name of the generator output folder created inside each
+            variant's own temp sub-directory (never relative to the CWD).
 
     Returns:
         ``(zip_buffer, filename)`` tuple ready to be wrapped in a response.
     """
     source_lang = languages.get('source')
-    target_langs = languages.get('target', None)
-    agent_models: List[Tuple[Any, str]] = []
+    target_langs = _validated_target_languages(languages.get('target'))
+    config_yaml = json_data.get('configYaml')
+
+    # Each variant keeps its own (agent_model, lang, config) so the generator
+    # and the OpenAI-key lookup use that variant's configuration.
+    variants: List[Tuple[Any, str, Dict[str, Any]]] = []
 
     # Default agent (no language)
+    default_config: Dict[str, Any] = (
+        {k: v for k, v in config.items() if k != 'languages'}
+        if isinstance(config, dict) else {}
+    )
     default_json_data = {**json_data}
     if 'config' in default_json_data and isinstance(default_json_data['config'], dict):
         default_json_data['config'] = {
             k: v for k, v in default_json_data['config'].items() if k != 'languages'
         }
-    agent_models.append((process_agent_diagram(default_json_data), 'default'))
+    variants.append((process_agent_diagram(default_json_data), _DEFAULT_VARIANT, default_config))
 
     # Agents for each target language
     for lang in target_langs:
-        new_config = dict(config) if config else {}
-        new_config['language'] = lang
+        lang_config = dict(config) if config else {}
+        lang_config['language'] = lang
         if source_lang:
-            new_config['source_language'] = source_lang
-        new_json_data = dict(json_data)
-        new_json_data['config'] = new_config
-        agent_models.append((process_agent_diagram(new_json_data), lang))
+            lang_config['source_language'] = source_lang
+        lang_json_data = dict(json_data)
+        lang_json_data['config'] = lang_config
+        variants.append((process_agent_diagram(lang_json_data), lang, lang_config))
 
-    # Generate files for each agent model
+    generator_class = get_generator_info("agent").generator_class
+
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for agent_model, lang in agent_models:
-            with tempfile.TemporaryDirectory(prefix=f"besser_agent_{lang}_") as temp_dir:
-                agent_file = os.path.join(temp_dir, f"agent_model_{lang}.py")
+    request_dir = tempfile.mkdtemp(prefix=AGENT_TEMP_DIR_PREFIX)
+    try:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for index, (agent_model, lang, variant_config) in enumerate(variants):
+                variant_dir = os.path.join(request_dir, f"variant_{index}")
+                os.makedirs(variant_dir)
+                variant_output_dir = os.path.join(variant_dir, output_dir)
+
+                agent_file = os.path.join(variant_dir, f"agent_model_{lang}.py")
                 agent_model_to_code(agent_model, agent_file)
-                sys.path.insert(0, temp_dir)
+                # spec_from_file_location takes the absolute path; no sys.path edit needed.
                 spec = importlib.util.spec_from_file_location(
                     f"agent_model_{lang}", agent_file
                 )
                 agent_module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(agent_module)
-                generator_info = get_generator_info("agent")
-                generator_class = generator_info.generator_class
-                variant_openai_api_key = extract_openai_api_key(new_config)
-                config_yaml = json_data.get('configYaml')
-                if hasattr(agent_module, 'agent'):
-                    # gui_models is now serialized by agent_model_to_code; no patch needed.
-                    generator = generator_class(
-                        agent_module.agent,
-                        config=new_config,
-                        openai_api_key=variant_openai_api_key,
-                        config_yaml=config_yaml,
-                    )
-                else:
-                    generator = generator_class(
-                        agent_model,
-                        config=new_config,
-                        openai_api_key=variant_openai_api_key,
-                        config_yaml=config_yaml,
-                    )
+
+                # gui_models is serialized by agent_model_to_code; no patch needed.
+                model_for_generator = (
+                    agent_module.agent if hasattr(agent_module, 'agent') else agent_model
+                )
+                generator = generator_class(
+                    model_for_generator,
+                    output_dir=variant_output_dir,
+                    config=variant_config,
+                    openai_api_key=extract_openai_api_key(variant_config),
+                    config_yaml=config_yaml,
+                )
                 generator.generate()
+
                 zip_file.write(agent_file, f"{lang}/agent_model_{lang}.py")
-                if os.path.exists(output_dir):
-                    for file_name in os.listdir(output_dir):
-                        file_path = os.path.join(output_dir, file_name)
-                        if os.path.isfile(file_path):
-                            zip_file.write(file_path, f"{lang}/{file_name}")
+                if os.path.isdir(variant_output_dir):
+                    for root, _, files in os.walk(variant_output_dir):
+                        for file_name in sorted(files):
+                            file_path = os.path.join(root, file_name)
+                            arcname = os.path.relpath(file_path, variant_output_dir)
+                            zip_file.write(file_path, f"{lang}/{arcname}".replace(os.sep, "/"))
+    finally:
+        shutil.rmtree(request_dir, ignore_errors=True)
     zip_buffer.seek(0)
     return zip_buffer, "agents_multi_lang.zip"
 

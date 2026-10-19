@@ -4,6 +4,7 @@ by `TFGenerator` and `PytorchGenerator` to generates code for neural
 networks based on the B-UML model.
 """
 
+import logging
 import os
 import re
 from collections.abc import Callable
@@ -24,6 +25,8 @@ from besser.generators.nn.utils_nn import (
     handle_tensorop,
     renumber_tensorop_variables,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class NNCodeGenerator(GeneratorInterface):
@@ -104,6 +107,18 @@ class NNCodeGenerator(GeneratorInterface):
         generation."""
         if not self.model.modules:
             return
+
+        # torch.nn RNN/LSTM/GRU return a tuple, which nn.Sequential passes
+        # on as is to the next module.
+        if self.template_dir == "pytorch":
+            for module in self.model.modules:
+                if isinstance(module, (SimpleRNNLayer, LSTMLayer, GRULayer)):
+                    raise ValueError(
+                        "PyTorch sequential generation does not support "
+                        f"recurrent layer '{module.name}': torch.nn "
+                        "recurrent layers return a tuple. Use subclassing "
+                        "mode instead."
+                    )
 
         module_names = [mod.name for mod in self.model.modules]
         output_map = {}
@@ -579,4 +594,4 @@ class NNCodeGenerator(GeneratorInterface):
 
         with open(file_path, mode="w", encoding="utf-8") as f:
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.info("Code generated in the location: %s", file_path)

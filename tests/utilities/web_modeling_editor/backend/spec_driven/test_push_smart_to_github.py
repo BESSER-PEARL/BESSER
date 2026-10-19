@@ -154,6 +154,12 @@ def _seed_run(run_id: str, *, with_secret_env: bool = True) -> str:
     # Internal artifact that must NOT be pushed.
     with open(os.path.join(tmp, ".besser_recipe.json"), "w", encoding="utf-8") as fh:
         fh.write('{"instructions": "x"}')
+    # Line attribution state: rides along for continue-from-GitHub (#620).
+    with open(os.path.join(tmp, ".besser_attribution.json"), "w", encoding="utf-8") as fh:
+        fh.write('{"version": 1, "contributors": [], "files": {}}')
+    os.makedirs(os.path.join(tmp, ".agent-trace"), exist_ok=True)
+    with open(os.path.join(tmp, ".agent-trace", "run.json"), "w", encoding="utf-8") as fh:
+        fh.write("{}")
 
     # Build/dependency dir that must be skipped.
     nm = os.path.join(tmp, "node_modules", "left-pad")
@@ -269,6 +275,8 @@ class TestPushSmartToGitHub:
         # The recipe rides along so continue-from-GitHub re-hydrates the
         # seed's generator + history; other internals and build dirs stay out.
         assert ".besser_recipe.json" in files
+        assert ".besser_attribution.json" in files
+        assert ".agent-trace/run.json" in files
         assert not any(f.startswith(".besser_checkpoint") for f in files)
         assert not any(f.startswith(".besser_snapshot") for f in files)
         assert not any(f.startswith("node_modules/") for f in files)

@@ -450,6 +450,47 @@ def test_baking_skips_artifact_without_agent_ref(tmp_path, _researcher_agent):
     assert not (tmp_path / "database" / "Dockerfile").exists()
 
 
+def test_baked_agent_default_db_keeps_placeholders(tmp_path):
+    """A deployment has no generated app database, so ``db1`` stays a placeholder.
+
+    Unlike the web app generator (whose agents get the backend's SQLite file as
+    ``db1``), a Deployment model carries no class diagram, no generated app and no
+    database connection details: a ``db``-stereotyped artifact is an externally
+    hosted capability and a plain LOCAL artifact is a user-supplied build. Nothing
+    is mounted into the agent and its ``db1`` keeps the ``YOUR-DB-*`` placeholders.
+    """
+    from besser.BUML.metamodel.state_machine.agent import Agent, DBReply, WebSocketPlatform
+    from besser.BUML.metamodel.state_machine.state_machine import Body
+
+    agent = Agent("Researcher")
+    agent.platforms.append(WebSocketPlatform())
+    state = agent.new_state("initial", initial=True)
+    state.set_body(Body("initial_body", actions=[
+        DBReply(db_query_mode="sql", db_operation="select", db_sql_query="SELECT 1"),
+    ]))
+
+    node = Node("Cluster", kind=NodeKind.EXECUTION_ENVIRONMENT)
+    researcher = Artifact("Researcher", locality=Locality.LOCAL)
+    researcher.agent_model_ref = "agent-1"
+    app = Artifact("app", locality=Locality.LOCAL)
+    store = Artifact("store", locality=Locality.EXTERNAL, stereotypes=["db"])
+    rels = {DeploymentRelation(researcher, node), DeploymentRelation(app, node),
+            DeploymentRelation(store, node), DeploymentDependency(researcher, app)}
+    model = DeploymentModel("m", nodes={node}, artifacts={researcher, app, store},
+                            relationships=rels)
+
+    DockerComposeGenerator(model, output_dir=str(tmp_path),
+                           agent_models_by_id={"agent-1": agent}).generate()
+
+    compose = _parse((tmp_path / "docker-compose.yml").read_text(encoding="utf-8"))
+    assert "volumes" not in compose
+    assert all("volumes" not in svc for svc in compose["services"].values())
+    config = yaml.safe_load((tmp_path / "researcher" / "config.yaml").read_text(encoding="utf-8"))
+    sql = {key: value for item in config["db"]["sql"] for key, value in item.items()}
+    assert sql["db1"]["dialect"] == "postgresql"
+    assert sql["db1"]["host"] == "YOUR-DB-HOST"
+
+
 def test_baking_no_op_when_agent_models_empty(tmp_path):
     """Back-compat: empty agent_models_by_id produces only compose."""
     node = Node("Host", kind=NodeKind.DEVICE)

@@ -445,6 +445,9 @@ async def deploy_webapp_to_github(
                 agent_models=agent_models,
                 agent_configs=agent_configs,
                 agent_config_yamls=agent_config_yamls,
+                # Render runs the backend and each agent as separate services with no
+                # shared disk, so the agent cannot open the backend's SQLite file.
+                link_agent_database=False,
             )
             generator.generate()
 

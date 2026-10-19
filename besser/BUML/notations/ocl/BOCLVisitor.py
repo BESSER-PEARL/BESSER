@@ -184,6 +184,11 @@ class BOCLVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by BOCLParser#dotClosureNavigation.
+    def visitDotClosureNavigation(self, ctx:BOCLParser.DotClosureNavigationContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by BOCLParser#arrowasSet.
     def visitArrowasSet(self, ctx:BOCLParser.ArrowasSetContext):
         return self.visitChildren(ctx)
@@ -216,6 +221,11 @@ class BOCLVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BOCLParser#dotOclAsType.
     def visitDotOclAsType(self, ctx:BOCLParser.DotOclAsTypeContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BOCLParser#dotDateNavigation.
+    def visitDotDateNavigation(self, ctx:BOCLParser.DotDateNavigationContext):
         return self.visitChildren(ctx)
 
 

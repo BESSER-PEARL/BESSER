@@ -804,6 +804,102 @@ class TestValidateDiagram:
         assert data.get("valid_constraints") == ["dummy"]
         assert data.get("invalid_constraints") == []
 
+    # -- BESSER-PEARL/BESSER#400: DateTime overlap invariant -----------------
+
+    _OVERLAP_OCL = (
+        "context Session\n"
+        "inv NoRoomTimeOverlap:\n"
+        "  Session.allInstances()->forAll(s1, s2 |\n"
+        "    s1 <> s2 implies\n"
+        "      s1.room <> s2.room or\n"
+        "      s1.scheduleSlot.endTime <= s2.scheduleSlot.startTime or\n"
+        "      s1.scheduleSlot.startTime >= s2.scheduleSlot.endTime\n"
+        "  )"
+    )
+
+    @classmethod
+    def _conference_payload(cls, slot_role: str) -> Dict[str, Any]:
+        """Event / Session / Room / ScheduleSlot (DateTime start/end) + the issue's invariant."""
+        elements: Dict[str, Any] = {}
+        for cid, name, attrs in [
+            ("c-event", "Event", [("title", "str")]),
+            ("c-session", "Session", [("title", "str")]),
+            ("c-room", "Room", [("name", "str")]),
+            ("c-slot", "ScheduleSlot", [("startTime", "DateTime"), ("endTime", "DateTime")]),
+        ]:
+            elements[cid] = {
+                "type": "Class", "name": name, "methods": [],
+                "attributes": [f"{cid}-{attr}" for attr, _ in attrs],
+            }
+            for attr, attr_type in attrs:
+                elements[f"{cid}-{attr}"] = {"type": "Attribute", "name": f"+ {attr}: {attr_type}"}
+        elements["ocl-1"] = {"type": "ClassOCLConstraint", "constraint": cls._OVERLAP_OCL}
+
+        def _rel(rid, target, role):
+            return {
+                "id": rid, "type": "ClassBidirectional", "name": rid,
+                "source": {"element": "c-session", "role": "", "multiplicity": "0..*"},
+                "target": {"element": target, "role": role, "multiplicity": "1"},
+            }
+
+        return {
+            "title": "Conference",
+            "model": {
+                "type": "ClassDiagram",
+                "elements": elements,
+                "relationships": {
+                    "SessionRoom": _rel("SessionRoom", "c-room", ""),
+                    "SessionSlot": _rel("SessionSlot", "c-slot", slot_role),
+                    "SessionEvent": _rel("SessionEvent", "c-event", ""),
+                },
+            },
+        }
+
+    def test_validate_datetime_overlap_invariant(self):
+        """The issue's invariant is accepted once the role names it navigates exist."""
+        response = client.post(
+            "/besser_api/validate-diagram", json=self._conference_payload("scheduleSlot")
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["isValid"] is True
+        assert data["warnings"] == []
+        assert data["invalid_constraints"] == []
+        assert len(data["valid_constraints"]) == 1
+        assert "NoRoomTimeOverlap" in data["valid_constraints"][0]
+
+    def test_validate_datetime_overlap_invariant_unnamed_role_hint(self):
+        """An unnamed end defaults to the lower-cased class name ('scheduleslot'),
+        so 's1.scheduleSlot' fails; the warning now says which name exists."""
+        response = client.post("/besser_api/validate-diagram", json=self._conference_payload(""))
+        assert response.status_code == 200
+        data = response.json()
+        [warning] = data["warnings"]
+        assert "Property 'scheduleSlot' not found in context 'Session'" in warning
+        assert "did you mean 'scheduleslot'?" in warning
+
+    def test_validate_forwards_ocl_checker_warnings(self, monkeypatch):
+        """Constraints the checker could not evaluate surface as diagram warnings."""
+        from besser.utilities.web_modeling_editor.backend.routers import validation_router as vr
+
+        def _fake_check_ocl_constraint(_domain_model, object_model=None):
+            return {
+                "success": True,
+                "message": "",
+                "valid_constraints": ["ok"],
+                "invalid_constraints": [],
+                "warnings": ["OCL [Session inv x] not evaluated against the object diagram: reason"],
+            }
+
+        monkeypatch.setattr(vr, "check_ocl_constraint", _fake_check_ocl_constraint)
+        response = client.post(
+            "/besser_api/validate-diagram", json=self._conference_payload("scheduleSlot")
+        )
+        assert response.status_code == 200
+        assert response.json()["warnings"] == [
+            "OCL [Session inv x] not evaluated against the object diagram: reason"
+        ]
+
 
 # ---------------------------------------------------------------------------
 # Export BUML Endpoint -- POST /besser_api/export-buml

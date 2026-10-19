@@ -53,24 +53,31 @@ Create and activate a virtual environment first:
    directory itself, make sure you own the target folder or use ``sudo chown``
    on it.
 
-Python 3.13 is not supported
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``pip install`` fails on Python 3.13
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 **Symptom**
 
-Build errors or missing wheels when running ``pip install besser`` on
-Python 3.13.
+``pip install besser`` (or ``pip install -e .`` from a clone) on Python 3.13
+fails while building ``pydantic-core`` from source, typically ending with
+``TypeError: ForwardRef._evaluate() missing 1 required keyword-only argument:
+'recursive_guard'``.
 
 **Cause**
 
-Some BESSER dependencies have not yet released Python 3.13-compatible
-wheels.
+``setup.cfg`` declares ``python_requires = >=3.11``, so pip does not refuse
+Python 3.13 up front. But BESSER's own dependency ``bocl==1.0.1`` (the OCL
+interpreter, listed in ``requirements.txt`` and therefore installed with the
+core library, and pinned again in the web editor backend's
+``requirements.txt``) requires ``pydantic==2.6.3``, which needs
+``pydantic-core==2.16.3``. That release ships no Python 3.13 wheels and its
+source build does not work on 3.13. The failure therefore affects the core
+library, not only the backend.
 
 **Fix**
 
-Use **Python 3.11** or **3.12** instead — these are the versions CI tests, and
-``setup.cfg`` declares ``python_requires = >=3.11``, so anything older will not
-install either.  You can manage multiple Python versions with
+Use **Python 3.11** or **3.12** — these are the versions CI tests.  You can
+manage multiple Python versions with
 `pyenv <https://github.com/pyenv/pyenv>`_ (Linux/macOS) or
 the `Python Launcher for Windows <https://docs.python.org/3/using/windows.html#launcher>`_.
 

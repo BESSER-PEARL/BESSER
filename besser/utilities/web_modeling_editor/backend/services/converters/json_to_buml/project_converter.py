@@ -6,6 +6,7 @@ not just the active one.
 """
 
 import logging
+import re
 from typing import Optional
 
 from . import (
@@ -206,9 +207,8 @@ def json_to_buml_project(project):
     Processes ALL diagrams of each type (not just the active one), so that
     every model is included in the resulting Project.
     """
-    name = project.name
-    if name and "-" in name:
-        name = name.replace("-", "_")
+    # The editor allows any project name; the B-UML name must be an identifier.
+    name = re.sub(r"\W", "_", project.name) if project.name else project.name
     description = project.description or ""
 
     # Collect all valid diagrams, grouped by type
@@ -404,6 +404,8 @@ def json_to_buml_project(project):
     # can read them without changing this function's return type (the
     # public API stays a single Project instance).
     project_instance._nn_diagram_titles = nn_titles
+    if name != project.name:
+        project_instance._display_name = project.name
     project_instance._diagram_ids = diagram_ids
 
     # Project-level cross-diagram-reference promotion.

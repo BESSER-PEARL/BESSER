@@ -601,6 +601,9 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
         f.write("from besser.BUML.metamodel.project import Project\n")
         f.write("from besser.BUML.metamodel.structural.structural import Metadata\n\n")
         id_lines = _editor_id_lines(project)
+        display_name = getattr(project, "_display_name", None)
+        if display_name:
+            id_lines.insert(0, f"# project-name {json.dumps(display_name)}")
         if id_lines:
             f.write("# Web editor ids, read back on import\n")
             f.write("\n".join(id_lines) + "\n\n")

@@ -69,7 +69,7 @@ def _fixture_model(name):
     return json.loads(path.read_text(encoding="utf-8"))["model"]
 
 
-def _project_round_trip(diagrams, tmp_path, description="Round trip"):
+def _project_round_trip(diagrams, tmp_path, description="Round trip", name="RoundTrip"):
     import copy
     from besser.utilities.buml_code_builder.project_builder import project_to_code
     from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
@@ -79,7 +79,7 @@ def _project_round_trip(diagrams, tmp_path, description="Round trip"):
     from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.project_converter import (
         json_to_buml_project,
     )
-    project = {"id": "p", "type": "Project", "name": "RoundTrip", "description": description,
+    project = {"id": "p", "type": "Project", "name": name, "description": description,
                "owner": "tester", "createdAt": "2026-01-01T00:00:00Z",
                "diagrams": copy.deepcopy(diagrams)}
     out = tmp_path / "project.py"
@@ -249,3 +249,13 @@ def test_a_class_named_project_survives_a_buml_file_round_trip(tmp_path):
     domain_model_to_code(process_class_diagram(diagram), str(path))
     reloaded = parse_buml_content(path.read_text(encoding="utf-8"))
     assert [a.name for a in reloaded.get_class_by_name("Project").attributes] == ["title"]
+
+
+def test_a_project_name_with_spaces_exports_and_comes_back(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    classes = _class_diagram([_node("book", "class", {"name": "Book", "attributes": [], "methods": []})])
+    diagrams = {"ClassDiagram": [{"id": "cd-1", "title": "Library", "model": classes["model"]}]}
+    code, imported = _project_round_trip(diagrams, tmp_path, name="My Library-App")
+    # B-UML names cannot hold spaces or hyphens; the editor's name rides alongside.
+    assert 'name="My_Library_App"' in code
+    assert imported["name"] == "My Library-App"

@@ -95,6 +95,19 @@ def _object_model_title(section_code: str) -> str:
 # Written by project_builder in the PROJECT DEFINITION section.
 _DIAGRAM_ID_LINE = re.compile(r'^# diagram-id (\w+): (".*")\s*$', re.MULTILINE)
 _CLASS_IDS_LINE = re.compile(r'^# class-ids (\{.*\})\s*$', re.MULTILINE)
+_PROJECT_NAME_LINE = re.compile(r'^# project-name (".*")\s*$', re.MULTILINE)
+
+
+def _project_display_name(definition: str) -> Optional[str]:
+    """The editor's project name, recorded when the B-UML name had to be sanitised."""
+    match = _PROJECT_NAME_LINE.search(definition)
+    if not match:
+        return None
+    try:
+        name = json.loads(match.group(1))
+    except ValueError:
+        return None
+    return name if isinstance(name, str) else None
 
 
 def _parse_editor_ids(content: str) -> Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
@@ -558,7 +571,8 @@ def project_to_json(content: str) -> Dict[str, Any]:
     # first Metadata(...) / owner= of some model section above it.
     definition_start = content.rfind("# PROJECT DEFINITION")
     definition = content[definition_start:] if definition_start != -1 else content
-    project_name = _string_kwarg(r'Project\s*\(\s*name', definition) or "Unnamed Project"
+    project_name = (_project_display_name(definition)
+                    or _string_kwarg(r'Project\s*\(\s*name', definition) or "Unnamed Project")
     project_description = _string_kwarg(r'Metadata\s*\(\s*description', definition) or "No description"
     project_owner = _string_kwarg(r'\bowner', definition) or "Unknown"
 

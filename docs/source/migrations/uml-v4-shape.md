@@ -129,6 +129,10 @@ every v3 model through
   `classId`, component `realizes` / `processModelRefs` / `agentModelRef`,
   agent `a2a` refs) stay valid after a `.py` round trip. Files without the
   lines (or whose sections no longer line up with them) get fresh ids.
+- A project name that is not a B-UML identifier (spaces, hyphens, ...) is
+  exported with each such character replaced by `_`; the editor's name is
+  kept on a `# project-name "<name>"` line in the same section and restored
+  on import.
 
 ---
 

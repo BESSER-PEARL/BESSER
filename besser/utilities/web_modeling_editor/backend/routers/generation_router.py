@@ -862,6 +862,8 @@ def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
 @handle_endpoint_errors("_handle_agent_generation")
 async def _handle_agent_generation(json_data: dict):
     """Handle agent diagram generation by dispatching to specialized helpers."""
+    if agent_diagram_without_states(json_data.get('model')):
+        raise HTTPException(status_code=400, detail=agent_without_states_message(json_data.get('title')))
     config = json_data.get('config', {})
     config_yaml: Optional[str] = json_data.get('configYaml') if isinstance(json_data.get('configYaml'), str) else None
     sanitized_config_log = (

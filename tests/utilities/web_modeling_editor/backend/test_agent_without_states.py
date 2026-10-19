@@ -103,3 +103,10 @@ def test_standalone_agent_deploy_reports_an_agent_without_states(monkeypatch):
                      headers={"X-GitHub-Session": "test-session"})
     assert response.status_code == 400, response.text
     assert "'Helper' has no states" in response.json()["detail"]
+
+
+def test_single_diagram_agent_generation_reports_an_agent_without_states():
+    body = {"title": "Helper", "model": _COMPONENTS_ONLY, "generator": "agent"}
+    response = _post("/besser_api/generate-output", json=body)
+    assert response.status_code == 400, response.text
+    assert "'Helper' has no states" in response.json()["detail"]

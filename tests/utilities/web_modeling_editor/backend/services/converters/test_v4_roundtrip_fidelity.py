@@ -30,6 +30,10 @@ def test_class_description_is_not_doubled_by_a_round_trip():
     for _ in range(2):
         exported = class_buml_to_json(process_class_diagram(diagram))
         diagram = {"title": "Library", "model": exported}
+        # Where the class inspector reads it, and nowhere else.
+        [book] = [n for n in exported["nodes"] if n["type"] == "class"]
+        assert book["data"].get("description") == "A printed work"
+        assert not [n for n in exported["nodes"] if n["type"] == "comment"]
     model = process_class_diagram(diagram)
     assert model.get_class_by_name("Book").metadata.description == "A printed work"
 

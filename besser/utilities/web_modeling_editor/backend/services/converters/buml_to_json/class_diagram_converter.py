@@ -351,7 +351,6 @@ def class_buml_to_json(domain_model):
     method_diagram_refs = getattr(domain_model, 'method_diagram_refs', {})
     layout_positions = getattr(domain_model, '_layout_positions', {})
 
-    comments_to_create: list = []  # [(text, linked_class_node_id)]
     # Nodes without a saved position; placed on a size-aware grid at the end.
     auto_placed: list = []
 
@@ -404,10 +403,10 @@ def class_buml_to_json(domain_model):
 
         if isinstance(type_obj, Class) and getattr(type_obj, 'metadata', None):
             md = type_obj.metadata
-            # Emitted once, as a linked comment: re-import merges both
-            # data.description and linked comments into the description.
+            # Only where the class inspector reads it: a linked comment as
+            # well would merge into the description again on re-import.
             if md.description:
-                comments_to_create.append((md.description, node_id))
+                data["description"] = md.description
             if md.uri:
                 data["uri"] = md.uri
             if md.icon:
@@ -600,28 +599,6 @@ def class_buml_to_json(domain_model):
                     source_handle="Center",
                     target_handle="Up",
                 ))
-
-    # Comments (top-level ``comment`` nodes + ``CommentLink`` edges — the
-    # node / edge types the React Flow frontend registers).
-    for comment_text, linked_class_id in comments_to_create:
-        comment_id = str(uuid.uuid4())
-        node = make_node(
-            node_id=comment_id,
-            type_="comment",
-            data={"name": comment_text},
-            position={"x": 0, "y": 0},
-            width=160,
-            height=100,
-        )
-        nodes.append(node)
-        auto_placed.append(node)
-        edges.append(make_edge(
-            edge_id=str(uuid.uuid4()),
-            source=comment_id,
-            target=linked_class_id,
-            type_="CommentLink",
-            data={"points": []},
-        ))
 
     if hasattr(domain_model, 'metadata') and domain_model.metadata and domain_model.metadata.description:
         node = make_node(

@@ -872,7 +872,11 @@ class TestClassDiagramRoundtrip:
 
     def test_comment_round_trip(self, minimal_class_diagram_json):
         """``comment`` nodes tethered by ``CommentLink`` edges land on the
-        class metadata and re-emit with the same node / edge types."""
+        class metadata, which re-emits as the class's ``data.description``.
+
+        B-UML keeps one description per class, so a linked comment and the
+        inspector's description field cannot both come back; the field the
+        class inspector edits wins."""
         model = minimal_class_diagram_json["model"]
         model["nodes"].append({
             "id": "n-note",
@@ -898,16 +902,10 @@ class TestClassDiagramRoundtrip:
         assert book.metadata.description == "Books are the unit of lending."
 
         result = class_buml_to_json(domain_model)
-        comments = _nodes_by_type(result, "comment")
-        assert [_data(c).get("name") for c in comments] == [
-            "Books are the unit of lending.",
-        ]
-        links = _edges_by_type(result, "CommentLink")
-        assert len(links) == 1
-        linked = {links[0]["source"], links[0]["target"]}
-        assert comments[0]["id"] in linked
         book_node = _class_node_by_name(result, "Book")
-        assert book_node["id"] in linked
+        assert _data(book_node).get("description") == "Books are the unit of lending."
+        assert _nodes_by_type(result, "comment") == []
+        assert _edges_by_type(result, "CommentLink") == []
 
     def test_legacy_comments_link_spelling_still_ingests(self, minimal_class_diagram_json):
         """Older fixtures use ``Comments`` / ``Link`` — keep accepting them."""

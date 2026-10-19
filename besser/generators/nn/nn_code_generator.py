@@ -108,6 +108,18 @@ class NNCodeGenerator(GeneratorInterface):
         if not self.model.modules:
             return
 
+        # torch.nn RNN/LSTM/GRU return a tuple, which nn.Sequential passes
+        # on as is to the next module.
+        if self.template_dir == "pytorch":
+            for module in self.model.modules:
+                if isinstance(module, (SimpleRNNLayer, LSTMLayer, GRULayer)):
+                    raise ValueError(
+                        "PyTorch sequential generation does not support "
+                        f"recurrent layer '{module.name}': torch.nn "
+                        "recurrent layers return a tuple. Use subclassing "
+                        "mode instead."
+                    )
+
         module_names = [mod.name for mod in self.model.modules]
         output_map = {}
 

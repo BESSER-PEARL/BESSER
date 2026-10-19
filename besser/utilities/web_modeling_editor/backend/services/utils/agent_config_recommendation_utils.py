@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 
 RECOMMENDATION_ALLOWED_VALUES = {
     "agentLanguage": ["original", "english", "french", "german", "spanish", "luxembourgish", "portuguese"],
-    "agentStyle": ["original", "formal", "informal", "friendly", "technical"],
+    "conversationalTone": ["original", "formal", "informal", "friendly", "technical"],
+    "explanationStyle": ["original", "direct", "step-by-step", "narrative"],
     "languageComplexity": ["original", "simple", "medium", "complex"],
     "sentenceLength": ["original", "concise", "verbose"],
     "font": ["sans", "serif", "monospace", "neutral", "grotesque", "condensed", "hyperlegible", "lexend", "dyslexia", "verdana"],
@@ -56,7 +57,8 @@ def load_default_agent_recommendation_config() -> Dict[str, Any]:
     fallback = {
         "presentation": {
             "agentLanguage": "original",
-            "agentStyle": "original",
+            "conversationalTone": "original",
+            "explanationStyle": "original",
             "languageComplexity": "original",
             "sentenceLength": "concise",
             "interfaceStyle": {
@@ -164,7 +166,13 @@ def normalize_recommended_agent_config(
 ) -> Dict[str, Any]:
     """Normalize recommendation to a safe structured config with allowed frontend values."""
     defaults = load_default_agent_recommendation_config()
-    merged = merge_dicts(defaults, raw_config if isinstance(raw_config, dict) else {})
+    raw_config = deepcopy(raw_config) if isinstance(raw_config, dict) else {}
+    raw_presentation = raw_config.get("presentation")
+    if isinstance(raw_presentation, dict):
+        if "conversationalTone" not in raw_presentation and "agentStyle" in raw_presentation:
+            raw_presentation["conversationalTone"] = raw_presentation["agentStyle"]
+        raw_presentation.pop("agentStyle", None)
+    merged = merge_dicts(defaults, raw_config)
 
     presentation = merged.get("presentation") if isinstance(merged.get("presentation"), dict) else {}
     modality = merged.get("modality") if isinstance(merged.get("modality"), dict) else {}
@@ -200,10 +208,15 @@ def normalize_recommended_agent_config(
                 RECOMMENDATION_ALLOWED_VALUES["agentLanguage"],
                 default_presentation["agentLanguage"],
             ),
-            "agentStyle": _pick_allowed(
-                presentation.get("agentStyle"),
-                RECOMMENDATION_ALLOWED_VALUES["agentStyle"],
-                default_presentation["agentStyle"],
+            "conversationalTone": _pick_allowed(
+                presentation.get("conversationalTone"),
+                RECOMMENDATION_ALLOWED_VALUES["conversationalTone"],
+                default_presentation["conversationalTone"],
+            ),
+            "explanationStyle": _pick_allowed(
+                presentation.get("explanationStyle"),
+                RECOMMENDATION_ALLOWED_VALUES["explanationStyle"],
+                default_presentation["explanationStyle"],
             ),
             "languageComplexity": _pick_allowed(
                 presentation.get("languageComplexity"),

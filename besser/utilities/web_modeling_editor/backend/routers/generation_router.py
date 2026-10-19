@@ -188,6 +188,10 @@ async def recommend_agent_config_llm(
         "Return ONLY a JSON object with this exact shape: "
         "{presentation:{...}, modality:{...}, behavior:{...}, content:{...}, system:{...}}. "
         "Use only allowed values and keep output concise and deterministic. "
+        "Within presentation, conversationalTone controls how the agent addresses the user; "
+        "explanationStyle controls how it explains information (direct, step-by-step, or narrative). "
+        "Both preserve facts and the core message; semantic adaptation belongs to content. "
+        "Explanation style applies where useful, leaving practical answers direct. "
         "Do not include markdown, comments, or explanatory text."
     )
     user_prompt = (

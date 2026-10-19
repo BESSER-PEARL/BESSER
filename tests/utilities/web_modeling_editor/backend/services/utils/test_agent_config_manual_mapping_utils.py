@@ -42,7 +42,7 @@ def test_age_threshold_triggers_older_adults_rule():
     cfg = result["config"]
     # The older_adults rule sets formal style, simple complexity, large font, high contrast.
     p = cfg["presentation"]
-    assert p["agentStyle"] == "formal"
+    assert p["conversationalTone"] == "formal"
     assert p["languageComplexity"] == "simple"
     assert p["sentenceLength"] == "concise"
     assert p["interfaceStyle"]["size"] == 20
@@ -172,3 +172,16 @@ def test_get_manual_agent_config_mapping_exposes_rules_and_metadata():
     mapping["rules"].clear()
     again = get_manual_agent_config_mapping()
     assert again["rules"], "expected fresh rules list on subsequent call"
+
+
+@pytest.mark.parametrize("current_config", [
+    {"agentStyle": "informal", "explanationStyle": "narrative"},
+    {"presentation": {"agentStyle": "informal", "explanationStyle": "narrative"}},
+    {"presentation": {"conversationalTone": "informal", "explanationStyle": "narrative"}},
+])
+def test_manual_mapping_preserves_new_and_legacy_presentation(current_config):
+    result = build_manual_mapping_recommendation({}, current_config=current_config)
+    presentation = result["config"]["presentation"]
+    assert presentation["conversationalTone"] == "informal"
+    assert presentation["explanationStyle"] == "narrative"
+    assert "agentStyle" not in presentation

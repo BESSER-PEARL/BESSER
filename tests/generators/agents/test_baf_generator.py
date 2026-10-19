@@ -226,3 +226,25 @@ def test_baf_generator_single_rag_still_uses_explicit_instance(tmp_path):
     assert "rag_message = session.run_rag(session.event.message)" not in code
 
 
+
+
+@pytest.mark.parametrize("config", [
+    {"explanationStyle": "narrative"},
+    {"presentation": {"explanationStyle": "narrative"}},
+])
+def test_explanation_only_rule_generates_personalized_model(tmp_path, config):
+    from unittest.mock import patch
+    from besser.BUML.metamodel.state_machine.agent import AgentReply
+
+    agent = Agent("explanation_agent")
+    agent.platforms.append(WebSocketPlatform())
+    state = agent.new_state(name="exhibit", initial=True)
+    state.set_body(Body("exhibit_body", actions=[AgentReply("The fortress protected the city.")]))
+    with patch("besser.generators.agents.agent_personalization.call_openai_chat", return_value=
+               "1. Imagine approaching the city: the fortress protects the people inside.") as mock_chat:
+        BAFGenerator(model=agent, config=config, output_dir=str(tmp_path),
+                     openai_api_key="k", generation_mode=GenerationMode.PERSONALIZED_ONLY).generate()
+    mock_chat.assert_called_once()
+    exported = (tmp_path / "personalized_agent_model.py").read_text(encoding="utf-8")
+    assert "Imagine approaching the city" in exported
+    assert (tmp_path / "personalized_agent_model.json").is_file()

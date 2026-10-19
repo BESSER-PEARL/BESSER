@@ -19,7 +19,7 @@
     ],
     "recommendation": {
       "presentation": {
-        "agentStyle": "formal",
+        "conversationalTone": "formal",
         "languageComplexity": "simple",
         "sentenceLength": "concise",
         "interfaceStyle": {
@@ -56,7 +56,7 @@
     ],
     "recommendation": {
       "presentation": {
-        "agentStyle": "informal",
+        "conversationalTone": "informal",
         "languageComplexity": "medium",
         "sentenceLength": "concise"
       },

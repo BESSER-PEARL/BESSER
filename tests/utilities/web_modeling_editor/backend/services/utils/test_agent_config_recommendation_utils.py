@@ -182,7 +182,7 @@ def test_normalize_invalid_enum_falls_back_to_default():
     raw = {
         "presentation": {
             "agentLanguage": "klingon",      # not in allow-list
-            "agentStyle": "INVALID",
+            "conversationalTone": "INVALID",
             "interfaceStyle": {
                 "font": "comic-sans",
                 "alignment": "diagonal",
@@ -195,7 +195,7 @@ def test_normalize_invalid_enum_falls_back_to_default():
     out = normalize_recommended_agent_config(raw, None)
     p = out["presentation"]
     assert p["agentLanguage"] in RECOMMENDATION_ALLOWED_VALUES["agentLanguage"]
-    assert p["agentStyle"] in RECOMMENDATION_ALLOWED_VALUES["agentStyle"]
+    assert p["conversationalTone"] in RECOMMENDATION_ALLOWED_VALUES["conversationalTone"]
     assert p["interfaceStyle"]["font"] in RECOMMENDATION_ALLOWED_VALUES["font"]
     assert p["interfaceStyle"]["alignment"] in RECOMMENDATION_ALLOWED_VALUES["alignment"]
     assert p["interfaceStyle"]["contrast"] in RECOMMENDATION_ALLOWED_VALUES["contrast"]
@@ -240,3 +240,13 @@ def test_normalize_llm_block_keeps_known_provider():
     raw = {"system": {"llm": {"provider": "openai", "model": "gpt-5-mini"}}}
     out = normalize_recommended_agent_config(raw, None)
     assert out["system"]["llm"] == {"provider": "openai", "model": "gpt-5-mini"}
+
+
+@pytest.mark.parametrize("tone_key", ["agentStyle", "conversationalTone"])
+def test_explanation_and_saved_tone_are_normalized(tone_key):
+    raw = {"presentation": {tone_key: "informal", "explanationStyle": "narrative"}}
+    result = normalize_recommended_agent_config(raw, None)["presentation"]
+    assert result["conversationalTone"] == "informal"
+    assert result["explanationStyle"] == "narrative"
+    assert "agentStyle" not in result
+    assert raw["presentation"][tone_key] == "informal"

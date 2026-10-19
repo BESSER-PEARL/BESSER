@@ -353,13 +353,17 @@ def _to_structured_config(current_config: Optional[Dict[str, Any]]) -> Dict[str,
             section = current_config.get(key)
             if isinstance(section, dict):
                 structured[key] = deepcopy(section)
+        presentation = structured.get("presentation", {})
+        if "conversationalTone" not in presentation and "agentStyle" in presentation:
+            presentation["conversationalTone"] = presentation.pop("agentStyle")
         return structured
 
     # Flat to structured conversion for compatibility.
     return {
         "presentation": {
             "agentLanguage": current_config.get("agentLanguage"),
-            "agentStyle": current_config.get("agentStyle"),
+            "conversationalTone": current_config.get("conversationalTone", current_config.get("agentStyle")),
+            "explanationStyle": current_config.get("explanationStyle"),
             "languageComplexity": current_config.get("languageComplexity"),
             "sentenceLength": current_config.get("sentenceLength"),
             "interfaceStyle": current_config.get("interfaceStyle"),

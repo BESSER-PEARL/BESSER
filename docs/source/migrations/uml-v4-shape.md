@@ -121,6 +121,14 @@ every v3 model through
   formats (GrapesJS / custom canvas). They are **not** v3 UML models and the
   migrator must skip them based on diagram type, not on the absence of
   `elements`.
+- A project exported as B-UML (`project_to_code`) records the editor ids in
+  its `PROJECT DEFINITION` section: one `# diagram-id <ModelType>: "<id>"`
+  line per diagram, in section order per type, and one
+  `# class-ids {"<class diagram id>": {"<class name>": "<node id>"}}` line.
+  `project_to_json` restores them, so cross-diagram references (object
+  `classId`, component `realizes` / `processModelRefs` / `agentModelRef`,
+  agent `a2a` refs) stay valid after a `.py` round trip. Files without the
+  lines (or whose sections no longer line up with them) get fresh ids.
 
 ---
 

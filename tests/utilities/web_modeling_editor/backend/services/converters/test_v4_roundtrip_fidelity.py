@@ -105,3 +105,56 @@ def test_several_diagrams_of_one_type_import_once_each(tmp_path, monkeypatch):
         entries = imported["diagrams"][diagram_type]
         assert len(entries) == 2, (diagram_type, [e["title"] for e in entries])
         assert all(e["model"]["nodes"] for e in entries), diagram_type
+
+
+def _cross_reference_project():
+    """A component realizes a class and joins a BPMN process; an object
+    instantiates the same class by its node id."""
+    bpmn = {"version": "4.0.0", "type": "BPMNDiagram", "edges": [
+        {"id": "f1", "type": "BPMNSequenceFlow", "source": "s", "target": "e",
+         "data": {"name": "", "points": []}},
+    ], "nodes": [
+        _node("s", "bpmnStartEvent", {"name": "start", "eventType": "default"}),
+        _node("e", "bpmnEndEvent", {"name": "end", "eventType": "default"}),
+    ]}
+    component = {"version": "4.0.0", "type": "ComponentDiagram", "edges": [], "nodes": [
+        _node("cmp", "component", {"name": "Catalogue", "isComponentHeaderShown": True,
+                                   "realizes": ["n-book"], "processModelRefs": ["bp-1"]}),
+    ]}
+    objects = {"version": "4.0.0", "type": "ObjectDiagram", "edges": [], "nodes": [
+        _node("o1", "objectName", {"name": "dune", "classId": "n-book", "methods": [],
+                                   "attributes": []}),
+    ]}
+    return {
+        "ClassDiagram": [{"id": "cd-1", "title": "Library",
+                          "model": _fixture_model("class_diagram_basic")}],
+        "ObjectDiagram": [{"id": "od-1", "title": "Shelf", "model": objects,
+                           "references": {"ClassDiagram": "cd-1"}}],
+        "BPMN": [{"id": "bp-1", "title": "Lending", "model": bpmn}],
+        "ComponentDiagram": [{"id": "cmp-1", "title": "Services", "model": component}],
+    }
+
+
+def test_project_import_keeps_diagram_and_class_ids(tmp_path, monkeypatch):
+    from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.project_converter import (
+        json_to_buml_project,
+    )
+    monkeypatch.chdir(tmp_path)
+    diagrams = _cross_reference_project()
+    _, imported = _project_round_trip(diagrams, tmp_path)
+
+    for diagram_type, expected in (("ClassDiagram", "cd-1"), ("ObjectDiagram", "od-1"),
+                                   ("BPMN", "bp-1"), ("ComponentDiagram", "cmp-1")):
+        assert [d["id"] for d in imported["diagrams"][diagram_type]] == [expected], diagram_type
+    class_ids = {n["data"]["name"]: n["id"]
+                 for n in imported["diagrams"]["ClassDiagram"][0]["model"]["nodes"]
+                 if n["type"] == "class"}
+    assert class_ids["Book"] == "n-book"
+    [obj] = imported["diagrams"]["ObjectDiagram"][0]["model"]["nodes"]
+    assert obj["data"]["classId"] == "n-book"
+
+    # The imported project exports again: its cross-diagram references resolve.
+    project = dict(imported, name="RoundTrip")
+    reexported = json_to_buml_project(ProjectInput(**project))
+    assert reexported._cross_diagram_errors["errors"] == []

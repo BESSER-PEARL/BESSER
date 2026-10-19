@@ -4,6 +4,7 @@ Project Builder
 This module generates Python code for complete BUML projects including all models.
 """
 
+import json
 import logging
 import os
 import re
@@ -80,6 +81,31 @@ def _suffixed_name(base_name: str, index: int, total: int) -> str:
 
 # The fixed "# <KIND> MODEL #" banner a model builder writes, with its borders.
 _BUILDER_BANNER = re.compile(r"^#+\n# [A-Z ]+ MODEL #\n#+\n", re.MULTILINE)
+
+
+def _editor_id_lines(project: Project) -> list:
+    """``# diagram-id`` / ``# class-ids`` comment lines for the web editor.
+
+    ``json_to_buml_project`` records the diagram each model came from; the
+    importer restores those ids (in section order per diagram type) and the
+    class node ids, which cross-diagram references (object ``classId``,
+    component ``realizes`` / ``processModelRefs``, ...) point at.
+    """
+    diagram_ids = getattr(project, "_diagram_ids", None) or {}
+    lines = []
+    class_ids = {}
+    for model in project.models:
+        entry = diagram_ids.get(id(model))
+        if entry is None:
+            continue
+        diagram_type, diagram_id = entry
+        lines.append(f"# diagram-id {diagram_type}: {json.dumps(diagram_id)}")
+        index = getattr(model, "_wme_class_index", None)
+        if diagram_type == "ClassDiagram" and index:
+            class_ids[diagram_id] = {cls.name: wid for wid, cls in index.items()}
+    if class_ids:
+        lines.append(f"# class-ids {json.dumps(class_ids, sort_keys=True)}")
+    return lines
 
 
 def _write_temp_to_output(temp_path: str, out_file, section_header: str = ""):
@@ -574,6 +600,10 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
         f.write("######################\n\n")
         f.write("from besser.BUML.metamodel.project import Project\n")
         f.write("from besser.BUML.metamodel.structural.structural import Metadata\n\n")
+        id_lines = _editor_id_lines(project)
+        if id_lines:
+            f.write("# Web editor ids, read back on import\n")
+            f.write("\n".join(id_lines) + "\n\n")
 
         # Write metadata and project
         f.write(f'metadata = Metadata(description="{_escape_python_string(project.metadata.description)}")\n')

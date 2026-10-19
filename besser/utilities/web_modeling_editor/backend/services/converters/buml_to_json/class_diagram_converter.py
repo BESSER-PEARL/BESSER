@@ -350,13 +350,16 @@ def class_buml_to_json(domain_model):
     auto_placed: list = []
 
     class_id_map: dict = {}  # type_obj -> node id
+    # Editor node ids of the classes (from the JSON or a project .py import),
+    # so cross-diagram references to them stay valid.
+    known_ids = {cls.name: wid for wid, cls in (getattr(domain_model, "_wme_class_index", None) or {}).items()}
 
     # Emit class / abstract / interface / enumeration nodes.
     for type_obj in sorted(
         (t for t in domain_model.types if isinstance(t, (Class, Enumeration))),
         key=lambda t: t.name,
     ):
-        node_id = str(uuid.uuid4())
+        node_id = known_ids.get(type_obj.name) or str(uuid.uuid4())
         class_id_map[type_obj] = node_id
 
         saved_bounds = layout_positions.get(type_obj.name)

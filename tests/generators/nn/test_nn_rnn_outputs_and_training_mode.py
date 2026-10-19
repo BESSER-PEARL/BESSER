@@ -18,10 +18,8 @@ def rnn_then_linear(layer_cls, return_type):
 
 @pytest.mark.parametrize("layer_cls", [GRULayer, LSTMLayer, SimpleRNNLayer])
 @pytest.mark.parametrize("return_type", ["last", "full"])
-def test_rnn_returning_one_tensor_needs_no_input_var(layer_cls, return_type, tmp_path):
-    model = rnn_then_linear(layer_cls, return_type)
-    assert model.validate(raise_exception=False)["success"]
-    PytorchGenerator(model, output_dir=str(tmp_path / "torch")).generate()
+def test_rnn_returning_one_tensor_generates_without_input_var(layer_cls, return_type, tmp_path):
+    PytorchGenerator(rnn_then_linear(layer_cls, return_type), output_dir=str(tmp_path / "torch")).generate()
     TFGenerator(rnn_then_linear(layer_cls, return_type), output_dir=str(tmp_path / "tf")).generate()
     code = (tmp_path / "torch" / "pytorch_nn_subclassing.py").read_text(encoding="utf-8")
     assert "x, _ = self.rnn(x)" in code
@@ -49,13 +47,6 @@ def test_pytorch_sequential_rejects_recurrent_layers(layer_cls, return_type, tmp
     tf_code = (tmp_path / "tf_nn_sequential.py").read_text(encoding="utf-8")
     assert "layers.Dense(units=2" in tf_code
     assert "return_state=True" not in tf_code
-
-
-@pytest.mark.parametrize("return_type", ["hidden", "both"])
-def test_rnn_returning_several_tensors_still_needs_input_var(return_type):
-    result = rnn_then_linear(LSTMLayer, return_type).validate(raise_exception=False)
-    assert not result["success"]
-    assert any("input_var is required" in e for e in result["errors"])
 
 
 def regression_model(outputs):

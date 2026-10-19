@@ -14,10 +14,12 @@ from besser.BUML.metamodel.nn import (
     DropoutLayer,
     EmbeddingLayer,
     FlattenLayer,
+    GRULayer,
     Image,
     Label,
     LayerNormLayer,
     LinearLayer,
+    LSTMLayer,
     PoolingLayer,
     SimpleRNNLayer,
     Structured,
@@ -158,6 +160,26 @@ def test_rnn_layer():
     assert simple_rnn_layer.bidirectional is False
     assert simple_rnn_layer.dropout is True
     assert simple_rnn_layer.input_reused is False
+
+def _rnn_then_linear(layer_cls, return_type):
+    model = NN(name="forecaster")
+    model.add_layer(layer_cls(name="rnn", input_size=3, hidden_size=8, return_type=return_type))
+    model.add_layer(LinearLayer(name="out", in_features=8, out_features=2))
+    return model
+
+
+@pytest.mark.parametrize("layer_cls", [GRULayer, LSTMLayer, SimpleRNNLayer])
+@pytest.mark.parametrize("return_type", ["last", "full"])
+def test_rnn_returning_one_tensor_needs_no_input_var(layer_cls, return_type):
+    """'last' and 'full' give one tensor, so the next layer needs no input_var."""
+    assert _rnn_then_linear(layer_cls, return_type).validate(raise_exception=False)["success"]
+
+
+@pytest.mark.parametrize("return_type", ["hidden", "both"])
+def test_rnn_returning_several_tensors_still_needs_input_var(return_type):
+    result = _rnn_then_linear(LSTMLayer, return_type).validate(raise_exception=False)
+    assert not result["success"]
+    assert any("input_var is required" in e for e in result["errors"])
 
 #Test conv layers
 def test_conv_layer():

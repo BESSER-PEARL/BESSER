@@ -94,6 +94,7 @@ def _object_model_title(section_code: str) -> str:
 
 # Written by project_builder in the PROJECT DEFINITION section.
 _DIAGRAM_ID_LINE = re.compile(r'^# diagram-id (\w+): (".*")\s*$', re.MULTILINE)
+_DIAGRAM_TITLE_LINE = re.compile(r'^# diagram-title (\w+): (".*")\s*$', re.MULTILINE)
 _CLASS_IDS_LINE = re.compile(r'^# class-ids (\{.*\})\s*$', re.MULTILINE)
 _PROJECT_NAME_LINE = re.compile(r'^# project-name (".*")\s*$', re.MULTILINE)
 
@@ -110,20 +111,26 @@ def _project_display_name(definition: str) -> Optional[str]:
     return name if isinstance(name, str) else None
 
 
+def _parse_recorded_strings(pattern: re.Pattern, content: str) -> Dict[str, List[str]]:
+    """``{diagram type: [value, ...]}`` from ``# <key> <Type>: "<value>"`` lines, in order."""
+    values: Dict[str, List[str]] = {}
+    for diagram_type, raw_value in pattern.findall(content):
+        try:
+            value = json.loads(raw_value)
+        except ValueError:
+            continue
+        if isinstance(value, str):
+            values.setdefault(diagram_type, []).append(value)
+    return values
+
+
 def _parse_editor_ids(content: str) -> Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
     """Read the web editor ids a project export carries.
 
     Returns ``(diagram ids per diagram type, in section order;
     {class diagram id: {class name: class node id}})``. Malformed lines are ignored.
     """
-    diagram_ids: Dict[str, List[str]] = {}
-    for diagram_type, raw_id in _DIAGRAM_ID_LINE.findall(content):
-        try:
-            diagram_id = json.loads(raw_id)
-        except ValueError:
-            continue
-        if isinstance(diagram_id, str):
-            diagram_ids.setdefault(diagram_type, []).append(diagram_id)
+    diagram_ids = _parse_recorded_strings(_DIAGRAM_ID_LINE, content)
     class_ids: Dict[str, Dict[str, str]] = {}
     match = _CLASS_IDS_LINE.search(content)
     if match:
@@ -579,6 +586,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
     # diagram_jsons maps diagram type -> list of diagram entries
     diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}
     recorded_ids, recorded_class_ids = _parse_editor_ids(content)
+    recorded_titles = _parse_recorded_strings(_DIAGRAM_TITLE_LINE, content)
 
     # First pass: extract all structural/domain sections (needed as context for object diagrams)
     # Check for both exact "domain_model" and suffixed variants like "domain_model_1"
@@ -666,11 +674,14 @@ def project_to_json(content: str) -> Dict[str, Any]:
 
         diagram_list = []
         section_ids = _ids_for(recorded_ids, diagram_type, len(sections))
+        section_titles = _ids_for(recorded_titles, diagram_type, len(sections))
         for idx, (title, section_code) in enumerate(sections):
             resolved_title = title if title else default_title
             # Append index suffix for multi-diagram types (only when more than one)
             if len(sections) > 1 and not title:
                 resolved_title = f"{default_title} {idx + 1}"
+            # The editor's own title, when the export recorded it.
+            resolved_title = section_titles[idx] or resolved_title
 
             logger.debug(
                 "Converting section %d/%d for %s: '%s'",

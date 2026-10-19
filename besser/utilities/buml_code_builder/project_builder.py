@@ -84,11 +84,11 @@ _BUILDER_BANNER = re.compile(r"^#+\n# [A-Z ]+ MODEL #\n#+\n", re.MULTILINE)
 
 
 def _editor_id_lines(project: Project) -> list:
-    """``# diagram-id`` / ``# class-ids`` comment lines for the web editor.
+    """``# diagram-id`` / ``# diagram-title`` / ``# class-ids`` comment lines for the web editor.
 
     ``json_to_buml_project`` records the diagram each model came from; the
-    importer restores those ids (in section order per diagram type) and the
-    class node ids, which cross-diagram references (object ``classId``,
+    importer restores those ids and titles (in section order per diagram type)
+    and the class node ids, which cross-diagram references (object ``classId``,
     component ``realizes`` / ``processModelRefs``, ...) point at.
     """
     diagram_ids = getattr(project, "_diagram_ids", None) or {}
@@ -98,8 +98,11 @@ def _editor_id_lines(project: Project) -> list:
         entry = diagram_ids.get(id(model))
         if entry is None:
             continue
-        diagram_type, diagram_id = entry
+        diagram_type, diagram_id, title = entry
         lines.append(f"# diagram-id {diagram_type}: {json.dumps(diagram_id)}")
+        # One per id, empty when untitled, so the titles line up with the ids.
+        title = title if isinstance(title, str) else ""
+        lines.append(f"# diagram-title {diagram_type}: {json.dumps(title)}")
         index = getattr(model, "_wme_class_index", None)
         if diagram_type == "ClassDiagram" and index:
             class_ids[diagram_id] = {cls.name: wid for wid, cls in index.items()}

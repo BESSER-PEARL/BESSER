@@ -259,3 +259,18 @@ def test_a_project_name_with_spaces_exports_and_comes_back(tmp_path, monkeypatch
     # B-UML names cannot hold spaces or hyphens; the editor's name rides alongside.
     assert 'name="My_Library_App"' in code
     assert imported["name"] == "My Library-App"
+
+
+def test_diagram_titles_survive_a_project_round_trip(tmp_path, monkeypatch):
+    import copy
+    monkeypatch.chdir(tmp_path)
+    bpmn = _cross_reference_project()["BPMN"][0]["model"]
+    diagrams = {
+        "AgentDiagram": [{"id": "ag-1", "title": "Front desk bot",
+                          "model": _fixture_model("agent_diagram_basic")}],
+        "BPMN": [{"id": "bp-1", "title": "Lending", "model": bpmn},
+                 {"id": "bp-2", "title": "Returns \u2014 late", "model": copy.deepcopy(bpmn)}],
+    }
+    _, imported = _project_round_trip(diagrams, tmp_path)
+    assert [d["title"] for d in imported["diagrams"]["AgentDiagram"]] == ["Front desk bot"]
+    assert [d["title"] for d in imported["diagrams"]["BPMN"]] == ["Lending", "Returns \u2014 late"]

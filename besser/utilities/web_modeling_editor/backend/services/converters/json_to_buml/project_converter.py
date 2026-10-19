@@ -219,13 +219,13 @@ def json_to_buml_project(project):
     # built model. Populated for BPMN + Agent diagrams as they are processed;
     # consumed by the cross-diagram resolver for process_model_refs / agent_diagram_ref.
     diagram_index: dict = {}
-    # id(model) -> (diagram model type, WME diagram id); project_to_code
+    # id(model) -> (diagram model type, WME diagram id, title); project_to_code
     # writes them so a .py import keeps the ids cross-diagram refs point at.
     diagram_ids: dict = {}
 
     def _remember(model, diagram_type: str, diag) -> None:
         if getattr(diag, "id", None):
-            diagram_ids[id(model)] = (diagram_type, diag.id)
+            diagram_ids[id(model)] = (diagram_type, diag.id, getattr(diag, "title", None))
     # ── ClassDiagram caching ──────────────────────────────────────────
     # Cache processed ClassDiagrams by ID so we never process the same one twice
     # (e.g. when an ObjectDiagram and a GUINoCodeDiagram both reference it).

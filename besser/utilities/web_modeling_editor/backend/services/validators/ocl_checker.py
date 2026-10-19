@@ -299,7 +299,12 @@ def check_ocl_constraint(domain_model, object_model = None):
                     # "  >= 0 and  <= 120" and blows up with a Python
                     # ``invalid syntax`` error. An unset attribute means "no
                     # constraint to check", so we skip instead.
+                    # Only attributes count: an association end (``self.books``)
+                    # has no slot, and an object without links is a valid value.
                     referenced_attrs = set(re.findall(r'self\.(\w+)', expression))
+                    context_class = getattr(constraint, "context", None)
+                    if isinstance(context_class, Class):
+                        referenced_attrs &= {a.name for a in context_class.all_attributes()}
                     if referenced_attrs:
                         def _has_all_referenced(obj):
                             slot_names = {

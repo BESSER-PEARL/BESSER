@@ -214,7 +214,7 @@ class TestSpecDriven:
         _, (done, entry) = self._package(tmp_path, {"main.py": "x = 1\n", "app.py": "y = 2\n"})
         trace_name = f".agent-trace/{done.runId}.json"
         record = json.loads(_zip_entries(open(entry.file_path, "rb").read())[trace_name])
-        assert record["version"] == "0.1.0"
+        assert record["version"] == "0.1"  # the spec schema only accepts two-part versions
         assert record["tool"] == {"name": "BESSER Spec-Driven Agent", "version": VERSION}
         assert {f["path"] for f in record["files"]} == {"main.py", "app.py"}
         # The record is not a user file.

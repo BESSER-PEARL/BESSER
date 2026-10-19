@@ -1,3 +1,4 @@
+import logging
 import os
 import json
 import re
@@ -8,6 +9,9 @@ from besser.BUML.metamodel.structural import (
     DateTimeType, TimeType,
 )
 from besser.generators import GeneratorInterface
+
+logger = logging.getLogger(__name__)
+
 
 class JSONSchemaGenerator(GeneratorInterface):
     """
@@ -275,7 +279,7 @@ class JSONSchemaGenerator(GeneratorInterface):
                 with open(notes_file_path, mode="w", encoding='utf-8') as f:
                     f.write("# Notes about the data model\n")
 
-                print(f"Smart Data schema for {class_def.name} generated in: {file_path}")
+                logger.info("Smart Data schema for %s generated in: %s", class_def.name, file_path)
         else:
             # Regular JSON Schema mode
             template = env.get_template('json_schema.json.j2')
@@ -287,7 +291,7 @@ class JSONSchemaGenerator(GeneratorInterface):
                     enumerations = self.model.get_enumerations(),
                 )
                 f.write(generated_code)
-                print("Code generated in the location: " + file_path)
+                logger.info("Code generated in the location: %s", file_path)
 
     def generate_example(self, schema_str):
         """Generates an example JSON based on the rendered schema string."""

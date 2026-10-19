@@ -92,6 +92,22 @@ def test_safe_path_no_prefix_sibling_false_positive():
         assert os.path.realpath(sibling) not in result
 
 
+def test_routers_use_the_canonical_safe_path():
+    """Routers must not carry their own (weaker) copy of ``safe_path``.
+
+    ``deployment_router`` used to define a local ``_safe_path`` whose
+    ``startswith`` containment check accepts sibling directories that share
+    a prefix with the base directory.
+    """
+    from besser.utilities.web_modeling_editor.backend.routers import (
+        deployment_router,
+        generation_router,
+    )
+
+    assert deployment_router._safe_path is safe_path
+    assert generation_router._safe_path is safe_path
+
+
 # ---------------------------------------------------------------------------
 # sanitize_object_model_filename
 # ---------------------------------------------------------------------------
@@ -248,11 +264,17 @@ def test_generate_user_profile_document_smoke_uses_user_profile_temp_prefix():
     assert isinstance(result, dict) and result, "expected a non-empty result dict"
     # The hierarchy normalization fired, so we should see "model" not "objects".
     assert "model" in result and "objects" not in result
-    # Temp dir prefix matches the cleanup service's allow-list ("user_profile_").
+    # Temp dir prefix is one the cleanup service sweeps.
+    from besser.utilities.web_modeling_editor.backend.constants.constants import (
+        USER_PROFILE_TEMP_DIR_PREFIX,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.cleanup import _BESSER_TEMP_PREFIXES
+
     assert captured_prefixes, "expected TemporaryDirectory to be called"
     assert any(
-        prefix.startswith("user_profile_") for prefix in captured_prefixes
-    ), f"expected a user_profile_ prefix, got: {captured_prefixes!r}"
+        prefix.startswith(USER_PROFILE_TEMP_DIR_PREFIX) for prefix in captured_prefixes
+    ), f"expected a {USER_PROFILE_TEMP_DIR_PREFIX} prefix, got: {captured_prefixes!r}"
+    assert USER_PROFILE_TEMP_DIR_PREFIX in _BESSER_TEMP_PREFIXES
 
 
 def test_generate_user_profile_document_raises_generation_error_when_generator_not_configured():

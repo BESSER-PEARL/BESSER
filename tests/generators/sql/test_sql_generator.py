@@ -2,7 +2,7 @@ import os
 import pytest
 from besser.generators.sql import SQLGenerator
 from besser.BUML.metamodel.structural import (
-    Class, DomainModel, DateType, StringType, IntegerType,
+    Class, DomainModel, DateType, StringType, IntegerType, BooleanType, Constraint,
     Property, BinaryAssociation, Multiplicity, Enumeration, EnumerationLiteral
 )
 
@@ -406,3 +406,119 @@ def test_sqlite_ddl_executes(domain_model_with_enums, tmpdir):
     finally:
         conn.close()
     assert {"author", "book", "library"} <= tables
+
+
+def test_mssql_ddl_needs_no_db_driver(domain_model_with_enums, tmpdir):
+    """DDL is compiled against the dialect only: no pyodbc / ODBC library is needed."""
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=domain_model_with_enums, output_dir=str(output_dir), sql_dialect="mssql").generate()
+
+    with open(os.path.join(str(output_dir), "tables_mssql.sql"), "r", encoding="utf-8") as f:
+        generated_code = f.read()
+
+    assert "CREATE TABLE book" in generated_code
+    assert "IDENTITY" in generated_code
+    # Targets a current SQL Server: DATE, not the pre-2008 DATETIME fallback.
+    assert "release DATE NOT NULL" in generated_code
+
+
+def test_database_url_env_does_not_change_dialect(domain_model, tmpdir, monkeypatch):
+    """The DDL dialect comes from sql_dialect, never from a DATABASE_URL in the environment."""
+    monkeypatch.setenv("DATABASE_URL", "mssql+pyodbc://user:pw@localhost/db")
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=domain_model, output_dir=str(output_dir), sql_dialect="postgresql").generate()
+
+    with open(os.path.join(str(output_dir), "tables_postgresql.sql"), "r", encoding="utf-8") as f:
+        generated_code = f.read()
+
+    assert "id SERIAL NOT NULL" in generated_code
+
+
+def test_invalid_dialect_raises_value_error(domain_model, tmpdir):
+    with pytest.raises(ValueError, match="Invalid DBMS"):
+        SQLGenerator(model=domain_model, output_dir=str(tmpdir), sql_dialect="db2").generate()
+
+
+def test_failing_ddl_script_raises_clear_error(domain_model, tmpdir, monkeypatch):
+    """A failing DDL subprocess surfaces its stderr instead of a FileNotFoundError."""
+    import subprocess
+
+    from besser.generators.sql import sql_generator
+
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="ImportError: boom")
+
+    monkeypatch.setattr(sql_generator.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="(?s)dialect 'sqlite'.*ImportError: boom"):
+        SQLGenerator(model=domain_model, output_dir=str(tmpdir), sql_dialect="sqlite").generate()
+
+
+def _model_with_ocl_invariants():
+    book = Class(name="Book", attributes={
+        Property(name="pages", type=IntegerType),
+        Property(name="title", type=StringType),
+        Property(name="inPrint", type=BooleanType),
+    })
+    invariants = {
+        "minPages": "self.pages > 0",
+        "pagesRange": "self.pages >= 1 and self.pages <= 5000",
+        "hasTitle": "self.title <> ''",
+        "inPrint": "self.inPrint = true",
+        "titleSize": "self.title.size() > 3",          # not translatable: skipped
+        "orCase": "self.pages > 5 or self.pages < 2",  # not translatable: skipped
+    }
+    constraints = {
+        Constraint(name=name, context=book, expression=f"context Book inv: {body}", language="OCL")
+        for name, body in invariants.items()
+    }
+    return DomainModel(name="Lib", types={book}, constraints=constraints)
+
+
+def _read_sql(output_dir, dialect):
+    with open(os.path.join(str(output_dir), f"tables_{dialect}.sql"), "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def test_ocl_invariants_become_check_constraints(tmpdir):
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=_model_with_ocl_invariants(), output_dir=str(output_dir), sql_dialect="postgresql").generate()
+    ddl = _read_sql(output_dir, "postgresql")
+
+    assert "CONSTRAINT ck_book_minpages CHECK (pages > 0)" in ddl
+    assert "CONSTRAINT ck_book_pagesrange CHECK (pages >= 1 AND pages <= 5000)" in ddl
+    assert "CONSTRAINT ck_book_hastitle CHECK (title != '')" in ddl
+    assert 'CONSTRAINT ck_book_inprint CHECK ("inPrint" = true)' in ddl
+    assert "titlesize" not in ddl and "orcase" not in ddl
+
+
+@pytest.mark.parametrize("dialect, expected", [
+    ("mysql", "CHECK (`inPrint` = true)"),
+    ("mssql", "CHECK ([inPrint] = 1)"),
+    ("oracle", 'CHECK ("inPrint" = 1)'),
+])
+def test_check_constraints_follow_the_dialect(tmpdir, dialect, expected):
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=_model_with_ocl_invariants(), output_dir=str(output_dir), sql_dialect=dialect).generate()
+    assert expected in _read_sql(output_dir, dialect)
+
+
+def test_sqlite_check_constraints_are_enforced(tmpdir):
+    import sqlite3
+
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=_model_with_ocl_invariants(), output_dir=str(output_dir), sql_dialect="sqlite").generate()
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.executescript(_read_sql(output_dir, "sqlite"))
+        conn.execute("INSERT INTO book (pages, title, \"inPrint\") VALUES (10, 't', 1)")
+        with pytest.raises(sqlite3.IntegrityError, match="ck_book_minpages"):
+            conn.execute("INSERT INTO book (pages, title, \"inPrint\") VALUES (0, 't', 1)")
+    finally:
+        conn.close()
+
+
+def test_check_constraints_can_be_disabled(tmpdir):
+    output_dir = tmpdir.mkdir("output")
+    SQLGenerator(model=_model_with_ocl_invariants(), output_dir=str(output_dir), sql_dialect="postgresql",
+                 ocl_check_constraints=False).generate()
+    assert "CHECK" not in _read_sql(output_dir, "postgresql")

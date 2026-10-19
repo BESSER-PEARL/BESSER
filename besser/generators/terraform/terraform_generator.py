@@ -1,7 +1,10 @@
+import logging
 import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.deployment import DeploymentModel, IPRangeType, ServiceType, Protocol
 from besser.generators import GeneratorInterface
+
+logger = logging.getLogger(__name__)
 
 class TerraformGenerator(GeneratorInterface):
     """
@@ -74,15 +77,16 @@ class TerraformGenerator(GeneratorInterface):
                 # Read the configuration file .conf line by line
                 with open(public_cluster.config_file, 'r') as file:
                     config_lines = file.readlines()
-            except IOError as e:
-                print(f"Error reading configuration file {public_cluster.config_file}: {e}")
+            except OSError as e:
+                logger.error("Error reading configuration file %s: %s", public_cluster.config_file, e)
                 continue
 
             # Dictionary mapping template file names to output file names
             template_to_file_map = self.get_template_to_file_map(public_cluster.provider.value)
 
             if not template_to_file_map:
-                print(f"Unsupported provider: {public_cluster.provider.value}")
+                logger.warning("Unsupported provider '%s' for cluster '%s'; skipping it.",
+                               public_cluster.provider.value, public_cluster.name)
                 continue
 
             # Create a directory path with the provider and cluster name
@@ -94,17 +98,18 @@ class TerraformGenerator(GeneratorInterface):
                 file_path = os.path.join(cluster_dir, output_file_name)
                 try:
                     template = self.env.get_template(template_name)
-                except Exception as e:
-                    print(f"Error loading template {template_name}: {e}")
-                    continue
+                except Exception:
+                    logger.exception("Error loading template %s", template_name)
+                    raise
 
+                generated_code = template.render(public_cluster=public_cluster, config_lines=config_lines)
                 try:
                     with open(file_path, mode="w") as f:
-                        generated_code = template.render(public_cluster=public_cluster, config_lines=config_lines)
                         f.write(generated_code)
-                        print(f"Code generated in the location: {file_path}")
-                except IOError as e:
-                    print(f"Error writing to file {file_path}: {e}")
+                except OSError:
+                    logger.exception("Error writing to file %s", file_path)
+                    raise
+                logger.info("Code generated in the location: %s", file_path)
 
     @staticmethod
     def get_template_to_file_map(provider):

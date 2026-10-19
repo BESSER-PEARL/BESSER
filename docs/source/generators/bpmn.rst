@@ -56,11 +56,19 @@ producing organisation. Inside it:
   / … elements for gateways, ``<bpmn:sequenceFlow>`` elements for sequence flows,
   ``<bpmn:laneSet>`` / ``<bpmn:lane>`` elements for lane sets, and
   ``<bpmn:dataObjectReference>`` / ``<bpmn:dataObject>`` pairs for data objects.
+  Data associations are nested in their task as ``<bpmn:dataInputAssociation>``
+  (data element → task) or ``<bpmn:dataOutputAssociation>`` (task → data element).
 - A single ``<bpmn:collaboration>`` element when the model has a
   ``Collaboration``, containing ``<bpmn:participant>`` elements and
   ``<bpmn:messageFlow>`` elements for cross-pool flows.
 - ``<bpmn:dataStore>`` elements at the definitions level for model-scoped data
-  stores.
+  stores, each referenced by a ``<bpmn:dataStoreReference>`` in the first process.
+
+A data object or data store's own id goes to its ``*Reference`` element (the
+one BPMN tools draw); the semantic ``<bpmn:dataObject>`` / ``<bpmn:dataStore>``
+gets a derived ``DataObject_<id>`` / ``DataStore_<id>`` id. DI shapes and data
+associations therefore point at the references, as Camunda Modeler and bpmn-js
+expect, matching the Web Modeling Editor's own BPMN exporter.
 
 Default sequence flows emit the diagonal-slash marker per BPMN 2.0.2 § 8.3.13
 (the ``default`` attribute on the source element plus a ``<bpmn:conditionExpression>``
@@ -74,6 +82,14 @@ emitted only when the input model carries layout data on its elements (via the
 opaque ``BPMNElement.layout`` passthrough populated by ``process_bpmn_diagram``
 when importing from the Web Modeling Editor). For freshly-built or programmatic
 models the DI section is omitted and the importing tool auto-lays out on open.
+
+Edge waypoints are absolute canvas coordinates. The editor stores a flow's
+``path`` relative to the flow's own ``bounds``, so the generator offsets it by
+``bounds.x`` / ``bounds.y``. A path is kept only if it then starts on the source
+shape and ends on the target shape; otherwise (placeholder geometry, such as the
+flows the modeling assistant creates before the editor re-routes them, a stale
+path, or no path at all) the edge is re-routed orthogonally between the two
+shapes' bounds, so every arrow is drawn connected to its steps.
 
 Identifier handling
 -------------------

@@ -181,6 +181,23 @@ class BOCLVisitorImpl(BOCLVisitor):
         oce.source = source
         return oce
 
+    def visitAllInstancesExp(self, ctx: BOCLParser.AllInstancesExpContext):
+        """``Session.allInstances()`` — the dot form of ``Session::allInstances()``.
+
+        Without this override the generated ``visitChildren`` returns the
+        value of the last child (the ``)`` token, i.e. ``None``), so any
+        loop over ``X.allInstances()`` silently iterated over nothing in the
+        evaluator. Both forms now produce the same ``ALLInstances`` node.
+        """
+        source = self.visit(ctx.expression())
+        if isinstance(source, VariableExp):
+            type_exp = TypeExp(source.name, source.name)
+        else:
+            type_exp = source
+        oce = OperationCallExpression(name="ALLInstances", operation="ALLInstances", arguments=[])
+        oce.source = type_exp
+        return oce
+
     def visitDotOclIsTypeOf(self, ctx: BOCLParser.DotOclIsTypeOfContext):
         source = self.visit(ctx.expression())
         type_name = ctx.typeRef().getText()
@@ -266,6 +283,26 @@ class BOCLVisitorImpl(BOCLVisitor):
     def visitArrowIsEmpty(self, ctx: BOCLParser.ArrowIsEmptyContext):
         source = self.visit(ctx.expression())
         oce = OperationCallExpression(name="IsEmpty", operation="IsEmpty", arguments=[])
+        oce.source = source
+        return oce
+
+    def visitArrowasSet(self, ctx: BOCLParser.ArrowasSetContext):
+        source = self.visit(ctx.expression())
+        oce = OperationCallExpression(name="ASSET", operation="ASSET", arguments=[])
+        oce.source = source
+        return oce
+
+    def visitIntersection(self, ctx: BOCLParser.IntersectionContext):
+        source = self.visit(ctx.expression(0))
+        arg = self.visit(ctx.expression(1))
+        oce = OperationCallExpression(name="INTERSECTION", operation="INTERSECTION", arguments=[arg])
+        oce.source = source
+        return oce
+
+    def visitIsunique(self, ctx: BOCLParser.IsuniqueContext):
+        source = self.visit(ctx.expression(0))
+        arg = self.visit(ctx.expression(1))
+        oce = OperationCallExpression(name="ISUNIQUE", operation="ISUNIQUE", arguments=[arg])
         oce.source = source
         return oce
 

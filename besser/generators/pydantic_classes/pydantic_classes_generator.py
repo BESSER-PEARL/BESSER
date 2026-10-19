@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import unicodedata
@@ -13,6 +14,9 @@ from besser.generators.structural_utils import (
 )
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.utilities.utils import sort_by_timestamp
+
+logger = logging.getLogger(__name__)
+
 
 class PydanticGenerator(GeneratorInterface):
     """
@@ -129,4 +133,4 @@ class PydanticGenerator(GeneratorInterface):
                 sort_by_timestamp=sort_by_timestamp,
             )
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.info("Code generated in the location: %s", file_path)

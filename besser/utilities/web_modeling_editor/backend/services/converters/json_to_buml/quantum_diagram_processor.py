@@ -14,37 +14,7 @@ from besser.BUML.metamodel.quantum.quantum import (
 )
 import math
 
-
-def sanitize_name(name: str) -> str:
-    """
-    Sanitize a name to be valid for BUML NamedElement.
-    According to NamedElement validation:
-    - Spaces are not allowed (replaced with underscores)
-    - Hyphens are not allowed (replaced with underscores)
-    - Other characters like ^, (, ), etc. are allowed
-
-    Args:
-        name (str): The original name
-
-    Returns:
-        str: Sanitized name safe for NamedElement
-    """
-    if not name:
-        return "unnamed"
-
-    # Replace spaces with underscores
-    sanitized = name.replace(' ', '_')
-
-    # Replace hyphens with underscores (but preserve minus signs in context like Z^-t)
-    # Only replace standalone hyphens, not those that are part of mathematical notation
-    # For safety, we'll just replace all hyphens with underscores
-    sanitized = sanitized.replace('-', '_')
-
-    # Ensure it's not empty after sanitization
-    if not sanitized:
-        return "unnamed"
-
-    return sanitized
+from .utils import sanitize_name
 
 
 def process_quantum_diagram(json_data):

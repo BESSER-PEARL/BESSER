@@ -235,7 +235,7 @@ class DjangoGenerator(GeneratorInterface):
         if main_page in screens:
             screens.remove(main_page)
         else:
-            print("Warning: No main page found.")
+            logger.warning("No main page found.")
 
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(
@@ -280,7 +280,7 @@ class DjangoGenerator(GeneratorInterface):
         if main_page in screens:
             screens.remove(main_page)
         else:
-            print("Warning: No main page found.")
+            logger.warning("No main page found.")
             screens = list(screens)  # Convert set to list
 
         with open(file_path, mode="w", encoding="utf-8") as f:
@@ -329,7 +329,7 @@ class DjangoGenerator(GeneratorInterface):
         if main_page in screens:
             screens.remove(main_page)
         else:
-            print("Warning: No main page found.")
+            logger.warning("No main page found.")
             screens = list(screens)  # Convert set to list
 
         with open(file_path, mode="w", encoding="utf-8") as f:
@@ -375,7 +375,7 @@ class DjangoGenerator(GeneratorInterface):
         if main_page in screens:
             screens.remove(main_page)
         else:
-            print("Main Page not found in the screens list.")
+            logger.warning("Main page not found in the screens list.")
             screens = list(screens)  # Convert set to list
 
         with open(file_path, mode="w", encoding="utf-8") as f:
@@ -744,7 +744,7 @@ JAZZMIN_SETTINGS = {{
                                               fkeys=self.fkeys)
                 self.generate_project_urls()
 
-            print("Django project generation completed successfully!")
+            logger.info("Django project generation completed successfully!")
 
         except subprocess.CalledProcessError as e:
             # Re-raised so callers never package a half-written project as success.

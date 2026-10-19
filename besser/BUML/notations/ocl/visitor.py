@@ -530,7 +530,7 @@ class BOCLVisitorImpl(BOCLVisitor):
 
     def visitBooleanLiteral(self, ctx: BOCLParser.BooleanLiteralContext):
         text = ctx.BOOLEAN_LITERAL().getText()
-        return BooleanLiteralExpression("NP", text)
+        return BooleanLiteralExpression("NP", text == "true")
 
     def visitNullLiteral(self, ctx: BOCLParser.NullLiteralContext):
         return None

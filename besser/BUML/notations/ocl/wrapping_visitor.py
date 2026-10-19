@@ -13,14 +13,11 @@ break any consumer that needs the AST in its proper shape:
    receiver's actual type, so ``self.employer.minSalary`` would look up
    ``minSalary`` on ``Employee`` (the constraint context) instead of on
    ``Department`` (the type of ``self.employer``).
-4. **Wrong iterator-variable typing in ``visitArrowIterator``**: when no
-   explicit type annotation is supplied (``forAll(e | …)``), the base visitor
-   sets ``iterators_context[e]`` to the constraint's context class, regardless
-   of what collection is being iterated. The element type of the source
-   collection is what's needed.
-5. **Boolean-lexeme-as-string in ``visitBooleanLiteral``**: the literal value
-   is stored as the lexeme ``"true"`` / ``"false"`` (a Python ``str``)
-   instead of a Python ``bool``.
+4. **Incomplete iterator-variable typing in ``visitArrowIterator``**: the
+   base visitor types an untyped variable (``forAll(e | …)``) from association
+   ends, ``allInstances()``, ``select`` and ``reject``; this subclass also
+   follows ``asSet`` and the ordered-collection operations, and records the
+   inferred type on the ``IteratorExp``.
 
 This subclass overrides the affected methods to fix all of the above. Until
 the fixes are upstreamed into ``BOCLVisitorImpl`` itself, all consumers
@@ -28,7 +25,7 @@ should parse via ``WrappingVisitor`` (or via :func:`parse_ocl`, which uses it).
 """
 
 from besser.BUML.metamodel.ocl.ocl import (
-    BooleanLiteralExpression, IteratorExp, LoopExp, OperationCallExpression,
+    IteratorExp, LoopExp, OperationCallExpression,
     OrderedSetType, PropertyCallExpression, SequenceType, SetType, TypeExp,
     VariableExp,
 )
@@ -164,10 +161,6 @@ class WrappingVisitor(BOCLVisitorImpl):
     def visitDotClosureNavigation(self, ctx):
         receiver = self.visit(ctx.expression())
         return self._wrap_navigation(receiver, "closure", ctx)
-
-    def visitBooleanLiteral(self, ctx):
-        text = ctx.BOOLEAN_LITERAL().getText()
-        return BooleanLiteralExpression("NP", text == "true")
 
     # ``visitAllInstancesExp`` (``X.allInstances()``), ``visitArrowasSet``,
     # ``visitIntersection`` and ``visitIsunique`` live on ``BOCLVisitorImpl``:

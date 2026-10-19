@@ -60,3 +60,48 @@ def test_method_contracts_are_not_duplicated_by_a_buml_file_round_trip(tmp_path)
     exported = class_buml_to_json(reloaded)
     boxes = [n for n in exported["nodes"] if n["type"] == "ClassOCLConstraint"]
     assert len(boxes) == 2
+
+
+def _fixture_model(name):
+    import json
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[5] / "fixtures" / "v4" / f"{name}.json"
+    return json.loads(path.read_text(encoding="utf-8"))["model"]
+
+
+def _project_round_trip(diagrams, tmp_path, description="Round trip"):
+    import copy
+    from besser.utilities.buml_code_builder.project_builder import project_to_code
+    from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.project_converter import (
+        project_to_json,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.project_converter import (
+        json_to_buml_project,
+    )
+    project = {"id": "p", "type": "Project", "name": "RoundTrip", "description": description,
+               "owner": "tester", "createdAt": "2026-01-01T00:00:00Z",
+               "diagrams": copy.deepcopy(diagrams)}
+    out = tmp_path / "project.py"
+    project_to_code(json_to_buml_project(ProjectInput(**project)), str(out))
+    code = out.read_text(encoding="utf-8")
+    return code, project_to_json(code)
+
+
+def test_several_diagrams_of_one_type_import_once_each(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    agent, sm, cd = (_fixture_model(n) for n in
+                     ("agent_diagram_basic", "state_machine_basic", "class_diagram_basic"))
+    diagrams = {
+        "AgentDiagram": [{"id": "a1", "title": "AgentOne", "model": agent},
+                         {"id": "a2", "title": "AgentTwo", "model": agent}],
+        "StateMachineDiagram": [{"id": "s1", "title": "SmOne", "model": sm},
+                                {"id": "s2", "title": "SmTwo", "model": sm}],
+        "ClassDiagram": [{"id": "c1", "title": "LibA", "model": cd},
+                         {"id": "c2", "title": "LibB", "model": cd}],
+    }
+    _, imported = _project_round_trip(diagrams, tmp_path)
+    for diagram_type in diagrams:
+        entries = imported["diagrams"][diagram_type]
+        assert len(entries) == 2, (diagram_type, [e["title"] for e in entries])
+        assert all(e["model"]["nodes"] for e in entries), diagram_type

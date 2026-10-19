@@ -6,6 +6,7 @@ This module generates Python code for complete BUML projects including all model
 
 import logging
 import os
+import re
 import tempfile
 import uuid
 import shutil
@@ -77,6 +78,10 @@ def _suffixed_name(base_name: str, index: int, total: int) -> str:
     return f"{base_name}_{index}"
 
 
+# The fixed "# <KIND> MODEL #" banner a model builder writes, with its borders.
+_BUILDER_BANNER = re.compile(r"^#+\n# [A-Z ]+ MODEL #\n#+\n", re.MULTILINE)
+
+
 def _write_temp_to_output(temp_path: str, out_file, section_header: str = ""):
     """Read a temp file and append its content (with optional header) to *out_file*."""
     with open(temp_path, "r", encoding="utf-8") as tmp:
@@ -84,6 +89,9 @@ def _write_temp_to_output(temp_path: str, out_file, section_header: str = ""):
     # One version header per file: the project writes its own at the top.
     content = content.removeprefix(buml_header())
     if section_header:
+        # The numbered header replaces the builder's banner: with both, the
+        # importer reads each model as two sections.
+        content = _BUILDER_BANNER.sub("", content, count=1)
         out_file.write(section_header)
     out_file.write(content)
     out_file.write("\n\n")

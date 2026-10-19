@@ -238,6 +238,8 @@ async def validate_diagram(input_data: DiagramInput):
             # Add OCL warnings if present
             if hasattr(buml_model, "ocl_warnings") and buml_model.ocl_warnings:
                 validation_warnings.extend(buml_model.ocl_warnings)
+            # Constraints that parse but cannot be evaluated on the object diagram
+            validation_warnings.extend(ocl_results.get("warnings", []))
 
         except Exception:
             logger.exception("Unexpected error during OCL constraint check")

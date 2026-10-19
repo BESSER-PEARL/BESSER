@@ -182,8 +182,10 @@ SSE event types
    * - ``done``
      - Success. Carries ``downloadUrl``, ``fileName``, the run recipe, a file
        count and top-level listing, ``tokensUsed``, ``blockerCount`` (unfixed
-       blocker-severity findings), ``incomplete`` / ``incompleteReason``, and
-       a three-way authorship split of the output tree.
+       blocker-severity findings), ``incomplete`` / ``incompleteReason``,
+       a three-way authorship split of the output tree, and ``aiShare``, the
+       AI-written share of the lines from the run's Agent Trace record (see
+       :ref:`spec-driven-agent-trace`).
    * - ``error``
      - ``INVALID_KEY`` / ``UPSTREAM_LLM`` / ``INTERNAL`` / ``BAD_REQUEST`` /
        ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` / ``INCOMPLETE``

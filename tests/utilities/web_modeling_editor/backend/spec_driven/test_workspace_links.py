@@ -6,6 +6,7 @@ not read through, on every path that copies the tree out.
 """
 
 import asyncio
+import json
 import os
 import pathlib
 import zipfile
@@ -101,13 +102,57 @@ def test_download_zip_skips_symlinked_file_and_dir(tmp_path):
 
     runner = SmartGenerationRunner(_build_request())
     runner.temp_dir = str(tmp_path)
-    _done, entry = runner._package_result(str(result_path))
+    done, entry = runner._package_result(str(result_path))
 
     assert entry.is_zip
     with zipfile.ZipFile(entry.file_path) as archive:
         names = archive.namelist()
-        assert sorted(names) == ["BESSER_GENERATION.md", "app.py", "main.py"]
+        trace = f".agent-trace/{done.runId}.json"
+        assert sorted(names) == [trace, "BESSER_GENERATION.md", "app.py", "main.py"]
+        # Linked files are not attributed either.
+        assert {f["path"] for f in json.loads(archive.read(trace))["files"]} == {"app.py", "main.py"}
         assert all(SECRET not in archive.read(n).decode("utf-8") for n in names)
+
+
+def test_attribution_writes_never_follow_a_planted_link(tmp_path):
+    # The harness writes the attribution state and the Agent Trace record
+    # unsandboxed; a link the model planted at either must not redirect it.
+    outside = _outside(tmp_path)
+    result_path = tmp_path / "result"
+    result_path.mkdir()
+    (result_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (result_path / "app.py").write_text("app = 1\n", encoding="utf-8")
+    _symlink(outside / "secret.txt", result_path / ".besser_attribution.json.tmp")
+    _symlink(outside, result_path / ".agent-trace", is_dir=True)
+
+    runner = SmartGenerationRunner(_build_request())
+    runner.temp_dir = str(tmp_path)
+    done, entry = runner._package_result(str(result_path))
+
+    assert (outside / "secret.txt").read_text(encoding="utf-8") == SECRET
+    assert sorted(os.listdir(outside)) == ["secret.txt"]
+    trace_dir = result_path / ".agent-trace"
+    assert not trace_dir.is_symlink() and (trace_dir / f"{done.runId}.json").is_file()
+    with zipfile.ZipFile(entry.file_path) as archive:
+        assert f".agent-trace/{done.runId}.json" in archive.namelist()
+
+
+def test_a_linked_attribution_state_is_replaced_not_written_through(tmp_path):
+    from besser.spec_driven_agent.state import agent_trace as at
+
+    outside = _outside(tmp_path)
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "main.py").write_text("x = 1\n", encoding="utf-8")
+    _symlink(outside / "secret.txt", workspace / at.ATTRIBUTION_FILENAME)
+
+    with pytest.raises(at.AttributionStateError):       # never read through
+        at.AttributionState.load(str(workspace))
+    at.record_generated_files(str(workspace), ["main.py"], "backend")
+    at.AttributionState().save(str(workspace))
+
+    assert (outside / "secret.txt").read_text(encoding="utf-8") == SECRET
+    assert not (workspace / at.ATTRIBUTION_FILENAME).is_symlink()
 
 
 def test_single_file_download_is_never_a_symlink(tmp_path):

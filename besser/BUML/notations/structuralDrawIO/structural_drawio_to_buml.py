@@ -6,6 +6,7 @@ and convert them into B-UML model representations. It handles classes, enumerati
 associations, generalizations, attributes, methods and their relationships.
 """
 
+import logging
 import re
 import xml.etree.ElementTree as ET
 from besser.BUML.metamodel.structural import (
@@ -13,6 +14,8 @@ from besser.BUML.metamodel.structural import (
     Enumeration, EnumerationLiteral, Generalization, Method, Parameter, StringType, IntegerType, FloatType, BooleanType, TimeType, DateType, DateTimeType, TimeDeltaType
 )
 from besser.utilities import domain_model_to_code
+
+logger = logging.getLogger(__name__)
 
 # Map primitive type strings to their corresponding type classes
 PRIMITIVE_TYPE_MAPPING = {
@@ -61,34 +64,6 @@ def clean_html_tags(text: str) -> str:
     clean = re.compile('<.*?>')
     return re.sub(clean, '', text).strip()
 
-def calculate_absolute_position(edge: dict, label_geometry: ET.Element) -> tuple:
-    """
-    Calculate absolute position of a label on an edge.
-
-    Args:
-        edge: Dictionary containing edge source and target coordinates
-        label_geometry: XML element with label geometry information
-
-    Returns:
-        Tuple of (x, y) absolute coordinates
-    """
-    source_x, source_y = edge['source_x'], edge['source_y']
-    target_x, target_y = edge['target_x'], edge['target_y']
-    relative_x = float(label_geometry.get('x', 0))
-    relative_y = float(label_geometry.get('y', 0))
-
-    abs_x = source_x + (target_x - source_x) * relative_x
-    abs_y = source_y + (target_y - source_y) * relative_x + relative_y
-
-    offset = label_geometry.find(".//mxPoint[@as='offset']")
-    if offset is not None:
-        offset_x = float(offset.get('x', 0))
-        offset_y = float(offset.get('y', 0))
-        abs_x += offset_x
-        abs_y += offset_y
-
-    return abs_x, abs_y
-
 def extract_classes_from_drawio(drawio_file: str) -> tuple:
     """
     Extract UML elements from Draw.io XML file.
@@ -108,7 +83,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
         tree = ET.parse(drawio_file)
         root = tree.getroot()
     except ET.ParseError as e:
-        print(f"Error parsing XML file: {e}")
+        logger.error("Error parsing XML file: %s", e)
         return {}, [], {}, {}, {}
 
     # Group model elements
@@ -183,7 +158,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                             if literal and not is_enumeration(literal):
                                 model_elements['enumerations'][enum_name].append(literal)
             else:
-                print(f"Warning: Enum found without a name in value: {value}")
+                logger.warning("Enum found without a name in value: %s", value)
             continue
 
         # Process classes (only if not an enumeration)
@@ -246,7 +221,6 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                 'attributes': [],
                                 'methods': []
                             }
-                            #print(f"\nProcessing class: {class_name}")
                             # Parse attributes and methods from HTML
                             field_matches = re.finditer(r'<p[^>]*>([^<]*)</p>', value)
                             for match in field_matches:
@@ -382,10 +356,10 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             target_class = extract_class_name(target_cell.get('value', ''))
 
             if not source_cell:
-                print(f"Error: Source cell {source} not found for connection")
+                logger.error("Source cell %s not found for connection", source)
                 continue
             if not target_cell:
-                print(f"Error: Target cell {target} not found for connection")
+                logger.error("Target cell %s not found for connection", target)
                 continue
 
             if source_class and target_class:
@@ -839,9 +813,7 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                 # Make sure we have all three values
                 if len(attr_data) == 3:
                     visibility, attr_name, attr_type = attr_data
-                    #print(f"\nProcessing attribute: {attr_name} ({attr_type})")
                     visibility = "public" if visibility == "+" else "private"
-                    #print(f": {buml_enumerations}")
                     # First check if it's an enumeration or class
                     if attr_type in buml_enumerations:
                         type_obj = buml_enumerations[attr_type]
@@ -958,12 +930,14 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
             class2 = buml_classes.get(assoc2['class'])
 
             if not class1:
-                print(f"Error: Association references non-existent class '{assoc1['class']}'."
-                      f"Make sure you are connecting to a valid class, not an attribute, method, or enumeration.")
+                logger.error(
+                    "Association references non-existent class '%s'. Make sure you are connecting "
+                    "to a valid class, not an attribute, method, or enumeration.", assoc1['class'])
                 continue
             if not class2:
-                print(f"Error: Association references non-existent class '{assoc2['class']}'."
-                      f"Make sure you are connecting to a valid class, not an attribute, method, or enumeration.")
+                logger.error(
+                    "Association references non-existent class '%s'. Make sure you are connecting "
+                    "to a valid class, not an attribute, method, or enumeration.", assoc2['class'])
                 continue
 
             if class1 and class2:
@@ -1013,11 +987,6 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                 association_properties[assoc1['name']] = assoc_property_1
                 association_properties[assoc2['name']] = assoc_property_2
 
-                # Add debug print
-                #print(f"\nBinary Association created: {association_name}")
-                #for end in binary_assoc.ends:
-                #    mult_str = f"{end.multiplicity.min}..
-                # {'*' if end.multiplicity.max == '*' else end.multiplicity.max}"
     # Create generalizations
     for gen in generalizations:
         specific_class = buml_classes.get(gen['specific'])
@@ -1036,7 +1005,6 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
         generalizations=set(buml_generalizations)
     )
 
-    #print(f"\nDomain Model created: {domain_model}")
     return domain_model, association_properties
 
 def is_class_style(style: str, value: str) -> bool:
@@ -1111,14 +1079,6 @@ def clean_enumeration_name(value: str) -> str:
 
     return result.strip()
 
-def extract_enum_name_from_html(value: str) -> str:
-    """Extract enumeration name from HTML formatted value."""
-    b_tags = re.findall(r'<b>(.*?)</b>', value)
-    for tag in b_tags:
-        if not is_enumeration(tag):
-            return tag
-    return ""
-
 def extract_literals_from_html(value: str) -> list:
     """Extract enumeration literals from HTML content."""
     literals = []
@@ -1140,17 +1100,6 @@ def extract_literals_from_html(value: str) -> list:
             if clean_literal and not is_enumeration(clean_literal) and clean_literal != '<br>':
                 literals.append(clean_literal)
 
-    return literals
-
-def extract_literals_from_cells(root: ET.Element, cell_id: str) -> list:
-    """Extract enumeration literals from child cells."""
-    literals = []
-    for literal_cell in root.findall(f".//mxCell[@parent='{cell_id}']"):
-        literal_value = literal_cell.get('value', '')
-        if literal_value and not is_enumeration(literal_value):
-            clean_literal = clean_html_tags(literal_value).lstrip('-').strip()
-            if clean_literal:
-                literals.append(clean_literal)
     return literals
 
 def process_method_string(method_str: str) -> tuple:
@@ -1202,51 +1151,3 @@ def parse_parameters(params_str: str) -> list:
                     'default': default_value
                 })
     return parameters
-
-def extract_attributes_from_html(value: str) -> list:
-    """Extract class attributes from HTML content."""
-    attributes = []
-
-    # Handle div-separated attributes
-    if '<div>' in value:
-        parts = value.split('</div>')
-        for part in parts:
-            # Clean the part from HTML tags
-            clean_part = clean_html_tags(part).strip()
-            if clean_part and clean_part != '<br>':
-                # Parse attribute
-                attr_parts = clean_part.split(':')
-                attr_name = attr_parts[0].strip().lstrip('+')
-                attr_type = attr_parts[1].strip() if len(attr_parts) > 1 else 'str'
-                attributes.append((attr_name, attr_type))
-    else:
-        # Handle single line attributes
-        attr_parts = clean_html_tags(value).split(':')
-        attr_name = attr_parts[0].strip().lstrip('+')
-        attr_type = attr_parts[1].strip() if len(attr_parts) > 1 else 'str'
-        attributes.append((attr_name, attr_type))
-
-    return attributes
-
-def process_class_attributes(cell_value: str) -> list:
-    """Process class attributes and return a list of Property objects."""
-    properties = []
-
-    attributes = extract_attributes_from_html(cell_value)
-    for attr_name, attr_type in attributes:
-        # Map type strings to actual types
-        type_mapping = {
-            'str': StringType,
-            'int': IntegerType,
-            'float': FloatType,
-            'bool': BooleanType,
-            'time': TimeType,
-            'date': DateType,
-            'datetime': DateTimeType,
-            'timedelta': TimeDeltaType
-        }
-
-        attr_type_obj = type_mapping.get(attr_type, StringType)
-        properties.append(Property(name=attr_name, type=attr_type_obj))
-
-    return properties

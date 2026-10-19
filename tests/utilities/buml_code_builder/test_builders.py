@@ -579,10 +579,8 @@ class TestFormatMethodCodeLiteral:
 from besser.BUML.metamodel.state_machine.state_machine import (
     StateMachine, Body, Event,
 )
-from besser.utilities.buml_code_builder.state_machine_builder import (
-    state_machine_to_code,
-    _sanitize_identifier,
-)
+from besser.utilities.buml_code_builder.common import _sanitize_identifier
+from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 
 
 class TestSanitizeIdentifier:
@@ -1173,6 +1171,72 @@ class TestGUIModelBuilder:
         recreated = namespace["gui_model"]
         assert isinstance(recreated, GUIModel)
         assert recreated.name == "TestGUI"
+
+    def test_transition_without_target_screen_compiles(self, tmp_path):
+        """A Transition with no target screen emits ``target_screen=None``.
+
+        The TODO note used to be inlined into the constructor call, so its
+        ``#`` commented out the closing paren and the output did not compile.
+        """
+        from besser.BUML.metamodel.gui.events_actions import Event, EventType, Transition
+
+        btn = Button(
+            name="GoBtn", label="Go", description="",
+            buttonType=ButtonType.RaisedButton, actionType=ButtonActionType.Navigate,
+        )
+        btn.events = {Event(name="go", event_type=EventType.OnClick,
+                            actions={Transition(name="nowhere", target_screen=None)})}
+        screen = Screen(name="Home", description="", view_elements={btn})
+        gui = GUIModel(name="G", package="p", versionCode="1", versionName="1.0",
+                       modules={Module(name="M", screens={screen})}, description="")
+
+        file_path = str(tmp_path / "gui.py")
+        gui_model_to_code(gui, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        compile(code, file_path, "exec")
+        namespace = {}
+        exec(code, namespace)
+        transition = next(iter(next(iter(
+            namespace["gui_model"].modules)).screens)).view_elements.pop().events.pop().actions.pop()
+        assert isinstance(transition, Transition)
+        assert transition.target_screen is None
+
+    def test_keyword_named_screen_compiles(self, tmp_path):
+        """A screen named after a Python keyword gets a suffixed variable.
+
+        Every reference to it (module screens, button targetScreen,
+        Transition target) must use the same suffixed name.
+        """
+        from besser.BUML.metamodel.gui.events_actions import Event, EventType, Transition
+
+        target = Screen(name="class", description="", view_elements=set())
+        btn = Button(
+            name="GoBtn", label="Go", description="",
+            buttonType=ButtonType.RaisedButton, actionType=ButtonActionType.Navigate,
+            targetScreen=target,
+        )
+        btn.events = {Event(name="go", event_type=EventType.OnClick,
+                            actions={Transition(name="to_class", target_screen=target)})}
+        home = Screen(name="Home", description="", view_elements={btn})
+        gui = GUIModel(name="G", package="p", versionCode="1", versionName="1.0",
+                       modules={Module(name="M", screens={home, target})}, description="")
+
+        file_path = str(tmp_path / "gui.py")
+        gui_model_to_code(gui, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        assert "class_ = Screen(" in code
+        compile(code, file_path, "exec")
+        namespace = {}
+        exec(code, namespace)
+        screens = {s.name: s for s in next(iter(namespace["gui_model"].modules)).screens}
+        assert set(screens) == {"Home", "class"}
+        button = next(iter(screens["Home"].view_elements))
+        assert button.targetScreen is screens["class"]
+        assert next(iter(next(iter(button.events)).actions)).target_screen is screens["class"]
 
 
 # ---------------------------------------------------------------------------

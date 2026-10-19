@@ -32,6 +32,7 @@ real-PK routing, method-code normalization and the error-response shape
 monolith, just relocated.
 """
 
+import logging
 import os
 import re
 from typing import Dict, List, Tuple
@@ -51,6 +52,8 @@ from besser.generators.structural_utils import (
     normalize_method_code,
 )
 from besser.utilities.utils import sort_by_timestamp
+
+logger = logging.getLogger(__name__)
 
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
@@ -329,4 +332,4 @@ def generate_modular_api(
     with open(os.path.join(output_dir, "main_api.py"), mode="w", encoding="utf-8") as f:
         f.write(main_api_code)
 
-    print("Code generated in the location: " + os.path.join(output_dir, "main_api.py"))
+    logger.info("Code generated in the location: %s", os.path.join(output_dir, "main_api.py"))

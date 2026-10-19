@@ -31,6 +31,7 @@ from typing import Any, Callable, Literal
 from uuid import uuid4
 
 from besser.BUML.metamodel.structural import DomainModel
+from besser.utilities.provenance import get_besser_version
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
@@ -72,6 +73,7 @@ from besser.spec_driven_agent.agent.edit_apply import (
     _strip_line_numbers,
 )
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
+from besser.spec_driven_agent.state.agent_trace import record_generated_files
 from besser.spec_driven_agent.validation import frontend_source
 
 logger = logging.getLogger(__name__)
@@ -521,6 +523,9 @@ class ToolExecutor:
         self.nn_model = nn_model
         # Track files created by generators — used to warn if LLM overwrites them
         self._generator_files: set[str] = set()
+        # Per generator output dir: file stamps taken just before the
+        # generator ran (see _gen_dir / _track_generated_files).
+        self._pre_generation: dict[str, dict[str, tuple[int, int]]] = {}
         # Per-path modify_file counts. After >= 2 targeted edits on a small
         # generator file the write_file guardrail relaxes, so a deliberate
         # rewrite is not bounced with "use modify_file".
@@ -1525,16 +1530,44 @@ class ToolExecutor:
         return sorted(files, key=lambda x: x["path"])
 
     def _gen_dir(self, name: str) -> str:
-        """Create and return a generator output subdirectory."""
+        """Create and return a generator output subdirectory.
+
+        Also records each existing file's (mtime, size) there, so
+        ``_track_generated_files`` can tell the files this generator call
+        wrote from files already in the folder (the model's own, on a
+        Phase 2 re-run), which must keep their line attribution.
+        """
         d = os.path.join(self.workspace, name)
         os.makedirs(d, exist_ok=True)
+        self._pre_generation[os.path.normpath(d)] = self._file_stamps(d)
         return d
 
+    def _file_stamps(self, directory: str) -> dict[str, tuple[int, int]]:
+        stamps: dict[str, tuple[int, int]] = {}
+        for f in self._list_dir(directory):
+            try:
+                st = os.stat(os.path.join(self.workspace, f["path"]))
+            except OSError:
+                continue
+            stamps[f["path"]] = (st.st_mtime_ns, st.st_size)
+        return stamps
+
     def _track_generated_files(self, directory: str) -> list[dict]:
-        """List files in a generator output dir and mark them as generator-created."""
+        """List files in a generator output dir and mark the ones this call
+        wrote as generator-created."""
         files = self._list_dir(directory)
-        for f in files:
-            self._generator_files.add(f["path"])
+        # Only the files this call wrote or rewrote are generator output: on a
+        # Phase 2 re-run the folder also holds the model's own files, which
+        # must keep their attribution and stay outside the scaffold guards.
+        before = self._pre_generation.pop(os.path.normpath(directory), {})
+        after = self._file_stamps(directory)
+        written = [path for path, stamp in after.items() if before.get(path) != stamp]
+        self._generator_files.update(written)
+        # Line-level attribution for the run's Agent Trace record.
+        record_generated_files(
+            self.workspace, written,
+            os.path.basename(os.path.normpath(directory)), get_besser_version(),
+        )
         return files
 
     @staticmethod

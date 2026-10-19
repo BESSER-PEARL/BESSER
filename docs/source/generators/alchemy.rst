@@ -20,6 +20,10 @@ the ``generate`` method as follows:
 The ``dbms`` parameter specifies the target database management system. 
 In this example, we use ``sqlite``, but you can also specify ``postgresql``, ``mysql``, ``mssql``, ``mariadb``, or ``oracle``.
 
+Pass ``ocl_check_constraints=True`` to ``generate`` to turn the simple OCL invariants of the model
+into ``CheckConstraint`` entries in each table's ``__table_args__`` (off by default). Which invariants
+are translated is described in :ref:`sql-ocl-check-constraints`.
+
 Generated Output
 ----------------
 

@@ -55,6 +55,11 @@ services:
       - "{{ 5000 + loop.index0 }}:5000"
     volumes:
       - {{ agent | agent_slug }}_agent_data:/app/data
+{% if link_agent_database %}
+      # The backend's database volume: db1 in this agent's config.yaml is
+      # {{ webapp_db_mount }}/{{ name }}.db, the file the backend serves.
+      - sqlite_data:{{ webapp_db_mount }}
+{% endif %}
     environment:
       - PYTHONUNBUFFERED=1
 

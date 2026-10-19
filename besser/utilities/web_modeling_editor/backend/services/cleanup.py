@@ -16,19 +16,21 @@ import time
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_RUN_WORKSPACE_ROOT,
     LLM_TEMP_DIR_PREFIX,
+    TEMP_DIR_PREFIXES,
 )
 
 logger = logging.getLogger(__name__)
 
-# All known prefixes used by BESSER when creating temp directories.
-# Keep this in sync with constants.py and any ad-hoc prefixes in routers.
-_BESSER_TEMP_PREFIXES = (
-    "besser_",
-    "besser_agent_",
-    "besser_csv_",
-    "besser_llm_",
+# Prefixes older releases used before every temp dir carried a ``besser_``
+# prefix. Still matched so directories left behind by those releases are
+# removed too.
+_LEGACY_TEMP_PREFIXES = (
     "user_profile_",
 )
+
+# All known prefixes used by BESSER when creating temp directories. Add new
+# prefixes to ``TEMP_DIR_PREFIXES`` in constants.py, not here.
+_BESSER_TEMP_PREFIXES = TEMP_DIR_PREFIXES + _LEGACY_TEMP_PREFIXES
 
 # How often the background cleanup task runs (in seconds).
 _CLEANUP_INTERVAL_SECONDS = 3600  # 1 hour

@@ -4,6 +4,7 @@ Agent Model Builder
 This module generates Python code for BUML agent models.
 """
 
+import logging
 import os
 import tempfile
 import textwrap
@@ -21,6 +22,8 @@ from besser.BUML.metamodel.state_machine.agent import (
 from besser.BUML.metamodel.state_machine.state_machine import Action, Body, CustomCodeAction, Event
 from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, buml_header, safe_var_name
 from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
+
+logger = logging.getLogger(__name__)
 
 # Prefix of the module-level functions that build the agent GUIs in the generated code.
 # ``agent_diagram_converter`` recognises them through the ``add_gui_model`` call.
@@ -648,4 +651,4 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
 
                 f.write("\n")
 
-    print(f"Agent model saved to {file_path}")
+    logger.info("Agent model saved to %s", file_path)

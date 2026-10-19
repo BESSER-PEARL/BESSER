@@ -15,6 +15,9 @@ import os
 from typing import List, Optional, List as List_, Optional as Optional_
 from sqlalchemy import (
     create_engine, Enum, UniqueConstraint as _UniqueConstraint, event as _sa_event,
+{%- if check_constraints %}
+    CheckConstraint as _CheckConstraint, and_ as _sa_and, column as _sa_column,
+{%- endif %}
     Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Interval,
     PickleType, String, Table, Text, Time,
     Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
@@ -118,6 +121,14 @@ class {{ class.name }}(
     strict_attrs = True
     {%- else -%}
     __tablename__ = "{{class.name.lower()}}"
+    {%- if check_constraints.get(class.name) %}
+    # CHECK constraints translated from the model's OCL invariants
+    __table_args__ = (
+        {%- for check in check_constraints[class.name] %}
+        _CheckConstraint({{ check.expression }}, name="{{ check.name }}"),
+        {%- endfor %}
+    )
+    {%- endif %}
     {%- endif -%}
     {%- for parent in sort(class.parents()) %}
     {%- if parent.name not in concrete_parents %}
@@ -211,7 +222,20 @@ class {{ asso_class.name }}(Base):
     # A modeled identifier (or, when another association points here, a
     # surrogate id) is the primary key; the endpoint pair remains unique
     # because the generated relationship API addresses links by that pair.
-    __table_args__ = (_UniqueConstraint({% for end in asso_class.association.ends|sort(attribute='name') %}"{{ end.name }}_id"{{ ", " if not loop.last else "" }}{% endfor %}),)
+    {%- endif %}
+    {%- set unique_pair %}_UniqueConstraint({% for end in asso_class.association.ends|sort(attribute='name') %}"{{ end.name }}_id"{{ ", " if not loop.last else "" }}{% endfor %}){% endset %}
+    {%- if check_constraints.get(asso_class.name) %}
+    # CHECK constraints translated from the model's OCL invariants
+    __table_args__ = (
+        {%- if own_key %}
+        {{ unique_pair }},
+        {%- endif %}
+        {%- for check in check_constraints[asso_class.name] %}
+        _CheckConstraint({{ check.expression }}, name="{{ check.name }}"),
+        {%- endfor %}
+    )
+    {%- elif own_key %}
+    __table_args__ = ({{ unique_pair }},)
     {%- endif %}
     {%- if not ids.get(asso_class.name) and asso_class.name in referenced_asso %}
     id: Mapped_[int] = mapped_column(primary_key=True)

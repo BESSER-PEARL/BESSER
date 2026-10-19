@@ -1,6 +1,54 @@
 import pickle
 import os
+import datetime as _datetime
+from typing import Any as _Any, Optional as _Optional
+
 from besser.BUML.metamodel.structural import DomainModel
+
+
+def timestamp_to_iso(timestamp: _Any) -> _Optional[str]:
+    """Serialize an element ``timestamp`` as an ISO 8601 string.
+
+    Returns ``None`` when the value is not a ``datetime`` (e.g. a timestamp
+    that was never set), so callers can simply omit the field.
+    """
+    if isinstance(timestamp, _datetime.datetime):
+        return timestamp.isoformat()
+    return None
+
+
+def explicit_timestamp_iso(element: _Any) -> _Optional[str]:
+    """ISO 8601 form of ``element.timestamp`` when it was given explicitly.
+
+    A timestamp that defaulted to the creation time (see
+    ``Element.has_explicit_timestamp``) gives ``None``: writing it out would
+    make serializing the same model twice produce different output.
+    """
+    if not getattr(element, "has_explicit_timestamp", False):
+        return None
+    return timestamp_to_iso(getattr(element, "timestamp", None))
+
+
+def parse_iso_timestamp(value: _Any) -> _Optional[_datetime.datetime]:
+    """Parse an ISO 8601 string written by :func:`timestamp_to_iso`.
+
+    Tolerant by design: ``None``, non-string and malformed values return
+    ``None`` so the caller falls back to the metamodel's default (the creation
+    time). A timezone-aware value is converted to UTC and made naive, because
+    the metamodel's default timestamps are naive and ``sort_by_timestamp``
+    cannot compare naive with aware datetimes. UTC, not the server's local
+    time, so the same input gives the same model on every host.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = _datetime.datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(_datetime.timezone.utc).replace(tzinfo=None)
+    return parsed
+
 
 def sort_by_timestamp(obj_set: set) -> list:
     """

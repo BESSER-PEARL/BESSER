@@ -37,6 +37,7 @@ import threading
 from collections import Counter
 from typing import Any, Iterable, Optional
 
+from besser.spec_driven_agent.state.agent_trace import TRACE_DIRNAME
 from besser.utilities.provenance import PROVENANCE_FILENAME
 
 logger = logging.getLogger(__name__)
@@ -232,7 +233,7 @@ def compute_file_split(
                 rel = os.path.relpath(
                     os.path.join(root, name), output_dir
                 ).replace("\\", "/")
-                if rel == PROVENANCE_FILENAME:
+                if rel == PROVENANCE_FILENAME or rel.startswith(TRACE_DIRNAME + "/"):
                     continue
                 split["total"] += 1
                 if rel in generator_set:

@@ -53,6 +53,32 @@ Supported diagram types (the project keys): ``ClassDiagram``, ``ObjectDiagram``,
 has type ``BPMNDiagram``.
 
 
+Class Diagrams: Element Timestamps
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Every structural B-UML element carries a ``timestamp`` (its creation time),
+which generators use to order members. The class-diagram converters keep it:
+``class_buml_to_json`` writes an optional ISO 8601 ``timestamp`` string on the
+diagram model, on each class, enumeration, attribute, enumeration literal,
+method and OCL constraint element, on each association and inheritance
+relationship, and on each association end (``source`` / ``target``). Only
+explicit timestamps are written (``Element.has_explicit_timestamp``: given to
+the constructor, set later, or read from JSON); one that defaulted to the
+creation time is left out, so converting the same model twice gives the same
+JSON, and exporting a timestamp-less diagram to B-UML twice gives the same file.
+``process_class_diagram`` reads the field back. A missing or malformed value
+falls back to the creation time, and a value with a UTC offset is converted to
+UTC and stored naive, like the metamodel's own timestamps (UTC rather than the
+server's local time, so the same JSON gives the same B-UML on every host).
+Method parameters live
+in the method signature string, so they are recreated with a fresh timestamp.
+
+The editor itself does not keep the field yet: its element model serializes a
+fixed set of properties, so a diagram opened and saved in the editor loses its
+timestamps. They survive conversions that do not pass through the editor, such
+as importing a B-UML file and exporting it back.
+
+
 Neural Network Diagrams
 ^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -596,13 +622,53 @@ request body:
 Running the Backend
 -------------------
 
-Start the backend from the BESSER repository root:
+The backend needs packages that the core ``besser`` install does not include
+(FastAPI, openpyxl, the LLM SDKs, ...). Install them once, then start the
+backend with the ``besser-wme-backend`` command, which ``pip install besser``
+(or ``pip install -e .`` in a checkout) puts on your ``PATH``:
 
 .. code-block:: bash
 
-   python besser/utilities/web_modeling_editor/backend/backend.py
+   pip install besser
+   pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
+   besser-wme-backend
 
-The backend listens on ``http://localhost:9000/besser_api`` by default.
+The requirements file ships inside the installed package too. If a backend
+dependency is missing, ``besser-wme-backend`` says which one and prints the
+``pip install -r`` command with the file's full path, instead of an import
+traceback.
+
+The backend listens on ``http://localhost:9000/besser_api`` by default. The
+command accepts:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 20 55
+
+   * - Option
+     - Default
+     - Meaning
+   * - ``--host``
+     - ``0.0.0.0``
+     - Interface to bind. The default accepts connections on every interface;
+       pass ``127.0.0.1`` to accept local connections only.
+   * - ``--port``
+     - ``9000``
+     - Port to listen on. The frontend's development server expects ``9000``.
+   * - ``--log-level``
+     - ``info``
+     - uvicorn log level (``critical``, ``error``, ``warning``, ``info``,
+       ``debug``, ``trace``).
+
+From a checkout, ``python -m besser.utilities.web_modeling_editor.backend.backend``
+(what the Docker image runs) and ``python besser/utilities/web_modeling_editor/backend/backend.py``
+start the same server and take the same options. The backend always runs as a
+single process (see the note under `Agent Simulation`_).
+
+Startup and shutdown work (the temp-file cleanup, the spec-driven download
+registry restore and sweepers) runs in the FastAPI ``lifespan`` handler
+declared in ``backend.py``; the agent simulator service declares its own
+``lifespan`` in ``agent_simulator_api.py``.
 
 The Spec-Driven Agent's PIA provider is LIST's private AI gateway, an
 OpenAI-compatible endpoint backed by AWS Bedrock and reachable only from the

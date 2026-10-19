@@ -66,6 +66,13 @@ const getNestedValue = (obj: any, path: string): any => {
   return value;
 };
 
+
+// Readable axes: large numbers in compact form (25B, 1.5M), long category labels shortened.
+const compactNumber = (value: unknown): string =>
+  typeof value === "number" && Math.abs(value) >= 10000
+    ? new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value)
+    : String(value ?? "");
+
 export const LineChartComponent: React.FC<Props> = ({
   id,
   title,
@@ -228,8 +235,8 @@ export const LineChartComponent: React.FC<Props> = ({
         <LineChart data={mergedData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
           {showGrid && <CartesianGrid strokeDasharray="3 3" stroke={options?.gridColor} />}
           <XAxis dataKey="name" />
-          <YAxis />
-          {showTooltip && <Tooltip />}
+          <YAxis tickFormatter={compactNumber} width={64} />
+          {showTooltip && <Tooltip formatter={(v: unknown) => (typeof v === "number" ? v.toLocaleString("en-US", { maximumFractionDigits: 2 }) : String(v ?? ""))} />}
           {showLegend && <Legend verticalAlign={legendPosition} content={renderLegend} />}
           {series.map((s, index) => (
             <Line

@@ -102,10 +102,13 @@ Class Diagrams: Element Timestamps
 
 Every structural B-UML element carries a ``timestamp`` (its creation time),
 which generators use to order members. The class-diagram converters keep it:
-``class_buml_to_json`` writes an optional ISO 8601 ``timestamp`` string on the
-diagram model, on each class, enumeration, attribute, enumeration literal,
-method and OCL constraint element, on each association and inheritance
-relationship, and on each association end (``source`` / ``target``). Only
+``class_buml_to_json`` writes an optional ISO 8601 timestamp string on the
+diagram model (``model.timestamp``), on each class, enumeration and OCL
+constraint node (``node.data.timestamp``), on each attribute, enumeration
+literal and method row (``timestamp`` on the row), on each association and
+inheritance edge (``edge.data.timestamp``), and on each association end
+(``edge.data.sourceTimestamp`` / ``edge.data.targetTimestamp``); see
+``docs/source/migrations/uml-v4-shape.md``. Only
 explicit timestamps are written (``Element.has_explicit_timestamp``: given to
 the constructor, set later, or read from JSON); one that defaulted to the
 creation time is left out, so converting the same model twice gives the same
@@ -114,13 +117,12 @@ JSON, and exporting a timestamp-less diagram to B-UML twice gives the same file.
 falls back to the creation time, and a value with a UTC offset is converted to
 UTC and stored naive, like the metamodel's own timestamps (UTC rather than the
 server's local time, so the same JSON gives the same B-UML on every host).
-Method parameters live
-in the method signature string, so they are recreated with a fresh timestamp.
+Method parameter rows carry no timestamp, so parameters are recreated with a
+fresh one.
 
-The editor itself does not keep the field yet: its element model serializes a
-fixed set of properties, so a diagram opened and saved in the editor loses its
-timestamps. They survive conversions that do not pass through the editor, such
-as importing a B-UML file and exporting it back.
+The editor neither reads nor writes these fields. They survive conversions
+that do not pass through the editor, such as importing a B-UML file and
+exporting it back.
 
 
 Neural Network Diagrams

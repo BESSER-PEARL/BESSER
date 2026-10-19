@@ -83,10 +83,11 @@ opaque ``BPMNElement.layout`` passthrough populated by ``process_bpmn_diagram``
 when importing from the Web Modeling Editor). For freshly-built or programmatic
 models the DI section is omitted and the importing tool auto-lays out on open.
 
-Edge waypoints are absolute canvas coordinates. The editor stores a flow's
-``path`` relative to the flow's own ``bounds``, so the generator offsets it by
-``bounds.x`` / ``bounds.y``. A path is kept only if it then starts on the source
-shape and ends on the target shape; otherwise (placeholder geometry, such as the
+Edge waypoints are absolute canvas coordinates. ``process_bpmn_diagram`` stores
+the editor's absolute edge points as the flow's ``path`` with no ``bounds``; a
+``path`` from an older B-UML file is relative to the flow's own ``bounds``, so
+the generator offsets it by ``bounds.x`` / ``bounds.y``. A path is kept only if
+it then starts on the source shape and ends on the target shape; otherwise (placeholder geometry, such as the
 flows the modeling assistant creates before the editor re-routes them, a stale
 path, or no path at all) the edge is re-routed orthogonally between the two
 shapes' bounds, so every arrow is drawn connected to its steps.

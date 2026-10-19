@@ -301,6 +301,16 @@ legacy lowercase data). Map v3 element `type`:
   failing the conversion.
 - `path` becomes `edge.data.points`. If `isManuallyLayouted` is set, copy
   it through; otherwise omit.
+- Element timestamps (optional ISO 8601 strings, written only when the
+  B-UML element's timestamp is explicit; a missing or malformed value
+  falls back to the creation time on ingest): `model.timestamp` (the
+  domain model), `node.data.timestamp` (class, enumeration and
+  `ClassOCLConstraint` nodes), `timestamp` on attribute, method and
+  enumeration-literal rows, `edge.data.timestamp` (associations and
+  `ClassInheritance`), and `edge.data.sourceTimestamp` /
+  `edge.data.targetTimestamp` (the association ends). Parameter rows carry
+  none. A constraint node holding several constraints gives its timestamp
+  to none of them.
 - Member name parsing: if a v3 `ClassAttribute.name` is `"+ counter:
   int"` and `attributeType` is undefined, fall back to
   `parseLegacyNameFormat` (see `utils/classifierMemberDisplay.ts`) — the
@@ -865,6 +875,14 @@ type UserModelAttribute = {
 
 - `UserModelAttribute` and `UserModelIcon` v3 children collapse into the
   parent `UserModelName` data — same shape as ObjectDiagram.
+- B-UML → JSON (project import of a `user_object_model` section) emits
+  `UserModelName` nodes with `data.classId: null` and `data.className` (the
+  editor resolves classes from its own copy of the user metamodel), rows
+  with `value` and `attributeOperator: '=='` (B-UML stores a slot value, not
+  a comparison), `UserModelLink` edges, and no `referenceDiagramData`.
+- Comments linked to user objects are kept on the request's object model,
+  never on the module-level user reference model, which is shared by every
+  request.
 - The reference metamodel JSON (`usermetamodel_buml_short.json`) is bundled
   in the new lib at `services/userMetaModel/usermetamodel.json` — backend
   remains the OCL validation authority.

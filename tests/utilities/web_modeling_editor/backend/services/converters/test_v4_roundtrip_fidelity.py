@@ -192,3 +192,35 @@ def test_agent_default_llm_is_read_from_the_model_config_too():
     payload = _multi_llm_payload()
     payload["model"]["config"] = payload.pop("config")
     assert process_agent_diagram(payload).default_llm_name == "big"
+
+
+def test_nn_metrics_and_sub_nn_reference_use_the_editor_formats():
+    from besser.BUML.metamodel.nn import NN, Configuration, LinearLayer
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.nn_diagram_converter import (
+        nn_model_to_json,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+        process_nn_diagram,
+    )
+    classifier = NN(name="classifier")
+    classifier.add_layer(LinearLayer(name="head", in_features=8, out_features=2))
+    net = NN(name="net")
+    net.add_layer(LinearLayer(name="body", in_features=4, out_features=8))
+    net.add_sub_nn(classifier)
+    net.add_configuration(Configuration(
+        batch_size=8, epochs=1, learning_rate=0.01, optimizer="adam",
+        loss_function="crossentropy", metrics=["f1-score", "accuracy"],
+    ))
+
+    out = nn_model_to_json(net)
+    [config] = [n for n in out["nodes"] if n["type"] == "Configuration"]
+    # The editor's metrics multiselect parses the bare bracketed form.
+    assert config["data"]["attributes"]["metrics"] == "[f1-score, accuracy]"
+    [ref] = [n for n in out["nodes"] if n["type"] == "NNReference"]
+    container_ids = {n["data"]["name"]: n["id"] for n in out["nodes"] if n["type"] == "NNContainer"}
+    # referenceTarget is the referenced container's node id, as the editor stores it.
+    assert ref["data"]["referenceTarget"] == container_ids["classifier"]
+
+    rebuilt = process_nn_diagram({"title": "net", "model": out})
+    assert rebuilt.configuration.metrics == ["f1-score", "accuracy"]
+    assert [m.name for m in rebuilt.modules if isinstance(m, NN)] == ["classifier"]

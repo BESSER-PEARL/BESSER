@@ -984,8 +984,8 @@ type NNContainerNodeData = {
 type NNReferenceNodeData = {
   name: string;
   referenceTarget?: string;                     // id of the referenced NNContainer node (the editor
-                                                // writes the id; the backend emits the container
-                                                // name — readers resolve id first, then name)
+                                                // and the backend write the id; readers resolve
+                                                // id first, then a container name from older files)
 };
 ```
 
@@ -1036,7 +1036,7 @@ type (without the layer suffix), normalized to `snake_case`:
 | `LearningRateAttributeConfiguration`  | `learning_rate`       |
 | `OptimizerAttributeConfiguration`     | `optimizer`           |
 | `LossFunctionAttributeConfiguration`  | `loss_function`       |
-| `MetricsAttributeConfiguration`       | `metrics`             |
+| `MetricsAttributeConfiguration`       | `metrics` (bare bracketed list, `[accuracy, f1-score]`) |
 | `WeightDecayAttributeConfiguration`   | `weight_decay`        |
 | `MomentumAttributeConfiguration`      | `momentum`            |
 | `PathDataAttributeDataset`            | `path_data`           |

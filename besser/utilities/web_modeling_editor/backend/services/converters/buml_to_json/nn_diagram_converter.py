@@ -448,7 +448,8 @@ def _configuration_fields(config: Configuration) -> list[tuple[str, Any, str, bo
         ('learning_rate',  config.learning_rate,  'float', True),
         ('optimizer',      config.optimizer,      'str',  True),
         ('loss_function',  config.loss_function,  'str',  True),
-        ('metrics',        config.metrics,        'List', True),
+        # Bare bracketed form, as the editor's metrics multiselect writes it.
+        ('metrics',        '[' + ', '.join(config.metrics or []) + ']', 'List', True),
     ]
     if _is_attr_set(config, 'weight_decay') or (
         config.weight_decay is not None and config.weight_decay != 0
@@ -546,12 +547,14 @@ def _emit_container_node(name: str, x: int, y: int, width: int, height: int, nod
     return container_id
 
 
-def _emit_nn_reference_node(ref_name: str, parent_id: str, x: int, y: int, nodes: list) -> str:
+def _emit_nn_reference_node(ref_name: str, target_id: str, parent_id: str, x: int, y: int,
+                            nodes: list) -> str:
+    """``referenceTarget`` is the referenced container's node id, as the editor stores it."""
     ref_id = _new_id()
     nodes.append(make_node(
         node_id=ref_id,
         type_="NNReference",
-        data={"name": ref_name, "referenceTarget": ref_name},
+        data={"name": ref_name, "referenceTarget": target_id},
         position={"x": x, "y": y},
         parent_id=parent_id,
         width=110,
@@ -633,7 +636,9 @@ def _emit_nn_container(nn: NN, y_base: int, nodes: list, edges: list,
         y = y_base + 60
         module_type = type(module).__name__
         if module_type == 'NN' and sub_nn_ids and id(module) in sub_nn_ids:
-            element_id = _emit_nn_reference_node(module.name, container_id, x, y, nodes)
+            element_id = _emit_nn_reference_node(
+                module.name, sub_nn_ids[id(module)], container_id, x, y, nodes,
+            )
         else:
             element_id = _emit_module_node(module, container_id, x, y, nodes)
         if prev_id is not None:

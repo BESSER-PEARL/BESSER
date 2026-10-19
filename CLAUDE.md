@@ -140,6 +140,9 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
   analysis failed, `[]` = scaffold already sufficient (Phase 2 may be skipped), a list = the tasks.
 - `validation/` — code checks; `validation/issues.py::_classify_issue` assigns severity.
 - `state/checkpoint.py`, `state/tracing.py` — per-run checkpoint and trace files.
+- `state/agent_trace.py` — line-level attribution (`.besser_attribution.json`: line hashes per contributor,
+  updated on generator writes, on seeding and at packaging) and the run's Agent Trace record
+  (`.agent-trace/<run id>.json`, shipped in the ZIP and the GitHub push).
 - Service layer `backend/services/spec_driven/`: `runner.py` (drives a run, emits SSE), `run_manager.py`
   (durable runs: SQLite event store, sequence numbers assigned *before* any subscriber sees a frame, replay
   via `?after=` / `Last-Event-ID`, `interrupted` marking on restart), `sse_events.py` (typed event schema),

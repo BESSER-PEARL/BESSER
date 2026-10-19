@@ -250,6 +250,18 @@ class TestSpecDriven:
         # The GitHub push copies the workspace, so the file travels there.
         assert (result_path / PROVENANCE_FILENAME).is_file()
 
+    def test_zip_download_carries_the_agent_trace_record(self, tmp_path):
+        # Issue #620: one Agent Trace record per run, beside the code.
+        _, (done, entry) = self._package(tmp_path, {"main.py": "x = 1\n", "app.py": "y = 2\n"})
+        trace_name = f".agent-trace/{done.runId}.json"
+        record = json.loads(_zip_entries(open(entry.file_path, "rb").read())[trace_name])
+        assert record["version"] == "0.1"  # the spec schema only accepts two-part versions
+        assert record["tool"] == {"name": "BESSER Spec-Driven Agent", "version": VERSION}
+        assert {f["path"] for f in record["files"]} == {"main.py", "app.py"}
+        # The record is not a user file.
+        assert done.fileCount == 2
+        assert done.aiShare["aiLines"] == 2 and done.aiShare["tracePath"] == trace_name
+
 
 def test_build_sha_is_shown_only_when_the_image_was_stamped(monkeypatch):
     from besser.utilities.provenance import generation_provenance_markdown

@@ -93,3 +93,62 @@ A repository that was pushed to GitHub by a previous run can be brought back
 the same way: ``POST /besser_api/spec-driven/import-github-run`` re-imports it
 as a run whose ``run_id`` can then seed a ``mode: "modify"`` run. See
 :doc:`api` for both request shapes.
+
+.. _spec-driven-agent-trace:
+
+Who wrote which lines (Agent Trace)
+-----------------------------------
+
+Every run ships an `Agent Trace <https://agent-trace.dev/>`_ record (spec
+version ``0.1``, MIME type ``application/vnd.agent-trace.record+json``) at
+``.agent-trace/<run id>.json``, in the download ZIP and in the GitHub push. It
+lists each text file of the delivered tree with line ranges and who wrote them:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Contributor
+     - Lines
+   * - ``ai`` with ``model_id``
+     - Written or modified by the LLM. ``model_id`` is ``provider/model``, the
+       model that served the run (after any fallback switch). The
+       conversation's ``related`` entry ``urn:besser:run:<run id>`` names the
+       run, so a range can be traced back to the run's events.
+   * - ``unknown`` (generator)
+     - Unchanged from a deterministic BESSER generator's output. ``related``
+       names the generator and BESSER version
+       (``urn:besser:generator:django@<version>``). Deterministic packaging
+       fixes (the frontend build configuration, secret redaction) are
+       attributed the same way.
+   * - ``human``
+     - On a run that continues from a previous run or a GitHub import: lines a
+       person changed in between.
+   * - ``unknown`` (no generator)
+     - Code carried over from a repository pushed before attribution existed.
+
+Ranges refer to the files as delivered and carry a ``content_hash``
+(``sha256:``) so moved code can be found again. ``metadata["org.besser-pearl"]``
+holds the run id, the base generator, the model id and line counts per kind.
+The ``done`` event carries the AI-written share (``aiShare``): AI lines overall
+and for this run, and per file.
+
+Attribution compares files, it does not replay edits: whenever a generator
+writes a file, its lines are recorded (as short hashes) in
+``.besser_attribution.json``; at packaging time every line that differs from
+that record goes to the LLM. A line keeps its contributor however often the
+file was edited, as long as the line itself is unchanged. The record holds
+hashes only, never content, and is pushed to GitHub beside the recipe, so a
+continue-from-GitHub run can tell a person's edits from the AI's. Binary files
+and files over 2 MB are not attributed. In files longer than 5,000 lines only
+the unchanged lines at the start and the end keep their contributor: a change
+in the middle gives every line from the first change to the last one to the
+new contributor (a full line diff of such files is too slow).
+
+When attribution cannot be trusted (the state file is unreadable, or a
+generator's update failed), the run ships without a record and without
+``.besser_attribution.json``, rather than with a record that credits someone
+else's lines to the AI; the next run on that code then starts from
+``unknown``. The record carries no ``vcs`` revision:
+it is part of the commit it would have to name. Older traces in the repository
+are kept, and their ranges refer to the revision they were written for.

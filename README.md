@@ -24,8 +24,7 @@
 
 BESSER is a [low-modeling](https://modeling-languages.com/welcome-to-the-low-modeling-revolution/) [low-code](https://lowcode-book.com/) open-source platform. BESSER (Building bEtter Smart Software fastER) is funded thanks to an [FNR Pearl grant](https://modeling-languages.com/a-smart-low-code-platform-for-smart-software-in-luxembourg-goodbye-barcelona/) led by the [Luxembourg Institute of Science and Technology](https://www.list.lu/) with the participation of the [SnT/University of Luxembourg](https://www.uni.lu/snt-en/) and open to all your contributions!
 
-<!-- TODO: replace with a new 20–30 s GIF: draw 2–3 classes → Generate → the running app in the browser. -->
-![From model to running app with BESSER](./docs/source/img/besser_new.gif)
+![Draw a model in the BESSER editor, generate a web app, and run it](./docs/source/img/besser_quickstart.gif)
 
 ## Quickstart
 

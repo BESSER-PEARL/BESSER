@@ -19,7 +19,7 @@ every date-typed attribute produces, since BUML's ``DateType`` is named
 ``date`` — could not be parsed.
 
 The collection operations the grammar accepts after ``->`` include ``size``,
-``isEmpty``, ``sum``, ``includes``, ``excludes``, ``union``, ``asSet``,
+``isEmpty``, ``notEmpty``, ``sum``, ``includes``, ``excludes``, ``union``, ``asSet``,
 ``intersection``, ``isUnique``, ``symmetricDifference``, ``subSequence`` and
 ``subOrderedSet``, alongside the ``forAll``/``exists``/``select``/``reject``/
 ``collect`` iterators. ``allInstances()`` is accepted in both the ``Class::``

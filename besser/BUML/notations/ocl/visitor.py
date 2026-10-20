@@ -64,6 +64,22 @@ class BOCLVisitorImpl(BOCLVisitor):
             return receiver.property.type
         return None
 
+    def _element_type(self, source):
+        """Element type of the collection a loop iterates over, or None if unknown.
+
+        ``self.books`` → ``Book``; ``Book.allInstances()`` → ``Book``;
+        ``select`` / ``reject`` keep their source's element type.
+        """
+        if isinstance(source, Property):
+            return source.type
+        if isinstance(source, PropertyCallExpression):
+            return source.property.type
+        if isinstance(source, OperationCallExpression) and source.name == "ALLInstances":
+            return self._get_class_by_name(getattr(source.source, "name", None))
+        if isinstance(source, LoopExp) and source.name in ("select", "reject"):
+            return self._element_type(source.source)
+        return None
+
     def _get_class_by_name(self, name):
         for t in self.dm.types:
             if t.name == name:
@@ -277,10 +293,10 @@ class BOCLVisitorImpl(BOCLVisitor):
                     loop.addIterator(it)
                     i += 2
                     continue
-            # No type annotation
+            # No type annotation: the variable ranges over the source's elements.
             it = IteratorExp(var_name, "NotMentioned")
             loop.addIterator(it)
-            self.iterators_context[var_name] = self.context_class
+            self.iterators_context[var_name] = self._element_type(source) or self.context_class
             i += 1
 
         # Visit the body expression
@@ -313,6 +329,12 @@ class BOCLVisitorImpl(BOCLVisitor):
     def visitArrowIsEmpty(self, ctx: BOCLParser.ArrowIsEmptyContext):
         source = self.visit(ctx.expression())
         oce = OperationCallExpression(name="IsEmpty", operation="IsEmpty", arguments=[])
+        oce.source = source
+        return oce
+
+    def visitArrowNotEmpty(self, ctx: BOCLParser.ArrowNotEmptyContext):
+        source = self.visit(ctx.expression())
+        oce = OperationCallExpression(name="NotEmpty", operation="NotEmpty", arguments=[])
         oce.source = source
         return oce
 
@@ -514,7 +536,7 @@ class BOCLVisitorImpl(BOCLVisitor):
 
     def visitBooleanLiteral(self, ctx: BOCLParser.BooleanLiteralContext):
         text = ctx.BOOLEAN_LITERAL().getText()
-        return BooleanLiteralExpression("NP", text)
+        return BooleanLiteralExpression("NP", text == "true")
 
     def visitNullLiteral(self, ctx: BOCLParser.NullLiteralContext):
         return None

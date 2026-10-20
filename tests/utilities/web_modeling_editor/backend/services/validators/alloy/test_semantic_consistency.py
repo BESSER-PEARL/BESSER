@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.models.diagram import DiagramInput
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy import semantic_consistency
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy.semantic_consistency import (
     check_semantic_consistency,
     generate_object_diagram,
@@ -67,9 +68,14 @@ def state_machine_diagram() -> DiagramInput:
 
 
 def _events(stream) -> list[dict]:
-    """The events of the SSE *stream*, an async generator of ``data:`` lines."""
+    """The events of the SSE *stream*, an async generator of ``data:`` lines and heartbeat comments."""
+    return [json.loads(line.removeprefix("data: ")) for line in _lines(stream) if not line.startswith(":")]
+
+
+def _lines(stream) -> list[str]:
+    """The lines of the SSE *stream*, an async generator."""
     async def collect():
-        return [json.loads(line.removeprefix("data: ")) async for line in stream]
+        return [line async for line in stream]
     return asyncio.run(collect())
 
 
@@ -106,9 +112,10 @@ def test_consistent_diagram(consistent_diagram):
 
 
 @needs_alloy
-def test_the_search_announces_its_time_budget(consistent_diagram):
-    events = _events(check_semantic_consistency(consistent_diagram))
-    assert events[0]["time_budget_seconds"] == 140
+def test_heartbeats_while_the_analyzer_runs(monkeypatch, contradictory_diagram):
+    monkeypatch.setattr(semantic_consistency, "HEARTBEAT_SECONDS", 0.01)
+    lines = _lines(check_semantic_consistency(contradictory_diagram, scopes=(5,)))
+    assert ": semantic-check-heartbeat\n\n" in lines  # the JVM alone takes longer to start
 
 
 @needs_alloy
@@ -150,7 +157,6 @@ def test_no_instance_reason_timeout(consistent_diagram):
 @needs_alloy
 def test_scopes_and_timeout_are_parameters(contradictory_diagram):
     events = _events(check_semantic_consistency(contradictory_diagram, scopes=(1, 2), timeout=10))
-    assert events[0]["time_budget_seconds"] == 30  # 2 scopes x (10 s + 5 s)
     assert events[-1]["message"].startswith("No instance within 2 objects per class")
 
 

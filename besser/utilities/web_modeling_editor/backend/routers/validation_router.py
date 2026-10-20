@@ -279,7 +279,7 @@ async def check_ocl(input_data: DiagramInput):
 
 
 # Headers of the Server-Sent Events streams: no caching, and no buffering by proxies such as nginx
-_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+_SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
 
 
 @router.post("/semantic-consistency-check")
@@ -289,7 +289,7 @@ async def semantic_consistency_check(input_data: DiagramInput) -> StreamingRespo
     The search tries increasingly larger scopes (objects per class) and streams its progress as
     Server-Sent Events. A search that finds nothing reports what it searched, and why in ``reason``
     (``"unsat"`` or ``"timeout"``): "No instance within N objects per class, integers in [a, b],
-    ...". The first event carries ``time_budget_seconds``, the longest the search can take.
+    ...". While the Alloy Analyzer runs, SSE comment lines are sent as heartbeats.
     """
     return StreamingResponse(
         check_semantic_consistency(input_data), media_type="text/event-stream", headers=_SSE_HEADERS

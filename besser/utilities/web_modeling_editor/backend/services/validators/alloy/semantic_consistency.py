@@ -5,11 +5,12 @@ The two functions behind the ``/semantic-consistency-check`` and ``/generate-obj
 endpoints search for an instance of a class diagram, and its OCL invariants, within increasingly
 larger scopes, and stream their progress as Server-Sent Events.  A search that finds nothing
 reports what it searched (e.g. "No instance within 11 objects per class and integers in
-[-1024, 1023]."): a larger scope might still hold an instance.  Its events carry the reason in ``reason``: ``"unsat"`` when the bounds hold no
-instance, ``"timeout"`` when the Alloy Analyzer timed out, which ends the search.
+[-1024, 1023]."): a larger scope might still hold an instance.  Its events carry the reason in
+``reason``: ``"unsat"`` when the bounds hold no instance, ``"timeout"`` when the Alloy Analyzer
+timed out, which ends the search.
 
-The search takes at most :func:`time_budget` seconds, given in its first event
-(``time_budget_seconds``), so that clients can wait for it.
+While the Alloy Analyzer runs, an SSE comment line is sent every :data:`HEARTBEAT_SECONDS` as a
+heartbeat, so that clients and proxies see the stream is alive.
 """
 
 import asyncio
@@ -41,14 +42,9 @@ DEFAULT_SCOPES = (5, 7, 9, 11)
 # Seconds the Alloy Analyzer may run, per scope, before the search times out.
 DEFAULT_TIMEOUT_SECONDS = 30
 
-# Seconds allowed, per scope, for the work outside the Alloy Analyzer: translating the model,
-# reading the instance and converting it into an object diagram.
-SCOPE_OVERHEAD_SECONDS = 5
-
-
-def time_budget(scopes: Sequence[int], timeout: int) -> int:
-    """The seconds a search of *scopes* takes at most, when each analysis times out after *timeout* seconds."""
-    return len(scopes) * (timeout + SCOPE_OVERHEAD_SECONDS)
+# Seconds between the SSE heartbeats sent while the Alloy Analyzer runs, so that clients and
+# proxies see the stream is alive.
+HEARTBEAT_SECONDS = 15
 
 
 async def check_semantic_consistency(
@@ -92,15 +88,19 @@ async def _search(
             yield _failure("The Alloy Analyzer is not available on this server.", warnings=warnings)
             return
 
-        for index, scope in enumerate(scopes):
+        for scope in scopes:
             try:
                 bounds = await asyncio.to_thread(solver.generate_specification, scope)
-                # The first event of the search tells clients how long it can take
-                budget = {"time_budget_seconds": time_budget(scopes, timeout)} if index == 0 else {}
-                yield _progress(f"Searching within {bounds}...", scope=bounds.objects, **budget)
-                result, object_model = await asyncio.to_thread(
-                    _analyze, solver, scope, timeout, with_object_diagram
+                yield _progress(f"Searching within {bounds}...", scope=bounds.objects)
+                analysis = asyncio.ensure_future(
+                    asyncio.to_thread(_analyze, solver, scope, timeout, with_object_diagram)
                 )
+                while True:
+                    try:
+                        result, object_model = await asyncio.wait_for(asyncio.shield(analysis), HEARTBEAT_SECONDS)
+                        break
+                    except asyncio.TimeoutError:
+                        yield _heartbeat()
             except AlloyTranslationError as error:
                 yield _failure(
                     "The model cannot be translated to Alloy.", errors=[str(error)], warnings=warnings
@@ -192,6 +192,11 @@ def _object_model_to_json(object_model: ObjectModel, domain_json: dict[str, Any]
 
 def _sse(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload)}\n\n"
+
+
+def _heartbeat() -> str:
+    """An SSE comment line, which clients ignore, telling them the stream is alive."""
+    return ": semantic-check-heartbeat\n\n"
 
 
 def _progress(message: str, sat: bool | None = None, **fields: Any) -> str:

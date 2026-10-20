@@ -35,6 +35,19 @@ the linking of existing entities via identifiers and the nested creation of new 
 entities using their identifiers. The default setting is False, which restricts the functionality to linking by identifiers. Finally, the 
 ``docker_image`` parameter is there to assist you in `creating a Docker image <#docker-image-generation>`_ for your application.
 
+The ``api_title``, ``api_description`` and ``api_version`` parameters set the metadata of the generated FastAPI
+application, shown in the OpenAPI docs (``/docs``) and returned by the ``/`` endpoint. They default to
+``"<model name> API"``, a generic description and ``"1.0.0"``.
+
+.. code-block:: python
+
+    backend = BackendGenerator(
+        model=library_model,
+        api_title="Library Service",
+        api_description="Manage libraries, books and authors.",
+        api_version="2.1.0",
+    )
+
 
 Invoke the generate method to produce the backend code.The generated files will be placed in the ``<<current_directory>>/output_backend``.
 This method will generate a modular project (rather than one large file) so each concern lives in its own module:
@@ -61,6 +74,50 @@ When you run the code generated, a SqlLite database and the OpenAPI specificatio
 
 We have an example demonstrating how this generator works, which you can find here: :doc:`../examples/backend_example`.
 This example showcases the usage of the Backend Generator with our :doc:`../examples/library_example` Example, illustrating its application in generating a fully functional backend from a B-UML model.
+
+Extending the Generated Backend
+-------------------------------
+Regenerating the backend overwrites the generated files, so keep your own code in separate files and
+plug it into the generated ``app`` with the standard FastAPI mechanisms. For example, a ``my_extensions.py``
+next to the generated code can add endpoints, middleware or authentication:
+
+.. code-block:: python
+
+    from fastapi import APIRouter, Depends
+    from sqlalchemy.orm import Session
+
+    from database import get_db
+    from main_api import app
+    from sql_alchemy import Library
+
+    router = APIRouter(prefix="/custom", tags=["Custom"])
+
+
+    @router.get("/library-names")
+    def library_names(database: Session = Depends(get_db)):
+        return [library.name for library in database.query(Library).all()]
+
+
+    @app.middleware("http")
+    async def add_custom_header(request, call_next):
+        response = await call_next(request)
+        response.headers["X-Custom"] = "yes"
+        return response
+
+
+    app.include_router(router)
+
+Start the application from your file, so that your additions are loaded with the generated routes:
+``uvicorn my_extensions:app`` instead of ``python main_api.py``. If you use the generated ``Dockerfile``,
+copy your file into the image and change its start command the same way.
+
+- **Endpoints**: put them in your own ``APIRouter`` and add it with ``app.include_router()``. Use ``get_db``
+  from ``database.py`` for a database session and the models from ``sql_alchemy.py`` to query it.
+- **Middleware and authentication**: register them on ``app`` (``app.middleware()``, ``app.add_middleware()``),
+  or protect your own routes with FastAPI dependencies.
+- **Configuration and secrets**: read them from environment variables (``os.environ``) instead of writing them
+  into code. The generated code already reads ``DATABASE_URL`` this way. With Docker, pass them at run time,
+  for example ``docker run --env-file .env ...``.
 
 Docker Image Generation
 -----------------------

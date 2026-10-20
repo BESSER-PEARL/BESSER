@@ -29,11 +29,11 @@ def parse_json_safely(json_text: str):
 
 def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
     """
-    Convert class specifications from GPT-generated JSON to Apollon/BUML format.
+    Convert class specifications from GPT-generated JSON to BESSER WME / BUML format.
     """
 
-    elements = {}
-    relationships = {}
+    nodes = []
+    edges = []
 
     # ID generation helpers
     def make_id(prefix, counter):
@@ -51,11 +51,11 @@ def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
         class_map[cls["className"]] = class_id
         class_counter += 1
 
-        # Create class element
-        class_element = {
-            "id": class_id,
-            "type": "Class",
+        # Create class node (v4 shape); attribute/method rows carry the
+        # "+ name: type" signature, parsed by the class diagram processor.
+        class_data = {
             "name": cls["className"],
+            "stereotype": None,
             "attributes": [],
             "methods": []
         }
@@ -73,15 +73,7 @@ def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
             )
             name_str = f"{visibility_symbol} {attr['name']}: {attr['type']}"
 
-            attr_element = {
-                "id": attr_id,
-                "type": "ClassAttribute",
-                "owner": class_id,
-                "name": name_str
-            }
-
-            class_element["attributes"].append(attr_id)
-            elements[attr_id] = attr_element
+            class_data["attributes"].append({"id": attr_id, "name": name_str})
 
         # --- Methods ---
         for method in cls.get("methods", []):
@@ -104,17 +96,14 @@ def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
 
             name_str = f"{visibility_symbol} {method['name']}({param_str}): {return_type}"
 
-            method_element = {
-                "id": method_id,
-                "type": "ClassMethod",
-                "owner": class_id,
-                "name": name_str
-            }
+            class_data["methods"].append({"id": method_id, "name": name_str})
 
-            class_element["methods"].append(method_id)
-            elements[method_id] = method_element
-
-        elements[class_id] = class_element
+        nodes.append({
+            "id": class_id,
+            "type": "class",
+            "position": {"x": 0, "y": 0},
+            "data": class_data
+        })
 
     # === Relationships ===
     for rel in system_spec.get("relationships", []):
@@ -137,34 +126,30 @@ def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
         if not source_class_id or not target_class_id:
             continue  # skip invalid relationships
 
-        relationship_obj = {
+        edges.append({
             "id": rel_id,
             "type": converted_type,
-            "source": {
-                "element": source_class_id,
-                "multiplicity": rel.get("sourceMultiplicity", "1"),
-                "role": rel.get("sourceRole", "")
-            },
-            "target": {
-                "element": target_class_id,
-                "multiplicity": rel.get("targetMultiplicity", "1"),
-                "role": rel.get("name", "")
-            },
-            "name": rel.get("name", "")
-        }
-
-        relationships[rel_id] = relationship_obj
+            "source": source_class_id,
+            "target": target_class_id,
+            "data": {
+                "name": rel.get("name", ""),
+                "sourceMultiplicity": rel.get("sourceMultiplicity", "1"),
+                "sourceRole": rel.get("sourceRole", ""),
+                "targetMultiplicity": rel.get("targetMultiplicity", "1"),
+                "targetRole": rel.get("name", "")
+            }
+        })
 
     # === Final structure ===
-    apollon_buml_json = {
+    besser_buml_json = {
         "title": title.replace(" ", "_"),
         "model": {
-            "elements": elements,
-            "relationships": relationships
+            "nodes": nodes,
+            "edges": edges
         }
     }
 
-    return apollon_buml_json
+    return besser_buml_json
 
 
 def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):

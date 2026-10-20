@@ -1,17 +1,25 @@
 """BPMN processing for converting JSON to BUML format.
 
-Returns a ``BPMNModel`` metamodel instance from the WME BPMN diagram JSON envelope. The
-algorithm is the standard nodes-first / edges-second pass with a containment pass in
-between.
+Reads the v4 wire shape (``{nodes, edges}``) natively — mirrors
+``json_to_buml/class_diagram_processor.py``. Containment follows the
+``parentId`` chain, each BPMN flow kind has its own edge ``type`` (see
+``docs/source/migrations/uml-v4-shape.md``), and flows are routed to their
+process via ``process_of``.
+
+``BPMNElement.layout`` / ``BPMNConnectingObject.layout`` are declared opaque
+by the metamodel (type-checked as dict-or-None, content never interpreted),
+so the converters define the internal stash shape — see
+``_layout_dict`` / ``_flow_layout_dict``.
 
 Design points:
 
-* **Identity is by object**: WME ids ride in ``element.layout`` so the
-  converter pair can round-trip them, but the metamodel itself stays id-free.
-* **Layout is opaque**: ``BPMNElement.layout`` carries the WME bounds /
-  path / stash without the metamodel ever interpreting it.
-* **Validation is a separate concern**: this processor never calls ``BPMNModel.validate``
-  — it only produces a ``BPMNModel``. Callers run validation if they need it.
+* **Identity is by object**: WME ids ride in ``element.layout`` so the converter
+  pair can round-trip them, but the metamodel itself stays id-free.
+* **Layout is opaque**: ``BPMNElement.layout`` carries the WME position / size /
+  points stash without the metamodel ever interpreting it.
+* **Validation is a separate concern**: this processor never calls
+  ``BPMNModel.validate`` — it only produces a ``BPMNModel``. Callers run
+  validation if they need it.
 """
 
 import logging
@@ -51,63 +59,70 @@ from besser.BUML.metamodel.bpmn import (
     ReflectionMode,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    BPMN_DIAGRAM_TYPE,
-    BPMN_RELATIONSHIP_TYPE,
+    BPMN_DIAGRAM_TYPES,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event_mapping import (
     parse_event_type,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    absolute_bounds, edge_layout, node_data,
+)
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    reject_unreadable_model,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# WME element-type → metamodel class dispatch
-# ---------------------------------------------------------------------------
-
+# v4 node `type` (lowerCamelCase, packages/library/lib/nodes/types.ts) -> metamodel class.
 _EVENT_CLASSES = {
-    "BPMNStartEvent": StartEvent,
-    "BPMNIntermediateEvent": IntermediateEvent,
-    "BPMNEndEvent": EndEvent,
+    "bpmnStartEvent": StartEvent,
+    "bpmnIntermediateEvent": IntermediateEvent,
+    "bpmnEndEvent": EndEvent,
 }
 
 _ACTIVITY_CLASSES = {
-    "BPMNTask": Task,
-    "BPMNSubprocess": SubProcess,
-    "BPMNTransaction": Transaction,
-    "BPMNCallActivity": CallActivity,
+    "bpmnTask": Task,
+    "bpmnSubprocess": SubProcess,
+    "bpmnTransaction": Transaction,
+    "bpmnCallActivity": CallActivity,
+}
+
+# v4 edge `type` -> BUML connecting-object class (versionConverter.ts convertV3EdgeTypeToV4).
+_FLOW_CLASS_FOR_EDGE_TYPE = {
+    "BPMNSequenceFlow": SequenceFlow,
+    "BPMNMessageFlow": MessageFlow,
+    "BPMNAssociationFlow": Association,
+    "BPMNDataAssociationFlow": DataAssociation,
 }
 
 
-def _layout_dict(elem_id: str, elem: dict) -> dict:
-    """Build the opaque ``layout`` passthrough for a node element.
-
-    Stores everything the converter needs to round-trip the WME shape that is *not* part
-    of the abstract syntax: original id, owner pointer, bounds, and any styling fields.
-    """
+def _layout_dict(node: dict, raw_by_id: dict) -> dict:
+    """Opaque layout passthrough for a node: id + parentId + absolute bounds + style keys."""
     layout = {
-        "id": elem_id,
-        "owner": elem.get("owner"),
-        "bounds": elem.get("bounds"),
+        "id": node.get("id"),
+        "parentId": node.get("parentId"),
+        "bounds": absolute_bounds(node, raw_by_id),
     }
+    data = node_data(node)
     for style_key in ("fillColor", "strokeColor", "textColor", "highlight"):
-        if style_key in elem:
-            layout[style_key] = elem[style_key]
+        if style_key in data:
+            layout[style_key] = data[style_key]
     return layout
 
 
-def _flow_layout_dict(rel_id: str, rel: dict) -> dict:
-    """Build the opaque ``layout`` passthrough for a relationship element."""
-    return {
-        "id": rel_id,
-        "owner": rel.get("owner"),
-        "bounds": rel.get("bounds"),
-        "path": rel.get("path"),
-        "source_direction": (rel.get("source") or {}).get("direction"),
-        "target_direction": (rel.get("target") or {}).get("direction"),
-        "isManuallyLayouted": rel.get("isManuallyLayouted", False),
-    }
+def _flow_layout_dict(edge: dict) -> dict:
+    """Opaque layout passthrough for an edge (flow)."""
+    layout = edge_layout(edge)
+    # ``path`` feeds the BPMN generator's BPMNEdge DI waypoints. With no
+    # ``bounds`` offset in the layout it is read as absolute, so the user's
+    # routing is kept whenever it starts and ends on the two shapes.
+    layout["path"] = list(layout["points"]) or None
+    return layout
+
+
+_AGENT_ROLE_ALIASES = {"worker": "solution", "manager": "supervision"}
 
 
 def _clamp_trust_score(value) -> int:
@@ -128,63 +143,53 @@ def _clamp_swarm_size(value) -> int:
     return max(1, n)
 
 
-def _build_node(elem: dict):
-    """Construct the metamodel object for one WME ``elements[id]`` entry.
+def _build_node(node: dict):
+    """Construct the metamodel object for one v4 ``nodes[]`` entry, or ``None`` for
+    an unknown type. Raises ConversionError for a known type with an unrecognised
+    enum string. Agentic variants (``data.isAgentic``) build ``AgenticTask`` /
+    ``AgenticGateway`` / ``AgenticLane``."""
+    node_type = node.get("type")
+    data = node_data(node)
+    name = data.get("name", "") or ""
 
-    Returns ``None`` for unknown types (caller logs and skips). Pool elements are
-    constructed *with* their ``Process`` so containment in pass 2 has somewhere to land.
-
-    Raises:
-        ConversionError: if a known WME type carries an unrecognised enum string for one
-            of its subtype attributes.
-    """
-    elem_type = elem.get("type")
-    name = elem.get("name", "") or ""
-
-    if elem_type in _ACTIVITY_CLASSES:
-        cls = _ACTIVITY_CLASSES[elem_type]
+    if node_type in _ACTIVITY_CLASSES:
+        cls = _ACTIVITY_CLASSES[node_type]
         try:
-            loop = LoopCharacteristics(elem.get("marker", "none") or "none")
+            loop = LoopCharacteristics(data.get("marker", "none") or "none")
         except ValueError as exc:
             raise ConversionError(
-                f"Unknown BPMN loop marker '{elem.get('marker')}' on element '{name}'."
+                f"Unknown BPMN loop marker '{data.get('marker')}' on element '{name}'."
             ) from exc
         if cls is Task:
             try:
-                task_type = TaskType(elem.get("taskType", "default") or "default")
+                task_type = TaskType(data.get("taskType", "default") or "default")
             except ValueError as exc:
                 raise ConversionError(
-                    f"Unknown BPMN task type '{elem.get('taskType')}' on Task '{name}'."
+                    f"Unknown BPMN task type '{data.get('taskType')}' on Task '{name}'."
                 ) from exc
-            if elem.get("isAgentic"):
-                reflection_value = elem.get("reflectionMode", "none") or "none"
+            if data.get("isAgentic"):
+                reflection_value = data.get("reflectionMode", "none") or "none"
                 try:
                     reflection = ReflectionMode(reflection_value)
                 except ValueError as exc:
                     raise ConversionError(
                         f"Unknown reflectionMode '{reflection_value}' on AgenticTask '{name}'."
                     ) from exc
-
-                trust = _clamp_trust_score(elem.get("trustScore", 0))
-                agent_ref = elem.get("agentDiagramRef") or None
-
                 return AgenticTask(
                     name=name,
                     task_type=task_type,
                     loop_characteristics=loop,
                     reflection_mode=reflection,
-                    trust_score=trust,
-                    agent_diagram_ref=agent_ref,
-                    reflection_reviewer_lane_id=elem.get("reflectionReviewerLaneId") or None,
+                    trust_score=_clamp_trust_score(data.get("trustScore", 0)),
+                    agent_diagram_ref=data.get("agentDiagramRef") or None,
+                    reflection_reviewer_lane_id=data.get("reflectionReviewerLaneId") or None,
                 )
-
             return Task(name=name, task_type=task_type, loop_characteristics=loop)
-        # SubProcess / Transaction / CallActivity all take the same args (no task_type).
         return cls(name=name, loop_characteristics=loop)
 
-    if elem_type in _EVENT_CLASSES:
-        cls = _EVENT_CLASSES[elem_type]
-        event_type = elem.get("eventType", "default") or "default"
+    if node_type in _EVENT_CLASSES:
+        cls = _EVENT_CLASSES[node_type]
+        event_type = data.get("eventType", "default") or "default"
         try:
             direction, definition = parse_event_type(cls, event_type)
         except ValueError as exc:
@@ -193,33 +198,29 @@ def _build_node(elem: dict):
             ) from exc
         return cls(name=name, direction=direction, event_definition=definition)
 
-    if elem_type == "BPMNGateway":
+    if node_type == "bpmnGateway":
         try:
-            gateway_type = GatewayType(elem.get("gatewayType", "exclusive") or "exclusive")
+            gateway_type = GatewayType(data.get("gatewayType", "exclusive") or "exclusive")
         except ValueError as exc:
             raise ConversionError(
-                f"Unknown BPMN gateway type '{elem.get('gatewayType')}' on Gateway '{name}'."
+                f"Unknown BPMN gateway type '{data.get('gatewayType')}' on Gateway '{name}'."
             ) from exc
-        if elem.get("isAgentic"):
+        if data.get("isAgentic"):
             try:
-                role = GatewayRole(elem.get("gatewayRole", "diverging") or "diverging")
+                role = GatewayRole(data.get("gatewayRole", "diverging") or "diverging")
             except ValueError as exc:
                 raise ConversionError(
-                    f"Unknown gatewayRole '{elem.get('gatewayRole')}' "
+                    f"Unknown gatewayRole '{data.get('gatewayRole')}' "
                     f"on AgenticGateway '{name}'."
                 ) from exc
-
-            trust = _clamp_trust_score(elem.get("trustScore", 0))
-
-            gov = elem.get("governanceDsl")
+            gov = data.get("governanceDsl")
             gov = gov if (isinstance(gov, str) and gov.strip() != "") else None
-
             try:
                 return AgenticGateway(
                     name=name,
                     gateway_type=gateway_type,
                     gateway_role=role,
-                    trust_score=trust,
+                    trust_score=_clamp_trust_score(data.get("trustScore", 0)),
                     governance_dsl=gov,
                 )
             except ValueError as exc:
@@ -229,62 +230,58 @@ def _build_node(elem: dict):
 
         return Gateway(name=name, gateway_type=gateway_type)
 
-    if elem_type == "BPMNDataObject":
+    if node_type == "bpmnDataObject":
         return DataObject(name=name)
-    if elem_type == "BPMNDataStore":
+    if node_type == "bpmnDataStore":
         return DataStore(name=name)
-    if elem_type == "BPMNAnnotation":
-        # WME stores the annotation body in `name`; the metamodel keeps it in `text`.
+    if node_type == "bpmnAnnotation":
         return TextAnnotation(name="", text=name)
-    if elem_type == "BPMNGroup":
+    if node_type == "bpmnGroup":
         return Group(name=name)
-    if elem_type == "BPMNSwimlane":
-        if elem.get("isAgentic"):
-            # SEAA'25 «AgenticLane» (paper §4.1 Fig 3a).
-            role_value = elem.get("role", "solution") or "solution"
-            # Accept the editor's former role values (worker / manager) transparently.
-            _ROLE_ALIASES = {"worker": "solution", "manager": "supervision"}
-            role_value = _ROLE_ALIASES.get(role_value, role_value)
+    if node_type == "bpmnSwimlane":
+        # packages/library/lib/nodes/bpmn/BPMNSwimlane.tsx — a lane is a child
+        # (parentId) of its bpmnPool.
+        if data.get("isAgentic"):
+            # «AgenticLane». The editor's former role values (worker / manager)
+            # are accepted as aliases.
+            role_value = data.get("role", "solution") or "solution"
+            role_value = _AGENT_ROLE_ALIASES.get(role_value, role_value)
             try:
                 role = AgentRole(role_value)
             except ValueError as exc:
                 raise ConversionError(
                     f"Unknown role '{role_value}' on AgenticLane '{name}'."
                 ) from exc
-            trust = _clamp_trust_score(elem.get("trustScore", 0))
-            # Optional opaque AgentDiagram id. Empty string / absent → None.
-            # No UUID validation — pass through verbatim.
-            agent_ref = elem.get("agentDiagramRef") or None
-            # Swarm size; absent → 1 (single agent).
-            swarm_size = _clamp_swarm_size(elem.get("multiplicity", 1))
-            return AgenticLane(name=name, role=role, trust_score=trust,
-                               agent_diagram_ref=agent_ref,
-                               swarm_size=swarm_size)
+            return AgenticLane(
+                name=name,
+                role=role,
+                trust_score=_clamp_trust_score(data.get("trustScore", 0)),
+                # Opaque AgentDiagram id, passed through verbatim; "" -> None.
+                agent_diagram_ref=data.get("agentDiagramRef") or None,
+                # Swarm size travels as `multiplicity`; absent -> 1 (single agent).
+                swarm_size=_clamp_swarm_size(data.get("multiplicity", 1)),
+            )
         return Lane(name=name)
-    if elem_type == "BPMNPool":
-        # Build the Pool's Process eagerly so pass 2 containment can attach to it.
+    if node_type == "bpmnPool":
         return Participant(name=name, process=Process(name=name))
 
     return None
 
 
-def _build_flow(rel: dict, source, target):
-    """Construct the metamodel flow object for one WME ``relationships[id]`` entry.
+def _build_flow(edge: dict, source, target):
+    """Construct the metamodel flow object for one v4 ``edges[]`` entry."""
+    edge_data = edge.get("data") or {}
+    # BPMNDiagramEdge.tsx renders data.label; name kept for parity with every
+    # other v4 edge type's authoring convention (class associations, StateTransition...).
+    name = edge_data.get("name") or edge_data.get("label") or ""
 
-    Branches on ``flowType``. Wraps ``is_default``: an illegal value (WME source can't
-    legally carry a default) downgrades to ``False`` with a warning rather than aborting.
+    flow_cls = _FLOW_CLASS_FOR_EDGE_TYPE.get(edge.get("type"))
+    if flow_cls is None:
+        raise ConversionError(f"Unknown BPMN edge type '{edge.get('type')}' on relationship '{name}'.")
 
-    Raises:
-        ConversionError: if ``flowType`` is missing or unknown.
-        TypeError / ValueError: if endpoint types violate the connecting object's rules
-            (caller logs and skips).
-    """
-    name = rel.get("name", "") or ""
-    flow_type = rel.get("flowType")
-
-    if flow_type == "sequence":
+    if flow_cls is SequenceFlow:
         flow = SequenceFlow(source=source, target=target, name=name)
-        if rel.get("isDefault"):
+        if edge_data.get("isDefault"):
             try:
                 flow.is_default = True
             except ValueError as exc:
@@ -293,136 +290,116 @@ def _build_flow(rel: dict, source, target):
                     "downgrading to is_default=False.", name, exc,
                 )
         return flow
-    if flow_type == "message":
-        return MessageFlow(source=source, target=target, name=name)
-    if flow_type == "association":
-        return Association(source=source, target=target, name=name)
-    if flow_type == "data association":
-        return DataAssociation(source=source, target=target, name=name)
-
-    raise ConversionError(f"Unknown BPMN flowType '{flow_type}' on relationship '{name}'.")
+    return flow_cls(source=source, target=target, name=name)
 
 
 def _outer_process(container):
-    """Walk ``SubProcess`` containment up to the enclosing ``Process``, or ``None``."""
     while isinstance(container, SubProcess):
         container = container.container
     return container if isinstance(container, Process) else None
 
 
 def process_bpmn_diagram(json_data: dict) -> BPMNModel:
-    """Convert a WME BPMN diagram (JSON) into a ``BPMNModel`` instance.
-
-    Args:
-        json_data: Dictionary with the standard Apollon ``UMLModel`` envelope; the BPMN
-            payload sits under ``json_data["model"]`` with ``elements`` (nodes) and
-            ``relationships`` (flows) maps keyed by id.
+    """Convert a v4 BPMN diagram (``{nodes, edges}``) into a ``BPMNModel``.
+    v3-shape input is not supported — mirrors process_class_diagram's contract.
 
     Returns:
         ``BPMNModel``. ``model.collaboration`` is ``None`` for a pool-less diagram and a
         ``Collaboration`` (with one ``Participant`` per pool) otherwise.
 
     Raises:
-        ConversionError: structural failures (missing ``model`` key, unknown WME element
-            type with no metamodel mapping, unknown enum strings, unknown ``flowType``).
-            Non-fatal cases (dangling flow endpoint, illegal ``isDefault``) log and skip.
+        ConversionError: structural failures (missing ``model`` key, unknown enum
+            strings, unknown BPMN edge type). Non-fatal cases (dangling flow
+            endpoint, unknown node type, illegal ``isDefault``) log and skip.
     """
-    model_data = json_data.get("model")
-    if not model_data:
+    reject_unreadable_model(json_data, "BPMNDiagram")
+    title = json_data.get('title') or 'Generated_BPMN_Model'
+    if json_data.get('model') is None:
         raise ConversionError("BPMN diagram JSON is missing the 'model' key.")
-
-    if model_data.get("type") and model_data.get("type") != BPMN_DIAGRAM_TYPE:
-        # Don't reject — WME may not have aligned yet. Log so the mismatch is visible.
+    model_payload = json_data.get('model') or {}
+    model_type = model_payload.get('type')
+    if model_type and model_type not in BPMN_DIAGRAM_TYPES:
         logger.warning(
-            "BPMN diagram envelope type is '%s', expected '%s'.",
-            model_data.get("type"), BPMN_DIAGRAM_TYPE,
+            "BPMN diagram envelope type is '%s', expected one of %s.",
+            model_type, BPMN_DIAGRAM_TYPES,
         )
 
-    elements = model_data.get("elements") or {}
-    relationships = model_data.get("relationships") or {}
-    name = json_data.get("title") or "Generated_BPMN_Model"
+    nodes = model_payload.get('nodes') or []
+    edges = model_payload.get('edges') or []
+    if not isinstance(nodes, list):
+        nodes = []
+    if not isinstance(edges, list):
+        edges = []
 
     # --- Pass 1: build node objects (no containment yet) -------------------
-    node_by_id: dict = {}
-    pools: list = []  # (elem_id, Participant) — preserves JSON order
+    raw_by_id: dict = {n.get("id"): n for n in nodes if n.get("id")}
+    obj_by_id: dict = {}
+    pools: list = []  # (node_id, Participant) — preserves JSON order
 
-    for elem_id, elem in elements.items():
+    for node in nodes:
+        node_id = node.get("id")
         try:
-            obj = _build_node(elem)
+            obj = _build_node(node)
         except ConversionError:
             raise
         except (TypeError, ValueError) as exc:
-            raise ConversionError(
-                f"Could not build BPMN element '{elem_id}': {exc}"
-            ) from exc
+            raise ConversionError(f"Could not build BPMN element '{node_id}': {exc}") from exc
         if obj is None:
-            logger.warning(
-                "BPMN element '%s' has unknown type '%s'; skipping.",
-                elem_id, elem.get("type"),
-            )
+            logger.warning("BPMN node '%s' has unknown type '%s'; skipping.", node_id, node.get("type"))
             continue
-        obj.layout = _layout_dict(elem_id, elem)
-        node_by_id[elem_id] = obj
+        obj.layout = _layout_dict(node, raw_by_id)
+        obj_by_id[node_id] = obj
         if isinstance(obj, Participant):
-            pools.append((elem_id, obj))
+            pools.append((node_id, obj))
 
-    # --- Pass 2: containment via the `owner` chain --------------------------
-    # `process_of` covers every placed element (FlowNode, Artifact, DataObject) so the
-    # flow router (Pass 3) can resolve a flow's owning Process via either endpoint.
+    # --- Pass 2: containment via `parentId` ---------------------------------
     process_of: dict = {}
     synthetic_process = None
 
     def _ensure_synthetic_process():
         nonlocal synthetic_process
         if synthetic_process is None:
-            synthetic_process = Process(name=name)
+            synthetic_process = Process(name=title)
         return synthetic_process
 
-    # Sub-pass 2a: attach Lanes to their pool's Process first, so flow-node placement
-    # in 2b can route into the correct lane.
-    for elem_id, obj in node_by_id.items():
+    for node_id, obj in obj_by_id.items():
         if not isinstance(obj, Lane):
             continue
-        owner_id = elements[elem_id].get("owner")
-        owner_obj = node_by_id.get(owner_id) if owner_id else None
-        if isinstance(owner_obj, Participant) and owner_obj.process is not None:
-            owner_obj.process.add_lane(obj)
+        parent_id = (raw_by_id.get(node_id) or {}).get("parentId")
+        parent_obj = obj_by_id.get(parent_id) if parent_id else None
+        if isinstance(parent_obj, Participant) and parent_obj.process is not None:
+            parent_obj.process.add_lane(obj)
         else:
-            logger.warning(
-                "BPMN Lane '%s' has no Pool owner; orphan lane skipped.", elem_id,
-            )
+            logger.warning("BPMN Lane '%s' has no Pool parent; orphan lane skipped.", node_id)
 
-    # Sub-pass 2b: place every other element. Skip Pools (no owner-based containment) and
-    # Lanes (already done) and DataStores (live on the model, not in a process).
-    for elem_id, obj in node_by_id.items():
+    for node_id, obj in obj_by_id.items():
         if isinstance(obj, (Participant, Lane, DataStore)):
             continue
 
-        owner_id = elements[elem_id].get("owner")
-        owner_obj = node_by_id.get(owner_id) if owner_id else None
+        parent_id = (raw_by_id.get(node_id) or {}).get("parentId")
+        parent_obj = obj_by_id.get(parent_id) if parent_id else None
 
         target_container = None
         target_lane = None
 
-        if owner_obj is None:
+        if parent_obj is None:
             target_container = _ensure_synthetic_process()
-        elif isinstance(owner_obj, Lane):
-            target_lane = owner_obj
-            # The lane was attached to its pool's Process in 2a — find that Process.
+        elif isinstance(parent_obj, Lane):
+            target_lane = parent_obj
             for _, part in pools:
                 if part.process is not None and target_lane in part.process.lanes:
                     target_container = part.process
                     break
             if target_container is None:
                 target_container = _ensure_synthetic_process()
-        elif isinstance(owner_obj, Participant):
-            target_container = owner_obj.process or _ensure_synthetic_process()
-        elif isinstance(owner_obj, SubProcess):
-            target_container = owner_obj
+        elif isinstance(parent_obj, Participant):
+            target_container = parent_obj.process or _ensure_synthetic_process()
+        elif isinstance(parent_obj, SubProcess):
+            target_container = parent_obj
         else:
             logger.warning(
-                "BPMN element '%s' has unexpected owner type '%s'; placing at top level.",
-                elem_id, type(owner_obj).__name__,
+                "BPMN element '%s' has unexpected parent type '%s'; placing at top level.",
+                node_id, type(parent_obj).__name__,
             )
             target_container = _ensure_synthetic_process()
 
@@ -440,15 +417,10 @@ def process_bpmn_diagram(json_data: dict) -> BPMNModel:
             outer.add_data_object(obj)
             process_of[obj] = outer
 
-    # Data stores live model-wide (BPMN spec §10.3 — root-level element).
-    data_stores = {obj for obj in node_by_id.values() if isinstance(obj, DataStore)}
+    data_stores = {obj for obj in obj_by_id.values() if isinstance(obj, DataStore)}
 
-    # --- Build collaboration / processes set -------------------------------
     if pools:
-        collaboration = Collaboration(
-            name=name,
-            participants={part for _, part in pools},
-        )
+        collaboration = Collaboration(name=title, participants={part for _, part in pools})
         processes = {part.process for _, part in pools if part.process is not None}
     else:
         collaboration = None
@@ -456,59 +428,51 @@ def process_bpmn_diagram(json_data: dict) -> BPMNModel:
     if synthetic_process is not None:
         processes.add(synthetic_process)
 
-    # --- Pass 3: build flows from `relationships` --------------------------
-    for rel_id, rel in relationships.items():
-        if rel.get("type") != BPMN_RELATIONSHIP_TYPE:
-            logger.warning(
-                "BPMN relationship '%s' has unexpected type '%s'; skipping.",
-                rel_id, rel.get("type"),
-            )
+    # --- Pass 3: build flows from `edges` -----------------------------------
+    for edge in edges:
+        edge_id = edge.get("id")
+        edge_type = edge.get("type")
+        if edge_type not in _FLOW_CLASS_FOR_EDGE_TYPE:
+            if isinstance(edge_type, str) and edge_type.startswith("BPMN"):
+                # A BPMN flow we cannot build: fail rather than drop it.
+                raise ConversionError(f"Unknown BPMN edge type '{edge_type}' on edge '{edge_id}'.")
+            logger.warning("BPMN edge '%s' has non-flow type '%s'; skipping.", edge_id, edge_type)
             continue
 
-        source = node_by_id.get((rel.get("source") or {}).get("element"))
-        target = node_by_id.get((rel.get("target") or {}).get("element"))
+        source = obj_by_id.get(edge.get("source"))
+        target = obj_by_id.get(edge.get("target"))
         if source is None or target is None:
             logger.warning(
                 "BPMN flow '%s' has a dangling endpoint (source=%s, target=%s); skipping.",
-                rel_id,
-                (rel.get("source") or {}).get("element"),
-                (rel.get("target") or {}).get("element"),
+                edge_id, edge.get("source"), edge.get("target"),
             )
             continue
 
         try:
-            flow = _build_flow(rel, source, target)
+            flow = _build_flow(edge, source, target)
         except ConversionError:
             raise
         except (TypeError, ValueError) as exc:
-            logger.warning(
-                "BPMN flow '%s' could not be built (%s); skipping.", rel_id, exc,
-            )
+            logger.warning("BPMN flow '%s' could not be built (%s); skipping.", edge_id, exc)
             continue
 
-        flow.layout = _flow_layout_dict(rel_id, rel)
+        flow.layout = _flow_layout_dict(edge)
 
         if isinstance(flow, MessageFlow):
             if collaboration is not None:
                 collaboration.add_message_flow(flow)
             else:
                 logger.warning(
-                    "BPMN MessageFlow '%s' present but the diagram has no pools; skipping.",
-                    rel_id,
+                    "BPMN MessageFlow '%s' present but the diagram has no pools; skipping.", edge_id,
                 )
             continue
 
-        # SequenceFlow / Association / DataAssociation: route via either endpoint.
         endpoint_container = process_of.get(source) or process_of.get(target)
         if endpoint_container is None:
-            logger.warning(
-                "BPMN flow '%s' has no resolvable container; skipping.", rel_id,
-            )
+            logger.warning("BPMN flow '%s' has no resolvable container; skipping.", edge_id)
             continue
 
         if isinstance(flow, SequenceFlow):
-            # SequenceFlows go into their endpoints' immediate container (Process or
-            # SubProcess). The metamodel's E2 rule guarantees both endpoints share one.
             if isinstance(endpoint_container, (Process, SubProcess)):
                 endpoint_container.add_sequence_flow(flow)
         elif isinstance(flow, Association):
@@ -520,9 +484,4 @@ def process_bpmn_diagram(json_data: dict) -> BPMNModel:
             if outer is not None:
                 outer.add_data_association(flow)
 
-    return BPMNModel(
-        name=name,
-        processes=processes,
-        collaboration=collaboration,
-        data_stores=data_stores,
-    )
+    return BPMNModel(name=title, processes=processes, collaboration=collaboration, data_stores=data_stores)

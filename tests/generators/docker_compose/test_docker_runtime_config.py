@@ -15,6 +15,10 @@ from besser.generators.docker_compose.docker_compose_generator import DockerComp
 from besser.generators.docker_compose.runtime_config import resolve_runtime_yaml
 
 
+# A non-empty v4 AgentDiagram model (the route skips diagrams without nodes).
+_AGENT_MODEL = {'version': '4.0.0', 'type': 'AgentDiagram', 'nodes': [{'id': 'dummy'}], 'edges': []}
+
+
 def _yaml(a2a=8000, websocket=8765, streamlit=5000):
     return yaml.safe_dump({
         'nlp': {'language': 'ca', 'openai': {'api_key': 'test-only-placeholder'}},
@@ -131,9 +135,9 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
 
     captured = {}
     normalized = []
-    entries = [DiagramInput(id='first', title='First', model={'elements': {'dummy': {}}},
+    entries = [DiagramInput(id='first', title='First', model=_AGENT_MODEL,
                             config={'agentPlatform': 'websocket'}, configYaml=_yaml(a2a=9001)),
-               DiagramInput(id='second', title='Second', model={'elements': {'dummy': {}}},
+               DiagramInput(id='second', title='Second', model=_AGENT_MODEL,
                             config={'personalizationMapping': [{'user_profile': {'raw': True}}]},
                             configYaml=_yaml(a2a=9002))]
     saved = deepcopy(entries)

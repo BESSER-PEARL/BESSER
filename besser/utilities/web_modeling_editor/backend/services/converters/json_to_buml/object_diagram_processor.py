@@ -1,5 +1,11 @@
 """
-Object diagram processing for converting JSON to BUML format.
+Object diagram processing for converting v4 JSON to BUML format.
+
+Reads the v4 wire shape (``{nodes, edges}``) natively. The v4 spec
+collapses ``ObjectAttribute`` rows onto the parent ``objectName`` node's
+``data.attributes`` array; we walk that directly. ``referenceDiagramData``
+arrives in v4 too (and is consumed by walking its ``nodes``/``edges``
+likewise).
 """
 
 import logging
@@ -12,10 +18,25 @@ from besser.BUML.metamodel.object.builder import ObjectBuilder
 from besser.BUML.metamodel.object import Link, LinkEnd
 from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import parse_attribute
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    node_data,
+)
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
 from datetime import datetime, timedelta
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
+    reject_unreadable_model,
+)
+
+# The React Flow frontend creates ``comment`` nodes tethered by
+# ``CommentLink`` edges; ``Comments`` / ``Link`` are the legacy spellings.
+COMMENT_NODE_TYPES = ("comment", "Comments")
+COMMENT_LINK_TYPES = ("CommentLink", "Link")
+
+# UserDiagram links behave exactly like ObjectLink (the frontend registers
+# ``UserModelLink`` as an ObjectLink alias).
+OBJECT_LINK_TYPES = ("ObjectLink", "UserModelLink")
 
 
 def get_all_attributes(cls, domain_model):
@@ -30,55 +51,51 @@ def get_all_attributes(cls, domain_model):
 
 def parse_datetime_value(value, type_name):
     """Parse datetime values from string format."""
+    if not isinstance(value, str):
+        return value
     try:
         if type_name in ['datetime', 'DateTimeType']:
-            # Try different datetime formats
             if 'T' in value:
-                if len(value) == 16:  # Format: YYYY-MM-DDTHH:MM
+                if len(value) == 16:
                     return datetime.strptime(value, '%Y-%m-%dT%H:%M')
-                elif len(value) == 19:  # Format: YYYY-MM-DDTHH:MM:SS
+                elif len(value) == 19:
                     return datetime.strptime(value, '%Y-%m-%dT%H:%M:%S')
-                else:  # Try with milliseconds or other formats
-                    # Remove milliseconds and timezone info for parsing
+                else:
                     clean_value = value.split('.')[0].split('+')[0].split('Z')[0]
-                    if len(clean_value) == 16:  # After cleaning, check if it's YYYY-MM-DDTHH:MM
+                    if len(clean_value) == 16:
                         return datetime.strptime(clean_value, '%Y-%m-%dT%H:%M')
                     else:
                         return datetime.strptime(clean_value, '%Y-%m-%dT%H:%M:%S')
             else:
-                # Try other common formats
                 try:
                     return datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
                 except ValueError:
-                    # Try without seconds
                     return datetime.strptime(value, '%Y-%m-%d %H:%M')
         elif type_name in ['date', 'DateType']:
             return datetime.strptime(value, '%Y-%m-%d').date()
         elif type_name in ['time', 'TimeType']:
-            # Try different time formats
-            if len(value.split(':')) == 2:  # Format: HH:MM
+            if len(value.split(':')) == 2:
                 return datetime.strptime(value, '%H:%M').time()
-            else:  # Format: HH:MM:SS
+            else:
                 return datetime.strptime(value, '%H:%M:%S').time()
         elif type_name in ['timedelta', 'TimeDeltaType']:
-            # Parse timedelta from string (e.g., "1 day, 2:30:00", "2:30:00", or "1:30")
             if 'day' in value:
                 parts = value.split(',')
                 days = int(parts[0].split()[0])
                 time_part = parts[1].strip() if len(parts) > 1 else "0:00:00"
                 time_components = time_part.split(':')
-                if len(time_components) == 2:  # HH:MM format
+                if len(time_components) == 2:
                     hours, minutes = map(int, time_components)
                     return timedelta(days=days, hours=hours, minutes=minutes)
-                else:  # HH:MM:SS format
+                else:
                     hours, minutes, seconds = map(int, time_components)
                     return timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
             else:
                 time_components = value.split(':')
-                if len(time_components) == 2:  # HH:MM format
+                if len(time_components) == 2:
                     hours, minutes = map(int, time_components)
                     return timedelta(hours=hours, minutes=minutes)
-                else:  # HH:MM:SS format
+                else:
                     hours, minutes, seconds = map(int, time_components)
                     return timedelta(hours=hours, minutes=minutes, seconds=seconds)
     except (ValueError, IndexError):
@@ -86,6 +103,29 @@ def parse_datetime_value(value, type_name):
         return value
 
     return value
+
+
+def _reference_class_name(class_node_id: str, reference_data: dict) -> str:
+    """Look up a class node's name in v4 reference diagram data."""
+    if not isinstance(reference_data, dict):
+        return ""
+    for node in reference_data.get("nodes") or []:
+        if node.get("id") != class_node_id:
+            continue
+        if node.get("type") == "class":
+            return (node.get("data") or {}).get("name", "")
+    return ""
+
+
+def _reference_association_name(assoc_id: str, reference_data: dict) -> str:
+    """Look up an association edge's name in v4 reference diagram data."""
+    if not isinstance(reference_data, dict):
+        return ""
+    for edge in reference_data.get("edges") or []:
+        if edge.get("id") != assoc_id:
+            continue
+        return (edge.get("data") or {}).get("name", "")
+    return ""
 
 
 def _is_shared_domain_model(domain_model) -> bool:
@@ -108,19 +148,8 @@ def _append_description(element, text):
 
 
 def process_object_diagram(json_data, domain_model):
-    """Process Object Diagram specific elements and return an ObjectModel.
-
-    Args:
-        json_data: The JSON payload describing the object diagram.
-        domain_model: A ``DomainModel`` instance that provides the class
-            definitions referenced by objects in the diagram.  This parameter
-            is required; passing ``None`` will raise a ``ConversionError``
-            with a clear message.
-
-    Raises:
-        ConversionError: If *domain_model* is ``None`` or does not expose the
-            expected interface.
-    """
+    """Process an Object Diagram in the v4 wire shape and return an ObjectModel."""
+    reject_unreadable_model(json_data, "ObjectDiagram")
     if domain_model is None:
         raise ConversionError(
             "Object diagram processing requires a reference class diagram (domain model). "
@@ -132,286 +161,258 @@ def process_object_diagram(json_data, domain_model):
         title = title.replace(' ', '_')
 
     object_model = ObjectModel(title)
-    # Get elements, relationships, and reference data from the JSON payload
-    model_data = json_data.get('model', {})
-    elements = model_data.get('elements', {})
-    relationships = model_data.get('relationships', {})
-    reference_data = model_data.get('referenceDiagramData', {})
+    model_data = json_data.get('model', {}) or {}
+    nodes = model_data.get('nodes') or []
+    edges = model_data.get('edges') or []
+    if not isinstance(nodes, list):
+        nodes = []
+    if not isinstance(edges, list):
+        edges = []
 
-    # If elements is empty, try the nested structure some exporters use
-    if not elements and isinstance(model_data.get('model'), dict):
+    reference_data = model_data.get('referenceDiagramData', {}) or {}
+
+    # If nodes is empty, try the nested structure some exporters use
+    if not nodes and isinstance(model_data.get('model'), dict):
         nested_model = model_data.get('model')
-        elements = nested_model.get('elements', {})
-        relationships = nested_model.get('relationships', {})
+        nodes = nested_model.get('nodes') or []
+        edges = nested_model.get('edges') or []
         reference_data = nested_model.get('referenceDiagramData', reference_data)
 
-    # Track objects by their ID for link creation
+    # Track objects by node id for link creation.
     objects_by_id = {}
 
-    # Build a class name lookup for O(1) attribute property resolution
-    # (get_all_attributes already traverses generalizations, so we just need fast class lookups)
+    comment_nodes = {}
+    comment_links = {}
 
-    # Store comments for later processing
-    comment_elements = {}  # {comment_id: comment_text}
-    comment_links = {}  # {comment_id: [linked_element_ids]}
+    for node in nodes:
+        node_type = node.get("type")
+        node_id = node.get("id")
+        data = node_data(node)
 
-    # First pass: Create objects using fluent API
-    for element_id, element in elements.items():
-        # Collect comments
-        if element.get("type") == "Comments":
-            comment_text = element.get("name", "").strip()
-            comment_elements[element_id] = comment_text
+        if node_type in COMMENT_NODE_TYPES:
+            comment_nodes[node_id] = (data.get("name") or "").strip()
             continue
 
-        if element.get("type") == "ObjectName" or element.get("type") == "UserModelName":
-            # Extract object name and class ID
-            object_name = element.get("name", "")
-            class_id = element.get("classId")
+        if node_type not in ("objectName", "UserModelName"):
+            continue
 
-            # Find the corresponding class in the domain model using classId
-            class_obj = None
-            class_name = None
-            if class_id and reference_data:
-                reference_elements = reference_data.get('elements', {})
-                class_element = reference_elements.get(class_id)
-                if class_element:
-                    class_name = class_element.get("name", "")
-            if not class_name:
-                class_name = element.get("className")
+        object_name = data.get("name", "") or ""
+        class_id = data.get("classId")
 
-            if class_name:
-                class_obj = domain_model.get_class_by_name(class_name)
+        class_obj = None
+        class_name = None
+        if class_id and reference_data:
+            class_name = _reference_class_name(class_id, reference_data)
+        if not class_name:
+            class_name = data.get("className")
+        if class_name:
+            class_obj = domain_model.get_class_by_name(class_name)
+        if not class_obj:
+            class_obj = domain_model.get_class_by_name(object_name)
+        if not class_obj:
+            raise ConversionError(
+                f"Could not find class for object '{object_name}' with class ID '{class_id}'. "
+                "Ensure either reference diagram data or explicit class names are provided."
+            )
 
-            if not class_obj:
-                # Fall back to searching by object name if class lookup fails
-                class_obj = domain_model.get_class_by_name(object_name)
+        builder = ObjectBuilder(class_obj).name(object_name)
 
-            if not class_obj:
-                raise ConversionError(
-                    f"Could not find class for object '{object_name}' with class ID '{class_id}'. "
-                    "Ensure either reference diagram data or explicit class names are provided."
-                )
-
-            # Create object using fluent API
-            builder = ObjectBuilder(class_obj).name(object_name)
-
-            # Process object attributes (slots) and add them to builder
-            attributes_dict = {}
-            for attr_id in element.get("attributes", []):
-                attr_element = elements.get(attr_id)
-                if not attr_element:
+        attributes_dict = {}
+        for attr in data.get("attributes") or []:
+            attr_string = attr.get("name", "") or ""
+            attr_name = None
+            value = None
+            if node_type == "objectName":
+                # v4 inspector rows carry the value in a separate
+                # ``value`` field (``ObjectNodeAttribute`` in
+                # packages/library/lib/types/nodes/NodeProps.ts); legacy
+                # rows bake a combined "name = value" string into ``name``.
+                split_value = attr.get("value")
+                # Legacy combined format: "name = value".
+                if " = " in attr_string:
+                    attr_part, value_part = attr_string.split(" = ", 1)
+                    if split_value is None:
+                        split_value = value_part.strip()
+                    attr_string = attr_part.strip()
+                value = split_value
+                try:
+                    _, attr_name, _ = parse_attribute(attr_string, domain_model)
+                except Exception as e:
+                    logger.warning(
+                        "Could not process attribute '%s' for object '%s': %s",
+                        attr_string, object_name, e,
+                    )
                     continue
+            else:  # UserModelName
+                # v4 inspector rows carry ``value`` (preferred) /
+                # ``defaultValue`` plus an ``attributeOperator`` comparator
+                # (``UserModelAttributeRow``). Legacy rows bake
+                # "name <op> value" into ``name``.
+                operator_str = attr.get("attributeOperator", "==")
+                attr_name = attr_string.strip()
+                embedded_value = None
+                # The name string can embed the operator in two forms: the
+                # stored symbol (e.g. "age == 22", from manual edits) or the
+                # editor's displayed equality symbol (a single '=', e.g.
+                # "age = 22", from the modeling agent). Try the stored
+                # operator first so "age == 22" is not split on its first '=';
+                # fall back to '=' for equality so agent-generated criteria
+                # are still parsed instead of dropped.
+                candidate_operators = [operator_str]
+                if operator_str == "==":
+                    candidate_operators.append("=")
+                for candidate in candidate_operators:
+                    if candidate and candidate in attr_name:
+                        attr_part, value_part = attr_name.split(candidate, 1)
+                        attr_name = attr_part.strip()
+                        embedded_value = value_part.strip()
+                        break
+                value = attr.get("value")
+                if value is None:
+                    value = attr.get("defaultValue")
+                if value is None:
+                    value = embedded_value if embedded_value else attr.get("attributeValue")
 
-                attr_type = attr_element.get("type")
-                attr_string = attr_element.get("name", "")
-                attr_name = None
-                value = None
+            # Skip values left blank in the editor (e.g. "age = "): an empty
+            # value is "no constraint", not a value to type-convert, so it
+            # must not raise on int/float parsing.
+            if attr_name and value not in (None, ""):
+                property_obj = None
+                all_attrs = get_all_attributes(class_obj, domain_model)
+                for prop in all_attrs:
+                    if prop.name == attr_name:
+                        property_obj = prop
+                        break
 
-                if attr_type == "ObjectAttribute":
-                    # Format: "+ name: type = value"
-                    if " = " in attr_string:
-                        attr_part, value_part = attr_string.split(" = ", 1)
-                        value = value_part.strip()
-                        attr_string = attr_part.strip()
-                    try:
-                        _, attr_name, _ = parse_attribute(attr_string, domain_model)
-                    except Exception as e:
-                        logger.warning("Could not process attribute '%s' for object '%s': %s", attr_string, object_name, e)
-                        continue
-                elif attr_type == "UserModelAttribute":
-                    operator = attr_element.get("attributeOperator", "==")
-                    # The name string can embed the operator in two forms: the
-                    # stored symbol (e.g. "age == 22", produced by manual edits)
-                    # or the editor's displayed equality symbol (a single '=',
-                    # e.g. "age = 22", produced by the modeling agent). Try the
-                    # stored operator first so "age == 22" is not split on its
-                    # first '=' (which captured "= 22" as the value and broke
-                    # type conversion). Fall back to the displayed '=' for
-                    # equality, so agent-generated criteria are still parsed
-                    # instead of dropped.
-                    candidate_operators = [operator]
-                    if operator == "==":
-                        candidate_operators.append("=")
-                    for candidate in candidate_operators:
-                        if candidate and candidate in attr_string:
-                            attr_part, value_part = attr_string.split(candidate, 1)
-                            attr_name = attr_part.strip()
-                            value = value_part.strip()
-                            break
-                    else:
-                        attr_name = attr_string.strip()
-                        value = attr_element.get("attributeValue")
-                else:
-                    continue
-
-                # Skip criteria left blank in the editor (e.g. "age = "): an
-                # empty value is "no constraint", not a value to type-convert,
-                # so it must not raise on int/float parsing.
-                if attr_name and value not in (None, ""):
-                    # Find the corresponding property in the class or its ancestors
-                    property_obj = None
-                    all_attrs = get_all_attributes(class_obj, domain_model)
-                    for prop in all_attrs:
-                        if prop.name == attr_name:
-                            property_obj = prop
-                            break
-
-                    if property_obj:
-                        # Convert value to appropriate type
-                        converted_value = value
-
-                        # Check if the property type is an enumeration
-                        if hasattr(property_obj.type, 'literals'):  # This is an enumeration
+                if property_obj:
+                    converted_value = value
+                    if hasattr(property_obj.type, 'literals'):
+                        try:
+                            for literal in property_obj.type.literals:
+                                if literal.name == value:
+                                    converted_value = literal
+                                    break
+                            else:
+                                converted_value = getattr(property_obj.type, value)
+                        except (AttributeError, StopIteration):
+                            logger.warning(
+                                "Enumeration literal '%s' not found in %s",
+                                value, property_obj.type.name,
+                            )
+                            converted_value = value
+                    elif hasattr(property_obj.type, 'name'):
+                        type_name = (
+                            property_obj.type.name
+                            if hasattr(property_obj.type, 'name')
+                            else str(property_obj.type)
+                        )
+                        if type_name in ['int', 'IntegerType']:
                             try:
-                                for literal in property_obj.type.literals:
-                                    if literal.name == value:
-                                        converted_value = literal
-                                        break
-                                else:
-                                    converted_value = getattr(property_obj.type, value)
-                            except (AttributeError, StopIteration):
-                                logger.warning("Enumeration literal '%s' not found in %s", value, property_obj.type.name)
-                                converted_value = value
-                        elif hasattr(property_obj.type, 'name'):
-                            type_name = property_obj.type.name if hasattr(property_obj.type, 'name') else str(property_obj.type)
-                            if type_name in ['int', 'IntegerType']:
-                                try:
-                                    converted_value = int(value)
-                                except (TypeError, ValueError) as exc:
-                                    raise ConversionError(
-                                        f"Object '{object_name}' (class '{class_obj.name}'): "
-                                        f"attribute '{attr_name}' expects an integer, "
-                                        f"but received {value!r}."
-                                    ) from exc
-                            elif type_name in ['float', 'FloatType']:
-                                try:
-                                    converted_value = float(value)
-                                except (TypeError, ValueError) as exc:
-                                    raise ConversionError(
-                                        f"Object '{object_name}' (class '{class_obj.name}'): "
-                                        f"attribute '{attr_name}' expects a number, "
-                                        f"but received {value!r}."
-                                    ) from exc
-                            elif type_name in ['bool', 'BooleanType']:
+                                converted_value = int(value)
+                            except (TypeError, ValueError) as exc:
+                                raise ConversionError(
+                                    f"Object '{object_name}' (class '{class_obj.name}'): "
+                                    f"attribute '{attr_name}' expects an integer, "
+                                    f"but received {value!r}."
+                                ) from exc
+                        elif type_name in ['float', 'FloatType']:
+                            try:
+                                converted_value = float(value)
+                            except (TypeError, ValueError) as exc:
+                                raise ConversionError(
+                                    f"Object '{object_name}' (class '{class_obj.name}'): "
+                                    f"attribute '{attr_name}' expects a number, "
+                                    f"but received {value!r}."
+                                ) from exc
+                        elif type_name in ['bool', 'BooleanType']:
+                            if isinstance(value, str):
                                 converted_value = value.lower() in ['true', '1', 'yes']
-                            elif type_name in ['datetime', 'DateTimeType', 'date', 'DateType', 'time', 'TimeType', 'timedelta', 'TimeDeltaType']:
-                                converted_value = parse_datetime_value(value, type_name)
+                            else:
+                                converted_value = bool(value)
+                        elif type_name in ['datetime', 'DateTimeType', 'date', 'DateType', 'time', 'TimeType', 'timedelta', 'TimeDeltaType']:
+                            converted_value = parse_datetime_value(value, type_name)
+                    attributes_dict[attr_name] = converted_value
 
-                        attributes_dict[attr_name] = converted_value
+        if attributes_dict:
+            builder = builder.attributes(**attributes_dict)
 
-            # Add attributes to builder if any were found
-            if attributes_dict:
-                builder = builder.attributes(**attributes_dict)
+        try:
+            obj = builder.build()
+        except (TypeError, ValueError) as exc:
+            raise ConversionError(
+                f"Object '{object_name}' (class '{class_obj.name}'): {exc}"
+            ) from exc
+        logger.debug("Created object '%s' of class '%s'", object_name, class_obj.name)
 
-            # Build the object. Translate metamodel TypeError/ValueError (e.g. a
-            # datetime/enum value the upstream conversion let through and the
-            # metamodel rejected) into a ConversionError carrying the object
-            # context, so the user sees a 400 with a clear message instead of a
-            # 500 internal error.
-            try:
-                obj = builder.build()
-            except (TypeError, ValueError) as exc:
-                raise ConversionError(
-                    f"Object '{object_name}' (class '{class_obj.name}'): {exc}"
-                ) from exc
-            logger.debug("Created object '%s' of class '%s'", object_name, class_obj.name)
+        object_model.add_object(obj)
+        objects_by_id[node_id] = obj
 
-            # Add the object to the model and track it
-            object_model.add_object(obj)
-            objects_by_id[element_id] = obj
-    # Second pass: Create links between objects
-    for rel_id, relationship in relationships.items():
-        # Handle Link (comment links)
-        if relationship.get("type") == "Link":
-            source_element_id = relationship.get("source", {}).get("element")
-            target_element_id = relationship.get("target", {}).get("element")
-
-            # Determine which is the comment and which is the target
+    # Process links (edges).
+    for edge in edges:
+        edge_type = edge.get("type")
+        if edge_type in COMMENT_LINK_TYPES:
+            source_id = edge.get("source")
+            target_id = edge.get("target")
             comment_id = None
-            target_id = None
-
-            if source_element_id in comment_elements:
-                comment_id = source_element_id
-                target_id = target_element_id
-            elif target_element_id in comment_elements:
-                comment_id = target_element_id
-                target_id = source_element_id
-
-            if comment_id and target_id:
-                if comment_id not in comment_links:
-                    comment_links[comment_id] = []
-                comment_links[comment_id].append(target_id)
-
+            target = None
+            if source_id in comment_nodes:
+                comment_id = source_id
+                target = target_id
+            elif target_id in comment_nodes:
+                comment_id = target_id
+                target = source_id
+            if comment_id and target:
+                comment_links.setdefault(comment_id, []).append(target)
             continue
 
-        if relationship.get("type") == "ObjectLink":
-            source_id = relationship.get("source", {}).get("element")
-            target_id = relationship.get("target", {}).get("element")
-            link_name = relationship.get("name", "")
-            association_id = relationship.get("associationId")
+        if edge_type in OBJECT_LINK_TYPES:
+            source_id = edge.get("source")
+            target_id = edge.get("target")
+            edge_data = edge.get("data") or {}
+            link_name = edge_data.get("name", "") or ""
+            association_id = edge_data.get("associationId")
 
             source_obj = objects_by_id.get(source_id)
             target_obj = objects_by_id.get(target_id)
-
             if not source_obj or not target_obj:
                 raise ConversionError(
                     f"Could not find objects for link '{link_name}'. Please ensure all objects in the link exist in the diagram."
                 )
-          # Find the corresponding association in the domain model
+
             association_obj = None
             if association_id:
-                # First try to find the association directly by ID from the domain model
                 if hasattr(domain_model, 'association_by_id') and domain_model.association_by_id:
                     association_obj = domain_model.association_by_id.get(association_id)
+                if not association_obj and reference_data:
+                    assoc_name = _reference_association_name(association_id, reference_data)
+                    if assoc_name:
+                        for assoc in domain_model.associations:
+                            if assoc.name == assoc_name:
+                                association_obj = assoc
+                                break
 
-                # If not found by direct ID lookup, try the reference diagram approach
-                if not association_obj:
-                    # Look for the association by ID in the reference diagram data
-                    reference_data = json_data.get('model', {}).get('referenceDiagramData', {})
-                    if reference_data:
-                        reference_relationships = reference_data.get('relationships', {})
-                        assoc_element = reference_relationships.get(association_id)
-                        if assoc_element:
-                            # Found association in reference data
-                            assoc_name = assoc_element.get("name", "")
-                            # Only try to find by name if the association name is not empty
-                            if assoc_name:
-                                # Try to find the association by name
-                                for assoc in domain_model.associations:
-                                    if assoc.name == assoc_name:
-                                        association_obj = assoc
-                                        break
-
-            # If still not found, try to find association by matching the connected classes
             if not association_obj:
                 for assoc in domain_model.associations:
-                    # Check if this association connects the right classes
                     end_types = {end.type for end in assoc.ends}
                     if (source_obj.classifier in end_types and target_obj.classifier in end_types):
                         association_obj = assoc
                         break
 
             if association_obj:
-                # Create link using association ends
                 link_ends = []
                 for end in association_obj.ends:
-                    # Check if end type matches source object (considering inheritance)
                     source_matches = False
                     if end.type == source_obj.classifier:
                         source_matches = True
                     else:
-                        # Check if source object's class inherits from end type
                         for gen in domain_model.generalizations:
                             if gen.specific == source_obj.classifier and gen.general == end.type:
                                 source_matches = True
                                 break
-
-                    # Check if end type matches target object (considering inheritance)
                     target_matches = False
                     if end.type == target_obj.classifier:
                         target_matches = True
                     else:
-                        # Check if target object's class inherits from end type
                         for gen in domain_model.generalizations:
                             if gen.specific == target_obj.classifier and gen.general == end.type:
                                 target_matches = True
@@ -420,16 +421,13 @@ def process_object_diagram(json_data, domain_model):
                     if source_matches:
                         link_end = LinkEnd(name=f"{end.name}_end", association_end=end, object=source_obj)
                         link_ends.append(link_end)
-                        logger.debug("Created link end for source: %s_end", end.name)
                     elif target_matches:
                         link_end = LinkEnd(name=f"{end.name}_end", association_end=end, object=target_obj)
                         link_ends.append(link_end)
 
                 if len(link_ends) == 2:
-                    # Use link_name if provided, otherwise generate a default name
                     link_display_name = link_name if link_name else f"{source_obj.name}_{target_obj.name}_link"
                     Link(name=link_display_name, association=association_obj, connections=link_ends)
-                    # Links are automatically added to objects via the Link constructor
                 else:
                     raise ConversionError(
                         f"Expected 2 link ends but got {len(link_ends)} for link '{link_name}'. There may be an issue with the association structure."
@@ -446,7 +444,7 @@ def process_object_diagram(json_data, domain_model):
     # kept on this request's object model instead. (Objects cannot carry
     # metadata themselves: their attribute access is mapped onto slots/links.)
     annotate_classifiers = not _is_shared_domain_model(domain_model)
-    for comment_id, comment_text in comment_elements.items():
+    for comment_id, comment_text in comment_nodes.items():
         linked_objects = [
             objects_by_id[element_id]
             for element_id in comment_links.get(comment_id, ())

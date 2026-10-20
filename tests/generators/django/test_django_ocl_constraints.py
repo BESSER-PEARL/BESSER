@@ -20,6 +20,7 @@ from besser.BUML.metamodel.structural import (
     Property,
     Constraint,
     IntegerType,
+    Method,
     StringType,
 )
 from besser.generators.django import DjangoGenerator
@@ -200,3 +201,35 @@ class TestConstraintOnlyAffectsTargetClass:
 
         assert "def clean(self):" in player_block
         assert "def clean(self):" not in team_block
+
+
+class TestConstraintWithMethods:
+    """clean() followed by methods: the first method used to be glued to
+    ``raise ValidationError(errors)`` on the same line (SyntaxError)."""
+
+    def _model(self, methods):
+        age_attr = Property(name="age", type=IntegerType)
+        player = Class(name="Player", attributes={age_attr}, methods=set(methods))
+        return DomainModel(
+            name="M",
+            types={player},
+            constraints={
+                Constraint(
+                    name="min_age",
+                    context=player,
+                    expression="context Player inv: self.age > 10",
+                    language="OCL",
+                )
+            },
+        )
+
+    def test_method_with_code_after_clean_compiles(self):
+        birthday = Method(name="birthday", code="def birthday(self):\n    self.age += 1\n    return self.age\n")
+        output = _render_models(self._model([birthday]))
+        compile(output, "<generated>", "exec")
+        assert "            raise ValidationError(errors)\n    def birthday(self):" in output
+
+    def test_method_without_code_after_clean_compiles(self):
+        output = _render_models(self._model([Method(name="older")]))
+        compile(output, "<generated>", "exec")
+        assert "    def older(self):" in output

@@ -269,13 +269,33 @@ RELATIONSHIP_TYPES = {
 # BPMN — WME ↔ B-UML BPMN metamodel constants
 # Single source of truth for the BPMN converter pair (json_to_buml /
 # buml_to_json). Diagram-type discriminator: "BPMNDiagram" (uniform with
-# "ClassDiagram", "StateMachineDiagram", …).
+# "ClassDiagram", "StateMachineDiagram", …) — the value of
+# ``UMLDiagramType.BPMN`` in ``packages/library/lib/types/DiagramType.ts``.
 # ---------------------------------------------------------------------------
 BPMN_DIAGRAM_TYPE = "BPMNDiagram"
-BPMN_RELATIONSHIP_TYPE = "BPMNFlow"
+# Both spellings accepted on read: "BPMN" was the canonical v4 value for a while
+# (and is the project-envelope key, ``project.diagrams.BPMN``).
+BPMN_DIAGRAM_TYPES = ("BPMNDiagram", "BPMN")
+# Key of the BPMN bucket in the project envelope (``project.diagrams.BPMN``,
+# ``SupportedDiagramType`` in the webapp) — NOT the model ``type`` above.
+BPMN_PROJECT_DIAGRAM_KEY = "BPMN"
 
 # UML Deployment diagram type (the Docker Compose generator's input).
 DEPLOYMENT_DIAGRAM_TYPE = "DeploymentDiagram"
+
+# v4 required-interface edge types per diagram. The socket variants differ only
+# in how much of the socket is drawn; all read as InterfaceRequired, and the
+# converters keep the drawn variant in the relationship layout.
+COMPONENT_REQUIRED_INTERFACE_EDGE_TYPES = frozenset({
+    "ComponentRequiredInterface",
+    "ComponentRequiredQuarterInterface",
+    "ComponentRequiredThreeQuarterInterface",
+})
+DEPLOYMENT_REQUIRED_INTERFACE_EDGE_TYPES = frozenset({
+    "DeploymentRequiredInterface",
+    "DeploymentRequiredQuarterInterface",
+    "DeploymentRequiredThreeQuarterInterface",
+})
 
 # ---------------------------------------------------------------------------
 # UML Component / Deployment stereotype tokens

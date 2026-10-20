@@ -3,8 +3,8 @@
 A project export writes a UserDiagram as the user reference domain model
 (``user_model``) plus an object section (``user_object_model``).
 ``project_to_json`` has to read those back as a ``UserDiagram`` built from the
-elements ``json_to_buml``'s object processor reads (``UserModelName``,
-``UserModelAttribute`` with ``attributeOperator``), and must not import the
+nodes ``json_to_buml``'s object processor reads (``UserModelName`` nodes whose
+attribute rows carry ``attributeOperator``), and must not import the
 reference model as a class diagram. A class diagram that merely has a class
 named ``User`` stays a class diagram.
 """
@@ -24,94 +24,68 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 )
 
 
-def _box(x=0, y=0):
-    return {"x": x, "y": y, "width": 200, "height": 100}
+def _node(node_id, node_type, data):
+    return {"id": node_id, "type": node_type, "position": {"x": 0, "y": 0},
+            "width": 200, "height": 100, "data": data}
 
 
-def _user_object(eid, name, class_name, criteria=()):
-    """A UserModelName plus one UserModelAttribute per (name, value) criterion."""
-    elements = {
-        eid: {
-            "id": eid, "name": name, "type": "UserModelName", "owner": None,
-            "bounds": _box(), "attributes": [f"{eid}-{attr}" for attr, _ in criteria],
-            "methods": [], "className": class_name,
-        },
-    }
-    for attr, value in criteria:
-        elements[f"{eid}-{attr}"] = {
-            "id": f"{eid}-{attr}", "name": f"{attr} = {value}",
-            "type": "UserModelAttribute", "owner": eid, "attributeOperator": "==",
-            "bounds": _box(),
-        }
-    return elements
+def _user_object(node_id, name, class_name, criteria=()):
+    """A UserModelName node with one equality-criterion row per (name, value)."""
+    rows = [
+        {"id": f"{node_id}-{attr}", "name": attr, "value": value, "attributeOperator": "=="}
+        for attr, value in criteria
+    ]
+    return _node(node_id, "UserModelName",
+                 {"name": name, "className": class_name, "attributes": rows, "methods": []})
 
 
-def _object_link(rid, source, target):
-    return {
-        "id": rid, "name": "", "type": "ObjectLink", "owner": None, "bounds": _box(),
-        "path": [{"x": 0, "y": 0}, {"x": 10, "y": 0}],
-        "source": {"element": source, "direction": "Right"},
-        "target": {"element": target, "direction": "Left"},
-    }
+def _object_link(edge_id, source, target, edge_type="UserModelLink"):
+    return {"id": edge_id, "type": edge_type, "source": source, "target": target,
+            "data": {"name": "", "points": [{"x": 0, "y": 0}, {"x": 10, "y": 0}]}}
 
 
 def _user_diagram(title="Alice"):
-    elements = {}
-    elements.update(_user_object("u-user", "user_1", "User"))
-    elements.update(_user_object(
-        "u-info", "personal_Information_1", "Personal_Information",
-        [("firstName", "Alice"), ("age", "30"), ("gender", "Female")],
-    ))
-    elements.update(_user_object("u-comp", "competence_1", "Competence"))
-    elements.update(_user_object("u-eng", "language_1", "Language", [("iso693_3", "eng")]))
-    elements.update(_user_object("u-fra", "language_2", "Language", [("iso693_3", "fra")]))
-    relationships = {
-        "l-info": _object_link("l-info", "u-user", "u-info"),
-        "l-comp": _object_link("l-comp", "u-user", "u-comp"),
-        "l-eng": _object_link("l-eng", "u-comp", "u-eng"),
-        "l-fra": _object_link("l-fra", "u-comp", "u-fra"),
-    }
+    nodes = [
+        _user_object("u-user", "user_1", "User"),
+        _user_object("u-info", "personal_Information_1", "Personal_Information",
+                     [("firstName", "Alice"), ("age", "30"), ("gender", "Female")]),
+        _user_object("u-comp", "competence_1", "Competence"),
+        _user_object("u-eng", "language_1", "Language", [("iso693_3", "eng")]),
+        _user_object("u-fra", "language_2", "Language", [("iso693_3", "fra")]),
+    ]
+    edges = [
+        _object_link("l-info", "u-user", "u-info"),
+        _object_link("l-comp", "u-user", "u-comp"),
+        _object_link("l-eng", "u-comp", "u-eng"),
+        _object_link("l-fra", "u-comp", "u-fra"),
+    ]
     return {
         "id": f"user-diagram-{title}",
         "title": title,
-        "model": {
-            "version": "3.0.0", "type": "UserDiagram", "size": {"width": 1400, "height": 740},
-            "elements": elements, "relationships": relationships,
-            "interactive": {"elements": {}, "relationships": {}}, "assessments": {},
-        },
+        "model": {"version": "4.0.0", "type": "UserDiagram", "nodes": nodes, "edges": edges,
+                  "assessments": {}},
     }
 
 
 def _class_diagram():
     """An ordinary class diagram that happens to have a class named ``User``."""
-    def cls(eid, name, attr_ids):
-        return {"id": eid, "name": name, "type": "Class", "owner": None, "bounds": _box(),
-                "attributes": attr_ids, "methods": []}
-
-    def attr(eid, owner, name):
-        return {"id": eid, "name": name, "type": "ClassAttribute", "owner": owner,
-                "visibility": "public", "attributeType": "str", "bounds": _box()}
+    def cls(node_id, name, attr_id, attr_name):
+        return _node(node_id, "class", {"name": name, "methods": [], "attributes": [
+            {"id": attr_id, "name": attr_name, "visibility": "public", "attributeType": "str"},
+        ]})
 
     return {
         "id": "class-diagram",
         "title": "Library",
         "model": {
-            "version": "3.0.0", "type": "ClassDiagram", "size": {"width": 1400, "height": 740},
-            "elements": {
-                "c-user": cls("c-user", "User", ["a-uname"]),
-                "a-uname": attr("a-uname", "c-user", "username"),
-                "c-book": cls("c-book", "Book", ["a-title"]),
-                "a-title": attr("a-title", "c-book", "title"),
-            },
-            "relationships": {
-                "r-borrows": {
-                    "id": "r-borrows", "name": "borrows", "type": "ClassBidirectional",
-                    "owner": None, "bounds": _box(),
-                    "source": {"element": "c-user", "multiplicity": "0..*", "role": "borrower"},
-                    "target": {"element": "c-book", "multiplicity": "0..*", "role": "loans"},
-                },
-            },
-            "interactive": {"elements": {}, "relationships": {}}, "assessments": {},
+            "version": "4.0.0", "type": "ClassDiagram", "assessments": {},
+            "nodes": [cls("c-user", "User", "a-uname", "username"),
+                      cls("c-book", "Book", "a-title", "title")],
+            "edges": [{
+                "id": "r-borrows", "type": "ClassBidirectional", "source": "c-user", "target": "c-book",
+                "data": {"name": "borrows", "sourceMultiplicity": "0..*", "sourceRole": "borrower",
+                         "targetMultiplicity": "0..*", "targetRole": "loans", "points": []},
+            }],
         },
     }
 
@@ -122,16 +96,11 @@ def _object_diagram():
         "title": "Loans",
         "references": {"ClassDiagram": "class-diagram"},
         "model": {
-            "version": "3.0.0", "type": "ObjectDiagram", "size": {"width": 1400, "height": 740},
-            "elements": {
-                "o-bob": {"id": "o-bob", "name": "bob", "type": "ObjectName", "owner": None,
-                          "bounds": _box(), "attributes": ["o-bob-name"], "methods": [],
-                          "className": "User"},
-                "o-bob-name": {"id": "o-bob-name", "name": "username = bob",
-                               "type": "ObjectAttribute", "owner": "o-bob", "bounds": _box()},
-            },
-            "relationships": {},
-            "interactive": {"elements": {}, "relationships": {}}, "assessments": {},
+            "version": "4.0.0", "type": "ObjectDiagram", "assessments": {}, "edges": [],
+            "nodes": [_node("o-bob", "objectName", {
+                "name": "bob", "className": "User", "methods": [],
+                "attributes": [{"id": "o-bob-name", "name": "username", "value": "bob"}],
+            })],
         },
     }
 
@@ -187,31 +156,25 @@ def test_user_diagram_round_trips(tmp_path):
     assert "user_object_model" in source
     diagrams = imported["diagrams"]
     # The reference model is context, not a class diagram.
-    assert diagrams["ClassDiagram"][0]["model"]["elements"] == {}
+    assert diagrams["ClassDiagram"][0]["model"]["nodes"] == []
     assert imported["currentDiagramIndices"]["UserDiagram"] == 0
 
     [user_diagram] = diagrams["UserDiagram"]
     assert user_diagram["title"] == "Alice"
     model = user_diagram["model"]
     assert model["type"] == "UserDiagram"
-    element_types = {el["type"] for el in model["elements"].values()}
-    assert element_types == {"UserModelName", "UserModelAttribute"}
-    criteria = {
-        el["name"] for el in model["elements"].values() if el["type"] == "UserModelAttribute"
+    assert "referenceDiagramData" not in model
+    assert {node["type"] for node in model["nodes"]} == {"UserModelName"}
+    rows = [row for node in model["nodes"] for row in node["data"]["attributes"]]
+    assert {(row["name"], row["value"]) for row in rows} == {
+        ("firstName", "Alice"), ("age", "30"), ("gender", "Female"),
+        ("iso693_3", "eng"), ("iso693_3", "fra"),
     }
-    assert criteria == {
-        "firstName = Alice", "age = 30", "gender = Female", "iso693_3 = eng", "iso693_3 = fra",
-    }
-    assert all(
-        el["attributeOperator"] == "==" for el in model["elements"].values()
-        if el["type"] == "UserModelAttribute"
-    )
-    class_names = {
-        el["name"]: el["className"] for el in model["elements"].values()
-        if el["type"] == "UserModelName"
-    }
+    assert all(row["attributeOperator"] == "==" for row in rows)
+    class_names = {node["data"]["name"]: node["data"]["className"] for node in model["nodes"]}
     assert class_names["personal_Information_1"] == "Personal_Information"
-    assert len(model["relationships"]) == 4
+    assert {edge["type"] for edge in model["edges"]} == {"UserModelLink"}
+    assert len(model["edges"]) == 4
 
     # JSON -> B-UML again yields the same user model.
     reimported = json_to_buml_project(ProjectInput(**imported))
@@ -247,16 +210,17 @@ def test_user_diagram_beside_class_diagram_with_user_class(tmp_path):
     assert "domain_model" in source
     [class_diagram] = diagrams["ClassDiagram"]
     class_names = {
-        el["name"] for el in class_diagram["model"]["elements"].values() if el["type"] == "Class"
+        node["data"]["name"] for node in class_diagram["model"]["nodes"] if node["type"] == "class"
     }
     assert class_names == {"User", "Book"}
 
     [object_diagram] = diagrams["ObjectDiagram"]
     assert object_diagram["model"]["type"] == "ObjectDiagram"
     assert {
-        el["name"] for el in object_diagram["model"]["elements"].values()
-        if el["type"] == "ObjectAttribute"
-    } == {"username = bob"}
+        (row["name"], row["value"])
+        for node in object_diagram["model"]["nodes"] if node["type"] == "objectName"
+        for row in node["data"]["attributes"]
+    } == {("username", "bob")}
 
     [user_diagram] = diagrams["UserDiagram"]
     reimported = json_to_buml_project(ProjectInput(**imported))

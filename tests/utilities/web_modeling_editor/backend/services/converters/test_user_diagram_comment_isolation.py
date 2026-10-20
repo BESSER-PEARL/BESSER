@@ -15,32 +15,26 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 )
 
 
-def _box():
-    return {"x": 0, "y": 0, "width": 200, "height": 100}
+def _node(node_id, node_type, data):
+    return {"id": node_id, "type": node_type, "position": {"x": 0, "y": 0},
+            "width": 200, "height": 100, "data": data}
 
 
 def _user_diagram(title, comment_text):
     return {
         "title": title,
         "model": {
+            "version": "4.0.0",
             "type": "UserDiagram",
-            "elements": {
-                "u-user": {
-                    "id": "u-user", "name": "user_1", "type": "UserModelName", "owner": None,
-                    "bounds": _box(), "attributes": [], "methods": [], "className": "User",
-                },
-                "c-1": {
-                    "id": "c-1", "name": comment_text, "type": "Comments", "owner": None,
-                    "bounds": _box(),
-                },
-            },
-            "relationships": {
-                "l-1": {
-                    "id": "l-1", "name": "", "type": "Link", "owner": None, "bounds": _box(),
-                    "source": {"element": "c-1", "direction": "Right"},
-                    "target": {"element": "u-user", "direction": "Left"},
-                },
-            },
+            "nodes": [
+                _node("u-user", "UserModelName",
+                      {"name": "user_1", "attributes": [], "methods": [], "className": "User"}),
+                _node("c-1", "comment", {"name": comment_text}),
+            ],
+            "edges": [
+                {"id": "l-1", "type": "CommentLink", "source": "c-1", "target": "u-user",
+                 "data": {"points": []}},
+            ],
         },
     }
 
@@ -92,8 +86,9 @@ def test_object_diagram_comments_still_annotate_per_request_classes():
     book = Class(name="Book", metadata=Metadata(description="A book"))
     model = DomainModel(name="Library", types={book})
     payload = _user_diagram("Objects", "linked comment")
-    element = payload["model"]["elements"]["u-user"]
-    element.update({"type": "ObjectName", "name": "book_1", "className": "Book"})
+    node = payload["model"]["nodes"][0]
+    node["type"] = "objectName"
+    node["data"].update({"name": "book_1", "className": "Book"})
 
     object_model = process_object_diagram(payload, model)
 

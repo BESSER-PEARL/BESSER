@@ -89,15 +89,17 @@ def _rich_model() -> BPMNModel:
 
 def _elements(json_model):
     return sorted(
-        (e["type"], e["name"], e.get("taskType"), e.get("marker"), e.get("eventType"), e.get("gatewayType"))
-        for e in json_model["elements"].values()
+        (n["type"], n["data"].get("name"), n["data"].get("taskType"), n["data"].get("marker"),
+         n["data"].get("eventType"), n["data"].get("gatewayType"))
+        for n in json_model["nodes"]
     )
 
 
 def _relationships(json_model):
     return sorted(
-        (r["type"], r["name"], r.get("flowType"), r.get("isDefault") if r.get("flowType") == "sequence" else None)
-        for r in json_model["relationships"].values()
+        (e["type"], e["data"].get("name"),
+         bool(e["data"].get("isDefault")) if e["type"] == "BPMNSequenceFlow" else None)
+        for e in json_model["edges"]
     )
 
 
@@ -110,7 +112,7 @@ def test_every_element_kind_round_trips_through_the_safe_loader():
     direct = bpmn_object_to_json(model)
     assert _elements(out) == _elements(direct)
     assert _relationships(out) == _relationships(direct)
-    assert len(out["elements"]) >= 15
+    assert len(out["nodes"]) >= 15
 
 
 @pytest.mark.parametrize("payload", [

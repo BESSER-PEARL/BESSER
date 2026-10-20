@@ -136,7 +136,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         {%- endfor %}
         if errors:
             raise ValidationError(errors)
-    {%- endif %}
+    {% endif %}
 
     {#- Generate methods with code #}
     {%- for method in sort_by_timestamp(class_obj.methods) %}

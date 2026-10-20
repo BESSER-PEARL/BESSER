@@ -1,5 +1,11 @@
 """BPMN conversion from BUML to JSON format.
 
+Emits the v4 wire shape (``{nodes, edges}``) directly — mirrors
+``buml_to_json/class_diagram_converter.py`` (``make_node``/``make_edge`` from
+``_node_builders``). The metamodel is walked pools -> lanes -> process
+contents -> data stores -> flows; every node is emitted with its ``parentId``
+and each flow kind has its own edge ``type``.
+
 Two entry points:
 
 * ``bpmn_object_to_json(model: BPMNModel) -> dict`` — converts a metamodel object
@@ -13,11 +19,11 @@ Two entry points:
 Design points (mirror of the processor):
 
 * **Stable round-trip ids.** ``id_for(obj)`` reuses the original WME id stashed in
-  ``obj.layout["id"]`` when present, falling back to a fresh uuid. The metamodel
-  stays id-free; ``layout`` is the per-element side-channel.
+  ``obj.layout["id"]`` when present, falling back to a fresh uuid. The metamodel stays
+  id-free; ``layout`` is the per-element side-channel.
 * **Layout fallback.** When ``layout`` is missing / partial (a freshly-built model, or
   one loaded from BUML code that didn't emit layout), a deterministic grid layout fills
-  the gaps; flow paths reuse ``services.utils.layout_calculator``.
+  the gaps.
 * **Deterministic walk.** Set members are walked in ``timestamp`` order via
   ``besser.utilities.sort_by_timestamp`` so the export is reproducible (BPMN names are
   not unique — sorting by name is not an option).
@@ -64,95 +70,79 @@ from besser.BUML.metamodel.bpmn import (
     Transaction,
 )
 from besser.utilities.utils import sort_by_timestamp
-from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    BPMN_DIAGRAM_TYPE,
-    BPMN_RELATIONSHIP_TYPE,
-)
+from besser.utilities.web_modeling_editor.backend.constants.constants import BPMN_DIAGRAM_TYPE
 from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event_mapping import (
     serialise_event_type,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._node_builders import (
+    envelope_size, make_edge, make_node, make_positions_parent_relative, points_from_layout,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
     strip_buml_imports,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
-from besser.utilities.web_modeling_editor.backend.services.utils import (
-    calculate_connection_points,
-    calculate_path_points,
-    calculate_relationship_bounds,
-    determine_connection_direction,
-)
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# WME element-type and default-bounds tables
-# ---------------------------------------------------------------------------
 
-# Reverse of the processor's dispatch — every concrete metamodel type that maps to a
-# distinct WME ``elements[id]["type"]`` string. Lookup is by exact ``type(obj)`` (see
-# ``_wme_type_for``), so entry order is irrelevant even for subclasses like Transaction
-# (a SubProcess subclass); ``CallActivity`` is resolved separately in ``_wme_type_for``.
+# Lookup is by exact ``type(obj)``, so the agentic subclasses need their own entries.
 _TYPE_FOR_CLASS = {
-    Task: "BPMNTask",
-    AgenticTask: "BPMNTask",
-    Transaction: "BPMNTransaction",
-    SubProcess: "BPMNSubprocess",
-    StartEvent: "BPMNStartEvent",
-    IntermediateEvent: "BPMNIntermediateEvent",
-    EndEvent: "BPMNEndEvent",
-    Gateway: "BPMNGateway",
-    AgenticGateway: "BPMNGateway",
-    DataObject: "BPMNDataObject",
-    DataStore: "BPMNDataStore",
-    TextAnnotation: "BPMNAnnotation",
-    Group: "BPMNGroup",
-    Lane: "BPMNSwimlane",
-    AgenticLane: "BPMNSwimlane",
-    Participant: "BPMNPool",
+    Task: "bpmnTask",
+    AgenticTask: "bpmnTask",
+    Transaction: "bpmnTransaction",
+    SubProcess: "bpmnSubprocess",
+    StartEvent: "bpmnStartEvent",
+    IntermediateEvent: "bpmnIntermediateEvent",
+    EndEvent: "bpmnEndEvent",
+    Gateway: "bpmnGateway",
+    AgenticGateway: "bpmnGateway",
+    DataObject: "bpmnDataObject",
+    DataStore: "bpmnDataStore",
+    TextAnnotation: "bpmnAnnotation",
+    Group: "bpmnGroup",
+    Lane: "bpmnSwimlane",
+    AgenticLane: "bpmnSwimlane",
+    Participant: "bpmnPool",
 }
 
-# Default per-class bounds when ``layout["bounds"]`` is missing.
-_DEFAULT_BOUNDS = {
-    "BPMNTask": {"width": 110, "height": 60},
-    "BPMNSubprocess": {"width": 250, "height": 150},
-    "BPMNTransaction": {"width": 250, "height": 150},
-    "BPMNCallActivity": {"width": 110, "height": 60},
-    "BPMNStartEvent": {"width": 40, "height": 40},
-    "BPMNIntermediateEvent": {"width": 40, "height": 40},
-    "BPMNEndEvent": {"width": 40, "height": 40},
-    "BPMNGateway": {"width": 50, "height": 50},
-    "BPMNDataObject": {"width": 40, "height": 50},
-    "BPMNDataStore": {"width": 60, "height": 50},
-    "BPMNAnnotation": {"width": 200, "height": 80},
-    "BPMNGroup": {"width": 240, "height": 200},
-    "BPMNSwimlane": {"width": 800, "height": 120},
-    "BPMNPool": {"width": 800, "height": 240},
+_DEFAULT_SIZE = {
+    "bpmnTask": {"width": 110, "height": 60},
+    "bpmnSubprocess": {"width": 250, "height": 150},
+    "bpmnTransaction": {"width": 250, "height": 150},
+    "bpmnCallActivity": {"width": 110, "height": 60},
+    "bpmnStartEvent": {"width": 40, "height": 40},
+    "bpmnIntermediateEvent": {"width": 40, "height": 40},
+    "bpmnEndEvent": {"width": 40, "height": 40},
+    "bpmnGateway": {"width": 50, "height": 50},
+    "bpmnDataObject": {"width": 40, "height": 50},
+    "bpmnDataStore": {"width": 60, "height": 50},
+    "bpmnAnnotation": {"width": 200, "height": 80},
+    "bpmnGroup": {"width": 240, "height": 200},
+    "bpmnSwimlane": {"width": 800, "height": 120},
+    "bpmnPool": {"width": 800, "height": 240},
 }
 
-_FLOW_TYPE_FOR_CLASS = {
-    SequenceFlow: "sequence",
-    MessageFlow: "message",
-    Association: "association",
-    DataAssociation: "data association",
+_EDGE_TYPE_FOR_FLOW_CLASS = {
+    SequenceFlow: "BPMNSequenceFlow",
+    MessageFlow: "BPMNMessageFlow",
+    Association: "BPMNAssociationFlow",
+    DataAssociation: "BPMNDataAssociationFlow",
 }
 
-# WME's BPMNTask / BPMNGateway / BPMNSwimlane always serialise these agentic
-# fields with hard defaults when the element is not agentic. Mirror exactly so
-# BESSER-emitted JSON matches WME's own JSON byte-for-byte on non-agentic
-# elements. The values are taken from WME's `dev/bpmn`
-# packages/editor/.../bpmn-{task,gateway,swimlane}.ts ``default*`` statics.
-_WME_TASK_DEFAULTS = {
+# Agentic fields emitted on every task / gateway / lane node, with these defaults
+# when the element is not agentic (the editor's own defaults for the same fields).
+_TASK_AGENTIC_DEFAULTS = {
     "isAgentic": False,
     "reflectionMode": "none",
     "trustScore": 0,
 }
-_WME_GATEWAY_DEFAULTS = {
+_GATEWAY_AGENTIC_DEFAULTS = {
     "isAgentic": False,
     "gatewayRole": "diverging",
     "trustScore": 0,
 }
-_WME_LANE_DEFAULTS = {
+_LANE_AGENTIC_DEFAULTS = {
     "isAgentic": False,
     "role": "solution",
     "trustScore": 0,
@@ -161,31 +151,42 @@ _WME_LANE_DEFAULTS = {
 
 
 def _wme_type_for(obj) -> str:
-    """Return the WME ``type`` string for a metamodel object."""
     cls = type(obj)
     if cls.__name__ == "CallActivity":
-        return "BPMNCallActivity"
+        return "bpmnCallActivity"
     return _TYPE_FOR_CLASS.get(cls, "")
 
-# ---------------------------------------------------------------------------
-# bpmn_object_to_json
-# ---------------------------------------------------------------------------
+
+class _GridLayout:
+    """Deterministic per-class grid placement when layout['bounds'] is absent."""
+
+    _ROW_FOR_TYPE = {
+        "bpmnPool": 0, "bpmnSwimlane": 1,
+        "bpmnStartEvent": 2, "bpmnTask": 2, "bpmnGateway": 2,
+        "bpmnCallActivity": 2, "bpmnIntermediateEvent": 2, "bpmnEndEvent": 2,
+        "bpmnSubprocess": 3, "bpmnTransaction": 3,
+        "bpmnDataObject": 4, "bpmnDataStore": 4,
+        "bpmnAnnotation": 5, "bpmnGroup": 5,
+    }
+
+    def __init__(self):
+        self._x_for_row: dict = {}
+
+    def next_bounds(self, wme_type: str) -> dict:
+        size = _DEFAULT_SIZE.get(wme_type, {"width": 100, "height": 60})
+        row = self._ROW_FOR_TYPE.get(wme_type, 6)
+        x = self._x_for_row.get(row, 40)
+        y = 40 + row * 180
+        self._x_for_row[row] = x + size["width"] + 40
+        return {"x": x, "y": y, "width": size["width"], "height": size["height"]}
 
 
 def bpmn_object_to_json(model: BPMNModel) -> dict:
-    """Convert a ``BPMNModel`` into a WME BPMN diagram JSON dict.
-
-    Args:
-        model: A ``BPMNModel`` metamodel instance.
-
-    Returns:
-        Dict in the standard Apollon BPMN envelope (``version``, ``type``, ``size``,
-        ``elements``, ``relationships``, ``interactive``, ``assessments``).
-    """
-    elements: dict = {}
-    relationships: dict = {}
-
-    # Per-call id map: stable round-trip ids via the layout stash; fresh uuids otherwise.
+    """Convert a ``BPMNModel`` into a v4 WME BPMN diagram JSON dict
+    (``version``, ``type``, ``title``, ``size``, ``nodes``, ``edges``,
+    ``interactive``, ``assessments``)."""
+    nodes: list = []
+    edges: list = []
     id_map: dict = {}
     grid = _GridLayout()
 
@@ -195,277 +196,203 @@ def bpmn_object_to_json(model: BPMNModel) -> dict:
             id_map[obj] = stashed or str(uuid.uuid4())
         return id_map[obj]
 
-    # --- 1. Pools (and their lanes) ----------------------------------------
     if model.collaboration is not None:
         for participant in sort_by_timestamp(model.collaboration.participants):
-            _emit_pool(participant, elements, id_for, grid)
+            _emit_pool(participant, nodes, id_for, grid)
 
-    # --- 2. Pool-less Processes (no Participant) ---------------------------
     pooled_processes = (
         {p.process for p in model.collaboration.participants if p.process is not None}
-        if model.collaboration is not None
-        else set()
+        if model.collaboration is not None else set()
     )
     for process in sort_by_timestamp(model.processes):
         if process in pooled_processes:
             continue
-        _emit_process_contents(
-            process, owner_id=None, elements=elements, id_for=id_for, grid=grid,
-        )
+        _emit_process_contents(process, parent_id=None, nodes=nodes, id_for=id_for, grid=grid)
 
-    # --- 3. Pool-ful Processes' contents -----------------------------------
     if model.collaboration is not None:
         for participant in sort_by_timestamp(model.collaboration.participants):
             if participant.process is None:
                 continue
             _emit_process_contents(
-                participant.process,
-                owner_id=id_for(participant),
-                elements=elements,
-                id_for=id_for,
-                grid=grid,
+                participant.process, parent_id=id_for(participant),
+                nodes=nodes, id_for=id_for, grid=grid,
             )
 
-    # --- 4. Model-level data stores ----------------------------------------
     for data_store in sort_by_timestamp(model.data_stores):
-        elements[id_for(data_store)] = _emit_node(
-            data_store, owner_id=None, id_for=id_for, grid=grid,
-        )
+        node = _emit_node(data_store, parent_id=None, id_for=id_for, grid=grid)
+        if node:
+            nodes.append(node)
 
-    # --- 5. Flows ----------------------------------------------------------
+    # Stashed bounds are absolute; grid-fallback positions are already relative.
+    make_positions_parent_relative(
+        nodes, {node_id for obj, node_id in id_map.items() if (getattr(obj, "layout", None) or {}).get("bounds")},
+    )
+
+    emitted_ids = {node["id"] for node in nodes}
     for process in sort_by_timestamp(model.processes):
         for flow in sort_by_timestamp(process.sequence_flows):
-            _emit_flow(flow, relationships, elements, id_for)
+            _emit_flow(flow, edges, id_for, emitted_ids)
         for flow in sort_by_timestamp(process.associations):
-            _emit_flow(flow, relationships, elements, id_for)
+            _emit_flow(flow, edges, id_for, emitted_ids)
         for flow in sort_by_timestamp(process.data_associations):
-            _emit_flow(flow, relationships, elements, id_for)
+            _emit_flow(flow, edges, id_for, emitted_ids)
 
     # Sequence flows nested in SubProcesses
     for sub in _walk_subprocesses(model):
         for flow in sort_by_timestamp(sub.sequence_flows):
-            _emit_flow(flow, relationships, elements, id_for)
+            _emit_flow(flow, edges, id_for, emitted_ids)
 
     if model.collaboration is not None:
         for flow in sort_by_timestamp(model.collaboration.message_flows):
-            _emit_flow(flow, relationships, elements, id_for)
-
-    # --- 6. Envelope -------------------------------------------------------
-    size = _compute_envelope_size(elements)
+            _emit_flow(flow, edges, id_for, emitted_ids)
 
     return {
-        "version": "3.0.0",
+        "version": "4.0.0",
         "type": BPMN_DIAGRAM_TYPE,
-        "size": size,
+        "title": getattr(model, "name", "") or "",
+        "size": envelope_size(nodes),
+        "nodes": nodes,
+        "edges": edges,
         "interactive": {"elements": {}, "relationships": {}},
-        "elements": elements,
-        "relationships": relationships,
         "assessments": {},
     }
 
-# ---------------------------------------------------------------------------
-# Element emission helpers
-# ---------------------------------------------------------------------------
 
-
-def _emit_pool(participant: Participant, elements: dict, id_for, grid: "_GridLayout") -> None:
-    """Emit a pool (``BPMNPool``) and its lanes (``BPMNSwimlane``)."""
-    pool_id = id_for(participant)
-    elements[pool_id] = _emit_node(participant, owner_id=None, id_for=id_for, grid=grid)
-
+def _emit_pool(participant: Participant, nodes: list, id_for, grid: "_GridLayout") -> None:
+    pool_node = _emit_node(participant, parent_id=None, id_for=id_for, grid=grid)
+    if pool_node:
+        nodes.append(pool_node)
     if participant.process is None:
         return
+    pool_id = id_for(participant)
     for lane in sort_by_timestamp(participant.process.lanes):
-        elements[id_for(lane)] = _emit_node(
-            lane, owner_id=pool_id, id_for=id_for, grid=grid,
-        )
+        lane_node = _emit_node(lane, parent_id=pool_id, id_for=id_for, grid=grid)
+        if lane_node:
+            nodes.append(lane_node)
 
 
-def _emit_process_contents(process: Process, owner_id, elements: dict,
-                           id_for, grid: "_GridLayout") -> None:
-    """Emit every child of ``process``: flow nodes (recursing into sub-processes),
-    artifacts, and data objects.
-
-    ``owner_id`` is the WME owner pointer for top-level children: the pool id when the
-    process is in a pool, ``None`` otherwise. Children inside a lane resolve their owner
-    to the lane id; children inside a sub-process resolve to the sub-process id.
-    """
+def _emit_process_contents(process: Process, parent_id, nodes: list, id_for, grid: "_GridLayout") -> None:
     for node in sort_by_timestamp(process.flow_nodes):
-        node_owner_id = id_for(node.lane) if node.lane is not None else owner_id
-        elements[id_for(node)] = _emit_node(
-            node, owner_id=node_owner_id, id_for=id_for, grid=grid,
-        )
+        node_parent_id = id_for(node.lane) if node.lane is not None else parent_id
+        emitted = _emit_node(node, parent_id=node_parent_id, id_for=id_for, grid=grid)
+        if emitted:
+            nodes.append(emitted)
         if isinstance(node, SubProcess):
-            _emit_subprocess_children(node, elements, id_for, grid)
+            _emit_subprocess_children(node, nodes, id_for, grid)
 
     for artifact in sort_by_timestamp(process.artifacts):
-        elements[id_for(artifact)] = _emit_node(
-            artifact, owner_id=owner_id, id_for=id_for, grid=grid,
-        )
+        emitted = _emit_node(artifact, parent_id=parent_id, id_for=id_for, grid=grid)
+        if emitted:
+            nodes.append(emitted)
     for data_object in sort_by_timestamp(process.data_objects):
-        elements[id_for(data_object)] = _emit_node(
-            data_object, owner_id=owner_id, id_for=id_for, grid=grid,
-        )
+        emitted = _emit_node(data_object, parent_id=parent_id, id_for=id_for, grid=grid)
+        if emitted:
+            nodes.append(emitted)
 
 
-def _emit_subprocess_children(sub: SubProcess, elements: dict,
-                              id_for, grid: "_GridLayout") -> None:
-    """Recursively emit a sub-process's flow nodes (their owner is the sub-process)."""
+def _emit_subprocess_children(sub: SubProcess, nodes: list, id_for, grid: "_GridLayout") -> None:
     sub_id = id_for(sub)
     for node in sort_by_timestamp(sub.flow_nodes):
-        elements[id_for(node)] = _emit_node(
-            node, owner_id=sub_id, id_for=id_for, grid=grid,
-        )
+        emitted = _emit_node(node, parent_id=sub_id, id_for=id_for, grid=grid)
+        if emitted:
+            nodes.append(emitted)
         if isinstance(node, SubProcess):
-            _emit_subprocess_children(node, elements, id_for, grid)
+            _emit_subprocess_children(node, nodes, id_for, grid)
 
 
-def _emit_node(obj, owner_id, id_for, grid: "_GridLayout") -> dict:
-    """Build one ``elements[id]`` entry for a metamodel object."""
+def _emit_node(obj, parent_id, id_for, grid: "_GridLayout"):
     wme_type = _wme_type_for(obj)
     if not wme_type:
-        # Should not happen — guard anyway.
         logger.warning("BPMN export: unknown metamodel class %s; skipping.", type(obj).__name__)
-        return {}
+        return None
 
     layout = obj.layout or {}
     bounds = layout.get("bounds") or grid.next_bounds(wme_type)
 
-    name = obj.name
-    if isinstance(obj, TextAnnotation):
-        # The metamodel keeps the body in `text` — WME stores it back in `name`.
-        name = obj.text
+    name = obj.text if isinstance(obj, TextAnnotation) else obj.name
 
-    entry: dict = {
-        "id": id_for(obj),
-        "name": name,
-        "type": wme_type,
-        "owner": owner_id,
-        "bounds": bounds,
-    }
+    data: dict = {"name": name}
     for style_key in ("fillColor", "strokeColor", "textColor", "highlight"):
         if style_key in layout:
-            entry[style_key] = layout[style_key]
+            data[style_key] = layout[style_key]
 
-    # Subtype attrs — only on the relevant types.
     if isinstance(obj, Task):
-        entry["taskType"] = obj.task_type.value
+        data["taskType"] = obj.task_type.value
     if isinstance(obj, Activity):
-        entry["marker"] = obj.loop_characteristics.value
+        data["marker"] = obj.loop_characteristics.value
     if isinstance(obj, Event):
-        entry["eventType"] = serialise_event_type(obj)
+        data["eventType"] = serialise_event_type(obj)
     if isinstance(obj, Gateway):
-        entry["gatewayType"] = obj.gateway_type.value
+        data["gatewayType"] = obj.gateway_type.value
 
     if isinstance(obj, Task):
-        entry.update(_WME_TASK_DEFAULTS)
+        data.update(_TASK_AGENTIC_DEFAULTS)
         if isinstance(obj, AgenticTask):
-            entry["isAgentic"] = True
-            entry["reflectionMode"] = obj.reflection_mode.value
-            entry["trustScore"] = obj.trust_score
+            data["isAgentic"] = True
+            data["reflectionMode"] = obj.reflection_mode.value
+            data["trustScore"] = obj.trust_score
             if obj.agent_diagram_ref is not None:
-                entry["agentDiagramRef"] = obj.agent_diagram_ref
+                data["agentDiagramRef"] = obj.agent_diagram_ref
             if obj.reflection_reviewer_lane_id is not None:
-                entry["reflectionReviewerLaneId"] = obj.reflection_reviewer_lane_id
+                data["reflectionReviewerLaneId"] = obj.reflection_reviewer_lane_id
 
     if isinstance(obj, Gateway):
-        entry.update(_WME_GATEWAY_DEFAULTS)
+        data.update(_GATEWAY_AGENTIC_DEFAULTS)
         if isinstance(obj, AgenticGateway):
-            entry["isAgentic"] = True
-            entry["gatewayRole"] = obj.gateway_role.value
-            entry["trustScore"] = obj.trust_score
+            data["isAgentic"] = True
+            data["gatewayRole"] = obj.gateway_role.value
+            data["trustScore"] = obj.trust_score
             if obj.governance_dsl is not None:
-                entry["governanceDsl"] = obj.governance_dsl
+                data["governanceDsl"] = obj.governance_dsl
 
     if isinstance(obj, Lane):
-        entry.update(_WME_LANE_DEFAULTS)
+        data.update(_LANE_AGENTIC_DEFAULTS)
         if isinstance(obj, AgenticLane):
-            entry["isAgentic"] = True
-            entry["role"] = obj.role.value
-            entry["trustScore"] = obj.trust_score
-            entry["multiplicity"] = obj.swarm_size
+            data["isAgentic"] = True
+            data["role"] = obj.role.value
+            data["trustScore"] = obj.trust_score
+            data["multiplicity"] = obj.swarm_size
             if obj.agent_diagram_ref is not None:
-                entry["agentDiagramRef"] = obj.agent_diagram_ref
+                data["agentDiagramRef"] = obj.agent_diagram_ref
 
-    return entry
+    return make_node(
+        node_id=id_for(obj), type_=wme_type, data=data,
+        position={"x": bounds["x"], "y": bounds["y"]},
+        parent_id=parent_id, width=bounds["width"], height=bounds["height"],
+    )
 
-# ---------------------------------------------------------------------------
-# Flow emission helpers
-# ---------------------------------------------------------------------------
 
-
-def _emit_flow(flow: BPMNConnectingObject, relationships: dict,
-               elements: dict, id_for) -> None:
-    """Build one ``relationships[id]`` entry for a flow."""
-    flow_type = _FLOW_TYPE_FOR_CLASS.get(type(flow))
-    if flow_type is None:
-        logger.warning(
-            "BPMN export: unknown connecting object %s; skipping.", type(flow).__name__,
-        )
+def _emit_flow(flow: "BPMNConnectingObject", edges: list, id_for, emitted_ids: set) -> None:
+    edge_type = _EDGE_TYPE_FOR_FLOW_CLASS.get(type(flow))
+    if edge_type is None:
+        logger.warning("BPMN export: unknown connecting object %s; skipping.", type(flow).__name__)
         return
 
     source_id = id_for(flow.source)
     target_id = id_for(flow.target)
-    source_entry = elements.get(source_id)
-    target_entry = elements.get(target_id)
-    if source_entry is None or target_entry is None:
+    if source_id not in emitted_ids or target_id not in emitted_ids:
         # Endpoint wasn't emitted (defensive — happens only on a malformed model).
         logger.warning(
-            "BPMN flow '%s' references an endpoint that was not emitted; skipping.",
-            flow.name,
+            "BPMN flow '%s' references an endpoint that was not emitted; skipping.", flow.name,
         )
         return
 
     layout = flow.layout or {}
-    source_dir, target_dir = _resolve_directions(layout, source_entry, target_entry)
-    source_point = calculate_connection_points(source_entry["bounds"], source_dir)
-    target_point = calculate_connection_points(target_entry["bounds"], target_dir)
-    path = layout.get("path") or calculate_path_points(
-        source_point, target_point, source_dir, target_dir,
-    )
-    bounds = layout.get("bounds") or calculate_relationship_bounds(path)
-
-    entry: dict = {
-        "id": id_for(flow),
+    edge_data: dict = {
         "name": flow.name,
-        "type": BPMN_RELATIONSHIP_TYPE,
-        "owner": layout.get("owner"),
-        "bounds": bounds,
-        "path": path,
-        "source": {
-            "direction": source_dir,
-            "element": source_id,
-            "bounds": {"x": source_point["x"], "y": source_point["y"], "width": 0, "height": 0},
-        },
-        "target": {
-            "direction": target_dir,
-            "element": target_id,
-            "bounds": {"x": target_point["x"], "y": target_point["y"], "width": 0, "height": 0},
-        },
+        "label": flow.name,  # BPMNDiagramEdge.tsx reads data.label
+        "points": points_from_layout(layout),
         "isManuallyLayouted": layout.get("isManuallyLayouted", False),
-        "flowType": flow_type,
     }
-    if isinstance(flow, SequenceFlow):
-        entry["isDefault"] = flow.is_default
+    if isinstance(flow, SequenceFlow) and flow.is_default:
+        edge_data["isDefault"] = True
 
-    relationships[id_for(flow)] = entry
-
-
-def _resolve_directions(layout: dict, source_entry: dict, target_entry: dict):
-    """Pick connection directions for an emitted flow.
-
-    Prefers the directions stashed in ``layout`` so a round-tripped flow keeps the same
-    connection sides; falls back to ``determine_connection_direction`` from the bounds.
-    """
-    source_dir = layout.get("source_direction")
-    target_dir = layout.get("target_direction")
-    if source_dir and target_dir:
-        return source_dir, target_dir
-    return determine_connection_direction(source_entry["bounds"], target_entry["bounds"])
-
-# ---------------------------------------------------------------------------
-# Misc helpers
-# ---------------------------------------------------------------------------
+    edges.append(make_edge(
+        edge_id=id_for(flow), source=source_id, target=target_id,
+        type_=edge_type, data=edge_data,
+        source_handle=layout.get("source_direction") or "right",
+        target_handle=layout.get("target_direction") or "left",
+    ))
 
 
 def _walk_subprocesses(model: BPMNModel):
@@ -475,116 +402,31 @@ def _walk_subprocesses(model: BPMNModel):
             if isinstance(node, SubProcess):
                 yield node
                 yield from _recurse(node)
-
     for process in model.processes:
         yield from _recurse(process)
 
 
-def _compute_envelope_size(elements: dict) -> dict:
-    """Bounding box of all element bounds, with a sensible minimum."""
-    if not elements:
-        return {"width": 800, "height": 600}
-    max_x = 0
-    max_y = 0
-    for entry in elements.values():
-        bounds = entry.get("bounds") or {}
-        right = (bounds.get("x") or 0) + (bounds.get("width") or 0)
-        bottom = (bounds.get("y") or 0) + (bounds.get("height") or 0)
-        if right > max_x:
-            max_x = right
-        if bottom > max_y:
-            max_y = bottom
-    return {"width": max(int(max_x) + 40, 800), "height": max(int(max_y) + 40, 600)}
-
-# ---------------------------------------------------------------------------
-# Grid layout (deterministic fallback when layout is missing)
-# ---------------------------------------------------------------------------
-
-
-class _GridLayout:
-    """Deterministic per-class grid placement used only when ``layout["bounds"]`` is
-    absent. Each WME type advances its own row so nodes of different sizes don't overlap.
-    """
-
-    _ROW_FOR_TYPE = {
-        "BPMNPool": 0,
-        "BPMNSwimlane": 1,
-        "BPMNStartEvent": 2,
-        "BPMNTask": 2,
-        "BPMNGateway": 2,
-        "BPMNCallActivity": 2,
-        "BPMNIntermediateEvent": 2,
-        "BPMNEndEvent": 2,
-        "BPMNSubprocess": 3,
-        "BPMNTransaction": 3,
-        "BPMNDataObject": 4,
-        "BPMNDataStore": 4,
-        "BPMNAnnotation": 5,
-        "BPMNGroup": 5,
-    }
-
-    def __init__(self):
-        self._x_for_row: dict = {}
-
-    def next_bounds(self, wme_type: str) -> dict:
-        size = _DEFAULT_BOUNDS.get(wme_type, {"width": 100, "height": 60})
-        row = self._ROW_FOR_TYPE.get(wme_type, 6)
-        x = self._x_for_row.get(row, 40)
-        y = 40 + row * 180
-        self._x_for_row[row] = x + size["width"] + 40
-        return {"x": x, "y": y, "width": size["width"], "height": size["height"]}
-
-# ---------------------------------------------------------------------------
-# bpmn_buml_to_json — BUML .py source string → WME JSON
-# ---------------------------------------------------------------------------
-
-
 def bpmn_buml_to_json(content: str) -> dict:
-    """Convert a BPMN BUML ``.py`` source string into a WME BPMN diagram JSON dict.
+    """Convert a BPMN BUML ``.py`` source string into a v4 WME BPMN diagram JSON dict.
 
-    Loads ``content`` through ``safe_load_buml`` (AST allowlist), locates the resulting ``BPMNModel``, and
-    delegates to :func:`bpmn_object_to_json`. The ``.py`` files emitted by
-    ``besser.utilities.buml_code_builder.bpmn_model_builder.bpmn_model_to_code`` are
-    exactly what this wrapper expects.
-
-    Args:
-        content: BPMN BUML Python source code as a string.
-
-    Returns:
-        A WME BPMN diagram JSON dict (the standard Apollon envelope).
+    Loads ``content`` through ``safe_load_buml`` (AST allowlist — no raw ``exec``),
+    locates the resulting ``BPMNModel``, and delegates to :func:`bpmn_object_to_json`.
 
     Raises:
         ConversionError: if the source fails to parse / execute, or if no
             ``BPMNModel`` instance is produced.
     """
     allowed_names = {
-        "BPMNModel": BPMNModel,
-        "Process": Process,
-        "Collaboration": Collaboration,
-        "Participant": Participant,
-        "Task": Task,
-        "TaskType": TaskType,
-        "LoopCharacteristics": LoopCharacteristics,
-        "SubProcess": SubProcess,
-        "Transaction": Transaction,
-        "CallActivity": CallActivity,
-        "StartEvent": StartEvent,
-        "IntermediateEvent": IntermediateEvent,
-        "EndEvent": EndEvent,
-        "EventDirection": EventDirection,
-        "EventDefinitionType": EventDefinitionType,
-        "Gateway": Gateway,
-        "GatewayType": GatewayType,
-        "SequenceFlow": SequenceFlow,
-        "MessageFlow": MessageFlow,
-        "Association": Association,
-        "DataAssociation": DataAssociation,
-        "DataObject": DataObject,
-        "DataStore": DataStore,
-        "Lane": Lane,
-        "Group": Group,
-        "TextAnnotation": TextAnnotation,
-        "set": set,
+        "BPMNModel": BPMNModel, "Process": Process, "Collaboration": Collaboration,
+        "Participant": Participant, "Task": Task, "TaskType": TaskType,
+        "LoopCharacteristics": LoopCharacteristics, "SubProcess": SubProcess,
+        "Transaction": Transaction, "CallActivity": CallActivity, "StartEvent": StartEvent,
+        "IntermediateEvent": IntermediateEvent, "EndEvent": EndEvent,
+        "EventDirection": EventDirection, "EventDefinitionType": EventDefinitionType,
+        "Gateway": Gateway, "GatewayType": GatewayType, "SequenceFlow": SequenceFlow,
+        "MessageFlow": MessageFlow, "Association": Association, "DataAssociation": DataAssociation,
+        "DataObject": DataObject, "DataStore": DataStore, "Lane": Lane, "Group": Group,
+        "TextAnnotation": TextAnnotation, "set": set,
         "Project": lambda *args, **kwargs: None,
         "AgenticTask": AgenticTask,
         "AgenticGateway": AgenticGateway,
@@ -609,14 +451,13 @@ def bpmn_buml_to_json(content: str) -> dict:
     if model is None:
         raise ConversionError(
             "BPMN BUML file produced no BPMNModel — expected a top-level variable "
-            "(`bpmn_model = BPMNModel(...)` is the convention emitted by "
-            "`bpmn_model_to_code`)."
+            "(`bpmn_model = BPMNModel(...)` is the convention emitted by `bpmn_model_to_code`)."
         )
     return bpmn_object_to_json(model)
 
 
 def _find_bpmn_model(namespace: dict):
-    """Return the ``BPMNModel`` from the exec'd namespace, preferring ``bpmn_model``."""
+    """Return the ``BPMNModel`` from the loaded namespace, preferring ``bpmn_model``."""
     candidate = namespace.get("bpmn_model")
     if isinstance(candidate, BPMNModel):
         return candidate

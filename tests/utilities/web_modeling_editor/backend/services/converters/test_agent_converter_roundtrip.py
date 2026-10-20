@@ -83,15 +83,18 @@ def test_agent_roundtrip_preserves_multi_llm_and_reasoning(tmp_path):
 
     json_model = agent_buml_to_json(content)
 
-    # The reasoning state must be emitted in the canonical shape the editor can
-    # deserialize: an AgentState carrying stateType "reasoning". The legacy
-    # AgentReasoningState element type was removed from the editor registry, so
-    # emitting it would crash on import.
-    json_elements = list(json_model.get("elements", {}).values())
-    reasoning_elements = [el for el in json_elements if el.get("stateType") == "reasoning"]
-    assert len(reasoning_elements) == 1
-    assert reasoning_elements[0]["type"] == "AgentState"
-    assert all(el.get("type") != "AgentReasoningState" for el in json_elements)
+    # The reasoning state must be emitted in the canonical v4 shape the editor can
+    # load: an AgentState node carrying data.stateType "reasoning". The legacy
+    # AgentReasoningState type is no longer registered by the editor.
+    json_nodes = json_model["nodes"]
+    reasoning_nodes = [n for n in json_nodes if n["data"].get("stateType") == "reasoning"]
+    assert len(reasoning_nodes) == 1
+    assert reasoning_nodes[0]["type"] == "AgentState"
+    assert all(n.get("type") != "AgentReasoningState" for n in json_nodes)
+    # Components never become canvas nodes.
+    component_types = {c["type"] for c in json_model["components"].values()}
+    assert {"AgentLLM", "AgentTool", "AgentSkill", "AgentWorkspace", "AgentRagElement"} <= component_types
+    assert not component_types & {n["type"] for n in json_nodes}
 
     # process_agent_diagram consumes the frontend envelope: the apollon model
     # under "model" and the diagram config surfaced at the top level.
@@ -314,13 +317,19 @@ _SIGNUP_GUI = {
 
 
 def _action(action_id, action_type, **fields):
-    return {"id": action_id, "type": "AgentStateBody", "name": fields.pop("name", action_type),
-            "actionType": action_type, **fields}
+    """A v4 AgentState action row (inline in ``data.bodies`` / ``data.fallbackBodies``)."""
+    return {"id": action_id, "name": fields.pop("name", action_type), "actionType": action_type, **fields}
 
 
-def _transition(rel_id, source, target, **fields):
-    return {"id": rel_id, "type": "AgentStateTransition", "source": {"element": source},
-            "target": {"element": target}, **fields}
+def _transition(edge_id, source, target, **data):
+    return {"id": edge_id, "type": "AgentStateTransition", "source": source, "target": target,
+            "sourceHandle": "Right", "targetHandle": "Left", "data": {"points": [], **data}}
+
+
+def _state(node_id, name, actions, fallback=(), initial=False):
+    return {"id": node_id, "type": "AgentState", "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+            "data": {"name": name, "initial": initial, "stateType": "standard",
+                     "bodies": list(actions), "fallbackBodies": list(fallback)}}
 
 
 def _live_testing_components():
@@ -328,7 +337,7 @@ def _live_testing_components():
         "llm-1": {"id": "llm-1", "type": "AgentLLM", "name": "fast", "provider": "openai",
                   "parameters": {"model": "gpt-4o-mini"}},
         "int-1": {"id": "int-1", "type": "AgentIntent", "name": "greet", "bodies": ["int-1-b"]},
-        "int-1-b": {"id": "int-1-b", "type": "AgentIntentBody", "name": _TRICKY},
+        "int-1-b": {"id": "int-1-b", "type": "AgentIntentBody", "name": _TRICKY, "owner": "int-1"},
         "rag-1": {"id": "rag-1", "type": "AgentRagElement", "name": "docs", "llm_name": "fast"},
         "tool-1": {"id": "tool-1", "type": "AgentTool", "name": "lookup", "description": "d",
                    "code": "def lookup(x):\n    return x"},
@@ -339,69 +348,89 @@ def _live_testing_components():
     }
 
 
-def _live_testing_elements():
-    return {
-        "init": {"id": "init", "type": "StateInitialNode", "name": ""},
-        "s-ask": {"id": "s-ask", "type": "AgentState", "name": "ask",
-                  "actions": ["a-text", "a-gui", "a-md", "a-html", "a-speech"], "fallbackActions": ["a-fb"]},
-        "s-think": {"id": "s-think", "type": "AgentState", "name": "think",
-                    "actions": ["a-llm", "a-chat", "a-rag", "a-db", "a-crawl"]},
-        "s-files": {"id": "s-files", "type": "AgentState", "name": "files", "actions": ["a-done"]},
-        "a-text": _action("a-text", "TextReplyAction", name=_TRICKY, useSessionVars=True),
-        "a-gui": _action("a-gui", "GUIReplyAction", guiId="signup"),
-        "a-md": _action("a-md", "WebSocketReplyMarkdownAction", ws_message="**{name}**", useSessionVars=True),
-        "a-html": _action("a-html", "WebSocketReplyHTMLAction", ws_message="<b>{name}</b>", useSessionVars=True),
-        "a-speech": _action("a-speech", "WebSocketReplySpeechAction", ws_message="Hi {name}",
-                            ws_audio_speed=1.5, useSessionVars=True),
-        "a-fb": _action("a-fb", "GUIReplyAction", guiId="signup"),
-        "a-llm": _action("a-llm", "LLMReplyAction", system_message=_TRICKY, llm_name="fast",
-                         inputPromptMode="custom", customInputPrompt="Summarise {email}",
-                         customInputPromptUseSessionVars=True, systemPromptUseSessionVars=True,
-                         storeInSession="summary", sendReply=False),
-        "a-chat": _action("a-chat", "LLMChatAction", system_message="Chat about {summary}", llm_name="fast",
-                          systemPromptUseSessionVars=True, storeInSession="chat", sendReply=False),
-        "a-rag": _action("a-rag", "RAGReplyAction", ragDatabaseName="docs", prompt="Cite {summary}",
-                         inputPromptMode="custom", customInputPrompt="Find {email}",
-                         customInputPromptUseSessionVars=True, promptUseSessionVars=True,
-                         storeInSession="rag_answer", sendReply=False),
-        "a-db": _action("a-db", "DBAction", dbQueryMode="llm_query", llm_name="fast",
-                        inputPromptMode="custom", customInputPrompt="Rows for {email}",
-                        customInputPromptUseSessionVars=True, storeInSession="rows", sendReply=False),
-        "a-crawl": _action("a-crawl", "WebCrawlLLMAction", initial_url="https://example.org",
-                           system_message_prefix="Site of {email}", systemMessagePrefixUseSessionVars=True,
-                           llm_name="fast", storeInSession="crawl", sendReply=False),
-        "a-done": _action("a-done", "TextReplyAction", name="Files received"),
-    }
+def _live_testing_nodes():
+    return [
+        _state("s-ask", "ask", [
+            _action("a-text", "TextReplyAction", name=_TRICKY, useSessionVars=True),
+            _action("a-gui", "GUIReplyAction", guiId="signup"),
+            _action("a-md", "WebSocketReplyMarkdownAction", ws_message="**{name}**", useSessionVars=True),
+            _action("a-html", "WebSocketReplyHTMLAction", ws_message="<b>{name}</b>", useSessionVars=True),
+            _action("a-speech", "WebSocketReplySpeechAction", ws_message="Hi {name}",
+                    ws_audio_speed=1.5, useSessionVars=True),
+        ], fallback=[_action("a-fb", "GUIReplyAction", guiId="signup")], initial=True),
+        _state("s-think", "think", [
+            _action("a-llm", "LLMReplyAction", system_message=_TRICKY, llm_name="fast",
+                    inputPromptMode="custom", customInputPrompt="Summarise {email}",
+                    customInputPromptUseSessionVars=True, systemPromptUseSessionVars=True,
+                    storeInSession="summary", sendReply=False),
+            _action("a-chat", "LLMChatAction", system_message="Chat about {summary}", llm_name="fast",
+                    systemPromptUseSessionVars=True, storeInSession="chat", sendReply=False),
+            _action("a-rag", "RAGReplyAction", ragDatabaseName="docs", prompt="Cite {summary}",
+                    inputPromptMode="custom", customInputPrompt="Find {email}",
+                    customInputPromptUseSessionVars=True, promptUseSessionVars=True,
+                    storeInSession="rag_answer", sendReply=False),
+            _action("a-db", "DBAction", dbQueryMode="llm_query", llm_name="fast",
+                    inputPromptMode="custom", customInputPrompt="Rows for {email}",
+                    customInputPromptUseSessionVars=True, storeInSession="rows", sendReply=False),
+            _action("a-crawl", "WebCrawlLLMAction", initial_url="https://example.org",
+                    system_message_prefix="Site of {email}", systemMessagePrefixUseSessionVars=True,
+                    llm_name="fast", storeInSession="crawl", sendReply=False),
+        ]),
+        _state("s-files", "files", [_action("a-done", "TextReplyAction", name="Files received")]),
+    ]
 
 
-def _live_testing_relationships():
-    return {
-        "r-init": {"id": "r-init", "type": "AgentStateTransitionInit", "source": {"element": "init"},
-                   "target": {"element": "s-ask"}},
-        "r-form": _transition("r-form", "s-ask", "s-think", transitionType="predefined",
-                              predefined={"predefinedType": "when_form_submitted", "formGuiId": "signup"}),
-        "r-event": _transition("r-event", "s-think", "s-files", transitionType="custom",
-                               custom={"event": "GUIEvent", "condition": [], "guiEventGuiId": "signup"}),
-        "r-files": _transition("r-files", "s-files", "s-ask", transitionType="predefined",
-                               predefined={"predefinedType": "when_file_received", "fileType": "pdf, csv, image/png"}),
-        "r-intent": _transition("r-intent", "s-ask", "s-files", transitionType="predefined",
-                                predefined={"predefinedType": "when_intent_matched", "intentName": "greet"}),
-    }
+def _live_testing_edges():
+    return [
+        _transition("r-form", "s-ask", "s-think", transitionType="predefined",
+                    predefined={"predefinedType": "when_form_submitted", "formGuiId": "signup"}),
+        _transition("r-event", "s-think", "s-files", transitionType="custom",
+                    custom={"event": "GUIEvent", "condition": [], "guiEventGuiId": "signup"}),
+        _transition("r-files", "s-files", "s-ask", transitionType="predefined",
+                    predefined={"predefinedType": "when_file_received", "fileType": "pdf, csv, image/png"}),
+        _transition("r-intent", "s-ask", "s-files", transitionType="predefined",
+                    predefined={"predefinedType": "when_intent_matched", "intentName": "greet"}),
+    ]
+
+
+def _component_nodes(components):
+    """Legacy v4 layout: components rendered as canvas nodes (pre-Components-page models).
+
+    Intents carry their training sentences inline on ``data.training_phrases``.
+    """
+    nodes = []
+    for component in components.values():
+        if component["type"] == "AgentIntentBody":
+            continue
+        data = {k: v for k, v in component.items() if k not in ("id", "type", "owner")}
+        if component["type"] == "AgentIntent":
+            data["training_phrases"] = [
+                {"id": body_id, "name": components[body_id]["name"]} for body_id in data.pop("bodies")
+            ]
+        nodes.append({"id": component["id"], "type": component["type"], "position": {"x": 0, "y": 0},
+                      "width": 160, "height": 100, "data": data})
+    return nodes
 
 
 def _live_testing_diagram(layout: str = "components"):
-    """The live-testing diagram in the current layout (``model.components``), the old
-    layout (components inside ``model.elements``) or the legacy top-level ``agentComponents``."""
-    elements = _live_testing_elements()
-    model = {"elements": elements, "relationships": _live_testing_relationships()}
+    """The live-testing diagram in the current layout (``model.components``), the legacy v4
+    layout (components as canvas ``nodes``) or the legacy top-level ``agentComponents``."""
+    nodes = _live_testing_nodes()
+    model = {"version": "4.0.0", "type": "AgentDiagram", "nodes": nodes, "edges": _live_testing_edges()}
     diagram = {"title": "LiveAgent", "model": model}
     if layout == "components":
         model["components"] = _live_testing_components()
-    elif layout == "elements":
-        elements.update(_live_testing_components())
+    elif layout == "nodes":
+        nodes.extend(_component_nodes(_live_testing_components()))
     else:
         diagram["agentComponents"] = _live_testing_components()
     return diagram
+
+
+def _state_rows(diagram_model, state_name, key="bodies"):
+    state = next(n for n in diagram_model["nodes"]
+                 if n["type"] == "AgentState" and n["data"]["name"] == state_name)
+    return state["data"][key]
 
 
 def _to_code(agent, tmp_path, name="agent.py"):
@@ -461,17 +490,16 @@ def _agent_signature(agent):
 
 
 def _elements_by_type(json_model, element_type):
-    pool = {**json_model["elements"], **json_model["components"]}
-    return [el for el in pool.values() if el.get("type") == element_type]
+    """Components of ``element_type``; asserts none leaked onto the canvas."""
+    assert all(n["type"] != element_type for n in json_model["nodes"])
+    return [c for c in json_model["components"].values() if c.get("type") == element_type]
 
 
-def _state_actions(json_model, state_name, key="actions"):
-    state = next(el for el in json_model["elements"].values()
-                 if el.get("type") == "AgentState" and el.get("name") == state_name)
-    return {json_model["elements"][aid]["actionType"]: json_model["elements"][aid] for aid in state[key]}
+def _state_actions(json_model, state_name, key="bodies"):
+    return {row["actionType"]: row for row in _state_rows(json_model, state_name, key)}
 
 
-@pytest.mark.parametrize("layout", ["components", "elements", "agentComponents"])
+@pytest.mark.parametrize("layout", ["components", "nodes", "agentComponents"])
 def test_live_testing_diagram_loads_in_every_layout(layout):
     agent = process_agent_diagram(_live_testing_diagram(layout))
     assert {llm.name for llm in agent.llms} == {"fast"}
@@ -509,17 +537,15 @@ def test_live_testing_json_roundtrip_preserves_editor_fields(tmp_path):
     source = _live_testing_diagram()
     json_model = agent_buml_to_json(_to_code(process_agent_diagram(copy.deepcopy(source)), tmp_path))
 
-    source_elements = source["model"]["elements"]
-    for state_name, source_state in (("ask", "s-ask"), ("think", "s-think")):
+    for state_name in ("ask", "think"):
         actions = _state_actions(json_model, state_name)
-        for action_id in source_elements[source_state]["actions"]:
-            expected = source_elements[action_id]
+        for expected in _state_rows(source["model"], state_name):
             produced = actions[expected["actionType"]]
-            ignored = {"id", "type"} if expected["actionType"] == "TextReplyAction" else {"id", "type", "name"}
+            ignored = {"id"} if expected["actionType"] == "TextReplyAction" else {"id", "name"}
             for key, value in expected.items():
                 if key not in ignored:
                     assert produced[key] == value, (state_name, expected["actionType"], key)
-    fallback = _state_actions(json_model, "ask", key="fallbackActions")
+    fallback = _state_actions(json_model, "ask", key="fallbackBodies")
     assert fallback["GUIReplyAction"]["guiId"] == "signup"
 
     guis = _elements_by_type(json_model, "AgentGUI")
@@ -532,12 +558,15 @@ def test_live_testing_json_roundtrip_preserves_editor_fields(tmp_path):
     sentences = _elements_by_type(json_model, "AgentIntentBody")
     assert [s["name"] for s in sentences] == [_TRICKY]
 
-    transitions = [r for r in json_model["relationships"].values() if r["type"] == "AgentStateTransition"]
+    transitions = [e["data"] for e in json_model["edges"] if e["type"] == "AgentStateTransition"]
     predefined = {r["predefined"]["predefinedType"]: r["predefined"] for r in transitions
                   if r["transitionType"] == "predefined"}
     assert predefined["when_form_submitted"]["formGuiId"] == "signup"
     assert predefined["when_file_received"]["fileType"] == "pdf, csv, png"
     custom = [r["custom"] for r in transitions if r["transitionType"] == "custom"]
+    # The initial state is a data flag, not a StateInitialNode marker.
+    initial = [n["data"]["name"] for n in json_model["nodes"] if n["data"].get("initial")]
+    assert initial == ["ask"]
     assert custom == [{"event": "GUIEvent", "condition": [], "guiEventGuiId": "signup"}]
 
 
@@ -586,7 +615,7 @@ def test_undesigned_agent_gui_becomes_empty_gui_model():
 
 def test_custom_input_mode_without_prompt_is_rejected():
     diagram = _live_testing_diagram()
-    diagram["model"]["elements"]["a-llm"]["customInputPrompt"] = ""
+    next(row for row in _state_rows(diagram["model"], "think") if row["id"] == "a-llm")["customInputPrompt"] = ""
     with pytest.raises(ValueError, match="requires a non-empty custom_input_prompt"):
         process_agent_diagram(diagram)
 
@@ -617,3 +646,33 @@ def test_project_export_import_keeps_agent_gui_inside_agent_diagram(tmp_path):
     assert [g["gui_id"] for g in guis] == ["signup"]
     restored = process_agent_diagram({"title": "LiveAgent", "model": agent_json})
     assert _agent_signature(restored) == _agent_signature(agent)
+
+
+def test_rag_embedding_and_hybrid_settings_roundtrip(tmp_path):
+    """RAG embedding (Ollama base_url/model) and hybrid retrieval settings are read from the
+    AgentRagElement component (and from a legacy RAG node's data) and emitted back on the
+    component by buml_to_json."""
+    rag = {"id": "rag-1", "type": "AgentRagElement", "name": "local_docs", "llm_name": "",
+           "embedding_provider": "ollama", "embedding_base_url": "http://ollama:11434",
+           "embedding_model": "mxbai-embed-large", "use_hybrid_rag": True, "bm25_weight": 0.3,
+           "k": 5, "num_previous_messages": 2, "llm_prompt": "Use the docs."}
+    state = _state("s-1", "answer", [_action("a-rag", "RAGReplyAction", ragDatabaseName="local_docs")],
+                   initial=True)
+    as_component = {"title": "RagAgent", "model": {"nodes": [state], "edges": [], "components": {"rag-1": rag}}}
+    as_legacy_node = {"title": "RagAgent", "model": {"nodes": [state] + _component_nodes({"rag-1": rag}),
+                                                     "edges": []}}
+    for diagram in (as_component, as_legacy_node):
+        agent = process_agent_diagram(copy.deepcopy(diagram))
+        (restored_rag,) = agent.rags
+        assert restored_rag.vector_store.embedding_provider == "ollama"
+        assert restored_rag.vector_store.embedding_parameters == {
+            "base_url": "http://ollama:11434", "model": "mxbai-embed-large"}
+        assert (restored_rag.use_hybrid_rag, restored_rag.bm25_weight) == (True, 0.3)
+        assert (restored_rag.k, restored_rag.num_previous_messages) == (5, 2)
+
+    json_model = agent_buml_to_json(_to_code(process_agent_diagram(copy.deepcopy(as_component)), tmp_path))
+    (emitted,) = _elements_by_type(json_model, "AgentRagElement")
+    assert "bounds" not in emitted and "position" not in emitted
+    for key in ("embedding_provider", "embedding_base_url", "embedding_model", "use_hybrid_rag",
+                "bm25_weight", "k", "num_previous_messages", "llm_prompt"):
+        assert emitted[key] == rag[key], key

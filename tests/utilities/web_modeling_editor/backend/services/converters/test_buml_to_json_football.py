@@ -215,11 +215,8 @@ def test_inherited_attributes_keep_their_class_attribute(object, model, tmp_path
     object_model_to_code(object, str(code_file))
     result = object_buml_to_json(code_file.read_text(), class_buml_to_json(model))
 
-    names = object_names(result)
-    keeper = {
-        e["name"]: e for e in result["elements"].values()
-        if e["type"] == "ObjectAttribute" and names[e["owner"]] == "keeper"
-    }
+    [keeper_node] = [n for n in result["nodes"] if n["data"].get("name") == "keeper"]
+    keeper = {f"{row['name']} = {row['value']}": row for row in keeper_node["data"]["attributes"]}
     assert keeper["age = 30"]["attributeId"] is not None
     assert keeper["age = 30"]["attributeType"] == "int"
     assert keeper["name = Keeper"]["attributeId"] is not None

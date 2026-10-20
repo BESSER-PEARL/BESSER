@@ -1,6 +1,6 @@
 """Post-processing for SVG diagrams returned by the headless render service.
 
-The WME Node renderer (Apollon + ELK) sizes the root ``<svg>`` to the diagram's
+The WME Node renderer (headless editor + ELK) sizes the root ``<svg>`` to the diagram's
 node/edge geometry, but it does **not** account for association-end *labels*
 (role names and multiplicities) that are drawn outside that box. For a
 self-referential association the loop is routed on the node's left edge and its

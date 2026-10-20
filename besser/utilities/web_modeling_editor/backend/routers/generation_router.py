@@ -41,13 +41,13 @@ from besser.utilities.web_modeling_editor.backend.models import (
 # Backend services - Converters
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_class_diagram,
+    process_bpmn_diagram,
     process_agent_diagram,
     annotate_agent_with_a2a,
     process_object_diagram,
     process_gui_diagram,
     process_quantum_diagram,
     process_nn_diagram,
-    process_bpmn_diagram,
     process_deployment_diagram,
     link_method_neural_networks,
 )
@@ -61,6 +61,8 @@ from besser.utilities.web_modeling_editor.backend.services.governance.swarm_bind
 
 # Backend services - Other services
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+    agent_diagram_without_states,
+    agent_without_states_message,
     collect_agents_from_diagrams,
     extract_openai_api_key,
     normalize_personalization_mapping,
@@ -130,6 +132,9 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
     GenerationError,
     ValidationError,
+)
+from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
+    ensure_not_legacy_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -217,6 +222,7 @@ async def recommend_agent_config_llm(
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")
+    ensure_not_legacy_model(user_profile_model, "UserDiagram", "userProfileModel")
 
     user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
     current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
@@ -311,6 +317,7 @@ async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
     # gui_personalization_utils (mirroring agent_personalization). The router
     # only resolves the API key, delegates off the event loop, and shapes the
     # HTTP response; @handle_endpoint_errors maps ValidationError/GenerationError.
+    ensure_not_legacy_model(payload.get("userProfileModel"), "UserDiagram", "userProfileModel")
     result = await asyncio.to_thread(
         run_gui_personalization,
         payload.get("guiPage"),
@@ -358,6 +365,7 @@ async def recommend_agent_config_mapping(
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")
+    ensure_not_legacy_model(user_profile_model, "UserDiagram", "userProfileModel")
 
     user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
     current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
@@ -803,7 +811,9 @@ async def _handle_deployment_project_generation(
         for entry in input_data.diagrams.get("AgentDiagram", []):
             entry_dict = entry.model_dump()
             model = entry_dict.get("model")
-            if not entry_dict.get("id") or not (isinstance(model, dict) and model.get("elements")):
+            if agent_diagram_without_states(model):
+                raise HTTPException(status_code=400, detail=agent_without_states_message(entry_dict.get("title")))
+            if not entry_dict.get("id") or not (isinstance(model, dict) and model.get("nodes")):
                 continue
             agent_config = entry_dict.get("config")
             if isinstance(agent_config, dict) and isinstance(agent_config.get("personalizationMapping"), list):
@@ -852,6 +862,8 @@ def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
 @handle_endpoint_errors("_handle_agent_generation")
 async def _handle_agent_generation(json_data: dict):
     """Handle agent diagram generation by dispatching to specialized helpers."""
+    if agent_diagram_without_states(json_data.get('model')):
+        raise HTTPException(status_code=400, detail=agent_without_states_message(json_data.get('title')))
     config = json_data.get('config', {})
     config_yaml: Optional[str] = json_data.get('configYaml') if isinstance(json_data.get('configYaml'), str) else None
     sanitized_config_log = (
@@ -1005,7 +1017,10 @@ def _extract_reference_class_diagram(json_data: dict):
         model_payload = reference_data
         title = reference_data.get("title")
 
-    if not isinstance(model_payload, dict) or "elements" not in model_payload:
+    # The reference diagram arrives in the v4 wire shape (``{nodes, edges}``)
+    # — the same gate validation_router applies before calling
+    # ``process_class_diagram``.
+    if not isinstance(model_payload, dict) or "nodes" not in model_payload:
         return None
 
     return {

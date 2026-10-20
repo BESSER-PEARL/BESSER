@@ -6,17 +6,19 @@ not just the active one.
 """
 
 import logging
+import re
 from typing import Optional
 
 from . import (
     process_class_diagram,
+    process_bpmn_diagram,
     process_object_diagram,
     process_agent_diagram,
     process_state_machine,
-    process_bpmn_diagram,
     process_component_diagram,
     process_deployment_diagram,
 )
+from .a2a_tags import annotate_agent_with_a2a
 from .method_nn_linker import link_method_neural_networks
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
@@ -152,9 +154,23 @@ def _is_valid_diagram(diag, diagram_type):
         cols = data.get("cols") if isinstance(data, dict) else getattr(model, "cols", None)
         return cols is not None  # Empty list is valid
 
-    # Standard element-based diagrams
-    elements = data.get("elements") if isinstance(data, dict) else getattr(model, "elements", None)
-    return bool(elements)
+    # Standard element-based diagrams accept the v4 ``nodes`` shape. The
+    # editor migrator at ``packages/library/lib/utils/versionConverter.ts``
+    # is the only place v3 is converted to v4 in the system; the backend
+    # never sees v3.
+    if isinstance(data, dict):
+        nodes = data.get("nodes")
+    else:
+        nodes = getattr(model, "nodes", None)
+    if nodes:
+        return True
+
+    # An agent diagram may hold only off-canvas ``components`` (intents,
+    # LLMs, RAG databases, ...) and no canvas nodes yet; it is still a model.
+    if diagram_type == "AgentDiagram":
+        components = data.get("components") if isinstance(data, dict) else getattr(model, "components", None)
+        return bool(components)
+    return False
 
 
 def _collect_valid_diagrams(project):
@@ -192,9 +208,8 @@ def json_to_buml_project(project):
     Processes ALL diagrams of each type (not just the active one), so that
     every model is included in the resulting Project.
     """
-    name = project.name
-    if name and "-" in name:
-        name = name.replace("-", "_")
+    # The editor allows any project name; the B-UML name must be an identifier.
+    name = re.sub(r"\W", "_", project.name) if project.name else project.name
     description = project.description or ""
 
     # Collect all valid diagrams, grouped by type
@@ -205,6 +220,15 @@ def json_to_buml_project(project):
     # built model. Populated for BPMN + Agent diagrams as they are processed;
     # consumed by the cross-diagram resolver for process_model_refs / agent_diagram_ref.
     diagram_index: dict = {}
+    # id(model) -> (diagram model type, WME diagram id, title); project_to_code
+    # writes them so a .py import keeps the ids cross-diagram refs point at.
+    diagram_ids: dict = {}
+    # id(object model) -> the editor ``references`` it was resolved with.
+    diagram_references: dict = {}
+
+    def _remember(model, diagram_type: str, diag) -> None:
+        if getattr(diag, "id", None):
+            diagram_ids[id(model)] = (diagram_type, diag.id, getattr(diag, "title", None))
     # ── ClassDiagram caching ──────────────────────────────────────────
     # Cache processed ClassDiagrams by ID so we never process the same one twice
     # (e.g. when an ObjectDiagram and a GUINoCodeDiagram both reference it).
@@ -215,6 +239,7 @@ def json_to_buml_project(project):
         diag_id = class_diag.id if class_diag.id else id(class_diag)
         if diag_id not in processed_class_diagrams:
             processed_class_diagrams[diag_id] = process_class_diagram(class_diag.model_dump())
+            _remember(processed_class_diagrams[diag_id], "ClassDiagram", class_diag)
         return processed_class_diagrams[diag_id]
 
     # ── Process ALL ClassDiagrams first ───────────────────────────────
@@ -233,8 +258,17 @@ def json_to_buml_project(project):
             obj_class_diag = diagrams["ClassDiagram"][0]
         if obj_class_diag:
             obj_domain_model = _get_or_process_class_diagram(obj_class_diag)
-            object_model = process_object_diagram(obj_diag.model_dump(), obj_domain_model)
+            obj_json = obj_diag.model_dump()
+            # Stored object diagrams carry no reference data (the migration
+            # drops develop's embedded copy): resolve ``classId`` against the
+            # referenced class diagram so it wins over a missing/stale className.
+            if not obj_json["model"].get("referenceDiagramData"):
+                obj_json["model"]["referenceDiagramData"] = obj_class_diag.model_dump()["model"]
+            object_model = process_object_diagram(obj_json, obj_domain_model)
             model_list.append(object_model)
+            _remember(object_model, "ObjectDiagram", obj_diag)
+            if obj_class_diag.id:
+                diagram_references[id(object_model)] = {"ClassDiagram": obj_class_diag.id}
         else:
             logger.warning(
                 "ObjectDiagram '%s' skipped: no ClassDiagram reference found.",
@@ -250,11 +284,15 @@ def json_to_buml_project(project):
             user_diag.model_dump(), user_reference_domain_model
         )
         model_list.append(user_model)
+        _remember(user_model, "UserDiagram", user_diag)
 
     # ── Process ALL AgentDiagrams ─────────────────────────────────────
     for agent_diag in diagrams.get("AgentDiagram", []):
-        agent_model = process_agent_diagram(agent_diag.model_dump())
+        agent_json = agent_diag.model_dump()
+        agent_model = process_agent_diagram(agent_json)
+        annotate_agent_with_a2a(agent_model, agent_json)
         model_list.append(agent_model)
+        _remember(agent_model, "AgentDiagram", agent_diag)
         # Index by diagram UUID so an agentic task's agent_diagram_ref resolves.
         if getattr(agent_diag, "id", None):
             diagram_index[agent_diag.id] = agent_model
@@ -290,6 +328,7 @@ def json_to_buml_project(project):
 
             gui_model = process_gui_diagram(gui_json, class_json, gui_domain_model)
             model_list.append(gui_model)
+            _remember(gui_model, "GUINoCodeDiagram", gui_diag)
         else:
             logger.warning(
                 "GUINoCodeDiagram '%s' skipped: no ClassDiagram reference found.",
@@ -302,11 +341,13 @@ def json_to_buml_project(project):
     for quantum_diag in diagrams.get("QuantumCircuitDiagram", []):
         quantum_model = process_quantum_diagram(quantum_diag.model_dump())
         model_list.append(quantum_model)
+        _remember(quantum_model, "QuantumCircuitDiagram", quantum_diag)
 
     # ── Process ALL StateMachineDiagrams ──────────────────────────────
     for sm_diag in diagrams.get("StateMachineDiagram", []):
         sm_model = process_state_machine(sm_diag.model_dump())
         model_list.append(sm_model)
+        _remember(sm_model, "StateMachineDiagram", sm_diag)
 
 
     # ── Process ALL NNDiagrams ────────────────────────────────────────
@@ -317,6 +358,7 @@ def json_to_buml_project(project):
     for nn_diag in diagrams.get("NNDiagram", []):
         nn_model = process_nn_diagram(nn_diag.model_dump())
         model_list.append(nn_model)
+        _remember(nn_model, "NNDiagram", nn_diag)
         processed_nn_models[nn_diag.id or id(nn_diag)] = nn_model
         # Preserve the diagram's user-facing title so project_to_code can
         # emit it in the section header — the NN metamodel only stores a
@@ -333,6 +375,7 @@ def json_to_buml_project(project):
     for bpmn_diag in diagrams.get("BPMN", []):
         bpmn_model = process_bpmn_diagram(bpmn_diag.model_dump())
         model_list.append(bpmn_model)
+        _remember(bpmn_model, "BPMNDiagram", bpmn_diag)
         if bpmn_diag.id:
             diagram_index[bpmn_diag.id] = bpmn_model
 
@@ -340,11 +383,13 @@ def json_to_buml_project(project):
     for comp_diag in diagrams.get("ComponentDiagram", []):
         comp_model = process_component_diagram(comp_diag.model_dump())
         model_list.append(comp_model)
+        _remember(comp_model, "ComponentDiagram", comp_diag)
 
     # ── Process ALL DeploymentDiagrams ───────────────────────────────
     for dep_diag in diagrams.get("DeploymentDiagram", []):
         dep_model = process_deployment_diagram(dep_diag.model_dump())
         model_list.append(dep_model)
+        _remember(dep_model, "DeploymentDiagram", dep_diag)
 
     # Ensure ALL processed ClassDiagrams are in model_list.
     # Object/GUI diagrams may reference ClassDiagrams that were not in the
@@ -366,6 +411,10 @@ def json_to_buml_project(project):
     # can read them without changing this function's return type (the
     # public API stays a single Project instance).
     project_instance._nn_diagram_titles = nn_titles
+    if name != project.name:
+        project_instance._display_name = project.name
+    project_instance._diagram_ids = diagram_ids
+    project_instance._diagram_references = diagram_references
 
     # Project-level cross-diagram-reference promotion.
     # Classify the already-built models and promote dangling cross-refs

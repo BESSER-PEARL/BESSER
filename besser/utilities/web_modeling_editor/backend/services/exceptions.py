@@ -39,3 +39,13 @@ class CodeValidationError(ValidationError):
     other user-input validation failure.
     """
     pass
+
+
+class LegacyDiagramFormatError(ConversionError):
+    """Raised when a UML diagram arrives in the legacy v3 editor format.
+
+    The converters read only the v4 ``{nodes, edges}`` shape; a v3
+    ``{elements, relationships}`` payload would otherwise convert to an empty
+    model. Subclasses :class:`ConversionError`, so it maps to HTTP 400.
+    """
+    pass

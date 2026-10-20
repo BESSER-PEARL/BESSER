@@ -5,6 +5,7 @@ Supports both single-diagram and multi-diagram per type formats.
 """
 
 import ast
+import json
 import logging
 import uuid
 import re
@@ -15,13 +16,13 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.buml_code_builder.project_builder import is_user_reference_domain_model
 
 from .class_diagram_converter import parse_buml_content, class_buml_to_json
+from .bpmn_diagram_converter import bpmn_buml_to_json
 from .state_machine_converter import state_machine_to_json
 from .agent_diagram_converter import agent_buml_to_json
 from .object_diagram_converter import object_buml_to_json
 from .gui_diagram_converter import gui_buml_to_json
 from .quantum_diagram_converter import quantum_buml_to_json
 from .nn_diagram_converter import nn_buml_to_json
-from .bpmn_diagram_converter import bpmn_buml_to_json
 from .component_diagram_converter import component_buml_to_json
 from .deployment_diagram_converter import deployment_buml_to_json
 
@@ -51,6 +52,8 @@ _USER_OBJECT_MODEL_ASSIGN = re.compile(
     r'^user_object_model(?:_\d+)?\s*(?::[^=\n]*)?=(?!=)', re.MULTILINE,
 )
 _OBJECT_MODEL_NAME = re.compile(r'ObjectModel\(\s*name\s*=\s*"((?:[^"\\]|\\.)*)"')
+
+
 def _parse_user_reference_section(section_code: str) -> Optional[DomainModel]:
     """Return the parsed model if a STRUCTURAL section is the user reference domain model, else ``None``.
 
@@ -67,6 +70,17 @@ def _parse_user_reference_section(section_code: str) -> Optional[DomainModel]:
     return domain_model if is_user_reference_domain_model(domain_model) else None
 
 
+def _string_kwarg(prefix: str, code: str) -> str:
+    """The string literal after ``<prefix> = `` in ``code`` (escapes decoded), or ''."""
+    match = re.search(prefix + r'\s*=\s*"((?:[^"\\]|\\.)*)"', code)
+    if not match:
+        return ""
+    try:
+        return ast.literal_eval(f'"{match.group(1)}"')
+    except (ValueError, SyntaxError):
+        return match.group(1)
+
+
 def _object_model_title(section_code: str) -> str:
     """Return the ``ObjectModel(name=...)`` of an object section, or ''."""
     match = _OBJECT_MODEL_NAME.search(section_code)
@@ -78,6 +92,64 @@ def _object_model_title(section_code: str) -> str:
         return match.group(1)
 
 
+# Written by project_builder in the PROJECT DEFINITION section.
+_DIAGRAM_ID_LINE = re.compile(r'^# diagram-id (\w+): (".*")\s*$', re.MULTILINE)
+_DIAGRAM_TITLE_LINE = re.compile(r'^# diagram-title (\w+): (".*")\s*$', re.MULTILINE)
+_DIAGRAM_REFERENCES_LINE = re.compile(r'^# diagram-references (\w+): (\{.*\})\s*$', re.MULTILINE)
+_CLASS_IDS_LINE = re.compile(r'^# class-ids (\{.*\})\s*$', re.MULTILINE)
+_PROJECT_NAME_LINE = re.compile(r'^# project-name (".*")\s*$', re.MULTILINE)
+
+
+def _project_display_name(definition: str) -> Optional[str]:
+    """The editor's project name, recorded when the B-UML name had to be sanitised."""
+    match = _PROJECT_NAME_LINE.search(definition)
+    if not match:
+        return None
+    try:
+        name = json.loads(match.group(1))
+    except ValueError:
+        return None
+    return name if isinstance(name, str) else None
+
+
+def _parse_recorded_values(pattern: re.Pattern, content: str, value_type: type = str) -> Dict[str, list]:
+    """``{diagram type: [value, ...]}`` from ``# <key> <Type>: <JSON value>`` lines, in order."""
+    values: Dict[str, list] = {}
+    for diagram_type, raw_value in pattern.findall(content):
+        try:
+            value = json.loads(raw_value)
+        except ValueError:
+            continue
+        if isinstance(value, value_type):
+            values.setdefault(diagram_type, []).append(value)
+    return values
+
+
+def _parse_editor_ids(content: str) -> Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
+    """Read the web editor ids a project export carries.
+
+    Returns ``(diagram ids per diagram type, in section order;
+    {class diagram id: {class name: class node id}})``. Malformed lines are ignored.
+    """
+    diagram_ids = _parse_recorded_values(_DIAGRAM_ID_LINE, content)
+    class_ids: Dict[str, Dict[str, str]] = {}
+    match = _CLASS_IDS_LINE.search(content)
+    if match:
+        try:
+            parsed = json.loads(match.group(1))
+        except ValueError:
+            parsed = {}
+        if isinstance(parsed, dict):
+            class_ids = {k: v for k, v in parsed.items() if isinstance(v, dict)}
+    return diagram_ids, class_ids
+
+
+def _ids_for(diagram_ids: Dict[str, List[str]], diagram_type: str, count: int) -> List[Optional[str]]:
+    """The recorded ids of ``diagram_type``, or Nones when they do not line up with the sections."""
+    ids = diagram_ids.get(diagram_type) or []
+    return list(ids) if len(ids) == count else [None] * count
+
+
 # All known section header keywords used as boundary markers
 ALL_SECTION_KEYWORDS = [
     'STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN',
@@ -86,16 +158,11 @@ ALL_SECTION_KEYWORDS = [
 
 
 def empty_model(diagram_type: str) -> Dict[str, Any]:
-    """
-    Create an empty model template for the specified diagram type.
+    """Create an empty model template for the given diagram type.
 
-    Args:
-        diagram_type: Type of diagram to create empty model for
-
-    Returns:
-        Dictionary representing empty model structure
+    Returns the v4 wire shape (``{nodes, edges}``) for BESSER WME-driven
+    diagrams; ``GUINoCodeDiagram`` keeps its bespoke shape.
     """
-    # GUINoCodeDiagram has a different structure with pages instead of elements
     if diagram_type == "GUINoCodeDiagram":
         return {
             "version": "3.0.0",
@@ -108,11 +175,11 @@ def empty_model(diagram_type: str) -> Dict[str, Any]:
         }
 
     return {
-        "version": "3.0.0",
+        "version": "4.0.0",
         "type": diagram_type,
         "size": {"width": 1400, "height": 740},
-        "elements": {},
-        "relationships": {},
+        "nodes": [],
+        "edges": [],
         "interactive": {"elements": {}, "relationships": {}},
         "assessments": {}
     }
@@ -199,6 +266,9 @@ def _convert_section(
     domain_sections: List[Tuple[str, str]],
     class_diagram_list: List[Dict[str, Any]],
     user_reference_json: Dict[str, Any] = None,
+    diagram_id: Optional[str] = None,
+    class_ids: Optional[Dict[str, str]] = None,
+    references: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Convert a single section's code into a diagram JSON entry.
@@ -211,30 +281,45 @@ def _convert_section(
         class_diagram_list: Already-converted class diagrams (needed for object diagram references)
         user_reference_json: The user reference domain model as class-diagram
             JSON (needed for ``user_object_model`` sections)
+        diagram_id: The diagram's editor id, kept when the export recorded it
+        class_ids: ``{class name: class node id}`` recorded for a class diagram
+        references: the editor ``references`` recorded for an object diagram
 
     Returns:
         Dictionary with 'id', 'title', 'model', and 'lastUpdate' keys
     """
-    diagram_id = str(uuid.uuid4())
+    diagram_id = diagram_id or str(uuid.uuid4())
     last_update = datetime.now(timezone.utc).isoformat()
 
     try:
         if model_name == "domain_model":
             parsed = parse_buml_content(section_code)
+            if class_ids:
+                parsed._wme_class_index = {
+                    wid: parsed.get_class_by_name(name)
+                    for name, wid in class_ids.items()
+                    if isinstance(wid, str) and parsed.get_class_by_name(name) is not None
+                }
             model = class_buml_to_json(parsed)
 
         elif model_name == "object_model":
             # Object diagrams need the domain model code prepended for context
             # Combine all domain sections as context prefix
             domain_code = "\n".join(code for _, code in domain_sections)
-            combined_code = domain_code + "\n" + section_code if domain_code else section_code
             # Use the first class diagram's model as reference, or empty dict
             class_model_ref = class_diagram_list[0]["model"] if class_diagram_list else {}
+            # The referenced class diagram instead, when the export recorded it.
+            referenced_id = (references or {}).get("ClassDiagram")
+            for index, class_entry in enumerate(class_diagram_list[:len(domain_sections)]):
+                if referenced_id and class_entry["id"] == referenced_id:
+                    domain_code = domain_sections[index][1]
+                    class_model_ref = class_entry["model"]
+            combined_code = domain_code + "\n" + section_code if domain_code else section_code
             model = object_buml_to_json(combined_code, class_model_ref)
 
         elif model_name == "user_object_model":
             model = object_buml_to_json(
-                section_code, user_reference_json or {"elements": {}, "relationships": {}},
+                section_code, user_reference_json or {"nodes": [], "edges": []},
                 diagram_type="UserDiagram",
             )
 
@@ -282,12 +367,18 @@ def _convert_section(
             f"Failed to convert '{title}' section ({model_name}): {e}"
         ) from e
 
-    return {
+    entry = {
         "id": diagram_id,
         "title": title,
         "model": model,
         "lastUpdate": last_update,
     }
+    if references:
+        entry["references"] = references
+    # The editor keeps an agent's default LLM on the diagram config envelope.
+    if model_name == "agent" and isinstance(model.get("config"), dict):
+        entry["config"] = model.pop("config")
+    return entry
 
 
 # Detection heuristics for single-diagram BUML files that omit the Project(...)
@@ -494,17 +585,20 @@ def project_to_json(content: str) -> Dict[str, Any]:
     model_names = re.findall(r'\b(\w+)\b', model_match.group(1))
     logger.debug("Detected model names in project: %s", model_names)
 
-    # Extract project metadata
-    project_name_match = re.search(r'Project\s*\(\s*name\s*=\s*"(.*?)"', content)
-    project_desc_match = re.search(r'Metadata\s*\(\s*description\s*=\s*"(.*?)"', content)
-    project_owner_match = re.search(r'owner\s*=\s*"(.*?)"', content)
-
-    project_name = project_name_match.group(1) if project_name_match else "Unnamed Project"
-    project_description = project_desc_match.group(1) if project_desc_match else "No description"
-    project_owner = project_owner_match.group(1) if project_owner_match else "Unknown"
+    # Extract project metadata from the project definition, not from the
+    # first Metadata(...) / owner= of some model section above it.
+    definition_start = content.rfind("# PROJECT DEFINITION")
+    definition = content[definition_start:] if definition_start != -1 else content
+    project_name = (_project_display_name(definition)
+                    or _string_kwarg(r'Project\s*\(\s*name', definition) or "Unnamed Project")
+    project_description = _string_kwarg(r'Metadata\s*\(\s*description', definition) or "No description"
+    project_owner = _string_kwarg(r'\bowner', definition) or "Unknown"
 
     # diagram_jsons maps diagram type -> list of diagram entries
     diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}
+    recorded_ids, recorded_class_ids = _parse_editor_ids(content)
+    recorded_titles = _parse_recorded_values(_DIAGRAM_TITLE_LINE, content)
+    recorded_references = _parse_recorded_values(_DIAGRAM_REFERENCES_LINE, content, dict)
 
     # First pass: extract all structural/domain sections (needed as context for object diagrams)
     # Check for both exact "domain_model" and suffixed variants like "domain_model_1"
@@ -558,14 +652,16 @@ def project_to_json(content: str) -> Dict[str, Any]:
         seen_base_names.add(base_name)
 
         if base_name == "user_object_model":
+            user_ids = _ids_for(recorded_ids, "UserDiagram", len(user_object_sections))
             diagram_jsons["UserDiagram"] = [
                 _convert_section(
                     base_name, section_code,
                     _object_model_title(section_code) or title
                     or DIAGRAM_DEFAULT_TITLES["UserDiagram"],
                     domain_sections, [], user_reference_json,
+                    diagram_id=user_id,
                 )
-                for title, section_code in user_object_sections
+                for (title, section_code), user_id in zip(user_object_sections, user_ids)
             ]
             continue
 
@@ -589,11 +685,16 @@ def project_to_json(content: str) -> Dict[str, Any]:
             continue
 
         diagram_list = []
+        section_ids = _ids_for(recorded_ids, diagram_type, len(sections))
+        section_titles = _ids_for(recorded_titles, diagram_type, len(sections))
+        section_references = _ids_for(recorded_references, diagram_type, len(sections))
         for idx, (title, section_code) in enumerate(sections):
             resolved_title = title if title else default_title
             # Append index suffix for multi-diagram types (only when more than one)
             if len(sections) > 1 and not title:
                 resolved_title = f"{default_title} {idx + 1}"
+            # The editor's own title, when the export recorded it.
+            resolved_title = section_titles[idx] or resolved_title
 
             logger.debug(
                 "Converting section %d/%d for %s: '%s'",
@@ -605,6 +706,9 @@ def project_to_json(content: str) -> Dict[str, Any]:
             entry = _convert_section(
                 base_name, section_code, resolved_title,
                 domain_sections, class_diagrams,
+                diagram_id=section_ids[idx],
+                class_ids=recorded_class_ids.get(section_ids[idx]) if section_ids[idx] else None,
+                references=section_references[idx],
             )
             if entry is not None:
                 diagram_list.append(entry)

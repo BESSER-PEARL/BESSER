@@ -112,9 +112,10 @@ def _source_export() -> dict:
                     "id": "cd1",
                     "title": "Library",
                     "model": {
+                        "version": "4.0.0",
                         "type": "ClassDiagram",
-                        "elements": {},
-                        "relationships": {},
+                        "nodes": [],
+                        "edges": [],
                     },
                 }
             ]
@@ -222,9 +223,9 @@ def test_new_class_applied_and_slotted_into_export(tmp_path):
     # class_buml_to_json reflects the new class.
     serialized = class_buml_to_json(orch.domain_model)
     class_element_names = {
-        e.get("name")
-        for e in serialized["elements"].values()
-        if e.get("type") == "Class"
+        (n.get("data") or {}).get("name")
+        for n in serialized["nodes"]
+        if n.get("type") == "class"
     }
     assert "User" in class_element_names
     assert "Book" in class_element_names
@@ -236,9 +237,9 @@ def test_new_class_applied_and_slotted_into_export(tmp_path):
         orch._updated_project_export["diagrams"]["ClassDiagram"][0]["model"]
     )
     exported_names = {
-        e.get("name")
-        for e in entry_model["elements"].values()
-        if e.get("type") == "Class"
+        (n.get("data") or {}).get("name")
+        for n in entry_model["nodes"]
+        if n.get("type") == "class"
     }
     assert "User" in exported_names
 

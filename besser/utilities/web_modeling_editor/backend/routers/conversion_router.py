@@ -50,23 +50,24 @@ from besser.utilities.web_modeling_editor.backend.models import (
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     # JSON to BUML converters
     process_class_diagram,
+    process_bpmn_diagram,
     process_state_machine,
     process_agent_diagram,
+    annotate_agent_with_a2a,
     process_object_diagram,
     process_nn_diagram,
-    process_bpmn_diagram,
     process_component_diagram,
     process_deployment_diagram,
     json_to_buml_project,
     # BUML to JSON converters
     class_buml_to_json,
     parse_buml_content,
+    bpmn_buml_to_json,
     state_machine_to_json,
     agent_buml_to_json,
     gui_buml_to_json,
     project_to_json,
     nn_buml_to_json,
-    bpmn_buml_to_json,
     component_buml_to_json,
     deployment_buml_to_json,
 )
@@ -98,7 +99,9 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     CSV_TEMP_DIR_PREFIX,
     OUTPUT_DIR_NAME,
     AGENT_MODEL_FILENAME,
+    BPMN_DIAGRAM_TYPES,
     BPMN_DIAGRAM_TYPE,
+    BPMN_PROJECT_DIAGRAM_KEY,
     DEPLOYMENT_DIAGRAM_TYPE,
 )
 
@@ -108,6 +111,9 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
+)
+from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
+    ensure_not_legacy_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -365,6 +371,7 @@ async def export_buml(input_data: DiagramInput):
 
         elif elements_data.get("type") == "AgentDiagram":
             agent_model = process_agent_diagram(json_data)
+            annotate_agent_with_a2a(agent_model, json_data)
             output_file_path = os.path.join(temp_dir, "agent_buml.py")
             agent_model_to_code(agent_model, output_file_path)
             file_content = await _read_file(output_file_path, "rb")
@@ -376,7 +383,7 @@ async def export_buml(input_data: DiagramInput):
                 },
             )
 
-        elif elements_data.get("type") == BPMN_DIAGRAM_TYPE:
+        elif elements_data.get("type") in BPMN_DIAGRAM_TYPES:
             try:
                 bpmn_model = process_bpmn_diagram(json_data)
             except (KeyError, TypeError, AttributeError) as exc:
@@ -536,7 +543,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         try:
             parsed_project = project_to_json(buml_content)
 
-            # project_to_json emits the schemaVersion=3 shape:
+            # project_to_json emits the schemaVersion=3 project envelope with
+            # v4 diagram models:
             #   { diagrams: { ClassDiagram: [ {id,title,model,...}, ... ], ... },
             #     currentDiagramType: "...",
             #     currentDiagramIndices: { ClassDiagram: 0, ... } }
@@ -548,10 +556,12 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             current_type = parsed_project.get("currentDiagramType")
 
             def _entry_is_populated(entry):
+                # v4 models carry {nodes, edges}; GUI models keep their
+                # bespoke {pages} shape.
                 model = (entry or {}).get("model") or {}
                 return bool(
-                    model.get("elements")
-                    or model.get("relationships")
+                    model.get("nodes")
+                    or model.get("edges")
                     or model.get("pages")
                 )
 
@@ -571,8 +581,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             for dtype in (
                 "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
                 "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
-                "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE, "ComponentDiagram",
-                DEPLOYMENT_DIAGRAM_TYPE,
+                BPMN_PROJECT_DIAGRAM_KEY, "QuantumCircuitDiagram",
+                "ComponentDiagram", DEPLOYMENT_DIAGRAM_TYPE,
             ):
                 if dtype not in priority:
                     priority.append(dtype)
@@ -581,7 +591,9 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 entry = _pick_entry(dtype)
                 if entry is not None:
                     diagram_data = entry
-                    diagram_type = dtype
+                    # The project bucket key is "BPMN"; the model type on
+                    # the wire is BPMN_DIAGRAM_TYPE ("BPMNDiagram").
+                    diagram_type = BPMN_DIAGRAM_TYPE if dtype == BPMN_PROJECT_DIAGRAM_KEY else dtype
                     break
 
             if diagram_data and diagram_data.get("title"):
@@ -598,6 +610,10 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 "title": diagram_title,
                 "model": agent_json
             }
+            # The editor keeps the default LLM on the diagram config envelope;
+            # model.config stays too, the processor reads it underneath.
+            if isinstance(agent_json.get("config"), dict):
+                diagram_data["config"] = dict(agent_json["config"])
             diagram_type = "AgentDiagram"
         except Exception as agent_error:
             logger.error("Agent diagram parsing failed: %s", str(agent_error))
@@ -711,7 +727,7 @@ async def get_svg(buml_file: UploadFile = File(...)):
     Convert a B-UML class-diagram file to an auto-laid-out SVG image.
 
     Pipeline: parse the B-UML to a DomainModel, convert it to the editor JSON
-    model, then delegate rendering to the WME Node server (Apollon, headless),
+    model, then delegate rendering to the WME Node server (headless editor),
     which runs ELK auto-layout and exports SVG. The Node server base URL is read
     from the WME_NODE_SERVER_URL env var (default http://localhost:8080).
     """
@@ -841,7 +857,7 @@ async def get_json_model_from_image(
     if existing_model:
         try:
             existing_json = json.loads(existing_model)
-            if existing_json.get("model", {}).get("elements") or existing_json.get("elements"):
+            if existing_json.get("model", {}).get("nodes") or existing_json.get("nodes"):
                 payload = existing_json if "model" in existing_json else {"title": "Existing", "model": existing_json}
                 existing_domain_model = process_class_diagram(payload)
         except (json.JSONDecodeError, ValueError):
@@ -937,6 +953,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
         logger.debug("[Agent transform] config: %s", json.dumps(base_config, indent=2, default=str))
         config = deepcopy(base_config)
         user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
+        ensure_not_legacy_model(user_profile_payload, "UserDiagram", "config.userProfileModel")
         if isinstance(user_profile_payload, dict):
             config["userProfileModel"] = generate_user_profile_document(user_profile_payload)
         elif isinstance(config, dict) and "userProfileModel" in config:

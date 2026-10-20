@@ -32,8 +32,9 @@ def _export(condition_name, directory):
 
 
 def _custom_conditions(json_model):
-    return [r["custom"]["condition"] for r in json_model["relationships"].values()
-            if r.get("transitionType") == "custom"]
+    # v4 wire shape: transitions are edges whose canonical trigger lives in ``edge.data``.
+    return [e["data"]["custom"]["condition"] for e in json_model["edges"]
+            if (e.get("data") or {}).get("transitionType") == "custom"]
 
 
 @pytest.mark.parametrize("condition_name", ["is.ready", "if"])

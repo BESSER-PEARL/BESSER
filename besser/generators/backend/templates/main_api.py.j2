@@ -19,9 +19,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="{{name}} API",
-    description="Auto-generated REST API with full CRUD operations, relationship management, and advanced features",
-    version="1.0.0",
+    title={{ api_title }},
+    description={{ api_description }},
+    version={{ api_version }},
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_tags=[
@@ -164,8 +164,8 @@ app.include_router({{ class.name | lower }}_router.router)
 def root():
     """Root endpoint - API information"""
     return {
-        "name": "{{name}} API",
-        "version": "1.0.0",
+        "name": app.title,
+        "version": app.version,
         "status": "running"
     }
 

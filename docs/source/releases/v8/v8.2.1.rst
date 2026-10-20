@@ -1,0 +1,89 @@
+Version 8.2.1
+=============
+
+Patch release: **OCL validation that evaluates what users write, BPMN from the
+assistant, and configurable backend metadata**. Checking OCL constraints
+against an object diagram now evaluates constraints that navigate
+associations, use ``true`` / ``false`` or ``->notEmpty()``. The modeling
+assistant keeps BPMN data objects and opens a generated BPMN model in the BPMN
+section. The FastAPI backend generator takes the API's title, description and
+version. No metamodel changes.
+
+B-OCL
+-----
+
+* **Constraints that navigate associations are evaluated.** In
+  ``self.books->forAll(b | b.pages > 0)``, the iterator ``b`` was typed as the
+  context class, so ``b.pages`` failed with "Property 'pages' not found in
+  context 'Library'" and the constraint was dropped from the results. An
+  iterator without a declared type now takes the element type of what it
+  iterates: a property, an association end, ``allInstances()``, or a nested
+  ``select`` / ``reject``. The check that skips constraints over unset
+  attributes now only looks at attributes of the context class, so such
+  constraints are no longer skipped either.
+* ``true`` **and** ``false``. Boolean literals were not built as booleans, so
+  ``self.isOpen = true`` and ``if ... then ... else true endif`` crashed the
+  evaluation.
+* ``->notEmpty()``. A common collection operation that B-OCL rejected as a
+  syntax error, so users had to write ``->size() > 0``. It is now part of the
+  grammar, the pretty printer and normalization.
+* **"Not evaluated" instead of "invalid syntax".** When valid OCL reaches
+  something the evaluator cannot handle yet, ``/validate-diagram`` reports
+  "not evaluated" with the reason, instead of telling the user their syntax is
+  wrong. Real syntax errors are still reported as syntax errors.
+* **Getting started with OCL.** :doc:`/examples/ocl` gains a "New to OCL?"
+  section with a tutorial link and eight common constraint patterns.
+
+Generators
+----------
+
+* **Backend API metadata.** ``BackendGenerator`` takes ``api_title``,
+  ``api_description`` and ``api_version``. The generated FastAPI app uses them,
+  and its root endpoint reports the title and version. The defaults are
+  unchanged. See :doc:`/generators/backend`.
+* **Extending a generated backend.** A new section of
+  :doc:`/generators/backend` shows how to add routes, middleware and settings
+  in a separate module that imports the generated ``app``, so regenerating
+  never overwrites custom code.
+
+Web modeling editor
+-------------------
+
+* **BPMN models from the assistant open in the BPMN section.** A BPMN model
+  generated through the agentic interface used to replace the open Class
+  Diagram. The switch to the BPMN diagram fell back to the Class Diagram
+  because BPMN is the only type whose project name (``BPMN``) differs from the
+  editor's (``BPMNDiagram``). The assistant now also refuses to write a model
+  when the switch does not land on the requested diagram, instead of
+  overwriting the one that is open.
+* **BPMN data objects from the assistant.** Data objects and their input and
+  output associations described in a prompt or an uploaded process document
+  now reach the diagram instead of being dropped. Each task's data objects are
+  laid out in a row under it, with room for their labels.
+* **Spec-Driven Agent runs.** The run card names each agent action with its
+  target (``write frontend/src/App.jsx``), and a finished run has a "View
+  files" button that opens the generated project in a read-only file viewer.
+* **Interface polish.** The fixes from the editor styling review, a "Star us
+  on GitHub" link in the sidebar, and dropdowns with fixed options keep the
+  width of their widest option. The agentic interface walkthrough is served at
+  ``/demo-agentic``.
+
+Deploy alongside
+----------------
+
+The modeling agent has matching changes and should be deployed with this
+release: BPMN data objects (modeling-agent #31, needed for the data-object
+fix above) and progress messages that name the diagram being built instead of
+always mentioning classes (modeling-agent #32).
+
+The B-OCL interpreter has a fix for ``isEmpty``, ``notEmpty``, ``sum`` and
+``forAll`` over empty collections (B-OCL-Interpreter #14). It is not yet
+published, so BESSER still pins ``bocl==1.0.1``. With that version these
+constructs are reported as "not evaluated".
+
+Upgrade notes
+-------------
+
+* ``notEmpty`` is now a B-OCL keyword, like ``isEmpty`` and the other
+  collection operations. An attribute literally named ``notEmpty`` can no
+  longer be navigated in a constraint.

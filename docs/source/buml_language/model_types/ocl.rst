@@ -37,6 +37,10 @@ parser routes on the keyword that follows ``context``:
     - ``context Class::attribute : Type init: expression``
       — e.g. ``context Account::balance : Integer init: 0``
 
+New to OCL? Start with the common patterns in :doc:`../../examples/ocl` and
+`The Ultimate Object Constraint Language (OCL) tutorial
+<https://modeling-languages.com/ocl-tutorial/>`_.
+
 Invariants attach to the :class:`DomainModel`'s constraint set. Preconditions
 and postconditions attach to a specific :class:`Method` via ``add_pre`` /
 ``add_post`` (see below). Initialisation constraints attach to a specific
@@ -84,6 +88,8 @@ sessions in the same room at overlapping times:
         s1.scheduleSlot.endTime <= s2.scheduleSlot.startTime or
         s1.scheduleSlot.startTime >= s2.scheduleSlot.endTime
     )
+
+.. _ocl-object-diagram-validation:
 
 Validating constraints against an object diagram
 ------------------------------------------------

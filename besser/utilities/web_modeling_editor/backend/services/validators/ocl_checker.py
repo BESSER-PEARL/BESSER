@@ -1,5 +1,5 @@
 import re
-from typing import Optional
+from typing import Optional, Tuple
 
 from antlr4 import InputStream, CommonTokenStream
 from bocl.OCLWrapper import OCLWrapper
@@ -118,11 +118,11 @@ def _evaluation_limitation(ast) -> Optional[str]:
     return "; ".join(reasons.values()) + " - not supported by the evaluator yet"
 
 
-def _evaluation_limitation_for(constraint, domain_model) -> Optional[str]:
+def _evaluation_limitation_for(constraint, domain_model) -> Tuple[bool, Optional[str]]:
     """Parse ``constraint`` and run :func:`_evaluation_limitation` on its AST.
 
-    A constraint that cannot be parsed here is left to the evaluator, which
-    reports the parse error itself.
+    Returns whether it parsed, and the limitation. A constraint that cannot be
+    parsed here is left to the evaluator, which reports the parse error itself.
     """
     context_class = getattr(constraint, "context", None)
     try:
@@ -131,8 +131,8 @@ def _evaluation_limitation_for(constraint, domain_model) -> Optional[str]:
             context_class=context_class if isinstance(context_class, Class) else None,
         )
     except Exception:  # noqa: BLE001 - any failure: let the evaluator report it
-        return None
-    return _evaluation_limitation(parsed.ast)
+        return False, None
+    return True, _evaluation_limitation(parsed.ast)
 
 
 def extract_context_class_name(expression):
@@ -299,7 +299,12 @@ def check_ocl_constraint(domain_model, object_model = None):
                     # "  >= 0 and  <= 120" and blows up with a Python
                     # ``invalid syntax`` error. An unset attribute means "no
                     # constraint to check", so we skip instead.
+                    # Only attributes count: an association end (``self.books``)
+                    # has no slot, and an object without links is a valid value.
                     referenced_attrs = set(re.findall(r'self\.(\w+)', expression))
+                    context_class = getattr(constraint, "context", None)
+                    if isinstance(context_class, Class):
+                        referenced_attrs &= {a.name for a in context_class.all_attributes()}
                     if referenced_attrs:
                         def _has_all_referenced(obj):
                             slot_names = {
@@ -310,10 +315,20 @@ def check_ocl_constraint(domain_model, object_model = None):
                         if not all(_has_all_referenced(obj) for obj in context_instances):
                             continue
 
-                    limitation = _evaluation_limitation_for(constraint, domain_model)
+                    parsed, limitation = _evaluation_limitation_for(constraint, domain_model)
                     if limitation is None:
-                        result = parser.evaluate(constraint)
-                        if not isinstance(result, bool):
+                        try:
+                            result = parser.evaluate(constraint)
+                        except BOCLSyntaxError:
+                            raise
+                        except Exception as eval_error:  # noqa: BLE001
+                            if not parsed:
+                                raise
+                            # Valid B-OCL that the evaluator cannot handle yet:
+                            # its crash is not the user's error.
+                            result = None
+                            limitation = f"the evaluator does not support it yet ({eval_error})"
+                        if limitation is None and not isinstance(result, bool):
                             # An invariant is Boolean; anything else (e.g. the
                             # ``()`` the evaluator yields for a loop whose source
                             # it could not resolve) means it failed silently.

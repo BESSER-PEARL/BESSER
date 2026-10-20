@@ -30,9 +30,15 @@ class BackendGenerator(GeneratorInterface):
         docker_config_path (str, optional): The path to the docker configuration file to auto upload the image. Defaults to None.
         port (int, optional): Port embedded in the generated ``uvicorn.run`` call. Takes precedence over the
                                 docker configuration's ``docker_port``. Defaults to None (docker config, else 8000).
+        api_title (str, optional): Title of the generated FastAPI app (OpenAPI docs and ``/``). Defaults to
+                                ``"<model name> API"``.
+        api_description (str, optional): Description shown in the generated API docs. Defaults to a generic
+                                description of the generated API.
+        api_version (str, optional): Version of the generated API. Defaults to ``"1.0.0"``.
     """
 
-    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None):
+    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None,
+                 api_title: str = None, api_description: str = None, api_version: str = None):
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "DELETE"]
         if not http_methods:
@@ -44,6 +50,9 @@ class BackendGenerator(GeneratorInterface):
         self.docker_image = docker_image
         self.docker_config_path = docker_config_path
         self.port = port
+        self.api_title = api_title
+        self.api_description = api_description
+        self.api_version = api_version
         self.config = self.load_config()
         self.has_nn_methods = False
 
@@ -104,6 +113,9 @@ class BackendGenerator(GeneratorInterface):
             nested_creations=self.nested_creations,
             port=docker_port,
             output_dir=backend_folder_path,
+            api_title=self.api_title,
+            api_description=self.api_description,
+            api_version=self.api_version,
         )
 
         sql_alchemy = SQLAlchemyGenerator(model=self.model, output_dir=backend_folder_path)

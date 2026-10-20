@@ -61,6 +61,24 @@ class AlloyBounds:
             return None
         return -2 ** (self.bitwidth - 1), 2 ** (self.bitwidth - 1) - 1
 
+    def __str__(self) -> str:
+        """The bounds in words, e.g. ``5 objects per class, integers in [-16, 15], 5 strings and 5 dates``."""
+        parts = [f"{_count(self.objects, 'object')} per class"]
+        if self.integers is not None:
+            parts.append(f"integers in [{self.integers[0]}, {self.integers[1]}]")
+        if self.strings is not None:
+            parts.append(_count(self.strings, "string"))
+        if self.dates is not None:
+            parts.append(_count(self.dates, "date"))
+        if len(parts) == 1:
+            return parts[0]
+        return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
+def _count(number: int, noun: str) -> str:
+    """*number* followed by *noun*, in the plural unless *number* is 1."""
+    return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
+
 
 def _identifier(name: str) -> str:
     """A valid Alloy identifier for *name*.

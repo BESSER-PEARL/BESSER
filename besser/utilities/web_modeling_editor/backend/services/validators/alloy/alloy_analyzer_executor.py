@@ -7,6 +7,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Seconds the Alloy Analyzer may run before an analysis times out.
+_DEFAULT_TIMEOUT_SECONDS = 30
+
 from enum import Enum
 class AlloyResult(Enum):
     SAT = 1
@@ -14,8 +17,6 @@ class AlloyResult(Enum):
     TIMEOUT = 3
 
 class AlloyAnalyzerExecutor():
-
-    GLOBAL_TIMEOUT = 40  # seconds
 
     def __init__(self):
         self.java_path = None
@@ -29,9 +30,10 @@ class AlloyAnalyzerExecutor():
     output_dir/instance_model-solution-1.xml, and so on. 
     Returns a pair (result, instance_files) where result is SAT, UNSAT, or TIMEOUT and 
     instance_files is a list of the generated instance files (if any).
+    The Alloy Analyzer is stopped, and the result is TIMEOUT, after timeout seconds.
     Raises RuntimeError exceptions if the execution of the Alloy Analyzer fails."""
     def generate_instances(self, spec_als: str, output_dir: str, 
-                            num_instances: int = 1, timeout = GLOBAL_TIMEOUT):
+                            num_instances: int = 1, timeout: int = _DEFAULT_TIMEOUT_SECONDS):
         self.output_dir = output_dir
         # Clean up any previous instance files before generating new ones 
         for file in Path(output_dir).glob("instance_model-solution-*.xml"):

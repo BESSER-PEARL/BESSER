@@ -53,8 +53,8 @@ Create and activate a virtual environment first:
    directory itself, make sure you own the target folder or use ``sudo chown``
    on it.
 
-``pip install`` fails on Python 3.13
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``pip install`` fails on Python 3.13 (BESSER 8.2.0 and earlier)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 **Symptom**
 
@@ -65,19 +65,16 @@ fails while building ``pydantic-core`` from source, typically ending with
 
 **Cause**
 
-``setup.cfg`` declares ``python_requires = >=3.11``, so pip does not refuse
-Python 3.13 up front. But BESSER's own dependency ``bocl==1.0.1`` (the OCL
-interpreter, listed in ``requirements.txt`` and therefore installed with the
-core library, and pinned again in the web editor backend's
-``requirements.txt``) requires ``pydantic==2.6.3``, which needs
-``pydantic-core==2.16.3``. That release ships no Python 3.13 wheels and its
-source build does not work on 3.13. The failure therefore affects the core
-library, not only the backend.
+Up to BESSER 8.2.0, the dependency ``bocl==1.0.1`` (the OCL interpreter)
+required ``pydantic==2.6.3``, which needs ``pydantic-core==2.16.3``. That
+release ships no Python 3.13 wheels and its source build does not work on
+3.13. BESSER 8.2.1 requires ``bocl`` 1.0.3, which accepts any newer
+``pydantic``.
 
 **Fix**
 
-Use **Python 3.11** or **3.12** — these are the versions CI tests.  You can
-manage multiple Python versions with
+Install BESSER 8.2.1 or later, or use **Python 3.11** or **3.12**, the
+versions CI tests. You can manage multiple Python versions with
 `pyenv <https://github.com/pyenv/pyenv>`_ (Linux/macOS) or
 the `Python Launcher for Windows <https://docs.python.org/3/using/windows.html#launcher>`_.
 

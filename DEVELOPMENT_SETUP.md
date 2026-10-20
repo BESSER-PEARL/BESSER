@@ -6,11 +6,11 @@ Complete guide to set up the BESSER development environment from scratch.
 
 ## Prerequisites
 
-### 1. Python 3.11 or 3.12
+### 1. Python 3.11 or newer
 
-> `setup.cfg` requires Python >= 3.11, and CI tests 3.11 and 3.12. **Installing on Python 3.13 currently fails**:
-> the `bocl==1.0.1` dependency pins `pydantic==2.6.3`, whose `pydantic-core` has no 3.13 wheels and does not build
-> from source on 3.13 (see `docs/source/troubleshooting.rst`).
+> `setup.cfg` requires Python >= 3.11, and CI tests 3.11 and 3.12. Python 3.13 installs and passes the test suite
+> since `bocl` 1.0.3, but is not covered by CI. Older checkouts pinned `bocl==1.0.1`, which fails to install on 3.13
+> (see `docs/source/troubleshooting.rst`).
 
 - Download from [python.org](https://www.python.org/downloads/)
 - During installation, check **"Add Python to PATH"** (Windows)

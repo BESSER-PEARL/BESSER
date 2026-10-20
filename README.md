@@ -1,109 +1,98 @@
 <div align="center">
-  <img src="./docs/source/_static/besser_logo_light.png" alt="BESSER platform" width="500"/>
-</div>
+  <img src="./docs/source/_static/besser_logo_light.png" alt="BESSER" width="420"/>
 
-[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue?logo=python&logoColor=gold)](https://pypi.org/project/besser/)
+  <h3>Draw a model. Get a working app.</h3>
+
+  <p>BESSER is an open-source, model-driven low-code platform in Python.<br/>
+  Design your app as a UML model — in the browser or in Python — and generate the code:<br/>
+  FastAPI backends, React frontends, Django, Spring Boot, Flutter, databases, agents and more.</p>
+
+  <p>
+    <a href="https://editor.besser-pearl.org"><b>Try it in your browser</b></a> ·
+    <a href="https://besser.readthedocs.io/en/latest/">Docs</a> ·
+    <a href="https://github.com/BESSER-PEARL/BESSER-examples">Examples</a> ·
+    <a href="https://github.com/BESSER-PEARL/Built-with-BESSER">Built with BESSER</a>
+  </p>
+
 [![PyPI version](https://img.shields.io/pypi/v/besser?logo=pypi&logoColor=white)](https://pypi.org/project/besser/)
 [![PyPI - Downloads](https://static.pepy.tech/badge/besser)](https://pypi.org/project/besser/)
-[![Documentation Status](https://readthedocs.org/projects/besser/badge/?version=latest)](https://besser.readthedocs.io/en/latest/)
-[![PyPI - License](https://img.shields.io/pypi/l/besser)](https://opensource.org/license/MIT)
-[![LinkedIn](https://img.shields.io/badge/-LinkedIn-blue?logo=Linkedin&logoColor=white)](https://www.linkedin.com/company/besser-pearl)
-[![GitHub Repo stars](https://img.shields.io/github/stars/besser-pearl/besser?style=social)](https://star-history.com/#besser-pearl/besser)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue?logo=python&logoColor=gold)](https://pypi.org/project/besser/)
+[![License: MIT](https://img.shields.io/pypi/l/besser)](https://opensource.org/license/MIT)
+[![GitHub Repo stars](https://img.shields.io/github/stars/besser-pearl/besser?style=social)](https://github.com/BESSER-PEARL/BESSER/stargazers)
 
-BESSER is a [low-modeling](https://modeling-languages.com/welcome-to-the-low-modeling-revolution/) [low-code](https://lowcode-book.com/) open-source platform. BESSER (Building bEtter Smart Software fastER) is funded thanks to an [FNR Pearl grant](https://modeling-languages.com/a-smart-low-code-platform-for-smart-software-in-luxembourg-goodbye-barcelona/) led by the [Luxembourg Institute of Science and Technology](https://www.list.lu/) with the participation of the [Snt/University of Luxembourg](https://www.uni.lu/snt-en/) and open to all your contributions!
+</div>
 
-The BESSER low-code platform is built on top of [B-UML](https://besser.readthedocs.io/en/latest/buml_language.html) our Python-based personal interpretation of a "Universal Modeling Language" (yes, heavily inspired and a simplified version of the better known UML, the Unified Modeling Language).
-With B-UML you can specify your software application and then use any of the [code-generators available](https://besser.readthedocs.io/en/latest/generators.html) to translate your model into executable code suitable for various applications, such as Django web apps or database structures compatible with SQLAlchemy.
+BESSER is a [low-modeling](https://modeling-languages.com/welcome-to-the-low-modeling-revolution/) [low-code](https://lowcode-book.com/) open-source platform. BESSER (Building bEtter Smart Software fastER) is funded thanks to an [FNR Pearl grant](https://modeling-languages.com/a-smart-low-code-platform-for-smart-software-in-luxembourg-goodbye-barcelona/) led by the [Luxembourg Institute of Science and Technology](https://www.list.lu/) with the participation of the [SnT/University of Luxembourg](https://www.uni.lu/snt-en/) and open to all your contributions!
 
-Beyond the deterministic generators, BESSER also offers the [Spec-Driven Agent](https://besser.readthedocs.io/en/latest/spec_driven_agent/index.html) (experimental), where generation is *hybrid* rather than a single template pass. It runs in three phases: a deterministic generator produces a model-faithful scaffold, an LLM then customises that scaffold to satisfy a natural-language request — adding features the templates don't cover (auth, Docker, tests) or targeting stacks with no built-in generator — and finally the result is validated, with blocker-level issues driving a bounded auto-fix loop. Where a free tier is configured it runs with no API key at all; bringing your own key is optional, and a key you do supply is never stored.
+<!-- TODO: replace with a new 20–30 s GIF: draw 2–3 classes → Generate → the running app in the browser. -->
+![From model to running app with BESSER](./docs/source/img/besser_new.gif)
 
-This repository contains the backend foundation for the ecosystem: the
-metamodel, code generators, notations, utilities, and services that drive the web modeling editor and the Python SDK. The editor's frontend is maintained in the companion [BESSER-Web-Modeling-Editor](https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor) repository and is included here only as a submodule (at `besser/utilities/web_modeling_editor/frontend`) for local deployments.
+## Quickstart
 
-**Check out the [BESSER Web Modeling Editor online](https://editor.besser-pearl.org/)**
-![BESSER Web Modeling Editor Demo](./docs/source/img/besser_new.gif)
+**No install:** open the [BESSER Web Modeling Editor](https://editor.besser-pearl.org), draw a class diagram (or describe your app and let the AI assistant draw it), and click **Generate**.
 
-**Check out the official [documentation](https://besser.readthedocs.io/en/latest/)**
+**In Python:**
 
-## Basic Installation
+    pip install besser
 
-BESSER requires Python 3.11+ (CI tests 3.11 and 3.12). We recommend creating a virtual environment (e.g. [venv](https://docs.python.org/3/tutorial/venv.html), [conda](https://docs.conda.io/en/latest/)).
+```python
+from besser.BUML.metamodel.structural import DomainModel, Class, Property, StringType, IntegerType
+from besser.generators.backend import BackendGenerator
 
-The latest stable version of BESSER is available in the Python Package Index (PyPi) and can be installed using
+book = Class(name="Book", attributes={Property(name="title", type=StringType),
+                                      Property(name="pages", type=IntegerType)})
+model = DomainModel(name="Library", types={book})
 
-    $ pip install besser
+BackendGenerator(model, output_dir="library_api").generate()   # FastAPI + SQLAlchemy + Pydantic
+```
 
-BESSER can be used with any of the popular IDEs for Python development such as [VScode](https://code.visualstudio.com/), [PyCharm](https://www.jetbrains.com/pycharm/), [Sublime Text](https://www.sublimetext.com/), etc.
+    python library_api/main_api.py      # then open http://localhost:8000/docs
 
-## Running BESSER Locally
+That's a working REST API with a database, CRUD endpoints and validation, generated from five lines of model.
 
-If you are interested in developing new code generators or designing BESSER extensions, you can download and modify the full codebase, including tests and examples.
-
-### Step 1: Clone the repository
-
-    $ git clone https://github.com/BESSER-PEARL/BESSER.git
-    $ cd BESSER
-
-### Step 2: Create a virtual environment
-
-Create a virtual environment and install BESSER in editable mode. The editable install (`pip install -e .`) is what makes *besser* importable from anywhere, including in IDEs such as VS Code, without configuring the `PYTHONPATH`.
-
-    $ python -m venv venv
-    $ source venv/bin/activate        # Windows: venv\Scripts\activate
-    $ pip install -e .
-
-To run or test the Web Modeling Editor backend, also install its requirements:
-
-    $ pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
-
-### Step 3: Run an example
-
-To verify the setup, you can run a basic example.
-
-    $ cd tests/BUML/metamodel/structural/library
-    $ python library.py
-
-## Examples
-If you want to try examples, check out the [BESSER-examples](https://github.com/BESSER-PEARL/BESSER-examples) repository!
-
-## AI Agent Skills
-
-Working with BESSER through an AI coding agent (Claude Code, Cursor, Cline, Copilot, …)? Two companion repositories package BESSER as [Agent Skills](https://agentskills.io), so your agent gets the right knowledge on demand instead of loading the whole codebase into context.
-
-[BESSER Skills](https://github.com/BESSER-PEARL/besser-skills) covers BESSER's metamodel, generators, and troubleshooting, so your agent builds *correct, validated* B-UML models — and viewable diagrams — without guesswork.
+**With your AI coding agent** (Claude Code, Cursor, Copilot, Cline, …): install the [BESSER Skills](https://github.com/BESSER-PEARL/besser-skills) and just ask, e.g. *"model a library with books and authors in BESSER and generate a FastAPI backend"*. The agent builds a correct B-UML model and runs the right generator for you.
 
     npx skills add BESSER-PEARL/besser-skills --all
 
-[UML Drawing](https://github.com/BESSER-PEARL/uml-drawing) is the diagrams-for-docs front door to BESSER: it turns a description or existing code into a correct UML class diagram, rendered as a real SVG/PNG straight into your README or docs.
+## What you can generate
 
+| You want… | BESSER generates |
+|---|---|
+| A full-stack web app | React frontend + FastAPI backend + database (`WebAppGenerator`) |
+| A backend / REST API | FastAPI, SQLAlchemy, Pydantic · Spring Boot · Django · Supabase |
+| A database | SQL DDL (PostgreSQL, MySQL, SQLite, …) · SQLAlchemy models |
+| A mobile app | Flutter |
+| Plain code & schemas | Python classes · Java classes · JSON Schema · RDF |
+| Agents & chatbots | [BESSER Agentic Framework](https://github.com/BESSER-PEARL/BESSER-Agentic-Framework) agents from agent diagrams |
+| ML & quantum | PyTorch · TensorFlow · Qiskit |
+| Deployment | Docker Compose · Terraform |
+
+See the [full list of generators](https://besser.readthedocs.io/en/latest/generators.html).
+
+## Why model first?
+
+- **Deterministic.** The same model always produces the same code. No prompt roulette for the parts that should be boring.
+- **AI where templates stop.** The experimental [Spec-Driven Agent](https://besser.readthedocs.io/en/latest/spec_driven_agent/index.html) starts from the generated scaffold, lets an LLM add what the templates don't cover (auth, Docker, tests, other stacks), then validates the result. Where a free tier is configured, it runs without an API key.
+- **The model stays the source of truth.** Change the model, regenerate, keep going. Class, object, state machine, agent, GUI, BPMN, neural network and quantum models all live in one project.
+
+## Use BESSER from your AI coding agent
+
+[BESSER Skills](https://github.com/BESSER-PEARL/besser-skills) and [UML Drawing](https://github.com/BESSER-PEARL/uml-drawing) package BESSER as [Agent Skills](https://agentskills.io) for Claude Code, Cursor, Copilot, Cline and others:
+
+    npx skills add BESSER-PEARL/besser-skills --all
     npx skills add BESSER-PEARL/uml-drawing --all
-
-Both follow the open Agent Skills standard, so they work with any spec-compatible coding agent.
 
 ## Contributing
 
-We encourage contributions from the community and any comment is welcome!
+Contributions are welcome: new generators, metamodels, bug fixes and docs. Start with [CONTRIBUTING.md](CONTRIBUTING.md) (local setup, tests) and the [Contributor Guide](https://besser.readthedocs.io/en/latest/contributor_guide.html). Look for [`good first issue`](https://github.com/BESSER-PEARL/BESSER/labels/good%20first%20issue) to get started.
 
-If you are interested in contributing to this project, please read the [CONTRIBUTING.md](CONTRIBUTING.md) file.
-You can also explore our step-by-step [Contributor Guide](https://besser.readthedocs.io/en/latest/contributor_guide.html) and the dedicated [AI Assistant Guide](https://besser.readthedocs.io/en/latest/ai_assistant_guide.html) to understand the workflows and expectations before opening a pull request.
+If BESSER is useful to you, a ⭐ helps others find it.
 
-## How to cite BESSER
+## About
 
-This repository has the CITATION.cff file, which activates the "Cite this repository" button in the About section (right side of the repository). The citation is in APA and BibTex format.
+BESSER is built on [B-UML](https://besser.readthedocs.io/en/latest/buml_language.html), our Python-based interpretation of a "Universal Modeling Language", heavily inspired by UML.
 
-## Code of Conduct
-
-At BESSER, our commitment is centered on establishing and maintaining development environments that are welcoming, inclusive, safe and free from all forms of harassment. All participants are expected to voluntarily respect and support our [Code of Conduct](CODE_OF_CONDUCT.md).
-
-## Governance
-
-The development of this project follows the governance rules described in the [GOVERNANCE.md](GOVERNANCE.md) document.
-
-## Contact
-You can reach us at: [info@besser-pearl.org](mailto:info@besser-pearl.org)
-
-Website: https://besser-pearl.org
-
-## License
-
-This project is licensed under the [MIT](https://mit-license.org/) license.
+- **Cite:** use the "Cite this repository" button (CITATION.cff).
+- **Code of Conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) · **Governance:** [GOVERNANCE.md](GOVERNANCE.md)
+- **Contact:** [info@besser-pearl.org](mailto:info@besser-pearl.org) · [besser-pearl.org](https://besser-pearl.org) · [LinkedIn](https://www.linkedin.com/company/besser-pearl)
+- **License:** [MIT](LICENSE.md)

@@ -18,7 +18,7 @@ from besser.BUML.notations.ocl.normalization.rules._helpers import (
 _BOOLEAN_OPS = {
     "and", "or", "not", "xor", "implies",
     "=", "<>", "<", ">", "<=", ">=",
-    "IsEmpty", "OCLISTYPEOF", "OCLISKINDOF",
+    "IsEmpty", "NotEmpty", "OCLISTYPEOF", "OCLISKINDOF",
 }
 _BOOLEAN_LOOPS = {"forAll", "exists"}
 

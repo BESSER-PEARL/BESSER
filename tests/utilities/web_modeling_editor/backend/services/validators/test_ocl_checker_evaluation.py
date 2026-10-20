@@ -21,7 +21,7 @@ from besser.BUML.metamodel.object import (  # noqa: E402
     AttributeLink, DataValue, Link, LinkEnd, Object, ObjectModel,
 )
 from besser.BUML.metamodel.structural import (  # noqa: E402
-    BinaryAssociation, Class, DateTimeType, DateType, DomainModel, IntegerType,
+    BinaryAssociation, Class, Constraint, DateTimeType, DateType, DomainModel, IntegerType,
     Multiplicity, Property, StringType, TimeType,
 )
 from besser.BUML.notations.ocl.api import parse_ocl  # noqa: E402
@@ -164,6 +164,36 @@ def test_non_boolean_result_is_not_reported_as_valid(conf, monkeypatch):
         "OCL [Session inv positive] not evaluated against the object diagram: "
         "the evaluator returned a non-Boolean value (())"
     ]
+
+
+def test_evaluator_crash_on_valid_ocl_is_not_a_user_error(conf, monkeypatch):
+    """Valid B-OCL the evaluator cannot handle (e.g. ``->isEmpty()`` in bocl 1.0.1,
+    which crashed with "invalid syntax (<string>, line 1)") used to be reported as
+    an error in the user's constraint."""
+    conf.add_constraint("context Session inv positive: self.capacity > 0")
+
+    def crash(self, constraint):
+        raise SyntaxError("invalid syntax (<string>, line 1)")
+
+    monkeypatch.setattr(ocl_checker.OCLWrapper, "evaluate", crash)
+    result = check_ocl_constraint(conf.model, conf.objects(datetime(2026, 3, 2, 10)))
+    assert result["success"] is True
+    assert result["invalid_constraints"] == []
+    assert result["warnings"] == [
+        "OCL [Session inv positive] not evaluated against the object diagram: "
+        "the evaluator does not support it yet (invalid syntax (<string>, line 1))"
+    ]
+
+
+def test_unknown_property_is_still_an_error(conf):
+    """A constraint that does not parse stays an error (not 'not evaluated')."""
+    conf.model.constraints = {Constraint(
+        name="typo", context=conf.session, expression="context Session inv typo: self.capacityy > 0",
+        language="OCL",
+    )}
+    result = check_ocl_constraint(conf.model, conf.objects(datetime(2026, 3, 2, 10)))
+    assert result["success"] is False
+    assert "capacityy" in result["invalid_constraints"][0]
 
 
 def _limitation(conf, body):

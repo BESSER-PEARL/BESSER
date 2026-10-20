@@ -5,9 +5,8 @@ checks identity against the expected normal form. Idempotence is asserted on
 every case: ``normalize(normalize(c)) == normalize(c)``.
 
 Test inputs trace the worked examples in Cabot & Teniente, Sci. Comput.
-Program. 68 (2007). T7's input uses ``->size() > 0`` instead of ``->notEmpty()``
-because ``notEmpty`` is not in the BESSER grammar today (the rewrite system
-itself never produces it; the substitution is purely a test-input choice).
+Program. 68 (2007). T7's input uses ``->size() > 0``, the form ``->notEmpty()``
+normalizes to (the rewrite system itself never produces ``notEmpty``).
 """
 
 import pytest
@@ -79,6 +78,14 @@ def test_T6_allinstances_removal(model):
     assert_normalizes_to(
         "context Employee inv: Employee::allInstances()->forAll(e | e.age > 16)",
         "context Employee inv: self.age > 16",
+        model,
+    )
+
+
+def test_not_empty_becomes_size_greater_than_zero(model):
+    assert_normalizes_to(
+        "context Department inv: self.employee->notEmpty()",
+        "context Department inv: self.employee->size() > 0",
         model,
     )
 

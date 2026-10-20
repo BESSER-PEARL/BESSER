@@ -88,6 +88,8 @@ Upgrade notes
 
 * ``bocl`` 1.0.3 no longer pins ``pydantic==2.6.3`` and ``fastapi==0.110.0``
   exactly, so a fresh install now resolves the current ``pydantic`` 2.x.
+* BESSER now installs on Python 3.13, which the old ``pydantic`` pin
+  prevented, and the test suite passes there. CI still tests 3.11 and 3.12.
 
 * ``notEmpty`` is now a B-OCL keyword, like ``isEmpty`` and the other
   collection operations. An attribute literally named ``notEmpty`` can no

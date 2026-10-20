@@ -1,10 +1,10 @@
 # Agent simulator image dependencies (the ONLY requirements the image installs;
 # the repository's `besser` package is then added with `pip install --no-deps`).
 #
-# Why not also the root requirements.txt: it pins bocl==1.0.1, and bocl pins
-# pydantic==2.6.3, while besser-agentic-framework[extras] pulls langchain 0.2.x
-# whose langchain-core requires pydantic>=2.7.4 on Python >= 3.12.4. The two
-# sets cannot be installed together (pip: ResolutionImpossible). The simulator
+# Why not also the root requirements.txt: it pulls in bocl, which pins
+# jinja2==3.1.2 (and up to bocl 1.0.1 also pydantic==2.6.3, against
+# langchain-core's pydantic>=2.7.4), while this image needs jinja2==3.1.6. The
+# two sets cannot be installed together (pip: ResolutionImpossible). The simulator
 # needs neither bocl nor the generators' database drivers, so it installs only
 # what it runs.
 #

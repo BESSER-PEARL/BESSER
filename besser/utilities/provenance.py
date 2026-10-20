@@ -78,6 +78,8 @@ def generation_provenance_markdown(
         "",
         "Regenerating from the model overwrites these files; re-apply any manual changes afterwards.",
         "",
+        f"If BESSER saved you time, a [star on GitHub]({BESSER_URL}) helps others find it.",
+        "",
     ]
     return "\n".join(lines)
 

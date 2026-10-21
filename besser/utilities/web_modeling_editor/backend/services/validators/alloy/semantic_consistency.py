@@ -5,17 +5,15 @@ The two functions behind the ``/semantic-consistency-check`` and ``/generate-obj
 endpoints search for an instance of a class diagram, and its OCL invariants, within increasingly
 larger scopes, and stream their progress as Server-Sent Events.  A search that finds nothing
 reports what it searched (e.g. "No instance within 9 objects per class and integers in
-[-256, 255]."): a larger scope might still hold an instance.  Its events carry the reason in
-``reason``: ``"unsat"`` when the bounds hold no instance, ``"timeout"`` when the Alloy Analyzer
-timed out, and ``"capacity"`` when the bounds are too large for the Alloy Analyzer; the last two
-end the search.
+[-256, 255]."): a larger scope might still hold an instance.  Each event's message says what was
+searched and, when nothing was found, why: the bounds hold no instance, the Alloy Analyzer timed
+out, or the bounds are too large for it; the last two end the search.
 
 While the Alloy Analyzer runs, an SSE comment line is sent every :data:`HEARTBEAT_SECONDS` as a
 heartbeat, so that clients and proxies see the stream is alive.
 """
 
 import asyncio
-import json
 import logging
 import os
 import tempfile
@@ -27,6 +25,7 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.generators.alloy import AlloyTranslationError
 from besser.utilities.buml_code_builder.domain_model_builder import object_model_to_code
 from besser.utilities.web_modeling_editor.backend.models.diagram import DiagramInput
+from besser.utilities.web_modeling_editor.backend.models.responses import SemanticCheckEvent
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     object_buml_to_json,
     process_class_diagram,
@@ -92,7 +91,7 @@ async def _search(
         for scope in scopes:
             try:
                 bounds = await asyncio.to_thread(solver.generate_specification, scope)
-                yield _progress(f"Searching within {bounds}...", scope=bounds.objects)
+                yield _progress(f"Searching within {bounds}...")
                 analysis = asyncio.ensure_future(
                     asyncio.to_thread(_analyze, solver, scope, timeout, with_object_diagram)
                 )
@@ -113,36 +112,24 @@ async def _search(
                 return
 
             if result == AlloyResult.TIMEOUT:
-                yield _failure(
-                    f"Timed out searching within {bounds}.",
-                    warnings=warnings,
-                    scope=bounds.objects,
-                    reason="timeout",
-                )
+                yield _failure(f"Timed out searching within {bounds}.", warnings=warnings)
                 return
             if result == AlloyResult.SCOPES_TOO_LARGE:
-                yield _failure(
-                    f"Too large to search within {bounds}.",
-                    warnings=warnings,
-                    scope=bounds.objects,
-                    reason="capacity",
-                )
+                yield _failure(f"Too large to search within {bounds}.", warnings=warnings)
                 return
             if result == AlloyResult.ERROR:
                 yield _failure(f"The semantic check failed unexpectedly at scope {scope}.", warnings=warnings)
                 return
             if result == AlloyResult.SAT:
-                fields: dict[str, Any] = {"scope": bounds.objects}
+                object_diagram = None
                 if with_object_diagram:
-                    fields["object_model"] = _object_model_to_json(object_model, input_data.model, temp_dir)
-                yield _success(f"Instance found within {bounds}.", warnings=warnings, **fields)
+                    object_diagram = _object_model_to_json(object_model, input_data.model, temp_dir)
+                yield _success(f"Instance found within {bounds}.", warnings=warnings, object_model=object_diagram)
                 return
             if scope != scopes[-1]:
-                yield _progress(f"No instance within {bounds}.", sat=False, scope=bounds.objects, reason="unsat")
+                yield _progress(f"No instance within {bounds}.")
 
-        yield _failure(
-            f"No instance within {bounds}.", sat=False, warnings=warnings, scope=bounds.objects, reason="unsat"
-        )
+        yield _failure(f"No instance within {bounds}.", warnings=warnings)
 
 
 def _prepare(input_data: DiagramInput) -> tuple[DomainModel, list[str]] | str:
@@ -202,8 +189,8 @@ def _object_model_to_json(object_model: ObjectModel, domain_json: dict[str, Any]
 # Server-Sent Events
 # ---------------------------------------------------------------------------
 
-def _sse(payload: dict[str, Any]) -> str:
-    return f"data: {json.dumps(payload)}\n\n"
+def _sse(event: SemanticCheckEvent) -> str:
+    return f"data: {event.model_dump_json(exclude_none=True)}\n\n"
 
 
 def _heartbeat() -> str:
@@ -211,28 +198,22 @@ def _heartbeat() -> str:
     return ": semantic-check-heartbeat\n\n"
 
 
-def _progress(message: str, sat: bool | None = None, **fields: Any) -> str:
+def _progress(message: str) -> str:
     """A non-terminal event."""
-    return _sse({"sat": sat, "done": False, "message": message, **fields})
+    return _sse(SemanticCheckEvent(message=message))
 
 
-def _success(message: str, warnings: list[str] | None = None, **fields: Any) -> str:
-    """The terminal event of an instance found."""
-    return _sse({
-        "sat": True, "isValid": True, "done": True, "message": message,
-        "errors": [], "warnings": list(warnings or []), **fields,
-    })
-
-
-def _failure(
-    message: str,
-    sat: bool | None = None,
-    errors: list[str] | None = None,
-    warnings: list[str] | None = None,
-    **fields: Any,
+def _success(
+    message: str, warnings: list[str] | None = None, object_model: dict[str, Any] | None = None
 ) -> str:
+    """The terminal event of an instance found, with it as an object diagram (*object_model*) if requested."""
+    return _sse(SemanticCheckEvent(
+        done=True, isValid=True, message=message, warnings=list(warnings or []), object_model=object_model,
+    ))
+
+
+def _failure(message: str, errors: list[str] | None = None, warnings: list[str] | None = None) -> str:
     """The terminal event of a search that found no instance, could not run or failed."""
-    return _sse({
-        "sat": sat, "isValid": False, "done": True, "message": message,
-        "errors": list(errors or []), "warnings": list(warnings or []), **fields,
-    })
+    return _sse(SemanticCheckEvent(
+        done=True, message=message, errors=list(errors or []), warnings=list(warnings or []),
+    ))

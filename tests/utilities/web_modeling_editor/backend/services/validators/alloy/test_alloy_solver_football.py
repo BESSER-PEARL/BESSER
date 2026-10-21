@@ -42,11 +42,46 @@ def inconsistent_model() -> DomainModel:
     return _team_player_model("self.age = 2 and self.age = 3")
 
 
+@pytest.fixture
+def too_large_model() -> DomainModel:
+    """The literal 40000 needs a 17-bit ``Int``: its 131072 atoms are too many for the Alloy Analyzer
+    to represent the relation ``age``, even at scope 1."""
+    return _team_player_model("self.age = 40000")
+
+
+def test_check_consistency_consistent(consistent_model, tmp_path):
+    solver = AlloySolver(consistent_model, output_dir=str(tmp_path))
+    assert solver.check_consistency(scope=1) == AlloyResult.SAT
+
+
+def test_check_consistency_inconsistent(inconsistent_model, tmp_path):
+    solver = AlloySolver(inconsistent_model, output_dir=str(tmp_path))
+    assert solver.check_consistency(scope=1) == AlloyResult.UNSAT
+
+
+def test_check_consistency_scopes_too_large(too_large_model, tmp_path):
+    solver = AlloySolver(too_large_model, output_dir=str(tmp_path))
+    assert solver.check_consistency(scope=1) == AlloyResult.SCOPES_TOO_LARGE
+
+
+def test_generate_object_models_scopes_too_large(too_large_model, tmp_path):
+    solver = AlloySolver(too_large_model, output_dir=str(tmp_path))
+    result, object_models = solver.generate_object_models(scope=1)
+    assert result == AlloyResult.SCOPES_TOO_LARGE
+    assert object_models == []
+
+
 def test_generate_object_models_consistent(consistent_model, tmp_path):
     solver = AlloySolver(consistent_model, output_dir=str(tmp_path))
     result, object_models = solver.generate_object_models(scope=1)
     assert result == AlloyResult.SAT
     assert len(object_models) == 1
+
+    scopes = solver.get_scopes()
+    assert scopes.objects == 1
+    assert scopes.integers == (-4, 3)  # the literal 2 needs 2 bits, plus the sign bit
+    assert scopes.strings == 1  # the literal 'Barcelona'
+    assert scopes.dates is None
 
     object_model = object_models[0]
     description = describe(object_model)
@@ -70,13 +105,3 @@ def test_generate_object_models_inconsistent(inconsistent_model, tmp_path):
 def test_scopes_before_any_analysis(consistent_model, tmp_path):
     solver = AlloySolver(consistent_model, output_dir=str(tmp_path))
     assert solver.get_scopes() is None
-
-
-def test_scopes_of_the_last_analysis(consistent_model, tmp_path):
-    solver = AlloySolver(consistent_model, output_dir=str(tmp_path))
-    solver.generate_object_models(scope=1)
-    scopes = solver.get_scopes()
-    assert scopes.objects == 1
-    assert scopes.integers == (-4, 3)  # the literal 2 needs 2 bits, plus the sign bit
-    assert scopes.strings == 1  # the literal 'Barcelona'
-    assert scopes.dates is None

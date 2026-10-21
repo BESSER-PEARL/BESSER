@@ -1,22 +1,24 @@
-
 import json
-import logging
 import os
 import subprocess
+from enum import Enum
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 # Seconds the Alloy Analyzer may run before an analysis times out.
 _DEFAULT_TIMEOUT_SECONDS = 30
 
-from enum import Enum
+
 class AlloyResult(Enum):
     SAT = 1
     UNSAT = 2
     TIMEOUT = 3
+    # The bounds are too large for the Alloy Analyzer ("Translation capacity exceeded")
+    SCOPES_TOO_LARGE = 4
+    # The Alloy Analyzer failed for any other reason
+    ERROR = 5
 
-class AlloyAnalyzerExecutor():
+
+class AlloyAnalyzerExecutor:
 
     def __init__(self):
         self.java_path = None
@@ -24,27 +26,28 @@ class AlloyAnalyzerExecutor():
         self._resolve_java_path()
         self._resolve_alloy_jar_path()
 
-    """Generates up to num_instances satisfying instances for spec_als by invoking 
-    the Alloy Analyzer. Yields instances in XML format, in files named 
-    output_dir/instance_model-solution-0.xml, 
-    output_dir/instance_model-solution-1.xml, and so on. 
-    Returns a pair (result, instance_files) where result is SAT, UNSAT, or TIMEOUT and 
-    instance_files is a list of the generated instance files (if any).
-    The Alloy Analyzer is stopped, and the result is TIMEOUT, after timeout seconds.
-    Raises RuntimeError exceptions if the execution of the Alloy Analyzer fails."""
-    def generate_instances(self, spec_als: str, output_dir: str, 
-                            num_instances: int = 1, timeout: int = _DEFAULT_TIMEOUT_SECONDS):
-        self.output_dir = output_dir
-        # Clean up any previous instance files before generating new ones 
+    def generate_instances(
+        self, spec_als: str, output_dir: str, num_instances: int = 1, timeout: int = _DEFAULT_TIMEOUT_SECONDS
+    ) -> tuple[AlloyResult, list[str]]:
+        """Generates up to num_instances satisfying instances for spec_als by invoking
+        the Alloy Analyzer. Yields instances in XML format, in files named
+        output_dir/instance_model-solution-0.xml,
+        output_dir/instance_model-solution-1.xml, and so on.
+        Returns a pair (result, instance_files) where result is SAT, UNSAT, TIMEOUT,
+        SCOPES_TOO_LARGE or ERROR and instance_files is a list of the generated instance files (if any).
+        The Alloy Analyzer is stopped, and the result is TIMEOUT, after timeout seconds.
+        The result is SCOPES_TOO_LARGE when the bounds of spec_als are too large for the Alloy
+        Analyzer, and ERROR when it fails for any other reason."""
+        # Clean up any previous instance files and receipt before generating new ones
         for file in Path(output_dir).glob("instance_model-solution-*.xml"):
             file.unlink()
+        Path(output_dir, "receipt.json").unlink(missing_ok=True)
         # Execute the Alloy Analyzer via subprocess
         try:
-            output_type = "xml"
             result = subprocess.run(
                 [
                     self.java_path, "-jar", self.alloy_jar_path, "exec", "-n", "-f",
-                    "-o", output_dir, "-t", output_type, "-r", str(num_instances), spec_als,
+                    "-o", output_dir, "-t", "xml", "-r", str(num_instances), spec_als,
                 ],
                 capture_output=True,
                 text=True,
@@ -53,74 +56,70 @@ class AlloyAnalyzerExecutor():
         except subprocess.TimeoutExpired:
             return AlloyResult.TIMEOUT, []
 
-        if self._check_satisfiability_in_alloy_receipt_json(result):
-            return AlloyResult.SAT, self._get_instance_xml_files()
+        analysis_result = self._result_in_alloy_receipt_json(result, output_dir)
+        if analysis_result == AlloyResult.SAT:
+            return AlloyResult.SAT, self._get_instance_xml_files(output_dir)
         else:
-            return AlloyResult.UNSAT, []
+            return analysis_result, []
 
-
-    def _check_satisfiability_in_alloy_receipt_json(self, result):
+    def _result_in_alloy_receipt_json(self, result: subprocess.CompletedProcess, output_dir: str) -> AlloyResult:
         """Parse the ``receipt.json`` produced by the Alloy Analyzer in output_dir.
-        Returns whether the model is satisfiable and the list of solutions (instances) found.
+        Returns SAT or UNSAT, or, when the Alloy Analyzer produced no receipt, SCOPES_TOO_LARGE
+        or ERROR.
         """
-        receipt_path = os.path.join(self.output_dir, "receipt.json")
+        receipt_path = os.path.join(output_dir, "receipt.json")
         if not os.path.exists(receipt_path):
             output = (result.stdout or "") + (result.stderr or "")
-            logger.warning("Alloy exec produced no receipt.json. Output: %s", output[:500])
-            raise RuntimeError(
-                "Alloy execution produced no receipt.json. "
-                "Check Alloy output for errors: " + output.strip()[:1000]
-            )
+            if "Translation capacity exceeded" in output:
+                return AlloyResult.SCOPES_TOO_LARGE
+            return AlloyResult.ERROR
 
         with open(receipt_path, "r", encoding="utf-8") as f:
             receipt = json.load(f)
         commands = receipt.get("commands", {})
         if not commands:
-            raise RuntimeError("No commands found in receipt.json. Alloy execution may have failed.")
+            return AlloyResult.ERROR
         first_command_name = next(iter(commands))
         first_command = commands[first_command_name]
         solutions = first_command.get("solution", [])
-        return any(sol.get("instances") for sol in solutions)
+        if any(sol.get("instances") for sol in solutions):
+            return AlloyResult.SAT
+        return AlloyResult.UNSAT
 
-
-    def _resolve_alloy_jar_path(self):
-        """Locates the ``alloy.jar`` file used to run the Alloy Analyzer, 
-        using environment variable``BESSER_ALLOY_JAR`` environment variable.
+    def _resolve_alloy_jar_path(self) -> None:
+        """Locates the ``alloy.jar`` file used to run the Alloy Analyzer,
+        using the ``BESSER_ALLOY_JAR`` environment variable.
         """
         env_path = os.getenv("BESSER_ALLOY_JAR")
-        if env_path:
-            candidate = Path(env_path).expanduser().resolve()
-            if candidate.exists() and candidate.is_file():
-                self.alloy_jar_path = str(candidate)
+        if not env_path:
+            raise RuntimeError("BESSER_ALLOY_JAR is not set.")
+        candidate = Path(env_path).expanduser().resolve()
+        if candidate.is_file():
+            self.alloy_jar_path = str(candidate)
 
         if not self.alloy_jar_path:
-            logger.warning("BESSER_ALLOY_JAR points to a missing file: %s", env_path)
-            raise RuntimeError("Alloy JAR not found.")
+            raise RuntimeError(f"BESSER_ALLOY_JAR points to a missing file: {env_path}")
 
-
-    def _resolve_java_path(self):
+    def _resolve_java_path(self) -> None:
         """Locates the ``java`` executable strictly via JAVA_HOME.
         """
         java_home = os.getenv("JAVA_HOME")
         if not java_home:
-            logger.error("JAVA_HOME is not set. Cannot run the Alloy Analyzer.")
-            return None
+            raise RuntimeError("JAVA_HOME is not set.")
         java_file = "java.exe" if os.name == "nt" else "java"
         candidate = Path(java_home).expanduser() / "bin" / java_file
         if candidate.is_file() and os.access(candidate, os.X_OK):
             self.java_path = str(candidate.resolve())
 
         if not self.java_path:
-            logger.error("JAVA_HOME points to a directory without a java executable: %s", java_home)
-            raise RuntimeError("JAVA_HOME is not set or does not point to a valid java executable.")
+            raise RuntimeError(f"JAVA_HOME points to a directory without a java executable: {java_home}")
 
-
-    """Returns a list of XML filenames produced by the Alloy Analyzer, which
-    are assumed to be called output_dir/instance_model-solution-0.xml, 
-    output_dir/instance_model-solution-1.xml, ..."""
-    def _get_instance_xml_files(self):
-        output_dir_path = Path(self.output_dir)
-        if not output_dir_path.is_dir():
-            raise RuntimeError(f"Output directory does not exist: {self.output_dir}")
-        xml_files = sorted(output_dir_path.glob("instance_model-solution-*.xml"))
+    def _get_instance_xml_files(self, output_dir: str) -> list[str]:
+        """Returns a list of XML filenames produced by the Alloy Analyzer, which
+        are assumed to be called output_dir/instance_model-solution-0.xml,
+        output_dir/instance_model-solution-1.xml, ..., in the order of their numbers."""
+        xml_files = sorted(
+            Path(output_dir).glob("instance_model-solution-*.xml"),
+            key=lambda f: int(f.stem.rsplit("-", 1)[1]),
+        )
         return [str(f.resolve()) for f in xml_files]

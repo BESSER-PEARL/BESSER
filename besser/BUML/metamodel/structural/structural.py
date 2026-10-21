@@ -2036,16 +2036,27 @@ class Constraint(NamedElement):
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the constraint (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+        violating_events (set): ``ViolatingEvent`` links to structural events that may
+            violate this constraint. Empty until an incremental pre-analysis stores them.
+        violating_events_source (str): Constraint text those events were computed from.
+            None until an analysis has run.
     """
 
     def __init__(self, name: str, context: Class, expression: str, language: str,
                  description: str = None, timestamp: datetime = None,
-                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0,
+                 violating_events: set = None, violating_events_source: str = None):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+        self.__violating_events: set = set()
+        self.__violating_events_source: str = None
         self.context: Class = context
         self.expression: str = expression
         self.language: str = language
         self.description: str = description
+        if violating_events:
+            self.violating_events = violating_events
+        if violating_events_source is not None:
+            self.violating_events_source = violating_events_source
 
     @property
     def context(self) -> Class:
@@ -2075,7 +2086,12 @@ class Constraint(NamedElement):
                 f"Constraint.expression must be a string; got {type(expression).__name__}. "
                 f"To attach a parsed OCL AST, use OCLConstraint with its ast field."
             )
+        previous = getattr(self, "_Constraint__expression", None)
         self.__expression = expression
+        # A different text invalidates a previously stored pre-analysis.
+        # The first assignment, during construction, has no previous text.
+        if previous is not None and previous != expression:
+            self._clear_violating_events()
 
     @property
     def language(self) -> str:
@@ -2098,6 +2114,70 @@ class Constraint(NamedElement):
         if description is not None and not isinstance(description, str):
             raise TypeError("description must be a string or None")
         self.__description = description
+
+    @property
+    def violating_events(self) -> set:
+        """set: Structural events that may violate this constraint.
+
+        Each item is a ``ViolatingEvent``. The set is empty until an
+        incremental pre-analysis stores a result. An empty set after an
+        analysis means no handled event can violate the constraint.
+        """
+        return self.__violating_events
+
+    @violating_events.setter
+    def violating_events(self, violating_events: set):
+        """set: Replace the structural events that may violate this constraint.
+
+        Raises:
+            TypeError: if ``violating_events`` is not a set, or an item is not
+                a ``ViolatingEvent``.
+        """
+        if violating_events is None:
+            violating_events = set()
+        if not isinstance(violating_events, set):
+            raise TypeError("violating_events must be a set")
+        # Imported lazily: the event module imports Constraint.
+        from besser.BUML.metamodel.structural_event.structural_event import ViolatingEvent
+        for item in violating_events:
+            if not isinstance(item, ViolatingEvent):
+                raise TypeError(f"violating_events must contain ViolatingEvent instances, got {type(item).__name__}")
+        current = getattr(self, "_Constraint__violating_events", set())
+        for old in list(current):
+            if old not in violating_events:
+                old.constraint = None
+        self.__violating_events = set()
+        for item in violating_events:
+            # Already attached to this constraint: the setter would no-op and
+            # the link would be missing from the set we just emptied.
+            if item.constraint is self:
+                self.__violating_events.add(item)
+            else:
+                item.constraint = self
+
+    @property
+    def violating_events_source(self) -> str:
+        """str: The constraint text the stored events were computed from, or None."""
+        return self.__violating_events_source
+
+    @violating_events_source.setter
+    def violating_events_source(self, source: str):
+        """str: Record the text the stored events were computed from.
+
+        Raises:
+            TypeError: if ``source`` is neither a string nor None.
+        """
+        if source is not None and not isinstance(source, str):
+            raise TypeError("violating_events_source must be a string or None")
+        self.__violating_events_source = source
+
+    def _clear_violating_events(self):
+        """Drop a stored pre-analysis after the constraint text changes."""
+        current = getattr(self, "_Constraint__violating_events", None)
+        if current:
+            for old in list(current):
+                old.constraint = None
+        self.__violating_events_source = None
 
     def __repr__(self):
         return (

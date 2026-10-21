@@ -35,6 +35,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers.mu
     format_multiplicity_label,
 )
 from besser.utilities.utils import explicit_timestamp_iso
+from besser.BUML.metamodel.structural_event import event_payloads
 
 
 def _set_timestamp(target: dict, element) -> dict:
@@ -49,6 +50,21 @@ def _set_timestamp(target: dict, element) -> dict:
     if iso is not None:
         target["timestamp"] = iso
     return target
+
+
+def _attach_violating_events(element_data: dict, constraint) -> None:
+    """Copy a stored pre-analysis onto an OCL box.
+
+    Omitted when the constraint has never been analyzed, so diagrams that
+    predate this field keep the JSON they had before.
+    """
+    source = getattr(constraint, "violating_events_source", None)
+    events = getattr(constraint, "violating_events", None) or set()
+    if source is None and not events:
+        return
+    element_data["violatingEvents"] = event_payloads(constraint)
+    if source is not None:
+        element_data["violatingEventsSource"] = source
 
 
 def fresh_primitive_types() -> dict:
@@ -482,6 +498,8 @@ def class_buml_to_json(domain_model):
             # Surface natural-language constraint descriptions for the editor
             if isinstance(type_obj, Constraint) and getattr(type_obj, 'description', None):
                 element_data["description"] = type_obj.description
+            if isinstance(type_obj, Constraint):
+                _attach_violating_events(element_data, type_obj)
 
             # Add metadata fields for classes if they exist
             if isinstance(type_obj, Class) and hasattr(type_obj, 'metadata') and type_obj.metadata:
@@ -742,6 +760,7 @@ def class_buml_to_json(domain_model):
                     # are symmetric for method contracts too.
                     if getattr(constraint, "description", None):
                         elements[box_id]["description"] = constraint.description
+                    _attach_violating_events(elements[box_id], constraint)
                     _set_timestamp(elements[box_id], constraint)
                     rel_id = str(uuid.uuid4())
                     relationships[rel_id] = {

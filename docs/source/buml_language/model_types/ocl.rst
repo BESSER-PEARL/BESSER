@@ -178,6 +178,20 @@ the following sub-pages cover the public surface:
 
 For a runnable end-to-end example, see :doc:`../../examples/ocl`.
 
+Incremental pre-analysis
+------------------------
+
+Parsing an invariant does not decide which changes can violate it. Call
+:func:`besser.BUML.notations.ocl.incremental.analyze_invariant` when that set
+is needed. The result is a set of :class:`ViolatingEvent` links on the
+constraint, one per structural event from :doc:`structural_event`. Operators
+the analysis does not handle exactly are over-approximated: extra events are
+kept and marked ``approximated``. Only invariants are analyzed.
+
+The web editor runs this from **Generate → Constraints → Incremental
+pre-analysis** (``POST /besser_api/ocl/incremental-preanalysis``) and shows the
+events when an OCL constraint is opened.
+
 Supported notations
 -------------------
 

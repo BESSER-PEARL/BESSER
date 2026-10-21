@@ -4,6 +4,7 @@ B-UML Language
 .. toctree::
 
    BUML/metamodel/api_structural
+   BUML/metamodel/api_structural_event
    BUML/metamodel/api_object
    BUML/metamodel/api_gui
    BUML/metamodel/api_ocl

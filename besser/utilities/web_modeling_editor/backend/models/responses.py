@@ -31,6 +31,21 @@ class ValidationResponse(BaseModel):
     ocl_message: str = ""
 
 
+class IncrementalPreanalysisItem(BaseModel):
+    """Events that may violate one invariant, addressed to its editor box."""
+    name: str
+    elementId: Optional[str] = None
+    source: Optional[str] = None
+    warnings: List[str] = []
+    events: List[Dict[str, Any]] = []
+
+
+class IncrementalPreanalysisResponse(BaseModel):
+    """On-demand chapter-4 pre-analysis of the invariants in a class diagram."""
+    constraints: List[IncrementalPreanalysisItem] = []
+    warnings: List[str] = []
+
+
 class ApiInfoResponse(BaseModel):
     """Response for the API root endpoint."""
     message: str

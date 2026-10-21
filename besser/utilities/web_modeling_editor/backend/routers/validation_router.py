@@ -13,6 +13,7 @@ from besser.utilities.web_modeling_editor.backend.models import (
     DiagramInput,
 )
 from besser.utilities.web_modeling_editor.backend.models.responses import (
+    IncrementalPreanalysisResponse,
     ValidationResponse,
 )
 
@@ -38,6 +39,9 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 # Backend services - Validators
 from besser.utilities.web_modeling_editor.backend.services.validators import (
     check_ocl_constraint,
+)
+from besser.utilities.web_modeling_editor.backend.services.ocl.incremental_preanalysis import (
+    incremental_preanalysis,
 )
 
 # Centralized error handling
@@ -262,6 +266,21 @@ async def validate_diagram(input_data: DiagramInput):
             response["ocl_message"] = ocl_results["message"]
 
     return response
+
+
+@router.post("/ocl/incremental-preanalysis", response_model=IncrementalPreanalysisResponse)
+@handle_endpoint_errors("incremental_preanalysis")
+async def ocl_incremental_preanalysis(input_data: DiagramInput):
+    """Compute the structural events that may violate each invariant.
+
+    Class diagrams only. The computation runs when the editor asks for it.
+    Parsing and validation are unchanged.
+    """
+    return incremental_preanalysis({
+        "id": input_data.id,
+        "title": input_data.title,
+        "model": input_data.model,
+    })
 
 
 @router.post("/check-ocl", response_model=ValidationResponse)

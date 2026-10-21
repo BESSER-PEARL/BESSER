@@ -21,6 +21,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
     legacy_body_only_to_text, process_ocl_constraints,
 )
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
+from besser.BUML.metamodel.structural_event import event_from_dict
 from besser.utilities.utils import parse_iso_timestamp
 
 
@@ -884,6 +885,66 @@ def _ocl_box_to_full_text(
         return None
 
 
+def _restore_violating_events(
+    elements: dict[str, Any],
+    domain_model: DomainModel,
+    by_name: dict[str, Any],
+    names_by_element: dict[str, list[str]],
+    all_warnings: list[str],
+) -> None:
+    """Put stored pre-analysis events back on the constraints they belong to.
+
+    Runs after each constraint's expression is final. Assigning the expression
+    clears a previously stored analysis, so the events have to be attached
+    after that.
+    """
+    for element_id, element in elements.items():
+        if element.get("type") != "ClassOCLConstraint":
+            continue
+        payloads = element.get("violatingEvents")
+        source = element.get("violatingEventsSource")
+        if not payloads and source is None:
+            continue
+        if payloads is not None and not isinstance(payloads, list):
+            all_warnings.append(
+                f"Warning: OCL element {element_id} has a violatingEvents value "
+                f"that is not a list; ignoring it."
+            )
+            payloads = []
+        attached: set[Any] = set()
+        box_names = names_by_element.get(element_id, [])
+        for payload in payloads or []:
+            if not isinstance(payload, dict):
+                all_warnings.append(
+                    f"Warning: OCL element {element_id} has a violating event "
+                    f"that is not an object; ignoring it."
+                )
+                continue
+            name = payload.get("constraint")
+            constraint = by_name.get(name) if name else None
+            if constraint is None and len(box_names) == 1:
+                constraint = by_name.get(box_names[0])
+            if constraint is None:
+                all_warnings.append(
+                    f"Warning: stored violating event on {element_id} does not match "
+                    f"an invariant ({payload.get('kind')}, {name}); ignoring it."
+                )
+                continue
+            link = event_from_dict(payload, constraint, domain_model)
+            if link is None:
+                all_warnings.append(
+                    f"Warning: could not restore {payload.get('kind')} for "
+                    f"'{name}' on {element_id}; a class, attribute or association is missing."
+                )
+                continue
+            attached.add(constraint)
+        if source is None:
+            continue
+        targets = attached or {by_name[name] for name in box_names if name in by_name}
+        for constraint in targets:
+            constraint.violating_events_source = source
+
+
 def _process_constraints(
     elements: dict[str, Any],
     relationships: dict[str, Any],
@@ -993,6 +1054,9 @@ def _process_constraints(
             f"ambiguous. Closest definition wins."
         )
 
+    # element id and box text of each invariant, so a later pre-analysis can
+    # write its events back onto the editor box that declared it.
+    origin_meta: dict[int, tuple[str, str]] = {}
     # Use a list (not a set) so the iteration order at de-dup time matches
     # the order constraints were encountered in ``elements.items()``. With
     # a set, "first wins" would silently become "any-wins" on Python
@@ -1055,6 +1119,7 @@ def _process_constraints(
             try:
                 if kind == "invariant":
                     extra_invariants.append((constraint, origin))
+                    origin_meta[id(constraint)] = (element_id, text)
                 else:
                     method = method_by_qualified_name.get((class_name, method_name)) if method_name else None
                     if method is None:
@@ -1094,6 +1159,23 @@ def _process_constraints(
         by_name[c.name] = c
     domain_model.ocl_warnings = all_warnings
     domain_model.constraints = set(by_name.values())
+    element_ids: dict[str, str] = {}
+    box_text: dict[str, str] = {}
+    names_by_element: dict[str, list[str]] = {}
+    for constraint in domain_model.constraints:
+        meta = origin_meta.get(id(constraint))
+        if meta is None:
+            continue
+        element_id, text = meta
+        element_ids[constraint.name] = element_id
+        box_text[constraint.name] = text
+        names_by_element.setdefault(element_id, []).append(constraint.name)
+    domain_model.ocl_element_ids = element_ids
+    domain_model.ocl_box_text = box_text
+    _restore_violating_events(
+        elements, domain_model, by_name, names_by_element, all_warnings,
+    )
+    domain_model.ocl_warnings = all_warnings
 
 
 def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:

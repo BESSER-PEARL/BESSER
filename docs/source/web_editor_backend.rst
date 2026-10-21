@@ -571,11 +571,11 @@ Validation
 
 Both take a ``DiagramInput`` with a class diagram and answer with a ``text/event-stream``. The search tries 5, 7
 and 9 objects per class, in turn, each analysis timing out after 30 seconds, and sends a ``data:`` JSON event per
-step, with ``sat`` (``true``, ``false`` or ``null``), ``done``, ``message`` and ``scope``. The last event
-(``done: true``) also has ``isValid``, ``errors`` and ``warnings``, plus ``object_model`` for an instance found by
-``/generate-object-diagram``. When no instance is found, ``reason`` says why: ``"unsat"``, when the bounds hold no
-instance, ``"timeout"``, or ``"capacity"``, when the bounds are too large for the Alloy Analyzer; the last two end the
-search. While the Alloy Analyzer runs, SSE comment lines
+step: a ``SemanticCheckEvent`` (``models/responses.py``) with ``done``, ``message``, ``isValid``, ``errors`` and
+``warnings``, like the response of ``/validate-diagram``, plus ``object_model`` for an instance found by
+``/generate-object-diagram``. The last event has ``done: true``; its ``isValid`` is true only when an instance was
+found. When no instance is found, ``message`` says why; a timeout, or bounds too large for the
+Alloy Analyzer, end the search. While the Alloy Analyzer runs, SSE comment lines
 (``: semantic-check-heartbeat``) are sent every 15 seconds, so that clients and proxies see the stream is alive.
 Both need Java and the Alloy Analyzer (``JAVA_HOME``, ``BESSER_ALLOY_JAR``); the backend Docker image bundles them.
 

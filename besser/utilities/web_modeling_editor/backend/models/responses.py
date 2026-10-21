@@ -32,6 +32,19 @@ class ValidationResponse(BaseModel):
     ocl_message: str = ""
 
 
+class SemanticCheckEvent(BaseModel):
+    """An event of the semantic check streams (``/semantic-consistency-check``, ``/generate-object-diagram``).
+    The last one has ``done``; as in :class:`ValidationResponse`, ``isValid`` says whether an instance was
+    found, and ``message`` what was searched and, when nothing was found, why."""
+    done: bool = False
+    message: str
+    isValid: bool = False
+    errors: List[str] = []
+    warnings: List[str] = []
+    # The instance found, as an object diagram (``/generate-object-diagram`` only)
+    object_model: Optional[Dict[str, Any]] = None
+
+
 class ApiInfoResponse(BaseModel):
     """Response for the API root endpoint."""
     message: str

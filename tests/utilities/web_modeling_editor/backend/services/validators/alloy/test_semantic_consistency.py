@@ -112,7 +112,7 @@ def test_invalid_ocl_is_not_checked(invalid_ocl_diagram):
 @needs_alloy
 def test_consistent_diagram(consistent_diagram):
     events = _events(check_semantic_consistency(consistent_diagram))
-    assert events[-1]["sat"] is True
+    assert events[-1]["isValid"] is True
     assert events[-1]["done"] is True
     assert events[-1]["message"].startswith("Instance found within 5 objects per class")
 
@@ -129,7 +129,7 @@ def test_object_diagram_of_a_consistent_diagram(consistent_diagram):
     events = _events(generate_object_diagram(consistent_diagram))
     object_diagram = events[-1]["object_model"]
     names = [element["name"] for element in object_diagram["elements"].values() if element["type"] == "ObjectName"]
-    assert events[-1]["sat"] is True
+    assert events[-1]["isValid"] is True
     assert "Book_0" in names  # Alloy numbers the atoms of a signature from 0
 
 
@@ -138,19 +138,17 @@ def test_contradictory_diagram(contradictory_diagram):
     events = _events(check_semantic_consistency(contradictory_diagram))
     not_found = [event for event in events if event["message"].startswith("No instance within")]
     assert len(not_found) == 3  # one per scope, the last one final
-    assert events[-1]["sat"] is False
-    assert events[-1]["reason"] == "unsat"
+    assert events[-1]["isValid"] is False
     assert events[-1]["done"] is True
     assert events[-1]["message"].startswith("No instance within 9 objects per class")
 
 
 @needs_alloy
-def test_no_instance_reason_timeout(consistent_diagram):
+def test_timeout_ends_the_search(consistent_diagram):
     events = _events(check_semantic_consistency(consistent_diagram, timeout=0))
     searches = [event for event in events if event["message"].startswith("Searching within")]
     assert len(searches) == 1  # a timeout ends the search
-    assert events[-1]["reason"] == "timeout"
-    assert events[-1]["sat"] is None
+    assert events[-1]["isValid"] is False
     assert events[-1]["message"].startswith("Timed out searching within 5 objects per class")
 
 
@@ -159,8 +157,7 @@ def test_bounds_too_large(too_large_diagram):
     events = _events(check_semantic_consistency(too_large_diagram))
     searches = [event for event in events if event["message"].startswith("Searching within")]
     assert len(searches) == 1  # bounds too large end the search
-    assert events[-1]["reason"] == "capacity"
-    assert events[-1]["sat"] is None
+    assert events[-1]["isValid"] is False
     assert events[-1]["message"].startswith("Too large to search within 5 objects per class")
 
 

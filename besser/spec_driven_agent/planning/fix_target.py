@@ -11,11 +11,10 @@ so the orchestrator can:
   warning to blocker, so the fix loop is driven to resolve them;
 * gate the run's success on the target actually being addressed.
 
-Scope: this is the backend generator's LOCAL detector. It mirrors the
-*spirit* of the modeling-agent's ``_looks_like_fix_request`` /
-``_FIX_INTENT_RE`` (a separate codebase) rather than importing it. It is
-used only on the ``modify()`` path — from-scratch ``run()`` never touches
-it.
+Scope: this is the backend generator's LOCAL detector, used only on the
+``modify()`` path — from-scratch ``run()`` never touches it. Unlike the
+modeling-agent's ``_FIX_INTENT_RE`` (which only picks confirmation copy), it
+gates the run, so it needs evidence of a failure, not failure vocabulary.
 
 Design rule (shared with ``contract_checks``): **precision over recall**.
 A target we cannot ground in concrete vocabulary falls back to a soft
@@ -29,25 +28,67 @@ import re
 from dataclasses import dataclass, field
 
 
-# Strong, unambiguous fix / error vocabulary — mirrors the modeling-agent's
-# ``_FIX_INTENT_RE`` in spirit (fix/error/traceback/exception/bug/broken/
-# crash/fails/not working/regenerate) plus a bare HTTP 4xx/5xx status code.
-_FIX_INTENT_RE = re.compile(
-    r"\b(?:fix|fixes|fixed|fixing|"
-    r"error|errors|traceback|stack\s?trace|exception|"
-    r"bug|bugs|broken|crash(?:es|ed|ing)?|"
-    r"fails?|failing|failed|"
-    r"not\s+working|does(?:n['’]?t| not)\s+work|"
-    r"regressed?|returns?\s+(?:a\s+)?[45]\d{2}|"
-    r"update\s+the\s+code|re-?generate|re-?run)\b"
-    r"|\b[45]\d{2}\b"
-    # A bare exception-class token (``NameError``, ``ValidationError``) — a
-    # pasted traceback often names the class without the standalone word
-    # "error". The suffix must attach to a longer identifier, so the plain
-    # word "error"/"exception" is handled by the alternation above, not here.
-    r"|\b[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)\b",
+# The modeling-agent sends its own summary first (machine prose such as "show
+# clear error messages", "return 404 for unknown tasks"), then the user's words
+# under these headings, the newest message last. Only the user's newest
+# message can report a failure.
+_USER_TEXT_MARKERS = (
+    "## Subsequent user request, verbatim",
+    "## The user's original request, verbatim",
+)
+
+# Evidence that the user reports a failure of the existing app. Feature wording
+# is not evidence: "show a validation error", "a fixed daily rate", "return
+# 404 for unknown ids", "regenerate the app" (#659).
+_FAILURE_EVIDENCE_RE = re.compile(
+    "|".join((
+        # A pasted traceback, stack trace or tool error.
+        r"traceback \(most recent call last\)|\bstack\s?trace\b|\bFile \"[^\"]+\", line \d+",
+        r"\bnpm (?:ERR!|error)|\bHTTP/\d(?:\.\d)? [45]\d\d\b|\berror\s*:\s*\S",
+        # The app misbehaving.
+        r"\b(?:does|do|did|is|are|was)(?:n['’]?t| not)\s+(?:work|load|start|run|open|compile|build|save|respond)",
+        r"\bwon['’]?t\s+(?:work|load|start|run|open|compile|build|save|respond)",
+        r"\bnot\s+working\b|\bcrash(?:es|ed|ing)\b|\bblank (?:page|screen)\b|\bnothing happens\b",
+        r"\b(?:is|are|was|were|seems|looks|still|['’]s)\s+(?:completely\s+|totally\s+|now\s+)?broken\b",
+        r"\b(?:it|this|build|tests?|install|request|import|migration|login|app|server|backend"
+        r"|frontend|page|call|endpoint|compilation|deploy(?:ment)?|command)\s+"
+        r"(?:still\s+|keeps\s+|always\s+|now\s+|is\s+|are\s+)?(?:fails|failed|failing)\b",
+        r"\bfail(?:s|ed|ing)?\s+with\b",
+        # The user meeting an error, or asking for a fix.
+        r"\b(?:i|we)\s+(?:get|got|keep getting|am getting|are getting|see|saw|hit|ran into|run into"
+        r"|receive|received)\s+(?:an?\s+|this\s+|the\s+|that\s+|some\s+|following\s+)*(?:\w+\s+){0,2}errors?\b",
+        r"\bgetting\s+(?:an?\s+|this\s+|the\s+)?(?:\w+\s+)?errors?\b",
+        r"\bfix(?:ing)?\s+(?:it|this|that|these|those|them|the|my|our|all)\b",
+        r"\b(?:please|pls|can you|could you)\s+fix\b",
+        r"\bthere(?:['’]s| is| are)\s+(?:an?\s+|some\s+)?bugs?\b|\bbuggy\b",
+        r"\b[45]\d\ds\b|\b[45]\d\d (?:error|bad request|internal server error|not found|unprocessable)",
+        r"\b(?:error|errors|status)\s+(?:code\s+)?[45]\d\d\b",
+    )),
     re.IGNORECASE,
 )
+# A pasted exception class (``NameError``, ``ValidationError``): case-sensitive,
+# and not when the request specifies it ("raise a ValueError if ...").
+_EXCEPTION_EVIDENCE_RE = re.compile(r"\b[A-Z][A-Za-z0-9]*(?:Error|Exception)\b")
+# A status code the app returned ("POST /x returns 400"), not one it should
+# return ("returns 404 for unknown tasks").
+_STATUS_REPORT_RE = re.compile(
+    r"\b(?:returns?|returned|returning|gives?|gave|got|get|getting|responds?\s+with)\s+"
+    r"(?:an?\s+|http\s+|status\s+)*[45]\d\d\b"
+    r"(?!\s+(?:if|for|when(?!\s+I\b)|unless|on\s+(?:unknown|missing|invalid)))",
+    re.IGNORECASE,
+)
+# Words that make the next match a specification ("raise a ValueError if",
+# "should return 404"), not a report.
+_SPECIFIED_BEFORE_RE = re.compile(
+    r"\b(?:raise|throw|return|should|must|shall|will|to)\s+(?:an?\s+)?$", re.IGNORECASE,
+)
+
+
+def _reported(pattern: re.Pattern, text: str) -> bool:
+    return any(
+        not _SPECIFIED_BEFORE_RE.search(text[max(0, m.start() - 20):m.start()])
+        for m in pattern.finditer(text)
+    )
 
 # HTTP method + path, e.g. ``POST /createWatchlist`` or ``GET /watchlists/{id}``.
 _HTTP_METHOD_PATH_RE = re.compile(
@@ -104,9 +145,23 @@ class ReportedTarget:
         return self.kind == "soft" or not self.entities
 
 
+def users_latest_words(instructions: str) -> str:
+    """The user's newest message inside the modeling-agent's framing."""
+    text = instructions or ""
+    for marker in _USER_TEXT_MARKERS:
+        if marker in text:
+            return text.rsplit(marker, 1)[1]
+    return text
+
+
 def looks_like_fix_request(instructions: str) -> bool:
-    """True when the instructions carry fix / error / failure vocabulary."""
-    return bool(_FIX_INTENT_RE.search(instructions or ""))
+    """True when the user's newest message reports a failure of the app."""
+    text = users_latest_words(instructions)
+    return bool(
+        _FAILURE_EVIDENCE_RE.search(text)
+        or _reported(_EXCEPTION_EVIDENCE_RE, text)
+        or _reported(_STATUS_REPORT_RE, text)
+    )
 
 
 def _forms(name: str) -> set[str]:
@@ -203,9 +258,9 @@ def parse_reported_target(
     returns a target (possibly soft) when they are — the caller decides
     what to do with a soft target.
     """
-    text = (instructions or "").strip()
-    if not looks_like_fix_request(text):
+    if not looks_like_fix_request(instructions):
         return None
+    text = users_latest_words(instructions).strip()
 
     class_names = _canonical_class_names(domain_model)
 

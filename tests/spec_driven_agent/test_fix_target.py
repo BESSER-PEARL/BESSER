@@ -177,3 +177,70 @@ class TestFindingMatchesTarget:
     def test_empty_entities_never_matches(self):
         soft = ReportedTarget(raw="x", kind="soft", descriptor="d", entities=())
         assert not finding_matches_target("acceptance: entity Book", soft)
+
+
+# ----------------------------------------------------------------------
+# Precision: feature wording is not a reported failure (#659 second-run test)
+# ----------------------------------------------------------------------
+
+# Live: a modify run with the library spec became "the runtime failure you
+# reported" (via "fixed" and "errors"), a warning was promoted to a blocker,
+# and the run ended "could not confirm the reported failure is fixed".
+_FEATURE_WORDING = (
+    "Show a validation error if the email is invalid.",
+    "Regenerate the app from the updated class diagram.",
+    "Every loan also records a daily rate and a processing fee, fixed at the moment "
+    "the book is checked out.",
+    "Build a todo app with form validation that shows clear error messages, and a "
+    "REST API returning 404 for unknown tasks",
+    "The API should return 409 when two bookings overlap.",
+    "If the payment fails, show a retry button.",
+    "Raise a ValueError if the quantity is negative.",
+    "You must finish the app having no errors on it, do not ask me anything.",
+)
+
+_REAL_FAILURES = (
+    "I get a 500 error when I submit the form, please fix it",
+    "the endpoint 500s",
+    "fix the checkout page, it crashes",
+    "Can you fix it in the code and give the updated files?",
+    "INFO:main_api:Response status: 400 / POST /user/methods/createWatchlist/ HTTP/1.1 400 Bad Request",
+    "npm error code ENOENT / npm error syscall open",
+)
+
+
+class TestFeatureWordingIsNotAFix:
+    def test_feature_wording(self):
+        for text in _FEATURE_WORDING:
+            assert not looks_like_fix_request(text), text
+            assert parse_reported_target(text, _domain("Book")) is None, text
+
+    def test_reported_failures_still_detected(self):
+        for text in _REAL_FAILURES:
+            assert looks_like_fix_request(text), text
+
+
+def _framed(original_spec: str, follow_up: str) -> str:
+    """The modeling-agent's framing: its summary, then the user's words."""
+    return (
+        "## Assistant's notes (may be inaccurate)\n\nShow clear error messages on "
+        "invalid input and return 404 for unknown books.\n\n"
+        "## The user's original request, verbatim\n\nThis is the authority.\n\n"
+        f"{original_spec}\n\n## Subsequent user request, verbatim\n\n"
+        "This later request takes precedence where it changes earlier requirements.\n\n"
+        f"{follow_up}"
+    )
+
+
+class TestOnlyTheNewestUserMessageCounts:
+    SPEC = "A library app. Fines are fixed per day; the API errors on a missing Book."
+
+    def test_spec_and_summary_wording_does_not_make_a_fix(self):
+        assert not looks_like_fix_request(_framed(self.SPEC, "Add a search bar to the Loan list"))
+
+    def test_the_newest_message_is_parsed(self):
+        target = parse_reported_target(
+            _framed(self.SPEC, "POST /loan/ returns 500 when I save"), _domain("Book", "Loan"),
+        )
+        assert target is not None and target.kind == "http"
+        assert target.entities == ("Loan",)  # not Book, named only in the spec

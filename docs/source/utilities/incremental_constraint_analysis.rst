@@ -131,7 +131,9 @@ On a class diagram the same computation is **Generate → Constraints →
 Incremental pre-analysis** (``POST /besser_api/ocl/incremental-preanalysis``).
 Opening an OCL constraint afterwards lists the events. The editor
 remembers the expression that was analyzed, and shows the list as out
-of date if the constraint text changes afterwards.
+of date if the constraint text changes afterwards. Choosing the menu
+item again discards the stored events and computes a new list from the
+current constraint text.
 
 API
 ---

@@ -372,6 +372,48 @@ def test_preanalysis_endpoint_matches_the_running_example():
         assert all(event["approximated"] is False for event in item["events"])
 
 
+def test_a_second_run_ignores_events_stored_by_the_first():
+    """A rerun computes from the constraint text, not from the previous list.
+
+    Stored events are what the editor sends back. Rebuilding one that no
+    longer matches the model used to warn (``could not restore InsertClass``)
+    even though the new analysis replaced the list.
+    """
+    from besser.utilities.web_modeling_editor.backend.services.converters import class_buml_to_json
+    from besser.utilities.web_modeling_editor.backend.services.ocl.incremental_preanalysis import (
+        incremental_preanalysis,
+    )
+
+    model = ecommerce_model()
+    _load(model)
+    for constraint in list(model.constraints):
+        constraint.expression = INVARIANTS[constraint.name]
+        set_violating_events(constraint, set())
+    payload = {"title": "Ecommerce", "model": class_buml_to_json(model)}
+    first = incremental_preanalysis(payload)
+    assert first["warnings"] == []
+
+    for item in first["constraints"]:
+        box = payload["model"]["elements"][item["elementId"]]
+        box["violatingEvents"] = item["events"] + [{
+            "kind": "InsertClass",
+            "class": "Sale",
+            "constraint": item["name"],
+            "approximated": False,
+        }]
+        box["violatingEventsSource"] = item["source"]
+
+    second = incremental_preanalysis(payload)
+    assert second["warnings"] == []
+    assert first["constraints"] == second["constraints"]
+    # The caller's diagram still holds the previous list; only the computation drops it.
+    assert any(
+        event.get("kind") == "InsertClass"
+        for element in payload["model"]["elements"].values()
+        for event in element.get("violatingEvents") or []
+    )
+
+
 def test_preanalysis_rejects_a_diagram_that_is_not_a_class_diagram():
     from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
     from besser.utilities.web_modeling_editor.backend.services.ocl.incremental_preanalysis import (

@@ -1,5 +1,6 @@
 # Two targets:
-#   backend          the web editor backend: Python, its requirements and besser.
+#   backend          the web editor backend: Python, its requirements, besser
+#                    and the Alloy Analyzer with its JRE.
 #   smartgen-worker  the Spec-Driven Agent worker: backend plus the toolchains
 #                    Phase 3 compiles with and bubblewrap for run_command.
 # docker build --target backend|smartgen-worker. Without --target the last
@@ -40,6 +41,18 @@ RUN grep -v '^governancedsl' backend-requirements.txt > backend-requirements-bas
     && grep '^governancedsl' backend-requirements.txt > governance-requirement.txt \
     && pip install --no-cache-dir -r requirements.txt -r backend-requirements-base.txt
 
+# The Alloy Analyzer, which the semantic consistency check and the object
+# diagram generation run (services/validators/alloy), and the JRE it needs.
+# Its MIT license must ship with the redistributed jar (THIRD_PARTY_LICENSES.md).
+# default-java is Debian's link to the default JRE, whatever the architecture.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends default-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
+ADD https://github.com/AlloyTools/org.alloytools.alloy/releases/download/v6.2.0/org.alloytools.alloy.dist.jar /alloy/alloy.jar
+ADD https://raw.githubusercontent.com/AlloyTools/org.alloytools.alloy/v6.2.0/LICENSE /alloy/LICENSE
+ENV JAVA_HOME=/usr/lib/jvm/default-java \
+    BESSER_ALLOY_JAR=/alloy/alloy.jar
+
 
 FROM python-deps AS backend
 
@@ -50,11 +63,16 @@ RUN pip install --no-cache-dir -e . && pip install --no-cache-dir -r governance-
 # A build-time CA must not become runtime trust. Unconditional; the last lines
 # fail the build if a known TLS-inspection CA is still trusted. They read the
 # decoded subjects: the PEM bundle is base64, so grepping it never matches.
-RUN rm -f /usr/local/share/ca-certificates/*.crt \
+# The JRE's keystore was built while the proxy CA was trusted, and --fresh
+# never removes a cert from it: delete it so the jks-keystore hook rebuilds it
+# from the clean store, then check it the same way.
+RUN rm -f /usr/local/share/ca-certificates/*.crt /etc/ssl/certs/java/cacerts \
     && update-ca-certificates --fresh >/dev/null 2>&1 \
     && subjects="$(openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca-certificates.crt \
         | openssl pkcs7 -print_certs -noout)" && [ -n "$subjects" ] \
-    && ! printf '%s\n' "$subjects" | grep -qiE 'netskope|goskope'
+    && ! printf '%s\n' "$subjects" | grep -qiE 'netskope|goskope' \
+    && jks="$(keytool -list -v -cacerts -storepass changeit)" && [ -n "$jks" ] \
+    && ! printf '%s\n' "$jks" | grep -qiE 'netskope|goskope'
 
 ENV PYTHONPATH=/app
 

@@ -27,15 +27,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from besser.spec_driven_agent.planning.requirements_ledger import original_request
+
 
 # The modeling-agent sends its own summary first (machine prose such as "show
 # clear error messages", "return 404 for unknown tasks"), then the user's words
-# under these headings, the newest message last. Only the user's newest
-# message can report a failure.
-_USER_TEXT_MARKERS = (
-    "## Subsequent user request, verbatim",
-    "## The user's original request, verbatim",
-)
+# (``original_request``), each later message under this heading. Only the
+# user's newest message can report a failure.
+_LATER_REQUEST_MARKER = "## Subsequent user request, verbatim"
 
 # Evidence that the user reports a failure of the existing app. Feature wording
 # is not evidence: "show a validation error", "a fixed daily rate", "return
@@ -48,7 +47,8 @@ _FAILURE_EVIDENCE_RE = re.compile(
         # The app misbehaving.
         r"\b(?:does|do|did|is|are|was)(?:n['’]?t| not)\s+(?:work|load|start|run|open|compile|build|save|respond)",
         r"\bwon['’]?t\s+(?:work|load|start|run|open|compile|build|save|respond)",
-        r"\bnot\s+working\b|\bcrash(?:es|ed|ing)\b|\bblank (?:page|screen)\b|\bnothing happens\b",
+        r"\bnot\s+working\b|\bcrash(?:es|ed|ing)\b|\bnothing happens\b|\binternal server error\b",
+        r"\bblank (?:white )?(?:page|screen)\b|\bwhite screen\b|\bsame error\b|\b(?:error|[45]\d\d)\s+again\b",
         r"\b(?:is|are|was|were|seems|looks|still|['’]s)\s+(?:completely\s+|totally\s+|now\s+)?broken\b",
         r"\b(?:it|this|build|tests?|install|request|import|migration|login|app|server|backend"
         r"|frontend|page|call|endpoint|compilation|deploy(?:ment)?|command)\s+"
@@ -58,29 +58,32 @@ _FAILURE_EVIDENCE_RE = re.compile(
         r"\b(?:i|we)\s+(?:get|got|keep getting|am getting|are getting|see|saw|hit|ran into|run into"
         r"|receive|received)\s+(?:an?\s+|this\s+|the\s+|that\s+|some\s+|following\s+)*(?:\w+\s+){0,2}errors?\b",
         r"\bgetting\s+(?:an?\s+|this\s+|the\s+)?(?:\w+\s+)?errors?\b",
-        r"\bfix(?:ing)?\s+(?:it|this|that|these|those|them|the|my|our|all)\b",
+        # Not the CSS sense: "fix the header to the top".
+        r"\bfix(?:ing)?\s+(?:it|this|that|these|those|them|the|my|our|all)\b(?!(?:\s+\w+){1,3}\s+(?:to|at)\b)",
         r"\b(?:please|pls|can you|could you)\s+fix\b",
         r"\bthere(?:['’]s| is| are)\s+(?:an?\s+|some\s+)?bugs?\b|\bbuggy\b",
-        r"\b[45]\d\ds\b|\b[45]\d\d (?:error|bad request|internal server error|not found|unprocessable)",
-        r"\b(?:error|errors|status)\s+(?:code\s+)?[45]\d\d\b",
+        r"\b[45]\d\ds\b",
     )),
     re.IGNORECASE,
 )
 # A pasted exception class (``NameError``, ``ValidationError``): case-sensitive,
 # and not when the request specifies it ("raise a ValueError if ...").
 _EXCEPTION_EVIDENCE_RE = re.compile(r"\b[A-Z][A-Za-z0-9]*(?:Error|Exception)\b")
-# A status code the app returned ("POST /x returns 400"), not one it should
-# return ("returns 404 for unknown tasks").
+# A status code the app returned ("POST /x returns 400", "a 500 error"), not
+# one it should return ("Return 404 for unknown tasks", "a custom 404 page").
 _STATUS_REPORT_RE = re.compile(
-    r"\b(?:returns?|returned|returning|gives?|gave|got|get|getting|responds?\s+with)\s+"
+    r"\b(?:returns|returned|returning|gives|gave|got|get|getting|responds?\s+with)\s+"
     r"(?:an?\s+|http\s+|status\s+)*[45]\d\d\b"
-    r"(?!\s+(?:if|for|when(?!\s+I\b)|unless|on\s+(?:unknown|missing|invalid)))",
+    r"(?!\s+(?:if|for|when(?!\s+I\b)|unless|on\s+(?:unknown|missing|invalid)))"
+    r"|\b[45]\d\d (?:error|bad request|internal server error|not found|unprocessable)"
+    r"|\b(?:error|errors|status)\s+(?:code\s+)?[45]\d\d\b",
     re.IGNORECASE,
 )
 # Words that make the next match a specification ("raise a ValueError if",
-# "should return 404"), not a report.
+# "should return 404", "log every 500 error"), not a report.
 _SPECIFIED_BEFORE_RE = re.compile(
-    r"\b(?:raise|throw|return|should|must|shall|will|to)\s+(?:an?\s+)?$", re.IGNORECASE,
+    r"\b(?:raise|throw|return|should|must|shall|will|to|every|each|any|all|custom)\s+(?:an?\s+)?$",
+    re.IGNORECASE,
 )
 
 
@@ -147,11 +150,7 @@ class ReportedTarget:
 
 def users_latest_words(instructions: str) -> str:
     """The user's newest message inside the modeling-agent's framing."""
-    text = instructions or ""
-    for marker in _USER_TEXT_MARKERS:
-        if marker in text:
-            return text.rsplit(marker, 1)[1]
-    return text
+    return original_request(instructions).rsplit(_LATER_REQUEST_MARKER, 1)[-1]
 
 
 def looks_like_fix_request(instructions: str) -> bool:

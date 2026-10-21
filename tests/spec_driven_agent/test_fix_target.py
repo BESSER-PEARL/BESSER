@@ -244,3 +244,26 @@ class TestOnlyTheNewestUserMessageCounts:
         )
         assert target is not None and target.kind == "http"
         assert target.entities == ("Loan",)  # not Book, named only in the spec
+
+
+class TestReviewCorpus:
+    """From a second, independently written corpus (real pilot reports among them)."""
+
+    def test_more_reports(self):
+        for text in (
+            "DB generation is giving an internal server error",
+            "I open the frontend and it's just a blank white page, nothing renders at all",
+            "same error as before",
+            "nope, 500 again",
+        ):
+            assert looks_like_fix_request(text), text
+
+    def test_more_specifications(self):
+        for text in (
+            "fix the header to the top of the page",
+            "fix the sidebar width to 240px",
+            "add rate limiting: return 429 after 100 requests per minute per user",
+            "log every 500 error to a file together with the request body",
+            "Add a custom 404 error page with a link back to the dashboard.",
+        ):
+            assert not looks_like_fix_request(text), text

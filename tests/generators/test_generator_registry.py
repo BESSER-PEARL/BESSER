@@ -33,8 +33,8 @@ SNAPSHOTS = Path(__file__).parent / "snapshots"
 WEB_EDITOR_IDS = [
     "python", "java", "pydantic", "test_case", "django", "spring", "backend", "web_app",
     "sqlalchemy", "sql", "supabase", "jsonschema", "jsonobject", "agent", "qiskit", "rdf",
-    "rest_api", "react", "flutter", "terraform", "bpmn", "docker_compose", "pytorch",
-    "tensorflow", "forecaster",
+    "rest_api", "react", "flutter", "terraform", "bpmn", "docker_compose", "alloy",
+    "pytorch", "tensorflow", "forecaster",
 ]
 AGENT_TOOLS = {
     "pydantic": "generate_pydantic",
@@ -59,7 +59,7 @@ AGENT_TOOLS = {
 }
 # The surfaces disagree here on purpose; offering one of these to the agent is
 # a product decision, not a registry fix.
-WEB_EDITOR_ONLY = {"spring", "flutter", "terraform", "docker_compose", "test_case", "forecaster"}
+WEB_EDITOR_ONLY = {"spring", "flutter", "terraform", "docker_compose", "test_case", "forecaster", "alloy"}
 
 
 def _snapshot(name):

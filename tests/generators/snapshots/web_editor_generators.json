@@ -22,6 +22,7 @@
     "terraform",
     "bpmn",
     "docker_compose",
+    "alloy",
     "pytorch",
     "tensorflow",
     "forecaster"
@@ -266,6 +267,17 @@
       "requires_class_diagram": false,
       "required_diagram_type": "DeploymentDiagram",
       "download_filename": "docker_compose.zip",
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
+    },
+    "alloy": {
+      "generator_class": "besser.generators.alloy.alloy_generator.AlloyGenerator",
+      "output_type": "zip",
+      "file_extension": ".zip",
+      "category": "formal_methods",
+      "requires_class_diagram": true,
+      "required_diagram_type": null,
+      "download_filename": "alloy_specification.zip",
       "keep_generated_filename": false,
       "needs_beyond_one_diagram": null
     },

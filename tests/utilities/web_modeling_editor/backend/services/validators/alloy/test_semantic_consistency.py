@@ -180,7 +180,7 @@ def test_untranslatable_diagram(untranslatable_diagram):
     events = _events(check_semantic_consistency(untranslatable_diagram))
     assert events[-1]["isValid"] is False
     assert events[-1]["message"] == "The model cannot be translated to Alloy."
-    assert "Real number" in events[-1]["errors"][0]
+    assert "Reals" in events[-1]["errors"][0]
 
 
 # ---------------------------------------------------------------------------

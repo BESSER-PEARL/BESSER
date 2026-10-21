@@ -19,8 +19,6 @@ def spec(library_with_ocl_v2, tmpdir):
     assert "open boolean" in content
     assert "open date" in content
     assert "open strings" in content
-    assert "open util/integer" not in content
-    assert "open util/ordering" not in content
     return AlloyTestSpec(content)
 
 

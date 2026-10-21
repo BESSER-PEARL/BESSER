@@ -170,8 +170,6 @@ class AlloyInstanceToObjectModel:
             return value if isinstance(value, str) else None
         if type_name == "date":
             return value if isinstance(value, datetime.date) else None
-        if type_name == "datetime":
-            return datetime.datetime.combine(value, datetime.time()) if isinstance(value, datetime.date) else None
         return None
 
     def _add_link(self, source: Object, end: Property, target: Object | None, links: set[tuple]) -> None:

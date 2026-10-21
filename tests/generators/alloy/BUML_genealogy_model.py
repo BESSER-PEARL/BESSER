@@ -32,14 +32,14 @@ Woman = Class(name="Woman")
 is_child_of: BinaryAssociation = BinaryAssociation(
     name="is_child_of",
     ends={
-        Property(name="person_1", type=Person, multiplicity=Multiplicity(1, 1), is_navigable=False),
+        Property(name="children", type=Person, multiplicity=Multiplicity(0, 9999), is_navigable=False),
         Property(name="parents", type=Person, multiplicity=Multiplicity(0, 9999))
     }
 )
 is_coupled_with: BinaryAssociation = BinaryAssociation(
     name="is_coupled_with",
     ends={
-        Property(name="person", type=Person, multiplicity=Multiplicity(1, 1), is_navigable=False),
+        Property(name="spouse_of", type=Person, multiplicity=Multiplicity(0, 1), is_navigable=False),
         Property(name="spouse", type=Person, multiplicity=Multiplicity(0, 1))
     }
 )
@@ -112,13 +112,12 @@ Person_inv_13_1: Constraint = Constraint(
     expression="context Person inv Person_inv_13_1 : self.spouse.parents->intersection(self.parents)->isEmpty()",
     language="OCL"
 )
-# ->closure is not supported by the Alloy translator
-# Person_inv_3_1: Constraint = Constraint(
-#     name="Person_inv_3_1",
-#     context=Person,
-#     expression="context Person inv Person_inv_3_1 :  self.parents->closure(parents)->excludes(self)",
-#     language="OCL"
-# )
+Person_inv_3_1: Constraint = Constraint(
+    name="Person_inv_3_1",
+    context=Person,
+    expression="context Person inv Person_inv_3_1 :  self.parents->closure(parents)->excludes(self)",
+    language="OCL"
+)
 Person_inv_5_1: Constraint = Constraint(
     name="Person_inv_5_1",
     context=Person,
@@ -143,7 +142,7 @@ domain_model = DomainModel(
     name="Class_Diagram",
     types={Adam, Eve, Man, Person, Woman},
     associations={is_child_of, is_coupled_with},
-    constraints={Adam_inv_1_1, Adam_inv_8_1, Adam_inv_4_1, Eve_inv_6_1, Eve_inv_2_1, Eve_inv_7_1, Man_inv_11_1, Person_inv_10_1, Person_inv_14_1, Person_inv_13_1, Person_inv_5_1, Person_inv_9_1, Woman_inv_12_1},
+    constraints={Adam_inv_1_1, Adam_inv_8_1, Adam_inv_4_1, Eve_inv_6_1, Eve_inv_2_1, Eve_inv_7_1, Man_inv_11_1, Person_inv_10_1, Person_inv_14_1, Person_inv_13_1, Person_inv_3_1, Person_inv_5_1, Person_inv_9_1, Woman_inv_12_1},
     generalizations={gen_Adam_Man, gen_Eve_Woman, gen_Man_Person, gen_Woman_Person},
     metadata=None
 )

@@ -97,13 +97,18 @@ The specification then includes the fact:
 
     fact { all self:this/Book|(self.Book_pages > 10) }
 
+The ``closure`` iterator becomes the reflexive transitive closure ``*`` of Alloy, so invariants
+about reachability can be checked, e.g. that nobody is their own ancestor:
+``self.parents->closure(parents)->excludes(self)``. The search is bounded, so the closure is exact
+within the scope.
+
 Unsupported Models
 ------------------
 
 The generator raises ``AlloyTranslationError`` (a ``ValueError``) rather than approximating a
 model it cannot translate faithfully:
 
-- association classes, and attributes of type ``time``, ``timedelta`` or ``any``;
+- association classes, and attributes of type ``datetime``, ``time``, ``timedelta`` or ``any``;
 - OCL that is invalid, or has no faithful Alloy translation yet, such as real numbers and real
   division, arithmetic on collections, ``size()`` or ``=`` on Bags, string operations other than
   ``=`` and ``<>``, date operations other than ``=`` and ``<>``, and enumeration literals.

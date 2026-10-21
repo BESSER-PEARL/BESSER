@@ -741,7 +741,7 @@ def _is_model_unavailable(error: Exception) -> bool:
     return any(marker in s for marker in (
         "model_not_found", "model not found", "no such model",
         "unknown model", "invalid model", "does not exist",
-        "is not available", "not_found",
+        "is not available", "not_found", "model_not_in_plan",
     ))
 
 
@@ -769,6 +769,9 @@ def _is_quota_exhausted(error: Exception) -> bool:
     (or fail) immediately — and can tell the user *why*.
     """
     s = str(error).lower()
+    # An exhausted prepaid balance (Command Code: 400 "insufficient credits").
+    if "insufficient credits" in s or "purchase more credits" in s:
+        return True
     if "429" not in s and "quota" not in s and "limit" not in s:
         return False
     return any(marker in s for marker in (
@@ -839,6 +842,8 @@ def _backoff_seconds(error: Exception, attempt: int) -> float:
 
 def _is_auth_error(error: Exception) -> bool:
     """Did the provider reject our credentials? Decided by status when known."""
+    if "model_not_in_plan" in str(error).lower():
+        return False
     status = _status_code(error)
     if status is not None:
         return status in (401, 403)
@@ -1821,7 +1826,8 @@ class OpenAIProvider(LLMProvider):
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
-                if (_is_retryable(e) or _is_model_unavailable(e)) and self._activate_fallback(e):
+                if ((_is_retryable(e) or _is_model_unavailable(e) or _is_quota_exhausted(e))
+                        and self._activate_fallback(e)):
                     return self.chat(
                         system, messages, tools,
                         force_tool=force_tool, model_override=model_override,
@@ -1979,7 +1985,8 @@ class OpenAIProvider(LLMProvider):
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
-                if (_is_retryable(e) or _is_model_unavailable(e)) and self._activate_fallback(e):
+                if ((_is_retryable(e) or _is_model_unavailable(e) or _is_quota_exhausted(e))
+                        and self._activate_fallback(e)):
                     # Re-stream from the top on the fallback endpoint. Any
                     # partial deltas already yielded are superseded — same
                     # semantics as the in-loop stream retry above.

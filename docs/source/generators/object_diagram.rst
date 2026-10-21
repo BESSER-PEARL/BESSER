@@ -78,6 +78,8 @@ The result is an ``AlloyResult``:
 - ``SAT``: an instance was found, so the invariants can all hold together.
 - ``UNSAT``: no instance exists within the bounds.
 - ``TIMEOUT``: the Alloy Analyzer did not finish within ``timeout`` seconds.
+- ``SCOPES_TOO_LARGE``: the bounds are too large for the Alloy Analyzer.
+- ``ERROR``: the Alloy Analyzer failed for any other reason.
 
 ``get_scopes()`` describes the bounds searched, e.g. "5 objects per class, integers in
 [-16, 15], 5 strings and 5 dates". ``generate_specification(scope)`` writes the specification of
@@ -147,6 +149,6 @@ Web Editor
 ----------
 
 The web editor runs these analyses for class diagrams through two endpoints, which search the
-scopes 5, 7, 9 and 11 in turn, each for at most 30 seconds, and stream their progress:
-**Quality Check > Semantic check** (``/semantic-consistency-check``) and **Generate from
-constraints** in object diagrams (``/generate-object-diagram``). See :doc:`../web_editor_backend`.
+scopes 5, 7 and 9 in turn, each for at most 30 seconds, and stream their progress:
+**Quality Check > Semantic check** (``/semantic-consistency-check``) and **Semantic
+generation** in object diagrams (``/generate-object-diagram``). See :doc:`../web_editor_backend`.

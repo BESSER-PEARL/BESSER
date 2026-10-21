@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.models.diagram import DiagramInput
-from besser.utilities.web_modeling_editor.backend.services.validators.alloy import semantic_consistency
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy import AlloyResult, semantic_consistency
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy.semantic_consistency import (
     check_semantic_consistency,
     generate_object_diagram,
@@ -49,6 +49,12 @@ def consistent_diagram() -> DiagramInput:
 @pytest.fixture
 def contradictory_diagram() -> DiagramInput:
     return _book_diagram("self.pages = 1 and self.pages = 2")
+
+
+@pytest.fixture
+def too_large_diagram() -> DiagramInput:
+    """The literal 40000 needs integers in [-65536, 65535]: too many for the Alloy Analyzer, even at scope 5."""
+    return _book_diagram("self.pages = 40000")
 
 
 @pytest.fixture
@@ -131,17 +137,11 @@ def test_object_diagram_of_a_consistent_diagram(consistent_diagram):
 def test_contradictory_diagram(contradictory_diagram):
     events = _events(check_semantic_consistency(contradictory_diagram))
     not_found = [event for event in events if event["message"].startswith("No instance within")]
-    assert len(not_found) == 4  # one per scope, the last one final
+    assert len(not_found) == 3  # one per scope, the last one final
     assert events[-1]["sat"] is False
-    assert events[-1]["done"] is True
-    assert events[-1]["message"].startswith("No instance within 11 objects per class")
-
-
-@needs_alloy
-def test_no_instance_reason_unsat(contradictory_diagram):
-    events = _events(check_semantic_consistency(contradictory_diagram))
     assert events[-1]["reason"] == "unsat"
-    assert events[-1]["message"].startswith("No instance within 11 objects per class")
+    assert events[-1]["done"] is True
+    assert events[-1]["message"].startswith("No instance within 9 objects per class")
 
 
 @needs_alloy
@@ -152,6 +152,24 @@ def test_no_instance_reason_timeout(consistent_diagram):
     assert events[-1]["reason"] == "timeout"
     assert events[-1]["sat"] is None
     assert events[-1]["message"].startswith("Timed out searching within 5 objects per class")
+
+
+@needs_alloy
+def test_bounds_too_large(too_large_diagram):
+    events = _events(check_semantic_consistency(too_large_diagram))
+    searches = [event for event in events if event["message"].startswith("Searching within")]
+    assert len(searches) == 1  # bounds too large end the search
+    assert events[-1]["reason"] == "capacity"
+    assert events[-1]["sat"] is None
+    assert events[-1]["message"].startswith("Too large to search within 5 objects per class")
+
+
+@needs_alloy
+def test_analyzer_error(monkeypatch, consistent_diagram):
+    monkeypatch.setattr(semantic_consistency, "_analyze", lambda *args: (AlloyResult.ERROR, None))
+    events = _events(check_semantic_consistency(consistent_diagram))
+    assert events[-1]["isValid"] is False
+    assert events[-1]["message"] == "The semantic check failed unexpectedly at scope 5."
 
 
 @needs_alloy

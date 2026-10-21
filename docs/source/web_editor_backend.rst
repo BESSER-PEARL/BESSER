@@ -576,7 +576,7 @@ step, with ``sat`` (``true``, ``false`` or ``null``), ``done``, ``message`` and 
 ``/generate-object-diagram``. When no instance is found, ``reason`` says why: ``"unsat"``, when the bounds hold no
 instance, or ``"timeout"``, which ends the search. While the Alloy Analyzer runs, SSE comment lines
 (``: semantic-check-heartbeat``) are sent every 15 seconds, so that clients and proxies see the stream is alive.
-Both need Java and the Alloy Analyzer (``JAVA_HOME``, ``BESSER_ALLOY_JAR``); the Docker images bundle them.
+Both need Java and the Alloy Analyzer (``JAVA_HOME``, ``BESSER_ALLOY_JAR``); the backend Docker image bundles them.
 
 Deployment
 ^^^^^^^^^^
@@ -745,7 +745,7 @@ Environment Variables
 
 - ``JAVA_HOME`` and ``BESSER_ALLOY_JAR`` -- The Java installation and the Alloy Analyzer jar that
   ``/semantic-consistency-check`` and ``/generate-object-diagram`` run (see
-  :doc:`generators/object_diagram`). The Docker images set both.
+  :doc:`generators/object_diagram`). The backend Docker image sets both.
 
 **Spec-Driven Agent (all optional):**
 

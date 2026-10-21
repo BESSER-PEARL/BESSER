@@ -39,7 +39,7 @@ Afterwards, you must set the following environment variables:
    Alloy Analyzer 6.2 is distributed under the MIT License, Copyright (c) the Alloy
    project (see
    `LICENSE <https://github.com/AlloyTools/org.alloytools.alloy/blob/v6.2.0/LICENSE>`_).
-   The BESSER Docker images bundle the Alloy jar and a Java runtime (see ``Dockerfile``); a
+   The BESSER backend Docker image bundles the Alloy jar and a Java runtime (see ``Dockerfile``); a
    manual installation as above does not. See the project's ``THIRD_PARTY_LICENSES.md`` for
    details.
 

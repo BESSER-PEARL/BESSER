@@ -180,12 +180,9 @@ class RequestSizeLimitMiddleware:
 # Startup: environment variable validation
 # ---------------------------------------------------------------------------
 
-_REQUIRED_ENV_VARS = [
-    "GITHUB_CLIENT_ID",
-    "GITHUB_CLIENT_SECRET",
-]
-
 _OPTIONAL_ENV_VARS = [
+    "GITHUB_CLIENT_ID",  # GitHub sign-in, push and deploy; drawing and generation work without them
+    "GITHUB_CLIENT_SECRET",
     "SMTP_PASSWORD",
     "OPENAI_API_KEY",
     "AGENT_SIMULATOR_API_TOKEN",  # live agent simulation returns 503 without it
@@ -193,20 +190,12 @@ _OPTIONAL_ENV_VARS = [
 
 
 def _validate_env_vars() -> None:
-    """Check that expected environment variables are set and log diagnostics.
+    """Log a warning for each optional environment variable that is not set.
 
-    Required variables trigger ``logger.error`` when absent; optional ones
-    trigger ``logger.warning``.  The application is **not** terminated so
-    that services which do not depend on the missing variables can still
-    operate (graceful degradation).
+    None of them is needed to draw models and run generators, so the
+    application is **not** terminated: services which do not depend on the
+    missing variables keep working (graceful degradation).
     """
-    for var in _REQUIRED_ENV_VARS:
-        if not os.environ.get(var):
-            logger.error(
-                "Required environment variable %s is not set. "
-                "Features depending on it will not work.", var,
-            )
-
     for var in _OPTIONAL_ENV_VARS:
         if not os.environ.get(var):
             logger.warning(

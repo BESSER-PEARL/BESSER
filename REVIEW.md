@@ -60,7 +60,7 @@ style are Nit at most.
   inline in routers; new temp-dir prefixes registered in `services/cleanup.py`; no new CORS wildcard; OAuth
   state never reused.
 - **Contract changes**: a changed endpoint or response shape names the matching frontend change in
-  `shared/api/` of BESSER-WEB-MODELING-EDITOR.
+  `shared/api/` of BESSER-Web-Modeling-Editor.
 - **Tests**: reuse the `tests/conftest.py` fixtures instead of rebuilding the same model; generator tests
   assert both structure (names, endpoints) and content (the logic is in the output).
 - **Docs**: public-surface changes update `docs/source/` as listed under "Documentation Sync" in `CLAUDE.md`.

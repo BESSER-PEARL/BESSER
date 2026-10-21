@@ -4,7 +4,7 @@ End-to-End: New Diagram Type + DSL
 This guide explains the full workflow for adding a **new diagram type with a new DSL**
 that must work across both repositories:
 
-* **WME repo** (frontend + editor package): `BESSER-WEB-MODELING-EDITOR`
+* **WME repo** (frontend + editor package): `BESSER-Web-Modeling-Editor`
 * **BESSER repo** (backend + BUML): this repository
 
 Use this when you need **new elements, new rendering, and new backend processing**.

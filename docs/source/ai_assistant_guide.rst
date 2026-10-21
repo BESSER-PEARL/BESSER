@@ -50,7 +50,7 @@ Repository Boundaries
   Editor and the standalone SDK. Changes should focus on the B-UML metamodel,
   generators, utilities, and backend services.
 * The web editor frontend lives in
-  `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_.
+  `BESSER-Web-Modeling-Editor <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_.
   Only modify the vendored submodule under
   ``besser/utilities/web_modeling_editor/frontend`` when explicitly instructed.
 * When adding backend capabilities for the editor, update corresponding

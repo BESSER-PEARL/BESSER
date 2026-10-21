@@ -9,7 +9,6 @@ Model types
   model_types/user_diagram
   model_types/gui
   model_types/ocl
-  model_types/structural_event
   model_types/deployment
   model_types/state_machine
   model_types/agent

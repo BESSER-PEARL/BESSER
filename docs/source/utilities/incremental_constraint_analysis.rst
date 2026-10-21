@@ -10,11 +10,45 @@ run while parsing, and it does not change the ``Constraint`` metaclass.
 The events are
 :class:`~besser.BUML.metamodel.structural_event.structural_event.ViolatingEvent`
 links between the constraint and one structural event. The text they were
-computed from is ``constraint.expression``. The metaclasses are documented
-in :doc:`../buml_language/model_types/structural_event`. Operators outside
-the chapter-4 fragment are over-approximated: extra events are kept and
-marked ``approximated``. Only invariants are analyzed. Preconditions,
-postconditions and initializers are left untouched.
+computed from is ``constraint.expression``. Operators outside the chapter-4
+fragment are over-approximated: extra events are kept and marked
+``approximated``. Only invariants are analyzed. Preconditions, postconditions
+and initializers are left untouched.
+
+The thesis calls a class ``ET`` and an association ``RT``. The metaclasses
+use ``Object`` and ``Link``.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Event
+     - What it is linked to
+   * - ``InsertObject``
+     - A new object is added to a :class:`~besser.BUML.metamodel.structural.structural.Class`. It has no links yet.
+   * - ``DeleteObject``
+     - An object is removed from a class.
+   * - ``UpdateAttribute``
+     - The value of one :class:`~besser.BUML.metamodel.structural.structural.Property` of an object is replaced.
+   * - ``SpecializeObject``
+     - An existing object is reclassified into a subclass.
+   * - ``GeneralizeObject``
+     - An object leaves a subclass and is afterwards only an instance of the superclass.
+   * - ``InsertLink``
+     - A new link is added to an :class:`~besser.BUML.metamodel.structural.structural.Association`.
+   * - ``DeleteLink``
+     - A link is removed from an association.
+
+An object event is linked to the class whose instances change. A link event
+is linked to the association whose links change. An attribute update is
+linked to the property whose value changes. The class of that object is the
+property's owner. ``SpecializeObject`` and ``GeneralizeObject`` each name
+one class. The other class is read from the generalization hierarchy when
+the event is drawn.
+
+Each :class:`~besser.BUML.metamodel.structural_event.structural_event.ViolatingEvent`
+links exactly one constraint and exactly one event. ``approximated`` is an
+attribute of that link.
 
 Computing the events
 --------------------
@@ -98,3 +132,15 @@ Incremental pre-analysis** (``POST /besser_api/ocl/incremental-preanalysis``).
 Opening an OCL constraint afterwards lists the events. The editor
 remembers the expression that was analyzed, and shows the list as out
 of date if the constraint text changes afterwards.
+
+API
+---
+
+.. automodule:: besser.BUML.metamodel.structural_event.structural_event
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: besser.BUML.notations.ocl.incremental.analyze
+   :members:
+   :undoc-members:

@@ -19,7 +19,7 @@ from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2
     # uninterpreted strings have no length
     ("Book", "self.title.size() > 0", "strings are uninterpreted"),
     # string literals name their constants, so their characters must be valid in identifiers
-    ("Author", "self.name = 'van gogh'", "the translation of the characters ' ' is unsupported"),
+    ("Author", "self.name = 'van gogh'", "the characters ' ' cannot be translated"),
     # type operations on collections collect their results
     ("Library", "self.books.oclIsKindOf(Book)", "collections"),
 ])
@@ -32,8 +32,19 @@ def test_bag_as_set_size(library_with_ocl_v2):  # noqa: F811
     specification = add_invariant_to_spec(
         library_with_ocl_v2, "Library", "self.books->collect(b | b.authors)->asSet()->size() > 5"
     )
+    # a body navigating from the iterator collects with a join
+    assert "all self:this/Library|(#(((self.Library_books).Book_authors)) > 5)" in specification
+
+
+def test_collect_of_a_selection(library_with_ocl_v2):  # noqa: F811
+    specification = add_invariant_to_spec(
+        library_with_ocl_v2,
+        "Library",
+        "self.books->collect(b | b.authors->select(a | a.books->size() > 1))->asSet()->size() > 5",
+    )
+    # any other body collects the set of its values
     assert "all self:this/Library|(#({collected: Author | some b : self.Library_books | " \
-        "collected in b.Book_authors}) > 5)" in specification
+        "collected in {select0[b.Book_authors]}}) > 5)" in specification
 
 
 def add_invariant_to_spec(model, context: str, expression: str) -> str:

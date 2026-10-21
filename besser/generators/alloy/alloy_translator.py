@@ -48,7 +48,9 @@ class BumlToAlloy:
 
     def __init__(self, model: DomainModel, scope: int, seed: int = 0):
         if any(isinstance(t, AssociationClass) for t in model.types):
-            raise AlloyTranslationError("Association classes are not supported by the Alloy translator yet")
+            raise AlloyTranslationError(
+                "Association classes are not supported in the current version of the Alloy translation"
+            )
         self.model = model
         self.scope = scope
         self._random = random.Random(seed)
@@ -230,7 +232,8 @@ class BumlToAlloy:
             return buml_type.name
         if buml_type.name not in _PRIMITIVE_TYPES:
             raise AlloyTranslationError(
-                f"Attributes of type '{buml_type.name}' are not supported by the Alloy translator"
+                f"Attributes of type '{buml_type.name}' are not supported in the current version of the "
+                "Alloy translation"
             )
         return _PRIMITIVE_TYPES[buml_type.name]
 
@@ -252,7 +255,8 @@ class BumlToAlloy:
 _FIRST_DATE = date(2000, 1, 1)
 _LAST_DATE = date(2038, 1, 1)
 
-# Alloy types of B-UML primitive types; the others (``time``, ``timedelta`` and ``any``) are not supported.
+# Alloy types of B-UML primitive types; the others (``datetime``, ``time``, ``timedelta`` and ``any``) are not
+# supported.
 _PRIMITIVE_TYPES = {
     "int": "Int",
     "integer": "Int",
@@ -261,5 +265,4 @@ _PRIMITIVE_TYPES = {
     "str": "Str",
     "string": "Str",
     "date": "Date",
-    "datetime": "Date",
 }

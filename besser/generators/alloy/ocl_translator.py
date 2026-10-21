@@ -14,6 +14,8 @@ than ``=`` and ``<>`` (strings are uninterpreted), and string literals with
 characters that cannot be part of an Alloy identifier (literals name their constants).  Invalid OCL raises
 :class:`OclTranslationError`.
 
+``closure`` becomes the reflexive transitive closure ``*`` of Alloy.
+
 A date literal is a string literal compared with a date; it must be an ISO date (``'1950-01-01'``).
 Dates support ``=`` and ``<>`` only: ordering comparisons, ``Date::today()``, ``addDays`` and date
 arithmetic are unsupported.
@@ -113,6 +115,9 @@ class OclToAlloy:
         self._variables = Variables()
         self._types: set[str] = set()
         self._function_count = 0
+        self._closure_count = 0
+        # The variable a bare property navigates from: self, or the implicit iterator of a short-form closure
+        self._implicit_source = "self"
 
     def add_invariant(self, constraint: Constraint) -> None:
         """Adds the fact stating the OCL invariant *constraint*.
@@ -143,27 +148,33 @@ class OclToAlloy:
             return Term("none", _NULL)
         if isinstance(node, VariableExp):
             return self._variable(node.name)
-        if isinstance(node, Property):  # a property of implicit self
-            return self._navigate(self._variable("self"), node.name)
+        if isinstance(node, Property):  # a property of implicit self, or of the implicit iterator of a closure
+            return self._navigate(self._variable(self._implicit_source), node.name)
         if isinstance(node, PropertyCallExpression):
             return self._navigate(self._translate(node.source), node.property.name)
         if isinstance(node, IntegerLiteralExpression):
             return self._integer(node)
         if isinstance(node, RealLiteralExpression):
-            raise UnsupportedOclError(f"Real number '{node.value}' is not supported")
+            raise UnsupportedOclError(
+                f"Reals ('{node.value}') are not supported in the current version of the Alloy translation"
+            )
         if isinstance(node, BooleanLiteralExpression):
             return self._boolean(node)
         if isinstance(node, StringLiteralExpression):
             return self._string(node)
         if isinstance(node, DateLiteralExpression):
-            raise UnsupportedOclError(f"Date expression '{node.value}' is not supported")
+            raise UnsupportedOclError(
+                f"Date expression '{node.value}' is not supported in the current version of the Alloy translation"
+            )
         if isinstance(node, IfExp):
             return self._if_then_else(node)
         if isinstance(node, LoopExp):
             return self._iteration(node)
         if isinstance(node, OperationCallExpression):
             return self._operation(node)
-        raise UnsupportedOclError(f"OCL expression '{pretty_print(node)}' is not supported")
+        raise UnsupportedOclError(
+            f"OCL expression '{pretty_print(node)}' is not supported in the current version of the Alloy translation"
+        )
 
     # ------------------------------------------------------------------
     # Literals
@@ -188,7 +199,10 @@ class OclToAlloy:
         try:
             parsed = date.fromisoformat(value)
         except ValueError:
-            raise UnsupportedOclError(f"Date '{value}' is not supported: date literals must be ISO dates") from None
+            raise UnsupportedOclError(
+                f"Date '{value}' is not supported: date literals must be ISO dates in the current version of "
+                "the Alloy translation"
+            ) from None
         self._types.add("Date")
         return Term(self.literals.add_date(parsed), "Date")
 
@@ -206,14 +220,18 @@ class OclToAlloy:
         if operation == "xor":
             return self._xor(*operands)
         if operation == "/":
-            raise UnsupportedOclError(f"Real division '{pretty_print(node)}' is not supported")
+            raise UnsupportedOclError(
+                f"Real division '{pretty_print(node)}' is not supported in the current version of the Alloy translation"
+            )
         if operation in _ARITHMETIC:
             return self._arithmetic(node, _ARITHMETIC[operation], *operands)
         if operation in _COMPARISONS:
             return self._comparison(node, operation, *operands)
         if operation in self._SOURCE_OPERATIONS:
             return getattr(self, self._SOURCE_OPERATIONS[operation])(node)
-        raise UnsupportedOclError(f"OCL operation '{pretty_print(node)}' is not supported")
+        raise UnsupportedOclError(
+            f"OCL operation '{pretty_print(node)}' is not supported in the current version of the Alloy translation"
+        )
 
     def _unary(self, node: OperationCallExpression, operation: str, operand: "Term") -> "Term":
         if operation == "not":
@@ -221,7 +239,9 @@ class OclToAlloy:
         if operation == "-":
             self._require_integers(node, operand)
             return Term(f"minus[0, {operand.text}]", "Int")
-        raise UnsupportedOclError(f"OCL operation '{pretty_print(node)}' is not supported")
+        raise UnsupportedOclError(
+            f"OCL operation '{pretty_print(node)}' is not supported in the current version of the Alloy translation"
+        )
 
     def _connective(self, connective: str, left, right) -> "Term":
         return Term(f"({self._translate(left).operand()} {connective} {self._translate(right).operand()})")
@@ -241,15 +261,19 @@ class OclToAlloy:
         if left.is_bag or right.is_bag:
             raise UnsupportedOclError(
                 f"'{pretty_print(node)}' is not supported: comparing a collection that may contain "
-                "duplicates (a Bag) needs asSet() first"
+                "duplicates (a Bag) needs asSet() first in the current version of the Alloy translation"
             )
         if left.type == right.type == "Date":
             if operator not in _DATE_COMPARISONS:
-                raise UnsupportedOclError(f"Date comparison '{operator}' is not supported by the Alloy translator yet")
+                raise UnsupportedOclError(
+                    f"Date comparison '{operator}' is not supported in the current version of the Alloy translation"
+                )
             return Term(f"({_DATE_COMPARISONS[operator]}[{left.text},{right.text}])")
         if left.type == right.type == "Str":
             if operator not in _STRING_COMPARISONS:
-                raise UnsupportedOclError(f"String comparison '{operator}' is not supported by the Alloy translator yet")
+                raise UnsupportedOclError(
+                    f"String comparison '{operator}' is not supported in the current version of the Alloy translation"
+                )
             return Term(f"({_STRING_COMPARISONS[operator]}[{left.text},{right.text}])")
         if operator in _ORDERINGS:
             self._require_integers(node, left, right)
@@ -283,11 +307,14 @@ class OclToAlloy:
         """``size()`` is the cardinality of its source; strings are uninterpreted, so they have no length."""
         source = self._translate(node.source)
         if source.type == "Str" and not source.is_set:
-            raise UnsupportedOclError(f"'{pretty_print(node)}' is not supported: strings are uninterpreted")
+            raise UnsupportedOclError(
+                f"'{pretty_print(node)}' is not supported: strings are uninterpreted in the current version of the "
+                "Alloy translation"
+            )
         if source.is_bag:
             raise UnsupportedOclError(
                 f"'{pretty_print(node)}' is not supported: the size of a collection that may contain "
-                "duplicates (a Bag) needs asSet() first"
+                "duplicates (a Bag) needs asSet() first in the current version of the Alloy translation"
             )
         return Term(f"#({source.text})", "Int")
 
@@ -317,7 +344,10 @@ class OclToAlloy:
 
     def _all_instances_of(self, node: OperationCallExpression) -> "Term":
         if not isinstance(node.source, TypeExp):
-            raise UnsupportedOclError(f"OCL expression '{pretty_print(node)}' is not supported")
+            raise UnsupportedOclError(
+                f"OCL expression '{pretty_print(node)}' is not supported in the current version of the Alloy "
+                "translation"
+            )
         return self._all_instances(node.source.name)
 
     def _is_kind_of(self, node: OperationCallExpression) -> "Term":
@@ -337,7 +367,10 @@ class OclToAlloy:
         """The source of the type operation *node*, which must not be a collection."""
         source = self._translate(node.source)
         if source.is_set:
-            raise UnsupportedOclError(f"'{pretty_print(node)}' is not supported: type operations on collections")
+            raise UnsupportedOclError(
+                f"Type operations on collections ('{pretty_print(node)}') are not supported in the current version "
+                "of the Alloy translation"
+            )
         return source
 
     # ------------------------------------------------------------------
@@ -351,18 +384,26 @@ class OclToAlloy:
             iterator.name: iterator.type.name if isinstance(iterator.type, Class) else collection.type
             for iterator in node.get_iterator
         }
-        if not variables:
-            raise UnsupportedOclError(f"'{operation}' without iterator variables is not supported")
         (body,) = node.get_body
+        if operation == "closure":
+            return self._closure(collection, variables, body)
+        if not variables:
+            raise UnsupportedOclError(
+                f"'{operation}' without iterator variables is not supported in the current version of the Alloy "
+                "translation"
+            )
         if operation in ("forAll", "exists"):
             return self._quantification("all" if operation == "forAll" else "some", collection, variables, body)
         if len(variables) != 1:
-            raise UnsupportedOclError(f"'{operation}' with several iterator variables is not supported")
+            raise UnsupportedOclError(
+                f"'{operation}' with several iterator variables is not supported in the current version of the "
+                "Alloy translation"
+            )
         if operation == "collect":
             return self._collect(collection, variables, body)
         if operation in ("select", "reject"):
             return self._select(collection, variables, body, reject=operation == "reject")
-        raise UnsupportedOclError(f"'{operation}' is not supported")
+        raise UnsupportedOclError(f"'{operation}' is not supported in the current version of the Alloy translation")
 
     # ------------------------------------------------------------------
     # Helpers
@@ -429,11 +470,18 @@ class OclToAlloy:
         return Term(f"{{{name}[{arguments}]}}", collection.type, is_set=True, is_bag=collection.is_bag)
 
     def _collect(self, collection: "Term", variables: dict[str, str], body) -> "Term":
-        """``collect`` becomes the set of the values of the body for the collection elements."""
+        """``collect`` becomes the set of the values of the body for the collection elements: a join when
+        the body is made of navigations from the iterator, unions and intersections (see
+        :meth:`_navigation_relation`), as a join distributes over its left set."""
         (variable,) = variables
         value = self._in_scope(variables, body)
         if value.is_formula():
-            raise UnsupportedOclError("'collect' of boolean expressions is not supported")
+            raise UnsupportedOclError(
+                "'collect' of boolean expressions is not supported in the current version of the Alloy translation"
+            )
+        relation = self._navigation_relation(variable, value)
+        if relation is not None:
+            return Term(f"(({collection.text}).{relation})", value.type, is_set=True, is_bag=True)
         result = self._spec.signature_name(value.type)
         return Term(
             f"{{collected: {result} | some {variable} : {collection.text} | collected in {value.text}}}",
@@ -442,11 +490,56 @@ class OclToAlloy:
             is_bag=True,
         )
 
+    def _closure(self, collection: "Term", variables: dict[str, str], body) -> "Term":
+        """``closure`` becomes the reflexive transitive closure of the relation from each element to the
+        values of the body, applied to the collection: the collection and everything reachable from it
+        (OCL 2.4, 11.9.1).
+
+        A body made of navigations from the iterator, unions and intersections closes the relation of its
+        fields (``*(A + B)``, see :meth:`_navigation_relation`); any other body closes the relation
+        ``{v, reached | reached in body}``. In the short form (no iterator variables), a bare property in
+        the body navigates from the implicit iterator.
+        """
+        number = self._closure_count
+        self._closure_count += 1
+        if variables:
+            (variable,) = variables
+            value = self._in_scope(variables, body)
+        else:
+            variable = f"closure{number}"
+            implicit_source, self._implicit_source = self._implicit_source, variable
+            try:
+                value = self._in_scope({variable: collection.type}, body)
+            finally:
+                self._implicit_source = implicit_source
+        relation = self._navigation_relation(variable, value)
+        if relation is None:
+            element, reached = self._spec.signature_name(collection.type), f"reached{number}"
+            relation = f"{{{variable}: {element}, {reached}: {element} | {reached} in {value.text}}}"
+        # *, like the other unary operators, binds tighter than the join: the relation needs parentheses
+        return Term(f"(({collection.text}).*({relation}))", collection.type, is_set=True)
+
+    @staticmethod
+    def _navigation_relation(variable: str, value: "Term") -> str | None:
+        """The relation R such that ``variable.R`` is *value*, when *value* is made of navigations from
+        the iterator *variable*, unions and intersections; ``None`` otherwise.
+
+        For the single atom v, v.(A + B) = v.A + v.B and v.(A & B) = v.A & v.B, so R is *value* without
+        the leading ``v.``s.
+        """
+        iterator = rf"(?<![.\w]){re.escape(variable)}\."
+        if re.fullmatch(rf"(?:{iterator}\w+(?:\.\w+)*|[\s()+&])+", value.text):
+            return re.sub(iterator, "", value.text)
+        return None
+
     @staticmethod
     def _require_integers(node: OperationCallExpression, *operands: "Term") -> None:
         """Raises unless the *operands* of *node* are single integers."""
         if any(operand.type != "Int" or operand.is_set for operand in operands):
-            raise UnsupportedOclError(f"'{pretty_print(node)}' is not supported: its operands must be single integers")
+            raise UnsupportedOclError(
+                f"'{pretty_print(node)}' is not supported: its operands must be single integers in the current "
+                "version of the Alloy translation"
+            )
 
     def _in_scope(self, variables: dict[str, str], expression) -> "Term":
         """Translates *expression* with *variables* in scope."""
@@ -521,8 +614,9 @@ class Literals:
         invalid = dict.fromkeys(_INVALID_IDENTIFIER_CHARACTERS.findall(value))
         if invalid:
             raise UnsupportedOclError(
-                f"String '{value}' is not supported: the translation of the characters "
-                f"{', '.join(repr(character) for character in invalid)} is unsupported"
+                f"String '{value}' is not supported: the characters "
+                f"{', '.join(repr(character) for character in invalid)} cannot be translated in the current "
+                "version of the Alloy translation"
             )
         self._strings.setdefault(value, f"Str_{value}")
         return self._strings[value]

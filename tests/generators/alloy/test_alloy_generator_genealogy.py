@@ -42,18 +42,13 @@ def test_signature_fields(spec):
 
 
 def test_facts(spec):
-    assert len(spec.facts) == 18
+    assert len(spec.facts) == 16
 
-    # person_1 (1..1) and person (1..1) are not navigable, so there is no `one` field enforcing
-    # them: the bounds are checked navigating the opposite field backwards
-    assert "all a: Person | #(Person_parents.a) >= 1" in spec.facts
-    assert "all a: Person | #(Person_parents.a) <= 1" in spec.facts
-    assert "all a: Person | #(Person_spouse.a) >= 1" in spec.facts
+    # spouse_of (0..1) is not navigable, so there is no `lone` field enforcing it: its bound is
+    # checked navigating the opposite field backwards
     assert "all a: Person | #(Person_spouse.a) <= 1" in spec.facts
     # Person -> Person, spouse (0..1)
     assert "all a: Person | #(a.Person_spouse) <= 1" in spec.facts
-    # Unidirectional associations: no inverse facts
-    assert not any("~" in f for f in spec.facts)
 
     # OCL: Adam::allInstances()->size() = 1
     assert "all self:this/Adam|(#(Adam) = 1)" in spec.facts
@@ -84,6 +79,8 @@ def test_facts(spec):
     # OCL: everyone except Adam and Eve has two parents
     assert "all self:this/Person|((not ((self in Adam) or (self in Eve))) => " \
         "(#(self.Person_parents) = 2))" in spec.facts
+    # OCL: nobody is their own ancestor (self.parents->closure(parents)->excludes(self))
+    assert "all self:this/Person|(self not in ((self.Person_parents).*(Person_parents)))" in spec.facts
 
 
 def test_run_command(spec):

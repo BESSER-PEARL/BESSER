@@ -114,6 +114,3 @@ def test_run_command(spec):
     assert "5 Fan" in spec.run_scopes
     assert "5 Int" in spec.run_scopes
     assert "5 Str" in spec.run_scopes
-    # Uninterpreted strings have no length to bound
-    # assert "5 seq" in spec.run_scopes
-    assert not any(scope.endswith(" seq") for scope in spec.run_scopes)

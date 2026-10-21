@@ -10,7 +10,7 @@ from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec, transl
     ("x-y-z", "'-'"),
 ])
 def test_strings_with_invalid_identifier_characters_are_unsupported(library_with_ocl_v2, value, characters):
-    with pytest.raises(UnsupportedOclError, match=f"the translation of the characters {characters} is unsupported"):
+    with pytest.raises(UnsupportedOclError, match=f"the characters {characters} cannot be translated"):
         translate(library_with_ocl_v2, "Author", f"self.name = '{value}'", scope=5)
 
 

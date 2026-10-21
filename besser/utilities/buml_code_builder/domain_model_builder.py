@@ -16,9 +16,10 @@ from besser.BUML.metamodel.structural.structural import (
     MethodImplementationType,
 )
 from besser.BUML.metamodel.structural_event.structural_event import (
-    AssociationEvent,
-    ClassEvent,
+    LinkEvent,
+    ObjectEvent,
     UpdateAttribute,
+    violating_events,
 )
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.utilities import sort_by_timestamp as sort
@@ -52,8 +53,8 @@ def _event_classes_used(model) -> list[str]:
             constraints.extend(getattr(method, "pre", ()) or ())
             constraints.extend(getattr(method, "post", ()) or ())
     for constraint in constraints:
-        for link in getattr(constraint, "violating_events", ()) or ():
-            names.add(type(link.event).__name__)
+        for link in violating_events(constraint):
+            names.add(type(link.structural_event).__name__)
     return sorted(names)
 
 
@@ -559,33 +560,29 @@ def domain_model_to_code(
             f.write("\n")
 
         def _emit_violating_events(constraint, var_name: str) -> None:
-            """Attach a stored pre-analysis after the constraint exists."""
-            events = list(getattr(constraint, "violating_events", ()) or ())
-            source = getattr(constraint, "violating_events_source", None)
-            if source is None and not events:
+            """Emit one association-class link per stored structural event."""
+            events = list(violating_events(constraint))
+            if not events:
                 return
-            if source is not None:
-                f.write(
-                    f"{var_name}.violating_events_source = "
-                    f"\"{_escape_python_string(source)}\"\n"
-                )
             for link in sorted(events, key=lambda item: (
-                item.event.kind(),
-                getattr(getattr(item.event, "target", None), "name", "") or "",
-                getattr(getattr(item.event, "attribute", None), "name", "") or "",
+                item.structural_event.kind(),
+                getattr(getattr(item.structural_event, "class_", None), "name", "")
+                or getattr(getattr(item.structural_event, "association", None), "name", "")
+                or "",
+                getattr(getattr(item.structural_event, "attribute", None), "name", "") or "",
             )):
-                event = link.event
+                event = link.structural_event
                 approximated = ", approximated=True" if link.approximated else ""
                 if isinstance(event, UpdateAttribute):
+                    owner = event.attribute.owner
                     ctor = (
                         f"UpdateAttribute("
-                        f"{attribute_var_name(event.target.name, event.attribute.name)}, "
-                        f"{safe_class_name(event.target.name)})"
+                        f"{attribute_var_name(owner.name, event.attribute.name)})"
                     )
-                elif isinstance(event, ClassEvent):
-                    ctor = f"{event.kind()}({safe_class_name(event.target.name)})"
-                elif isinstance(event, AssociationEvent):
-                    ctor = f"{event.kind()}({element_vars.name_for(event.target)})"
+                elif isinstance(event, ObjectEvent):
+                    ctor = f"{event.kind()}({safe_class_name(event.class_.name)})"
+                elif isinstance(event, LinkEvent):
+                    ctor = f"{event.kind()}({element_vars.name_for(event.association)})"
                 else:
                     continue
                 f.write(f"ViolatingEvent({var_name}, {ctor}{approximated})\n")

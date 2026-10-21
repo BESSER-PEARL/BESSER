@@ -20,7 +20,12 @@ from besser.BUML.metamodel.structural import (
     Multiplicity,
     Property,
 )
-from besser.BUML.metamodel.structural_event import event_from_dict, event_to_dict
+from besser.BUML.metamodel.structural_event import (
+    event_from_dict,
+    event_to_dict,
+    set_violating_events,
+    violating_events,
+)
 from besser.BUML.notations.ocl import parse_ocl
 from besser.BUML.notations.ocl.incremental import analyze_invariant, analyze_invariants
 
@@ -100,33 +105,33 @@ TABLE_4_7 = {
     "ValidShipDate": {
         "UpdateAttribute(paymentDate, Sale)",
         "UpdateAttribute(plannedShipDate, Shipment)",
-        "InsertAssociation(DeliveredIn)",
+        "InsertLink(DeliveredIn)",
     },
     "CorrectProduct": {
-        "InsertClass(Product)",
+        "InsertObject(Product)",
         "UpdateAttribute(price, Product)",
         "UpdateAttribute(maxDiscount, Product)",
     },
     "NotTooPendingSales": {
         "UpdateAttribute(maxPendingAmount, Category)",
-        "InsertAssociation(BelongsTo)",
-        "InsertAssociation(Purchases)",
+        "InsertLink(BelongsTo)",
+        "InsertLink(Purchases)",
         "UpdateAttribute(amount, Sale)",
         "UpdateAttribute(paymentDate, Sale)",
     },
     "AtLeastThreeCustomers": {
-        "DeleteAssociation(BelongsTo)",
-        "InsertClass(Category)",
+        "DeleteLink(BelongsTo)",
+        "InsertObject(Category)",
     },
     "NumberOfRestrictedProducts": {
-        "InsertClass(RestrictedProduct)",
-        "SpecializeClass(RestrictedProduct)",
+        "InsertObject(RestrictedProduct)",
+        "SpecializeObject(RestrictedProduct)",
     },
 }
 
 
 def _events(constraint):
-    return {repr(link.event) for link in constraint.violating_events}
+    return {repr(link.structural_event) for link in violating_events(constraint)}
 
 
 def _load(model):
@@ -144,7 +149,7 @@ def test_table_4_7_exact_event_sets():
     for name, expected in TABLE_4_7.items():
         assert _events(by_name[name]) == expected, name
         assert results[name].warnings == []
-        assert all(not link.approximated for link in by_name[name].violating_events)
+        assert all(not link.approximated for link in violating_events(by_name[name]))
 
 
 def test_valid_ship_date_excludes_class_population_events():
@@ -152,17 +157,17 @@ def test_valid_ship_date_excludes_class_population_events():
     model = ecommerce_model()
     _load(model)
     events = _events(next(c for c in model.constraints if c.name == "ValidShipDate"))
-    assert "InsertClass(Sale)" not in events
-    assert "DeleteClass(Shipment)" not in events
-    assert "DeleteClass(Sale)" not in events
+    assert "InsertObject(Sale)" not in events
+    assert "DeleteObject(Shipment)" not in events
+    assert "DeleteObject(Sale)" not in events
 
 
 def test_at_least_three_customers_excludes_delete_customer():
     model = ecommerce_model()
     _load(model)
     events = _events(next(c for c in model.constraints if c.name == "AtLeastThreeCustomers"))
-    assert "DeleteClass(Customer)" not in events
-    assert "DeleteClass(Category)" not in events
+    assert "DeleteObject(Customer)" not in events
+    assert "DeleteObject(Category)" not in events
 
 
 def test_not_flips_only_the_child_nodes_own_events():
@@ -178,9 +183,8 @@ def test_not_flips_only_the_child_nodes_own_events():
     )
     analyze_invariant(typed)
     analyze_invariant(negated)
-    assert _events(typed) == {"GeneralizeClass(Product)"}
-    assert _events(negated) == {"SpecializeClass(RestrictedProduct)"}
-    assert typed.violating_events_source == typed.expression
+    assert _events(typed) == {"GeneralizeObject(Product)"}
+    assert _events(negated) == {"SpecializeObject(RestrictedProduct)"}
 
 
 def test_select_marked_plus_flips_events_drawn_in_its_body():
@@ -193,9 +197,9 @@ def test_select_marked_plus_flips_events_drawn_in_its_body():
     )
     analyze_invariant(constraint)
     events = _events(constraint)
-    assert "InsertAssociation(Purchases)" in events
-    assert "DeleteAssociation(Purchases)" not in events
-    assert "InsertAssociation(BelongsTo)" in events
+    assert "InsertLink(Purchases)" in events
+    assert "DeleteLink(Purchases)" not in events
+    assert "InsertLink(BelongsTo)" in events
 
 
 def test_specialize_class_only_when_a_supertype_feature_is_read():
@@ -212,12 +216,12 @@ def test_specialize_class_only_when_a_supertype_feature_is_read():
     analyze_invariant(own)
     analyze_invariant(inherited)
     assert _events(own) == {
-        "InsertClass(RestrictedProduct)",
+        "InsertObject(RestrictedProduct)",
         "UpdateAttribute(maxUnits, RestrictedProduct)",
     }
     assert _events(inherited) == {
-        "InsertClass(RestrictedProduct)",
-        "SpecializeClass(RestrictedProduct)",
+        "InsertObject(RestrictedProduct)",
+        "SpecializeObject(RestrictedProduct)",
         "UpdateAttribute(price, Product)",
     }
 
@@ -229,9 +233,9 @@ def test_unknown_operator_is_over_approximated():
         model,
     )
     result = analyze_invariant(constraint)
-    events = {repr(link.event): link.approximated for link in constraint.violating_events}
-    assert events["InsertAssociation(BelongsTo)"] is True
-    assert events["DeleteAssociation(BelongsTo)"] is True
+    events = {repr(link.structural_event): link.approximated for link in violating_events(constraint)}
+    assert events["InsertLink(BelongsTo)"] is True
+    assert events["DeleteLink(BelongsTo)"] is True
     assert result.warnings
 
 
@@ -242,20 +246,21 @@ def test_preconditions_are_left_untouched():
     model.add_constraint(pre)
     _load(model)
     assert "PayPre" not in analyze_invariants(model)
-    assert pre.violating_events == set()
+    assert violating_events(pre) == set()
     result = analyze_invariant(pre)
     assert result.warnings
-    assert pre.violating_events == set()
+    assert violating_events(pre) == set()
 
 
-def test_editing_the_expression_drops_the_stored_events():
+def test_editing_the_expression_leaves_the_links_in_place():
     model = ecommerce_model()
     constraint = parse_ocl(INVARIANTS["CorrectProduct"], model)
     analyze_invariant(constraint)
-    assert constraint.violating_events
+    before = violating_events(constraint)
+    assert before
     constraint.expression = constraint.expression + " "
-    assert constraint.violating_events == set()
-    assert constraint.violating_events_source is None
+    assert violating_events(constraint) == before
+    assert all(link.constraint is constraint for link in before)
 
 
 def test_event_dict_round_trip():
@@ -263,8 +268,8 @@ def test_event_dict_round_trip():
     constraint = parse_ocl(INVARIANTS["NotTooPendingSales"], model)
     constraint.name = "NotTooPendingSales"
     analyze_invariant(constraint)
-    payloads = [event_to_dict(link) for link in constraint.violating_events]
-    constraint.violating_events = set()
+    payloads = [event_to_dict(link) for link in violating_events(constraint)]
+    set_violating_events(constraint, set())
     restored = {event_from_dict(payload, constraint, model) for payload in payloads}
     assert None not in restored
     assert _events(constraint) == TABLE_4_7["NotTooPendingSales"]
@@ -275,9 +280,9 @@ def test_reassigning_the_same_links_keeps_them():
     model = ecommerce_model()
     constraint = parse_ocl(INVARIANTS["AtLeastThreeCustomers"], model)
     analyze_invariant(constraint)
-    links = set(constraint.violating_events)
-    constraint.violating_events = links
-    assert constraint.violating_events == links
+    links = violating_events(constraint)
+    set_violating_events(constraint, links)
+    assert violating_events(constraint) == links
     assert all(link.constraint is constraint for link in links)
 
 
@@ -302,14 +307,14 @@ def test_json_round_trip_keeps_events_and_omits_them_when_absent():
     boxes = [element for element in exported["elements"].values() if element.get("type") == "ClassOCLConstraint"]
     assert len(boxes) == 1
     assert {event["kind"] for event in boxes[0]["violatingEvents"]} == {
-        "InsertClass", "UpdateAttribute",
+        "InsertObject", "UpdateAttribute",
     }
-    assert boxes[0]["violatingEventsSource"] == constraint.violating_events_source
+    assert boxes[0]["violatingEventsSource"] == constraint.expression
 
     loaded = process_class_diagram({"title": "Ecommerce", "model": exported})
     restored = next(c for c in loaded.constraints if c.name == "CorrectProduct")
     assert _events(restored) == TABLE_4_7["CorrectProduct"]
-    assert restored.violating_events_source == constraint.violating_events_source
+    assert restored.expression == constraint.expression
     assert loaded.ocl_element_ids["CorrectProduct"]
 
 
@@ -325,8 +330,8 @@ def test_python_export_recreates_the_events(tmp_path):
     domain_model_to_code(model, str(path))
     code = path.read_text(encoding="utf-8")
     assert "from besser.BUML.metamodel.structural_event import (" in code
-    assert "InsertClass" in code
-    assert "DeleteAssociation" in code
+    assert "InsertObject" in code
+    assert "DeleteLink" in code
     namespace: dict = {}
     exec(code, namespace)
     recreated = next(c for c in namespace["domain_model"].constraints if c.name == "AtLeastThreeCustomers")
@@ -345,8 +350,7 @@ def test_preanalysis_endpoint_matches_the_running_example():
     # header, which is what the JSON converter emits and parses.
     for constraint in list(model.constraints):
         constraint.expression = INVARIANTS[constraint.name]
-        constraint.violating_events = set()
-        constraint.violating_events_source = None
+        set_violating_events(constraint, set())
     payload = {"title": "Ecommerce", "model": class_buml_to_json(model)}
     result = incremental_preanalysis(payload)
     by_name = {item["name"]: item for item in result["constraints"]}
@@ -382,7 +386,7 @@ def test_event_from_dict_returns_none_for_a_missing_element():
     model = ecommerce_model()
     constraint = parse_ocl(INVARIANTS["CorrectProduct"], model)
     missing = event_from_dict(
-        {"kind": "InsertClass", "class": "Missing", "approximated": False},
+        {"kind": "InsertObject", "class": "Missing", "approximated": False},
         constraint,
         model,
     )

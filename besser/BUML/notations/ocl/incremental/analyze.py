@@ -42,15 +42,16 @@ from besser.BUML.metamodel.structural.structural import (
     Property,
 )
 from besser.BUML.metamodel.structural_event.structural_event import (
-    DeleteAssociation,
-    DeleteClass,
-    GeneralizeClass,
-    InsertAssociation,
-    InsertClass,
-    SpecializeClass,
+    DeleteLink,
+    DeleteObject,
+    GeneralizeObject,
+    InsertLink,
+    InsertObject,
+    SpecializeObject,
     StructuralEvent,
     UpdateAttribute,
     ViolatingEvent,
+    set_violating_events,
 )
 
 PLUS = "+"
@@ -85,20 +86,20 @@ class EventSpec:
         return (self.kind, self.target, self.attribute)
 
     def build(self) -> StructuralEvent:
-        if self.kind == "InsertClass":
-            return InsertClass(self.target)
-        if self.kind == "DeleteClass":
-            return DeleteClass(self.target)
-        if self.kind == "SpecializeClass":
-            return SpecializeClass(self.target)
-        if self.kind == "GeneralizeClass":
-            return GeneralizeClass(self.target)
+        if self.kind == "InsertObject":
+            return InsertObject(self.target)
+        if self.kind == "DeleteObject":
+            return DeleteObject(self.target)
+        if self.kind == "SpecializeObject":
+            return SpecializeObject(self.target)
+        if self.kind == "GeneralizeObject":
+            return GeneralizeObject(self.target)
         if self.kind == "UpdateAttribute":
-            return UpdateAttribute(self.attribute, self.target)
-        if self.kind == "InsertAssociation":
-            return InsertAssociation(self.target)
-        if self.kind == "DeleteAssociation":
-            return DeleteAssociation(self.target)
+            return UpdateAttribute(self.attribute)
+        if self.kind == "InsertLink":
+            return InsertLink(self.target)
+        if self.kind == "DeleteLink":
+            return DeleteLink(self.target)
         raise ValueError(f"unknown event kind {self.kind}")
 
 
@@ -133,8 +134,8 @@ def analyze_invariants(model: DomainModel) -> dict[str, AnalysisResult]:
     Constraints whose text is not an invariant are skipped.
 
     Returns:
-        A map from constraint name to the analysis result. The events
-        themselves are stored on each constraint.
+        A map from constraint name to the analysis result.         The events themselves are :class:`ViolatingEvent` links of each
+        constraint.
     """
     results = {}
     for constraint in sorted(model.constraints, key=lambda c: c.name):
@@ -147,9 +148,8 @@ def analyze_invariants(model: DomainModel) -> dict[str, AnalysisResult]:
 def analyze_invariant(constraint: Constraint) -> AnalysisResult:
     """Compute and store the events that may violate ``constraint``.
 
-    Replaces any previously stored events. The constraint text is recorded in
-    ``violating_events_source`` so a later edit can be told apart from this
-    result.
+    Replaces any previously stored links. The text those events were computed
+    from is ``constraint.expression``.
 
     Args:
         constraint: An OCL invariant. A constraint of another kind is left
@@ -180,11 +180,10 @@ def analyze_invariant(constraint: Constraint) -> AnalysisResult:
     _local, found = _visit(expression, frozenset({UND}), walk_ctx)
     specs = _dedup(found)
     links = {
-        ViolatingEvent(None, spec.build(), approximated=spec.approximated)
+        ViolatingEvent(constraint, spec.build(), approximated=spec.approximated)
         for spec in specs
     }
-    constraint.violating_events = links
-    constraint.violating_events_source = constraint.expression
+    set_violating_events(constraint, links)
     warnings = []
     if any(spec.approximated for spec in specs):
         warnings.append(
@@ -472,13 +471,13 @@ def _navigation_events(prop: Property, received: frozenset, ctx: _Walk, node) ->
     events = []
     flag = ctx.approximating
     if PLUS in received:
-        events.append(EventSpec("InsertAssociation", association, approximated=flag))
+        events.append(EventSpec("InsertLink", association, approximated=flag))
         parent = ctx.ancestors[-1] if ctx.ancestors else None
         parent_name = getattr(parent, "name", None) or getattr(parent, "operation", None)
         if ctx.select_decrease and parent_name not in _ABSORBING_PARENTS:
-            events.append(EventSpec("DeleteAssociation", association, approximated=flag))
+            events.append(EventSpec("DeleteLink", association, approximated=flag))
     if MINUS in received:
-        events.append(EventSpec("DeleteAssociation", association, approximated=flag))
+        events.append(EventSpec("DeleteLink", association, approximated=flag))
     return events
 
 
@@ -492,16 +491,16 @@ def _variable_events(node: VariableExp, received: frozenset, ctx: _Walk) -> list
     flag = ctx.approximating
     events = []
     if _is_navigation(prop) and MINUS in received:
-        events.append(EventSpec("InsertClass", ctx.context, approximated=flag))
+        events.append(EventSpec("InsertObject", ctx.context, approximated=flag))
         events.extend(_specialize_for_new_instance(ctx, flag))
     elif _is_attribute(prop) and _attribute_compared_with_self(parent, ctx):
-        events.append(EventSpec("InsertClass", ctx.context, approximated=flag))
+        events.append(EventSpec("InsertObject", ctx.context, approximated=flag))
         events.extend(_specialize_for_new_instance(ctx, flag))
     return events
 
 
 def _specialize_for_new_instance(ctx: _Walk, approximated: bool) -> list[EventSpec]:
-    """``SpecializeClass`` for a new instance of the context class.
+    """``SpecializeObject`` for a new instance of the context class.
 
     Emitted only when the class has a superclass and the invariant reads an
     attribute or association defined on that superclass. A fresh subclass
@@ -512,7 +511,7 @@ def _specialize_for_new_instance(ctx: _Walk, approximated: bool) -> list[EventSp
         return []
     if not _references_supertype_feature(ctx.root, ctx.context):
         return []
-    return [EventSpec("SpecializeClass", ctx.context, approximated=approximated)]
+    return [EventSpec("SpecializeObject", ctx.context, approximated=approximated)]
 
 
 def _references_supertype_feature(root, context: Class) -> bool:
@@ -562,13 +561,13 @@ def _all_instances_events(node: OperationCallExpression, received: frozenset, ct
     flag = ctx.approximating
     events = []
     if PLUS in received:
-        events.append(EventSpec("InsertClass", target, approximated=flag))
+        events.append(EventSpec("InsertObject", target, approximated=flag))
         if target.parents():
-            events.append(EventSpec("SpecializeClass", target, approximated=flag))
+            events.append(EventSpec("SpecializeObject", target, approximated=flag))
     if MINUS in received:
-        events.append(EventSpec("DeleteClass", target, approximated=flag))
+        events.append(EventSpec("DeleteObject", target, approximated=flag))
         for parent in target.parents():
-            events.append(EventSpec("GeneralizeClass", parent, approximated=flag))
+            events.append(EventSpec("GeneralizeObject", parent, approximated=flag))
     return events
 
 
@@ -584,10 +583,10 @@ def _type_test_events(node: OperationCallExpression, ctx: _Walk) -> list[EventSp
     flag = ctx.approximating
     events = []
     for parent in target.parents():
-        events.append(EventSpec("GeneralizeClass", parent, approximated=flag))
+        events.append(EventSpec("GeneralizeObject", parent, approximated=flag))
     if node.operation in _TYPE_OF:
         for child in target.specializations():
-            events.append(EventSpec("SpecializeClass", child, approximated=flag))
+            events.append(EventSpec("SpecializeObject", child, approximated=flag))
     return events
 
 
@@ -600,22 +599,22 @@ def _opposite_all(events: list[EventSpec]) -> list[EventSpec]:
 
 def _opposite(event: EventSpec) -> list[EventSpec]:
     swap = {
-        "InsertClass": "DeleteClass",
-        "DeleteClass": "InsertClass",
-        "InsertAssociation": "DeleteAssociation",
-        "DeleteAssociation": "InsertAssociation",
+        "InsertObject": "DeleteObject",
+        "DeleteObject": "InsertObject",
+        "InsertLink": "DeleteLink",
+        "DeleteLink": "InsertLink",
         "UpdateAttribute": "UpdateAttribute",
     }
     if event.kind in swap:
         return [replace(event, kind=swap[event.kind])]
-    if event.kind == "SpecializeClass" and isinstance(event.target, Class):
+    if event.kind == "SpecializeObject" and isinstance(event.target, Class):
         return [
-            replace(event, kind="GeneralizeClass", target=parent)
+            replace(event, kind="GeneralizeObject", target=parent)
             for parent in event.target.parents()
         ]
-    if event.kind == "GeneralizeClass" and isinstance(event.target, Class):
+    if event.kind == "GeneralizeObject" and isinstance(event.target, Class):
         return [
-            replace(event, kind="SpecializeClass", target=child)
+            replace(event, kind="SpecializeObject", target=child)
             for child in event.target.specializations()
         ]
     return [event]

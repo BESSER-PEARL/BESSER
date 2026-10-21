@@ -53,18 +53,16 @@ def _set_timestamp(target: dict, element) -> dict:
 
 
 def _attach_violating_events(element_data: dict, constraint) -> None:
-    """Copy a stored pre-analysis onto an OCL box.
+    """Copy stored violating-event links onto an OCL box.
 
-    Omitted when the constraint has never been analyzed, so diagrams that
-    predate this field keep the JSON they had before.
+    Omitted when the constraint has no links. The source recorded for the
+    editor is the constraint expression those events were computed from.
     """
-    source = getattr(constraint, "violating_events_source", None)
-    events = getattr(constraint, "violating_events", None) or set()
-    if source is None and not events:
+    events = event_payloads(constraint)
+    if not events:
         return
-    element_data["violatingEvents"] = event_payloads(constraint)
-    if source is not None:
-        element_data["violatingEventsSource"] = source
+    element_data["violatingEvents"] = events
+    element_data["violatingEventsSource"] = constraint.expression
 
 
 def fresh_primitive_types() -> dict:

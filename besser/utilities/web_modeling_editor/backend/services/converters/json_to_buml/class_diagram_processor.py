@@ -892,26 +892,23 @@ def _restore_violating_events(
     names_by_element: dict[str, list[str]],
     all_warnings: list[str],
 ) -> None:
-    """Put stored pre-analysis events back on the constraints they belong to.
+    """Rebuild ViolatingEvent links for constraints that have stored events.
 
-    Runs after each constraint's expression is final. Assigning the expression
-    clears a previously stored analysis, so the events have to be attached
-    after that.
+    The constraint expression is already the text those events belong to.
+    A box with no events has nothing to restore.
     """
     for element_id, element in elements.items():
         if element.get("type") != "ClassOCLConstraint":
             continue
         payloads = element.get("violatingEvents")
-        source = element.get("violatingEventsSource")
-        if not payloads and source is None:
+        if not payloads:
             continue
-        if payloads is not None and not isinstance(payloads, list):
+        if not isinstance(payloads, list):
             all_warnings.append(
                 f"Warning: OCL element {element_id} has a violatingEvents value "
                 f"that is not a list; ignoring it."
             )
-            payloads = []
-        attached: set[Any] = set()
+            continue
         box_names = names_by_element.get(element_id, [])
         for payload in payloads or []:
             if not isinstance(payload, dict):
@@ -937,12 +934,6 @@ def _restore_violating_events(
                     f"'{name}' on {element_id}; a class, attribute or association is missing."
                 )
                 continue
-            attached.add(constraint)
-        if source is None:
-            continue
-        targets = attached or {by_name[name] for name in box_names if name in by_name}
-        for constraint in targets:
-            constraint.violating_events_source = source
 
 
 def _process_constraints(

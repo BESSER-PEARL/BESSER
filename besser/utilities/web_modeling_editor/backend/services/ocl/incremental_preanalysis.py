@@ -15,10 +15,10 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 def incremental_preanalysis(json_data: dict[str, Any]) -> dict[str, Any]:
     """Analyze every invariant in a class-diagram payload.
 
-    The returned ``source`` is the OCL box text that was analyzed, so the
-    editor can tell a later edit apart from this result. Events are also
-    stored on the temporary domain model; the editor copies them onto the
-    constraint boxes.
+    The returned ``source`` is the constraint expression that was analyzed,
+    so the editor can tell a later edit apart from this result. Events are
+    ``ViolatingEvent`` links on the temporary domain model; the editor
+    copies them onto the constraint boxes.
 
     Raises:
         ConversionError: if ``json_data`` is not a class diagram.
@@ -40,7 +40,7 @@ def incremental_preanalysis(json_data: dict[str, Any]) -> dict[str, Any]:
         items.append({
             "name": name,
             "elementId": element_ids.get(name),
-            "source": box_text.get(name, constraint.violating_events_source),
+            "source": box_text.get(name, constraint.expression),
             "warnings": list(result.warnings),
             "events": event_payloads(constraint),
         })

@@ -192,9 +192,9 @@ Only invariants are analyzed.
 
 The web editor runs this from **Generate → Constraints → Incremental
 pre-analysis** (``POST /besser_api/ocl/incremental-preanalysis``) and shows the
-events when an OCL constraint is opened. The ecommerce invariants from the
-thesis, and the events computed for each one, are listed in
-:doc:`structural_event`.
+events when an OCL constraint is opened. The call, the ecommerce invariants,
+and the events computed for each one are in
+:doc:`../../utilities/incremental_constraint_analysis`.
 
 Supported notations
 -------------------

@@ -72,7 +72,9 @@ class AlloySolver:
     def check_consistency(self, scope: int = 5, seed: int = 0, timeout: int = _DEFAULT_TIMEOUT_SECONDS) -> AlloyResult:
         """Execute the Alloy Analyzer and check model satisfiability.
         Returns an AlloyResult indicating whether the model is satisfiable
-        (SAT), unsatisfiable (UNSAT), or if the analysis timed out (TIMEOUT).
+        (SAT), unsatisfiable (UNSAT), if the analysis timed out (TIMEOUT), if the bounds
+        of *scope* are too large for the Alloy Analyzer (SCOPES_TOO_LARGE), or if the
+        Alloy Analyzer failed for any other reason (ERROR).
 
         Args:
             scope: the scope of each class signature in the specification's ``run`` command.
@@ -92,9 +94,9 @@ class AlloySolver:
         self, scope: int = 5, num_models: int = 1, seed: int = 0, timeout: int = _DEFAULT_TIMEOUT_SECONDS
     ) -> tuple[AlloyResult, list[ObjectModel]]:
         """Generates B-UML object models of the model using Alloy.
-        Returns an AlloyResult indicating the result of the analysis and a list with
-        an object model per satisfying instance found. The list is empty if no satisfying
-        instances were found or if the analysis timed out.
+        Returns an AlloyResult indicating the result of the analysis (see :meth:`check_consistency`)
+        and a list with an object model per satisfying instance found. The list is empty unless
+        the result is SAT.
 
         Args:
             scope: the scope of each class signature in the specification's ``run`` command.
@@ -123,9 +125,9 @@ class AlloySolver:
         self, scope: int = 5, num_models: int = 1, seed: int = 0, timeout: int = _DEFAULT_TIMEOUT_SECONDS
     ) -> tuple[AlloyResult, Project | None]:
         """Generates a B-UML project with the model and object models of it generated using Alloy.
-        Returns an AlloyResult indicating the result of the analysis and the project, whose
-        models are the domain model followed by an object model per satisfying instance found.
-        The project is ``None`` if no satisfying instances were found or if the analysis timed out.
+        Returns an AlloyResult indicating the result of the analysis (see :meth:`check_consistency`)
+        and the project, whose models are the domain model followed by an object model per
+        satisfying instance found. The project is ``None`` unless the result is SAT.
 
         The project can be written with :meth:`generate_project_file`, producing a file that
         can be imported into the web modeling editor.
@@ -153,8 +155,8 @@ class AlloySolver:
     ) -> AlloyResult:
         """Generates a B-UML project with the model and object models of it generated using Alloy
         (see :meth:`generate_project`), and writes its B-UML code to ``alloy_project.py`` in the
-        output directory. Returns an AlloyResult indicating the result of the analysis. The file
-        is written only if satisfying instances were found; it can be imported into the web
+        output directory. Returns an AlloyResult indicating the result of the analysis (see
+        :meth:`check_consistency`). The file is written only if the result is SAT; it can be imported into the web
         modeling editor. When the solver was created without *output_dir*, the file is written to
         the solver's temporary directory, which is deleted with the solver.
 

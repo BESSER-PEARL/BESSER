@@ -4,10 +4,11 @@ Semantic consistency of class diagrams, checked with the Alloy Analyzer.
 The two functions behind the ``/semantic-consistency-check`` and ``/generate-object-diagram``
 endpoints search for an instance of a class diagram, and its OCL invariants, within increasingly
 larger scopes, and stream their progress as Server-Sent Events.  A search that finds nothing
-reports what it searched (e.g. "No instance within 11 objects per class and integers in
-[-1024, 1023]."): a larger scope might still hold an instance.  Its events carry the reason in
+reports what it searched (e.g. "No instance within 9 objects per class and integers in
+[-256, 255]."): a larger scope might still hold an instance.  Its events carry the reason in
 ``reason``: ``"unsat"`` when the bounds hold no instance, ``"timeout"`` when the Alloy Analyzer
-timed out, which ends the search.
+timed out, and ``"capacity"`` when the bounds are too large for the Alloy Analyzer; the last two
+end the search.
 
 While the Alloy Analyzer runs, an SSE comment line is sent every :data:`HEARTBEAT_SECONDS` as a
 heartbeat, so that clients and proxies see the stream is alive.
@@ -37,7 +38,7 @@ from besser.utilities.web_modeling_editor.backend.services.validators.ocl_checke
 logger = logging.getLogger(__name__)
 
 # Objects per class searched, in turn, until an instance is found.
-DEFAULT_SCOPES = (5, 7, 9, 11)
+DEFAULT_SCOPES = (5, 7, 9)
 
 # Seconds the Alloy Analyzer may run, per scope, before the search times out.
 DEFAULT_TIMEOUT_SECONDS = 30
@@ -118,6 +119,17 @@ async def _search(
                     scope=bounds.objects,
                     reason="timeout",
                 )
+                return
+            if result == AlloyResult.SCOPES_TOO_LARGE:
+                yield _failure(
+                    f"Too large to search within {bounds}.",
+                    warnings=warnings,
+                    scope=bounds.objects,
+                    reason="capacity",
+                )
+                return
+            if result == AlloyResult.ERROR:
+                yield _failure(f"The semantic check failed unexpectedly at scope {scope}.", warnings=warnings)
                 return
             if result == AlloyResult.SAT:
                 fields: dict[str, Any] = {"scope": bounds.objects}

@@ -625,7 +625,7 @@ def test_punning_class_and_node_shape_both_present(tmp_path: Path):
 
 def test_punned_class_and_shape_round_trip_through_rdf(tmp_path: Path):
     """Re-exporting must reproduce both assertions the source made."""
-    from rdflib import Graph, URIRef
+    from rdflib import URIRef
     from rdflib.namespace import OWL, RDF, RDFS
 
     from besser.utilities.kg_to_owl import knowledge_graph_to_rdf

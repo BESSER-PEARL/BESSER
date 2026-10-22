@@ -17,8 +17,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
 from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 

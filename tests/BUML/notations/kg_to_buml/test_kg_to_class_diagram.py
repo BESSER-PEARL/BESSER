@@ -1,7 +1,5 @@
 """Tests for ``besser.BUML.notations.kg_to_buml.kg_to_class_diagram``."""
 
-import pytest
-
 from besser.BUML.metamodel.kg import (
     KGBlank,
     KGClass,
@@ -12,9 +10,7 @@ from besser.BUML.metamodel.kg import (
     KnowledgeGraph,
 )
 from besser.BUML.metamodel.structural import (
-    BinaryAssociation,
     Class,
-    Generalization,
     IntegerType,
     StringType,
     UNLIMITED_MAX_MULTIPLICITY,

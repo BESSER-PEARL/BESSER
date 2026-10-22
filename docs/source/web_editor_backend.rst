@@ -155,7 +155,8 @@ JSON body: the ``diagram``, an optional ``description``, the ``provider``
 (``anthropic``, ``openai`` -- the default -- ``mistral`` or ``nebius``), an
 optional ``llm_model`` (the provider's default otherwise) and the caller's own
 ``api_key``. ``/classify-orphans-with-llm`` also takes ``node_ids`` (at most 400
-per request). The key is a ``SecretStr`` and is never logged. OpenAI is reached
+per request; the editor reads the limit from ``/kg-config``). The key is a
+``SecretStr`` and is never logged. OpenAI is reached
 through the transport in ``besser.utilities.llm_utils``; the other providers go
 through the Spec-Driven Agent's provider clients. The server-paid tiers and the
 providers that need a ``base_url`` are not offered, so the server never opens a
@@ -182,7 +183,11 @@ integer). The editor shows them as toasts. ``/kg-to-class-diagram`` returns its
 own, for example ``SHACL_COUNT_INVALID`` when a ``sh:minCount`` or
 ``sh:maxLength`` is not a whole number and the constraint is skipped.
 
-**Determinism.** Identical input yields identical output, including issue ids.
+**Determinism.** Importing the same ontology file twice through
+``/import-owl`` yields the same diagram JSON, blank-node ids included, and the
+preflight and consistency reports computed on a given diagram carry the same
+issue ids every time. A test imports one file twice and compares the two
+results.
 
 BPMN Diagrams
 ^^^^^^^^^^^^^
@@ -449,6 +454,7 @@ Refine KG dialog that precedes it.
 - ``POST /apply-kg-refinement`` -- Apply Refine KG decisions (``source`` selects the static analyzer or the LLM suggestions) and return the cleaned KG
 - ``POST /llm-clean-kg`` -- LLM-suggested cleanup of the graph, using the caller's own LLM key (see below); the optional ``description`` adds context, otherwise the model infers the domain from the KG
 - ``POST /classify-orphans-with-llm`` -- Per-node classification for orphan nodes deferred from the Refine dialog (``description`` is optional here too)
+- ``GET /kg-config`` -- The server-owned limits the editor reads before calling the LLM endpoints: ``{"llmRequestTimeoutSeconds": int, "maxOrphanClassifyNodes": int}``. Both values come from ``constants.py``, so the editor never hard-codes a limit the server enforces
 
 Validation
 ^^^^^^^^^^
@@ -595,12 +601,8 @@ Environment Variables
 
 **Optional:**
 
-- ``OPENAI_API_KEY`` -- OpenAI key consumed by several features:
+- ``OPENAI_API_KEY`` -- OpenAI key consumed by:
 
-  - image-to-model and knowledge-graph-to-model conversion,
-  - the Refine KG LLM endpoints (``/llm-clean-kg`` and
-    ``/classify-orphans-with-llm``) use the key in the request body instead,
-    so they need no server key and also accept Anthropic, Mistral and Nebius keys,
   - the :doc:`LLM-based agent recommendation <generators/agent_personalization>`
     endpoint (``/recommend-agent-config-llm``),
   - the BAF generator's personalization pipeline when ``agentLanguage`` /
@@ -613,6 +615,13 @@ Environment Variables
   The key can also be supplied per-request in the JSON body under
   ``system.openaiApiKey`` (or ``openai_api_key``). If both are set, the
   request-scoped key wins.
+
+  Endpoints that never read it: image-to-model (``/get-json-model-from-image``)
+  and knowledge-graph-to-model (``/get-json-model-from-kg``) take the key as a
+  required ``api_key`` form field, and the Knowledge Graph LLM endpoints
+  (``/llm-clean-kg``, ``/classify-orphans-with-llm``) take ``provider``,
+  ``llm_model`` and ``api_key`` in the request body, so they also accept
+  Anthropic, Mistral and Nebius keys.
 
 **Spec-Driven Agent (all optional):**
 

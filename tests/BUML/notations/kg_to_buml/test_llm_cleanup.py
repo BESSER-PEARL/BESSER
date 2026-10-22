@@ -88,7 +88,7 @@ def test_build_kg_snapshot_full_for_small_kg():
     assert EX + "Person" in alice["types"]
     # Blanks and literals included verbatim.
     assert any(b["id"] == "_:b1" for b in snapshot["blanks"])
-    assert any(l["id"] == "lit-1" for l in snapshot["literals"])
+    assert any(lit["id"] == "lit-1" for lit in snapshot["literals"])
 
 
 def test_build_kg_snapshot_summary_for_large_kg():

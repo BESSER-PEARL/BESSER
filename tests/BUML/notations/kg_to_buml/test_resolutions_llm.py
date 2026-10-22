@@ -7,12 +7,9 @@ in the graph.
 
 from __future__ import annotations
 
-import copy
-
 import pytest
 
 from besser.BUML.metamodel.kg import (
-    KGBlank,
     KGClass,
     KGEdge,
     KGIndividual,

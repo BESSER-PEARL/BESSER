@@ -32,8 +32,7 @@ def test_fastapi_primary_drops_bundled_subgenerator_tools(tmp_path):
     assert "generate_pydantic" not in kept
     assert "generate_sqlalchemy" not in kept
     assert "generate_rest_api" not in kept
-    assert "generate_fastapi_backend" not in kept  # the primary itself is locked too (#666)
-    assert {"generate_react", "write_file"} <= kept
+    assert {"generate_fastapi_backend", "generate_react", "write_file"} <= kept
 
 
 def test_non_bundling_primary_keeps_all(tmp_path):

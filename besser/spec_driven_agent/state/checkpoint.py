@@ -90,6 +90,8 @@ class Checkpoint:
     phase2_exited_cleanly: bool = False
     # Scheduling/progress only, never cached validation or API success.
     repair_progress: dict = field(default_factory=dict)
+    # Whole-application generators the run refuses (#666); a resume keeps them.
+    locked_generators: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +117,7 @@ class Checkpoint:
             "phase2_stop_reason": self.phase2_stop_reason,
             "phase2_exited_cleanly": self.phase2_exited_cleanly,
             "repair_progress": self.repair_progress,
+            "locked_generators": self.locked_generators,
         }
 
 
@@ -372,6 +375,7 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             phase2_stop_reason=str(data.get("phase2_stop_reason", "max_turns")),
             phase2_exited_cleanly=data.get("phase2_exited_cleanly") is True,
             repair_progress=progress,
+            locked_generators=[t for t in data.get("locked_generators") or [] if isinstance(t, str)],
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Checkpoint at %s has unexpected shape: %s", path, exc)

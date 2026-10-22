@@ -234,18 +234,6 @@ class ModifyRunMixin:
         )
         return self.output_dir
 
-    def _seed_has_app(self) -> bool:
-        """The seed holds an application a primary generator would overwrite:
-        app folders, or a class model behind it (not an agent-only seed)."""
-        if any(os.path.isdir(os.path.join(self.output_dir, d)) for d in ("backend", "frontend")):
-            return True
-        try:
-            with open_plain(os.path.join(self.output_dir, ".besser_recipe.json"), "r",
-                            root=self.output_dir, encoding="utf-8") as fh:
-                return bool((json.load(fh).get("model") or {}).get("classes"))
-        except Exception:
-            return False
-
     def _render_seed_history(self) -> str:
         """Format the seed recipe's session history for the inventory."""
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")

@@ -175,6 +175,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     TOOL_INPUTS_FILENAME,
     _LOG_VALUE_BUDGET,
     _WRITE_TOOLS_ON_RECORD,
+    _APPLICATION_OUTPUT_DIRS,
     _APPLICATION_PRIMARY_TOOLS,
     _BARE_LANG_RE,
     _EDIT_STREAK_TOOLS,
@@ -850,6 +851,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self._inventory = checkpoint.inventory
         self._generator_used = checkpoint.generator_used
+        self.executor.lock_generators(checkpoint.locked_generators)
         self._compaction_count = checkpoint.compaction_count
         self.tool_calls_log = list(checkpoint.tool_calls_log)
         self._validation_issues = [
@@ -890,6 +892,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             )
         else:
             self._drop_redundant_generator_tools()
+            self._lock_application_generators()
             self.executor.set_scaffold_family(
                 self._scaffold_family(), self._instructions)
 
@@ -1635,20 +1638,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     )
 
     def _drop_redundant_generator_tools(self) -> None:
-        """Remove generator tools that would duplicate or overwrite the app.
+        """Remove sub-generator tools the chosen primary already bundles.
 
-        Sub-generators the chosen primary already bundles (see
-        ``_REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY``) would emit duplicate
-        ``pydantic/`` / ``sqlalchemy/`` / ``rest_api/`` dirs next to the
-        assembled ``backend/``. Once an application exists (a primary scaffold,
-        or a modify run's seed that holds one), the primaries go too and the
-        executor refuses them (#666).
+        No-op unless ``self._generator_used`` is a known bundling primary
+        (see ``_REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY``). Prevents the Phase-2
+        agent from emitting duplicate ``pydantic/`` / ``sqlalchemy/`` /
+        ``rest_api/`` dirs alongside the assembled ``backend/``.
         """
-        redundant = set(_REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY.get(self._generator_used or "", ()))
-        if self._generator_used in _APPLICATION_PRIMARY_TOOLS or (
-                self._modify_mode and self._seed_has_app()):
-            redundant |= _APPLICATION_PRIMARY_TOOLS
-            self.executor.lock_generators(_APPLICATION_PRIMARY_TOOLS)
+        redundant = _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY.get(self._generator_used or "")
         if not redundant:
             return
         before = len(self.tools)
@@ -1658,10 +1655,35 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         ]
         if len(self.tools) != before:
             logger.info(
-                "Phase 2: dropped %d generator tool(s) that would duplicate or "
-                "overwrite the existing app (scaffold: %s)",
-                before - len(self.tools), self._generator_used or "seeded app",
+                "Phase 2: dropped %d redundant generator tool(s) already "
+                "bundled by %s (avoids duplicate output dirs)",
+                before - len(self.tools), self._generator_used,
             )
+
+    def _lock_application_generators(self) -> None:
+        """Refuse the whole-application generators that would overwrite the app (#666).
+
+        All of them once a primary built the scaffold (this run's Phase 1, or
+        the seed's recorded generator in a modify run). In a modify run on any
+        other seed, each one whose output folder the seed already has. A
+        resumed run keeps the lock its checkpoint recorded.
+        """
+        if self._generator_used in _APPLICATION_PRIMARY_TOOLS:
+            self.executor.lock_generators(_APPLICATION_PRIMARY_TOOLS)
+        elif self._modify_mode:
+            self.executor.lock_generators(
+                tool for tool, folder in _APPLICATION_OUTPUT_DIRS.items()
+                if os.path.isdir(os.path.join(self.output_dir, folder))
+            )
+        locked = self.executor.locked_generators
+        if not locked:
+            return
+        self.tools = [
+            t for t in self.tools
+            if (t.get("name") if isinstance(t, dict) else None) not in locked
+        ]
+        logger.info("Phase 2: locked %s, the application they write already exists",
+                    ", ".join(sorted(locked)))
 
     def _ensure_gitignore(self) -> None:
         """Write a .gitignore into the output root if the run didn't author one."""
@@ -1689,6 +1711,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # the agent can't scatter redundant pydantic/ sqlalchemy/ rest_api/
         # dirs next to the assembled backend/.
         self._drop_redundant_generator_tools()
+        self._lock_application_generators()
 
         # Ship a .gitignore so a pushed/cloned repo doesn't carry caches, a
         # runtime DB, node_modules, or a leaked .env. Deterministic — no LLM.
@@ -2521,6 +2544,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 phase2_stop_reason=self._phase2_stop_reason,
                 phase2_exited_cleanly=self._phase2_exited_cleanly,
                 repair_progress=self._repair_progress if phase == "phase3" else {},
+                locked_generators=sorted(self.executor.locked_generators),
             )
             path = save_checkpoint(self.output_dir, ckpt)
             if path:

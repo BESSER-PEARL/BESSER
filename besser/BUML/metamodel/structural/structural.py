@@ -1541,12 +1541,26 @@ class Class(Type):
         *other* parents. Only clashes involving a name in ``ends`` are raised;
         a pre-existing one is reported by ``DomainModel.validate()``.
 
+        Every class that reaches ``ends`` reaches the ends declared on it and
+        its ancestors, so the usual case -- no clash -- is settled with one walk
+        up from all of them at once (any other end of a new name found there is
+        reached by some such class, alongside the new one). Only a clash takes
+        the per-class look that names the class.
+
         Raises:
             ValueError: if this class or one of its specializations would reach
                 two distinct association ends with the same name.
         """
+        ends = set(ends)
         new_names = {end.name for end in ends}
-        for cls in [self, *sorted(self.all_specializations(), key=lambda c: c.name)]:
+        reaching = {self} | self.all_specializations()
+        declaring = reaching | Class._closure(reaching, Class.parents)
+        if len(new_names) == len(ends) and not any(
+            end.name in new_names and end not in ends
+            for cls in declaring for end in cls.association_ends()
+        ):
+            return
+        for cls in [self, *sorted(reaching - {self}, key=lambda c: c.name)]:
             clashes = sorted(cls._duplicate_end_names(ends) & new_names)
             if clashes:
                 raise ValueError(
@@ -1612,7 +1626,7 @@ class Class(Type):
         Never contains the class itself, even on an inheritance cycle (which
         ``DomainModel.validate()`` reports). See :meth:`_closure`.
         """
-        return self._closure(Class.parents)
+        return Class._closure([self], Class.parents) - {self}
 
     def specializations(self) -> set:
         """set[Class]: Get the set of direct specializations (children) of the class."""
@@ -1628,20 +1642,23 @@ class Class(Type):
         Never contains the class itself, even on an inheritance cycle. See
         :meth:`_closure`.
         """
-        return self._closure(Class.specializations)
+        return Class._closure([self], Class.specializations) - {self}
 
-    def _closure(self, step) -> set:
-        """set[Class]: Get every class reachable from this one by repeating ``step``, excluding itself.
+    @staticmethod
+    def _closure(classes, step) -> set:
+        """set[Class]: Get every class reached from ``classes`` by applying ``step`` one or more times.
 
         Iterative with a visited set: an inheritance chain deeper than Python's
         recursion limit is walked like any other, a class reached along several
-        paths (a diamond) is expanded once, and a cycle terminates.
+        paths (a diamond, or from several of ``classes``) is expanded once, and
+        a cycle terminates. A class of ``classes`` is in the result only if
+        ``step`` leads back to it.
         """
         found = set()
-        pending = list(step(self))
+        pending = [nxt for cls in classes for nxt in step(cls)]
         while pending:
             cls = pending.pop()
-            if cls is self or cls in found:
+            if cls in found:
                 continue
             found.add(cls)
             pending.extend(step(cls))

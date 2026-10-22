@@ -4,7 +4,6 @@ Validation Router
 Handles all diagram validation endpoints for the BESSER web modeling editor backend.
 """
 
-import asyncio
 import logging
 
 from fastapi import APIRouter
@@ -28,15 +27,17 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_deployment_diagram,
     process_bpmn_diagram,
 )
-from besser.BUML.notations.kg_to_buml import analyze_kg_for_class_diagram
 from besser.utilities.web_modeling_editor.backend.services.kg.payloads import parse_kg_diagram
+from besser.utilities.web_modeling_editor.backend.services.kg.validation import (
+    validate_knowledge_graph,
+)
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     BPMN_DIAGRAM_TYPE,
     DEPLOYMENT_DIAGRAM_TYPE,
-    KG_CONSISTENCY_TIMEOUT_SECONDS,
+    KG_DIAGRAM_TYPE,
 )
 
 # Backend services - Validators
@@ -55,19 +56,6 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/besser_api", tags=["validation"])
-
-
-def _format_kg_issue(code: str, description: str, node_ids) -> str:
-    """Render one KG finding as a single line.
-
-    ``KGIssue`` and ``ConsistencyIssue`` both carry a human-readable field and
-    the ids they concern; the ids are what let a caller locate the problem
-    without a second request.
-    """
-    text = f"[{code}] {description}".rstrip()
-    if node_ids:
-        text = f"{text} (nodes: {', '.join(node_ids)})"
-    return text
 
 
 @router.post("/validate-diagram", response_model=ValidationResponse)
@@ -174,45 +162,14 @@ async def validate_diagram(input_data: DiagramInput):
             except ValueError as e:
                 validation_errors.extend(str(e).splitlines())
 
-        elif diagram_type == "KnowledgeGraphDiagram":
+        elif diagram_type == KG_DIAGRAM_TYPE:
             kg = parse_kg_diagram(input_data.model_dump())
+            # The preflight and the OWL/SHACL consistency check, as in the
+            # editor's Refine KG modal (see services/kg/validation.py).
+            kg_errors, kg_warnings = await validate_knowledge_graph(kg)
+            validation_errors.extend(kg_errors)
+            validation_warnings.extend(kg_warnings)
 
-            # Same two checks the editor's Refine KG modal runs, so validating
-            # through the API and validating through the UI agree. Only the
-            # findings are reported: the modal's recommended/skip actions are
-            # interactive choices with no meaning in a validation response.
-            for issue in analyze_kg_for_class_diagram(kg).issues:
-                validation_errors.append(_format_kg_issue(issue.code, issue.description,
-                                                          issue.affected_node_ids))
-
-            # Imported here rather than at module scope: pulling in pyshacl +
-            # owlrl would otherwise make them a hard requirement to *start* the
-            # backend, even for deployments that never open a KG. Run off the
-            # event loop — it is seconds of CPU on a mid-sized ontology.
-            from besser.BUML.notations.kg_to_buml.consistency import (
-                ConsistencyCheckError,
-                check_kg_consistency,
-            )
-
-            try:
-                consistency = await asyncio.to_thread(
-                    check_kg_consistency, kg, timeout_seconds=KG_CONSISTENCY_TIMEOUT_SECONDS,
-                )
-            except ConsistencyCheckError as exc:
-                # The KG could not be checked at all (unloadable shapes, a pattern
-                # that ran out the clock): that is itself a finding about the KG.
-                validation_errors.append(str(exc))
-            else:
-                for issue in consistency.issues:
-                    line = _format_kg_issue(
-                        issue.code,
-                        issue.constraint_label or issue.message,
-                        issue.affected_node_ids,
-                    )
-                    if issue.severity == "violation":
-                        validation_errors.append(line)
-                    else:
-                        validation_warnings.append(line)
         elif diagram_type == "GUINoCodeDiagram":
             return {
                 "isValid": True,

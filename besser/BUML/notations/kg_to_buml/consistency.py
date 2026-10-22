@@ -23,20 +23,24 @@ in the in-memory graphs passed to pyshacl.
 pyshacl runs in a child process (``_shacl_worker.py``) that is killed when its
 time budget runs out: ``sh:pattern`` is user-authored and evaluated with
 :mod:`re`, which a catastrophically backtracking pattern can pin, GIL and all,
-for as long as it likes. Patterns that are recognisably dangerous are dropped
-up front and reported as a warning instead.
+for as long as it likes. The timeout is the guard; a pattern longer than
+:data:`MAX_SHACL_PATTERN_LENGTH` is not evaluated at all and is reported as a
+warning instead. The child gets a minimal environment
+(:func:`besser.utilities.subprocess_env.safe_subprocess_env`), never the
+server's secrets.
 
-Requires :mod:`pyshacl`, which is a dependency of the web editor backend only
-(``besser/utilities/web_modeling_editor/backend/requirements.txt``), not of the
-``besser`` library. Import this module lazily from code that must work without it.
+Running a check requires :mod:`pyshacl`, an optional dependency
+(``pip install besser[kg]``). It is imported only by the validator itself, so
+this module can be imported without it; :func:`check_kg_consistency` raises
+:class:`ImportError` naming the extra when it is missing.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import os
 import pickle
-import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -47,6 +51,7 @@ from rdflib import BNode, Literal, RDF, URIRef, XSD
 from rdflib.namespace import OWL, RDFS
 
 from besser.BUML.metamodel.kg.iri import local_name as _local_name
+from besser.utilities.subprocess_env import safe_subprocess_env
 from besser.BUML.metamodel.kg import (
     KnowledgeGraph,
     KGBlank,
@@ -266,9 +271,14 @@ def check_kg_consistency(
         the KG is fully conformant.
 
     Raises:
+        ImportError: pyshacl is not installed (``pip install besser[kg]``).
         ConsistencyCheckTimeout: the validation did not finish in time.
         ConsistencyCheckError: pyshacl rejected the KG's shapes.
     """
+    if importlib.util.find_spec("pyshacl") is None:
+        raise ImportError(
+            "The KG consistency check needs pyshacl. Install it with: pip install besser[kg]"
+        )
     data_graph, _ = kg_to_rdf(kg, mirror_shapes=True)
     _normalize_count_literals(data_graph)
     _augment_with_owl_shim(data_graph)
@@ -332,6 +342,8 @@ def _validate(
             capture_output=True,
             timeout=timeout_seconds,
             check=False,
+            # The child evaluates KG-authored patterns: it gets no server secrets.
+            env=safe_subprocess_env(),
         )
     except subprocess.TimeoutExpired as exc:
         # ``run`` has already killed the child.
@@ -357,107 +369,20 @@ def _unwrap_outcome(outcome: Tuple[str, Any]) -> rdflib.Graph:
     return value
 
 
-# A quantifier that can repeat its atom more than once: ``*``, ``+``, ``{n,}``,
-# ``{n,m}`` (m > 1) or ``{n}`` (n > 1). ``?`` cannot, so ``(https?://)?`` is fine.
-_REPEAT_RE = re.compile(r"[*+]|\{(\d*)(,?)(\d*)\}")
-
-
-def _repeat_at(pattern: str, index: int) -> Optional[Tuple[int, bool]]:
-    """``(end, variable)`` for a repeating quantifier at ``index``, else ``None``.
-
-    ``variable`` is False for a fixed count (``{3}``), which repeats its atom
-    but cannot backtrack over how many times.
-    """
-    match = _REPEAT_RE.match(pattern, index)
-    if match is None:
-        return None
-    if match.group(0) in ("*", "+"):
-        return match.end(), True
-    low, comma, high = match.groups()
-    if not low and not high:
-        return None                         # "{}" / "{,}": literal braces
-    if not comma:
-        return (match.end(), False) if int(low) > 1 else None
-    if not high:
-        return match.end(), True
-    if int(high) <= 1:
-        return None
-    return match.end(), int(high) > int(low or 0)
-
-
-def _has_nested_quantifier(pattern: str) -> bool:
-    """True when a repeated group contains a variable repetition: ``(a+)+``, ``(.*a){9}``.
-
-    The classic shape of catastrophic backtracking ("star height" above one, the
-    rule tools such as safe-regex apply). A heuristic in both directions: it
-    also flags unambiguous patterns such as ``([a-z]+\\.)+``, and it misses
-    overlapping alternations such as ``(a|aa)+``, which the validator's time
-    budget still bounds.
-    """
-    group_varies: List[bool] = []   # per open group: does it contain a variable repeat?
-    index = 0
-    in_class = False
-    while index < len(pattern):
-        char = pattern[index]
-        if char == "\\":
-            index += 2
-            continue
-        if in_class:
-            in_class = char != "]"
-            index += 1
-            continue
-        if char == "[":
-            # A "]" first in the class (after an optional "^") is a member, not the end.
-            index += 1
-            if pattern[index:index + 1] == "^":
-                index += 1
-            if pattern[index:index + 1] == "]":
-                index += 1
-            in_class = True
-            continue
-        if char == "(":
-            group_varies.append(False)
-            # "(?:", "(?P<name>", "(?=": that "?" is syntax, not a quantifier.
-            index += 2 if pattern[index + 1:index + 2] == "?" else 1
-            continue
-        if char == ")":
-            inner = group_varies.pop() if group_varies else False
-            repeat = _repeat_at(pattern, index + 1)
-            if repeat is not None and inner:
-                return True
-            if group_varies and (inner or (repeat is not None and repeat[1])):
-                group_varies[-1] = True
-            index = repeat[0] if repeat is not None else index + 1
-            continue
-        repeat = _repeat_at(pattern, index)
-        if repeat is not None:
-            if group_varies and repeat[1]:
-                group_varies[-1] = True
-            index = repeat[0]
-            continue
-        index += 1
-    return False
-
-
 def _drop_unsafe_patterns(shapes_graph: rdflib.Graph) -> List[Tuple[Any, str, str]]:
-    """Remove every ``sh:pattern`` that could make the validator backtrack for ages.
+    """Remove every ``sh:pattern`` longer than :data:`MAX_SHACL_PATTERN_LENGTH`.
 
     Mutates ``shapes_graph``. A shape whose pattern goes also loses its
     ``sh:flags``, which only qualify a pattern. Returns ``(shape, pattern,
-    reason)`` for each pattern removed, so it can be reported.
+    reason)`` for each pattern removed, so it can be reported. A short pattern
+    that backtracks badly is left to the validator's time budget.
     """
     skipped: List[Tuple[Any, str, str]] = []
     for shape, pattern in list(shapes_graph.subject_objects(SH.pattern)):
         text = str(pattern)
-        if len(text) > MAX_SHACL_PATTERN_LENGTH:
-            reason = f"it is longer than {MAX_SHACL_PATTERN_LENGTH} characters"
-        elif _has_nested_quantifier(text):
-            reason = (
-                "it repeats a group that itself contains a repetition, which can make "
-                "matching take exponential time"
-            )
-        else:
+        if len(text) <= MAX_SHACL_PATTERN_LENGTH:
             continue
+        reason = f"it is longer than {MAX_SHACL_PATTERN_LENGTH} characters"
         shapes_graph.remove((shape, SH.pattern, pattern))
         skipped.append((shape, text, reason))
     for shape, _text, _reason in skipped:

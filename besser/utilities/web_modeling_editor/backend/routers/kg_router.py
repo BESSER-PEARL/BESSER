@@ -19,7 +19,7 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Dict, List
 
-from fastapi import APIRouter, File, UploadFile, Body, Form
+from fastapi import APIRouter, File, HTTPException, UploadFile, Body, Form
 from fastapi.responses import Response
 from pydantic import SecretStr
 
@@ -81,6 +81,11 @@ from besser.utilities.web_modeling_editor.backend.services.kg.llm import (
     build_completer,
     run_with_deadline,
 )
+from besser.utilities.web_modeling_editor.backend.services.kg.validation import (
+    ConsistencyCheckBusy,
+    run_consistency_check,
+)
+from besser.BUML.notations.kg_to_buml.consistency import ConsistencyCheckError
 from besser.utilities.web_modeling_editor.backend.services.kg.payloads import (
     consistency_report_to_response,
     enforce_signature,
@@ -95,7 +100,6 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     API_VERSION,
     TEMP_DIR_PREFIX,
     MAX_OWL_SIZE,
-    KG_CONSISTENCY_TIMEOUT_SECONDS,
     MAX_BUML_SIZE,
     MAX_ORPHAN_CLASSIFY_NODES,
     KG_LLM_REQUEST_TIMEOUT_SECONDS,
@@ -239,22 +243,14 @@ async def check_kg_consistency_endpoint(input_data: KGDiagramInput):
     originating constraint shape id (when resolvable). Empty issues list
     means the KG is fully conformant.
     """
-    # Imported here rather than at module scope so pyshacl + owlrl are not
-    # pulled in just to start the backend. (rdflib still is — it is core to
-    # every KG path — but pyshacl and its owlrl dependency are not.)
-    from besser.BUML.notations.kg_to_buml.consistency import (
-        ConsistencyCheckError,
-        check_kg_consistency,
-    )
-
     kg, _ = kg_payload_to_kg(input_data)
     # pyshacl + owlrl is the heaviest thing this backend runs (seconds on a
-    # mid-sized ontology). It runs in a child process that is killed after the
-    # timeout; waiting for it stays off the event loop.
+    # mid-sized ontology): a killable child process, off the event loop, and
+    # at most KG_CONSISTENCY_MAX_CONCURRENT at once.
     try:
-        report = await asyncio.to_thread(
-            check_kg_consistency, kg, timeout_seconds=KG_CONSISTENCY_TIMEOUT_SECONDS,
-        )
+        report = await run_consistency_check(kg)
+    except ConsistencyCheckBusy as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ConsistencyCheckError as exc:
         # The KG itself is the cause (unloadable shapes, a pattern that runs away).
         raise ValidationError(str(exc)) from exc

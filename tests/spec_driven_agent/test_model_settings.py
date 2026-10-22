@@ -354,3 +354,11 @@ def test_a_luna_primary_plans_on_itself(model, monkeypatch):
     monkeypatch.delenv("BESSER_LLM_PLANNING_MODEL", raising=False)
     assert OpenAIProvider(api_key="k", model=model).planning_model is None
     assert OpenAIProvider(api_key="k", model="gpt-6-sol").planning_model is not None
+
+
+def test_openai_plans_on_gpt_6_luna(monkeypatch):
+    # Live 2026-10-22 against gpt-4o-mini: forced tool calls work for all three
+    # planning uses, verdicts at least as good, $0.10/$0.50 vs $0.15/$0.60 per
+    # 1M tokens, and 128000 output tokens vs 16384.
+    monkeypatch.delenv("BESSER_LLM_PLANNING_MODEL", raising=False)
+    assert OpenAIProvider(api_key="k", model="gpt-4o").planning_model == "gpt-6-luna"

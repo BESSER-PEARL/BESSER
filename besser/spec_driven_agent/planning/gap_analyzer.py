@@ -7,7 +7,7 @@ the customise (Phase 2) loop to execute.
 Model selection:
     The call prefers the provider's cheap planning sibling
     (``llm_client.planning_model`` — Haiku for Anthropic keys,
-    gpt-4o-mini for OpenAI keys, overridable via the
+    gpt-6-luna for OpenAI keys, overridable via the
     ``BESSER_LLM_PLANNING_MODEL`` env var, ``primary`` to disable). If
     the cheap model is unavailable on the user's gateway the call is
     retried once on the primary model, so cheap routing can never fail

@@ -1609,7 +1609,9 @@ class OpenAIProvider(LLMProvider):
 
     DEFAULT_MODEL = "gpt-4o"
     DEFAULT_MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
-    PLANNING_MODEL = "gpt-4o-mini"
+    # Measured against gpt-4o-mini on model-sync, gap analysis and the ledger
+    # judge (2026-10-22): as good or better, cheaper, 128000 output tokens.
+    PLANNING_MODEL = "gpt-6-luna"
 
     def __init__(
         self,
@@ -1742,7 +1744,7 @@ class OpenAIProvider(LLMProvider):
             return None  # already on a cheap tier
         # Self-hosted / free-local models (ollama gateways) and the keyless
         # route (not in its catalog): the OpenAI cheap sibling doesn't exist
-        # there — a gpt-4o-mini override just burns two failing round-trips
+        # there — a cheap-sibling override just burns two failing round-trips
         # per gap analysis before the primary-model retry kicks in.
         if self._free_route or _is_free_local_model(self._model.lower()):
             return None

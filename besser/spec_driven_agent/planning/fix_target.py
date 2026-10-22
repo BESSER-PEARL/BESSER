@@ -24,83 +24,160 @@ defect to chase.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 
-from besser.spec_driven_agent.planning.requirements_ledger import original_request
+from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message
 
+logger = logging.getLogger(__name__)
 
-# The modeling-agent sends its own summary first (machine prose such as "show
-# clear error messages", "return 404 for unknown tasks"), then the user's words
-# (``original_request``), each later message under this heading. Only the
-# user's newest message can report a failure. Must match the heading in the
-# modeling-agent's generation_handler.py (pinned in test_fix_target.py).
-_LATER_REQUEST_MARKER = "## Subsequent user request, verbatim"
-
-# Evidence that the user reports a failure of the existing app. Feature wording
-# is not evidence: "show a validation error", "a fixed daily rate", "return
-# 404 for unknown ids", "regenerate the app" (#659).
-_FAILURE_EVIDENCE_RE = re.compile(
-    "|".join((
-        # A pasted traceback, stack trace or tool error.
-        r"traceback \(most recent call last\)|\bstack\s?trace\b|\bFile \"[^\"]+\", line \d+",
-        r"\bnpm (?:ERR!|error)|\bHTTP/\d(?:\.\d)? [45]\d\d\b|\berror\s*:\s*\S",
-        # The app misbehaving.
-        r"\b(?:does|do|did|is|are|was)(?:n['’]?t| not)\s+(?:work|load|start|run|open|compile|build|save|respond)",
-        r"\bwon['’]?t\s+(?:work|load|start|run|open|compile|build|save|respond)",
-        r"\bnot\s+working\b|\bcrash(?:es|ed|ing)\b|\bnothing happens\b|\binternal server error\b",
-        r"\bblank (?:white )?(?:page|screen)\b|\bwhite screen\b|\bsame error\b|\b(?:error|[45]\d\d)\s+again\b",
-        r"\b(?:is|are|was|were|seems|looks|still|['’]s)\s+(?:completely\s+|totally\s+|now\s+)?broken\b",
-        r"\b(?:it|this|build|tests?|install|request|import|migration|login|app|server|backend"
-        r"|frontend|page|call|endpoint|compilation|deploy(?:ment)?|command)\s+"
-        r"(?:still\s+|keeps\s+|always\s+|now\s+|is\s+|are\s+)?(?:fails|failed|failing)\b",
-        r"\bfail(?:s|ed|ing)?\s+with\b",
-        # The user meeting an error, or asking for a fix.
-        r"\b(?:i|we)\s+(?:get|got|keep getting|am getting|are getting|see|saw|hit|ran into|run into"
-        r"|receive|received)\s+(?:an?\s+|this\s+|the\s+|that\s+|some\s+|following\s+)*(?:\w+\s+){0,2}errors?\b",
-        r"\bgetting\s+(?:an?\s+|this\s+|the\s+)?(?:\w+\s+)?errors?\b",
-        # Not the CSS sense: "fix the header to the top".
-        r"\bfix(?:ing)?\s+(?:it|this|that|these|those|them|the|my|our|all)\b(?!(?:\s+\w+){1,3}\s+(?:to|at)\b)",
-        r"\b(?:please|pls|can you|could you)\s+fix\b",
-        r"\bthere(?:['’]s| is| are)\s+(?:an?\s+|some\s+)?bugs?\b|\bbuggy\b",
-        r"\b[45]\d\ds\b",
-    )),
-    re.IGNORECASE,
+_I = re.IGNORECASE
+_STATUS = r"[45]\d\d"
+# After a status code: a condition or audience makes it a specification
+# ("returns 404 for unknown ids", "returns 403 to guests"), except "for an
+# existing / a valid ..." which describes the failing input.
+_NOT_SPECIFIED_AFTER = (
+    r"(?!(?:\s+(?:conflict|not found|bad request|unauthori[sz]ed|forbidden|unprocessable(?: entity)?))?"
+    r"\s+(?:if|unless|whenever|to\b|when(?!\s+(?:I|we)\b|\s+\w+ing\b)|on\s+(?:unknown|missing|invalid|bad|duplicate)"
+    r"|for(?!\s+(?:an?\s+|the\s+|my\s+)?(?:existing|valid|correct)\b)))"
 )
-# A pasted exception class (``NameError``, ``ValidationError``): case-sensitive,
-# and not when the request specifies it ("raise a ValueError if ...").
-_EXCEPTION_EVIDENCE_RE = re.compile(r"\b[A-Z][A-Za-z0-9]*(?:Error|Exception)\b")
-# A status code the app returned ("POST /x returns 400", "a 500 error"), not
-# one it should return ("Return 404 for unknown tasks", "a custom 404 page").
-_STATUS_REPORT_RE = re.compile(
-    r"\b(?:returns|returned|returning|gives|gave|got|get|getting|responds?\s+with)\s+"
-    r"(?:an?\s+|http\s+|status\s+)*[45]\d\d\b"
-    r"(?!\s+(?:if|for|when(?!\s+I\b)|unless|on\s+(?:unknown|missing|invalid)))"
-    r"|\b[45]\d\d (?:error|bad request|internal server error|not found|unprocessable)"
-    r"|\b(?:error|errors|status)\s+(?:code\s+)?[45]\d\d\b",
-    re.IGNORECASE,
+# Subjects that "fail" in a report ("the build fails", "npm run dev fails").
+_FAILING_SUBJECT = (
+    r"(?:it|this|build|tests?|install|request|import|migration|login|app|server|backend|frontend|page"
+    r"|call|endpoint|compilation|deploy(?:ment)?|command|dev|start|up)"
+)
+
+# Evidence that the user's newest message reports a failure of the existing
+# app, as (name, pattern, guarded). Feature wording is not evidence: "show a
+# validation error", "a fixed daily rate", "return 404 for unknown ids",
+# "regenerate the app" (#659). A guarded rule does not count right after a
+# word that makes it a specification (``_SPECIFIED_BEFORE_RE``).
+_EVIDENCE_RULES: tuple[tuple[str, re.Pattern, bool], ...] = (
+    ("traceback", re.compile(
+        r"traceback \(most recent call last\)|\bstack\s?trace\b|\bFile \"[^\"]+\", line \d+", _I), False),
+    ("tool log line", re.compile(
+        rf"\bnpm (?:ERR!|error\b)|\bHTTP/\d(?:\.\d)? {_STATUS}\b|\bERR_[A-Z_]{{4,}}\b|\bECONNREFUSED\b"), False),
+    ("request log line", re.compile(
+        rf"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/\S*\s*(?:->|→|=>|:|-)?\s*{_STATUS}\b", _I), False),
+    ("error line", re.compile(r"\berror\s*:\s*\S", _I), True),
+    # Case-sensitive: a class name such as ``NameError`` or ``ValidationError``.
+    ("exception class", re.compile(r"\b[A-Z][A-Za-z0-9]*(?:Error|Exception)\b"), True),
+    ("status returned", re.compile(
+        r"\b(?:returns|returned|returning|gives|gave|got|get|getting|says|said|shows|showed"
+        r"|respond(?:s|ed)?\s+with)\s+"
+        rf"(?:an?\s+|http\s+|status\s+(?:code\s+|of\s+)?)*{_STATUS}\b{_NOT_SPECIFIED_AFTER}", _I), True),
+    ("status code", re.compile(
+        rf"\b{_STATUS} (?:error|bad request|internal server error|not found|unprocessable)"
+        rf"|\b(?:error|errors|status)\s+(?:code\s+)?{_STATUS}\b{_NOT_SPECIFIED_AFTER}", _I), True),
+    ("status plural", re.compile(rf"\b{_STATUS}s\b", _I), False),
+    ("status now", re.compile(
+        rf"\b{_STATUS}\s+(?:now|instead)\b|\b{_STATUS}\s+(?:page|error)\s+(?:shows up|appears|pops up)\b", _I),
+     True),
+    ("status after a failure", re.compile(
+        r"\b(?:fail(?:s|ed|ing)?|crash(?:es|ed|ing)?|errors?\s+out)\s+with\s+"
+        rf"(?:an?\s+|http\s+|status\s+(?:code\s+)?)*{_STATUS}\b", _I), False),
+    ("repeated failure", re.compile(
+        rf"\bstill\s+(?:an?\s+|getting\s+(?:an?\s+)?)?(?:{_STATUS}|errors?)\b|\bsame error\b"
+        rf"|\b(?:error|{_STATUS})\s+again\b", _I), False),
+    ("does not work", re.compile(
+        r"\b(?:does|do|did|is|are|was)(?:n['’]?t| not)\s+(?:work|load|start|run|open|compile|build|save|respond)"
+        r"|\bwon['’]?t\s+(?:work|load|start|run|open|compile|build|save|respond)|\bnot\s+working\b"
+        r"|\bdoes nothing\b|\b(?:does|did)(?:n['’]?t| not)\s+do\s+anything\b"
+        r"|\bcan(?:['’]?t|not)\s+(?:reach|connect to)\s+the\s+(?:api|backend|server|database)\b", _I), False),
+    ("crash", re.compile(
+        r"\bcrash(?:es|ed|ing)\b|\bnothing happen(?:s|ed)\b|\binternal server error\b|\berrors?\s+out\b"
+        r"|\b(?:app|server|backend|frontend|page|it)\s+crash\b(?!-)"
+        r"|\bfreez(?:es|ing)\b|\bfroze\b|\bdisappeared\b|\bmiscalculat\w*", _I), False),
+    # Guarded: "if an error occurs, show a toast".
+    ("error occurs", re.compile(
+        r"\b(?:an?\s+)?(?:error|exception)s?\s+(?:occurs|occurred|appears|appeared|pops up|popped up|shows up"
+        r"|showed up|happens|happened|is thrown|was thrown)\b"
+        r"|(?:^|[.!?]\s+)(?:an?\s+)?(?:error|exception)\s+when\s+(?:I\b|we\b|\w+ing\b)", _I), True),
+    ("stuck loading", re.compile(
+        r"\b(?:keeps|kept)\s+(?:loading|spinning|restarting|crashing|failing|reloading)\b"
+        r"|\b(?:loading|spinning)\s+forever\b", _I), False),
+    ("regression", re.compile(
+        r"(?:n['’]t|\bnot|\bnever)\b[^.!?\n]{0,40}\banymore\b"
+        r"|\bno longer\s+(?:works?|loads?|saves?|shows?|starts?|appears?)\b"
+        r"|\bsince (?:your|the) last change\b|\bthat['’]?s (?:wrong|not right)\b", _I), False),
+    # Guarded: "if the list is empty, show a placeholder".
+    ("empty view", re.compile(
+        r"\b(?:page|list|table|dropdown|column|form|chart|dashboard)\s+(?:is|are|loads?|stays|comes up)\s+"
+        r"(?:still\s+|now\s+|completely\s+|always\s+)?empty\b", _I), True),
+    ("broken value", re.compile(
+        r"\b(?:shows?|showing|says|displays?|prints?)\s+(?:up\s+)?(?:as\s+)?['\"]?"
+        r"(?:NaN|undefined|Invalid Date|\[object Object\])|:\s*NaN\b"), True),
+    ("blank page", re.compile(
+        r"\bblank (?:white )?(?:page|screen)\b|\bwhite screen\b"
+        r"|\b(?:page|screen|app|frontend|it|dashboard)\s+(?:is|stays|remains)\s+(?:just\s+|still\s+)?blank\b",
+        _I), False),
+    ("broken", re.compile(
+        r"\b(?:is|are|was|were|seems|looks|still|['’]s)\s+(?:completely\s+|totally\s+|now\s+)?broken\b"
+        r"|\b(?:you|it|this|that)\s+(?:just\s+)?broke\b|\b(?:app|server|backend|frontend|page|login|site)\s+broken\b",
+        _I), False),
+    # Guarded: "whenever a request fails, show a toast".
+    ("fails", re.compile(
+        rf"\b{_FAILING_SUBJECT}\s+(?:still\s+|keeps\s+|always\s+|now\s+|is\s+|are\s+)?(?:fails|failed|failing)\b"
+        r"|\b(?:creating|saving|deleting|updating|loading|editing|adding|opening|logging in|signing up)\b"
+        r"(?:\s+\w+){0,4}?\s+(?:fails|failed)\b"
+        r"|\bfailed to (?:fetch|compile)\b", _I), True),
+    ("throws", re.compile(
+        r"\b(?:throws|threw|raises|raised)\s+(?:an?\s+)?(?:exception|error)\b"
+        r"(?!\s+(?:if|when(?!\s+I\b)|whenever|unless|for|on)\b)", _I), False),
+    ("cors error", re.compile(r"\bCORS\s+(?:policy\s+)?errors?\b|\bblocked by CORS policy\b", _I), True),
+    ("user meets an error", re.compile(
+        r"\b(?:i|we)\s+(?:get|got|keep getting|am getting|are getting|see|saw|hit|ran into|run into"
+        r"|receive|received)\s+(?:an?\s+|this\s+|the\s+|that\s+|some\s+|following\s+)*(?:\w+\s+){0,2}errors?\b"
+        r"|\bgetting\s+(?:an?\s+|this\s+|the\s+)?(?:\w+\s+)?errors?\b", _I), True),
+    # Guarded ("let the manager fix the price"), and not the CSS sense ("fix
+    # the header to the top").
+    ("fix request", re.compile(
+        r"\bfix(?:ing)?\s+(?:exactly\s+|only\s+)?(?:it|this|that|these|those|them|the|my|our|all)\b"
+        r"(?!(?:\s+\w+){1,3}\s+(?:to|at)\b)", _I), True),
+    ("asks for a fix", re.compile(r"\b(?:please|pls|can you|could you|you to)\s+fix\b", _I), False),
+    ("bug", re.compile(
+        r"\bthere(?:['’]s| is| are)\s+(?:an?\s+|some\s+)?bugs?\b|\bbuggy\b"
+        r"|\b(?:that|it|this)(?:['’]s| is)\s+(?:an?\s+)?bug\b", _I), False),
 )
 # Words that make the next match a specification ("raise a ValueError if",
-# "should return 404", "log every 500 error"), not a report.
+# "should return 404", "use status code 409", "let the manager fix the price",
+# a user story "As an admin, I see errors ...").
 _SPECIFIED_BEFORE_RE = re.compile(
-    r"\b(?:raise|throw|return|should|must|shall|will|to|every|each|any|all|custom)\s+(?:an?\s+)?$",
-    re.IGNORECASE,
+    r"\b(?:raise|throw|return|should|must|shall|will|to|every|each|any|all|custom|use|add|avoid|prevent"
+    r"|handle|catch|no|show|display|if|when|whenever|unless|can|may)\s+(?:an?\s+|the\s+)?$"
+    r"|\b(?:let|lets|allow|allows)\s+(?:\w+\s+){1,3}$|\bas an?\s+\w+(?:\s+\w+)?,?\s+$",
+    _I,
 )
+_SPECIFIED_BEFORE_WINDOW = 30  # chars before a match that may hold the specifying words
+_STATUS_IN_MATCH_RE = re.compile(rf"\b({_STATUS})")
 
 
-def _reported(pattern: re.Pattern, text: str) -> bool:
-    return any(
-        not _SPECIFIED_BEFORE_RE.search(text[max(0, m.start() - 20):m.start()])
-        for m in pattern.finditer(text)
-    )
+def _evidence(text: str) -> list[tuple[str, re.Match]]:
+    """Every (rule name, match) that reports a failure, in text order."""
+    found = []
+    for name, pattern, guarded in _EVIDENCE_RULES:
+        for m in pattern.finditer(text):
+            before = text[max(0, m.start() - _SPECIFIED_BEFORE_WINDOW):m.start()]
+            if not (guarded and _SPECIFIED_BEFORE_RE.search(before)):
+                found.append((name, m))
+    return sorted(found, key=lambda item: item[1].start())
+
+
+def _reported_status(evidence: list[tuple[str, re.Match]]) -> str | None:
+    """The first status code inside the evidence, never one the text only specifies."""
+    for _name, m in evidence:
+        status = _STATUS_IN_MATCH_RE.search(m.group(0))
+        if status:
+            return status.group(1)
+    return None
+
 
 # HTTP method + path, e.g. ``POST /createWatchlist`` or ``GET /watchlists/{id}``.
 _HTTP_METHOD_PATH_RE = re.compile(
     r"\b(GET|POST|PUT|PATCH|DELETE)\b\s*(/[\w\-/{}.:]*)",
     re.IGNORECASE,
 )
-# Bare HTTP status (already gated to 4xx/5xx by the intent regex).
-_STATUS_RE = re.compile(r"\b([45]\d{2})\b")
 # camelCase handler, e.g. ``createWatchlist`` / ``getWatchlistItems``.
 _HANDLER_CAMEL_RE = re.compile(
     r"\b(create|get|update|delete|list|post|put|patch|add|remove|fetch|save)"
@@ -149,19 +226,17 @@ class ReportedTarget:
         return self.kind == "soft" or not self.entities
 
 
-def users_latest_words(instructions: str) -> str:
-    """The user's newest message inside the modeling-agent's framing."""
-    return original_request(instructions).rsplit(_LATER_REQUEST_MARKER, 1)[-1]
-
-
 def looks_like_fix_request(instructions: str) -> bool:
     """True when the user's newest message reports a failure of the app."""
-    text = users_latest_words(instructions)
-    return bool(
-        _FAILURE_EVIDENCE_RE.search(text)
-        or _reported(_EXCEPTION_EVIDENCE_RE, text)
-        or _reported(_STATUS_REPORT_RE, text)
-    )
+    return bool(_logged_evidence(latest_user_message(instructions)))
+
+
+def _logged_evidence(text: str) -> list[tuple[str, re.Match]]:
+    evidence = _evidence(text)
+    if evidence:
+        name, m = evidence[0]
+        logger.debug("Fix request: rule %r matched %r", name, m.group(0))
+    return evidence
 
 
 def _forms(name: str) -> set[str]:
@@ -258,16 +333,13 @@ def parse_reported_target(
     returns a target (possibly soft) when they are — the caller decides
     what to do with a soft target.
     """
-    if not looks_like_fix_request(instructions):
+    text = latest_user_message(instructions)
+    evidence = _logged_evidence(text)
+    if not evidence:
         return None
-    text = users_latest_words(instructions).strip()
 
     class_names = _canonical_class_names(domain_model)
-
-    status = None
-    m_status = _STATUS_RE.search(text)
-    if m_status:
-        status = m_status.group(1)
+    status = _reported_status(evidence)
 
     method = path = None
     m_http = _HTTP_METHOD_PATH_RE.search(text)

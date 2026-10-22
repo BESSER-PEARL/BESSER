@@ -8,6 +8,10 @@ the exact failure the user reported.
 
 from __future__ import annotations
 
+import logging
+
+import pytest
+
 from besser.BUML.metamodel.structural import (
     Class,
     DomainModel,
@@ -15,13 +19,11 @@ from besser.BUML.metamodel.structural import (
     Property,
 )
 from besser.spec_driven_agent.planning.fix_target import (
-    _LATER_REQUEST_MARKER,
     ReportedTarget,
     finding_matches_target,
     looks_like_fix_request,
     parse_reported_target,
 )
-from besser.spec_driven_agent.planning.requirements_ledger import VERBATIM_MARKER
 
 
 def _domain(*class_names: str) -> DomainModel:
@@ -199,6 +201,21 @@ _FEATURE_WORDING = (
     "If the payment fails, show a retry button.",
     "Raise a ValueError if the quantity is negative.",
     "You must finish the app having no errors on it, do not ask me anything.",
+    # From the review corpus.
+    "fix the header to the top of the page",
+    "fix the sidebar width to 240px",
+    "add rate limiting: return 429 after 100 requests per minute per user",
+    "log every 500 error to a file together with the request body",
+    "Add a custom 404 error page with a link back to the dashboard.",
+    # From the PR review probes.
+    "Let the manager fix the price of each Room",
+    "the manager can fix the daily rate per room",
+    "Use status code 409 for duplicate bookings",
+    "The rooms API returns 403 to guests who are not logged in",
+    "the API returns 403 for non admins",
+    "error code 400 for invalid input is fine",
+    "GET /books/{id} returns 404 when the book does not exist",
+    "Add an Error: banner at the top of the Booking page",
 )
 
 _REAL_FAILURES = (
@@ -208,18 +225,41 @@ _REAL_FAILURES = (
     "Can you fix it in the code and give the updated files?",
     "INFO:main_api:Response status: 400 / POST /user/methods/createWatchlist/ HTTP/1.1 400 Bad Request",
     "npm error code ENOENT / npm error syscall open",
+    # From the review corpus.
+    "DB generation is giving an internal server error",
+    "I open the frontend and it's just a blank white page, nothing renders at all",
+    "same error as before",
+    "nope, 500 again",
+    # Caught by origin/development, missed by the first version of this change.
+    "GET /books/1 returns 404 for an existing book",
+    "POST /bookings 500",
+    "still 500",
+    "the create endpoint throws an exception",
+    "Failed to fetch",
+    "npm run dev fails",
+    "getting CORS error when the frontend calls the backend",
 )
 
 
-class TestFeatureWordingIsNotAFix:
-    def test_feature_wording(self):
-        for text in _FEATURE_WORDING:
-            assert not looks_like_fix_request(text), text
-            assert parse_reported_target(text, _domain("Book")) is None, text
+@pytest.mark.parametrize("text", _FEATURE_WORDING)
+def test_feature_wording_is_not_a_fix(text):
+    assert not looks_like_fix_request(text)
+    assert parse_reported_target(text, _domain("Book", "Room")) is None
 
-    def test_reported_failures_still_detected(self):
-        for text in _REAL_FAILURES:
-            assert looks_like_fix_request(text), text
+
+@pytest.mark.parametrize("text", _REAL_FAILURES)
+def test_reported_failure_is_detected(text):
+    assert looks_like_fix_request(text)
+
+
+@pytest.mark.parametrize("text, status", (
+    ("Unknown ids should return 404, but POST /loans returns 500 now", "500"),
+    ("Add a 404 page; also POST /loans returns 500", "500"),
+    ("it crashes with a 500 error", "500"),
+    ("the build fails", None),
+))
+def test_status_comes_from_the_reported_failure(text, status):
+    assert parse_reported_target(text).status == status
 
 
 def _framed(original_spec: str, follow_up: str) -> str:
@@ -246,37 +286,17 @@ class TestOnlyTheNewestUserMessageCounts:
         )
         assert target is not None and target.kind == "http"
         assert target.entities == ("Loan",)  # not Book, named only in the spec
+        assert target.raw == "POST /loan/ returns 500 when I save"
 
     def test_only_the_last_of_several_follow_ups_counts(self):
         earlier = "POST /loan/ returns 500 when I save\n\n## Subsequent user request, verbatim\n\n"
         assert not looks_like_fix_request(_framed(self.SPEC, earlier + "Add a due date to Loan"))
 
-    def test_headings_match_the_modeling_agent(self):
-        # Copied from modeling-agent src/handlers/smart_generation_handler.py and
-        # generation_handler.py. If they change there, the detector falls back to
-        # reading the whole text (summary and spec included).
-        assert VERBATIM_MARKER == "## The user's original request, verbatim"
-        assert _LATER_REQUEST_MARKER == "## Subsequent user request, verbatim"
+    def test_an_empty_newest_message_is_not_a_fix(self):
+        assert not looks_like_fix_request(_framed(self.SPEC, ""))
 
 
-class TestReviewCorpus:
-    """From a second, independently written corpus (real pilot reports among them)."""
-
-    def test_more_reports(self):
-        for text in (
-            "DB generation is giving an internal server error",
-            "I open the frontend and it's just a blank white page, nothing renders at all",
-            "same error as before",
-            "nope, 500 again",
-        ):
-            assert looks_like_fix_request(text), text
-
-    def test_more_specifications(self):
-        for text in (
-            "fix the header to the top of the page",
-            "fix the sidebar width to 240px",
-            "add rate limiting: return 429 after 100 requests per minute per user",
-            "log every 500 error to a file together with the request body",
-            "Add a custom 404 error page with a link back to the dashboard.",
-        ):
-            assert not looks_like_fix_request(text), text
+def test_the_matching_rule_is_logged(caplog):
+    with caplog.at_level(logging.DEBUG, logger="besser.spec_driven_agent.planning.fix_target"):
+        assert looks_like_fix_request("the endpoint 500s")
+    assert "status plural" in caplog.text

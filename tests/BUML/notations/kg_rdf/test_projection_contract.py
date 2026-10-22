@@ -18,10 +18,10 @@ Individuals        as the KG has them                         also declared
                                                               ``owl:NamedIndividual``
 =================  =========================================  ==========================
 
-Both take constraint *parameters* from the specs (the projection keeps a raw
-edge's exact term only when it carries the same value), and they share their
-leaf emitters (``kg_to_owl.emit_*``), so they cannot drift on how any single
-construct is written. This module pins what is left:
+Both take constraint *parameters* from the specs (the importer keeps no raw
+edge for them), and they share their leaf emitters (``kg_rdf._emit.emit_*``), the
+constraint indexes and the list rebuilding, so they cannot drift on how any
+single construct is written. This module pins what is left:
 
 * OWL only: isomorphic apart from the projection's ``owl:NamedIndividual``
   declarations.
@@ -43,15 +43,13 @@ from rdflib import OWL, RDF, BNode, Graph, Literal, Namespace, URIRef
 from rdflib.compare import isomorphic
 
 from besser.BUML.notations.kg_to_buml import consistency
-from besser.BUML.notations.kg_to_buml.kg_to_rdf import _value_key, kg_to_rdf
-from besser.utilities.kg_to_owl import OWL_RESTRICTION_KINDS, SHACL_PROPERTY_KINDS
-from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import kg_to_rdf, knowledge_graph_to_rdf, owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf._emit import OWL_RESTRICTION_KINDS, SHACL_PROPERTY_KINDS
 
 SH = Namespace("http://www.w3.org/ns/shacl#")
 
 _FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"      # tests/fixtures
-_KG = Path(__file__).resolve().parent / "fixtures"
+_KG = Path(__file__).resolve().parents[1] / "kg_to_buml" / "fixtures"
 
 
 def _without_shacl(graph: Graph) -> Graph:
@@ -114,6 +112,46 @@ def test_the_projections_agree_on_a_real_ontology():
     exported, converted = _views(_KG / "bibo" / "bibo.ttl")
 
     assert isomorphic(exported, converted)
+
+
+_ONE_OF_TTL = """
+@prefix ex: <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:Color a owl:Class ; owl:equivalentClass [ a owl:Class ; owl:oneOf ( ex:red ex:green ) ] .
+ex:size a owl:DatatypeProperty ;
+    rdfs:range [ a rdfs:Datatype ; owl:oneOf ( "S" "M" "3"^^xsd:integer ) ] .
+"""
+
+
+def _one_of_lists(graph: Graph):
+    return sorted(
+        sorted((type(m).__name__, str(m), str(getattr(m, "datatype", None) or "")) for m in graph.items(head))
+        for head in graph.objects(None, OWL.oneOf)
+    )
+
+
+def test_the_projections_agree_on_a_literal_one_of(tmp_path: Path):
+    """A datatype ``owl:oneOf`` keeps literal members (with their datatype) in both.
+
+    The exporter rebuilt a blank node's list from the recorded member *strings*
+    as IRIs, so ``("S" "M")`` came out as ``(<S> <M>)``: a different statement
+    from the one the projection, reading the member edges, made.
+    """
+    path = tmp_path / "one_of.ttl"
+    path.write_text(_ONE_OF_TTL, encoding="utf-8")
+    exported, converted = _views(path)
+
+    assert _one_of_lists(exported) == _one_of_lists(converted) == [
+        [("Literal", "3", str(XSD_INTEGER)), ("Literal", "M", ""), ("Literal", "S", "")],
+        [("URIRef", "http://ex.org/green", ""), ("URIRef", "http://ex.org/red", "")],
+    ]
+    assert isomorphic(exported, converted)
+
+
+XSD_INTEGER = URIRef("http://www.w3.org/2001/XMLSchema#integer")
 
 
 def _dangling_fillers(graph: Graph):
@@ -205,11 +243,11 @@ def _parameters(graph: Graph):
     for shape, path in graph.subject_objects(SH.path):
         for predicate, value in graph.predicate_objects(shape):
             if predicate in set(SHACL_PROPERTY_KINDS.values()) and predicate not in (SH["in"], SH.languageIn):
-                out.add(("sh", str(path), str(predicate), _value_key(value)))
+                out.add(("sh", str(path), str(predicate), value))
     for restriction, prop in graph.subject_objects(OWL.onProperty):
         for predicate, value in graph.predicate_objects(restriction):
             if predicate in set(OWL_RESTRICTION_KINDS.values()):
-                out.add(("owl", str(prop), str(predicate), _value_key(value)))
+                out.add(("owl", str(prop), str(predicate), value))
     return out
 
 
@@ -280,19 +318,6 @@ def test_a_spec_edit_reaches_the_class_diagram_and_the_consistency_check(tmp_pat
     assert any("Less than 3 values" in m for m in messages), messages
 
 
-def test_the_consistency_check_reads_the_mirrored_projection(tmp_path: Path, monkeypatch):
-    calls = []
-
-    def spy(kg, **kwargs):
-        calls.append(kwargs)
-        return kg_to_rdf(kg, **kwargs)
-
-    monkeypatch.setattr(consistency, "kg_to_rdf", spy)
-    consistency.check_kg_consistency(_edited(tmp_path, 1))
-
-    assert calls == [{"mirror_shapes": True}]
-
-
 def test_both_consumers_see_the_same_parameter(tmp_path: Path):
     kg = _edited(tmp_path, 3)
 
@@ -303,3 +328,23 @@ def test_both_consumers_see_the_same_parameter(tmp_path: Path):
 
 
 _XSD_NNI = URIRef("http://www.w3.org/2001/XMLSchema#nonNegativeInteger")
+
+
+def test_a_key_edit_reaches_the_export_and_the_projection(tmp_path: Path):
+    """``owl:hasKey`` is stored once, as the spec the inspector edits. It used to
+    be stored three times, and the projection let the import-time record win
+    over an edited spec while the exporter followed the spec."""
+    path = tmp_path / "key.ttl"
+    path.write_text(
+        "@prefix : <http://ex.org/> .\n@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+        ":ssn a owl:DatatypeProperty . :passport a owl:DatatypeProperty .\n"
+        ":P a owl:Class ; owl:hasKey ( :ssn ) .\n",
+        encoding="utf-8",
+    )
+    kg = owl_file_to_knowledge_graph(str(path))
+    (key_node,) = [n for n in kg.nodes if any(s["kind"] == "hasKey" for s in n.metadata.get("constraintSpecs", []))]
+    key_node.metadata = {**key_node.metadata, "constraintSpecs": [{"kind": "hasKey", "value": ["http://ex.org/passport"]}]}
+
+    for graph in (knowledge_graph_to_rdf(kg, vocab="owl"), kg_to_rdf(kg)[0]):
+        keys = [[str(m) for m in graph.items(head)] for head in graph.objects(None, OWL.hasKey)]
+        assert keys == [["http://ex.org/passport"]]

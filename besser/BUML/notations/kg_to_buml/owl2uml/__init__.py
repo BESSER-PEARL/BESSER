@@ -17,7 +17,7 @@ metamodel types are involved. Lowering the plan onto a BUML
 ``DomainModel`` is the job of
 :mod:`besser.BUML.notations.kg_to_buml.to_buml`, and projecting a
 :class:`~besser.BUML.metamodel.kg.KnowledgeGraph` into the input graph is the
-job of :mod:`besser.BUML.notations.kg_to_buml.kg_to_rdf`.
+job of :mod:`besser.BUML.notations.kg_rdf.projection`.
 
 Deviations from the reference are deliberate and confined to:
 
@@ -61,7 +61,7 @@ def plan_domain_model(
             from local ones. ``None`` disables the distinction.
         shapes: Optional SHACL shapes graph. When the shapes live in the same
             graph as the ontology (which is what
-            :func:`~besser.BUML.notations.kg_to_buml.kg_to_rdf.kg_to_rdf`
+            :func:`~besser.BUML.notations.kg_rdf.projection.kg_to_rdf`
             produces), pass the same graph for both arguments — the SHACL
             phase only looks at ``sh:NodeShape`` subjects.
         warnings: Optional sink for non-fatal diagnostics.

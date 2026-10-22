@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     kg_to_json,
     process_kg_diagram,
@@ -73,7 +73,7 @@ def test_kg_json_round_trip(ttl_path: Path):
 # The tiny fixture above carries no axioms, which is why a missing entry in the
 # processor's axiom table went unnoticed: EquivalentPropertiesAxiom was dropped
 # on the way back in and bibo.ttl returned 51 of its 61 axioms. These two
-# fixtures do carry axioms -- the same pair test_kg_to_rdf.py parametrizes over.
+# fixtures do carry axioms -- the same pair kg_rdf/test_projection.py parametrizes over.
 _AXIOM_BEARING_FIXTURES = [
     Path(__file__).resolve().parents[3] / "fixtures" / "complex_kg.ttl",
     Path(__file__).resolve().parents[3]
@@ -582,7 +582,7 @@ def test_import_owl_still_accepts_a_plain_ontology(client, ttl_path: Path):
 
 
 def test_import_owl_returns_the_anomalies_it_skipped(client):
-    from tests.utilities.test_owl_importer_constructs import _BAD_QUALIFIED_COUNT_TTL
+    from tests.BUML.notations.kg_rdf.test_importer_constructs import _BAD_QUALIFIED_COUNT_TTL
 
     resp = client.post(
         "/besser_api/kg/import-owl",

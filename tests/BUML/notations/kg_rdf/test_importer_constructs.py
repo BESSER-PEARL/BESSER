@@ -20,6 +20,7 @@ from besser.BUML.metamodel.kg import (
     KGBlank,
     KGClass,
     KGIndividual,
+    KGLiteral,
     KGNodeConstraint,
     KGPropertyConstraint,
     KGProperty,
@@ -27,7 +28,7 @@ from besser.BUML.metamodel.kg import (
     SubPropertyOfAxiom,
 )
 from besser.BUML.metamodel.kg.constants import CONSTRAINT_TARGET_CLASS
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 
 
 def _write_ttl(tmp_path: Path, content: str, name: str = "ontology.ttl") -> str:
@@ -401,8 +402,8 @@ def test_list_spine_blanks_swept_for_every_list_valued_construct(tmp_path: Path)
     nc = _class_expr_nc(kg, "http://ex.org/Pet", "unionOf")
     spec = next(s for s in nc.get_specs() if s["kind"] == "unionOf")
     assert spec["value"] == ["http://ex.org/Cat", "http://ex.org/Dog"]
-    key_axioms = _find_axioms(kg, HasKeyAxiom)
-    assert key_axioms[0].property_ids == ["http://ex.org/name", "http://ex.org/email"]
+    key = _class_expr_nc(kg, "http://ex.org/Person", "hasKey")
+    assert key.get_specs() == [{"kind": "hasKey", "value": ["http://ex.org/name", "http://ex.org/email"]}]
     union_axioms = _find_axioms(kg, DisjointUnionAxiom)
     assert union_axioms[0].part_class_ids == ["http://ex.org/Cat", "http://ex.org/Dog"]
 
@@ -508,7 +509,10 @@ def test_propertyChainAxiom_decoded_as_list(tmp_path: Path):
     assert axioms[0].chain_property_ids == ["http://ex.org/hasParent", "http://ex.org/hasBrother"]
 
 
-def test_hasKey_emitted_as_axiom(tmp_path: Path):
+def test_hasKey_is_stored_once_as_a_node_constraint_spec(tmp_path: Path):
+    """The key lives in the spec the inspector edits, and nowhere else: no
+    ``HasKeyAxiom`` record and no flattened ``owl:hasKey`` member edges that an
+    edit of the spec would leave stale."""
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -517,10 +521,44 @@ def test_hasKey_emitted_as_axiom(tmp_path: Path):
     :Person a owl:Class ; owl:hasKey ( :ssn ) .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    axioms = _find_axioms(kg, HasKeyAxiom)
-    assert len(axioms) == 1
-    assert axioms[0].class_id == "http://ex.org/Person"
-    assert axioms[0].property_ids == ["http://ex.org/ssn"]
+    nc = _class_expr_nc(kg, "http://ex.org/Person", "hasKey")
+    assert nc.get_specs() == [{"kind": "hasKey", "value": ["http://ex.org/ssn"]}]
+    assert _find_axioms(kg, HasKeyAxiom) == []
+    assert [e for e in kg.edges if e.iri == "http://www.w3.org/2002/07/owl#hasKey"] == []
+
+
+def test_constraint_parameters_are_stored_only_in_specs(tmp_path: Path):
+    """No raw edge repeats a value a spec holds, and nothing is left floating
+    once those edges are gone: no ``sh:in`` list spine, no ``rdf:nil``, no
+    cardinality literal. The specs themselves are intact."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix sh: <http://www.w3.org/ns/shacl#> .
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+    :p a owl:ObjectProperty .
+    :size a owl:DatatypeProperty .
+    :A a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p ; owl:minCardinality 2 ] .
+    :S a sh:NodeShape ; sh:targetClass :A ;
+        sh:property [ sh:path :size ; sh:in ( "S" "M" ) ; sh:minInclusive 18 ] .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+
+    parameters = {
+        "http://www.w3.org/2002/07/owl#minCardinality",
+        "http://www.w3.org/ns/shacl#in",
+        "http://www.w3.org/ns/shacl#minInclusive",
+    }
+    assert [e for e in kg.edges if e.iri in parameters] == []
+    assert [n.id for n in kg.nodes if isinstance(n, (KGBlank, KGLiteral))] == []
+    assert not any(n.iri == "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil" for n in kg.nodes)
+
+    specs = {s["kind"]: s["value"] for n in kg.nodes if isinstance(n, KGPropertyConstraint) for s in n.get_specs()}
+    assert specs["minCardinality"] == 2
+    assert specs["minInclusive"] == 18          # an integer, not 18.0
+    assert [m["value"] for m in specs["in"]] == ["S", "M"]
 
 
 def test_imports_logged_not_followed(tmp_path: Path):
@@ -628,7 +666,7 @@ def test_punned_class_and_shape_round_trip_through_rdf(tmp_path: Path):
     from rdflib import URIRef
     from rdflib.namespace import OWL, RDF, RDFS
 
-    from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
+    from besser.BUML.notations.kg_rdf import knowledge_graph_to_rdf
 
     SH = "http://www.w3.org/ns/shacl#"
     ttl = """
@@ -769,7 +807,7 @@ def test_a_skipped_cardinality_does_not_reach_the_class_diagram(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-_COMPLEX_KG = Path(__file__).resolve().parents[1] / "fixtures" / "complex_kg.ttl"
+_COMPLEX_KG = Path(__file__).resolve().parents[3] / "fixtures" / "complex_kg.ttl"
 
 
 def _import_json(path: Path) -> dict:
@@ -806,11 +844,11 @@ def test_import_ids_do_not_depend_on_the_hash_seed():
 
     script = (
         "import json, sys\n"
-        "from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph\n"
+        "from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph\n"
         "from besser.utilities.web_modeling_editor.backend.services.converters import kg_to_json\n"
         "print(json.dumps(kg_to_json(owl_file_to_knowledge_graph(sys.argv[1])), sort_keys=True))\n"
     )
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[4]
     outputs = []
     for seed in ("1", "2"):
         env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONPATH": str(root)}
@@ -822,22 +860,29 @@ def test_import_ids_do_not_depend_on_the_hash_seed():
     assert outputs[0] == outputs[1]
 
 
-def test_blank_node_ids_name_their_content_not_their_position(tmp_path: Path):
-    """Two files that differ only in what comes *before* a restriction keep its id."""
+def test_blank_node_ids_do_not_depend_on_unrelated_content(tmp_path: Path):
+    """Adding an unrelated, deeply nested structure elsewhere keeps a restriction's id.
+
+    The added six-cell ``rdf:List`` needs more refinement rounds to tell its
+    cells apart than the restriction does. Labels used to be refined until the
+    *whole* graph stopped splitting, so that addition changed the number of
+    rounds and, with it, the restriction's label and its constraint edge ids.
+    """
     body = (
         "@prefix : <http://ex.org/> .\n"
         "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
         "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
         ":p a owl:ObjectProperty .\n"
-        ":A a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p ; owl:someValuesFrom :B ] .\n"
+        ":A a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p ;\n"
+        "    owl:someValuesFrom [ owl:unionOf ( :B :C ) ] ] .\n"
     )
-    extra = body + ":C a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p ; owl:allValuesFrom :A ] .\n"
+    extra = body + ":Z owl:members ( :a :a :a :a :a :a ) .\n"
 
     def restriction_ids(text, name):
         kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, text, name))
-        return {
-            n.id for n in kg.nodes
-            if isinstance(n, KGPropertyConstraint) and n.get_specs()[0]["kind"] == "someValuesFrom"
-        }
+        restrictions = {n.id for n in kg.nodes if isinstance(n, KGPropertyConstraint)}
+        edges = {e.id for e in kg.edges if e.source.id in restrictions or e.target.id in restrictions}
+        return restrictions, edges
 
-    assert restriction_ids(body, "a.ttl") == restriction_ids(extra, "b.ttl")
+    before, after = restriction_ids(body, "a.ttl"), restriction_ids(extra, "b.ttl")
+    assert before[0] and before == after

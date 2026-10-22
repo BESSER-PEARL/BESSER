@@ -38,8 +38,7 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
 
 # BESSER KG libraries: OWL/RDF import and export, the LLM conversion
 from besser.utilities.kg_llm_to_buml import LLMAnswerError, kg_to_buml
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
-from besser.utilities.kg_to_owl import serialize_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph, serialize_knowledge_graph
 
 # BESSER KG → B-UML (deterministic, offline)
 from besser.BUML.notations.kg_to_buml import (

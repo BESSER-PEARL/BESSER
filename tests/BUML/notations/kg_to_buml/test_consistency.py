@@ -15,7 +15,7 @@ import time
 import pytest
 
 from besser.BUML.notations.kg_to_buml.consistency import check_kg_consistency
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +345,7 @@ def test_executable_shacl_is_stripped_before_validation():
         SH,
         _strip_executable_shacl,
     )
-    from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
+    from besser.BUML.notations.kg_rdf import knowledge_graph_to_rdf
 
     graph = knowledge_graph_to_rdf(_kg(_SSRF_TTL), vocab="both")
     removed = _strip_executable_shacl(graph)
@@ -359,7 +359,7 @@ def test_executable_shacl_is_stripped_before_validation():
 def test_stripping_leaves_a_normal_besser_kg_untouched():
     """Nothing BESSER's own constraint model emits is affected by the strip."""
     from besser.BUML.notations.kg_to_buml.consistency import _strip_executable_shacl
-    from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
+    from besser.BUML.notations.kg_rdf import knowledge_graph_to_rdf
 
     kg = _kg(_PREFIX + """
 :Person a owl:Class .
@@ -415,7 +415,7 @@ def test_the_shapes_graph_holds_only_what_besser_writes_as_a_shape():
         _SHAPE_PREDICATES,
         _extract_shapes,
     )
-    from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
+    from besser.BUML.notations.kg_rdf import knowledge_graph_to_rdf
 
     # Deliberately not stripped first: the extraction has to hold on its own.
     data = knowledge_graph_to_rdf(_kg(_FOREIGN_SHAPE_TTL), vocab="both")
@@ -463,7 +463,7 @@ def test_every_shape_triple_the_exporter_writes_reaches_the_validator(fixture):
     from pathlib import Path
     from rdflib import RDF as _RDF
     from besser.BUML.notations.kg_to_buml.consistency import _extract_shapes
-    from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
+    from besser.BUML.notations.kg_rdf import knowledge_graph_to_rdf
 
     root = Path(__file__).resolve().parents[4]
     kg = owl_file_to_knowledge_graph(str(root / fixture))

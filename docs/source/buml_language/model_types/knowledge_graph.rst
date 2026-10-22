@@ -57,6 +57,11 @@ metamodel they validate on assignment: an id must be a ``str`` and a list of ids
 a list of ``str``. Each class lists its fields in ``FIELDS``, and
 ``to_dict()`` gives the plain-dict form the converters serialise.
 
+The OWL importer stores each constraint parameter once, in the
+``constraintSpecs`` of its constraint node, which is what the editor edits; no
+raw edge repeats it. ``owl:hasKey`` in particular becomes only the ``hasKey``
+spec of a node constraint on the class, not a ``HasKeyAxiom``.
+
 Example
 -------
 
@@ -81,9 +86,9 @@ Building and consuming a KG
 ---------------------------
 
 * Import an ontology with
-  :func:`besser.BUML.notations.owl_to_kg.owl_to_kg.owl_file_to_knowledge_graph`.
+  :func:`besser.BUML.notations.kg_rdf.importer.owl_file_to_knowledge_graph`.
 * Export one with
-  :func:`besser.utilities.kg_to_owl.serialize_knowledge_graph` (Turtle or
+  :func:`besser.BUML.notations.kg_rdf.exporter.serialize_knowledge_graph` (Turtle or
   RDF/XML, with OWL restrictions, SHACL shapes, or both).
 * Transform one into a :doc:`structural model <structural>` with OCL
   constraints — see :doc:`../model_building/kg_to_buml`.

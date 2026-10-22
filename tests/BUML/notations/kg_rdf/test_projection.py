@@ -31,16 +31,16 @@ from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_PROPERTY,
     SH_PROPERTY,
 )
-from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
+from besser.BUML.notations.kg_rdf import kg_to_rdf
 from besser.BUML.notations.kg_to_buml.owl2uml import plan_domain_model
 from besser.BUML.notations.kg_to_buml.to_buml import build_domain_model
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 
 SH = "http://www.w3.org/ns/shacl#"
 EX = "http://ex.org/"
 XSD = "http://www.w3.org/2001/XMLSchema#"
 
-FIXTURES = Path(__file__).parent / "fixtures" / "bibo"
+FIXTURES = Path(__file__).resolve().parents[1] / "kg_to_buml" / "fixtures" / "bibo"
 
 
 def _write_ttl(tmp_path: Path, content: str) -> str:
@@ -745,11 +745,13 @@ def test_a_deleted_spec_takes_its_parameter_with_it(tmp_path: Path, mirror: bool
     assert list(graph.objects(None, URIRef(SH + "minCount"))) == []
 
 
-def test_an_unedited_parameter_keeps_the_source_literal(tmp_path: Path):
-    """When the spec and the edge agree, the edge's exact term is kept."""
+def test_an_unedited_parameter_is_written_from_its_spec(tmp_path: Path):
+    """The importer keeps no raw edge for a spec-held parameter, so the value
+    is the spec's rendering (``xsd:nonNegativeInteger``, as the exporter writes
+    it), not the source's ``xsd:integer``."""
     graph, _ = _project(tmp_path, _MIN_COUNT_TTL)
 
-    assert list(graph.objects(None, URIRef(SH + "minCount"))) == [Literal("1", datatype=XSD_INTEGER)]
+    assert list(graph.objects(None, URIRef(SH + "minCount"))) == [Literal("1", datatype=XSD_NNI)]
 
 
-XSD_INTEGER = URIRef(XSD + "integer")
+XSD_NNI = URIRef(XSD + "nonNegativeInteger")

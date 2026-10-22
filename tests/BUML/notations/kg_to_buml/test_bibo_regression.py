@@ -41,11 +41,11 @@ from rdflib import Graph
 
 from besser.BUML.metamodel.structural import Class, Enumeration
 from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
-from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
+from besser.BUML.notations.kg_rdf import kg_to_rdf
 from besser.BUML.notations.kg_to_buml.owl2uml import plan_domain_model
 from besser.BUML.notations.kg_to_buml.preflight import analyze_kg_for_class_diagram
 from besser.BUML.notations.kg_to_buml.resolutions import KGResolution
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 
 #: Names that may follow ``self.`` without being a feature. This audit keeps its
 #: own list rather than reading the lowering's: its job is to be an independent

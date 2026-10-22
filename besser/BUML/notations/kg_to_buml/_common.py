@@ -11,11 +11,15 @@ from besser.BUML.metamodel.kg.ids import short_digest
 from besser.utilities.identifiers import sanitize_identifier
 from besser.BUML.metamodel.kg.iri import local_name as _local_name
 from besser.BUML.metamodel.kg.constants import (
-    OWL as OWL_NS,
     RDF as RDF_NS,
     RDFS as RDFS_NS,
-    SH as SH_NS,
     XSD as XSD_NS,
+)
+from besser.BUML.notations.kg_rdf._common import (
+    KGConversionWarning,
+    add_warning,
+    is_meta_vocab,
+    looks_like_datatype_iri,
 )
 
 # --- Well-known predicate IRIs (full form, as emitted by rdflib) ---
@@ -29,22 +33,6 @@ RDFS_LABEL = f"{RDFS_NS}label"
 XSD_NAMESPACE = XSD_NS
 RDF_NAMESPACE = RDF_NS
 RDFS_NAMESPACE = RDFS_NS
-
-
-def looks_like_datatype_iri(iri: Optional[str]) -> bool:
-    """True when ``iri`` names a literal datatype rather than a class.
-
-    Every ``xsd:*`` term, plus the three RDF/RDFS literal types that behave
-    like datatypes in an ontology (``rdf:langString``, ``rdfs:Literal``,
-    ``rdf:PlainLiteral``).
-    """
-    if not iri:
-        return False
-    return iri.startswith(XSD_NAMESPACE) or iri in {
-        f"{RDF_NAMESPACE}langString",
-        f"{RDFS_NAMESPACE}Literal",
-        f"{RDF_NAMESPACE}PlainLiteral",
-    }
 
 
 def all_datatype_refs(members: List[str]) -> bool:
@@ -85,27 +73,6 @@ def is_issue_acknowledged(kg: KnowledgeGraph, issue_id: str, affected_node_ids: 
 # Private aliases kept for call sites that imported the underscore names.
 _looks_like_datatype_iri = looks_like_datatype_iri
 _all_datatype_refs = all_datatype_refs
-
-# OWL/RDF/RDFS/XSD/SHACL framework namespaces. IRIs in these namespaces are
-# vocabulary terms (``owl:Class``, ``owl:DatatypeProperty``, ``rdfs:Class``,
-# ``sh:NodeShape``, …), not user concepts. They appear as objects of
-# ``rdf:type`` triples in every well-formed ontology, but they should NEVER
-# produce user-facing BUML classes when the converter synthesises classes from
-# references.
-_META_VOCAB_NAMESPACES = (
-    OWL_NS,
-    RDF_NS,
-    RDFS_NS,
-    XSD_NS,
-    SH_NS,
-)
-
-
-def is_meta_vocab(iri: Optional[str]) -> bool:
-    """True when ``iri`` is in OWL / RDF / RDFS / XSD framework vocabulary."""
-    if not iri:
-        return False
-    return any(iri.startswith(ns) for ns in _META_VOCAB_NAMESPACES)
 
 # Compact forms occasionally appear when KGs are hand-edited in the web
 # editor; treat both forms as equivalent.
@@ -160,16 +127,6 @@ def sanitize_python_identifier(
         suffix += 1
     used_names.add(candidate)
     return candidate
-
-
-@dataclass
-class KGConversionWarning:
-    """A non-fatal anomaly detected while converting a KG to a BUML model."""
-
-    code: str
-    message: str
-    node_id: Optional[str] = None
-    edge_id: Optional[str] = None
 
 
 @dataclass
@@ -268,23 +225,6 @@ def find_cycles(parents: Dict[str, Set[str]]) -> List[Tuple[str, ...]]:
         rotated = cycle[pivot:] + cycle[:pivot]
         found.add(rotated + (rotated[0],))
     return sorted(found)
-
-
-def add_warning(
-    warnings: List[KGConversionWarning],
-    code: str,
-    message: str,
-    *,
-    node_id: Optional[str] = None,
-    edge_id: Optional[str] = None,
-) -> None:
-    """Append a :class:`KGConversionWarning` to ``warnings``.
-
-    ``code`` is the stable machine-readable identifier the editor keys on,
-    ``message`` the human text; ``node_id`` / ``edge_id`` point at the KG element
-    concerned, when there is one.
-    """
-    warnings.append(KGConversionWarning(code=code, message=message, node_id=node_id, edge_id=edge_id))
 
 
 __all__ = [

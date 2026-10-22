@@ -35,11 +35,6 @@ Deterministic conversion
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: besser.BUML.notations.kg_to_buml.kg_to_rdf
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 .. automodule:: besser.BUML.notations.kg_to_buml.to_buml
    :members:
    :undoc-members:
@@ -63,15 +58,29 @@ Preflight, resolutions and consistency
    :undoc-members:
    :show-inheritance:
 
-OWL / RDF import and export
----------------------------
+OWL / RDF import, export and projection
+---------------------------------------
 
-.. automodule:: besser.BUML.notations.owl_to_kg.owl_to_kg
+.. automodule:: besser.BUML.notations.kg_rdf
+   :members:
+   :show-inheritance:
+
+.. automodule:: besser.BUML.notations.kg_rdf.importer
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: besser.utilities.kg_to_owl
+.. automodule:: besser.BUML.notations.kg_rdf.exporter
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: besser.BUML.notations.kg_rdf.projection
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: besser.BUML.notations.kg_rdf._emit
    :members:
    :undoc-members:
    :show-inheritance:

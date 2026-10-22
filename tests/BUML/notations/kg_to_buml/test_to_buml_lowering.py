@@ -159,11 +159,22 @@ def test_enumeration_literals_are_sanitised_and_deduplicated():
     """``Mapper.literal_value`` quotes strings, and a value like ``"foo bar"``
     would be rejected outright by ``NamedElement.name``."""
     model = _model(_enum("Color", ['"deep red"', '"deep-red"', '"green"']))
-    result, _ = _lower(model)
+    result, warnings = _lower(model)
 
     enum = next(t for t in result.domain_model.types if isinstance(t, Enumeration))
     names = {literal.name for literal in enum.literals}
     assert names == {"deep_red", "deep_red_2", "green"}
+    # Renames are reported, once per enumeration; a literal kept as-is is not.
+    renamed = [w.message for w in warnings if w.code == "ENUM_LITERAL_RENAMED"]
+    assert renamed == [
+        "Enumeration Color: 2 literal(s) renamed to valid, unique BUML names: "
+        "'deep red' -> deep_red, 'deep-red' -> deep_red_2."
+    ]
+
+
+def test_enumeration_with_valid_literals_reports_nothing():
+    result, warnings = _lower(_model(_enum("Color", ['"red"', '"green"'])))
+    assert "ENUM_LITERAL_RENAMED" not in _codes(warnings)
 
 
 # ---------------------------------------------------------------------------

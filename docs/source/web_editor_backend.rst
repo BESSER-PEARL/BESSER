@@ -585,11 +585,17 @@ File Upload Limits
 - BUML Python files: 2 MB max
 - OWL/RDF ontologies (``.owl``, ``.ttl``, ``.rdf``, ``.xml``, ``.nt``,
   ``.n3``): 5 MB max
+- Knowledge graphs for the deprecated LLM conversion (``.ttl``, ``.rdf``,
+  ``.json``): 2 MB max
 
-OWL/RDF uploads that declare a DTD (``<!DOCTYPE`` / ``<!ENTITY``) are rejected
-with HTTP 400 before parsing. The XML parser underneath applies no
-entity-expansion limit, so a small file of nested entities would otherwise
-expand far enough to exhaust server resources; no ontology needs a DTD.
+An RDF/XML upload (``.owl``, ``.rdf``, ``.xml``) whose prolog declares a DTD
+(``<!DOCTYPE ...>``) is rejected with HTTP 400 before parsing. This is defence
+in depth: current expat already limits entity amplification and rdflib does not
+resolve external entities by default, but no ontology needs a DTD, so none is
+let through. The check reads the prolog with the same XML parser rdflib uses, so
+``<!DOCTYPE`` text inside a comment, a CDATA section or a literal is not
+mistaken for a declaration. Turtle, N-Triples and N3 have no DTD and are not
+scanned.
 
 
 Environment Variables

@@ -10,15 +10,14 @@ import ast
 import asyncio
 import os
 from typing import AbstractSet
+from xml.parsers import expat
 
 from fastapi import HTTPException, UploadFile
 
-#: Extensions whose content is parsed as RDF (see ``validate_file_content``).
-RDF_EXTENSIONS = frozenset({".owl", ".ttl", ".rdf", ".xml", ".nt", ".n3"})
-
-# Markup that declares a DTD. Matched case-insensitively against the whole
-# decoded upload.
-_DTD_MARKERS = ("<!DOCTYPE", "<!ENTITY")
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    ALLOWED_OWL_EXTENSIONS,
+    RDF_XML_EXTENSIONS,
+)
 
 
 def validate_upload(file: UploadFile, *, max_size: int, allowed_extensions: AbstractSet[str], content: bytes) -> None:
@@ -112,49 +111,77 @@ def validate_file_content(content: bytes, filename: str) -> None:
                     detail="File content does not match JPEG format (invalid magic bytes).",
                 )
 
-    elif ext in RDF_EXTENSIONS:
-        _validate_rdf_content(content)
+    elif ext in ALLOWED_OWL_EXTENSIONS:
+        _validate_rdf_content(content, is_xml=ext in RDF_XML_EXTENSIONS)
 
 
-def _validate_rdf_content(content: bytes) -> None:
-    """Reject an RDF/OWL upload that is empty, not UTF-8, or declares a DTD.
+def _validate_rdf_content(content: bytes, *, is_xml: bool) -> None:
+    """Reject an RDF/OWL upload that is empty or, for RDF/XML, declares a DTD.
 
-    rdflib's RDF/XML parser builds its parser with ``xml.sax.make_parser()`` and
-    never disables entity resolution, and stock expat has no expansion limit, so
-    a few hundred bytes of nested internal entities ("billion laughs") expand
-    into minutes of CPU inside the request. No ontology BESSER imports needs a
-    DTD, so any declaration is refused before rdflib sees the file.
-
-    The scan covers the **whole** document rather than its head. A DTD is only
-    legal in the prolog, but the prolog may begin with comments and processing
-    instructions of any length, so no fixed-size probe is enough. A NUL character
-    is refused too: the only way to hide ``<!DOCTYPE`` from this text scan while
-    keeping the bytes valid UTF-8 is to encode the markup as BOM-less UTF-16,
-    which expat detects from the leading ``<\\0`` and decodes on its own.
+    Everything else (syntax, structure, encoding) is left to rdflib, the real
+    parser. Text serialisations (Turtle, N-Triples, N3) are not XML and have no
+    DTD, so their content is not scanned: a ``<!DOCTYPE`` inside one of their
+    literals is just text. See :func:`_reject_xml_dtd` for the RDF/XML check.
     """
-    # The real parser (rdflib) performs the structural validation.
     if not content.strip():
         raise HTTPException(status_code=400, detail="OWL/RDF file is empty.")
-    try:
-        text = content.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="OWL/RDF file is not valid UTF-8 text.")
+    if is_xml:
+        _reject_xml_dtd(content)
 
-    if "\x00" in text:
-        raise HTTPException(
-            status_code=400,
-            detail="OWL/RDF file contains NUL characters; please upload it as UTF-8 text.",
-        )
-    upper = text.upper()
-    if any(marker in upper for marker in _DTD_MARKERS):
+
+class _DtdFound(Exception):
+    """Raised from an expat handler: the document declares a DTD."""
+
+
+class _PrologEnd(Exception):
+    """Raised from an expat handler: the root element starts, so the prolog is over."""
+
+
+def _reject_xml_dtd(content: bytes) -> None:
+    """Refuse an RDF/XML document whose prolog declares a DTD.
+
+    Defence in depth, not the primary guard: the expat bundled with current
+    Python (2.4.1 and later) already caps entity amplification ("billion
+    laughs"), and rdflib's SAX parser leaves external entities unresolved by
+    default. No ontology BESSER imports needs a DTD, though, so refusing one
+    keeps entity expansion out of the request path whatever expat or rdflib
+    version the server runs.
+
+    The document is read by expat, the parser rdflib itself uses, so the check
+    sees exactly the markup rdflib would: ``<!DOCTYPE`` inside a comment, a
+    CDATA section or a literal is not a declaration, and an encoding expat
+    detects on its own (UTF-16 with or without a BOM) is detected here too.
+    Parsing stops at the root element, because a DTD can only sit in the
+    prolog. A document expat cannot read is left for rdflib to report.
+
+    Raises:
+        HTTPException: 400 when a DTD is declared.
+    """
+    parser = expat.ParserCreate()
+
+    def _dtd(*_args: object) -> None:
+        raise _DtdFound()
+
+    def _root(*_args: object) -> None:
+        raise _PrologEnd()
+
+    parser.StartDoctypeDeclHandler = _dtd
+    # Entity declarations only occur inside a DTD; refused on their own too, so
+    # the check never depends on the order expat reports the two in.
+    parser.EntityDeclHandler = _dtd
+    parser.StartElementHandler = _root
+    try:
+        parser.Parse(content, True)
+    except _DtdFound:
         raise HTTPException(
             status_code=400,
             detail=(
-                "OWL/RDF file declares a DTD (<!DOCTYPE/<!ENTITY), which is "
-                "not accepted: entity expansion can be used to exhaust server "
-                "resources. Please re-export the ontology without a DTD."
+                "OWL/RDF file declares a DTD (<!DOCTYPE ...>), which is not "
+                "accepted. Please re-export the ontology without a DTD."
             ),
-        )
+        ) from None
+    except (_PrologEnd, expat.ExpatError):
+        return
 
 
 async def read_file_async(path: str, mode: str = "r", **kwargs) -> str | bytes:

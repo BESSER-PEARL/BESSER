@@ -38,14 +38,14 @@ projection may differ.
 
 Passes:
 
-``A`` raw edges → triples (skipping internal wiring, flattened list spines and
-      spec-folded constraint parameters, which pass D settles)
-``B`` re-collect flattened ``rdf:List`` values in their original order
-``B2`` one ``owl:propertyChainAxiom`` / ``owl:hasKey`` list per axiom record
-``C`` restore the structural links the constraint-node lifter consumed
-``D`` emit the constraint specs (parameters always; other triples only where no
-      raw edge already covers them)
-``E`` (``mirror_shapes`` only) each constraint in the other vocabulary too
+- ``A``: raw edges → triples, skipping internal wiring, flattened list spines
+  and spec-folded constraint parameters (pass ``D`` settles those).
+- ``B``: re-collect flattened ``rdf:List`` values in their original order.
+- ``B2``: one ``owl:propertyChainAxiom`` / ``owl:hasKey`` list per axiom record.
+- ``C``: restore the structural links the constraint-node lifter consumed.
+- ``D``: emit the constraint specs (parameters always; other triples only where
+  no raw edge already covers them).
+- ``E`` (``mirror_shapes`` only): each constraint in the other vocabulary too.
 """
 
 from __future__ import annotations

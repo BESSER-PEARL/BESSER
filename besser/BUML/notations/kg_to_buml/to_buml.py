@@ -399,10 +399,11 @@ def _build_attributes(model: ModelPlan, renames, classes, enumerations, out: Cla
     and then ``all_attributes()`` would hand every consumer the name twice.
 
     The ancestor's copy is the one to keep (the auxiliary class carries the
-    tighter multiplicity and type), as association ends already do
-    (``_ancestors_first``, ``ASSOC_INHERITED_SHADOWED``). So classes are filled in
-    ancestor-first order and each asks the metamodel what it already inherits
-    (``Class.inherited_attributes()``).
+    tighter multiplicity and type). So classes are filled in ancestor-first
+    order and each asks the metamodel what it already inherits
+    (``Class.inherited_attributes()``). A class has strictly more ancestors than
+    any of its ancestors, so ordering by ``len(all_parents())`` is
+    ancestors-first.
 
     Warnings are collected per class and emitted in class-name order, so they do
     not depend on the fill order.
@@ -414,15 +415,8 @@ def _build_attributes(model: ModelPlan, renames, classes, enumerations, out: Cla
         if buml_class is not None and uml_class.attributes:
             by_name[name] = (buml_class, uml_class)
 
-    depths: Dict[Class, int] = {}
-
-    def depth(cls: Class) -> int:
-        if cls not in depths:
-            depths[cls] = max((depth(parent) + 1 for parent in cls.parents()), default=0)
-        return depths[cls]
-
     warnings_of: Dict[str, List[KGConversionWarning]] = {}
-    for name in sorted(by_name, key=lambda n: (depth(by_name[n][0]), n)):
+    for name in sorted(by_name, key=lambda n: (len(by_name[n][0].all_parents()), n)):
         buml_class, uml_class = by_name[name]
         warnings_of[name] = []
         inherited = {attribute.name for attribute in buml_class.inherited_attributes()}

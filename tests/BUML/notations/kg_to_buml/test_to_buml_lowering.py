@@ -266,25 +266,31 @@ def test_generalization_cycles_are_broken():
     assert result.domain_model.validate(raise_exception=False)["errors"] == []
 
 
-def test_cycle_breaking_survives_a_chain_deeper_than_the_recursion_limit():
-    """``_break_cycles`` used to recurse once per level (RecursionError at ~1000).
+def test_a_chain_deeper_than_the_recursion_limit_is_lowered():
+    """Cycle breaking, the ancestors-first attribute fill and the metamodel's
+    hierarchy walks each used to recurse once per level (RecursionError at ~1000).
 
-    Called directly: lowering a chain this deep still needs the metamodel's own
-    ``all_parents`` / ``all_specializations``, which recurse too.
+    The root and the leaf both declare ``name``: the leaf's copy is dropped,
+    which needs the leaf to be filled after the root, 1500 levels up.
     """
-    from besser.BUML.notations.kg_to_buml.to_buml import _break_cycles
+    depth = 1500
+    names = [f"C{i:04d}" for i in range(depth + 1)]
+    model = _model(
+        *[_cls(name) for name in names[1:-1]],
+        _cls(names[0], _attr("name")), _cls(names[-1], _attr("name")),
+        *[_gen(names[i], names[i + 1]) for i in range(depth)],
+        _gen(names[-1], names[0]),                       # closes a cycle
+    )
+    result, warnings = _lower(model)
 
-    depth = 3000
-    pairs = [_gen(f"C{i:04d}", f"C{i + 1:04d}") for i in range(depth)]
-    warnings: list = []
-    kept = _break_cycles(_model(*pairs), {}, warnings)
-    assert len(kept) == depth and warnings == []
-
-    kept = _break_cycles(_model(*pairs, _gen(f"C{depth:04d}", "C0000")), {}, warnings)
-    assert len(kept) == depth
-    assert [w.message for w in warnings] == [
-        f"Generalization C{depth:04d} -> C0000 closes an inheritance cycle; dropped."
+    assert len(result.domain_model.generalizations) == depth
+    assert [w.message for w in warnings if w.code == "CYCLIC_SUBCLASS"] == [
+        f"Generalization {names[-1]} -> {names[0]} closes an inheritance cycle; dropped."
     ]
+    classes = _classes(result)
+    assert [a.name for a in classes[names[0]].all_attributes()] == ["name"]
+    assert classes[names[0]].attributes == set()
+    assert "ATTR_INHERITED_SHADOWED" in _codes(warnings)
 
 
 # ---------------------------------------------------------------------------

@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from besser.BUML.notations.kg_to_buml import (
     KGAction,
     KGIssue,

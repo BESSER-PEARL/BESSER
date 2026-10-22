@@ -45,6 +45,11 @@ from besser.spec_driven_agent.agent.compaction import (
     _summarize_messages,
 )
 from besser.spec_driven_agent.planning.model_change import model_summary
+from besser.spec_driven_agent.planning.model_rules import (
+    RENAMED,
+    converted_rule_fingerprints,
+    is_dropped_by_model_change,
+)
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.agent.history_eviction import evict_stale_file_bodies
@@ -3565,8 +3570,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         requirements = list(self._requirements or [])
         next_id = max((item["id"] for item in requirements), default=0) + 1
         for issue in getattr(self.domain_model, "conversion_issues", []) or []:
-            if not isinstance(issue, dict):
-                continue
+            if not isinstance(issue, dict) or is_dropped_by_model_change(issue):
+                continue  # dropped by the user's model change: reported, not recovered
             expression = issue.get("expression") or issue.get("original_text") or ""
             source = issue.get("source") or {}
             label = issue.get("name") or issue.get("context") or issue.get("id") or "unnamed rule"
@@ -3580,9 +3585,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 obligation = "The action must check the intended condition before execution and refuse when it fails. "
             else:
                 obligation = "The application must enforce the intended behavior and reject violations. "
+            rename = issue.get(RENAMED)
+            follow = (f"The model renamed {rename['from']} to {rename['to']} since the last run: "
+                      "keep the rule and enforce it on the new name. " if rename else "")
             text = (
                 f"Recover model constraint '{label}' rejected during conversion. "
-                f"Contract: {contract_kind} on {target}. {obligation}"
+                f"Contract: {contract_kind} on {target}. {obligation}{follow}"
                 "Use the actual model/API relationship names. "
                 "Resolve conflicts in favor of the original user specification "
                 "and its requirements above; the rejected expression is source "
@@ -4394,6 +4402,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "associations": len(self.domain_model.associations),
                     # The next modify run compares the user's model with this one.
                     "user_model": self._user_model,
+                    # ... and tells a rule its model change broke from a new one.
+                    "converted_rules": converted_rule_fingerprints(self.domain_model),
                 })
             except Exception:
                 # Domain model is present but malformed — don't fail

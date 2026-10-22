@@ -177,6 +177,18 @@ def test_conversion_issue_reason_has_no_suggestion_for_unrelated_typo():
     assert "did you mean" not in issues["typo"]["reason"]
 
 
+def test_conversion_issue_names_the_missing_element():
+    """The element a rule names but the model lacks, without parsing the reason (#659)."""
+    diagram = _hotel_diagram_json(
+        booking_inv="context Booking inv typo: self.totallyMadeUp->size() > 0",
+        room_inv="context Suite inv noOverlappingBookings: self.bookings->size() > 0",
+    )
+    dm = process_class_diagram(diagram)
+    issues = {i["name"]: i for i in dm.conversion_issues}
+    assert issues["typo"]["missing_element"] == "Booking.totallyMadeUp"
+    assert issues["noOverlappingBookings"]["missing_element"] == "Suite"
+
+
 # ---------------------------------------------------------------------------
 # _suggest_case_fix — names that differ only in case (BESSER-PEARL/BESSER#400)
 # ---------------------------------------------------------------------------

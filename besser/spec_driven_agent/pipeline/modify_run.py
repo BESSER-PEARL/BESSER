@@ -20,7 +20,11 @@ import time
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
-from besser.spec_driven_agent.planning.model_change import compare_with_base
+from besser.spec_driven_agent.planning.model_change import FULL_MODEL, compare_with_base
+from besser.spec_driven_agent.planning.model_rules import (
+    is_dropped_by_model_change,
+    mark_rules_broken_by_model_change,
+)
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.providers.llm_client import MODIFY_MAX_TOKENS
@@ -116,6 +120,7 @@ class ModifyRunMixin:
         # change, no crash. Scoped to modify() only; run()/_run_phase1
         # never invoke it, so from-scratch output is byte-identical.
         self._derive_and_apply_model_deltas(instructions)
+        self._mark_rules_broken_by_model_change()
 
         self._inventory = build_inventory(
             self.output_dir,
@@ -343,6 +348,11 @@ class ModifyRunMixin:
         if not isinstance(recipe, dict):
             return
         self._seed_generator_used = recipe.get("generator_used")
+        converted = (recipe.get("model") or {}).get("converted_rules")
+        if isinstance(converted, list):
+            self._seed_converted_rules = set(converted)
+            self._seed_dropped_rules = [
+                i for i in recipe.get("model_conversion_issues") or [] if is_dropped_by_model_change(i)]
         # Seed-issue forwarding: blockers the seed run could not fix are
         # THIS run's opening tasks. Blockers only — warnings/style would
         # bloat the prompt with ruff noise and dilute the real debt.
@@ -366,6 +376,22 @@ class ModifyRunMixin:
                     self.executor._generator_files.add(entry["path"])
         except Exception:
             logger.debug("Seed recipe output_files malformed", exc_info=True)
+
+    def _mark_rules_broken_by_model_change(self) -> None:
+        """Mark rejected model rules whose element this model change removed or renamed.
+
+        Needs the previous run's converted-rule fingerprints and full model (an
+        older recipe's class names cannot show an attribute was removed);
+        without either, every rejected rule keeps the normal recovery path.
+        """
+        change = getattr(self, "_model_change", None)
+        converted = getattr(self, "_seed_converted_rules", None)
+        if change is None or change.basis != FULL_MODEL or converted is None:
+            return
+        mark_rules_broken_by_model_change(
+            getattr(self.domain_model, "conversion_issues", None), change,
+            converted_before=converted, dropped_before=self._seed_dropped_rules,
+        )
 
     def _detect_fix_target(self, instructions: str) -> None:
         """MODIFY-only: parse the user-reported failure into a target.

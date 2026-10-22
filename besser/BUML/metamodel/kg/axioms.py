@@ -14,10 +14,15 @@ endpoints by id when serialised.
 
 Like the rest of the metamodel, the fields are private attributes behind
 validating setters (see :class:`~besser.BUML.metamodel.kg.KGEdge`): an id must
-be a ``str`` and a list of ids a list of ``str``, and a bad value fails at the
-assignment instead of surfacing later in a converter. Each class lists its
-fields, in constructor order, in ``FIELDS``; :meth:`KGAxiom.to_dict` and the
-serialisers are driven by it.
+be a non-empty ``str`` (as ``KGNode.id`` must) and a list of ids a list of
+them, and a bad value fails at the assignment instead of surfacing later in a
+converter. The single ids an axiom is about are required constructor
+arguments; only the lists, which may be empty, and ``ImportAxiom``'s
+``source_ontology_iri`` have defaults. Each class lists its fields, in
+constructor order, in ``FIELDS``; :meth:`KGAxiom.to_dict` and the serialisers
+are driven by it. The fields that name graph nodes are listed in
+``NODE_REF_FIELDS``, which :meth:`KGAxiom.referenced_ids` and
+``KnowledgeGraph.validate`` read.
 
 The records are *informational*: the deterministic KG → BUML class diagram
 converter reads them in order to surface preflight issues and to lift
@@ -46,7 +51,7 @@ __all__ = [
 
 
 def _id_property(name: str, doc: str, *, optional: bool = False) -> property:
-    """A ``str`` field stored as ``_<name>``; ``optional`` also accepts ``None``."""
+    """A non-empty ``str`` field stored as ``_<name>``; ``optional`` also accepts ``None``."""
     attr = f"_{name}"
 
     def getter(self) -> Optional[str]:
@@ -56,9 +61,9 @@ def _id_property(name: str, doc: str, *, optional: bool = False) -> property:
         if value is None and optional:
             setattr(self, attr, None)
             return
-        if not isinstance(value, str):
+        if not isinstance(value, str) or value == "":
             raise ValueError(
-                f"{type(self).__name__}.{name} must be a str, got {type(value).__name__}."
+                f"{type(self).__name__}.{name} must be a non-empty str, got {value!r}."
             )
         setattr(self, attr, value)
 
@@ -81,8 +86,8 @@ def _id_list_property(name: str, doc: str) -> property:
         if value is None:
             setattr(self, attr, [])
             return
-        if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
-            raise ValueError(f"{type(self).__name__}.{name} must be a list of str.")
+        if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) and v for v in value):
+            raise ValueError(f"{type(self).__name__}.{name} must be a list of str, none of them empty.")
         setattr(self, attr, list(value))
 
     return property(getter, setter, doc=doc)
@@ -98,6 +103,20 @@ class KGAxiom:
 
     #: Field names in constructor order. Declared by each subclass.
     FIELDS: ClassVar[Tuple[str, ...]] = ()
+    #: The fields whose ids name nodes of the graph (an id, or a list of them).
+    NODE_REF_FIELDS: ClassVar[Tuple[str, ...]] = ()
+
+    def referenced_ids(self) -> Dict[str, List[str]]:
+        """The node ids the axiom refers to, by field (a single id as a one-item list).
+
+        Returns:
+            dict: ``{field name: [node id, ...]}`` for each of ``NODE_REF_FIELDS``.
+        """
+        refs: Dict[str, List[str]] = {}
+        for name in self.NODE_REF_FIELDS:
+            value = getattr(self, name)
+            refs[name] = list(value) if isinstance(value, list) else [value]
+        return refs
 
     def to_dict(self) -> Dict[str, Any]:
         """The fields as a plain dict (lists copied), without the axiom's kind."""
@@ -124,6 +143,7 @@ class EquivalentClassesAxiom(KGAxiom):
     """
 
     FIELDS = ("class_ids",)
+    NODE_REF_FIELDS = FIELDS
     class_ids = _id_list_property("class_ids", "list[str]: Ids of the equivalent classes.")
 
     def __init__(self, class_ids: Optional[List[str]] = None) -> None:
@@ -138,6 +158,7 @@ class EquivalentPropertiesAxiom(KGAxiom):
     """
 
     FIELDS = ("property_ids",)
+    NODE_REF_FIELDS = FIELDS
     property_ids = _id_list_property("property_ids", "list[str]: Ids of the equivalent properties.")
 
     def __init__(self, property_ids: Optional[List[str]] = None) -> None:
@@ -151,6 +172,7 @@ class DisjointClassesAxiom(KGAxiom):
     """
 
     FIELDS = ("class_ids",)
+    NODE_REF_FIELDS = FIELDS
     class_ids = _id_list_property("class_ids", "list[str]: Ids of the pairwise-disjoint classes.")
 
     def __init__(self, class_ids: Optional[List[str]] = None) -> None:
@@ -161,10 +183,11 @@ class DisjointUnionAxiom(KGAxiom):
     """``owl:disjointUnionOf``: the union class is the disjoint union of its parts."""
 
     FIELDS = ("union_class_id", "part_class_ids")
+    NODE_REF_FIELDS = FIELDS
     union_class_id = _id_property("union_class_id", "str: Id of the union class.")
     part_class_ids = _id_list_property("part_class_ids", "list[str]: Ids of the disjoint parts.")
 
-    def __init__(self, union_class_id: str = "", part_class_ids: Optional[List[str]] = None) -> None:
+    def __init__(self, union_class_id: str, part_class_ids: Optional[List[str]] = None) -> None:
         self.union_class_id = union_class_id
         self.part_class_ids = part_class_ids
 
@@ -173,10 +196,11 @@ class SubPropertyOfAxiom(KGAxiom):
     """``rdfs:subPropertyOf`` between two properties (sub ⊑ super)."""
 
     FIELDS = ("sub_property_id", "super_property_id")
+    NODE_REF_FIELDS = FIELDS
     sub_property_id = _id_property("sub_property_id", "str: Id of the sub-property.")
     super_property_id = _id_property("super_property_id", "str: Id of the super-property.")
 
-    def __init__(self, sub_property_id: str = "", super_property_id: str = "") -> None:
+    def __init__(self, sub_property_id: str, super_property_id: str) -> None:
         self.sub_property_id = sub_property_id
         self.super_property_id = super_property_id
 
@@ -185,10 +209,11 @@ class InversePropertiesAxiom(KGAxiom):
     """``owl:inverseOf`` between two object properties."""
 
     FIELDS = ("property_a_id", "property_b_id")
+    NODE_REF_FIELDS = FIELDS
     property_a_id = _id_property("property_a_id", "str: Id of the first property.")
     property_b_id = _id_property("property_b_id", "str: Id of its inverse.")
 
-    def __init__(self, property_a_id: str = "", property_b_id: str = "") -> None:
+    def __init__(self, property_a_id: str, property_b_id: str) -> None:
         self.property_a_id = property_a_id
         self.property_b_id = property_b_id
 
@@ -200,12 +225,13 @@ class PropertyChainAxiom(KGAxiom):
     """
 
     FIELDS = ("property_id", "chain_property_ids")
+    NODE_REF_FIELDS = FIELDS
     property_id = _id_property("property_id", "str: Id of the composed property.")
     chain_property_ids = _id_list_property(
         "chain_property_ids", "list[str]: Ids of the chained properties, in order."
     )
 
-    def __init__(self, property_id: str = "", chain_property_ids: Optional[List[str]] = None) -> None:
+    def __init__(self, property_id: str, chain_property_ids: Optional[List[str]] = None) -> None:
         self.property_id = property_id
         self.chain_property_ids = chain_property_ids
 
@@ -214,10 +240,11 @@ class HasKeyAxiom(KGAxiom):
     """``owl:hasKey``: the listed properties uniquely identify instances of the class."""
 
     FIELDS = ("class_id", "property_ids")
+    NODE_REF_FIELDS = FIELDS
     class_id = _id_property("class_id", "str: Id of the keyed class.")
     property_ids = _id_list_property("property_ids", "list[str]: Ids of the key properties.")
 
-    def __init__(self, class_id: str = "", property_ids: Optional[List[str]] = None) -> None:
+    def __init__(self, class_id: str, property_ids: Optional[List[str]] = None) -> None:
         self.class_id = class_id
         self.property_ids = property_ids
 
@@ -230,11 +257,13 @@ class ImportAxiom(KGAxiom):
     """
 
     FIELDS = ("target_iri", "source_ontology_iri")
+    #: Both name ontologies, not nodes of the graph.
+    NODE_REF_FIELDS = ()
     target_iri = _id_property("target_iri", "str: IRI of the imported ontology.")
     source_ontology_iri = _id_property(
         "source_ontology_iri", "str | None: IRI of the importing ontology, if known.", optional=True
     )
 
-    def __init__(self, target_iri: str = "", source_ontology_iri: Optional[str] = None) -> None:
+    def __init__(self, target_iri: str, source_ontology_iri: Optional[str] = None) -> None:
         self.target_iri = target_iri
         self.source_ontology_iri = source_ontology_iri

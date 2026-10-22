@@ -15,12 +15,13 @@ writes. Two constraints follow from that pairing and shape everything below:
    helpers like ``sorted`` or ``enumerate``, no dunder attribute access, and
    ``set()`` rather than a bare ``{}`` for an empty node/edge set.
 
-2. **The section banner has to be written here.** ``project_to_code`` only
-   prepends a numbered ``# KNOWLEDGE_GRAPH MODEL n: "…" #`` header when a
-   project holds more than one KG, so a lone KG would otherwise carry no
-   header at all and ``project_to_json``'s section regex would never find it.
-   ``domain_model_builder``, ``agent_model_builder`` and ``bpmn_model_builder``
-   all emit their own banner for the same reason.
+2. **The section banner is written here, and only here.** ``project_to_json``
+   splits a project file on ``# KNOWLEDGE_GRAPH MODEL … #`` lines, so a lone KG
+   needs this banner to be found at all. When a project holds several KGs,
+   ``project_to_code`` passes each one's ``title`` rather than prepending a
+   header of its own: a second header right above this banner would be read
+   as an empty section and the KG lost (``nn_model_to_code`` takes a ``title``
+   for the same reason).
 
 Values are rendered with :func:`repr` rather than the usual
 ``_escape_python_string``. Node and edge ``metadata`` carries arbitrarily
@@ -32,8 +33,9 @@ whose ``repr`` is the undefined name ``nan`` / ``inf``.
 """
 
 import math
-from typing import Any, Dict, List, Mapping, Set, TextIO
+from typing import Any, Dict, List, Mapping, Optional, Set, TextIO
 
+from besser.BUML.metamodel.kg import axioms as _axioms
 from besser.BUML.metamodel.kg import (
     KGBlank,
     KGClass,
@@ -46,7 +48,7 @@ from besser.BUML.metamodel.kg import (
     KnowledgeGraph,
 )
 from besser.BUML.metamodel.kg.ids import short_digest
-from besser.utilities.buml_code_builder.common import _comment_safe, safe_var_name
+from besser.utilities.buml_code_builder.common import _comment_safe, buml_header, safe_var_name
 
 
 __all__ = ["kg_model_to_code"]
@@ -65,21 +67,16 @@ _NODE_CLASSES = (
     KGPropertyConstraint,
 )
 
-#: Every axiom class the metamodel defines, imported by the generated code.
-_AXIOM_NAMES = [
-    "EquivalentClassesAxiom",
-    "EquivalentPropertiesAxiom",
-    "DisjointClassesAxiom",
-    "DisjointUnionAxiom",
-    "SubPropertyOfAxiom",
-    "InversePropertiesAxiom",
-    "PropertyChainAxiom",
-    "HasKeyAxiom",
-    "ImportAxiom",
-]
+#: Every concrete axiom class the metamodel defines, imported by the generated code.
+_AXIOM_NAMES = [name for name in _axioms.__all__ if name != "KGAxiom"]
 
 
-def kg_model_to_code(model: KnowledgeGraph, file_path: str, model_var_name: str = "kg_model"):
+def kg_model_to_code(
+    model: KnowledgeGraph,
+    file_path: str,
+    model_var_name: str = "kg_model",
+    title: Optional[str] = None,
+):
     """
     Generates Python code for a KnowledgeGraph model.
 
@@ -90,9 +87,18 @@ def kg_model_to_code(model: KnowledgeGraph, file_path: str, model_var_name: str 
             the generated code. Defaults to ``"kg_model"``, which is the key
             ``project_to_json`` looks up in its ``SECTION_CONFIG`` table —
             any other name and the section is silently skipped on import.
+        title (str, optional): Diagram title to embed in the section banner
+            (``# KNOWLEDGE_GRAPH MODEL: "title" #``); ``project_to_json`` reads
+            it back as the diagram's title. ``project_to_code`` passes one per
+            KG when a project holds several.
+
+    Raises:
+        TypeError: If a node, edge or axiom carries a value that is not
+            JSON-compatible (see :func:`_literal`).
     """
     with open(file_path, 'w', encoding='utf-8') as f:
-        _write_banner(f)
+        f.write(buml_header())
+        _write_banner(f, title)
         _write_imports(f)
 
         node_vars = _write_nodes(f, model)
@@ -100,10 +106,16 @@ def kg_model_to_code(model: KnowledgeGraph, file_path: str, model_var_name: str 
         _write_graph(f, model, node_vars, edge_vars, model_var_name)
 
 
-def _write_banner(f: TextIO) -> None:
-    f.write("###########################\n")
-    f.write("# KNOWLEDGE_GRAPH MODEL   #\n")
-    f.write("###########################\n\n")
+def _write_banner(f: TextIO, title: Optional[str] = None) -> None:
+    if title:
+        # One line, and no `"`: the importer's regex captures the title as
+        # `"([^"]*)"`, so an embedded quote would truncate it.
+        safe_title = _comment_safe(title).replace('"', "'")
+        header_line = f'# KNOWLEDGE_GRAPH MODEL: "{safe_title}" #'
+    else:
+        header_line = "# KNOWLEDGE_GRAPH MODEL #"
+    border = "#" * len(header_line)
+    f.write(f"{border}\n{header_line}\n{border}\n\n")
 
 
 def _write_imports(f: TextIO) -> None:
@@ -231,27 +243,44 @@ def _var_set(var_names: List[str]) -> str:
 def _literal(value: Any) -> str:
     """Render ``value`` as a Python literal safe to ``exec``.
 
-    Only JSON-safe types are rendered structurally; anything else degrades to
-    its ``str()`` form so a stray object can never emit a ``repr`` that is not
-    valid Python (``<Foo object at 0x…>``).
+    Only JSON-compatible types are accepted. A subclass of a scalar type (an
+    rdflib ``URIRef`` is a ``str``, an ``IntEnum`` an ``int``) is written as
+    its base type, whose ``repr`` is a literal where the subclass's is not. A
+    ``set`` becomes a list in sorted order, so the output does not depend on
+    hash order.
+
+    Raises:
+        TypeError: For any other type. Writing its ``str()`` instead would
+            silently change the value's type on the way back.
     """
-    if isinstance(value, float) and not math.isfinite(value):
-        # repr() gives bare `nan` / `inf`, which are names Python does not
-        # define -- the generated module then fails to load with NameError.
-        if math.isnan(value):
-            return "float('nan')"
-        return "float('inf')" if value > 0 else "float('-inf')"
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None:
+        return "None"
+    if isinstance(value, bool):
+        return repr(bool(value))
+    if isinstance(value, int):
+        return repr(int(value))
+    if isinstance(value, float):
+        value = float(value)
+        if not math.isfinite(value):
+            # repr() gives bare `nan` / `inf`, which are names Python does not
+            # define -- the generated module then fails to load with NameError.
+            if math.isnan(value):
+                return "float('nan')"
+            return "float('inf')" if value > 0 else "float('-inf')"
         return repr(value)
     if isinstance(value, str):
-        return repr(value)
+        return repr(str(value))
     if isinstance(value, Mapping):      # includes the read-only view node.metadata returns
         items = ", ".join(f"{_literal(k)}: {_literal(v)}" for k, v in value.items())
         return "{" + items + "}"
-    if isinstance(value, (list, tuple, set)):
-        rendered = ", ".join(_literal(v) for v in value)
-        return "[" + rendered + "]"
-    return repr(str(value))
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_literal(v) for v in value) + "]"
+    if isinstance(value, (set, frozenset)):
+        return "[" + ", ".join(sorted(_literal(v) for v in value)) + "]"
+    raise TypeError(
+        f"kg_model_to_code: cannot write a {type(value).__name__} value; "
+        "node, edge and axiom data must be JSON-compatible."
+    )
 
 
 def _unique_var(prefix: str, hint: str, used: Set[str]) -> str:

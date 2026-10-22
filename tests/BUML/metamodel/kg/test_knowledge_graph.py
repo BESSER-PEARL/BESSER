@@ -380,7 +380,7 @@ def test_validate_reports_a_constraint_spec_that_got_around_the_setter():
     node = KGNodeConstraint(id="nc", label="N", metadata={"constraintSpecs": [_VALID_SPEC]})
     kg.add_node(node)
     # State the setter never saw, e.g. a graph unpickled from before it validated.
-    node._KGNode__metadata["constraintSpecs"] = [{"kind": "nonsense"}]
+    node._KGAnnotatedElement__metadata["constraintSpecs"] = [{"kind": "nonsense"}]
 
     result = kg.validate(raise_exception=False)
 
@@ -395,3 +395,154 @@ def test_a_mapping_is_accepted_wherever_a_dict_was():
     copy_of = KGBlank(id="_:c", label="", metadata=source.metadata)   # the view itself
 
     assert dict(copy_of.metadata) == {"kind": "restriction"}
+
+
+# ---------------------------------------------------------------------------
+# Axioms: the list is the graph's own, ids are required, references checked
+# ---------------------------------------------------------------------------
+
+
+def test_the_axioms_getter_hands_out_a_copy():
+    """Appending to the returned list bypassed ``add_axiom``'s type check."""
+    kg = KnowledgeGraph(name="graph", axioms=[EquivalentClassesAxiom(class_ids=["c1"])])
+
+    kg.axioms.append("not an axiom")
+
+    assert kg.axioms == [EquivalentClassesAxiom(class_ids=["c1"])]
+
+
+def test_validate_reports_an_axiom_that_is_not_a_kg_axiom():
+    kg = KnowledgeGraph(name="graph")
+    kg._KnowledgeGraph__axioms.append("not an axiom")   # state the setter never saw
+
+    result = kg.validate(raise_exception=False)
+
+    assert not result["success"]
+    assert result["errors"] == ["KnowledgeGraph.axioms[0] is a str, not a KGAxiom."]
+
+
+_REQUIRED_ID_FIELDS = [
+    (cls, name)
+    for cls, kwargs in AXIOM_SAMPLES.items()
+    for name, value in kwargs.items()
+    if isinstance(value, str) and not (cls is ImportAxiom and name == "source_ontology_iri")
+]
+
+
+@pytest.mark.parametrize("axiom_cls, field_name", _REQUIRED_ID_FIELDS,
+                         ids=lambda v: v if isinstance(v, str) else v.__name__)
+def test_a_required_id_cannot_be_left_out_or_empty(axiom_cls, field_name):
+    """``SubPropertyOfAxiom()`` used to be a valid axiom about nothing."""
+    kwargs = dict(AXIOM_SAMPLES[axiom_cls])
+
+    with pytest.raises(ValueError, match=f"{field_name} must be a non-empty str"):
+        axiom_cls(**{**kwargs, field_name: ""})
+    with pytest.raises(TypeError):
+        axiom_cls(**{k: v for k, v in kwargs.items() if k != field_name})
+    axiom = axiom_cls(**kwargs)
+    with pytest.raises(ValueError):
+        setattr(axiom, field_name, "")
+    assert getattr(axiom, field_name) == kwargs[field_name]
+
+
+@pytest.mark.parametrize("axiom_cls", [c for c, kw in AXIOM_SAMPLES.items()
+                                       if any(isinstance(v, list) for v in kw.values())],
+                         ids=lambda c: c.__name__)
+def test_an_id_list_cannot_hold_an_empty_id(axiom_cls):
+    kwargs = AXIOM_SAMPLES[axiom_cls]
+    list_field = next(k for k, v in kwargs.items() if isinstance(v, list))
+
+    with pytest.raises(ValueError, match="list of str, none of them empty"):
+        axiom_cls(**{**kwargs, list_field: ["ok", ""]})
+
+
+@pytest.mark.parametrize("axiom_cls", AXIOM_SAMPLES, ids=lambda c: c.__name__)
+def test_referenced_ids_lists_the_node_ids_by_field(axiom_cls):
+    kwargs = AXIOM_SAMPLES[axiom_cls]
+    refs = axiom_cls(**kwargs).referenced_ids()
+
+    if axiom_cls is ImportAxiom:
+        assert refs == {}, "an import names ontologies, not nodes"
+    else:
+        assert refs == {k: (v if isinstance(v, list) else [v]) for k, v in kwargs.items()}
+
+
+@pytest.mark.parametrize("axiom_cls", AXIOM_SAMPLES, ids=lambda c: c.__name__)
+def test_validate_flags_every_axiom_id_that_names_no_node(axiom_cls):
+    kwargs = AXIOM_SAMPLES[axiom_cls]
+    kg = KnowledgeGraph(name="graph", axioms=[axiom_cls(**kwargs)])
+
+    result = kg.validate()
+
+    expected = sum(len(ids) for ids in axiom_cls(**kwargs).referenced_ids().values())
+    assert result["success"] is True, "a dangling axiom reference is a warning, not an error"
+    assert len(result["warnings"]) == expected
+    assert all("is not a node in the graph" in w for w in result["warnings"])
+
+
+def test_validate_is_quiet_when_every_axiom_id_is_a_node():
+    kg = KnowledgeGraph(name="graph", nodes={KGClass(id="c1"), KGClass(id="c2")},
+                        axioms=[EquivalentClassesAxiom(class_ids=["c1", "c2"])])
+
+    assert kg.validate() == {"success": True, "errors": [], "warnings": []}
+
+
+# ---------------------------------------------------------------------------
+# label / iri types, and metadata shared by nodes and edges
+# ---------------------------------------------------------------------------
+
+_MAKERS = {
+    "node": lambda: KGClass(id="c1", label="C"),
+    "edge": lambda: KGEdge(id="e", source=KGClass(id="a"), target=KGClass(id="b")),
+}
+
+
+@pytest.mark.parametrize("kind", _MAKERS)
+@pytest.mark.parametrize("field_name", ["label", "iri"])
+def test_label_and_iri_must_be_strings(kind, field_name):
+    thing = _MAKERS[kind]()
+
+    with pytest.raises(ValueError, match=f"{field_name} must be a str or None"):
+        setattr(thing, field_name, 5)
+    setattr(thing, field_name, None)
+    assert getattr(thing, field_name) == ("" if field_name == "label" else None)
+
+
+def test_a_non_string_label_is_refused_by_the_constructor():
+    with pytest.raises(ValueError, match="label"):
+        KGIndividual(id="i1", label=5)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("kind", _MAKERS)
+def test_nested_metadata_cannot_be_changed_through_the_getter(kind):
+    """The read-only view used to be shallow on plain nodes and edges."""
+    thing = _MAKERS[kind]()
+    thing.metadata = {"members": ["a"], "nested": {"k": 1}}
+
+    thing.metadata["members"].append("b")
+    thing.metadata["nested"]["k"] = 2
+
+    assert dict(thing.metadata) == {"members": ["a"], "nested": {"k": 1}}
+
+
+@pytest.mark.parametrize("kind", _MAKERS)
+def test_the_metadata_passed_in_is_deep_copied(kind):
+    thing = _MAKERS[kind]()
+    mine = {"members": ["a"]}
+    thing.metadata = mine
+
+    mine["members"].append("b")
+
+    assert thing.metadata["members"] == ["a"]
+
+
+@pytest.mark.parametrize("kind", _MAKERS)
+def test_metadata_helpers_work_on_nodes_and_edges_alike(kind):
+    thing = _MAKERS[kind]()
+
+    thing.set_metadata_item("a", 1)
+    thing.update_metadata({"b": 2})
+
+    assert dict(thing.metadata) == {"a": 1, "b": 2}
+    with pytest.raises(ValueError, match=f"{type(thing).__name__}.metadata must be a dict"):
+        thing.metadata = ["not", "a", "mapping"]

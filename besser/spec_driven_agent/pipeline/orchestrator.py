@@ -175,6 +175,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     TOOL_INPUTS_FILENAME,
     _LOG_VALUE_BUDGET,
     _WRITE_TOOLS_ON_RECORD,
+    _APPLICATION_OUTPUT_DIRS,
     _APPLICATION_PRIMARY_TOOLS,
     _BARE_LANG_RE,
     _EDIT_STREAK_TOOLS,
@@ -850,6 +851,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self._inventory = checkpoint.inventory
         self._generator_used = checkpoint.generator_used
+        self.executor.lock_generators(checkpoint.locked_generators)
         self._compaction_count = checkpoint.compaction_count
         self.tool_calls_log = list(checkpoint.tool_calls_log)
         self._validation_issues = [
@@ -890,6 +892,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             )
         else:
             self._drop_redundant_generator_tools()
+            self._lock_application_generators()
             self.executor.set_scaffold_family(
                 self._scaffold_family(), self._instructions)
 
@@ -1657,6 +1660,31 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 before - len(self.tools), self._generator_used,
             )
 
+    def _lock_application_generators(self) -> None:
+        """Refuse the whole-application generators that would overwrite the app (#666).
+
+        All of them once a primary built the scaffold (this run's Phase 1, or
+        the seed's recorded generator in a modify run). In a modify run on any
+        other seed, each one whose output folder the seed already has. A
+        resumed run keeps the lock its checkpoint recorded.
+        """
+        if self._generator_used in _APPLICATION_PRIMARY_TOOLS:
+            self.executor.lock_generators(_APPLICATION_PRIMARY_TOOLS)
+        elif self._modify_mode:
+            self.executor.lock_generators(
+                tool for tool, folder in _APPLICATION_OUTPUT_DIRS.items()
+                if os.path.isdir(os.path.join(self.output_dir, folder))
+            )
+        locked = self.executor.locked_generators
+        if not locked:
+            return
+        self.tools = [
+            t for t in self.tools
+            if (t.get("name") if isinstance(t, dict) else None) not in locked
+        ]
+        logger.info("Phase 2: locked %s, the application they write already exists",
+                    ", ".join(sorted(locked)))
+
     def _ensure_gitignore(self) -> None:
         """Write a .gitignore into the output root if the run didn't author one."""
         try:
@@ -1683,6 +1711,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # the agent can't scatter redundant pydantic/ sqlalchemy/ rest_api/
         # dirs next to the assembled backend/.
         self._drop_redundant_generator_tools()
+        self._lock_application_generators()
 
         # Ship a .gitignore so a pushed/cloned repo doesn't carry caches, a
         # runtime DB, node_modules, or a leaked .env. Deterministic — no LLM.
@@ -2515,6 +2544,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 phase2_stop_reason=self._phase2_stop_reason,
                 phase2_exited_cleanly=self._phase2_exited_cleanly,
                 repair_progress=self._repair_progress if phase == "phase3" else {},
+                locked_generators=sorted(self.executor.locked_generators),
             )
             path = save_checkpoint(self.output_dir, ckpt)
             if path:

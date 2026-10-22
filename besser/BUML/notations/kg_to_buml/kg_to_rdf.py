@@ -126,8 +126,9 @@ _FLATTENED_LIST_PREDICATES = frozenset({
 })
 
 #: Flattened lists whose member order carries no meaning: a key is a set of
-#: properties, ``owl:members`` a set of pairwise-disjoint terms. Rebuilding them
-#: in edge-id order is not an inference worth warning about.
+#: properties, ``owl:members`` a set of pairwise-disjoint terms. They are
+#: rebuilt in member-id order (canonical, whatever the edge ids), and that is not
+#: an inference worth warning about.
 _UNORDERED_LIST_PREDICATES = frozenset({str(OWL.hasKey), str(OWL.members)})
 
 #: SHACL list-valued predicates the importer *consumes*: the spine is deleted
@@ -158,8 +159,8 @@ _NUM_RE = re.compile(r"(\d+)")
 def _natural_key(text: str) -> Tuple:
     """Sort key that orders embedded integers numerically.
 
-    Edge ids look like ``cedge:9`` / ``cedge:10``; plain lexicographic order
-    would put ``cedge:10`` first and silently reorder a flattened RDF list.
+    Editor-made ids can look like ``edge:9`` / ``edge:10``; plain lexicographic
+    order would put ``edge:10`` first and silently reorder a flattened RDF list.
     """
     return tuple(int(part) if part.isdigit() else part for part in _NUM_RE.split(text or ""))
 
@@ -472,19 +473,20 @@ def _pass_b_lists(g, nodes, edges, terms, rebuilt, default_ns, warnings) -> None
             rank = {key: index for index, key in enumerate(order)}
             group.sort(key=lambda e: (rank.get(_member_key(e.target), len(rank)),
                                       _natural_key(e.id)))
+        elif predicate in _UNORDERED_LIST_PREDICATES:
+            group.sort(key=lambda e: (_natural_key(e.target.id), _natural_key(e.id)))
         else:
             # Editor-authored graph, or a predicate the importer does not
-            # annotate. Fall back to edge-id order, and say so where the order
-            # is observable (operand order shows in auxiliary class names).
+            # annotate. Fall back to edge-id order, and say so: the order is
+            # observable (operand order shows in auxiliary class names).
             group.sort(key=lambda e: (_natural_key(e.id), _natural_key(e.target.id)))
-            if predicate not in _UNORDERED_LIST_PREDICATES:
-                add_warning(
-                    warnings,
-                    "LIST_ORDER_INFERRED",
-                    f"No recorded member order for {predicate} on node {node_id!r}; "
-                    f"inferred it from edge ids.",
-                    node_id=node_id,
-                )
+            add_warning(
+                warnings,
+                "LIST_ORDER_INFERRED",
+                f"No recorded member order for {predicate} on node {node_id!r}; "
+                f"inferred it from edge ids.",
+                node_id=node_id,
+            )
         members = [terms[e.target.id] for e in group if terms.get(e.target.id) is not None]
         if members:
             g.add((subject, URIRef(predicate), emit_rdf_list(g, members)))

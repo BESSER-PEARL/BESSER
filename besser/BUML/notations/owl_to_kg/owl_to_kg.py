@@ -1446,15 +1446,19 @@ def _lift_to_constraint_nodes(
         edges_by_id.clear()
         edges_by_id.update({e.id: e for e in kg.edges})
 
-    _renumber_constraint_edges(kg)
+    _assign_constraint_edge_ids(kg)
 
 
-def _renumber_constraint_edges(kg: KnowledgeGraph) -> None:
-    """Give the ``cedge:<n>`` edges the lifter added ids that depend on content only.
+def _assign_constraint_edge_ids(kg: KnowledgeGraph) -> None:
+    """Give the ``cedge:`` edges the lifter added ids derived from their content.
 
     The lifter numbers edges as it adds them, walking sets and dicts whose order
-    follows string hashing, which Python randomises per process. Renumbering by
-    ``(source, predicate, target)`` makes the ids the same on every import.
+    follows string hashing, which Python randomises per process. Each edge is
+    renamed ``cedge:<digest of (source, predicate, target)>``, so its id depends
+    on that edge alone: not on the hash seed, and not on how many other triples
+    the file has (a counter offset by the raw-edge count shifted every id when
+    an unrelated triple was added). The rare repeated ``(source, predicate,
+    target)`` gets a ``_<n>`` suffix.
     """
     lifted = sorted(
         (e for e in kg.edges if e.id.startswith("cedge:")),
@@ -1463,9 +1467,12 @@ def _renumber_constraint_edges(kg: KnowledgeGraph) -> None:
     if not lifted:
         return
     kept = {e for e in kg.edges if not e.id.startswith("cedge:")}
-    first = len(kept) + 1
-    for offset, edge in enumerate(lifted):
-        edge.id = f"cedge:{first + offset}"
+    seen: Dict[str, int] = {}
+    for edge in lifted:
+        base = "cedge:" + short_digest(f"{edge.source.id}\0{edge.iri or ''}\0{edge.target.id}", 16)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        edge.id = base if n == 0 else f"{base}_{n}"
     kg.edges = kept | set(lifted)
 
 
@@ -1605,25 +1612,25 @@ def owl_file_to_knowledge_graph(
         cls_node.set_metadata_item("punned_with", twin_id)
 
     edges = []
-    edge_counter = 0
-    # Sorted, so the ``edge:<n>`` ids do not depend on the store's iteration
-    # order (which follows per-process string hashing).
-    for s, p, o in sorted(g, key=_triple_sort_key):
+    # Each triple's edge is named ``edge:<digest of the triple>``, so its id
+    # depends on that triple alone: not on the store's iteration order (which
+    # follows per-process string hashing) and not on what else the file holds.
+    # The lifter's ``cedge:`` ids follow the same rule (_assign_constraint_edge_ids).
+    # Walking in sorted order keeps node creation deterministic too.
+    for triple in sorted(g, key=_triple_sort_key):
+        s, p, o = triple
         # For punned subjects, route NamedIndividual-typed triples to the
         # individual twin; everything else stays on the class node so the
         # TBox round-trip remains intact.
-        src_term = s
-        tgt_term = o
         if isinstance(s, URIRef) and str(s) in punned_twins and p == RDF.type and o == OWL.NamedIndividual:
             src = punned_twins[str(s)]
         else:
-            src = _get_or_create_node(src_term)
-        tgt = _get_or_create_node(tgt_term)
-        edge_counter += 1
+            src = _get_or_create_node(s)
+        tgt = _get_or_create_node(o)
         predicate_iri = str(p)
         edges.append(
             KGEdge(
-                id=f"edge:{edge_counter}",
+                id="edge:" + short_digest("\0".join(_triple_sort_key(triple)), 16),
                 source=src,
                 target=tgt,
                 label=_local_name(predicate_iri),
@@ -1676,23 +1683,31 @@ def owl_file_to_knowledge_graph(
 
 
 #: Rounds of neighbourhood refinement used to tell blank nodes apart. Each round
-#: lets a blank node's label see one hop further; past this, any remaining ties
-#: are broken by order of first appearance, which is just as deterministic.
+#: lets a blank node's label see one hop further. All rounds always run, so a
+#: label depends on the blank node's neighbourhood up to this many hops and on
+#: nothing else in the file; ties left after that get a ``_<n>`` suffix.
 _BLANK_LABEL_ROUNDS = 8
 
 
 def _with_deterministic_blank_nodes(g: rdflib.Graph) -> rdflib.Graph:
-    """Return ``g`` with every blank node relabelled from what it describes.
+    """Return a copy of ``g`` with every blank node relabelled from what it describes.
 
     rdflib mints a fresh random label per blank node on every parse, and the
     importer turns those labels into node ids (``_:<label>``), so importing the
     same file twice produced different KG JSON and different preflight issue
     ids. Here a blank node's label is a digest of its neighbourhood: the
-    predicates and named terms around it, refined a few rounds through
-    neighbouring blank nodes (colour refinement). Blank nodes that are still
-    indistinguishable after that are numbered in order of first appearance.
+    predicates and named terms around it, refined through neighbouring blank
+    nodes for exactly :data:`_BLANK_LABEL_ROUNDS` rounds (colour refinement).
 
-    The triple order is kept, so edge ids (``edge:<n>``) are unchanged.
+    The round count is fixed on purpose. Stopping once the partition of the
+    whole graph stops splitting made the number of rounds, and so every label,
+    depend on the rest of the file: an unrelated addition elsewhere relabelled
+    restrictions it never touched. Blank nodes whose bounded neighbourhoods are
+    identical share a digest; the first in parse order keeps it and the others
+    get ``_1``, ``_2``, … suffixes.
+
+    Only labels change; the triples are the same. Edge ids are assigned later,
+    by :func:`owl_file_to_knowledge_graph`, from the relabelled triples.
     """
     triples = list(g)
     blanks: List[BNode] = []
@@ -1718,9 +1733,8 @@ def _with_deterministic_blank_nodes(g: rdflib.Graph) -> rdflib.Graph:
     def key(term) -> str:
         return f"_:{color[term]}" if isinstance(term, BNode) else term.n3()
 
-    distinct = 1
     for _ in range(_BLANK_LABEL_ROUNDS):
-        refined = {
+        color = {
             b: short_digest(
                 "\n".join(sorted(
                     [f"> {p.n3()} {key(o)}" for p, o in out_edges[b]]
@@ -1730,11 +1744,6 @@ def _with_deterministic_blank_nodes(g: rdflib.Graph) -> rdflib.Graph:
             )
             for b in blanks
         }
-        color = refined
-        now = len(set(color.values()))
-        if now == distinct or now == len(blanks):
-            break
-        distinct = now
 
     occurrences: Dict[str, int] = {}
     mapping: Dict[BNode, BNode] = {}

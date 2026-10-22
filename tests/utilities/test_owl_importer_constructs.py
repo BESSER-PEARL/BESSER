@@ -822,22 +822,29 @@ def test_import_ids_do_not_depend_on_the_hash_seed():
     assert outputs[0] == outputs[1]
 
 
-def test_blank_node_ids_name_their_content_not_their_position(tmp_path: Path):
-    """Two files that differ only in what comes *before* a restriction keep its id."""
+def test_blank_node_ids_do_not_depend_on_unrelated_content(tmp_path: Path):
+    """Adding an unrelated, deeply nested structure elsewhere keeps a restriction's id.
+
+    The added six-cell ``rdf:List`` needs more refinement rounds to tell its
+    cells apart than the restriction does. Labels used to be refined until the
+    *whole* graph stopped splitting, so that addition changed the number of
+    rounds and, with it, the restriction's label and its constraint edge ids.
+    """
     body = (
         "@prefix : <http://ex.org/> .\n"
         "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
         "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
         ":p a owl:ObjectProperty .\n"
-        ":A a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p ; owl:someValuesFrom :B ] .\n"
+        ":A a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p ;\n"
+        "    owl:someValuesFrom [ owl:unionOf ( :B :C ) ] ] .\n"
     )
-    extra = body + ":C a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p ; owl:allValuesFrom :A ] .\n"
+    extra = body + ":Z owl:members ( :a :a :a :a :a :a ) .\n"
 
     def restriction_ids(text, name):
         kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, text, name))
-        return {
-            n.id for n in kg.nodes
-            if isinstance(n, KGPropertyConstraint) and n.get_specs()[0]["kind"] == "someValuesFrom"
-        }
+        restrictions = {n.id for n in kg.nodes if isinstance(n, KGPropertyConstraint)}
+        edges = {e.id for e in kg.edges if e.source.id in restrictions or e.target.id in restrictions}
+        return restrictions, edges
 
-    assert restriction_ids(body, "a.ttl") == restriction_ids(extra, "b.ttl")
+    before, after = restriction_ids(body, "a.ttl"), restriction_ids(extra, "b.ttl")
+    assert before[0] and before == after

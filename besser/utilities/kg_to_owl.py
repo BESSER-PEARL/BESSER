@@ -16,9 +16,11 @@ This is the *export*. The KG → UML conversion and the consistency check both
 read a different projection,
 :func:`besser.BUML.notations.kg_to_buml.kg_to_rdf.kg_to_rdf`, which keeps what
 this exporter drops around constraint nodes (punned ``rdfs:subClassOf``,
-``sh:targetClass`` …). The two share the leaf emitters and spec-kind tables
-defined here (``emit_*``, ``*_KINDS``), read constraint parameters from the
-same ``constraintSpecs``, and
+``sh:targetClass`` …). The two share what is defined here: the leaf emitters
+and spec-kind tables (``emit_*``, ``*_KINDS``), the constraint indexes
+(:func:`build_constraint_indexes`) and the rebuilding of flattened lists
+(:func:`emit_flattened_lists`); both read constraint parameters from
+``constraintSpecs`` only, and
 ``tests/BUML/notations/kg_to_buml/test_projection_contract.py`` pins where they
 may differ.
 """
@@ -27,7 +29,10 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, Iterable, List, Literal as TypingLiteral, Optional, Set, Union
+from typing import (
+    Any, Callable, Dict, FrozenSet, Iterable, List, Literal as TypingLiteral, Optional, Set,
+    Tuple, Union,
+)
 
 import rdflib
 from rdflib import BNode, Literal, Namespace, RDF, RDFS, OWL, URIRef, XSD
@@ -43,6 +48,7 @@ from besser.BUML.metamodel.kg import (
     PropertyChainAxiom,
 )
 from besser.BUML.metamodel.kg.constraint_specs import LOGICAL_KINDS
+from besser.BUML.notations.owl_to_kg.owl_to_kg import spec_folded_predicates
 from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_CLASS,
     CONSTRAINT_TARGET_PROPERTY,
@@ -64,13 +70,24 @@ __all__ = [
     "SHACL_LOGICAL_KINDS",
     "SHACL_NODE_KINDS",
     "SHACL_PROPERTY_KINDS",
+    "CLASS_EXPRESSION_PREDICATES",
+    "FLATTENED_LIST_PREDICATES",
+    "BlankHandles",
+    "ConstraintIndexes",
+    "blank_handles",
+    "build_constraint_indexes",
+    "emit_flattened_lists",
     "emit_nodeconstraint_owl_axioms",
+    "emit_owl_class_expression",
     "emit_owl_restriction",
+    "emit_property_chains",
     "emit_rdf_list",
     "emit_shacl_constraint",
     "emit_shacl_node_constraint",
+    "natural_key",
     "predicate_for_edge",
     "slugify",
+    "spec_folded_by_term",
     "spec_to_literal",
     "term_for_node",
 ]
@@ -89,17 +106,22 @@ _INTERNAL_PREDICATES: Set[str] = {
     SH_PROPERTY,
 }
 
-# OWL predicates whose value must be a single rdf:List, never repeated flat
-# triples. The importer represents these in the KG editor as direct
-# subject->member edges (one per member, for visibility/editability — see
-# owl_to_kg._flatten_owl_list_valued_triples), which must NOT be re-emitted
-# as-is here (that would produce invalid multi-object owl:unionOf or
-# owl:hasKey triples). Skipped in the generic edge loop below; re-emitted
-# properly as a single rdf:List via the dedicated passes that follow it.
-_OWL_LIST_VALUED_PREDICATES: Set[str] = {
+#: OWL list-valued predicates the importer *flattens*: it sweeps the
+#: ``rdf:first``/``rdf:rest`` spine and leaves one direct subject->member edge per
+#: member, so the canvas shows the operands. Re-emitting those edges as they are
+#: would give the predicate several objects instead of one list head, so both
+#: writers skip them in their edge loop and rebuild each list with
+#: :func:`emit_flattened_lists`.
+FLATTENED_LIST_PREDICATES: FrozenSet[str] = frozenset({
     str(OWL.unionOf), str(OWL.intersectionOf), str(OWL.oneOf),
     str(OWL.hasKey), str(OWL.disjointUnionOf), str(OWL.propertyChainAxiom),
-}
+    str(OWL.members),
+})
+
+#: Flattened lists whose member order carries no meaning: a key is a set of
+#: properties, ``owl:members`` a set of pairwise-disjoint terms. They are
+#: rebuilt in member-id order, which is canonical whatever the edge ids are.
+_UNORDERED_LIST_PREDICATES: FrozenSet[str] = frozenset({str(OWL.hasKey), str(OWL.members)})
 
 
 OWL_RESTRICTION_KINDS: Dict[str, URIRef] = {
@@ -219,6 +241,121 @@ def predicate_for_edge(edge: KGEdge, default_ns: str) -> URIRef:
     return URIRef(default_ns + slugify(edge.label or "relatedTo"))
 
 
+_NUM_RE = re.compile(r"(\d+)")
+
+
+def natural_key(text: str) -> Tuple:
+    """Sort key that orders embedded integers numerically.
+
+    Editor-made ids can look like ``edge:9`` / ``edge:10``; plain lexicographic
+    order would put ``edge:10`` first and silently reorder a flattened RDF list.
+    """
+    return tuple(int(part) if part.isdigit() else part for part in _NUM_RE.split(text or ""))
+
+
+#: A spec's name for an anonymous node -> that node's RDF term; see :func:`blank_handles`.
+BlankHandles = Dict[str, Any]
+
+
+def blank_handles(nodes: Iterable[KGNode], terms: Dict[str, Any]) -> BlankHandles:
+    """Map the bare label a spec uses for an anonymous node to that node's term.
+
+    A spec stores an anonymous class it refers to (a union filler, a restriction
+    inside an intersection) by its blank-node label, the node id without
+    ``_:``. That node may still be a ``KGBlank`` or may have been lifted into a
+    constraint node; either way the emitters must write the node's own term, not
+    a relative IRI (or a literal) that nothing else in the graph mentions.
+    """
+    out: BlankHandles = {}
+    for node in nodes:
+        term = terms.get(node.id)
+        if not isinstance(term, BNode):
+            continue
+        if node.id.startswith("_:"):
+            out[node.id[2:]] = term
+        elif isinstance(node, KGBlank):
+            out[node.id] = term
+    return out
+
+
+def spec_folded_by_term(nodes: Iterable[KGNode], terms: Dict[str, Any]) -> Dict[Any, FrozenSet[str]]:
+    """Per constraint-node term, the predicates whose value lives in its specs.
+
+    Keyed by *term*, not node: a punned shape shares its IRI with a class, and a
+    parameter written on the class node (``ex:Person sh:closed true``) is the
+    shape's parameter all the same. An edge with such a predicate on such a
+    subject is never written as it is: the spec is.
+    """
+    out: Dict[Any, Set[str]] = {}
+    for node in nodes:
+        predicates = spec_folded_predicates(node)
+        term = terms.get(node.id)
+        if predicates and term is not None and not isinstance(term, Literal):
+            out.setdefault(term, set()).update(predicates)
+    return {term: frozenset(predicates) for term, predicates in out.items()}
+
+
+class ConstraintIndexes:
+    """Which classes and properties each constraint node applies to, as RDF terms."""
+
+    def __init__(self) -> None:
+        #: Node constraint id -> the classes it targets, in edge order.
+        self.nc_targets: Dict[str, List[Any]] = {}
+        #: Property constraint id -> the property it constrains.
+        self.pc_property: Dict[str, Any] = {}
+        #: Node constraint id -> the property constraints it lists (``sh:property``).
+        self.nc_pcs: Dict[str, List[str]] = {}
+        #: Node constraints with a target that is no usable RDF subject (a literal).
+        self.nc_unresolved_targets: Set[str] = set()
+
+    def pc_owners(self) -> Dict[str, List[Any]]:
+        """Property constraint id -> the classes of the node constraints listing it."""
+        owners: Dict[str, List[Any]] = {}
+        for nc_id, pc_ids in self.nc_pcs.items():
+            for pc_id in pc_ids:
+                owners.setdefault(pc_id, []).extend(self.nc_targets.get(nc_id, []))
+        return owners
+
+
+def build_constraint_indexes(edges: Iterable[KGEdge], terms: Dict[str, Any]) -> ConstraintIndexes:
+    """Index the constraint wiring of a KG, for the exporter and the projection alike.
+
+    Both the editor wiring (``constraintTargetClass`` / ``constraintTargetProperty``)
+    and the raw SHACL edges (``sh:targetClass`` / ``sh:path``) are read: the
+    importer only adds the wiring when the target is a *declared* class or
+    property, and a graph drawn in the editor may only have the SHACL edges.
+    When a property constraint has both, ``constraintTargetProperty`` wins: it is
+    what the editor lets the user change. Edges are read in id order, so the
+    result does not depend on set iteration order.
+    """
+    idx = ConstraintIndexes()
+    targeted: Set[str] = set()
+    for edge in sorted(edges, key=lambda e: natural_key(e.id)):
+        # ``str`` because rdflib term equality is type-sensitive: a URIRef never
+        # compares equal to the plain string an editor payload carries.
+        predicate = str(edge.iri or "")
+        source, target = edge.source, edge.target
+        term = terms.get(target.id)
+        usable = term is not None and not isinstance(term, Literal)
+        if predicate in (CONSTRAINT_TARGET_CLASS, SH_TARGET_CLASS) and isinstance(source, KGNodeConstraint):
+            if not usable:
+                idx.nc_unresolved_targets.add(source.id)
+            elif term not in idx.nc_targets.setdefault(source.id, []):
+                idx.nc_targets[source.id].append(term)
+        elif predicate in (CONSTRAINT_TARGET_PROPERTY, SH_PATH) and isinstance(source, KGPropertyConstraint):
+            if usable and (predicate == CONSTRAINT_TARGET_PROPERTY or source.id not in targeted):
+                if predicate == CONSTRAINT_TARGET_PROPERTY:
+                    if source.id in targeted:
+                        continue
+                    targeted.add(source.id)
+                idx.pc_property[source.id] = term
+        elif predicate == SH_PROPERTY and isinstance(source, KGNodeConstraint) \
+                and isinstance(target, KGPropertyConstraint):
+            if target.id not in idx.nc_pcs.setdefault(source.id, []):
+                idx.nc_pcs[source.id].append(target.id)
+    return idx
+
+
 def spec_to_literal(value: Any) -> Optional[Literal]:
     """Convert a spec value to an rdflib Literal, picking an XSD datatype."""
     if value is None:
@@ -241,18 +378,34 @@ def spec_to_literal(value: Any) -> Optional[Literal]:
     return Literal(str(value))
 
 
-def emit_rdf_list(g: rdflib.Graph, items: Iterable[Any]) -> BNode:
-    """Emit an ``rdf:List`` for an iterable of items, returning the list head."""
+def _as_term(value: Any, handles: Optional[BlankHandles] = None) -> Any:
+    """The RDF term a spec value names: a term as is, a blank-node label as that
+    blank node, a string with a ``:`` as an IRI, anything else as a literal
+    (``{"value", "datatype", "language"}`` dicts keep their datatype)."""
+    if isinstance(value, (URIRef, BNode, Literal)):
+        return value
+    if isinstance(value, str):
+        if handles and value in handles:
+            return handles[value]
+        if ":" in value:
+            return URIRef(value)
+    return spec_to_literal(value)
+
+
+def emit_rdf_list(g: rdflib.Graph, items: Iterable[Any], handles: Optional[BlankHandles] = None) -> BNode:
+    """Emit an ``rdf:List`` for an iterable of items, returning the list head.
+
+    Each item becomes a term as :func:`_as_term` decides, so an ``owl:oneOf`` of
+    literals stays one of literals and a member that is a blank node (``handles``
+    maps the KG's blank-node labels to their terms) stays connected to that node.
+    """
     items = list(items)
     if not items:
         return RDF.nil
     head = BNode()
     cursor = head
     for i, item in enumerate(items):
-        if isinstance(item, (URIRef, BNode, Literal)):
-            node = item
-        else:
-            node = URIRef(str(item)) if isinstance(item, str) and ":" in item else spec_to_literal(item)
+        node = _as_term(item, handles)
         g.add((cursor, RDF.first, node))
         if i == len(items) - 1:
             g.add((cursor, RDF.rest, RDF.nil))
@@ -265,7 +418,7 @@ def emit_rdf_list(g: rdflib.Graph, items: Iterable[Any]) -> BNode:
 
 def _emit_restriction_value(
     g: rdflib.Graph, restriction, predicate: URIRef, spec: dict,
-    blank_handles: frozenset = frozenset(),
+    blank_handles: Optional[BlankHandles] = None,
 ) -> None:
     """Add the value triple(s) of one OWL restriction spec to ``restriction``.
 
@@ -275,19 +428,19 @@ def _emit_restriction_value(
     example a ``hasValue`` with no value) emits nothing, rather than handing
     ``None`` to ``Graph.add``, which raises ``AssertionError``.
 
-    ``blank_handles`` are the labels of the KG's blank nodes. A spec stores its
-    filler as a plain string, so a restriction over an anonymous class (a union,
-    say) carries that blank node's bare label; rebuilding it as
-    ``URIRef(label)`` produced a relative IRI that nothing in the graph mentions
-    -- and, since the label is minted per import, a different one every time.
-    Such a filler is mapped back to the blank node it names.
+    ``blank_handles`` comes from :func:`blank_handles`. A spec stores its filler
+    as a plain string, so a restriction over an anonymous class (a union, say)
+    carries that blank node's bare label; rebuilding it as ``URIRef(label)``
+    produced a relative IRI that nothing in the graph mentions. Such a filler is
+    mapped back to the node it names.
     """
+    handles = blank_handles or {}
     kind = spec.get("kind")
     value = spec.get("value")
     on_class = spec.get("on_class")
     if kind in ("someValuesFrom", "allValuesFrom"):
-        if isinstance(value, str) and value in blank_handles:
-            target = BNode(value)
+        if isinstance(value, str) and value in handles:
+            target = handles[value]
         else:
             target = URIRef(str(value)) if isinstance(value, str) else spec_to_literal(value)
         if target is not None:
@@ -303,30 +456,31 @@ def _emit_restriction_value(
         if literal is not None:
             g.add((restriction, predicate, literal))
         if on_class and str(kind).endswith("QualifiedCardinality"):
-            on_class_term = BNode(on_class) if on_class in blank_handles else URIRef(on_class)
+            on_class_term = handles.get(on_class, URIRef(on_class))
             g.add((restriction, OWL.onClass, on_class_term))
 
 
 def emit_owl_restriction(
     g: rdflib.Graph,
     pc: KGPropertyConstraint,
-    property_iri: Optional[str],
-    owner_class_iris: List[str],
-    default_ns: str,
+    property_iri: Optional[Any],
+    owner_class_iris: List[Any],
     *,
     subject=None,
-    blank_handles: frozenset = frozenset(),
+    blank_handles: Optional[BlankHandles] = None,
 ) -> None:
     """Emit an ``owl:Restriction`` per OWL-compatible spec of ``pc``.
 
     Args:
+        property_iri: The restricted property, as an IRI string or term.
+        owner_class_iris: The classes made ``rdfs:subClassOf`` each restriction,
+            as IRI strings or terms (a blank node stays one).
         subject: The term to use as the restriction node. By default a fresh
             ``BNode`` is minted per spec, which is right for the exporter. The
             conversion projection passes the constraint node's *own* term,
             because that node already is the original restriction and reusing it
             keeps the ``rdfs:subClassOf`` link emitted elsewhere valid.
-        blank_handles: Labels of the KG's blank nodes; see
-            :func:`_emit_restriction_value`.
+        blank_handles: The KG's anonymous nodes by label; see :func:`blank_handles`.
     """
     if not property_iri:
         return
@@ -337,10 +491,10 @@ def emit_owl_restriction(
             continue
         restr = subject if subject is not None else BNode()
         g.add((restr, RDF.type, OWL.Restriction))
-        g.add((restr, OWL.onProperty, URIRef(property_iri)))
+        g.add((restr, OWL.onProperty, _as_term(property_iri)))
         _emit_restriction_value(g, restr, pred, spec, blank_handles)
-        for owner_iri in owner_class_iris:
-            g.add((URIRef(owner_iri), RDFS.subClassOf, restr))
+        for owner in owner_class_iris:
+            g.add((_as_term(owner), RDFS.subClassOf, restr))
 
 
 #: SHACL logical operators → predicates. shaclNot takes a single shape
@@ -481,8 +635,7 @@ def emit_shacl_constraint(
 def _emit_shacl_property_shape_into(
     g: rdflib.Graph,
     pc: KGPropertyConstraint,
-    property_iri: Optional[str],
-    default_ns: str,
+    property_term: Optional[Any],
     resolve_ref,
     *,
     shape_term: Any,
@@ -491,8 +644,8 @@ def _emit_shacl_property_shape_into(
     term shared across the emit pass so cross-references resolve cleanly).
     """
     g.add((shape_term, RDF.type, SH.PropertyShape))
-    if property_iri:
-        g.add((shape_term, SH.path, URIRef(property_iri)))
+    if property_term is not None:
+        g.add((shape_term, SH.path, property_term))
     for spec in pc.get_specs():
         emit_shacl_constraint(g, shape_term, spec, resolve_ref, SH.PropertyShape)
     return shape_term
@@ -501,9 +654,8 @@ def _emit_shacl_property_shape_into(
 def _emit_shacl_node_shape_into(
     g: rdflib.Graph,
     nc: KGNodeConstraint,
-    target_class_iris: List[str],
+    target_classes: List[Any],
     property_shapes: List[URIRef | BNode],
-    default_ns: str,
     resolve_ref,
     *,
     shape_term: Any,
@@ -511,8 +663,8 @@ def _emit_shacl_node_shape_into(
     """Emit a ``sh:NodeShape`` into ``shape_term`` (pre-allocated)."""
     shape = shape_term
     g.add((shape, RDF.type, SH.NodeShape))
-    for target_iri in target_class_iris:
-        g.add((shape, SH.targetClass, URIRef(target_iri)))
+    for target in target_classes:
+        g.add((shape, SH.targetClass, target))
     for ps in property_shapes:
         g.add((shape, SH.property, ps))
     for spec in nc.get_specs():
@@ -553,48 +705,158 @@ def emit_shacl_node_constraint(
     return True
 
 
+#: Class-axiom spec kinds -> the OWL predicate they are written with.
+_CLASS_AXIOM_PREDICATES: Dict[str, URIRef] = {
+    "equivalentClasses": OWL.equivalentClass,
+    "disjointWith": OWL.disjointWith,
+    "subClassOf": RDFS.subClassOf,
+    "disjointUnionOf": OWL.disjointUnionOf,
+    "hasKey": OWL.hasKey,
+}
+_LIST_AXIOM_KINDS = frozenset({"disjointUnionOf", "hasKey"})
+
+
 def emit_nodeconstraint_owl_axioms(
     g: rdflib.Graph,
     nc: KGNodeConstraint,
-    target_class_iris: List[str],
+    target_class_iris: List[Any],
+    handles: Optional[BlankHandles] = None,
 ) -> None:
-    """Translate a NodeConstraint's class-axiom specs into raw OWL triples.
+    """Write a node constraint's class-axiom specs as OWL triples on its first target.
 
-    These are duplicates of what the ``KnowledgeGraph.axioms`` serialiser
-    would emit, kept here so node-constraint-only edits in the editor land
-    in the OWL output even when the typed axiom record has been removed.
+    The spec is the copy the editor edits, so it is what gets written; the
+    ``KnowledgeGraph.axioms`` records the importer also keeps are not serialised.
+    ``handles`` maps the KG's blank-node labels to their terms (:func:`blank_handles`).
     """
     if not target_class_iris:
         return
-    anchor = URIRef(target_class_iris[0])
+    anchor = _as_term(target_class_iris[0])
     for spec in nc.get_specs():
         kind = spec.get("kind")
         value = spec.get("value")
-        if kind == "equivalentClasses" and isinstance(value, list):
+        predicate = _CLASS_AXIOM_PREDICATES.get(kind)
+        if predicate is None:
+            continue
+        if kind in _LIST_AXIOM_KINDS:
+            if isinstance(value, list):
+                g.add((anchor, predicate, emit_rdf_list(g, value, handles)))
+        elif isinstance(value, list):
             for other in value:
-                g.add((anchor, OWL.equivalentClass, URIRef(other)))
-        elif kind == "disjointWith" and isinstance(value, list):
-            for other in value:
-                g.add((anchor, OWL.disjointWith, URIRef(other)))
-        elif kind == "subClassOf" and isinstance(value, str):
-            g.add((anchor, RDFS.subClassOf, URIRef(value)))
-        elif kind == "complementOf" and isinstance(value, str):
-            g.add((anchor, OWL.complementOf, URIRef(value)))
-        elif kind == "disjointUnionOf" and isinstance(value, list):
-            head = emit_rdf_list(g, [URIRef(v) for v in value])
-            g.add((anchor, OWL.disjointUnionOf, head))
-        elif kind == "unionOf" and isinstance(value, list):
-            head = emit_rdf_list(g, [URIRef(v) for v in value])
-            g.add((anchor, OWL.unionOf, head))
-        elif kind == "intersectionOf" and isinstance(value, list):
-            head = emit_rdf_list(g, [URIRef(v) for v in value])
-            g.add((anchor, OWL.intersectionOf, head))
-        elif kind == "oneOf" and isinstance(value, list):
-            head = emit_rdf_list(g, [URIRef(v) for v in value])
-            g.add((anchor, OWL.oneOf, head))
-        elif kind == "hasKey" and isinstance(value, list):
-            head = emit_rdf_list(g, [URIRef(v) for v in value])
-            g.add((anchor, OWL.hasKey, head))
+                g.add((anchor, predicate, _as_term(other, handles)))
+        elif isinstance(value, str):
+            g.add((anchor, predicate, _as_term(value, handles)))
+
+
+#: Spec kinds of an anonymous class expression -> their OWL predicate.
+CLASS_EXPRESSION_PREDICATES: Dict[str, URIRef] = {
+    "unionOf": OWL.unionOf,
+    "intersectionOf": OWL.intersectionOf,
+    "oneOf": OWL.oneOf,
+    "complementOf": OWL.complementOf,
+}
+
+
+def emit_owl_class_expression(
+    g: rdflib.Graph, nc: KGNodeConstraint, subject: Any, handles: Optional[BlankHandles] = None,
+) -> None:
+    """Write a node constraint's class-expression specs onto ``subject``.
+
+    ``[ a owl:Class ; owl:oneOf ("red" "green") ]`` lifted into a constraint
+    node keeps its operands in the spec only, so this is where the expression
+    comes back from. :func:`emit_rdf_list` decides literal vs IRI per member,
+    which keeps a ``oneOf`` of literals from turning into one of IRIs.
+    """
+    for spec in nc.get_specs():
+        kind = spec.get("kind")
+        value = spec.get("value")
+        if kind == "complementOf" and isinstance(value, str):
+            g.add((subject, OWL.complementOf, _as_term(value, handles)))
+        elif kind in CLASS_EXPRESSION_PREDICATES and isinstance(value, list) and value:
+            g.add((subject, RDF.type, OWL.Class))
+            g.add((subject, CLASS_EXPRESSION_PREDICATES[kind], emit_rdf_list(g, value, handles)))
+
+
+def _member_key(node: KGNode) -> str:
+    """The string the importer recorded for ``node`` in a blank's ``metadata['members']``:
+    an IRI for named terms, the lexical form for literals, the label for blank nodes."""
+    if isinstance(node, KGLiteral):
+        return str(node.value)
+    return node.iri or node.label or node.id
+
+
+def emit_flattened_lists(
+    g: rdflib.Graph,
+    nodes: Iterable[KGNode],
+    edges: Iterable[KGEdge],
+    terms: Dict[str, Any],
+    folded: Dict[Any, FrozenSet[str]],
+    axioms: Iterable[Any],
+    on_inferred_order: Optional[Callable[[str, str], None]] = None,
+) -> None:
+    """Rebuild one ``rdf:List`` per ``(subject, predicate)`` the importer flattened.
+
+    The member *terms* come from the edges, so a literal member of a datatype
+    ``owl:oneOf`` stays a literal with its datatype; the member *order* comes
+    from the blank node's ``metadata['members']`` when the importer recorded
+    it. Unordered lists (keys, ``owl:members``) are rebuilt in member-id order;
+    any other list falls back to edge-id order and ``on_inferred_order(node_id,
+    predicate)`` is told, since operand order shows in auxiliary class names.
+
+    Skipped: lists a spec holds (``folded`` for the subject's term, see
+    :func:`spec_folded_by_term`), and property chains, which come whole and in
+    order (repeats included) from their :class:`PropertyChainAxiom` record
+    instead (:func:`emit_property_chains`).
+    """
+    chained = {
+        a.property_id for a in axioms if isinstance(a, PropertyChainAxiom) and a.property_id
+    }
+    recorded: Dict[tuple, List[str]] = {}
+    for node in nodes:
+        combinator, members = node.metadata.get("combinator"), node.metadata.get("members")
+        if isinstance(node, KGBlank) and combinator and isinstance(members, list):
+            recorded[(node.id, str(OWL) + combinator)] = [str(m) for m in members]
+
+    groups: Dict[tuple, List[KGEdge]] = {}
+    for edge in edges:
+        predicate = str(edge.iri or "")
+        if predicate not in FLATTENED_LIST_PREDICATES:
+            continue
+        subject = terms.get(edge.source.id)
+        if subject is None or isinstance(subject, Literal) or predicate in folded.get(subject, ()):
+            continue
+        if predicate == str(OWL.propertyChainAxiom) and edge.source.id in chained:
+            continue
+        groups.setdefault((edge.source.id, predicate), []).append(edge)
+
+    for (node_id, predicate), group in sorted(groups.items()):
+        order = recorded.get((node_id, predicate))
+        if order is not None:
+            rank = {key: index for index, key in enumerate(order)}
+            group.sort(key=lambda e: (rank.get(_member_key(e.target), len(rank)), natural_key(e.id)))
+        elif predicate in _UNORDERED_LIST_PREDICATES:
+            group.sort(key=lambda e: (natural_key(e.target.id), natural_key(e.id)))
+        else:
+            group.sort(key=lambda e: (natural_key(e.id), natural_key(e.target.id)))
+            if on_inferred_order is not None:
+                on_inferred_order(node_id, predicate)
+        members = [terms[e.target.id] for e in group if terms.get(e.target.id) is not None]
+        if members:
+            g.add((terms[node_id], URIRef(predicate), emit_rdf_list(g, members)))
+
+
+def emit_property_chains(g: rdflib.Graph, axioms: Iterable[Any], terms: Dict[str, Any]) -> None:
+    """One ``owl:propertyChainAxiom`` list per :class:`PropertyChainAxiom` record.
+
+    The flattened member edges cannot carry a chain: a KG holds one edge per
+    ``(subject, member, predicate)``, so ``hasParent o hasParent`` would come back
+    as ``(hasParent)``, and two chains on one property would merge. A property
+    may have several chains; each record adds its own triple.
+    """
+    for axiom in axioms:
+        if isinstance(axiom, PropertyChainAxiom) and axiom.property_id and axiom.chain_property_ids:
+            subject = terms.get(axiom.property_id, URIRef(str(axiom.property_id)))
+            members = [URIRef(str(m)) for m in axiom.chain_property_ids]
+            g.add((subject, OWL.propertyChainAxiom, emit_rdf_list(g, members)))
 
 
 VocabChoice = TypingLiteral["owl", "shacl", "both"]
@@ -639,37 +901,10 @@ def knowledge_graph_to_rdf(
 
     nodes_by_id = {n.id: n for n in kg.nodes}
     vocabs = _vocab_set(vocab)
-
-    # Resolve constraint relationships.
-    pc_to_property_iri: Dict[str, str] = {}
-    pc_to_owner_classes: Dict[str, List[str]] = {}
-    nc_to_target_classes: Dict[str, List[str]] = {}
-    nc_to_pcs: Dict[str, List[str]] = {}
-    # The editor wiring (constraintTargetProperty / constraintTargetClass) and
-    # the raw SHACL edges (sh:path / sh:targetClass) are both read: the importer
-    # only adds the wiring when the path or target is a *declared* property or
-    # class, so a shapes file imported on its own (paths to undeclared
-    # properties) used to export property shapes with no sh:path at all, which
-    # the validator then rejects as malformed.
-    for e in sorted(kg.edges, key=lambda edge: edge.id):
-        if e.iri in (CONSTRAINT_TARGET_PROPERTY, SH_PATH) and isinstance(e.source, KGPropertyConstraint) \
-                and not isinstance(e.target, KGLiteral):
-            if e.iri == CONSTRAINT_TARGET_PROPERTY or e.source.id not in pc_to_property_iri:
-                pc_to_property_iri[e.source.id] = e.target.iri or e.target.id
-        elif e.iri in (CONSTRAINT_TARGET_CLASS, SH_TARGET_CLASS) and isinstance(e.source, KGNodeConstraint) \
-                and not isinstance(e.target, KGLiteral):
-            target_iri = e.target.iri or e.target.id
-            targets = nc_to_target_classes.setdefault(e.source.id, [])
-            if target_iri not in targets:
-                targets.append(target_iri)
-        elif e.iri == SH_PROPERTY and isinstance(e.source, KGNodeConstraint) \
-                and isinstance(e.target, KGPropertyConstraint):
-            nc_to_pcs.setdefault(e.source.id, []).append(e.target.id)
-    # Derive owner classes for each PC (via wrapping NC).
-    for nc_id, pc_ids in nc_to_pcs.items():
-        owner_iris = nc_to_target_classes.get(nc_id, [])
-        for pc_id in pc_ids:
-            pc_to_owner_classes.setdefault(pc_id, []).extend(owner_iris)
+    terms: Dict[str, Any] = {n.id: term_for_node(n, default_namespace) for n in kg.nodes}
+    folded = spec_folded_by_term(kg.nodes, terms)
+    handles = blank_handles(kg.nodes, terms)
+    idx = build_constraint_indexes(kg.edges, terms)
 
     # Emit ordinary triples (skipping internal predicates and skipping triples
     # involving constraint nodes — they're handled by the constraint emitters).
@@ -688,116 +923,62 @@ def knowledge_graph_to_rdf(
                 edge.id,
             )
             continue
-        if edge.iri in _INTERNAL_PREDICATES:
-            continue
-        if edge.iri in _OWL_LIST_VALUED_PREDICATES:
-            # Never emit as a flat triple — see _OWL_LIST_VALUED_PREDICATES.
-            # Re-emitted properly as a single rdf:List below.
+        if edge.iri in _INTERNAL_PREDICATES or edge.iri in FLATTENED_LIST_PREDICATES:
             continue
         if isinstance(src, (KGNodeConstraint, KGPropertyConstraint)) \
                 or isinstance(tgt, (KGNodeConstraint, KGPropertyConstraint)):
             # Constraint nodes are emitted via the dedicated paths below.
             continue
-        s = term_for_node(src, default_namespace)
-        p = predicate_for_edge(edge, default_namespace)
-        o = term_for_node(tgt, default_namespace)
+        s, p, o = terms[src.id], predicate_for_edge(edge, default_namespace), terms[tgt.id]
+        if str(p) in folded.get(s, ()):
+            continue  # a punned shape's parameter: its spec is written below
         g.add((s, p, o))
 
-    # Re-emit owl:unionOf/intersectionOf/oneOf as a proper rdf:List for any
-    # combinator blank that stayed a raw KGBlank (i.e. used directly as a
-    # property's rdfs:domain/rdfs:range value, not reached via
-    # rdfs:subClassOf/owl:equivalentClass from a class — those are lifted
-    # into a KGNodeConstraint and exported via the constraintSpecs-based path
-    # below instead). ``metadata['members']`` preserves list order.
-    for node in kg.nodes:
-        if not isinstance(node, KGBlank):
-            continue
-        if node.metadata.get("kind") != "class_expression":
-            continue
-        combinator = node.metadata.get("combinator")
-        members = node.metadata.get("members") or []
-        if combinator not in ("unionOf", "intersectionOf", "oneOf") or not members:
-            continue
-        subj_term = term_for_node(node, default_namespace)
-        member_terms = [URIRef(m) for m in members]
-        g.add((subj_term, OWL[combinator], emit_rdf_list(g, member_terms)))
+    emit_flattened_lists(g, kg.nodes, kg.edges, terms, folded, kg.axioms)
+    emit_property_chains(g, kg.axioms, terms)
 
-    # owl:propertyChainAxiom has no dedicated node-based representation in
-    # the KG (unlike unionOf/hasKey/etc., which get a KGNodeConstraint/
-    # KGBlank to hang metadata off) — re-derive it from the authoritative
-    # PropertyChainAxiom record instead of relying on raw graph edges.
-    for axiom in kg.axioms:
-        if not isinstance(axiom, PropertyChainAxiom) or not axiom.chain_property_ids:
-            continue
-        prop_node = nodes_by_id.get(axiom.property_id)
-        if prop_node is None:
-            continue
-        subj_term = term_for_node(prop_node, default_namespace)
-        chain_terms = [URIRef(p) for p in axiom.chain_property_ids]
-        g.add((subj_term, OWL.propertyChainAxiom, emit_rdf_list(g, chain_terms)))
-
-    # Constraint emission.
-    #
-    # Pre-allocate one rdflib term per top-level constraint node (URIRef for
-    # named, BNode for anonymous) BEFORE emitting any triples. That way a
-    # logical-operator spec like ``shaclAnd: [ {ref: "pc-other"} ]`` can
-    # resolve its ref to the correct shape term regardless of emission
-    # order — and refs that form a cycle still terminate (each cycle node
-    # already has a stable term).
-    pc_to_shape_term: Dict[str, URIRef | BNode] = {}
-    nc_to_shape_term: Dict[str, URIRef | BNode] = {}
-    for node in kg.nodes:
-        if isinstance(node, KGPropertyConstraint):
-            # Mirror `term_for_node`: stable BNode handle from node.id so
-            # downstream consumers (the consistency checker) can map
-            # pyshacl's `sh:sourceShape` back to this KG node.
-            pc_to_shape_term[node.id] = (
-                URIRef(node.iri) if node.iri else BNode(slugify(node.id))
-            )
-        elif isinstance(node, KGNodeConstraint):
-            nc_to_shape_term[node.id] = (
-                URIRef(node.iri) if node.iri else BNode(slugify(node.id))
-            )
-
+    # Constraint emission. Every constraint node already has its term in
+    # ``terms`` (named: its IRI; anonymous: a blank node named after its id, so
+    # the consistency checker can map pyshacl's ``sh:sourceShape`` back to the
+    # KG node), so a logical-operator spec like ``shaclAnd: [ {ref: "pc-other"} ]``
+    # resolves whatever the emission order, and reference cycles terminate.
     def resolve_ref(node_id: str):
-        return pc_to_shape_term.get(node_id) or nc_to_shape_term.get(node_id)
+        node = nodes_by_id.get(node_id)
+        return terms[node_id] if isinstance(node, (KGNodeConstraint, KGPropertyConstraint)) else None
 
     if "shacl" in vocabs:
         # Emit property shapes first (they may be referenced by node shapes
         # via sh:property and by logical operators via ref).
         for node in kg.nodes:
-            if not isinstance(node, KGPropertyConstraint):
-                continue
-            prop_iri = pc_to_property_iri.get(node.id)
-            _emit_shacl_property_shape_into(
-                g, node, prop_iri, default_namespace, resolve_ref,
-                shape_term=pc_to_shape_term[node.id],
-            )
-        # Node shapes.
+            if isinstance(node, KGPropertyConstraint):
+                _emit_shacl_property_shape_into(
+                    g, node, idx.pc_property.get(node.id), resolve_ref, shape_term=terms[node.id],
+                )
         for node in kg.nodes:
-            if not isinstance(node, KGNodeConstraint):
-                continue
-            target_iris = nc_to_target_classes.get(node.id, [])
-            ps_terms = [pc_to_shape_term[pc_id] for pc_id in nc_to_pcs.get(node.id, []) if pc_id in pc_to_shape_term]
-            _emit_shacl_node_shape_into(
-                g, node, target_iris, ps_terms, default_namespace, resolve_ref,
-                shape_term=nc_to_shape_term[node.id],
-            )
+            if isinstance(node, KGNodeConstraint):
+                ps_terms = [terms[pc_id] for pc_id in idx.nc_pcs.get(node.id, [])]
+                _emit_shacl_node_shape_into(
+                    g, node, idx.nc_targets.get(node.id, []), ps_terms, resolve_ref,
+                    shape_term=terms[node.id],
+                )
 
     if "owl" in vocabs:
-        blank_handles = frozenset(
-            n.id[2:] if n.id.startswith("_:") else n.id for n in kg.nodes if isinstance(n, KGBlank)
-        )
+        owners = idx.pc_owners()
         for node in kg.nodes:
             if isinstance(node, KGPropertyConstraint):
-                prop_iri = pc_to_property_iri.get(node.id) or node.metadata.get("onPropertyIri")
-                owner_iris = pc_to_owner_classes.get(node.id, [])
                 emit_owl_restriction(
-                    g, node, prop_iri, owner_iris, default_namespace, blank_handles=blank_handles,
+                    g, node, idx.pc_property.get(node.id) or node.metadata.get("onPropertyIri"),
+                    owners.get(node.id, []), blank_handles=handles,
                 )
             elif isinstance(node, KGNodeConstraint):
-                target_iris = nc_to_target_classes.get(node.id, [])
-                emit_nodeconstraint_owl_axioms(g, node, target_iris)
+                targets = idx.nc_targets.get(node.id, [])
+                emit_nodeconstraint_owl_axioms(g, node, targets, handles)
+                # A class expression the importer lifted stays anonymous: the
+                # target class is subclassed by the expression's own node.
+                if any(spec.get("kind") in CLASS_EXPRESSION_PREDICATES for spec in node.get_specs()):
+                    emit_owl_class_expression(g, node, terms[node.id], handles)
+                    for target in targets:
+                        g.add((target, RDFS.subClassOf, terms[node.id]))
 
     return g
 

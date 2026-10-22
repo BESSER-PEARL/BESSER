@@ -745,11 +745,13 @@ def test_a_deleted_spec_takes_its_parameter_with_it(tmp_path: Path, mirror: bool
     assert list(graph.objects(None, URIRef(SH + "minCount"))) == []
 
 
-def test_an_unedited_parameter_keeps_the_source_literal(tmp_path: Path):
-    """When the spec and the edge agree, the edge's exact term is kept."""
+def test_an_unedited_parameter_is_written_from_its_spec(tmp_path: Path):
+    """The importer keeps no raw edge for a spec-held parameter, so the value
+    is the spec's rendering (``xsd:nonNegativeInteger``, as the exporter writes
+    it), not the source's ``xsd:integer``."""
     graph, _ = _project(tmp_path, _MIN_COUNT_TTL)
 
-    assert list(graph.objects(None, URIRef(SH + "minCount"))) == [Literal("1", datatype=XSD_INTEGER)]
+    assert list(graph.objects(None, URIRef(SH + "minCount"))) == [Literal("1", datatype=XSD_NNI)]
 
 
-XSD_INTEGER = URIRef(XSD + "integer")
+XSD_NNI = URIRef(XSD + "nonNegativeInteger")

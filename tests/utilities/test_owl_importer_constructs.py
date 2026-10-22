@@ -20,6 +20,7 @@ from besser.BUML.metamodel.kg import (
     KGBlank,
     KGClass,
     KGIndividual,
+    KGLiteral,
     KGNodeConstraint,
     KGPropertyConstraint,
     KGProperty,
@@ -401,8 +402,8 @@ def test_list_spine_blanks_swept_for_every_list_valued_construct(tmp_path: Path)
     nc = _class_expr_nc(kg, "http://ex.org/Pet", "unionOf")
     spec = next(s for s in nc.get_specs() if s["kind"] == "unionOf")
     assert spec["value"] == ["http://ex.org/Cat", "http://ex.org/Dog"]
-    key_axioms = _find_axioms(kg, HasKeyAxiom)
-    assert key_axioms[0].property_ids == ["http://ex.org/name", "http://ex.org/email"]
+    key = _class_expr_nc(kg, "http://ex.org/Person", "hasKey")
+    assert key.get_specs() == [{"kind": "hasKey", "value": ["http://ex.org/name", "http://ex.org/email"]}]
     union_axioms = _find_axioms(kg, DisjointUnionAxiom)
     assert union_axioms[0].part_class_ids == ["http://ex.org/Cat", "http://ex.org/Dog"]
 
@@ -508,7 +509,10 @@ def test_propertyChainAxiom_decoded_as_list(tmp_path: Path):
     assert axioms[0].chain_property_ids == ["http://ex.org/hasParent", "http://ex.org/hasBrother"]
 
 
-def test_hasKey_emitted_as_axiom(tmp_path: Path):
+def test_hasKey_is_stored_once_as_a_node_constraint_spec(tmp_path: Path):
+    """The key lives in the spec the inspector edits, and nowhere else: no
+    ``HasKeyAxiom`` record and no flattened ``owl:hasKey`` member edges that an
+    edit of the spec would leave stale."""
     ttl = """
     @prefix : <http://ex.org/> .
     @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -517,10 +521,44 @@ def test_hasKey_emitted_as_axiom(tmp_path: Path):
     :Person a owl:Class ; owl:hasKey ( :ssn ) .
     """
     kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
-    axioms = _find_axioms(kg, HasKeyAxiom)
-    assert len(axioms) == 1
-    assert axioms[0].class_id == "http://ex.org/Person"
-    assert axioms[0].property_ids == ["http://ex.org/ssn"]
+    nc = _class_expr_nc(kg, "http://ex.org/Person", "hasKey")
+    assert nc.get_specs() == [{"kind": "hasKey", "value": ["http://ex.org/ssn"]}]
+    assert _find_axioms(kg, HasKeyAxiom) == []
+    assert [e for e in kg.edges if e.iri == "http://www.w3.org/2002/07/owl#hasKey"] == []
+
+
+def test_constraint_parameters_are_stored_only_in_specs(tmp_path: Path):
+    """No raw edge repeats a value a spec holds, and nothing is left floating
+    once those edges are gone: no ``sh:in`` list spine, no ``rdf:nil``, no
+    cardinality literal. The specs themselves are intact."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix sh: <http://www.w3.org/ns/shacl#> .
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+    :p a owl:ObjectProperty .
+    :size a owl:DatatypeProperty .
+    :A a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p ; owl:minCardinality 2 ] .
+    :S a sh:NodeShape ; sh:targetClass :A ;
+        sh:property [ sh:path :size ; sh:in ( "S" "M" ) ; sh:minInclusive 18 ] .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+
+    parameters = {
+        "http://www.w3.org/2002/07/owl#minCardinality",
+        "http://www.w3.org/ns/shacl#in",
+        "http://www.w3.org/ns/shacl#minInclusive",
+    }
+    assert [e for e in kg.edges if e.iri in parameters] == []
+    assert [n.id for n in kg.nodes if isinstance(n, (KGBlank, KGLiteral))] == []
+    assert not any(n.iri == "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil" for n in kg.nodes)
+
+    specs = {s["kind"]: s["value"] for n in kg.nodes if isinstance(n, KGPropertyConstraint) for s in n.get_specs()}
+    assert specs["minCardinality"] == 2
+    assert specs["minInclusive"] == 18          # an integer, not 18.0
+    assert [m["value"] for m in specs["in"]] == ["S", "M"]
 
 
 def test_imports_logged_not_followed(tmp_path: Path):

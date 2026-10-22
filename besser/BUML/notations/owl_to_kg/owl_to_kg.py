@@ -12,8 +12,11 @@ OWL/OWL2 constructs into structured annotations:
 * ``rdfs:comment`` / ``rdfs:isDefinedBy`` → ``KGNode.metadata['description' / 'defined_by']``
 * ``owl:imports`` → ``ImportAxiom`` (logged, not followed)
 * OWL axioms that don't fit on one node/edge (``equivalentClass``, ``disjointWith``,
-  ``disjointUnionOf``, ``subPropertyOf``, ``inverseOf``, ``propertyChainAxiom``,
-  ``hasKey``) → ``KnowledgeGraph.axioms``
+  ``disjointUnionOf``, ``subPropertyOf``, ``inverseOf``, ``propertyChainAxiom``)
+  → ``KnowledgeGraph.axioms``
+* OWL restrictions, class expressions, class axioms (``owl:hasKey`` included) and
+  SHACL shapes → constraint nodes whose ``constraintSpecs`` are the only stored
+  copy of their parameters (no raw edge repeats them)
 * OWL2 punning (same IRI as class + individual) → both nodes kept, linked via
   ``metadata['punned_with']``
 """
@@ -32,7 +35,6 @@ from besser.BUML.metamodel.kg import (
     DisjointUnionAxiom,
     EquivalentClassesAxiom,
     EquivalentPropertiesAxiom,
-    HasKeyAxiom,
     ImportAxiom,
     InversePropertiesAxiom,
     KGBlank,
@@ -483,14 +485,22 @@ def _emit_axioms(g: rdflib.Graph, lists: Dict[BNode, List[Any]]) -> List[Any]:
         prop_iri = _term_str(s)
         if prop_iri and chain_ids:
             axioms.append(PropertyChainAxiom(property_id=prop_iri, chain_property_ids=chain_ids))
-    # hasKey.
+    # owl:hasKey is not recorded here: it is stored once, as the ``hasKey`` spec
+    # of a node constraint (see _decode_keys and _lift_to_constraint_nodes),
+    # which is the form the editor shows and edits.
+    return axioms
+
+
+def _decode_keys(g: rdflib.Graph, lists: Dict[BNode, List[Any]]) -> List[Tuple[str, List[str]]]:
+    """``(class IRI, [key property IRIs])`` for every ``owl:hasKey``, in a stable order."""
+    out: List[Tuple[str, List[str]]] = []
     for s, _, o in g.triples((None, OWL.hasKey, None)):
         keys = lists.get(o, []) if isinstance(o, BNode) else []
         key_ids = [_term_str(k) for k in keys if _term_str(k)]
         cls_iri = _term_str(s)
         if cls_iri and key_ids:
-            axioms.append(HasKeyAxiom(class_id=cls_iri, property_ids=key_ids))
-    return axioms
+            out.append((cls_iri, key_ids))
+    return sorted(out)
 
 
 def _emit_imports(g: rdflib.Graph) -> List[ImportAxiom]:
@@ -525,6 +535,11 @@ def _shacl_literal_int(_g, o, _lists):
 
 def _shacl_literal_value(_g, o, _lists):
     if isinstance(o, Literal):
+        # An integer stays an integer: the spec is the only stored copy of the
+        # value, and ``18`` read back as ``18.0`` reached the OCL as ``>= 18.0``.
+        value = o.toPython()
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
         try:
             return float(str(o))
         except (TypeError, ValueError):
@@ -616,7 +631,9 @@ _SHACL_NODE_COMPONENTS: Dict[Any, Tuple[str, Any]] = {
 _OWL_RESTRICTION_FOLDED: FrozenSet[str] = frozenset(
     str(p) for p in (*_CARDINALITY_RESTRICTIONS, *_VALUE_RESTRICTIONS, OWL.onClass)
 )
-_OWL_EXPRESSION_FOLDED: FrozenSet[str] = frozenset({str(OWL.complementOf)})
+_OWL_EXPRESSION_FOLDED: FrozenSet[str] = frozenset(
+    str(p) for p in (OWL.complementOf, OWL.unionOf, OWL.intersectionOf, OWL.oneOf)
+)
 # The property components are collected for every shape, the node components
 # for node shapes only (see _decode_shacl_shapes); sh:not becomes a shaclNot spec.
 _SHACL_PROPERTY_SHAPE_FOLDED: FrozenSet[str] = frozenset(
@@ -631,12 +648,14 @@ def spec_folded_predicates(node: KGNode) -> FrozenSet[str]:
     """The predicates whose value the importer folds into ``node``'s ``constraintSpecs``.
 
     For an OWL restriction: its cardinality or filler and the qualified
-    ``owl:onClass``; for a class expression: ``owl:complementOf``; for a SHACL
+    ``owl:onClass``; for a class expression: its operator (``owl:unionOf``,
+    ``owl:intersectionOf``, ``owl:oneOf``, ``owl:complementOf``); for a SHACL
     shape: every component with a spec kind (``sh:qualifiedValueShape`` and the
-    qualified counts are not folded and stay raw edges). The raw edge stays so
-    the canvas can show it, but the spec is what the editor edits, so a
-    projection must take the value from the spec (``kg_to_rdf``). Empty for any
-    node that is not a constraint node.
+    qualified counts are not folded and stay raw edges). The spec is what the
+    editor edits, so it is the only stored copy: the importer drops the raw
+    edges (and does not flatten the lists) these predicates name, and the
+    exporter and the projection write them from the spec, ignoring any such
+    edge drawn by hand. Empty for any node that is not a constraint node.
     """
     shacl = node.metadata.get("source") == "shacl"
     if isinstance(node, KGPropertyConstraint):
@@ -985,15 +1004,28 @@ def _lift_to_constraint_nodes(
         ``rdfs:subClassOf``/``owl:equivalentClass`` edges from a class to such
         a node are removed and replaced by a ``constraintTargetClass`` edge
         from the NodeConstraint to the class, exactly like step 2.
-    3. Class-level axioms (``equivalentClass``, ``disjointWith``, ``oneOf``,
-       ``hasKey``, ``disjointUnionOf``) materialise as anonymous
-       ``KGNodeConstraint`` nodes (in addition to remaining on
-       ``kg.axioms`` for the existing class-diagram conversion).
+    3. Class-level axioms (``equivalentClass``, ``disjointWith``,
+       ``disjointUnionOf``, ``hasKey``) materialise as anonymous
+       ``KGNodeConstraint`` nodes anchored on the class. All but ``hasKey``
+       also stay on ``kg.axioms``, where preflight and the resolutions read
+       them; ``hasKey`` has no other reader, so its spec is its only copy.
     4. SHACL shapes from ``shacl_payloads`` materialise their full
        ``constraintSpecs`` and target / ``sh:property`` edges.
+    5. Specs are the single stored copy of constraint parameters: the raw
+       edges whose value a spec holds (:func:`spec_folded_predicates`) are
+       dropped, with whatever only they pointed at. The editor edits the
+       spec, so a raw copy would only go stale; exporter and projection read
+       the spec.
+    6. OWL list-valued triples no spec holds are flattened into direct
+       subject -> member edges (:func:`_flatten_owl_list_valued_triples`),
+       and every decoded ``rdf:List`` spine is swept away.
     """
     nodes_by_id: Dict[str, KGNode] = {n.id: n for n in kg.nodes}
     edges_by_id: Dict[str, KGEdge] = {e.id: e for e in kg.edges}
+    list_resolutions = _decode_lists(g)
+    #: ``(subject id, predicate)`` of the OWL lists whose members a spec holds;
+    #: those are not flattened into member edges (step 6).
+    spec_owned_lists: Set[Tuple[str, str]] = set()
 
     def _next_edge_id() -> str:
         i = len(edges_by_id) + 1
@@ -1007,12 +1039,15 @@ def _lift_to_constraint_nodes(
             i += 1
         return f"{prefix}{i}"
 
-    def _add_edge(src: KGNode, tgt: KGNode, label: str, iri: str) -> KGEdge:
+    def _add_edge(src: KGNode, tgt: KGNode, label: str, iri: str) -> None:
+        """Add a wiring edge, unless the graph already has that very triple
+        (a node shape's ``sh:property`` is both a source triple and wiring)."""
+        if any(e.source is src and e.target is tgt and e.iri == iri for e in kg.edges):
+            return
         eid = _next_edge_id()
         edge = KGEdge(id=eid, source=src, target=tgt, label=label, iri=iri)
         kg.add_edge(edge)
         edges_by_id[eid] = edge
-        return edge
 
     def _is_punned_declaration(node: KGNode) -> bool:
         """True when ``node`` is a domain concept the shape must not consume.
@@ -1159,6 +1194,9 @@ def _lift_to_constraint_nodes(
         target_node = nodes_by_id.get(target_class_id)
         if not _could_be_class_target(target_node):
             return
+        for spec in specs:
+            if spec["kind"] in _SPEC_OWNED_CLASS_LISTS:
+                spec_owned_lists.add((target_class_id, _SPEC_OWNED_CLASS_LISTS[spec["kind"]]))
         nid = _next_node_id(f"nc:axiom:{target_class_id}#")
         nc = KGNodeConstraint(
             id=nid,
@@ -1186,12 +1224,8 @@ def _lift_to_constraint_nodes(
                 axiom.union_class_id,
                 [{"kind": "disjointUnionOf", "value": list(axiom.part_class_ids)}],
             )
-        elif isinstance(axiom, HasKeyAxiom) and axiom.class_id:
-            _axiom_nc(
-                "Has key",
-                axiom.class_id,
-                [{"kind": "hasKey", "value": list(axiom.property_ids)}],
-            )
+    for class_id, key_ids in _decode_keys(g, list_resolutions):
+        _axiom_nc("Has key", class_id, [{"kind": "hasKey", "value": key_ids}])
 
     # 4. SHACL shapes.
     nested_blank_ids: Set[str] = set()
@@ -1375,20 +1409,23 @@ def _lift_to_constraint_nodes(
                 if nid in nodes_by_id and isinstance(nodes_by_id[nid], KGBlank):
                     nested_blank_ids.add(nid)
 
-    # Before sweeping the rdf:first/rdf:rest spine below, replace it with
-    # direct subject->member edges for every OWL list-valued construct (D18-
-    # D21/D38 etc.) — e.g. a unionOf's combinator blank gets one edge per
-    # member class, a hasKey's class gets one edge per key property. Without
-    # this, the spine sweep would leave the KG editor canvas showing e.g. a
-    # unionOf blank with no visible connection to any of its member classes
-    # at all, even though the metadata payload (used by the actual
-    # class-diagram conversion) is unaffected either way.
-    list_resolutions = _decode_lists(g)
+    # 5. Specs own the constraint parameters: drop the raw edges repeating them.
+    for node in kg.nodes:
+        for predicate in spec_folded_predicates(node):
+            spec_owned_lists.add((node.id, predicate))
+    linked_before = _linked_node_ids(kg)
+    released_heads = _drop_spec_folded_edges(kg)
+
+    # 6. Before sweeping the rdf:first/rdf:rest spine below, replace it with
+    # direct subject->member edges for every OWL list-valued construct no spec
+    # holds (a union used as a property's range, an owl:members list, a
+    # property chain): one edge per member, so the canvas still links the
+    # subject to its members once the spine is gone.
     existing_edge_keys = {(e.source.id, e.target.id, e.iri) for e in kg.edges}
     for subj_term, pred_iri, member_terms in _flatten_owl_list_valued_triples(g, list_resolutions):
         subj_id = f"_:{str(subj_term)}" if isinstance(subj_term, BNode) else str(subj_term)
         subj_node = nodes_by_id.get(subj_id)
-        if subj_node is None:
+        if subj_node is None or (subj_id, pred_iri) in spec_owned_lists:
             continue
         for member_term in member_terms:
             if isinstance(member_term, BNode):
@@ -1411,13 +1448,14 @@ def _lift_to_constraint_nodes(
     # importer has already decoded into structured metadata elsewhere (OWL
     # combinator member lists, hasKey/disjointUnionOf/propertyChainAxiom id
     # lists, SHACL sh:and/sh:or/sh:xone member lists — see
-    # _consumed_list_heads), plus the nested-only SHACL shape blanks
+    # _consumed_list_heads, and the lists of the spec-folded edges dropped in
+    # step 5, such as sh:in), plus the nested-only SHACL shape blanks
     # collected above. Their content is already captured; leaving the raw
     # blanks in the KG would make them look like unexplained "instances" to
     # the KG editor's blank-node-materialisation preflight check.
     rdf_first = str(RDF.first)
     rdf_rest = str(RDF.rest)
-    consumed_head_ids = {f"_:{str(h)}" for h in _consumed_list_heads(g)}
+    consumed_head_ids = {f"_:{str(h)}" for h in _consumed_list_heads(g)} | released_heads
     prev = -1
     doomed = nested_blank_ids | consumed_head_ids
     while len(doomed) != prev:
@@ -1446,7 +1484,47 @@ def _lift_to_constraint_nodes(
         edges_by_id.clear()
         edges_by_id.update({e.id: e for e in kg.edges})
 
+    # A term only a dropped parameter or a swept spine linked to (the literal of
+    # a cardinality, the xsd: term of an sh:datatype, rdf:nil) would be left
+    # floating on the canvas; the spec names it, so it goes.
+    unlinked = linked_before - _linked_node_ids(kg)
+    for node in [n for n in kg.nodes if n.id in unlinked]:
+        if not isinstance(node, (KGNodeConstraint, KGPropertyConstraint)):
+            kg.nodes.discard(node)
+
     _assign_constraint_edge_ids(kg)
+
+
+#: Class-axiom spec kinds whose value is an OWL list on the target class.
+_SPEC_OWNED_CLASS_LISTS: Dict[str, str] = {
+    "hasKey": str(OWL.hasKey),
+    "disjointUnionOf": str(OWL.disjointUnionOf),
+}
+
+
+def _linked_node_ids(kg: KnowledgeGraph) -> Set[str]:
+    return {e.source.id for e in kg.edges} | {e.target.id for e in kg.edges}
+
+
+def _drop_spec_folded_edges(kg: KnowledgeGraph) -> Set[str]:
+    """Remove every raw edge whose value a constraint node's spec already holds.
+
+    The edge is matched by its subject's IRI (or id, for a blank node), not by
+    node: a punned shape shares its IRI with a class, and a parameter written
+    on the class node (``ex:Person sh:closed true``) is the shape's all the
+    same. Returns the ids of the ``rdf:List`` heads those edges pointed at (an
+    ``sh:in`` list, say), so the spine sweep can remove them. A blank node that
+    is a value in its own right (an anonymous class used as a filler) stays.
+    """
+    folded: Dict[str, Set[str]] = {}
+    for node in kg.nodes:
+        predicates = spec_folded_predicates(node)
+        if predicates:
+            folded.setdefault(node.iri or node.id, set()).update(predicates)
+    dropped = {e for e in kg.edges if e.iri in folded.get(e.source.iri or e.source.id, ())}
+    kg.edges = kg.edges - dropped
+    list_heads = {e.source.id for e in kg.edges if e.iri == str(RDF.first)}
+    return {e.target.id for e in dropped if e.target.id in list_heads}
 
 
 def _assign_constraint_edge_ids(kg: KnowledgeGraph) -> None:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from types import SimpleNamespace
 
@@ -451,7 +452,7 @@ def test_a_provider_call_is_one_attempt_so_no_retry_outlives_the_deadline(monkey
 
     class _OverloadedCompletions:
         def create(self, **kwargs):
-            attempts.append(kwargs)
+            attempts.append(threading.get_ident())
             raise Exception("Error code: 503 - the model is overloaded")  # retryable
 
     real_create = llm_client.create_llm_client
@@ -462,7 +463,10 @@ def test_a_provider_call_is_one_attempt_so_no_retry_outlives_the_deadline(monkey
         return provider_client
 
     monkeypatch.setattr(llm_client, "create_llm_client", create)
-    monkeypatch.setattr(llm_client.time, "sleep", sleeps.append)
+    # ``llm_client.time`` is the global ``time`` module, so other threads still
+    # alive from earlier tests sleep through this patch too: record the thread
+    # and only look at the backoff of the thread that made the provider call.
+    monkeypatch.setattr(llm_client.time, "sleep", lambda s: sleeps.append((threading.get_ident(), s)))
     request = KGLLMRequest(diagram=_kg_diagram(), api_key=KEY, provider="mistral")
     complete = build_completer(request, RequestDeadline.start(60))
 
@@ -470,7 +474,7 @@ def test_a_provider_call_is_one_attempt_so_no_retry_outlives_the_deadline(monkey
         complete("system", "user")
 
     assert len(attempts) == 1
-    assert sleeps == []
+    assert [s for thread, s in sleeps if thread == attempts[0]] == []
 
 
 @pytest.mark.parametrize("max_retries, attempts", [(None, 5), (0, 1), (2, 3)])

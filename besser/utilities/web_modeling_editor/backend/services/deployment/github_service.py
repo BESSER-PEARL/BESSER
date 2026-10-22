@@ -193,7 +193,15 @@ class GitHubService:
                 )
             member.name = relative
             safe_members.append(member)
-        tar.extractall(dest_dir, members=safe_members)
+        # The ``data`` filter (3.12+, backported to 3.8.17 / 3.9.17 / 3.10.12 /
+        # 3.11.4) is defence in depth on top of the scan above: it also refuses
+        # absolute paths, traversal and links, and drops special mode bits.
+        # Passing it explicitly silences the 3.12 DeprecationWarning and pins
+        # the behaviour 3.14 makes the default.
+        if hasattr(tarfile, "data_filter"):
+            tar.extractall(dest_dir, members=safe_members, filter="data")
+        else:  # pragma: no cover - interpreter without PEP 706 support
+            tar.extractall(dest_dir, members=safe_members)
 
     async def create_repository(
         self,
@@ -561,6 +569,8 @@ python <agent_name>.py
 [BESSER](https://github.com/BESSER-PEARL/BESSER) is an open-source low-code platform that generates applications from visual models.
 
 [Documentation](https://besser.readthedocs.io/) · [Web Editor](https://editor.besser-pearl.org) · [Examples](https://github.com/BESSER-PEARL/BESSER-examples)
+
+If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESSER) helps others find it.
 """
             return readme
 
@@ -632,6 +642,8 @@ docker-compose up
 [BESSER](https://github.com/BESSER-PEARL/BESSER) is an open-source low-code platform that generates full-stack applications from visual models.
 
 [Documentation](https://besser.readthedocs.io/) · [Web Editor](https://editor.besser-pearl.org) · [Examples](https://github.com/BESSER-PEARL/BESSER-examples)
+
+If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESSER) helps others find it.
 """
 
         return readme

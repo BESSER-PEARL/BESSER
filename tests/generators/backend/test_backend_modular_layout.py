@@ -130,6 +130,61 @@ def test_search_endpoint_covers_inherited_attributes(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# FastAPI app metadata (issue #476): title, description and version used to be
+# hardcoded in main_api.py; they are now generator parameters.
+# ---------------------------------------------------------------------------
+
+def _fastapi_kwargs(output_dir):
+    """Literal keyword arguments of the generated ``app = FastAPI(...)`` call."""
+    with open(os.path.join(output_dir, "main_api.py"), encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "FastAPI"):
+            return {kw.arg: ast.literal_eval(kw.value) for kw in node.keywords
+                    if kw.arg in ("title", "description", "version")}
+    pytest.fail("no FastAPI(...) call in main_api.py")
+
+
+def test_api_metadata_defaults_unchanged(library_book_author_model, tmp_path):
+    output_dir = str(tmp_path / "output")
+    BackendGenerator(model=library_book_author_model, output_dir=output_dir).generate()
+
+    kwargs = _fastapi_kwargs(output_dir)
+    assert kwargs["title"] == f"{library_book_author_model.name} API"
+    assert kwargs["description"].startswith("Auto-generated REST API")
+    assert kwargs["version"] == "1.0.0"
+
+
+def test_api_metadata_is_configurable(library_book_author_model, tmp_path):
+    output_dir = str(tmp_path / "output")
+    BackendGenerator(
+        model=library_book_author_model, output_dir=output_dir,
+        api_title="Library Service", api_description="Books and authors.", api_version="2.3.1",
+    ).generate()
+
+    assert _fastapi_kwargs(output_dir) == {
+        "title": "Library Service", "description": "Books and authors.", "version": "2.3.1",
+    }
+    # The root endpoint reports the app's own metadata instead of a second copy.
+    with open(os.path.join(output_dir, "main_api.py"), encoding="utf-8") as f:
+        main_api = f.read()
+    assert '"name": app.title' in main_api
+    assert '"version": app.version' in main_api
+
+
+def test_api_metadata_is_emitted_as_literals(library_book_author_model, tmp_path):
+    """Quotes and newlines in a value must stay inside the string literal."""
+    output_dir = str(tmp_path / "output")
+    tricky = 'It\'s "quoted"\n", version="x"); import os  #'
+    BackendGenerator(
+        model=library_book_author_model, output_dir=output_dir, api_description=tricky,
+    ).generate()
+
+    assert _fastapi_kwargs(output_dir)["description"] == tricky
+
+
+# ---------------------------------------------------------------------------
 # cross_router_calls() heuristic (used to import a sibling class's endpoint
 # functions into a method-endpoint body without relying on module-level
 # imports, which could deadlock on circular router references).

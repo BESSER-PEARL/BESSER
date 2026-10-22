@@ -237,6 +237,13 @@ class DoneEvent(BaseSseEvent):
     # *_pct}`` — how much of the app the deterministic pipeline carried vs.
     # the LLM. Best-effort: ``None`` when the split could not be computed.
     fileSplit: Optional[dict[str, Any]] = None
+    # Line-level authorship from the run's Agent Trace record
+    # (``.agent-trace/<runId>.json``): ``{aiLines, aiLinesThisRun, totalLines,
+    # aiPct, fileCount, tracePath, files: [{path, aiLines, totalLines, aiPct}]}``
+    # with ``files`` sorted by AI lines and capped. ``aiLines`` counts lines
+    # written by any run's LLM, ``aiLinesThisRun`` only this run's. Best-effort:
+    # ``None`` when the record could not be built.
+    aiShare: Optional[dict[str, Any]] = None
 
 
 ErrorCode = Literal[

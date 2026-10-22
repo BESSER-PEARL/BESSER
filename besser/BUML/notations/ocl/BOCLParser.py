@@ -9,7 +9,7 @@ else:
 
 def serializedATN():
     return [
-        4,1,81,393,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,
+        4,1,83,401,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,
         6,2,7,7,7,2,8,7,8,2,9,7,9,2,10,7,10,2,11,7,11,2,12,7,12,2,13,7,13,
         2,14,7,14,2,15,7,15,2,16,7,16,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,
         0,1,0,1,0,1,0,3,0,47,8,0,1,1,1,1,1,1,1,1,1,1,1,1,3,1,55,8,1,1,1,
@@ -36,123 +36,127 @@ def serializedATN():
         1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,
         1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,
         1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,
-        1,15,1,15,1,15,1,15,5,15,360,8,15,10,15,12,15,363,9,15,1,16,1,16,
-        1,16,1,16,1,16,1,16,1,16,1,16,1,16,1,16,1,16,1,16,1,16,1,16,1,16,
-        1,16,1,16,1,16,3,16,383,8,16,1,16,1,16,1,16,1,16,1,16,1,16,3,16,
-        391,8,16,1,16,0,1,30,17,0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,
-        30,32,0,7,1,0,44,47,1,0,48,51,1,0,19,23,2,0,56,58,68,70,2,0,16,16,
-        72,72,1,0,73,74,1,0,71,72,439,0,46,1,0,0,0,2,48,1,0,0,0,4,61,1,0,
-        0,0,6,74,1,0,0,0,8,84,1,0,0,0,10,91,1,0,0,0,12,100,1,0,0,0,14,109,
-        1,0,0,0,16,118,1,0,0,0,18,120,1,0,0,0,20,122,1,0,0,0,22,127,1,0,
-        0,0,24,143,1,0,0,0,26,145,1,0,0,0,28,147,1,0,0,0,30,167,1,0,0,0,
-        32,390,1,0,0,0,34,35,3,8,4,0,35,36,5,0,0,1,36,47,1,0,0,0,37,38,3,
-        6,3,0,38,39,5,0,0,1,39,47,1,0,0,0,40,41,3,2,1,0,41,42,5,0,0,1,42,
-        47,1,0,0,0,43,44,3,4,2,0,44,45,5,0,0,1,45,47,1,0,0,0,46,34,1,0,0,
-        0,46,37,1,0,0,0,46,40,1,0,0,0,46,43,1,0,0,0,47,1,1,0,0,0,48,49,5,
-        1,0,0,49,50,5,78,0,0,50,51,5,54,0,0,51,52,5,78,0,0,52,54,5,60,0,
-        0,53,55,3,12,6,0,54,53,1,0,0,0,54,55,1,0,0,0,55,56,1,0,0,0,56,57,
-        5,61,0,0,57,58,5,4,0,0,58,59,5,65,0,0,59,60,3,30,15,0,60,3,1,0,0,
-        0,61,62,5,1,0,0,62,63,5,78,0,0,63,64,5,54,0,0,64,65,5,78,0,0,65,
-        67,5,60,0,0,66,68,3,12,6,0,67,66,1,0,0,0,67,68,1,0,0,0,68,69,1,0,
-        0,0,69,70,5,61,0,0,70,71,5,5,0,0,71,72,5,65,0,0,72,73,3,30,15,0,
-        73,5,1,0,0,0,74,75,5,1,0,0,75,76,5,78,0,0,76,77,5,54,0,0,77,78,5,
-        78,0,0,78,79,5,65,0,0,79,80,3,16,8,0,80,81,5,2,0,0,81,82,5,65,0,
-        0,82,83,3,30,15,0,83,7,1,0,0,0,84,85,5,1,0,0,85,87,5,78,0,0,86,88,
-        3,10,5,0,87,86,1,0,0,0,88,89,1,0,0,0,89,87,1,0,0,0,89,90,1,0,0,0,
-        90,9,1,0,0,0,91,93,5,3,0,0,92,94,5,78,0,0,93,92,1,0,0,0,93,94,1,
-        0,0,0,94,95,1,0,0,0,95,96,5,65,0,0,96,98,3,30,15,0,97,99,5,64,0,
-        0,98,97,1,0,0,0,98,99,1,0,0,0,99,11,1,0,0,0,100,105,3,14,7,0,101,
-        102,5,66,0,0,102,104,3,14,7,0,103,101,1,0,0,0,104,107,1,0,0,0,105,
-        103,1,0,0,0,105,106,1,0,0,0,106,13,1,0,0,0,107,105,1,0,0,0,108,110,
-        5,78,0,0,109,108,1,0,0,0,109,110,1,0,0,0,110,111,1,0,0,0,111,112,
-        5,65,0,0,112,113,3,16,8,0,113,15,1,0,0,0,114,119,3,18,9,0,115,119,
-        3,20,10,0,116,119,5,52,0,0,117,119,5,78,0,0,118,114,1,0,0,0,118,
-        115,1,0,0,0,118,116,1,0,0,0,118,117,1,0,0,0,119,17,1,0,0,0,120,121,
-        7,0,0,0,121,19,1,0,0,0,122,123,7,1,0,0,123,124,5,68,0,0,124,125,
-        3,16,8,0,125,126,5,69,0,0,126,21,1,0,0,0,127,130,5,78,0,0,128,129,
-        5,65,0,0,129,131,5,78,0,0,130,128,1,0,0,0,130,131,1,0,0,0,131,140,
-        1,0,0,0,132,133,5,66,0,0,133,136,5,78,0,0,134,135,5,65,0,0,135,137,
-        5,78,0,0,136,134,1,0,0,0,136,137,1,0,0,0,137,139,1,0,0,0,138,132,
-        1,0,0,0,139,142,1,0,0,0,140,138,1,0,0,0,140,141,1,0,0,0,141,23,1,
-        0,0,0,142,140,1,0,0,0,143,144,7,2,0,0,144,25,1,0,0,0,145,146,7,3,
-        0,0,146,27,1,0,0,0,147,152,3,30,15,0,148,149,5,66,0,0,149,151,3,
-        30,15,0,150,148,1,0,0,0,151,154,1,0,0,0,152,150,1,0,0,0,152,153,
-        1,0,0,0,153,29,1,0,0,0,154,152,1,0,0,0,155,156,6,15,-1,0,156,157,
-        7,4,0,0,157,168,3,30,15,10,158,159,5,7,0,0,159,160,3,30,15,0,160,
-        161,5,8,0,0,161,162,3,30,15,0,162,163,5,9,0,0,163,164,3,30,15,0,
-        164,165,5,10,0,0,165,168,1,0,0,0,166,168,3,32,16,0,167,155,1,0,0,
-        0,167,158,1,0,0,0,167,166,1,0,0,0,168,361,1,0,0,0,169,170,10,9,0,
-        0,170,171,7,5,0,0,171,360,3,30,15,10,172,173,10,8,0,0,173,174,7,
-        6,0,0,174,360,3,30,15,9,175,176,10,7,0,0,176,177,3,26,13,0,177,178,
-        3,30,15,8,178,360,1,0,0,0,179,180,10,6,0,0,180,181,5,14,0,0,181,
-        360,3,30,15,7,182,183,10,5,0,0,183,184,5,17,0,0,184,360,3,30,15,
-        6,185,186,10,4,0,0,186,187,5,15,0,0,187,360,3,30,15,5,188,189,10,
-        3,0,0,189,190,5,18,0,0,190,360,3,30,15,4,191,192,10,37,0,0,192,193,
-        5,59,0,0,193,194,5,27,0,0,194,195,5,60,0,0,195,360,5,61,0,0,196,
-        197,10,36,0,0,197,198,5,59,0,0,198,199,5,41,0,0,199,200,5,60,0,0,
-        200,201,3,16,8,0,201,202,5,61,0,0,202,360,1,0,0,0,203,204,10,35,
-        0,0,204,205,5,59,0,0,205,206,5,42,0,0,206,207,5,60,0,0,207,208,3,
-        16,8,0,208,209,5,61,0,0,209,360,1,0,0,0,210,211,10,34,0,0,211,212,
-        5,59,0,0,212,213,5,43,0,0,213,214,5,60,0,0,214,215,3,16,8,0,215,
-        216,5,61,0,0,216,360,1,0,0,0,217,218,10,33,0,0,218,219,5,59,0,0,
-        219,220,5,78,0,0,220,222,5,60,0,0,221,223,3,28,14,0,222,221,1,0,
-        0,0,222,223,1,0,0,0,223,224,1,0,0,0,224,360,5,61,0,0,225,226,10,
-        32,0,0,226,227,5,59,0,0,227,360,5,78,0,0,228,229,10,31,0,0,229,230,
-        5,59,0,0,230,360,5,27,0,0,231,232,10,30,0,0,232,233,5,59,0,0,233,
-        360,5,52,0,0,234,235,10,29,0,0,235,236,5,59,0,0,236,237,5,37,0,0,
-        237,238,5,60,0,0,238,360,5,61,0,0,239,240,10,28,0,0,240,241,5,55,
-        0,0,241,242,3,24,12,0,242,243,5,60,0,0,243,244,3,22,11,0,244,245,
-        5,67,0,0,245,246,3,30,15,0,246,247,5,61,0,0,247,360,1,0,0,0,248,
-        249,10,27,0,0,249,250,5,55,0,0,250,251,3,24,12,0,251,252,5,60,0,
-        0,252,253,3,30,15,0,253,254,5,61,0,0,254,360,1,0,0,0,255,256,10,
-        26,0,0,256,257,5,55,0,0,257,258,5,27,0,0,258,259,5,60,0,0,259,360,
-        5,61,0,0,260,261,10,25,0,0,261,262,5,55,0,0,262,263,5,28,0,0,263,
-        264,5,60,0,0,264,360,5,61,0,0,265,266,10,24,0,0,266,267,5,55,0,0,
-        267,268,5,26,0,0,268,269,5,60,0,0,269,360,5,61,0,0,270,271,10,23,
-        0,0,271,272,5,55,0,0,272,273,5,29,0,0,273,274,5,60,0,0,274,360,5,
-        61,0,0,275,276,10,22,0,0,276,277,5,55,0,0,277,278,5,30,0,0,278,279,
-        5,60,0,0,279,280,3,30,15,0,280,281,5,61,0,0,281,360,1,0,0,0,282,
-        283,10,21,0,0,283,284,5,55,0,0,284,285,5,31,0,0,285,286,5,60,0,0,
-        286,287,3,30,15,0,287,288,5,61,0,0,288,360,1,0,0,0,289,290,10,20,
-        0,0,290,291,5,55,0,0,291,292,5,32,0,0,292,293,5,60,0,0,293,294,3,
-        30,15,0,294,295,5,61,0,0,295,360,1,0,0,0,296,297,10,19,0,0,297,298,
-        5,55,0,0,298,299,5,33,0,0,299,300,5,60,0,0,300,360,5,61,0,0,301,
-        302,10,18,0,0,302,303,5,55,0,0,303,304,5,34,0,0,304,305,5,60,0,0,
-        305,360,5,61,0,0,306,307,10,17,0,0,307,308,5,55,0,0,308,309,5,35,
-        0,0,309,310,5,60,0,0,310,311,3,30,15,0,311,312,5,61,0,0,312,360,
-        1,0,0,0,313,314,10,16,0,0,314,315,5,55,0,0,315,316,5,36,0,0,316,
-        317,5,60,0,0,317,318,3,30,15,0,318,319,5,61,0,0,319,360,1,0,0,0,
-        320,321,10,15,0,0,321,322,5,55,0,0,322,323,5,40,0,0,323,324,5,60,
-        0,0,324,325,3,30,15,0,325,326,5,61,0,0,326,360,1,0,0,0,327,328,10,
-        14,0,0,328,329,5,55,0,0,329,330,5,38,0,0,330,331,5,60,0,0,331,332,
-        3,30,15,0,332,333,5,66,0,0,333,334,3,30,15,0,334,335,5,61,0,0,335,
-        360,1,0,0,0,336,337,10,13,0,0,337,338,5,55,0,0,338,339,5,39,0,0,
-        339,340,5,60,0,0,340,341,3,30,15,0,341,342,5,66,0,0,342,343,3,30,
-        15,0,343,344,5,61,0,0,344,360,1,0,0,0,345,346,10,12,0,0,346,347,
-        5,55,0,0,347,348,5,24,0,0,348,349,5,60,0,0,349,350,3,30,15,0,350,
-        351,5,61,0,0,351,360,1,0,0,0,352,353,10,11,0,0,353,354,5,55,0,0,
-        354,355,5,25,0,0,355,356,5,60,0,0,356,357,3,30,15,0,357,358,5,61,
-        0,0,358,360,1,0,0,0,359,169,1,0,0,0,359,172,1,0,0,0,359,175,1,0,
-        0,0,359,179,1,0,0,0,359,182,1,0,0,0,359,185,1,0,0,0,359,188,1,0,
-        0,0,359,191,1,0,0,0,359,196,1,0,0,0,359,203,1,0,0,0,359,210,1,0,
-        0,0,359,217,1,0,0,0,359,225,1,0,0,0,359,228,1,0,0,0,359,231,1,0,
-        0,0,359,234,1,0,0,0,359,239,1,0,0,0,359,248,1,0,0,0,359,255,1,0,
-        0,0,359,260,1,0,0,0,359,265,1,0,0,0,359,270,1,0,0,0,359,275,1,0,
-        0,0,359,282,1,0,0,0,359,289,1,0,0,0,359,296,1,0,0,0,359,301,1,0,
-        0,0,359,306,1,0,0,0,359,313,1,0,0,0,359,320,1,0,0,0,359,327,1,0,
-        0,0,359,336,1,0,0,0,359,345,1,0,0,0,359,352,1,0,0,0,360,363,1,0,
-        0,0,361,359,1,0,0,0,361,362,1,0,0,0,362,31,1,0,0,0,363,361,1,0,0,
-        0,364,391,5,6,0,0,365,391,5,77,0,0,366,391,5,76,0,0,367,391,5,75,
-        0,0,368,391,5,53,0,0,369,370,5,78,0,0,370,371,5,54,0,0,371,372,5,
-        37,0,0,372,373,5,60,0,0,373,391,5,61,0,0,374,375,5,52,0,0,375,376,
-        5,54,0,0,376,377,5,78,0,0,377,378,5,60,0,0,378,391,5,61,0,0,379,
-        380,5,78,0,0,380,382,5,60,0,0,381,383,3,28,14,0,382,381,1,0,0,0,
-        382,383,1,0,0,0,383,384,1,0,0,0,384,391,5,61,0,0,385,386,5,60,0,
-        0,386,387,3,30,15,0,387,388,5,61,0,0,388,391,1,0,0,0,389,391,5,78,
-        0,0,390,364,1,0,0,0,390,365,1,0,0,0,390,366,1,0,0,0,390,367,1,0,
-        0,0,390,368,1,0,0,0,390,369,1,0,0,0,390,374,1,0,0,0,390,379,1,0,
-        0,0,390,385,1,0,0,0,390,389,1,0,0,0,391,33,1,0,0,0,19,46,54,67,89,
-        93,98,105,109,118,130,136,140,152,167,222,359,361,382,390
+        1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,1,15,5,15,
+        368,8,15,10,15,12,15,371,9,15,1,16,1,16,1,16,1,16,1,16,1,16,1,16,
+        1,16,1,16,1,16,1,16,1,16,1,16,1,16,1,16,1,16,1,16,1,16,3,16,391,
+        8,16,1,16,1,16,1,16,1,16,1,16,1,16,3,16,399,8,16,1,16,0,1,30,17,
+        0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,0,7,1,0,46,49,1,0,
+        50,53,1,0,19,24,2,0,58,60,70,72,2,0,16,16,74,74,1,0,75,76,1,0,73,
+        74,449,0,46,1,0,0,0,2,48,1,0,0,0,4,61,1,0,0,0,6,74,1,0,0,0,8,84,
+        1,0,0,0,10,91,1,0,0,0,12,100,1,0,0,0,14,109,1,0,0,0,16,118,1,0,0,
+        0,18,120,1,0,0,0,20,122,1,0,0,0,22,127,1,0,0,0,24,143,1,0,0,0,26,
+        145,1,0,0,0,28,147,1,0,0,0,30,167,1,0,0,0,32,398,1,0,0,0,34,35,3,
+        8,4,0,35,36,5,0,0,1,36,47,1,0,0,0,37,38,3,6,3,0,38,39,5,0,0,1,39,
+        47,1,0,0,0,40,41,3,2,1,0,41,42,5,0,0,1,42,47,1,0,0,0,43,44,3,4,2,
+        0,44,45,5,0,0,1,45,47,1,0,0,0,46,34,1,0,0,0,46,37,1,0,0,0,46,40,
+        1,0,0,0,46,43,1,0,0,0,47,1,1,0,0,0,48,49,5,1,0,0,49,50,5,80,0,0,
+        50,51,5,56,0,0,51,52,5,80,0,0,52,54,5,62,0,0,53,55,3,12,6,0,54,53,
+        1,0,0,0,54,55,1,0,0,0,55,56,1,0,0,0,56,57,5,63,0,0,57,58,5,4,0,0,
+        58,59,5,67,0,0,59,60,3,30,15,0,60,3,1,0,0,0,61,62,5,1,0,0,62,63,
+        5,80,0,0,63,64,5,56,0,0,64,65,5,80,0,0,65,67,5,62,0,0,66,68,3,12,
+        6,0,67,66,1,0,0,0,67,68,1,0,0,0,68,69,1,0,0,0,69,70,5,63,0,0,70,
+        71,5,5,0,0,71,72,5,67,0,0,72,73,3,30,15,0,73,5,1,0,0,0,74,75,5,1,
+        0,0,75,76,5,80,0,0,76,77,5,56,0,0,77,78,5,80,0,0,78,79,5,67,0,0,
+        79,80,3,16,8,0,80,81,5,2,0,0,81,82,5,67,0,0,82,83,3,30,15,0,83,7,
+        1,0,0,0,84,85,5,1,0,0,85,87,5,80,0,0,86,88,3,10,5,0,87,86,1,0,0,
+        0,88,89,1,0,0,0,89,87,1,0,0,0,89,90,1,0,0,0,90,9,1,0,0,0,91,93,5,
+        3,0,0,92,94,5,80,0,0,93,92,1,0,0,0,93,94,1,0,0,0,94,95,1,0,0,0,95,
+        96,5,67,0,0,96,98,3,30,15,0,97,99,5,66,0,0,98,97,1,0,0,0,98,99,1,
+        0,0,0,99,11,1,0,0,0,100,105,3,14,7,0,101,102,5,68,0,0,102,104,3,
+        14,7,0,103,101,1,0,0,0,104,107,1,0,0,0,105,103,1,0,0,0,105,106,1,
+        0,0,0,106,13,1,0,0,0,107,105,1,0,0,0,108,110,5,80,0,0,109,108,1,
+        0,0,0,109,110,1,0,0,0,110,111,1,0,0,0,111,112,5,67,0,0,112,113,3,
+        16,8,0,113,15,1,0,0,0,114,119,3,18,9,0,115,119,3,20,10,0,116,119,
+        5,54,0,0,117,119,5,80,0,0,118,114,1,0,0,0,118,115,1,0,0,0,118,116,
+        1,0,0,0,118,117,1,0,0,0,119,17,1,0,0,0,120,121,7,0,0,0,121,19,1,
+        0,0,0,122,123,7,1,0,0,123,124,5,70,0,0,124,125,3,16,8,0,125,126,
+        5,71,0,0,126,21,1,0,0,0,127,130,5,80,0,0,128,129,5,67,0,0,129,131,
+        5,80,0,0,130,128,1,0,0,0,130,131,1,0,0,0,131,140,1,0,0,0,132,133,
+        5,68,0,0,133,136,5,80,0,0,134,135,5,67,0,0,135,137,5,80,0,0,136,
+        134,1,0,0,0,136,137,1,0,0,0,137,139,1,0,0,0,138,132,1,0,0,0,139,
+        142,1,0,0,0,140,138,1,0,0,0,140,141,1,0,0,0,141,23,1,0,0,0,142,140,
+        1,0,0,0,143,144,7,2,0,0,144,25,1,0,0,0,145,146,7,3,0,0,146,27,1,
+        0,0,0,147,152,3,30,15,0,148,149,5,68,0,0,149,151,3,30,15,0,150,148,
+        1,0,0,0,151,154,1,0,0,0,152,150,1,0,0,0,152,153,1,0,0,0,153,29,1,
+        0,0,0,154,152,1,0,0,0,155,156,6,15,-1,0,156,157,7,4,0,0,157,168,
+        3,30,15,10,158,159,5,7,0,0,159,160,3,30,15,0,160,161,5,8,0,0,161,
+        162,3,30,15,0,162,163,5,9,0,0,163,164,3,30,15,0,164,165,5,10,0,0,
+        165,168,1,0,0,0,166,168,3,32,16,0,167,155,1,0,0,0,167,158,1,0,0,
+        0,167,166,1,0,0,0,168,369,1,0,0,0,169,170,10,9,0,0,170,171,7,5,0,
+        0,171,368,3,30,15,10,172,173,10,8,0,0,173,174,7,6,0,0,174,368,3,
+        30,15,9,175,176,10,7,0,0,176,177,3,26,13,0,177,178,3,30,15,8,178,
+        368,1,0,0,0,179,180,10,6,0,0,180,181,5,14,0,0,181,368,3,30,15,7,
+        182,183,10,5,0,0,183,184,5,17,0,0,184,368,3,30,15,6,185,186,10,4,
+        0,0,186,187,5,15,0,0,187,368,3,30,15,5,188,189,10,3,0,0,189,190,
+        5,18,0,0,190,368,3,30,15,4,191,192,10,39,0,0,192,193,5,61,0,0,193,
+        194,5,28,0,0,194,195,5,62,0,0,195,368,5,63,0,0,196,197,10,38,0,0,
+        197,198,5,61,0,0,198,199,5,43,0,0,199,200,5,62,0,0,200,201,3,16,
+        8,0,201,202,5,63,0,0,202,368,1,0,0,0,203,204,10,37,0,0,204,205,5,
+        61,0,0,205,206,5,44,0,0,206,207,5,62,0,0,207,208,3,16,8,0,208,209,
+        5,63,0,0,209,368,1,0,0,0,210,211,10,36,0,0,211,212,5,61,0,0,212,
+        213,5,45,0,0,213,214,5,62,0,0,214,215,3,16,8,0,215,216,5,63,0,0,
+        216,368,1,0,0,0,217,218,10,35,0,0,218,219,5,61,0,0,219,220,5,80,
+        0,0,220,222,5,62,0,0,221,223,3,28,14,0,222,221,1,0,0,0,222,223,1,
+        0,0,0,223,224,1,0,0,0,224,368,5,63,0,0,225,226,10,34,0,0,226,227,
+        5,61,0,0,227,368,5,80,0,0,228,229,10,33,0,0,229,230,5,61,0,0,230,
+        368,5,28,0,0,231,232,10,32,0,0,232,233,5,61,0,0,233,368,5,54,0,0,
+        234,235,10,31,0,0,235,236,5,61,0,0,236,368,5,24,0,0,237,238,10,30,
+        0,0,238,239,5,61,0,0,239,240,5,39,0,0,240,241,5,62,0,0,241,368,5,
+        63,0,0,242,243,10,29,0,0,243,244,5,57,0,0,244,245,3,24,12,0,245,
+        246,5,62,0,0,246,247,3,22,11,0,247,248,5,69,0,0,248,249,3,30,15,
+        0,249,250,5,63,0,0,250,368,1,0,0,0,251,252,10,28,0,0,252,253,5,57,
+        0,0,253,254,3,24,12,0,254,255,5,62,0,0,255,256,3,30,15,0,256,257,
+        5,63,0,0,257,368,1,0,0,0,258,259,10,27,0,0,259,260,5,57,0,0,260,
+        261,5,28,0,0,261,262,5,62,0,0,262,368,5,63,0,0,263,264,10,26,0,0,
+        264,265,5,57,0,0,265,266,5,29,0,0,266,267,5,62,0,0,267,368,5,63,
+        0,0,268,269,10,25,0,0,269,270,5,57,0,0,270,271,5,30,0,0,271,272,
+        5,62,0,0,272,368,5,63,0,0,273,274,10,24,0,0,274,275,5,57,0,0,275,
+        276,5,27,0,0,276,277,5,62,0,0,277,368,5,63,0,0,278,279,10,23,0,0,
+        279,280,5,57,0,0,280,281,5,31,0,0,281,282,5,62,0,0,282,368,5,63,
+        0,0,283,284,10,22,0,0,284,285,5,57,0,0,285,286,5,32,0,0,286,287,
+        5,62,0,0,287,288,3,30,15,0,288,289,5,63,0,0,289,368,1,0,0,0,290,
+        291,10,21,0,0,291,292,5,57,0,0,292,293,5,33,0,0,293,294,5,62,0,0,
+        294,295,3,30,15,0,295,296,5,63,0,0,296,368,1,0,0,0,297,298,10,20,
+        0,0,298,299,5,57,0,0,299,300,5,34,0,0,300,301,5,62,0,0,301,302,3,
+        30,15,0,302,303,5,63,0,0,303,368,1,0,0,0,304,305,10,19,0,0,305,306,
+        5,57,0,0,306,307,5,35,0,0,307,308,5,62,0,0,308,368,5,63,0,0,309,
+        310,10,18,0,0,310,311,5,57,0,0,311,312,5,36,0,0,312,313,5,62,0,0,
+        313,368,5,63,0,0,314,315,10,17,0,0,315,316,5,57,0,0,316,317,5,37,
+        0,0,317,318,5,62,0,0,318,319,3,30,15,0,319,320,5,63,0,0,320,368,
+        1,0,0,0,321,322,10,16,0,0,322,323,5,57,0,0,323,324,5,38,0,0,324,
+        325,5,62,0,0,325,326,3,30,15,0,326,327,5,63,0,0,327,368,1,0,0,0,
+        328,329,10,15,0,0,329,330,5,57,0,0,330,331,5,42,0,0,331,332,5,62,
+        0,0,332,333,3,30,15,0,333,334,5,63,0,0,334,368,1,0,0,0,335,336,10,
+        14,0,0,336,337,5,57,0,0,337,338,5,40,0,0,338,339,5,62,0,0,339,340,
+        3,30,15,0,340,341,5,68,0,0,341,342,3,30,15,0,342,343,5,63,0,0,343,
+        368,1,0,0,0,344,345,10,13,0,0,345,346,5,57,0,0,346,347,5,41,0,0,
+        347,348,5,62,0,0,348,349,3,30,15,0,349,350,5,68,0,0,350,351,3,30,
+        15,0,351,352,5,63,0,0,352,368,1,0,0,0,353,354,10,12,0,0,354,355,
+        5,57,0,0,355,356,5,25,0,0,356,357,5,62,0,0,357,358,3,30,15,0,358,
+        359,5,63,0,0,359,368,1,0,0,0,360,361,10,11,0,0,361,362,5,57,0,0,
+        362,363,5,26,0,0,363,364,5,62,0,0,364,365,3,30,15,0,365,366,5,63,
+        0,0,366,368,1,0,0,0,367,169,1,0,0,0,367,172,1,0,0,0,367,175,1,0,
+        0,0,367,179,1,0,0,0,367,182,1,0,0,0,367,185,1,0,0,0,367,188,1,0,
+        0,0,367,191,1,0,0,0,367,196,1,0,0,0,367,203,1,0,0,0,367,210,1,0,
+        0,0,367,217,1,0,0,0,367,225,1,0,0,0,367,228,1,0,0,0,367,231,1,0,
+        0,0,367,234,1,0,0,0,367,237,1,0,0,0,367,242,1,0,0,0,367,251,1,0,
+        0,0,367,258,1,0,0,0,367,263,1,0,0,0,367,268,1,0,0,0,367,273,1,0,
+        0,0,367,278,1,0,0,0,367,283,1,0,0,0,367,290,1,0,0,0,367,297,1,0,
+        0,0,367,304,1,0,0,0,367,309,1,0,0,0,367,314,1,0,0,0,367,321,1,0,
+        0,0,367,328,1,0,0,0,367,335,1,0,0,0,367,344,1,0,0,0,367,353,1,0,
+        0,0,367,360,1,0,0,0,368,371,1,0,0,0,369,367,1,0,0,0,369,370,1,0,
+        0,0,370,31,1,0,0,0,371,369,1,0,0,0,372,399,5,6,0,0,373,399,5,79,
+        0,0,374,399,5,78,0,0,375,399,5,77,0,0,376,399,5,55,0,0,377,378,5,
+        80,0,0,378,379,5,56,0,0,379,380,5,39,0,0,380,381,5,62,0,0,381,399,
+        5,63,0,0,382,383,5,54,0,0,383,384,5,56,0,0,384,385,5,80,0,0,385,
+        386,5,62,0,0,386,399,5,63,0,0,387,388,5,80,0,0,388,390,5,62,0,0,
+        389,391,3,28,14,0,390,389,1,0,0,0,390,391,1,0,0,0,391,392,1,0,0,
+        0,392,399,5,63,0,0,393,394,5,62,0,0,394,395,3,30,15,0,395,396,5,
+        63,0,0,396,399,1,0,0,0,397,399,5,80,0,0,398,372,1,0,0,0,398,373,
+        1,0,0,0,398,374,1,0,0,0,398,375,1,0,0,0,398,376,1,0,0,0,398,377,
+        1,0,0,0,398,382,1,0,0,0,398,387,1,0,0,0,398,393,1,0,0,0,398,397,
+        1,0,0,0,399,33,1,0,0,0,19,46,54,67,89,93,98,105,109,118,130,136,
+        140,152,167,222,367,369,390,398
     ]
 
 class BOCLParser ( Parser ):
@@ -169,25 +173,26 @@ class BOCLParser ( Parser ):
                      "'post'", "'self'", "'if'", "'then'", "'else'", "'endif'", 
                      "'let'", "'in'", "'def'", "'and'", "'or'", "'not'", 
                      "'xor'", "'implies'", "'forAll'", "'exists'", "'select'", 
-                     "'reject'", "'collect'", "'intersection'", "'isUnique'", 
-                     "'asSet'", "'size'", "'isEmpty'", "'sum'", "'includes'", 
-                     "'excludes'", "'union'", "'first'", "'last'", "'prepend'", 
-                     "'append'", "'allInstances'", "'subSequence'", "'subOrderedSet'", 
-                     "'symmetricDifference'", "'oclIsTypeOf'", "'oclAsType'", 
-                     "'oclIsKindOf'", "'Boolean'", "'Integer'", "'Real'", 
-                     "<INVALID>", "<INVALID>", "'Bag'", "'Sequence'", "'OrderedSet'", 
-                     "<INVALID>", "'null'", "'::'", "<INVALID>", "'<>'", 
-                     "'<='", "'>='", "'.'", "'('", "')'", "'{'", "'}'", 
-                     "';'", "':'", "','", "'|'", "'<'", "'>'", "'='", "'+'", 
-                     "'-'", "'*'", "'/'" ]
+                     "'reject'", "'collect'", "'closure'", "'intersection'", 
+                     "'isUnique'", "'asSet'", "'size'", "'isEmpty'", "'notEmpty'", 
+                     "'sum'", "'includes'", "'excludes'", "'union'", "'first'", 
+                     "'last'", "'prepend'", "'append'", "'allInstances'", 
+                     "'subSequence'", "'subOrderedSet'", "'symmetricDifference'", 
+                     "'oclIsTypeOf'", "'oclAsType'", "'oclIsKindOf'", "'Boolean'", 
+                     "'Integer'", "'Real'", "<INVALID>", "<INVALID>", "'Bag'", 
+                     "'Sequence'", "'OrderedSet'", "<INVALID>", "'null'", 
+                     "'::'", "<INVALID>", "'<>'", "'<='", "'>='", "'.'", 
+                     "'('", "')'", "'{'", "'}'", "';'", "':'", "','", "'|'", 
+                     "'<'", "'>'", "'='", "'+'", "'-'", "'*'", "'/'" ]
 
     symbolicNames = [ "<INVALID>", "CONTEXT", "INIT", "INV", "PRE", "POST", 
                       "SELF", "IF", "THEN", "ELSE", "ENDIF", "LET", "IN", 
                       "DEF", "AND", "OR", "NOT", "XOR", "IMPLIES", "FORALL", 
-                      "EXISTS", "SELECT", "REJECT", "COLLECT", "INTERSECTION", 
-                      "ISUNIQUE", "ASSET", "SIZE", "ISEMPTY", "SUM", "INCLUDES", 
-                      "EXCLUDES", "UNION", "FIRST", "LAST", "PREPEND", "APPEND", 
-                      "ALLINSTANCES", "SUBSEQUENCE", "SUBORDEREDSET", "SYMMETRICDIFFERENCE", 
+                      "EXISTS", "SELECT", "REJECT", "COLLECT", "CLOSURE", 
+                      "INTERSECTION", "ISUNIQUE", "ASSET", "SIZE", "ISEMPTY", 
+                      "NOTEMPTY", "SUM", "INCLUDES", "EXCLUDES", "UNION", 
+                      "FIRST", "LAST", "PREPEND", "APPEND", "ALLINSTANCES", 
+                      "SUBSEQUENCE", "SUBORDEREDSET", "SYMMETRICDIFFERENCE", 
                       "OCLISTYPEOF", "OCLASTYPE", "OCLISKINDOF", "BOOLEAN_TYPE", 
                       "INTEGER_TYPE", "REAL_TYPE", "STRING_TYPE", "SET", 
                       "BAG", "SEQUENCE", "ORDEREDSET", "DATE", "NULL", "DOUBLECOLON", 
@@ -244,64 +249,66 @@ class BOCLParser ( Parser ):
     SELECT=21
     REJECT=22
     COLLECT=23
-    INTERSECTION=24
-    ISUNIQUE=25
-    ASSET=26
-    SIZE=27
-    ISEMPTY=28
-    SUM=29
-    INCLUDES=30
-    EXCLUDES=31
-    UNION=32
-    FIRST=33
-    LAST=34
-    PREPEND=35
-    APPEND=36
-    ALLINSTANCES=37
-    SUBSEQUENCE=38
-    SUBORDEREDSET=39
-    SYMMETRICDIFFERENCE=40
-    OCLISTYPEOF=41
-    OCLASTYPE=42
-    OCLISKINDOF=43
-    BOOLEAN_TYPE=44
-    INTEGER_TYPE=45
-    REAL_TYPE=46
-    STRING_TYPE=47
-    SET=48
-    BAG=49
-    SEQUENCE=50
-    ORDEREDSET=51
-    DATE=52
-    NULL=53
-    DOUBLECOLON=54
-    ARROW=55
-    NOTEQUAL=56
-    LE=57
-    GE=58
-    DOT=59
-    LPAREN=60
-    RPAREN=61
-    LBRACE=62
-    RBRACE=63
-    SEMI=64
-    COLON=65
-    COMMA=66
-    PIPE=67
-    LT=68
-    GT=69
-    EQUAL=70
-    PLUS=71
-    MINUS=72
-    STAR=73
-    DIVIDE=74
-    BOOLEAN_LITERAL=75
-    NUMBER=76
-    STRING_LITERAL=77
-    ID=78
-    WS=79
-    COMMENT=80
-    LINE_COMMENT=81
+    CLOSURE=24
+    INTERSECTION=25
+    ISUNIQUE=26
+    ASSET=27
+    SIZE=28
+    ISEMPTY=29
+    NOTEMPTY=30
+    SUM=31
+    INCLUDES=32
+    EXCLUDES=33
+    UNION=34
+    FIRST=35
+    LAST=36
+    PREPEND=37
+    APPEND=38
+    ALLINSTANCES=39
+    SUBSEQUENCE=40
+    SUBORDEREDSET=41
+    SYMMETRICDIFFERENCE=42
+    OCLISTYPEOF=43
+    OCLASTYPE=44
+    OCLISKINDOF=45
+    BOOLEAN_TYPE=46
+    INTEGER_TYPE=47
+    REAL_TYPE=48
+    STRING_TYPE=49
+    SET=50
+    BAG=51
+    SEQUENCE=52
+    ORDEREDSET=53
+    DATE=54
+    NULL=55
+    DOUBLECOLON=56
+    ARROW=57
+    NOTEQUAL=58
+    LE=59
+    GE=60
+    DOT=61
+    LPAREN=62
+    RPAREN=63
+    LBRACE=64
+    RBRACE=65
+    SEMI=66
+    COLON=67
+    COMMA=68
+    PIPE=69
+    LT=70
+    GT=71
+    EQUAL=72
+    PLUS=73
+    MINUS=74
+    STAR=75
+    DIVIDE=76
+    BOOLEAN_LITERAL=77
+    NUMBER=78
+    STRING_LITERAL=79
+    ID=80
+    WS=81
+    COMMENT=82
+    LINE_COMMENT=83
 
     def __init__(self, input:TokenStream, output:TextIO = sys.stdout):
         super().__init__(input, output)
@@ -471,7 +478,7 @@ class BOCLParser ( Parser ):
             self.state = 54
             self._errHandler.sync(self)
             _la = self._input.LA(1)
-            if _la==65 or _la==78:
+            if _la==67 or _la==80:
                 self.state = 53
                 self.paramList()
 
@@ -564,7 +571,7 @@ class BOCLParser ( Parser ):
             self.state = 67
             self._errHandler.sync(self)
             _la = self._input.LA(1)
-            if _la==65 or _la==78:
+            if _la==67 or _la==80:
                 self.state = 66
                 self.paramList()
 
@@ -778,7 +785,7 @@ class BOCLParser ( Parser ):
             self.state = 93
             self._errHandler.sync(self)
             _la = self._input.LA(1)
-            if _la==78:
+            if _la==80:
                 self.state = 92
                 self.match(BOCLParser.ID)
 
@@ -790,7 +797,7 @@ class BOCLParser ( Parser ):
             self.state = 98
             self._errHandler.sync(self)
             _la = self._input.LA(1)
-            if _la==64:
+            if _la==66:
                 self.state = 97
                 self.match(BOCLParser.SEMI)
 
@@ -848,7 +855,7 @@ class BOCLParser ( Parser ):
             self.state = 105
             self._errHandler.sync(self)
             _la = self._input.LA(1)
-            while _la==66:
+            while _la==68:
                 self.state = 101
                 self.match(BOCLParser.COMMA)
                 self.state = 102
@@ -905,7 +912,7 @@ class BOCLParser ( Parser ):
             self.state = 109
             self._errHandler.sync(self)
             _la = self._input.LA(1)
-            if _la==78:
+            if _la==80:
                 self.state = 108
                 self.match(BOCLParser.ID)
 
@@ -964,22 +971,22 @@ class BOCLParser ( Parser ):
             self.state = 118
             self._errHandler.sync(self)
             token = self._input.LA(1)
-            if token in [44, 45, 46, 47]:
+            if token in [46, 47, 48, 49]:
                 self.enterOuterAlt(localctx, 1)
                 self.state = 114
                 self.primitiveType()
                 pass
-            elif token in [48, 49, 50, 51]:
+            elif token in [50, 51, 52, 53]:
                 self.enterOuterAlt(localctx, 2)
                 self.state = 115
                 self.collectionType()
                 pass
-            elif token in [52]:
+            elif token in [54]:
                 self.enterOuterAlt(localctx, 3)
                 self.state = 116
                 self.match(BOCLParser.DATE)
                 pass
-            elif token in [78]:
+            elif token in [80]:
                 self.enterOuterAlt(localctx, 4)
                 self.state = 117
                 self.match(BOCLParser.ID)
@@ -1036,7 +1043,7 @@ class BOCLParser ( Parser ):
             self.enterOuterAlt(localctx, 1)
             self.state = 120
             _la = self._input.LA(1)
-            if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 263882790666240) != 0)):
+            if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 1055531162664960) != 0)):
                 self._errHandler.recoverInline(self)
             else:
                 self._errHandler.reportMatch(self)
@@ -1100,7 +1107,7 @@ class BOCLParser ( Parser ):
             self.enterOuterAlt(localctx, 1)
             self.state = 122
             _la = self._input.LA(1)
-            if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 4222124650659840) != 0)):
+            if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 16888498602639360) != 0)):
                 self._errHandler.recoverInline(self)
             else:
                 self._errHandler.reportMatch(self)
@@ -1169,7 +1176,7 @@ class BOCLParser ( Parser ):
             self.state = 130
             self._errHandler.sync(self)
             _la = self._input.LA(1)
-            if _la==65:
+            if _la==67:
                 self.state = 128
                 self.match(BOCLParser.COLON)
                 self.state = 129
@@ -1179,7 +1186,7 @@ class BOCLParser ( Parser ):
             self.state = 140
             self._errHandler.sync(self)
             _la = self._input.LA(1)
-            while _la==66:
+            while _la==68:
                 self.state = 132
                 self.match(BOCLParser.COMMA)
                 self.state = 133
@@ -1187,7 +1194,7 @@ class BOCLParser ( Parser ):
                 self.state = 136
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
-                if _la==65:
+                if _la==67:
                     self.state = 134
                     self.match(BOCLParser.COLON)
                     self.state = 135
@@ -1229,6 +1236,9 @@ class BOCLParser ( Parser ):
         def COLLECT(self):
             return self.getToken(BOCLParser.COLLECT, 0)
 
+        def CLOSURE(self):
+            return self.getToken(BOCLParser.CLOSURE, 0)
+
         def getRuleIndex(self):
             return BOCLParser.RULE_iteratorOp
 
@@ -1250,7 +1260,7 @@ class BOCLParser ( Parser ):
             self.enterOuterAlt(localctx, 1)
             self.state = 143
             _la = self._input.LA(1)
-            if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 16252928) != 0)):
+            if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 33030144) != 0)):
                 self._errHandler.recoverInline(self)
             else:
                 self._errHandler.reportMatch(self)
@@ -1310,7 +1320,7 @@ class BOCLParser ( Parser ):
             self.enterOuterAlt(localctx, 1)
             self.state = 145
             _la = self._input.LA(1)
-            if not(((((_la - 56)) & ~0x3f) == 0 and ((1 << (_la - 56)) & 28679) != 0)):
+            if not(((((_la - 58)) & ~0x3f) == 0 and ((1 << (_la - 58)) & 28679) != 0)):
                 self._errHandler.recoverInline(self)
             else:
                 self._errHandler.reportMatch(self)
@@ -1368,7 +1378,7 @@ class BOCLParser ( Parser ):
             self.state = 152
             self._errHandler.sync(self)
             _la = self._input.LA(1)
-            while _la==66:
+            while _la==68:
                 self.state = 148
                 self.match(BOCLParser.COMMA)
                 self.state = 149
@@ -1460,6 +1470,31 @@ class BOCLParser ( Parser ):
         def accept(self, visitor:ParseTreeVisitor):
             if hasattr( visitor, "visitArrowIterator" ):
                 return visitor.visitArrowIterator(self)
+            else:
+                return visitor.visitChildren(self)
+
+
+    class ArrowNotEmptyContext(ExpressionContext):
+
+        def __init__(self, parser, ctx:ParserRuleContext): # actually a BOCLParser.ExpressionContext
+            super().__init__(parser)
+            self.copyFrom(ctx)
+
+        def expression(self):
+            return self.getTypedRuleContext(BOCLParser.ExpressionContext,0)
+
+        def ARROW(self):
+            return self.getToken(BOCLParser.ARROW, 0)
+        def NOTEMPTY(self):
+            return self.getToken(BOCLParser.NOTEMPTY, 0)
+        def LPAREN(self):
+            return self.getToken(BOCLParser.LPAREN, 0)
+        def RPAREN(self):
+            return self.getToken(BOCLParser.RPAREN, 0)
+
+        def accept(self, visitor:ParseTreeVisitor):
+            if hasattr( visitor, "visitArrowNotEmpty" ):
+                return visitor.visitArrowNotEmpty(self)
             else:
                 return visitor.visitChildren(self)
 
@@ -1932,6 +1967,27 @@ class BOCLParser ( Parser ):
                 return visitor.visitChildren(self)
 
 
+    class DotClosureNavigationContext(ExpressionContext):
+
+        def __init__(self, parser, ctx:ParserRuleContext): # actually a BOCLParser.ExpressionContext
+            super().__init__(parser)
+            self.copyFrom(ctx)
+
+        def expression(self):
+            return self.getTypedRuleContext(BOCLParser.ExpressionContext,0)
+
+        def DOT(self):
+            return self.getToken(BOCLParser.DOT, 0)
+        def CLOSURE(self):
+            return self.getToken(BOCLParser.CLOSURE, 0)
+
+        def accept(self, visitor:ParseTreeVisitor):
+            if hasattr( visitor, "visitDotClosureNavigation" ):
+                return visitor.visitDotClosureNavigation(self)
+            else:
+                return visitor.visitChildren(self)
+
+
     class ArrowasSetContext(ExpressionContext):
 
         def __init__(self, parser, ctx:ParserRuleContext): # actually a BOCLParser.ExpressionContext
@@ -2363,14 +2419,14 @@ class BOCLParser ( Parser ):
             self.state = 167
             self._errHandler.sync(self)
             token = self._input.LA(1)
-            if token in [16, 72]:
+            if token in [16, 74]:
                 localctx = BOCLParser.UnaryExprContext(self, localctx)
                 self._ctx = localctx
                 _prevctx = localctx
 
                 self.state = 156
                 _la = self._input.LA(1)
-                if not(_la==16 or _la==72):
+                if not(_la==16 or _la==74):
                     self._errHandler.recoverInline(self)
                 else:
                     self._errHandler.reportMatch(self)
@@ -2397,7 +2453,7 @@ class BOCLParser ( Parser ):
                 self.state = 164
                 self.match(BOCLParser.ENDIF)
                 pass
-            elif token in [6, 52, 53, 60, 75, 76, 77, 78]:
+            elif token in [6, 54, 55, 62, 77, 78, 79, 80]:
                 localctx = BOCLParser.PrimaryExprContext(self, localctx)
                 self._ctx = localctx
                 _prevctx = localctx
@@ -2408,7 +2464,7 @@ class BOCLParser ( Parser ):
                 raise NoViableAltException(self)
 
             self._ctx.stop = self._input.LT(-1)
-            self.state = 361
+            self.state = 369
             self._errHandler.sync(self)
             _alt = self._interp.adaptivePredict(self._input,16,self._ctx)
             while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -2416,7 +2472,7 @@ class BOCLParser ( Parser ):
                     if self._parseListeners is not None:
                         self.triggerExitRuleEvent()
                     _prevctx = localctx
-                    self.state = 359
+                    self.state = 367
                     self._errHandler.sync(self)
                     la_ = self._interp.adaptivePredict(self._input,15,self._ctx)
                     if la_ == 1:
@@ -2428,7 +2484,7 @@ class BOCLParser ( Parser ):
                             raise FailedPredicateException(self, "self.precpred(self._ctx, 9)")
                         self.state = 170
                         _la = self._input.LA(1)
-                        if not(_la==73 or _la==74):
+                        if not(_la==75 or _la==76):
                             self._errHandler.recoverInline(self)
                         else:
                             self._errHandler.reportMatch(self)
@@ -2446,7 +2502,7 @@ class BOCLParser ( Parser ):
                             raise FailedPredicateException(self, "self.precpred(self._ctx, 8)")
                         self.state = 173
                         _la = self._input.LA(1)
-                        if not(_la==71 or _la==72):
+                        if not(_la==73 or _la==74):
                             self._errHandler.recoverInline(self)
                         else:
                             self._errHandler.reportMatch(self)
@@ -2524,9 +2580,9 @@ class BOCLParser ( Parser ):
                         localctx = BOCLParser.DotSizeContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
                         self.state = 191
-                        if not self.precpred(self._ctx, 37):
+                        if not self.precpred(self._ctx, 39):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 37)")
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 39)")
                         self.state = 192
                         self.match(BOCLParser.DOT)
                         self.state = 193
@@ -2541,9 +2597,9 @@ class BOCLParser ( Parser ):
                         localctx = BOCLParser.DotOclIsTypeOfContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
                         self.state = 196
-                        if not self.precpred(self._ctx, 36):
+                        if not self.precpred(self._ctx, 38):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 36)")
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 38)")
                         self.state = 197
                         self.match(BOCLParser.DOT)
                         self.state = 198
@@ -2560,9 +2616,9 @@ class BOCLParser ( Parser ):
                         localctx = BOCLParser.DotOclAsTypeContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
                         self.state = 203
-                        if not self.precpred(self._ctx, 35):
+                        if not self.precpred(self._ctx, 37):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 35)")
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 37)")
                         self.state = 204
                         self.match(BOCLParser.DOT)
                         self.state = 205
@@ -2579,9 +2635,9 @@ class BOCLParser ( Parser ):
                         localctx = BOCLParser.DotOclIsKindOfContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
                         self.state = 210
-                        if not self.precpred(self._ctx, 34):
+                        if not self.precpred(self._ctx, 36):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 34)")
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 36)")
                         self.state = 211
                         self.match(BOCLParser.DOT)
                         self.state = 212
@@ -2598,9 +2654,9 @@ class BOCLParser ( Parser ):
                         localctx = BOCLParser.DotMethodCallContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
                         self.state = 217
-                        if not self.precpred(self._ctx, 33):
+                        if not self.precpred(self._ctx, 35):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 33)")
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 35)")
                         self.state = 218
                         self.match(BOCLParser.DOT)
                         self.state = 219
@@ -2610,7 +2666,7 @@ class BOCLParser ( Parser ):
                         self.state = 222
                         self._errHandler.sync(self)
                         _la = self._input.LA(1)
-                        if (((_la) & ~0x3f) == 0 and ((1 << _la) & 1166432303489024192) != 0) or ((((_la - 72)) & ~0x3f) == 0 and ((1 << (_la - 72)) & 121) != 0):
+                        if (((_la) & ~0x3f) == 0 and ((1 << _la) & 4665729213955899584) != 0) or ((((_la - 74)) & ~0x3f) == 0 and ((1 << (_la - 74)) & 121) != 0):
                             self.state = 221
                             self.argList()
 
@@ -2623,9 +2679,9 @@ class BOCLParser ( Parser ):
                         localctx = BOCLParser.DotNavigationContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
                         self.state = 225
-                        if not self.precpred(self._ctx, 32):
+                        if not self.precpred(self._ctx, 34):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 32)")
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 34)")
                         self.state = 226
                         self.match(BOCLParser.DOT)
                         self.state = 227
@@ -2636,9 +2692,9 @@ class BOCLParser ( Parser ):
                         localctx = BOCLParser.DotSizeNavigationContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
                         self.state = 228
-                        if not self.precpred(self._ctx, 31):
+                        if not self.precpred(self._ctx, 33):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 31)")
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 33)")
                         self.state = 229
                         self.match(BOCLParser.DOT)
                         self.state = 230
@@ -2649,9 +2705,9 @@ class BOCLParser ( Parser ):
                         localctx = BOCLParser.DotDateNavigationContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
                         self.state = 231
-                        if not self.precpred(self._ctx, 30):
+                        if not self.precpred(self._ctx, 32):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 30)")
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 32)")
                         self.state = 232
                         self.match(BOCLParser.DOT)
                         self.state = 233
@@ -2659,366 +2715,396 @@ class BOCLParser ( Parser ):
                         pass
 
                     elif la_ == 16:
-                        localctx = BOCLParser.AllInstancesExpContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.DotClosureNavigationContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
                         self.state = 234
-                        if not self.precpred(self._ctx, 29):
+                        if not self.precpred(self._ctx, 31):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 29)")
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 31)")
                         self.state = 235
                         self.match(BOCLParser.DOT)
                         self.state = 236
-                        self.match(BOCLParser.ALLINSTANCES)
-                        self.state = 237
-                        self.match(BOCLParser.LPAREN)
-                        self.state = 238
-                        self.match(BOCLParser.RPAREN)
+                        self.match(BOCLParser.CLOSURE)
                         pass
 
                     elif la_ == 17:
-                        localctx = BOCLParser.ArrowIteratorContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.AllInstancesExpContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 239
-                        if not self.precpred(self._ctx, 28):
+                        self.state = 237
+                        if not self.precpred(self._ctx, 30):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 28)")
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 30)")
+                        self.state = 238
+                        self.match(BOCLParser.DOT)
+                        self.state = 239
+                        self.match(BOCLParser.ALLINSTANCES)
                         self.state = 240
-                        self.match(BOCLParser.ARROW)
-                        self.state = 241
-                        self.iteratorOp()
-                        self.state = 242
                         self.match(BOCLParser.LPAREN)
-                        self.state = 243
-                        self.iteratorVarDecl()
-                        self.state = 244
-                        self.match(BOCLParser.PIPE)
-                        self.state = 245
-                        self.expression(0)
-                        self.state = 246
+                        self.state = 241
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 18:
-                        localctx = BOCLParser.ArrowIteratorShortContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowIteratorContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 248
-                        if not self.precpred(self._ctx, 27):
+                        self.state = 242
+                        if not self.precpred(self._ctx, 29):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 27)")
-                        self.state = 249
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 29)")
+                        self.state = 243
                         self.match(BOCLParser.ARROW)
-                        self.state = 250
+                        self.state = 244
                         self.iteratorOp()
-                        self.state = 251
+                        self.state = 245
                         self.match(BOCLParser.LPAREN)
-                        self.state = 252
+                        self.state = 246
+                        self.iteratorVarDecl()
+                        self.state = 247
+                        self.match(BOCLParser.PIPE)
+                        self.state = 248
                         self.expression(0)
-                        self.state = 253
+                        self.state = 249
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 19:
-                        localctx = BOCLParser.ArrowSizeContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowIteratorShortContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 255
-                        if not self.precpred(self._ctx, 26):
+                        self.state = 251
+                        if not self.precpred(self._ctx, 28):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 26)")
-                        self.state = 256
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 28)")
+                        self.state = 252
                         self.match(BOCLParser.ARROW)
-                        self.state = 257
-                        self.match(BOCLParser.SIZE)
-                        self.state = 258
+                        self.state = 253
+                        self.iteratorOp()
+                        self.state = 254
                         self.match(BOCLParser.LPAREN)
-                        self.state = 259
+                        self.state = 255
+                        self.expression(0)
+                        self.state = 256
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 20:
-                        localctx = BOCLParser.ArrowIsEmptyContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowSizeContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 260
-                        if not self.precpred(self._ctx, 25):
+                        self.state = 258
+                        if not self.precpred(self._ctx, 27):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 25)")
-                        self.state = 261
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 27)")
+                        self.state = 259
                         self.match(BOCLParser.ARROW)
-                        self.state = 262
-                        self.match(BOCLParser.ISEMPTY)
-                        self.state = 263
+                        self.state = 260
+                        self.match(BOCLParser.SIZE)
+                        self.state = 261
                         self.match(BOCLParser.LPAREN)
-                        self.state = 264
+                        self.state = 262
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 21:
-                        localctx = BOCLParser.ArrowasSetContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowIsEmptyContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 265
-                        if not self.precpred(self._ctx, 24):
+                        self.state = 263
+                        if not self.precpred(self._ctx, 26):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 24)")
-                        self.state = 266
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 26)")
+                        self.state = 264
                         self.match(BOCLParser.ARROW)
-                        self.state = 267
-                        self.match(BOCLParser.ASSET)
-                        self.state = 268
+                        self.state = 265
+                        self.match(BOCLParser.ISEMPTY)
+                        self.state = 266
                         self.match(BOCLParser.LPAREN)
-                        self.state = 269
+                        self.state = 267
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 22:
-                        localctx = BOCLParser.ArrowSumContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowNotEmptyContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 270
-                        if not self.precpred(self._ctx, 23):
+                        self.state = 268
+                        if not self.precpred(self._ctx, 25):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 23)")
-                        self.state = 271
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 25)")
+                        self.state = 269
                         self.match(BOCLParser.ARROW)
-                        self.state = 272
-                        self.match(BOCLParser.SUM)
-                        self.state = 273
+                        self.state = 270
+                        self.match(BOCLParser.NOTEMPTY)
+                        self.state = 271
                         self.match(BOCLParser.LPAREN)
-                        self.state = 274
+                        self.state = 272
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 23:
-                        localctx = BOCLParser.ArrowIncludesContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowasSetContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 275
-                        if not self.precpred(self._ctx, 22):
+                        self.state = 273
+                        if not self.precpred(self._ctx, 24):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 22)")
-                        self.state = 276
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 24)")
+                        self.state = 274
                         self.match(BOCLParser.ARROW)
-                        self.state = 277
-                        self.match(BOCLParser.INCLUDES)
-                        self.state = 278
+                        self.state = 275
+                        self.match(BOCLParser.ASSET)
+                        self.state = 276
                         self.match(BOCLParser.LPAREN)
-                        self.state = 279
-                        self.expression(0)
-                        self.state = 280
+                        self.state = 277
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 24:
-                        localctx = BOCLParser.ArrowExcludesContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowSumContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 282
-                        if not self.precpred(self._ctx, 21):
+                        self.state = 278
+                        if not self.precpred(self._ctx, 23):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 21)")
-                        self.state = 283
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 23)")
+                        self.state = 279
                         self.match(BOCLParser.ARROW)
-                        self.state = 284
-                        self.match(BOCLParser.EXCLUDES)
-                        self.state = 285
+                        self.state = 280
+                        self.match(BOCLParser.SUM)
+                        self.state = 281
                         self.match(BOCLParser.LPAREN)
-                        self.state = 286
-                        self.expression(0)
-                        self.state = 287
+                        self.state = 282
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 25:
-                        localctx = BOCLParser.ArrowUnionContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowIncludesContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 289
-                        if not self.precpred(self._ctx, 20):
+                        self.state = 283
+                        if not self.precpred(self._ctx, 22):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 20)")
-                        self.state = 290
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 22)")
+                        self.state = 284
                         self.match(BOCLParser.ARROW)
-                        self.state = 291
-                        self.match(BOCLParser.UNION)
-                        self.state = 292
+                        self.state = 285
+                        self.match(BOCLParser.INCLUDES)
+                        self.state = 286
                         self.match(BOCLParser.LPAREN)
-                        self.state = 293
+                        self.state = 287
                         self.expression(0)
-                        self.state = 294
+                        self.state = 288
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 26:
-                        localctx = BOCLParser.ArrowFirstContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowExcludesContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 296
-                        if not self.precpred(self._ctx, 19):
+                        self.state = 290
+                        if not self.precpred(self._ctx, 21):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 19)")
-                        self.state = 297
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 21)")
+                        self.state = 291
                         self.match(BOCLParser.ARROW)
-                        self.state = 298
-                        self.match(BOCLParser.FIRST)
-                        self.state = 299
+                        self.state = 292
+                        self.match(BOCLParser.EXCLUDES)
+                        self.state = 293
                         self.match(BOCLParser.LPAREN)
-                        self.state = 300
+                        self.state = 294
+                        self.expression(0)
+                        self.state = 295
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 27:
-                        localctx = BOCLParser.ArrowLastContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowUnionContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 301
-                        if not self.precpred(self._ctx, 18):
+                        self.state = 297
+                        if not self.precpred(self._ctx, 20):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 18)")
-                        self.state = 302
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 20)")
+                        self.state = 298
                         self.match(BOCLParser.ARROW)
-                        self.state = 303
-                        self.match(BOCLParser.LAST)
-                        self.state = 304
+                        self.state = 299
+                        self.match(BOCLParser.UNION)
+                        self.state = 300
                         self.match(BOCLParser.LPAREN)
-                        self.state = 305
+                        self.state = 301
+                        self.expression(0)
+                        self.state = 302
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 28:
-                        localctx = BOCLParser.ArrowPrependContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowFirstContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 306
-                        if not self.precpred(self._ctx, 17):
+                        self.state = 304
+                        if not self.precpred(self._ctx, 19):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 17)")
-                        self.state = 307
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 19)")
+                        self.state = 305
                         self.match(BOCLParser.ARROW)
-                        self.state = 308
-                        self.match(BOCLParser.PREPEND)
-                        self.state = 309
+                        self.state = 306
+                        self.match(BOCLParser.FIRST)
+                        self.state = 307
                         self.match(BOCLParser.LPAREN)
-                        self.state = 310
-                        self.expression(0)
-                        self.state = 311
+                        self.state = 308
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 29:
-                        localctx = BOCLParser.ArrowAppendContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowLastContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 313
-                        if not self.precpred(self._ctx, 16):
+                        self.state = 309
+                        if not self.precpred(self._ctx, 18):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 16)")
-                        self.state = 314
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 18)")
+                        self.state = 310
                         self.match(BOCLParser.ARROW)
-                        self.state = 315
-                        self.match(BOCLParser.APPEND)
-                        self.state = 316
+                        self.state = 311
+                        self.match(BOCLParser.LAST)
+                        self.state = 312
                         self.match(BOCLParser.LPAREN)
-                        self.state = 317
-                        self.expression(0)
-                        self.state = 318
+                        self.state = 313
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 30:
-                        localctx = BOCLParser.ArrowSymDiffContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowPrependContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 320
-                        if not self.precpred(self._ctx, 15):
+                        self.state = 314
+                        if not self.precpred(self._ctx, 17):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 15)")
-                        self.state = 321
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 17)")
+                        self.state = 315
                         self.match(BOCLParser.ARROW)
-                        self.state = 322
-                        self.match(BOCLParser.SYMMETRICDIFFERENCE)
-                        self.state = 323
+                        self.state = 316
+                        self.match(BOCLParser.PREPEND)
+                        self.state = 317
                         self.match(BOCLParser.LPAREN)
-                        self.state = 324
+                        self.state = 318
                         self.expression(0)
-                        self.state = 325
+                        self.state = 319
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 31:
-                        localctx = BOCLParser.ArrowSubSequenceContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowAppendContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 327
-                        if not self.precpred(self._ctx, 14):
+                        self.state = 321
+                        if not self.precpred(self._ctx, 16):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 14)")
-                        self.state = 328
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 16)")
+                        self.state = 322
                         self.match(BOCLParser.ARROW)
-                        self.state = 329
-                        self.match(BOCLParser.SUBSEQUENCE)
-                        self.state = 330
+                        self.state = 323
+                        self.match(BOCLParser.APPEND)
+                        self.state = 324
                         self.match(BOCLParser.LPAREN)
-                        self.state = 331
+                        self.state = 325
                         self.expression(0)
-                        self.state = 332
-                        self.match(BOCLParser.COMMA)
-                        self.state = 333
-                        self.expression(0)
-                        self.state = 334
+                        self.state = 326
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 32:
-                        localctx = BOCLParser.ArrowSubOrderedSetContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowSymDiffContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 336
-                        if not self.precpred(self._ctx, 13):
+                        self.state = 328
+                        if not self.precpred(self._ctx, 15):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 13)")
-                        self.state = 337
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 15)")
+                        self.state = 329
                         self.match(BOCLParser.ARROW)
-                        self.state = 338
-                        self.match(BOCLParser.SUBORDEREDSET)
-                        self.state = 339
+                        self.state = 330
+                        self.match(BOCLParser.SYMMETRICDIFFERENCE)
+                        self.state = 331
                         self.match(BOCLParser.LPAREN)
-                        self.state = 340
+                        self.state = 332
                         self.expression(0)
-                        self.state = 341
-                        self.match(BOCLParser.COMMA)
-                        self.state = 342
-                        self.expression(0)
-                        self.state = 343
+                        self.state = 333
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 33:
-                        localctx = BOCLParser.IntersectionContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        localctx = BOCLParser.ArrowSubSequenceContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 345
-                        if not self.precpred(self._ctx, 12):
+                        self.state = 335
+                        if not self.precpred(self._ctx, 14):
                             from antlr4.error.Errors import FailedPredicateException
-                            raise FailedPredicateException(self, "self.precpred(self._ctx, 12)")
-                        self.state = 346
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 14)")
+                        self.state = 336
                         self.match(BOCLParser.ARROW)
-                        self.state = 347
-                        self.match(BOCLParser.INTERSECTION)
-                        self.state = 348
+                        self.state = 337
+                        self.match(BOCLParser.SUBSEQUENCE)
+                        self.state = 338
                         self.match(BOCLParser.LPAREN)
-                        self.state = 349
+                        self.state = 339
                         self.expression(0)
-                        self.state = 350
+                        self.state = 340
+                        self.match(BOCLParser.COMMA)
+                        self.state = 341
+                        self.expression(0)
+                        self.state = 342
                         self.match(BOCLParser.RPAREN)
                         pass
 
                     elif la_ == 34:
+                        localctx = BOCLParser.ArrowSubOrderedSetContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
+                        self.state = 344
+                        if not self.precpred(self._ctx, 13):
+                            from antlr4.error.Errors import FailedPredicateException
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 13)")
+                        self.state = 345
+                        self.match(BOCLParser.ARROW)
+                        self.state = 346
+                        self.match(BOCLParser.SUBORDEREDSET)
+                        self.state = 347
+                        self.match(BOCLParser.LPAREN)
+                        self.state = 348
+                        self.expression(0)
+                        self.state = 349
+                        self.match(BOCLParser.COMMA)
+                        self.state = 350
+                        self.expression(0)
+                        self.state = 351
+                        self.match(BOCLParser.RPAREN)
+                        pass
+
+                    elif la_ == 35:
+                        localctx = BOCLParser.IntersectionContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
+                        self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
+                        self.state = 353
+                        if not self.precpred(self._ctx, 12):
+                            from antlr4.error.Errors import FailedPredicateException
+                            raise FailedPredicateException(self, "self.precpred(self._ctx, 12)")
+                        self.state = 354
+                        self.match(BOCLParser.ARROW)
+                        self.state = 355
+                        self.match(BOCLParser.INTERSECTION)
+                        self.state = 356
+                        self.match(BOCLParser.LPAREN)
+                        self.state = 357
+                        self.expression(0)
+                        self.state = 358
+                        self.match(BOCLParser.RPAREN)
+                        pass
+
+                    elif la_ == 36:
                         localctx = BOCLParser.IsuniqueContext(self, BOCLParser.ExpressionContext(self, _parentctx, _parentState))
                         self.pushNewRecursionContext(localctx, _startState, self.RULE_expression)
-                        self.state = 352
+                        self.state = 360
                         if not self.precpred(self._ctx, 11):
                             from antlr4.error.Errors import FailedPredicateException
                             raise FailedPredicateException(self, "self.precpred(self._ctx, 11)")
-                        self.state = 353
+                        self.state = 361
                         self.match(BOCLParser.ARROW)
-                        self.state = 354
+                        self.state = 362
                         self.match(BOCLParser.ISUNIQUE)
-                        self.state = 355
+                        self.state = 363
                         self.match(BOCLParser.LPAREN)
-                        self.state = 356
+                        self.state = 364
                         self.expression(0)
-                        self.state = 357
+                        self.state = 365
                         self.match(BOCLParser.RPAREN)
                         pass
 
              
-                self.state = 363
+                self.state = 371
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,16,self._ctx)
 
@@ -3243,108 +3329,108 @@ class BOCLParser ( Parser ):
         self.enterRule(localctx, 32, self.RULE_primaryExpression)
         self._la = 0 # Token type
         try:
-            self.state = 390
+            self.state = 398
             self._errHandler.sync(self)
             la_ = self._interp.adaptivePredict(self._input,18,self._ctx)
             if la_ == 1:
                 localctx = BOCLParser.SelfExprContext(self, localctx)
                 self.enterOuterAlt(localctx, 1)
-                self.state = 364
+                self.state = 372
                 self.match(BOCLParser.SELF)
                 pass
 
             elif la_ == 2:
                 localctx = BOCLParser.StringLiteralContext(self, localctx)
                 self.enterOuterAlt(localctx, 2)
-                self.state = 365
+                self.state = 373
                 self.match(BOCLParser.STRING_LITERAL)
                 pass
 
             elif la_ == 3:
                 localctx = BOCLParser.NumberLiteralContext(self, localctx)
                 self.enterOuterAlt(localctx, 3)
-                self.state = 366
+                self.state = 374
                 self.match(BOCLParser.NUMBER)
                 pass
 
             elif la_ == 4:
                 localctx = BOCLParser.BooleanLiteralContext(self, localctx)
                 self.enterOuterAlt(localctx, 4)
-                self.state = 367
+                self.state = 375
                 self.match(BOCLParser.BOOLEAN_LITERAL)
                 pass
 
             elif la_ == 5:
                 localctx = BOCLParser.NullLiteralContext(self, localctx)
                 self.enterOuterAlt(localctx, 5)
-                self.state = 368
+                self.state = 376
                 self.match(BOCLParser.NULL)
                 pass
 
             elif la_ == 6:
                 localctx = BOCLParser.AllInstancesExprContext(self, localctx)
                 self.enterOuterAlt(localctx, 6)
-                self.state = 369
+                self.state = 377
                 self.match(BOCLParser.ID)
-                self.state = 370
+                self.state = 378
                 self.match(BOCLParser.DOUBLECOLON)
-                self.state = 371
+                self.state = 379
                 self.match(BOCLParser.ALLINSTANCES)
-                self.state = 372
+                self.state = 380
                 self.match(BOCLParser.LPAREN)
-                self.state = 373
+                self.state = 381
                 self.match(BOCLParser.RPAREN)
                 pass
 
             elif la_ == 7:
                 localctx = BOCLParser.DateFuncExprContext(self, localctx)
                 self.enterOuterAlt(localctx, 7)
-                self.state = 374
+                self.state = 382
                 self.match(BOCLParser.DATE)
-                self.state = 375
+                self.state = 383
                 self.match(BOCLParser.DOUBLECOLON)
-                self.state = 376
+                self.state = 384
                 self.match(BOCLParser.ID)
-                self.state = 377
+                self.state = 385
                 self.match(BOCLParser.LPAREN)
-                self.state = 378
+                self.state = 386
                 self.match(BOCLParser.RPAREN)
                 pass
 
             elif la_ == 8:
                 localctx = BOCLParser.FunctionCallExprContext(self, localctx)
                 self.enterOuterAlt(localctx, 8)
-                self.state = 379
+                self.state = 387
                 self.match(BOCLParser.ID)
-                self.state = 380
+                self.state = 388
                 self.match(BOCLParser.LPAREN)
-                self.state = 382
+                self.state = 390
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
-                if (((_la) & ~0x3f) == 0 and ((1 << _la) & 1166432303489024192) != 0) or ((((_la - 72)) & ~0x3f) == 0 and ((1 << (_la - 72)) & 121) != 0):
-                    self.state = 381
+                if (((_la) & ~0x3f) == 0 and ((1 << _la) & 4665729213955899584) != 0) or ((((_la - 74)) & ~0x3f) == 0 and ((1 << (_la - 74)) & 121) != 0):
+                    self.state = 389
                     self.argList()
 
 
-                self.state = 384
+                self.state = 392
                 self.match(BOCLParser.RPAREN)
                 pass
 
             elif la_ == 9:
                 localctx = BOCLParser.ParenExprContext(self, localctx)
                 self.enterOuterAlt(localctx, 9)
-                self.state = 385
+                self.state = 393
                 self.match(BOCLParser.LPAREN)
-                self.state = 386
+                self.state = 394
                 self.expression(0)
-                self.state = 387
+                self.state = 395
                 self.match(BOCLParser.RPAREN)
                 pass
 
             elif la_ == 10:
                 localctx = BOCLParser.IdExprContext(self, localctx)
                 self.enterOuterAlt(localctx, 10)
-                self.state = 389
+                self.state = 397
                 self.match(BOCLParser.ID)
                 pass
 
@@ -3399,110 +3485,118 @@ class BOCLParser ( Parser ):
          
 
             if predIndex == 7:
-                return self.precpred(self._ctx, 37)
+                return self.precpred(self._ctx, 39)
          
 
             if predIndex == 8:
-                return self.precpred(self._ctx, 36)
+                return self.precpred(self._ctx, 38)
          
 
             if predIndex == 9:
-                return self.precpred(self._ctx, 35)
+                return self.precpred(self._ctx, 37)
          
 
             if predIndex == 10:
-                return self.precpred(self._ctx, 34)
+                return self.precpred(self._ctx, 36)
          
 
             if predIndex == 11:
-                return self.precpred(self._ctx, 33)
+                return self.precpred(self._ctx, 35)
          
 
             if predIndex == 12:
-                return self.precpred(self._ctx, 32)
+                return self.precpred(self._ctx, 34)
          
 
             if predIndex == 13:
-                return self.precpred(self._ctx, 31)
+                return self.precpred(self._ctx, 33)
          
 
             if predIndex == 14:
-                return self.precpred(self._ctx, 30)
+                return self.precpred(self._ctx, 32)
          
 
             if predIndex == 15:
-                return self.precpred(self._ctx, 29)
+                return self.precpred(self._ctx, 31)
          
 
             if predIndex == 16:
-                return self.precpred(self._ctx, 28)
+                return self.precpred(self._ctx, 30)
          
 
             if predIndex == 17:
-                return self.precpred(self._ctx, 27)
+                return self.precpred(self._ctx, 29)
          
 
             if predIndex == 18:
-                return self.precpred(self._ctx, 26)
+                return self.precpred(self._ctx, 28)
          
 
             if predIndex == 19:
-                return self.precpred(self._ctx, 25)
+                return self.precpred(self._ctx, 27)
          
 
             if predIndex == 20:
-                return self.precpred(self._ctx, 24)
+                return self.precpred(self._ctx, 26)
          
 
             if predIndex == 21:
-                return self.precpred(self._ctx, 23)
+                return self.precpred(self._ctx, 25)
          
 
             if predIndex == 22:
-                return self.precpred(self._ctx, 22)
+                return self.precpred(self._ctx, 24)
          
 
             if predIndex == 23:
-                return self.precpred(self._ctx, 21)
+                return self.precpred(self._ctx, 23)
          
 
             if predIndex == 24:
-                return self.precpred(self._ctx, 20)
+                return self.precpred(self._ctx, 22)
          
 
             if predIndex == 25:
-                return self.precpred(self._ctx, 19)
+                return self.precpred(self._ctx, 21)
          
 
             if predIndex == 26:
-                return self.precpred(self._ctx, 18)
+                return self.precpred(self._ctx, 20)
          
 
             if predIndex == 27:
-                return self.precpred(self._ctx, 17)
+                return self.precpred(self._ctx, 19)
          
 
             if predIndex == 28:
-                return self.precpred(self._ctx, 16)
+                return self.precpred(self._ctx, 18)
          
 
             if predIndex == 29:
-                return self.precpred(self._ctx, 15)
+                return self.precpred(self._ctx, 17)
          
 
             if predIndex == 30:
-                return self.precpred(self._ctx, 14)
+                return self.precpred(self._ctx, 16)
          
 
             if predIndex == 31:
-                return self.precpred(self._ctx, 13)
+                return self.precpred(self._ctx, 15)
          
 
             if predIndex == 32:
-                return self.precpred(self._ctx, 12)
+                return self.precpred(self._ctx, 14)
          
 
             if predIndex == 33:
+                return self.precpred(self._ctx, 13)
+         
+
+            if predIndex == 34:
+                return self.precpred(self._ctx, 12)
+         
+
+            if predIndex == 35:
                 return self.precpred(self._ctx, 11)
          
 

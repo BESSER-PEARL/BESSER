@@ -83,7 +83,7 @@ Repository Layout
     verifying generator output or end-to-end flows.
 
 Frontend assets for the BESSER Web Modeling Editor live in the separate
-`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_
+`BESSER-Web-Modeling-Editor <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_
 repository (vendored here as the
 ``besser/utilities/web_modeling_editor/frontend`` submodule). Contribute UI
 updates there; this repository focuses on the backend APIs, metamodel,
@@ -100,6 +100,16 @@ Prerequisites
 * **Git**, including submodule support.
 * **Node.js 20+** *(only if you plan to run the web modeling editor frontend
   locally)*.
+* **System packages on Linux** (Debian/Ubuntu names):
+
+  .. code-block:: bash
+
+     sudo apt-get install python3-venv unixodbc bubblewrap
+
+  ``python3-venv`` (``python3.12-venv`` on Ubuntu 24.04) provides
+  ``ensurepip``, without which ``python -m venv`` fails. ``pyodbc`` needs
+  ``unixodbc`` at import time. ``bubblewrap`` is the Spec-Driven Agent's shell
+  sandbox; CI installs it, and the sandbox tests skip without it.
 
 Fork, clone, and initialize
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -134,6 +144,12 @@ Create a virtual environment
    # Activate it
    source venv/bin/activate           # Linux / macOS
    venv\Scripts\activate              # Windows (cmd / PowerShell)
+
+Keep the environment activated in every terminal you use. The commands below
+(``pytest``, ``besser-wme-backend``) and the ``django-admin`` command the Django
+generator calls are installed into it. A user-level ``pip install`` outside a
+virtual environment puts them in ``~/.local/bin`` on Linux, which is not on the
+default ``PATH``; the Django generator tests then skip.
 
 Install dependencies
 ~~~~~~~~~~~~~~~~~~~~
@@ -177,23 +193,36 @@ If you want to run or extend the Web Modeling Editor (WME) frontend, use the
 WME repository directly or the git submodule inside this repo. Prerequisites:
 Node.js 20+ and npm.
 
+The submodule at ``besser/utilities/web_modeling_editor/frontend`` is the
+`BESSER-Web-Modeling-Editor <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_
+repository, checked out at a fixed commit (a detached HEAD). To change the UI,
+create a branch inside the submodule and open the pull request in that
+repository; see `Coordinating Changes Across BESSER and WME`_.
+
 **Using the submodule:**
 
 1. Initialize the submodule: ``git submodule update --init --recursive``.
-2. Install dependencies:
-   ``cd besser/utilities/web_modeling_editor/frontend && npm install``.
+2. Install dependencies from the lockfile, in the submodule root:
+   ``cd besser/utilities/web_modeling_editor/frontend && npm ci``.
 3. Start the backend API (from the repo root):
    ``python besser/utilities/web_modeling_editor/backend/backend.py``.
 4. Start the webapp dev server: ``npm run dev`` (still in the frontend
    folder).
 
 The Vite dev server runs on http://localhost:8080 and expects the backend at
-http://localhost:9000/besser_api in development mode.
+http://localhost:9000/besser_api in development mode. Open the editor at
+``http://localhost:8080``: the backend's CORS allow-list (``DEFAULT_CORS_ORIGINS``)
+covers ``localhost`` and ``127.0.0.1``, and any other host name must be added
+through ``CORS_ORIGINS``.
+
+The backend logs a warning for each unset optional variable, including
+``GITHUB_CLIENT_ID`` and ``GITHUB_CLIENT_SECRET``. They are only needed for
+GitHub sign-in and deploy; drawing models and generating code work without them.
 
 **Using the standalone WME repo:**
 
-1. Clone `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_.
-2. Run ``npm install`` and ``npm run dev``.
+1. Clone `BESSER-Web-Modeling-Editor <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_.
+2. Run ``npm ci`` and ``npm run dev``.
 3. Start the BESSER backend as above if you need live API integration.
 
 Development Guidelines

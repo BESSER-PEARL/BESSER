@@ -20,6 +20,15 @@ TEMP_DIR_PREFIX = "besser_"
 AGENT_TEMP_DIR_PREFIX = "besser_agent_"
 CSV_TEMP_DIR_PREFIX = "besser_csv_"
 LLM_TEMP_DIR_PREFIX = "besser_llm_"
+USER_PROFILE_TEMP_DIR_PREFIX = "besser_user_profile_"
+# Every prefix above; services/cleanup.py removes stale temp dirs that match one.
+TEMP_DIR_PREFIXES = (
+    TEMP_DIR_PREFIX,
+    AGENT_TEMP_DIR_PREFIX,
+    CSV_TEMP_DIR_PREFIX,
+    LLM_TEMP_DIR_PREFIX,
+    USER_PROFILE_TEMP_DIR_PREFIX,
+)
 
 # ---------------------------------------------------------------------
 # Knowledge Graph (KG) endpoints
@@ -250,6 +259,10 @@ DEFAULT_CORS_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:8080",
+    # Browsers treat 127.0.0.1 as a different origin from localhost.
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8080",
 ]
 
 VALID_PRIMITIVE_TYPES = {

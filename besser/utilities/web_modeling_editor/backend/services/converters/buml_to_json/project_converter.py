@@ -4,11 +4,15 @@ Handles project structure processing and diagram coordination.
 Supports both single-diagram and multi-diagram per type formats.
 """
 
+import ast
 import logging
 import uuid
 import re
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Optional, Tuple
+
+from besser.BUML.metamodel.structural import DomainModel
+from besser.utilities.buml_code_builder.project_builder import is_user_reference_domain_model
 
 from .class_diagram_converter import parse_buml_content, class_buml_to_json
 from .state_machine_converter import state_machine_to_json
@@ -38,6 +42,43 @@ SECTION_CONFIG = {
     'component_model': ('COMPONENT', 'ComponentDiagram', 'Component Diagram'),
     'deployment_model': ('DEPLOYMENT', 'DeploymentDiagram', 'Deployment Diagram'),
 }
+
+# A project export writes a UserDiagram as two ordinary sections (see
+# project_builder): the user reference domain model under a STRUCTURAL header,
+# bound to ``user_model``, and the diagram's objects under an OBJECT header,
+# bound to ``user_object_model``. Those bindings tell them apart from class and
+# object diagrams. Numbered (``_<n>``) variants appear when there are several.
+_USER_MODEL_ASSIGN = re.compile(r'^user_model(?:_\d+)?\s*(?::[^=\n]*)?=(?!=)', re.MULTILINE)
+_USER_OBJECT_MODEL_ASSIGN = re.compile(
+    r'^user_object_model(?:_\d+)?\s*(?::[^=\n]*)?=(?!=)', re.MULTILINE,
+)
+_OBJECT_MODEL_NAME = re.compile(r'ObjectModel\(\s*name\s*=\s*"((?:[^"\\]|\\.)*)"')
+def _parse_user_reference_section(section_code: str) -> Optional[DomainModel]:
+    """Return the parsed model if a STRUCTURAL section is the user reference domain model, else ``None``.
+
+    Older exports also bound an ordinary class diagram that merely has a class
+    named ``User`` to ``user_model``; such a section has other classes and is
+    imported as a class diagram.
+    """
+    if not _USER_MODEL_ASSIGN.search(section_code):
+        return None
+    try:
+        domain_model = parse_buml_content(section_code)
+    except Exception:  # noqa: BLE001 -- unparsable: let the class-diagram path report it
+        return None
+    return domain_model if is_user_reference_domain_model(domain_model) else None
+
+
+def _object_model_title(section_code: str) -> str:
+    """Return the ``ObjectModel(name=...)`` of an object section, or ''."""
+    match = _OBJECT_MODEL_NAME.search(section_code)
+    if not match:
+        return ""
+    try:
+        return ast.literal_eval(f'"{match.group(1)}"')
+    except (ValueError, SyntaxError):
+        return match.group(1)
+
 
 # All known section header keywords used as boundary markers
 ALL_SECTION_KEYWORDS = [
@@ -168,6 +209,7 @@ def _convert_section(
     title: str,
     domain_sections: List[Tuple[str, str]],
     class_diagram_list: List[Dict[str, Any]],
+    user_reference_json: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """
     Convert a single section's code into a diagram JSON entry.
@@ -178,6 +220,8 @@ def _convert_section(
         title: Display title for the diagram
         domain_sections: All structural/domain sections (needed for object diagram context)
         class_diagram_list: Already-converted class diagrams (needed for object diagram references)
+        user_reference_json: The user reference domain model as class-diagram
+            JSON (needed for ``user_object_model`` sections)
 
     Returns:
         Dictionary with 'id', 'title', 'model', and 'lastUpdate' keys
@@ -198,6 +242,12 @@ def _convert_section(
             # Use the first class diagram's model as reference, or empty dict
             class_model_ref = class_diagram_list[0]["model"] if class_diagram_list else {}
             model = object_buml_to_json(combined_code, class_model_ref)
+
+        elif model_name == "user_object_model":
+            model = object_buml_to_json(
+                section_code, user_reference_json or {"elements": {}, "relationships": {}},
+                diagram_type="UserDiagram",
+            )
 
         elif model_name == "agent":
             model = agent_buml_to_json(section_code)
@@ -293,7 +343,12 @@ SINGLE_DIAGRAM_KEYWORDS: List[Tuple[str, Tuple[str, ...]]] = [
     )),
 ]
 
-_SINGLE_DIAGRAM_DEFAULT_TITLES = {
+# Single source of truth for the diagram types every imported project carries
+# (one slot per type, with an empty placeholder when the source file has none)
+# and their default titles. Insertion order is the order of the ``diagrams`` /
+# ``currentDiagramIndices`` keys in the returned project. Keys are diagram
+# *model* types; ``_fill_diagram_defaults`` re-keys the BPMN bucket for WME.
+DIAGRAM_DEFAULT_TITLES: Dict[str, str] = {
     'ClassDiagram': 'Class Diagram',
     'ObjectDiagram': 'Object Diagram',
     'AgentDiagram': 'Agent Diagram',
@@ -304,7 +359,41 @@ _SINGLE_DIAGRAM_DEFAULT_TITLES = {
     'BPMNDiagram': 'BPMN Diagram',
     'ComponentDiagram': 'Component Diagram',
     'DeploymentDiagram': 'Deployment Diagram',
+    'UserDiagram': 'User Diagram',
+    'KnowledgeGraphDiagram': 'Knowledge Graph Diagram',
 }
+
+
+def _fill_diagram_defaults(
+    diagram_jsons: Dict[str, List[Dict[str, Any]]],
+) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, int]]:
+    """Give every known diagram type a slot and an active index.
+
+    Types missing from *diagram_jsons* get one empty placeholder diagram. Every
+    bucket in the result -- known type or not -- gets a
+    ``currentDiagramIndices`` entry, so the frontend never sees a bucket
+    without an active index. The BPMN bucket is re-keyed as ``"BPMN"`` (WME's
+    key; ``model.type`` stays ``"BPMNDiagram"``).
+
+    Returns:
+        ``(diagrams, current_diagram_indices)``
+    """
+    filled: Dict[str, List[Dict[str, Any]]] = {}
+    for diagram_type, title in DIAGRAM_DEFAULT_TITLES.items():
+        filled[diagram_type] = diagram_jsons.get(diagram_type) or [{
+            "id": str(uuid.uuid4()),
+            "title": title,
+            "model": empty_model(diagram_type),
+            "lastUpdate": datetime.now(timezone.utc).isoformat(),
+        }]
+    # Keep any bucket of a type not listed above (canonical types first).
+    for diagram_type, entries in diagram_jsons.items():
+        filled.setdefault(diagram_type, entries)
+
+    filled["BPMN"] = filled.pop("BPMNDiagram")
+
+    current_diagram_indices = {diagram_type: 0 for diagram_type in filled}
+    return filled, current_diagram_indices
 
 
 def _detect_single_diagram_type(content: str) -> str:
@@ -333,7 +422,7 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
             "NNDiagram, BPMNDiagram, ComponentDiagram, DeploymentDiagram."
         )
 
-    title = _SINGLE_DIAGRAM_DEFAULT_TITLES[diagram_type]
+    title = DIAGRAM_DEFAULT_TITLES[diagram_type]
     try:
         if diagram_type == 'ClassDiagram':
             parsed = parse_buml_content(content)
@@ -366,37 +455,9 @@ def _build_project_from_single_diagram(content: str) -> Dict[str, Any]:
         "lastUpdate": datetime.now(timezone.utc).isoformat(),
     }
 
-    diagram_defaults = {
-        "ClassDiagram": "ClassDiagram",
-        "ObjectDiagram": "ObjectDiagram",
-        "AgentDiagram": "AgentDiagram",
-        "StateMachineDiagram": "StateMachineDiagram",
-        "GUINoCodeDiagram": "GUINoCodeDiagram",
-        "QuantumCircuitDiagram": "QuantumCircuitDiagram",
-        "NNDiagram": "NNDiagram",
-        "BPMNDiagram": "BPMNDiagram",
-        "ComponentDiagram": "ComponentDiagram",
-        "DeploymentDiagram": "DeploymentDiagram",
-    }
-
-    diagram_jsons: Dict[str, List[Dict[str, Any]]] = {}
-    for dt, mt in diagram_defaults.items():
-        if dt == diagram_type:
-            diagram_jsons[dt] = [filled_entry]
-        else:
-            diagram_jsons[dt] = [{
-                "id": str(uuid.uuid4()),
-                "title": _SINGLE_DIAGRAM_DEFAULT_TITLES[dt],
-                "model": empty_model(mt),
-                "lastUpdate": datetime.now(timezone.utc).isoformat(),
-            }]
-
-    current_diagram_indices = {dt: 0 for dt in diagram_defaults}
-
-    # WME keys the BPMN bucket as "BPMN" (model.type stays "BPMNDiagram").
-    if "BPMNDiagram" in diagram_jsons:
-        diagram_jsons["BPMN"] = diagram_jsons.pop("BPMNDiagram")
-        current_diagram_indices["BPMN"] = current_diagram_indices.pop("BPMNDiagram")
+    diagram_jsons, current_diagram_indices = _fill_diagram_defaults(
+        {diagram_type: [filled_entry]}
+    )
     current_diagram_type = "BPMN" if diagram_type == "BPMNDiagram" else diagram_type
 
     return {
@@ -463,11 +524,38 @@ def project_to_json(content: str) -> Dict[str, Any]:
     # First pass: extract all structural/domain sections (needed as context for object diagrams)
     # Check for both exact "domain_model" and suffixed variants like "domain_model_1"
     domain_sections: List[Tuple[str, str]] = []
-    has_domain_model = any(re.sub(r'_\d+$', '', name) == "domain_model" for name in model_names)
-    if has_domain_model:
+    base_names = {re.sub(r'_\d+$', '', name) for name in model_names}
+    if base_names & {"domain_model", "user_model"}:
         keyword = SECTION_CONFIG["domain_model"][0]
         domain_sections = _extract_all_sections(content, keyword)
         logger.debug("Found %d structural model section(s)", len(domain_sections))
+
+    # UserDiagrams: the user reference domain model is context, not a class
+    # diagram, and each user_object_model section becomes a UserDiagram.
+    user_reference_models: List[DomainModel] = []
+    class_sections: List[Tuple[str, str]] = []
+    for section in domain_sections:
+        reference_model = _parse_user_reference_section(section[1])
+        if reference_model is None:
+            class_sections.append(section)
+        else:
+            user_reference_models.append(reference_model)
+    domain_sections = class_sections
+    user_object_sections: List[Tuple[str, str]] = []
+    user_reference_json: Dict[str, Any] = {}
+    if base_names & {"object_model", "user_object_model"}:
+        object_sections = _extract_all_sections(content, SECTION_CONFIG["object_model"][0])
+        if user_reference_models:
+            user_object_sections = [
+                section for section in object_sections
+                if _USER_OBJECT_MODEL_ASSIGN.search(section[1])
+            ]
+            user_reference_json = class_buml_to_json(user_reference_models[0])
+    # Without the reference model, a user_object_model section instantiates an
+    # ordinary class diagram (older exports) and is imported as an object diagram.
+    model_aliases = {"user_model": "domain_model"}
+    if not user_object_sections:
+        model_aliases["user_object_model"] = "object_model"
 
     # Process each model type referenced in the project
     # Use a deduplicated ordered list to process each base model name only once.
@@ -478,17 +566,38 @@ def project_to_json(content: str) -> Dict[str, Any]:
     for model_name in model_names:
         # Strip numeric suffix: "domain_model_1" -> "domain_model", "agent_2" -> "agent"
         base_name = re.sub(r'_\d+$', '', model_name)
+        base_name = model_aliases.get(base_name, base_name)
 
         if base_name in seen_base_names:
             continue
         seen_base_names.add(base_name)
+
+        if base_name == "user_object_model":
+            diagram_jsons["UserDiagram"] = [
+                _convert_section(
+                    base_name, section_code,
+                    _object_model_title(section_code) or title
+                    or DIAGRAM_DEFAULT_TITLES["UserDiagram"],
+                    domain_sections, [], user_reference_json,
+                )
+                for title, section_code in user_object_sections
+            ]
+            continue
 
         if base_name not in SECTION_CONFIG:
             logger.debug("Skipping unknown model name '%s' (base: '%s')", model_name, base_name)
             continue
 
         keyword, diagram_type, default_title = SECTION_CONFIG[base_name]
-        sections = _extract_all_sections(content, keyword)
+        if base_name == "domain_model":
+            sections = domain_sections
+        elif base_name == "object_model":
+            sections = [
+                section for section in _extract_all_sections(content, keyword)
+                if section not in user_object_sections
+            ]
+        else:
+            sections = _extract_all_sections(content, keyword)
 
         if not sections:
             logger.info("No sections found for '%s' (keyword: %s), skipping", base_name, keyword)
@@ -546,33 +655,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
     created_at = datetime.now(timezone.utc).isoformat()
 
     # Ensure every diagram type has at least one entry (empty default)
-    diagram_defaults = {
-        "ClassDiagram": "ClassDiagram",
-        "ObjectDiagram": "ObjectDiagram",
-        "AgentDiagram": "AgentDiagram",
-        "StateMachineDiagram": "StateMachineDiagram",
-        "GUINoCodeDiagram": "GUINoCodeDiagram",
-        "QuantumCircuitDiagram": "QuantumCircuitDiagram",
-        "NNDiagram": "NNDiagram",
-        "BPMNDiagram": "BPMNDiagram",
-        "KnowledgeGraphDiagram": "KnowledgeGraphDiagram",
-    }
-
-    for diagram_type, model_type in diagram_defaults.items():
-        if diagram_type not in diagram_jsons:
-            diagram_jsons[diagram_type] = [{
-                "id": str(uuid.uuid4()),
-                "title": diagram_type.replace("Diagram", " Diagram"),
-                "model": empty_model(model_type),
-                "lastUpdate": datetime.now(timezone.utc).isoformat(),
-            }]
-
-    current_diagram_indices = {diagram_type: 0 for diagram_type in diagram_defaults}
-
-    # WME keys the BPMN bucket as "BPMN" (model.type stays "BPMNDiagram").
-    if "BPMNDiagram" in diagram_jsons:
-        diagram_jsons["BPMN"] = diagram_jsons.pop("BPMNDiagram")
-        current_diagram_indices["BPMN"] = current_diagram_indices.pop("BPMNDiagram")
+    diagram_jsons, current_diagram_indices = _fill_diagram_defaults(diagram_jsons)
 
     return {
         "id": project_id,

@@ -4,6 +4,7 @@ Project Builder
 This module generates Python code for complete BUML projects including all models.
 """
 
+import logging
 import os
 import tempfile
 import uuid
@@ -32,12 +33,43 @@ from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_
 from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
 from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
 
+logger = logging.getLogger(__name__)
+
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
         domain_model as reference_user_domain_model,
     )
 except ImportError:
     reference_user_domain_model = None
+
+
+def is_user_reference_domain_model(model: DomainModel) -> bool:
+    """Return True if *model* is the user reference domain model (User Modeling Language).
+
+    It is the model itself, or a model with exactly its classes (the
+    reference model re-executed from an exported project). A class diagram
+    that merely has a class named ``User`` is an ordinary domain model. When
+    the reference model is unavailable, any model with a ``User`` class counts.
+    """
+    if reference_user_domain_model is None:
+        return contains_user_class(model)
+    if model is reference_user_domain_model:
+        return True
+    reference_names = {cls.name for cls in reference_user_domain_model.get_classes()}
+    return {cls.name for cls in model.get_classes()} == reference_names
+
+
+def _is_user_reference_object_model(model: ObjectModel, user_classes: set) -> bool:
+    """Return True if every object of *model* instantiates a user reference class.
+
+    *user_classes* holds the classes of the user reference domain model(s).
+    When the reference model is unavailable, falls back to the name-based
+    ``is_user_object_model`` heuristic.
+    """
+    if reference_user_domain_model is None:
+        return is_user_object_model(model)
+    objects = model.objects or set()
+    return bool(objects) and all(obj.classifier in user_classes for obj in objects)
 
 
 def _suffixed_name(base_name: str, index: int, total: int) -> str:
@@ -126,14 +158,24 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     except ImportError:
         BPMNModel = None
 
+    # A UserDiagram is an ObjectModel over the user reference domain model, so
+    # it is recognised by its objects' classes: those of the reference model
+    # itself or of a copy of it in the project.
+    user_reference_classes = set()
+    if reference_user_domain_model is not None:
+        user_reference_classes.update(reference_user_domain_model.get_classes())
+    for model in project.models:
+        if isinstance(model, DomainModel) and is_user_reference_domain_model(model):
+            user_reference_classes.update(model.get_classes())
+
     for model in project.models:
         if isinstance(model, DomainModel):
-            if contains_user_class(model):
+            if is_user_reference_domain_model(model):
                 user_domain_models.append(model)
             else:
                 domain_models.append(model)
         elif isinstance(model, ObjectModel):
-            if is_user_object_model(model):
+            if _is_user_reference_object_model(model, user_reference_classes):
                 user_object_models.append(model)
             else:
                 object_models.append(model)
@@ -178,11 +220,14 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
     # Similarly pair user domain models with user object models
     user_pairs = []
+    standalone_user_object_models = []
     if len(user_domain_models) == 1 and len(user_object_models) <= 1:
         user_pairs.append((user_domain_models[0], user_object_models[0] if user_object_models else None))
     else:
         for udm in user_domain_models:
             user_pairs.append((udm, None))
+        # Written after the user domain model(s), whose classes they reference.
+        standalone_user_object_models = user_object_models
 
     # ------------------------------------------------------------------ #
     # Helper: count totals so we know whether to add numeric suffixes     #
@@ -299,6 +344,28 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 model_vars.append(var_name)
                 if uom:
                     model_vars.append(obj_var)
+
+            # User object models that could not be paired (several UserDiagrams
+            # over the one reference model). Like the standalone object models
+            # above, object_model_to_code writes the only section header.
+            n_standalone_user = len(standalone_user_object_models)
+            for idx, uom in enumerate(standalone_user_object_models, start=1):
+                obj_var = _suffixed_name("user_object_model", idx, n_standalone_user)
+
+                header_label = None
+                if n_standalone_user > 1:
+                    label = (_comment_safe(getattr(uom, "name", "")) or f"User Diagram {idx}").replace('"', "'")
+                    header_label = f'OBJECT MODEL {idx}: "{label}"'
+
+                tmp_path = os.path.join(temp_dir, f"user_object_model_{idx}.py")
+                object_model_to_code(
+                    objectmodel=uom,
+                    file_path=tmp_path,
+                    object_model_var_name=obj_var,
+                    header_label=header_label,
+                )
+                _write_temp_to_output(tmp_path, f)
+                model_vars.append(obj_var)
 
             # ---------------------------------------------------------- #
             # AGENT MODELS                                               #
@@ -538,4 +605,4 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
         f.write("    metadata=metadata\n")
         f.write(")\n")
 
-    print(f"Project saved to {file_path}")
+    logger.info("Project saved to %s", file_path)

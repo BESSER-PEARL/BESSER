@@ -1,5 +1,5 @@
 from abc import ABC
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Union, List, TYPE_CHECKING, Literal
 import keyword
@@ -48,6 +48,8 @@ class Element(ABC):
 
     def __init__(self, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0):
         self.timestamp: datetime = timestamp if timestamp is not None else _next_timestamp()
+        # Explicit = passed in (or set later), as opposed to the clock default.
+        self.__timestamp_explicit: bool = timestamp is not None
         self.is_derived: bool = is_derived
         self.uncertainty: float = uncertainty
 
@@ -58,8 +60,25 @@ class Element(ABC):
 
     @timestamp.setter
     def timestamp(self, timestamp: datetime):
-        """datetime: Set the timestamp of the element."""
+        """datetime: Set the timestamp of the element (marks it as explicit).
+
+        A timezone-aware value is stored as naive UTC, as ``parse_iso_timestamp``
+        does, since sorting cannot compare it with the naive clock default.
+        """
+        if isinstance(timestamp, datetime) and timestamp.tzinfo is not None:
+            timestamp = timestamp.astimezone(timezone.utc).replace(tzinfo=None)
         self.__timestamp = timestamp
+        self.__timestamp_explicit = True
+
+    @property
+    def has_explicit_timestamp(self) -> bool:
+        """bool: True when the timestamp was given (constructor argument or setter)
+        rather than defaulted to the creation time.
+
+        Serializers (code builder, editor JSON) only write explicit timestamps,
+        so the same input always gives the same output.
+        """
+        return getattr(self, "_Element__timestamp_explicit", False)
 
     @property
     def is_derived(self) -> bool:

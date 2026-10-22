@@ -107,6 +107,47 @@ class TestGeneratedZip:
         assert "overwrites" in text
         assert "NEVER" not in text and "api_key" not in text and "token" not in text
 
+    @pytest.mark.parametrize("generator, config, file_name, expected_entry, options", [
+        (
+            "django",
+            {"project_name": "library_site", "app_name": "books", "containerization": False},
+            "django_project.zip",
+            "manage.py",
+            ["project_name: `library_site`", "app_name: `books`", "containerization: `False`"],
+        ),
+        (
+            "spring",
+            {"project_name": "lib", "app_name": "LibApp", "package_name": "com.acme.lib",
+             "spring_boot_version": "3.4.4", "java_version": "21"},
+            "spring_boot_project.zip",
+            "pom.xml",
+            ["project_name: `lib`", "app_name: `LibApp`", "package_name: `com.acme.lib`",
+             "spring_boot_version: `3.4.4`", "java_version: `21`"],
+        ),
+        (
+            "jsonschema",
+            {"mode": "smart_data"},
+            "smart_data_schemas.zip",
+            None,
+            ["mode: `smart_data`"],
+        ),
+    ])
+    def test_custom_zip_endpoints_keep_filename_layout_and_provenance(
+        self, generator, config, file_name, expected_entry, options,
+    ):
+        response = _generate(generator, config)
+        assert response.headers["content-type"] == "application/zip"
+        assert response.headers["content-disposition"] == f'attachment; filename="{file_name}"'
+        entries = _zip_entries(response.content)
+        # Entries are relative to the project root, not prefixed with it.
+        if expected_entry:
+            assert expected_entry in entries
+        assert len(entries) > 1
+        text = entries[PROVENANCE_FILENAME].decode("utf-8")
+        assert f"Generator: `{generator}`" in text
+        for option in options:
+            assert option in text
+
     def test_standard_zip_generator_has_provenance_file(self):
         entries = _zip_entries(_generate("java").content)
         assert "Generator: `java`" in entries[PROVENANCE_FILENAME].decode("utf-8")
@@ -209,6 +250,18 @@ class TestSpecDriven:
         # The GitHub push copies the workspace, so the file travels there.
         assert (result_path / PROVENANCE_FILENAME).is_file()
 
+    def test_zip_download_carries_the_agent_trace_record(self, tmp_path):
+        # Issue #620: one Agent Trace record per run, beside the code.
+        _, (done, entry) = self._package(tmp_path, {"main.py": "x = 1\n", "app.py": "y = 2\n"})
+        trace_name = f".agent-trace/{done.runId}.json"
+        record = json.loads(_zip_entries(open(entry.file_path, "rb").read())[trace_name])
+        assert record["version"] == "0.1"  # the spec schema only accepts two-part versions
+        assert record["tool"] == {"name": "BESSER Spec-Driven Agent", "version": VERSION}
+        assert {f["path"] for f in record["files"]} == {"main.py", "app.py"}
+        # The record is not a user file.
+        assert done.fileCount == 2
+        assert done.aiShare["aiLines"] == 2 and done.aiShare["tracePath"] == trace_name
+
 
 def test_build_sha_is_shown_only_when_the_image_was_stamped(monkeypatch):
     from besser.utilities.provenance import generation_provenance_markdown
@@ -216,6 +269,11 @@ def test_build_sha_is_shown_only_when_the_image_was_stamped(monkeypatch):
     assert "BESSER build" not in generation_provenance_markdown("java")
     monkeypatch.setenv("BESSER_BUILD_SHA", "abc1234")
     assert "BESSER build: `abc1234`" in generation_provenance_markdown("java")
+
+
+def test_provenance_links_back_to_the_besser_repository():
+    from besser.utilities.provenance import BESSER_URL, generation_provenance_markdown
+    assert f"[star on GitHub]({BESSER_URL})" in generation_provenance_markdown("java")
 
 
 def test_provenance_file_is_not_counted_as_an_llm_authored_file(tmp_path):

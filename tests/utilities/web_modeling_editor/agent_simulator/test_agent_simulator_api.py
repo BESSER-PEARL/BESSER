@@ -174,3 +174,32 @@ class TestCreateSessionErrors:
     def test_invalid_session_id(self, client):
         response = client.post("/sessions", json=_session_payload(session_id="../../etc"), headers=AUTH)
         assert response.status_code == 400
+
+
+class TestLifespan:
+    def test_startup_runs_the_checks_and_shutdown_cancels_the_cleanup_task(self, monkeypatch, caplog):
+        calls: List[str] = []
+        monkeypatch.setattr(api, "_ensure_sessions_root_permissions", lambda: calls.append("permissions"))
+        monkeypatch.setattr(api, "_remove_stale_session_dirs", lambda: calls.append("stale"))
+        monkeypatch.setattr(api, "sandbox_selftest_error", lambda uid: calls.append("selftest") or None)
+        monkeypatch.delenv(api.API_TOKEN_ENV, raising=False)
+        cleanup_cancelled = []
+
+        async def fake_cleanup():
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                cleanup_cancelled.append(True)
+                raise
+
+        monkeypatch.setattr(api, "_periodic_cleanup", fake_cleanup)
+
+        async def _go():
+            async with api.app.router.lifespan_context(api.app):
+                await asyncio.sleep(0)
+                assert calls == ["permissions", "stale", "selftest"]
+                assert not cleanup_cancelled
+
+        asyncio.run(_go())
+        assert cleanup_cancelled == [True]
+        assert "AGENT_SIMULATOR_API_TOKEN is not set" in caplog.text

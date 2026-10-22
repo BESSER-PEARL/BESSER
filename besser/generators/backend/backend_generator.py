@@ -1,5 +1,6 @@
-import os
 import configparser
+import logging
+import os
 import docker
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
@@ -9,6 +10,9 @@ from besser.generators.pydantic_classes import PydanticGenerator
 from besser.generators.backend.api_generator import generate_modular_api
 from besser.generators.backend.docker_files import generate_docker_files
 from besser.generators.backend.nn_methods import NN_PACKAGE, TORCH_REQUIREMENT, generate_nn_methods
+
+logger = logging.getLogger(__name__)
+
 
 class BackendGenerator(GeneratorInterface):
     """
@@ -26,9 +30,15 @@ class BackendGenerator(GeneratorInterface):
         docker_config_path (str, optional): The path to the docker configuration file to auto upload the image. Defaults to None.
         port (int, optional): Port embedded in the generated ``uvicorn.run`` call. Takes precedence over the
                                 docker configuration's ``docker_port``. Defaults to None (docker config, else 8000).
+        api_title (str, optional): Title of the generated FastAPI app (OpenAPI docs and ``/``). Defaults to
+                                ``"<model name> API"``.
+        api_description (str, optional): Description shown in the generated API docs. Defaults to a generic
+                                description of the generated API.
+        api_version (str, optional): Version of the generated API. Defaults to ``"1.0.0"``.
     """
 
-    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None):
+    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None,
+                 api_title: str = None, api_description: str = None, api_version: str = None):
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "DELETE"]
         if not http_methods:
@@ -40,6 +50,9 @@ class BackendGenerator(GeneratorInterface):
         self.docker_image = docker_image
         self.docker_config_path = docker_config_path
         self.port = port
+        self.api_title = api_title
+        self.api_description = api_description
+        self.api_version = api_version
         self.config = self.load_config()
         self.has_nn_methods = False
 
@@ -63,9 +76,9 @@ class BackendGenerator(GeneratorInterface):
             }
         else:
             if not self.docker_config_path:
-                print("No configuration docker file.")
+                logger.debug("No Docker configuration file provided.")
             else:
-                print(f"Configuration file not found at path: {self.docker_config_path}")
+                logger.warning("Docker configuration file not found at path: %s", self.docker_config_path)
             return None
 
     def generate(self):
@@ -79,11 +92,11 @@ class BackendGenerator(GeneratorInterface):
         if self.output_dir is not None:
             backend_folder_path = self.output_dir
             os.makedirs(backend_folder_path, exist_ok=True)
-            print(f"Backend folder created at {backend_folder_path}")
+            logger.info("Backend folder created at %s", backend_folder_path)
         else:
             backend_folder_path = os.path.join(os.path.abspath(''), "output_backend")
             os.makedirs(backend_folder_path, exist_ok=True)
-            print(f"Backend folder created at {backend_folder_path}")
+            logger.info("Backend folder created at %s", backend_folder_path)
 
         # An explicitly requested port wins over the docker configuration; 8000 is the fallback.
         docker_port = self.port or (self.config["docker_port"] if self.config else 8000)
@@ -100,6 +113,9 @@ class BackendGenerator(GeneratorInterface):
             nested_creations=self.nested_creations,
             port=docker_port,
             output_dir=backend_folder_path,
+            api_title=self.api_title,
+            api_description=self.api_description,
+            api_version=self.api_version,
         )
 
         sql_alchemy = SQLAlchemyGenerator(model=self.model, output_dir=backend_folder_path)
@@ -176,7 +192,7 @@ class BackendGenerator(GeneratorInterface):
         )
 
         for log in build_logs:
-            print(log)
+            logger.info("%s", log)
 
         # Docker login
         username = self.config["docker_username"]
@@ -186,4 +202,4 @@ class BackendGenerator(GeneratorInterface):
         # Push Docker image
         resp = client.api.push(full_image_name, stream=True, decode=True)
         for line in resp:
-            print(line)
+            logger.info("%s", line)

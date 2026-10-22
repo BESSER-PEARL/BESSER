@@ -181,12 +181,9 @@ class RequestSizeLimitMiddleware:
 # Startup: environment variable validation
 # ---------------------------------------------------------------------------
 
-_REQUIRED_ENV_VARS = [
-    "GITHUB_CLIENT_ID",
-    "GITHUB_CLIENT_SECRET",
-]
-
 _OPTIONAL_ENV_VARS = [
+    "GITHUB_CLIENT_ID",  # GitHub sign-in, push and deploy; drawing and generation work without them
+    "GITHUB_CLIENT_SECRET",
     "SMTP_PASSWORD",
     "OPENAI_API_KEY",
     "AGENT_SIMULATOR_API_TOKEN",  # live agent simulation returns 503 without it
@@ -194,20 +191,12 @@ _OPTIONAL_ENV_VARS = [
 
 
 def _validate_env_vars() -> None:
-    """Check that expected environment variables are set and log diagnostics.
+    """Log a warning for each optional environment variable that is not set.
 
-    Required variables trigger ``logger.error`` when absent; optional ones
-    trigger ``logger.warning``.  The application is **not** terminated so
-    that services which do not depend on the missing variables can still
-    operate (graceful degradation).
+    None of them is needed to draw models and run generators, so the
+    application is **not** terminated: services which do not depend on the
+    missing variables keep working (graceful degradation).
     """
-    for var in _REQUIRED_ENV_VARS:
-        if not os.environ.get(var):
-            logger.error(
-                "Required environment variable %s is not set. "
-                "Features depending on it will not work.", var,
-            )
-
     for var in _OPTIONAL_ENV_VARS:
         if not os.environ.get(var):
             logger.warning(
@@ -368,16 +357,34 @@ def get_api_root():
     }
 
 
-# Main application entry point
-if __name__ == "__main__":
+def run(host: str = "0.0.0.0", port: int = 9000, log_level: str = "info") -> None:
+    """Serve ``app`` with uvicorn until interrupted."""
     import uvicorn
     # Single process on purpose: the agent simulator router keeps its rate
     # limiter, per-actor session cap and session-ownership map in memory.
     # Adding workers would give each worker its own copy of that state.
     uvicorn.run(
         app,
-        host="0.0.0.0",
-        port=9000,
-        log_level="info"
+        host=host,
+        port=port,
+        log_level=log_level,
     )
+
+
+def main(argv: Optional[list] = None) -> None:
+    """Parse ``--host`` / ``--port`` / ``--log-level`` and run the server.
+
+    The ``besser-wme-backend`` console script goes through
+    :func:`besser.utilities.web_modeling_editor.backend.cli.main`, which adds
+    a readable message when the backend dependencies are not installed.
+    """
+    from besser.utilities.web_modeling_editor.backend.cli import build_parser
+
+    args = build_parser().parse_args(argv)
+    run(host=args.host, port=args.port, log_level=args.log_level)
+
+
+# Main application entry point
+if __name__ == "__main__":
+    main()
 #The editor is available at: https://editor.besser-pearl.org

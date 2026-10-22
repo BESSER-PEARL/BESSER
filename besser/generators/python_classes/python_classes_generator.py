@@ -1,3 +1,4 @@
+import logging
 import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
@@ -5,6 +6,9 @@ from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
 from besser.generators.structural_utils import normalize_method_code
 from besser.utilities import sort_by_timestamp
+
+logger = logging.getLogger(__name__)
+
 
 class PythonGenerator(GeneratorInterface):
     """
@@ -39,4 +43,4 @@ class PythonGenerator(GeneratorInterface):
         with open(file_path, mode="w", encoding='utf-8') as f:
             generated_code = template.render(domain=self.model, sort_by_timestamp=sort_by_timestamp)
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.info("Code generated in the location: %s", file_path)

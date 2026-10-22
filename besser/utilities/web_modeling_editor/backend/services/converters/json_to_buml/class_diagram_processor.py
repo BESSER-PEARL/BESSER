@@ -21,6 +21,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
     legacy_body_only_to_text, process_ocl_constraints,
 )
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
+from besser.utilities.utils import parse_iso_timestamp
 
 
 def parse_method_signature_from_code(
@@ -151,11 +152,16 @@ def _process_enumerations(
                             f"Duplicate enumeration literal '{literal_name}' in '{element_name}'."
                         )
                     seen_literal_names.add(literal_name)
-                    literal_obj = EnumerationLiteral(name=literal_name)
+                    literal_obj = EnumerationLiteral(
+                        name=literal_name, timestamp=parse_iso_timestamp(literal.get("timestamp"))
+                    )
                     literals.append(literal_obj)
             # Store the ordered list for later use in buml_to_json conversion,
             # but pass as set to Enumeration (which requires set internally).
-            enum = Enumeration(name=element_name, literals=set(literals))
+            enum = Enumeration(
+                name=element_name, literals=set(literals),
+                timestamp=parse_iso_timestamp(element.get("timestamp")),
+            )
             # Preserve insertion order from the JSON for round-trip fidelity.
             enum._ordered_literals = list(literals)
             # Use add_type() which triggers validation through the setter
@@ -208,7 +214,10 @@ def _process_classes(
             if description or uri or icon:
                 metadata = Metadata(description=description, uri=uri, icon=icon)
             try:
-                cls = Class(name=class_name, is_abstract=is_abstract, metadata=metadata)
+                cls = Class(
+                    name=class_name, is_abstract=is_abstract, metadata=metadata,
+                    timestamp=parse_iso_timestamp(element.get("timestamp")),
+                )
                 # Use add_type() which triggers validation through the setter
                 domain_model.add_type(cls)
             except ValueError as e:
@@ -268,7 +277,8 @@ def _process_classes(
 
                     # Resolve the attribute type via O(1) lookup
                     type_obj = _resolve_type(attr_type, type_lookup)
-                    property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, is_id=is_id, is_external_id=is_external_id, is_derived=is_derived, default_value=default_value)
+                    property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, is_id=is_id, is_external_id=is_external_id, is_derived=is_derived, default_value=default_value,
+                                         timestamp=parse_iso_timestamp(attr.get("timestamp")))
                     cls.add_attribute(property_)
 
             # Add methods
@@ -366,7 +376,8 @@ def _process_classes(
                         visibility=visibility,
                         parameters=method_params,
                         code=method_code,
-                        implementation_type=implementation_type
+                        implementation_type=implementation_type,
+                        timestamp=parse_iso_timestamp(method.get("timestamp")),
                     )
 
                     # Store diagram references in a separate mapping for later resolution.
@@ -601,7 +612,8 @@ def _process_relationships(
                 name=source_role,
                 type=source_class,
                 multiplicity=source_multiplicity,
-                is_navigable=source_navigable
+                is_navigable=source_navigable,
+                timestamp=parse_iso_timestamp(source.get("timestamp")),
             )
 
             target_property = Property(
@@ -609,7 +621,8 @@ def _process_relationships(
                 type=target_class,
                 multiplicity=target_multiplicity,
                 is_navigable=target_navigable,
-                is_composite=is_composite
+                is_composite=is_composite,
+                timestamp=parse_iso_timestamp(target.get("timestamp")),
             )
 
             association_name = relationship.get("name") or f"{source_class.name}_{target_class.name}"
@@ -624,7 +637,8 @@ def _process_relationships(
 
             association = BinaryAssociation(
                 name=association_name,
-                ends={source_property, target_property}
+                ends={source_property, target_property},
+                timestamp=parse_iso_timestamp(relationship.get("timestamp")),
             )
             domain_model.associations.add(association)
 
@@ -653,7 +667,10 @@ def _process_relationships(
             layout_positions[f"rel_{association_name}"] = rel_layout
 
         elif rel_type == "ClassInheritance":
-            generalization = Generalization(general=target_class, specific=source_class)
+            generalization = Generalization(
+                general=target_class, specific=source_class,
+                timestamp=parse_iso_timestamp(relationship.get("timestamp")),
+            )
             domain_model.generalizations.add(generalization)
 
             # Capture layout bounds for the generalization
@@ -720,10 +737,14 @@ def _process_association_classes(
         methods = set(class_obj.methods)
 
         # Create the association class with attributes and methods
+        # The promoted class is the same diagram element, so it keeps an
+        # explicit timestamp read from the JSON. A defaulted one is not copied:
+        # passing it would make it explicit and serializers would emit it.
         association_class = AssociationClass(
             name=class_name,
             attributes=attributes,
-            association=association
+            association=association,
+            timestamp=class_obj.timestamp if class_obj.has_explicit_timestamp else None,
         )
 
         # Add methods to the association class if they exist
@@ -1017,6 +1038,12 @@ def _process_constraints(
             conversion_issues.append({**provenance(element_id, element), "code": "parse_error", "reason": reason})
             continue
         all_warnings.extend(warnings)
+        # A box holding a single constraint is that constraint, so it carries
+        # the box's timestamp. Boxes with several blocks are split into
+        # separate constraints, which keep their own creation times.
+        box_timestamp = parse_iso_timestamp(element.get("timestamp"))
+        if box_timestamp is not None and len(routing) == 1:
+            routing[0][1].timestamp = box_timestamp
         for issue in parser_issues:
             conversion_issues.append({
                 **provenance(element_id, element, issue),
@@ -1075,7 +1102,9 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     if ' ' in title:
         title = title.replace(' ', '_')
 
-    domain_model = DomainModel(title)
+    domain_model = DomainModel(
+        title, timestamp=parse_iso_timestamp((json_data.get('model') or {}).get('timestamp'))
+    )
     # Get elements and OCL constraints from the JSON data
     elements = (json_data.get('model') or {}).get('elements', {})
     relationships = (json_data.get('model') or {}).get('relationships', {})

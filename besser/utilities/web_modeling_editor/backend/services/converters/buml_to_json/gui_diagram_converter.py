@@ -36,8 +36,8 @@ from besser.utilities.buml_code_builder.common import (
     bind_association_end,
     bind_data_source,
     bind_domain_field,
+    attribute_var_name,
     build_data_binding,
-    safe_class_name,
 )
 from besser.BUML.metamodel.gui.dashboard import (
     AgentComponent,
@@ -62,7 +62,11 @@ from besser.BUML.metamodel.gui.events_actions import (
 )
 from besser.BUML.metamodel.gui.style import Layout, LayoutType, PositionType, Styling
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    SAFE_DATETIME_MODULE,
     safe_load_buml,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+    fresh_primitive_types,
 )
 
 # Namespace root used to decide which objects a GUI BUML section may name.
@@ -208,9 +212,8 @@ def _bind_domain_aliases(namespace: Dict[str, Any]) -> None:
             attributes = get_attrs()
         except Exception:  # pragma: no cover - defensive
             continue
-        class_name = safe_class_name(domain_class.name)
         for attribute in attributes:
-            namespace.setdefault(f"{class_name}_{attribute.name}", attribute)
+            namespace.setdefault(attribute_var_name(domain_class.name, attribute.name), attribute)
 
 
 def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Optional[GUIModel]:
@@ -244,7 +247,11 @@ def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Option
         # safe loader as every other uploaded section.
         context_names: Dict[str, Any] = {
             **_structural_namespace(),
+            # Not the process-wide StringType & co., which an upload could rename.
+            **fresh_primitive_types(),
             "UNLIMITED_MAX_MULTIPLICITY": _structural_module.UNLIMITED_MAX_MULTIPLICITY,
+            # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
+            "datetime": SAFE_DATETIME_MODULE,
             "set": set,
             "list": list,
             "dict": dict,
@@ -489,6 +496,14 @@ def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[s
     aggregation = getattr(binding, "aggregation", None)
     if aggregation is not None:
         attrs.setdefault("aggregation", aggregation.value)
+    # Nested paths have no class-diagram element to point at, so they travel as
+    # their own attributes (read back by chart_parsers).
+    if binding.label_field_path and not label_name:
+        attrs.setdefault("label-field-path", binding.label_field_path)
+    if binding.data_field_path and not data_name:
+        attrs.setdefault("data-field-path", binding.data_field_path)
+    if binding.filter_expression:
+        attrs.setdefault("filter", str(binding.filter_expression))
 def _apply_button_attributes(button: Button, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("button-label", button.label or button.name or "Button")
     action_type = attrs.get("action-type")
@@ -630,7 +645,9 @@ def _apply_table_attributes(chart: Table, attrs: Dict[str, Any]) -> None:
         attrs["columns"] = columns_list
 def _apply_metric_card_attributes(card: MetricCard, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(card, attrs)
-    attrs.setdefault("metric-title", card.title or card.name)
+    # metric_title defaults to "Metric Title"; a card titled only via ``title`` keeps it.
+    metric_title = card.metric_title if card.metric_title != "Metric Title" else None
+    attrs.setdefault("metric-title", metric_title or card.title or card.metric_title or card.name)
     attrs.setdefault("format", getattr(card, "format", None) or "number")
     attrs.setdefault("value-color", getattr(card, "value_color", "#2c3e50"))
     attrs.setdefault("value-size", getattr(card, "value_size", 32))

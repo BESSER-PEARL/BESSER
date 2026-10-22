@@ -32,9 +32,10 @@ real-PK routing, method-code normalization and the error-response shape
 monolith, just relocated.
 """
 
+import logging
 import os
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -52,7 +53,15 @@ from besser.generators.structural_utils import (
 )
 from besser.utilities.utils import sort_by_timestamp
 
+logger = logging.getLogger(__name__)
+
 _TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+
+# Defaults for the FastAPI app metadata; overridable through BackendGenerator.
+DEFAULT_API_DESCRIPTION = (
+    "Auto-generated REST API with full CRUD operations, relationship management, and advanced features"
+)
+DEFAULT_API_VERSION = "1.0.0"
 
 # Endpoint-name suffixes/prefixes that identify a function as belonging to a
 # given class's router. Used by ``cross_router_calls`` to detect when a
@@ -210,6 +219,9 @@ def generate_modular_api(
     nested_creations: bool,
     port: int,
     output_dir: str,
+    api_title: Optional[str] = None,
+    api_description: Optional[str] = None,
+    api_version: Optional[str] = None,
 ) -> None:
     """Render ``main_api.py``, ``database.py``, ``bal_stdlib.py`` and one
     ``routers/<class>.py`` per class into ``output_dir``.
@@ -325,8 +337,12 @@ def generate_modular_api(
         nested_creations=nested_creations,
         port=port,
         fkeys=fkeys,
+        # User-supplied strings: emit Python literals (repr), never raw text.
+        api_title=repr(api_title or f"{model.name} API"),
+        api_description=repr(api_description or DEFAULT_API_DESCRIPTION),
+        api_version=repr(api_version or DEFAULT_API_VERSION),
     )
     with open(os.path.join(output_dir, "main_api.py"), mode="w", encoding="utf-8") as f:
         f.write(main_api_code)
 
-    print("Code generated in the location: " + os.path.join(output_dir, "main_api.py"))
+    logger.info("Code generated in the location: %s", os.path.join(output_dir, "main_api.py"))

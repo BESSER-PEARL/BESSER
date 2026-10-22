@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from collections import deque
@@ -11,6 +12,8 @@ from besser.BUML.metamodel.structural import (
 from besser.generators import GeneratorInterface
 from besser.generators.structural_utils import get_foreign_keys
 from besser.utilities.utils import sort_by_timestamp
+
+logger = logging.getLogger(__name__)
 
 
 class SupabaseGenerator(GeneratorInterface):
@@ -335,4 +338,4 @@ class SupabaseGenerator(GeneratorInterface):
         file_path = self.build_generation_path(file_name=filename)
         with open(file_path, mode="w", encoding="utf-8") as f:
             f.write(rendered)
-        print(f"Supabase SQL generated at: {file_path}")
+        logger.info("Supabase SQL generated at: %s", file_path)

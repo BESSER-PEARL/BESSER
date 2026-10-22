@@ -66,6 +66,7 @@ The docs gate fails on **any** Sphinx warning or error, except an unreachable ex
 ```bash
 docker compose up --build           # backend on :9000, frontend on :8080
 python -m besser.utilities.web_modeling_editor.backend.backend   # backend alone, on :9000
+besser-wme-backend --port 9000      # same, via the console script (--host, --port, --log-level)
 ```
 The Spec-Driven Agent's PIA / Local (Ollama) providers need `BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`
 (the local `docker-compose.yml` sets it; running the backend alone does not).
@@ -94,7 +95,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
 | `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks) |
 | `…/backend/routers/` | One router per concern (generation, conversion, validation, deployment, spec_driven, telemetry, agent_simulator); `error_handler.py` has `@handle_endpoint_errors` |
-| `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` registry (`GeneratorInfo`) + `get_filename_for_generator` |
+| `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` registry (`GeneratorInfo`, incl. download filenames) + `get_filename_for_generator` |
 | `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins, most `BESSER_LLM_*` caps and flags |
 | `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`) |
 | `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
@@ -140,6 +141,9 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
   analysis failed, `[]` = scaffold already sufficient (Phase 2 may be skipped), a list = the tasks.
 - `validation/` — code checks; `validation/issues.py::_classify_issue` assigns severity.
 - `state/checkpoint.py`, `state/tracing.py` — per-run checkpoint and trace files.
+- `state/agent_trace.py` — line-level attribution (`.besser_attribution.json`: line hashes per contributor,
+  updated on generator writes, on seeding and at packaging) and the run's Agent Trace record
+  (`.agent-trace/<run id>.json`, shipped in the ZIP and the GitHub push).
 - Service layer `backend/services/spec_driven/`: `runner.py` (drives a run, emits SSE), `run_manager.py`
   (durable runs: SQLite event store, sequence numbers assigned *before* any subscriber sees a frame, replay
   via `?after=` / `Last-Event-ID`, `interrupted` marking on restart), `sse_events.py` (typed event schema),
@@ -196,7 +200,9 @@ in one response. (Spec-Driven code validation is a separate, fourth layer; see a
 1. Package in `besser/generators/<name>/` implementing `GeneratorInterface` (`__init__(model, output_dir=None)`,
    `generate()`; `output_dir=None` means `<cwd>/output`); templates in `generators/<name>/templates/`
 2. Register in `backend/config/generators.py`: `SUPPORTED_GENERATORS` (`GeneratorInfo`: `output_type`
-   `"file"`/`"zip"`, `requires_class_diagram`, `required_diagram_type`) **and** `get_filename_for_generator`
+   `"file"`/`"zip"`, `requires_class_diagram`, `required_diagram_type`, `download_filename`; without a
+   `download_filename` the download falls back to `<key>_output<ext>`; `keep_generated_filename` keeps a
+   single-file generator's own filename). Don't rename an existing `download_filename` — users rely on it
 3. Tests in `tests/generators/<name>/`
 4. `docs/source/generators/<name>.rst`, added to a toctree **and** the "Choosing a Generator" table in
    `docs/source/generators.rst`
@@ -212,8 +218,9 @@ Agent is not in `SUPPORTED_GENERATORS`; it has its own router rather than `/gene
 2. **Determinism**: identical input → identical output (no timestamps in file names)
 3. **Shared helpers** belong in `besser/utilities`, not in individual generators
 4. **Temp directories** use the `besser_*` prefixes from `constants.py` (`besser_`, `besser_agent_`,
-   `besser_csv_`, `besser_llm_`) so the hourly cleanup task (`services/cleanup.py`, >24 h) finds them;
-   clean up with try/finally; stream large outputs as ZIPs
+   `besser_csv_`, `besser_llm_`, `besser_user_profile_`) so the hourly cleanup task (`services/cleanup.py`,
+   >24 h) finds them — never a bare `TemporaryDirectory()`; a new prefix goes in `TEMP_DIR_PREFIXES`, which
+   cleanup reads; clean up with try/finally; stream large outputs as ZIPs
 5. **Backend contract changes** (endpoints, request/response shapes) must be coordinated with the frontend's
    `shared/api/` layer
 6. **Docs sync**: public-surface changes usually need `docs/source/` updates (see below)

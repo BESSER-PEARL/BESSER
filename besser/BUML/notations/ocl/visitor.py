@@ -64,6 +64,22 @@ class BOCLVisitorImpl(BOCLVisitor):
             return receiver.property.type
         return None
 
+    def _element_type(self, source):
+        """Element type of the collection a loop iterates over, or None if unknown.
+
+        ``self.books`` → ``Book``; ``Book.allInstances()`` → ``Book``;
+        ``select`` / ``reject`` keep their source's element type.
+        """
+        if isinstance(source, Property):
+            return source.type
+        if isinstance(source, PropertyCallExpression):
+            return source.property.type
+        if isinstance(source, OperationCallExpression) and source.name == "ALLInstances":
+            return self._get_class_by_name(getattr(source.source, "name", None))
+        if isinstance(source, LoopExp) and source.name in ("select", "reject"):
+            return self._element_type(source.source)
+        return None
+
     def _get_class_by_name(self, name):
         for t in self.dm.types:
             if t.name == name:
@@ -161,6 +177,10 @@ class BOCLVisitorImpl(BOCLVisitor):
         """
         return self._navigate_keyword_property(ctx, ctx.DATE().getText())
 
+    def visitDotClosureNavigation(self, ctx: BOCLParser.DotClosureNavigationContext):
+        """Resolve ``self.closure`` as a property: ``closure`` is the iterator keyword."""
+        return self._navigate_keyword_property(ctx, "closure")
+
     def _navigate_keyword_property(self, ctx, name: str):
         """Resolve ``<expression>.<name>`` where ``name`` is a lexer keyword.
 
@@ -205,6 +225,23 @@ class BOCLVisitorImpl(BOCLVisitor):
 
         oce = OperationCallExpression(name=method_name, operation=method_name, arguments=args)
         oce.source = source
+        return oce
+
+    def visitAllInstancesExp(self, ctx: BOCLParser.AllInstancesExpContext):
+        """``Session.allInstances()`` — the dot form of ``Session::allInstances()``.
+
+        Without this override the generated ``visitChildren`` returns the
+        value of the last child (the ``)`` token, i.e. ``None``), so any
+        loop over ``X.allInstances()`` silently iterated over nothing in the
+        evaluator. Both forms now produce the same ``ALLInstances`` node.
+        """
+        source = self.visit(ctx.expression())
+        if isinstance(source, VariableExp):
+            type_exp = TypeExp(source.name, source.name)
+        else:
+            type_exp = source
+        oce = OperationCallExpression(name="ALLInstances", operation="ALLInstances", arguments=[])
+        oce.source = type_exp
         return oce
 
     def visitDotOclIsTypeOf(self, ctx: BOCLParser.DotOclIsTypeOfContext):
@@ -256,10 +293,10 @@ class BOCLVisitorImpl(BOCLVisitor):
                     loop.addIterator(it)
                     i += 2
                     continue
-            # No type annotation
+            # No type annotation: the variable ranges over the source's elements.
             it = IteratorExp(var_name, "NotMentioned")
             loop.addIterator(it)
-            self.iterators_context[var_name] = self.context_class
+            self.iterators_context[var_name] = self._element_type(source) or self.context_class
             i += 1
 
         # Visit the body expression
@@ -292,6 +329,32 @@ class BOCLVisitorImpl(BOCLVisitor):
     def visitArrowIsEmpty(self, ctx: BOCLParser.ArrowIsEmptyContext):
         source = self.visit(ctx.expression())
         oce = OperationCallExpression(name="IsEmpty", operation="IsEmpty", arguments=[])
+        oce.source = source
+        return oce
+
+    def visitArrowNotEmpty(self, ctx: BOCLParser.ArrowNotEmptyContext):
+        source = self.visit(ctx.expression())
+        oce = OperationCallExpression(name="NotEmpty", operation="NotEmpty", arguments=[])
+        oce.source = source
+        return oce
+
+    def visitArrowasSet(self, ctx: BOCLParser.ArrowasSetContext):
+        source = self.visit(ctx.expression())
+        oce = OperationCallExpression(name="ASSET", operation="ASSET", arguments=[])
+        oce.source = source
+        return oce
+
+    def visitIntersection(self, ctx: BOCLParser.IntersectionContext):
+        source = self.visit(ctx.expression(0))
+        arg = self.visit(ctx.expression(1))
+        oce = OperationCallExpression(name="INTERSECTION", operation="INTERSECTION", arguments=[arg])
+        oce.source = source
+        return oce
+
+    def visitIsunique(self, ctx: BOCLParser.IsuniqueContext):
+        source = self.visit(ctx.expression(0))
+        arg = self.visit(ctx.expression(1))
+        oce = OperationCallExpression(name="ISUNIQUE", operation="ISUNIQUE", arguments=[arg])
         oce.source = source
         return oce
 
@@ -473,7 +536,7 @@ class BOCLVisitorImpl(BOCLVisitor):
 
     def visitBooleanLiteral(self, ctx: BOCLParser.BooleanLiteralContext):
         text = ctx.BOOLEAN_LITERAL().getText()
-        return BooleanLiteralExpression("NP", text)
+        return BooleanLiteralExpression("NP", text == "true")
 
     def visitNullLiteral(self, ctx: BOCLParser.NullLiteralContext):
         return None

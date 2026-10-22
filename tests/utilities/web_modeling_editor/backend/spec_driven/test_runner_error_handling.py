@@ -76,11 +76,13 @@ def test_scrub_skipped_files_never_reach_the_zip(tmp_path):
 
     runner = SmartGenerationRunner(_build_request())
     runner.temp_dir = str(tmp_path)
-    _done, entry = runner._package_result(str(result))
+    done, entry = runner._package_result(str(result))
 
     with zipfile.ZipFile(entry.file_path) as archive:
         names = set(archive.namelist())
-        assert names == {"main.py", "README.md", "BESSER_GENERATION.md"}
+        assert names == {
+            "main.py", "README.md", "BESSER_GENERATION.md", f".agent-trace/{done.runId}.json",
+        }
         assert all(TOKEN not in archive.read(n).decode() for n in names)
 
 

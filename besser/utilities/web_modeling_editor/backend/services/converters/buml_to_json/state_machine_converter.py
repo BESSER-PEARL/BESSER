@@ -7,22 +7,15 @@ Provides two entry points:
 """
 
 import uuid
-import re
 import ast
 from besser.BUML.metamodel.state_machine.state_machine import (
     StateMachine, CustomCodeAction,
 )
+from besser.utilities.buml_code_builder.common import _sanitize_identifier
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
 )
-
-
-def _sanitize_identifier(name: str) -> str:
-    """Sanitize a string to be a valid Python identifier."""
-    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
-    sanitized = re.sub(r'^[^a-zA-Z_]+', '', sanitized)
-    return sanitized or 'unnamed'
 
 
 def state_machine_object_to_json(sm: StateMachine) -> dict:

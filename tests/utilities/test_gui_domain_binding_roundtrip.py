@@ -81,25 +81,29 @@ def test_the_helper_degrades_to_none(model, cls, field):
 # --------------------------------------------------------------------------- #
 # The loader
 # --------------------------------------------------------------------------- #
+# In a real export the layer is built earlier in the same file; the loader only
+# lets a file assign attributes of objects it declared itself.
+_DECLARE_LAYER = "layer_binding = Holder()\n"
+
+
 def test_the_emitted_binding_loads_and_resolves():
-    holder = _Holder()
-    loader.safe_load_buml(EMITTED, allowed_names={
+    namespace = loader.safe_load_buml(_DECLARE_LAYER + EMITTED, allowed_names={
         "bind_domain_field": bind_domain_field,
         "domain_model": _Model(),
-        "layer_binding": holder,
+        "Holder": _Holder,
     })
+    holder = namespace["layer_binding"]
     assert holder.field is not None and holder.field.name == "title"
 
 
 def test_a_standalone_gui_export_still_loads():
     """No `domain_model` in scope: the NameError guard swallows it and the
     import succeeds with the binding left unset."""
-    holder = _Holder()
-    loader.safe_load_buml(EMITTED, allowed_names={
+    namespace = loader.safe_load_buml(_DECLARE_LAYER + EMITTED, allowed_names={
         "bind_domain_field": bind_domain_field,
-        "layer_binding": holder,
+        "Holder": _Holder,
     })
-    assert holder.field is None
+    assert namespace["layer_binding"].field is None
 
 
 def test_the_old_inline_form_is_still_refused():

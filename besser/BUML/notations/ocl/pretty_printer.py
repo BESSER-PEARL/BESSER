@@ -39,6 +39,7 @@ _PREC_POSTFIX = 90
 _ARROW_OPS = {
     "Size": "size",
     "IsEmpty": "isEmpty",
+    "NotEmpty": "notEmpty",
     "Sum": "sum",
     "First": "first",
     "Last": "last",

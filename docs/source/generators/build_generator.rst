@@ -48,10 +48,14 @@ it in ``besser/utilities/web_modeling_editor/backend/config/generators.py``. Eac
         file_extension=".zip",            # extension of the generated artifact
         category="web_framework",         # logical grouping (object_oriented, web_framework, database, etc.)
         requires_class_diagram=True,      # True if the generator needs a ClassDiagram as input
+        download_filename="my_app.zip",   # name of the downloaded file
     )
 
 Set ``requires_class_diagram=False`` for generators that consume other diagram types
 (e.g., agent diagrams, quantum circuits, deployment models).
 
-You should also add a filename mapping in ``get_filename_for_generator()`` in the same file so
-the download response uses a meaningful name.
+``download_filename`` is the name the browser saves the download under; ``get_filename_for_generator()``
+reads it from the registry, and an entry without one falls back to ``<generator_key>_output<file_extension>``.
+A single-file generator whose own output filename is meaningful (the Supabase generator's
+``<timestamp>_<slug>.sql`` migration name, for example) can set ``keep_generated_filename=True`` instead,
+so the download keeps that name.

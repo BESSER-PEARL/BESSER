@@ -94,6 +94,11 @@ class BOCLVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by BOCLParser#arrowNotEmpty.
+    def visitArrowNotEmpty(self, ctx:BOCLParser.ArrowNotEmptyContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by BOCLParser#arrowAppend.
     def visitArrowAppend(self, ctx:BOCLParser.ArrowAppendContext):
         return self.visitChildren(ctx)
@@ -181,6 +186,11 @@ class BOCLVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BOCLParser#addSubExpr.
     def visitAddSubExpr(self, ctx:BOCLParser.AddSubExprContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BOCLParser#dotClosureNavigation.
+    def visitDotClosureNavigation(self, ctx:BOCLParser.DotClosureNavigationContext):
         return self.visitChildren(ctx)
 
 

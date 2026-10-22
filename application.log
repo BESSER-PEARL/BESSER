@@ -1,0 +1,72 @@
+2026-10-20 14:44:16,399 - BESSER Agentic Framework - WARNING - cv2 dependencies in websocket_callbacks.py could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:44:16,399 - BESSER Agentic Framework - WARNING - plotly dependencies in websocket_callbacks.py could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:44:16,421 - BESSER Agentic Framework - WARNING - cv2 dependencies in WebSocketPlatform could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:44:16,422 - BESSER Agentic Framework - WARNING - plotly dependencies in WebSocketPlatform could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:44:16,423 - BESSER Agentic Framework - WARNING - librosa dependencies in WebSocketPlatform could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:44:18,761 - BESSER Agentic Framework - ERROR - User profiles file not found at user_profiles.json
+2026-10-20 14:44:20,400 - BESSER Agentic Framework - INFO - (guard): [merge_a] --> [done]
+2026-10-20 14:44:20,401 - BESSER Agentic Framework - INFO - [done] Running body done_body
+2026-10-20 14:44:20,601 - BESSER Agentic Framework - INFO - (guard): [merge_a] --> [done]
+2026-10-20 14:44:20,602 - BESSER Agentic Framework - INFO - [done] Running body done_body
+2026-10-20 14:44:21,832 - BESSER Agentic Framework - INFO - receive_message_text (guard): [receive] --> [peer_returned]
+2026-10-20 14:44:21,832 - BESSER Agentic Framework - INFO - [peer_returned] Running body peer_returned_body
+2026-10-20 14:44:21,832 - BESSER Agentic Framework - INFO - auto: [peer_returned] --> [wait]
+2026-10-20 14:44:21,832 - BESSER Agentic Framework - INFO - [wait] Running body default_body
+2026-10-20 14:44:22,048 - BESSER Agentic Framework - INFO - receive_message_text (guard): [to_peer] --> [from_peer]
+2026-10-20 14:44:22,048 - BESSER Agentic Framework - INFO - [from_peer] Running body peer_returned_body
+2026-10-20 14:44:22,048 - BESSER Agentic Framework - INFO - auto: [from_peer] --> [wait]
+2026-10-20 14:44:22,048 - BESSER Agentic Framework - INFO - [wait] Running body default_body
+2026-10-20 14:44:24,165 - BESSER Agentic Framework - ERROR - User profiles file not found at user_profiles.json
+2026-10-20 14:44:24,458 - BESSER Agentic Framework - ERROR - User profiles file not found at user_profiles.json
+2026-10-20 14:44:27,419 - BESSER Agentic Framework - ERROR - Internal error: owner merge failed
+2026-10-20 14:44:27,421 - BESSER Agentic Framework - ERROR - Internal error: No successful governed merge from owner (gw1)
+2026-10-20 14:44:28,312 - BESSER Agentic Framework - ERROR - Internal error: owner merge failed
+2026-10-20 14:44:28,313 - BESSER Agentic Framework - ERROR - Internal error: No successful governed merge from owner (gw1)
+2026-10-20 14:44:51,980 - BESSER Agentic Framework - WARNING - cv2 dependencies in websocket_callbacks.py could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:44:51,982 - BESSER Agentic Framework - WARNING - plotly dependencies in websocket_callbacks.py could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:44:51,990 - BESSER Agentic Framework - WARNING - cv2 dependencies in WebSocketPlatform could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:44:51,991 - BESSER Agentic Framework - WARNING - plotly dependencies in WebSocketPlatform could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:44:51,993 - BESSER Agentic Framework - WARNING - librosa dependencies in WebSocketPlatform could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:44:53,890 - BESSER Agentic Framework - ERROR - User profiles file not found at user_profiles.json
+2026-10-20 14:44:55,479 - BESSER Agentic Framework - INFO - (guard): [merge_a] --> [done]
+2026-10-20 14:44:55,480 - BESSER Agentic Framework - INFO - [done] Running body done_body
+2026-10-20 14:44:55,747 - BESSER Agentic Framework - INFO - (guard): [merge_a] --> [done]
+2026-10-20 14:44:55,747 - BESSER Agentic Framework - INFO - [done] Running body done_body
+2026-10-20 14:44:57,494 - BESSER Agentic Framework - INFO - receive_message_text (guard): [receive] --> [peer_returned]
+2026-10-20 14:44:57,496 - BESSER Agentic Framework - INFO - [peer_returned] Running body peer_returned_body
+2026-10-20 14:44:57,496 - BESSER Agentic Framework - INFO - auto: [peer_returned] --> [wait]
+2026-10-20 14:44:57,496 - BESSER Agentic Framework - INFO - [wait] Running body default_body
+2026-10-20 14:44:57,959 - BESSER Agentic Framework - INFO - receive_message_text (guard): [to_peer] --> [from_peer]
+2026-10-20 14:44:57,960 - BESSER Agentic Framework - INFO - [from_peer] Running body peer_returned_body
+2026-10-20 14:44:57,960 - BESSER Agentic Framework - INFO - auto: [from_peer] --> [wait]
+2026-10-20 14:44:57,960 - BESSER Agentic Framework - INFO - [wait] Running body default_body
+2026-10-20 14:45:01,892 - BESSER Agentic Framework - ERROR - User profiles file not found at user_profiles.json
+2026-10-20 14:45:02,327 - BESSER Agentic Framework - ERROR - User profiles file not found at user_profiles.json
+2026-10-20 14:45:08,187 - BESSER Agentic Framework - ERROR - Internal error: owner merge failed
+2026-10-20 14:45:08,188 - BESSER Agentic Framework - ERROR - Internal error: No successful governed merge from owner (gw1)
+2026-10-20 14:45:10,743 - BESSER Agentic Framework - ERROR - Internal error: owner merge failed
+2026-10-20 14:45:10,745 - BESSER Agentic Framework - ERROR - Internal error: No successful governed merge from owner (gw1)
+2026-10-20 14:45:44,414 - BESSER Agentic Framework - WARNING - cv2 dependencies in websocket_callbacks.py could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:45:44,415 - BESSER Agentic Framework - WARNING - plotly dependencies in websocket_callbacks.py could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:45:44,429 - BESSER Agentic Framework - WARNING - cv2 dependencies in WebSocketPlatform could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:45:44,431 - BESSER Agentic Framework - WARNING - plotly dependencies in WebSocketPlatform could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:45:44,432 - BESSER Agentic Framework - WARNING - librosa dependencies in WebSocketPlatform could not be imported. You can install them from the requirements/requirements-extras.txt file
+2026-10-20 14:45:46,780 - BESSER Agentic Framework - ERROR - User profiles file not found at user_profiles.json
+2026-10-20 14:45:48,470 - BESSER Agentic Framework - INFO - (guard): [merge_a] --> [done]
+2026-10-20 14:45:48,471 - BESSER Agentic Framework - INFO - [done] Running body done_body
+2026-10-20 14:45:48,752 - BESSER Agentic Framework - INFO - (guard): [merge_a] --> [done]
+2026-10-20 14:45:48,752 - BESSER Agentic Framework - INFO - [done] Running body done_body
+2026-10-20 14:45:50,216 - BESSER Agentic Framework - INFO - receive_message_text (guard): [receive] --> [peer_returned]
+2026-10-20 14:45:50,217 - BESSER Agentic Framework - INFO - [peer_returned] Running body peer_returned_body
+2026-10-20 14:45:50,217 - BESSER Agentic Framework - INFO - auto: [peer_returned] --> [wait]
+2026-10-20 14:45:50,217 - BESSER Agentic Framework - INFO - [wait] Running body default_body
+2026-10-20 14:45:50,403 - BESSER Agentic Framework - INFO - receive_message_text (guard): [to_peer] --> [from_peer]
+2026-10-20 14:45:50,403 - BESSER Agentic Framework - INFO - [from_peer] Running body peer_returned_body
+2026-10-20 14:45:50,403 - BESSER Agentic Framework - INFO - auto: [from_peer] --> [wait]
+2026-10-20 14:45:50,403 - BESSER Agentic Framework - INFO - [wait] Running body default_body
+2026-10-20 14:45:52,291 - BESSER Agentic Framework - ERROR - User profiles file not found at user_profiles.json
+2026-10-20 14:45:52,520 - BESSER Agentic Framework - ERROR - User profiles file not found at user_profiles.json
+2026-10-20 14:45:55,487 - BESSER Agentic Framework - ERROR - Internal error: owner merge failed
+2026-10-20 14:45:55,489 - BESSER Agentic Framework - ERROR - Internal error: No successful governed merge from owner (gw1)
+2026-10-20 14:45:56,502 - BESSER Agentic Framework - ERROR - Internal error: owner merge failed
+2026-10-20 14:45:56,503 - BESSER Agentic Framework - ERROR - Internal error: No successful governed merge from owner (gw1)

@@ -33,6 +33,7 @@ from besser.utilities.web_modeling_editor.backend.services.deployment import (
     run_docker_compose,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils import (
+    safe_path as _safe_path,
     validate_generator,
 )
 
@@ -54,15 +55,6 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _safe_path(base_dir: str, user_filename: str) -> str:
-    """Resolve a user-provided filename safely within base_dir."""
-    safe_name = os.path.basename(user_filename)
-    full_path = os.path.realpath(os.path.join(base_dir, safe_name))
-    if not full_path.startswith(os.path.realpath(base_dir)):
-        raise ValueError("Invalid path")
-    return full_path
 
 router = APIRouter(prefix="/besser_api", tags=["deployment"])
 

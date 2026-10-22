@@ -917,7 +917,7 @@ async def get_json_model_from_image(
         except (json.JSONDecodeError, ValueError):
             existing_domain_model = None
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         safe_filename = os.path.basename(image_file.filename)
         image_path = os.path.join(temp_dir, safe_filename)
         await _write_file(image_path, image_content)

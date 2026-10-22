@@ -154,8 +154,9 @@ consistency checks as the editor's Refine KG dialog and reports findings only.
 JSON body: the ``diagram``, an optional ``description``, the ``provider``
 (``anthropic``, ``openai`` -- the default -- ``mistral`` or ``nebius``), an
 optional ``llm_model`` (the provider's default otherwise) and the caller's own
-``api_key``. ``/classify-orphans-with-llm`` also takes ``node_ids`` (at most 400
-per request; the editor reads the limit from ``/kg-config``). The key is a
+``api_key``. ``/classify-orphans-with-llm`` also takes ``node_ids``, at most
+``maxOrphanClassifyNodes`` per request (80 by default; the editor reads the
+limit from ``/kg-config`` and sends larger sets in batches). The key is a
 ``SecretStr`` and is never logged. OpenAI is reached
 through the transport in ``besser.utilities.llm_utils``; the other providers go
 through the Spec-Driven Agent's provider clients. The server-paid tiers and the

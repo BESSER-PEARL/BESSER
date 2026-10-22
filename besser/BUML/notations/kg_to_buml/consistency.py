@@ -2,8 +2,9 @@
 
 Delegates the actual validation to :mod:`pyshacl` (which itself wraps
 :mod:`owlrl` for OWL2-RL inference). The KG is first serialised to an
-``rdflib.Graph`` via the existing :func:`knowledge_graph_to_rdf`
-exporter (``vocab="both"`` so both OWL and SHACL triples are present),
+``rdflib.Graph`` via :func:`~besser.BUML.notations.kg_to_buml.kg_to_rdf.kg_to_rdf`
+with ``mirror_shapes=True`` (the same projection the class-diagram conversion
+uses, plus the OWL restrictions mirrored as SHACL shapes),
 then augmented with a small set of synthetic SHACL shapes for OWL DL
 constructs that ``pyshacl + owlrl`` doesn't translate into validation
 violations on its own (notably ``owl:disjointWith``,
@@ -915,8 +916,9 @@ def _constraint_label_for(
 def _build_iri_to_node_id(kg: KnowledgeGraph) -> Dict[str, str]:
     """Map every rdflib-term-as-string to the KG node id that produced it.
 
-    The exporter at :func:`knowledge_graph_to_rdf` uses three strategies in
-    ``_term_for_node`` for non-literal nodes:
+    The projection names nodes through the shared
+    :func:`besser.utilities.kg_to_owl.term_for_node`, which uses three
+    strategies for non-literal nodes:
 
     1. ``node.iri`` directly when set;
     2. an explicit :class:`BNode` for KGBlank, KGNodeConstraint, and

@@ -1635,14 +1635,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     )
 
     def _drop_redundant_generator_tools(self) -> None:
-        """Remove sub-generator tools the chosen primary already bundles.
+        """Remove generator tools that would duplicate or overwrite the app.
 
-        No-op unless ``self._generator_used`` is a known bundling primary
-        (see ``_REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY``). Prevents the Phase-2
-        agent from emitting duplicate ``pydantic/`` / ``sqlalchemy/`` /
-        ``rest_api/`` dirs alongside the assembled ``backend/``.
+        Sub-generators the chosen primary already bundles (see
+        ``_REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY``) would emit duplicate
+        ``pydantic/`` / ``sqlalchemy/`` / ``rest_api/`` dirs next to the
+        assembled ``backend/``. Once an application exists (a primary scaffold,
+        or a modify run's seed that holds one), the primaries go too and the
+        executor refuses them (#666).
         """
-        redundant = _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY.get(self._generator_used or "")
+        redundant = set(_REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY.get(self._generator_used or "", ()))
+        if self._generator_used in _APPLICATION_PRIMARY_TOOLS or (
+                self._modify_mode and self._seed_has_app()):
+            redundant |= _APPLICATION_PRIMARY_TOOLS
+            self.executor.lock_generators(_APPLICATION_PRIMARY_TOOLS)
         if not redundant:
             return
         before = len(self.tools)
@@ -1652,9 +1658,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         ]
         if len(self.tools) != before:
             logger.info(
-                "Phase 2: dropped %d redundant generator tool(s) already "
-                "bundled by %s (avoids duplicate output dirs)",
-                before - len(self.tools), self._generator_used,
+                "Phase 2: dropped %d generator tool(s) that would duplicate or "
+                "overwrite the existing app (scaffold: %s)",
+                before - len(self.tools), self._generator_used or "seeded app",
             )
 
     def _ensure_gitignore(self) -> None:

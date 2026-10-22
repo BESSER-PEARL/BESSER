@@ -607,6 +607,8 @@ class ToolExecutor:
         # until the model has demonstrably tried targeted edits — the
         # rewrite habit is where modify-run regressions come from.
         self._modify_guard = False
+        # Whole-application generators refused once the scaffold exists (#666).
+        self._locked_generators: frozenset[str] = frozenset()
 
     def close(self) -> None:
         """End the run's shell session; every process it holds is killed."""
@@ -621,6 +623,11 @@ class ToolExecutor:
     def enable_modify_guard(self) -> None:
         """Turn on the edit-first guardrail (modify runs only)."""
         self._modify_guard = True
+
+    def lock_generators(self, names) -> None:
+        """Refuse these generators from now on: re-running one would
+        regenerate the app over every edit made since the scaffold."""
+        self._locked_generators = frozenset(names)
 
     def set_scaffold_family(self, family: str | None, instructions: str = "") -> None:
         """Record which framework the Phase-1 scaffold committed to.
@@ -1392,6 +1399,19 @@ class ToolExecutor:
                     f"{tool_name} is not available in this run. Shell access is "
                     "disabled. Use the file tools (write_file / modify_file) "
                     "instead — do not try to run commands."
+                ),
+            })
+
+        # Same reasoning as the shell gate: the toolset no longer offers these,
+        # but a model can still name one.
+        if tool_name in self._locked_generators:
+            logger.warning("Refused %s: the application scaffold already exists", tool_name)
+            return ToolExecutionResult("error", {
+                "error": (
+                    f"{tool_name} is not available: the application is already "
+                    "generated, and running it again would overwrite every edit "
+                    "made since. Change the existing files with modify_file / "
+                    "write_file instead. To change the stack, start a fresh run."
                 ),
             })
 

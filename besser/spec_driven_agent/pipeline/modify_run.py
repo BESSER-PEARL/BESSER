@@ -706,16 +706,28 @@ class ModifyRunMixin:
             "answer."
         )
         planning_model = getattr(self.client, "planning_model", None)
-        response = self.client.chat(
-            system=(
-                "You extract new domain-model entities implied by a code "
-                "modification. Call derive_model_deltas with your answer."
-            ),
-            messages=[{"role": "user", "content": prompt}],
-            tools=[delta_tool],
-            force_tool="derive_model_deltas",
-            model_override=planning_model,
-        )
+        # The user's key may not reach the planning model: retry on the
+        # primary, as the generator selection does.
+        for model_override in dict.fromkeys([planning_model, None]):
+            try:
+                response = self.client.chat(
+                    system=(
+                        "You extract new domain-model entities implied by a code "
+                        "modification. Call derive_model_deltas with your answer."
+                    ),
+                    messages=[{"role": "user", "content": prompt}],
+                    tools=[delta_tool],
+                    force_tool="derive_model_deltas",
+                    model_override=model_override,
+                )
+                break
+            except Exception as exc:
+                if model_override is None:
+                    raise
+                logger.warning(
+                    "modify: model-sync call on planning model %s failed (%s); "
+                    "retrying on the primary model", model_override, exc,
+                )
         for block in response.get("content", []):
             block_type = getattr(block, "type", None) or (
                 block.get("type") if isinstance(block, dict) else None

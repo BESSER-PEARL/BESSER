@@ -534,3 +534,32 @@ def test_model_sync_failure_is_a_warning_in_the_trace_and_recipe(
     with open(tmp_path / ".besser_recipe.json", encoding="utf-8") as f:
         recipe = json.load(f)
     assert "invalid_request_error" in recipe["model_sync_error"]
+
+
+def test_model_sync_falls_back_to_the_primary_when_the_key_cannot_reach_the_planning_model(
+        tmp_path, monkeypatch, caplog):
+    """A BYOK key without access to the planning model (404 model_not_found)
+    must not cost the model-sync: retry on the primary, warn once."""
+    import logging
+
+    client, sent = _openai_client_like_the_api(monkeypatch, [{"name": "User", "attributes": []}])
+    answer = client._client.chat.completions.create.side_effect
+
+    def create(**kwargs):
+        if kwargs["model"] == "gpt-4o-mini":
+            sent.append(kwargs)
+            raise Exception("Error code: 404 - The model `gpt-4o-mini` does not "
+                            "exist or you do not have access to it. model_not_found")
+        return answer(**kwargs)
+
+    client._client.chat.completions.create.side_effect = create
+    orch = _make_orchestrator(tmp_path, client, source_export=_source_export())
+
+    with caplog.at_level(logging.WARNING):
+        orch._derive_and_apply_model_deltas("add user accounts")
+
+    assert [k["model"] for k in sent] == ["gpt-4o-mini", "gpt-4o"]
+    assert "User" in _class_names(orch.domain_model)
+    assert orch._model_sync_error is None
+    assert any("retrying on the primary" in r.getMessage() for r in caplog.records
+               if r.levelno == logging.WARNING)

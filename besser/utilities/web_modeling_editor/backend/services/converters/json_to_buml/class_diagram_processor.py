@@ -1048,6 +1048,7 @@ def _process_constraints(
             conversion_issues.append({
                 **provenance(element_id, element, issue),
                 "code": issue["code"], "reason": issue["reason"],
+                **({"missing_element": issue["missing_element"]} if issue.get("missing_element") else {}),
             })
 
         for kind, constraint, class_name, method_name in routing:

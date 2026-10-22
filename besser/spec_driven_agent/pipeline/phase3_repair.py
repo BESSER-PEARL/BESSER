@@ -32,7 +32,8 @@ from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints,
     format_action_inventory,
 )
-from besser.spec_driven_agent.agent.prompt_builder import build_inventory
+from besser.spec_driven_agent.agent.prompt_builder import DROPPED_RULES_NOTE, build_inventory
+from besser.spec_driven_agent.planning.model_rules import DROPPED
 from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest
 from besser.spec_driven_agent.model_serializer import serialize_domain_model
 from besser.spec_driven_agent.pipeline.constants import (
@@ -851,12 +852,14 @@ class Phase3RepairMixin:
         if self._phase2_inspection_handoff:
             prompt_parts.extend(["## Prior inspection handoff", self._phase2_inspection_handoff, ""])
         if self.domain_model is not None:
+            serialized = serialize_domain_model(self.domain_model)
             prompt_parts.extend([
                 "## Domain model and conversion losses",
                 "conversion_issues are NOT implemented constraints. Recover their "
                 "intended behavior using actual relationship names; the original "
                 "request takes precedence over conflicting model expressions.",
-                json.dumps(serialize_domain_model(self.domain_model), ensure_ascii=False), "",
+                *([DROPPED_RULES_NOTE] if DROPPED in serialized else []),
+                json.dumps(serialized, ensure_ascii=False), "",
             ])
         requirements = self._requirements_for_validation()
         if requirements:

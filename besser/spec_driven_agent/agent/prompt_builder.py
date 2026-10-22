@@ -25,6 +25,7 @@ from besser.spec_driven_agent.model_serializer import (
     serialize_state_machines,
 )
 from besser.spec_driven_agent.agent.runbook import runbook_section
+from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
 from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section
 from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
@@ -62,6 +63,12 @@ def requests_frontend(instructions: str | None, *, bare_app: bool = True) -> boo
     if _FRONTEND_ASK_RE.search(low):
         return True
     return bare_app and bool(_APP_ASK_RE.search(low)) and not _BACKEND_APP_RE.search(low)
+
+DROPPED_RULES_NOTE = (
+    "dropped_by_model_change lists rules whose attributes or classes the user "
+    "just removed from the model: do not re-implement them and do not add back "
+    "what they used."
+)
 
 # The model-query tools exist only with a domain model (tools._TOOL_MODEL_REQUIREMENTS).
 _MODEL_TOOLS_SECTION = """\
@@ -167,7 +174,10 @@ def build_system_prompt(
             json.dumps(serialize_domain_model(domain_model), indent=2),
             "```",
         ])
-        if getattr(domain_model, "conversion_issues", None):
+        issues = getattr(domain_model, "conversion_issues", None) or []
+        if any(is_dropped_by_model_change(i) for i in issues):
+            model_sections.extend(["", DROPPED_RULES_NOTE])
+        if not all(is_dropped_by_model_change(i) for i in issues):
             model_sections.extend([
                 "",
                 "### Where the model disagrees with your specification",

@@ -281,6 +281,28 @@ The original natural-language request takes precedence when a rejected model
 expression conflicts with it. Relationship names must be resolved from the
 actual model and code, not guessed or automatically renamed.
 
+A modify run treats rules broken by the user's own model change differently.
+The converter records the element a rejected rule names but the model lacks
+(``missing_element``, e.g. ``Person.phone``),
+and every run's recipe records a fingerprint of each rule that converted
+(``model.converted_rules``) next to the user's model (``model.user_model``). A
+rejected rule is marked ``dropped_by_model_change`` only when the same rule
+text converted in the previous run and the element it misses is in the previous
+model but was removed from the new one (an attribute, association end or
+class). Such a rule raises no recovery task or requirement, the agent sees it
+listed as dropped (name and missing element only) with an instruction not to
+re-implement it, and the verification report lists it as not enforced because
+it was dropped by the model change. It stays dropped in later modify runs while
+the element is still missing.
+
+When the element was renamed instead (the class or attribute keeps its
+identity under a new name), the rule is recovered as usual and its requirement
+says to keep the rule and enforce it on the new name (``renamed_in_model``).
+A new or edited rule, a misspelled name, an element that never existed, a rule
+that already failed in the previous run, a recipe without the recorded model
+or rule fingerprints, any other conversion failure, and every rule in a fresh
+run are recovered as described above.
+
 Validation is attempted within the run's runtime budget. If that budget is
 already exhausted, the run records an unverified-completion blocker instead
 of silently reporting an empty validation result. The *repair* half is a flag:

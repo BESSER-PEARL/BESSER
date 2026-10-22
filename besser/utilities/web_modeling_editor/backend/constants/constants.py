@@ -30,6 +30,11 @@ TEMP_DIR_PREFIXES = (
     USER_PROFILE_TEMP_DIR_PREFIX,
 )
 
+# Upload size ceilings (see ``services/utils/upload_validation.py``).
+MAX_CSV_SIZE = 5 * 1024 * 1024       # 5 MB
+MAX_IMAGE_SIZE = 10 * 1024 * 1024    # 10 MB
+MAX_BUML_SIZE = 2 * 1024 * 1024      # 2 MB
+
 # ---------------------------------------------------------------------
 # Knowledge Graph (KG) endpoints
 # ---------------------------------------------------------------------
@@ -41,16 +46,23 @@ DEFAULT_KG_LLM_MODEL = DEFAULT_OPENAI_MODEL
 # Upload ceiling for an OWL/RDF ontology (``/import-owl``).
 MAX_OWL_SIZE = 5 * 1024 * 1024  # 5 MB
 
-# How far into an OWL/RDF upload to look for a DTD declaration. A DTD is only
-# legal in the prolog, so the head of the document is the only place it can
-# appear; scanning the whole 5 MB would just be wasted work.
-KG_DTD_PROBE_CHARS = 4096
+# Seconds ``/check-kg-consistency`` may spend validating before its pyshacl
+# child process is killed (a user-authored sh:pattern can backtrack forever).
+KG_CONSISTENCY_TIMEOUT_SECONDS = 60
+
+
+# Overall server deadline, in seconds, for one KG LLM request
+# (``/llm-clean-kg``, ``/classify-orphans-with-llm``, ``/get-json-model-from-kg``),
+# however many model calls it makes. Each call is given what is left of it as its
+# own timeout. Published to the editor by ``GET /kg-config``.
+KG_LLM_REQUEST_TIMEOUT_SECONDS = 120
 
 # Largest number of orphan nodes one ``/classify-orphans-with-llm`` call may
-# carry. The classifier sends one blocking OpenAI request per 40 nodes with no
-# internal ceiling, so an unbounded list turns a single request into an
-# arbitrarily long chain of upstream calls.
-MAX_ORPHAN_CLASSIFY_NODES = 400
+# carry. The classifier sends one model call per ``MAX_ORPHAN_BATCH`` (40) nodes,
+# sequentially, so this is two calls: what fits in the request deadline above
+# with room to spare. The editor splits longer lists into several requests
+# (it reads this value from ``GET /kg-config``).
+MAX_ORPHAN_CLASSIFY_NODES = 80
 
 # Accepted upload extensions.
 ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}

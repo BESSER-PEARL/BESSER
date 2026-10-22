@@ -329,7 +329,9 @@ def test_sparql_rule_in_kg_never_triggers_a_network_fetch(monkeypatch):
         "rdflib.plugins.sparql.evaluate.urlopen", _explode, raising=True
     )
 
-    report = check_kg_consistency(_kg(_SSRF_TTL))
+    # In-process (no child validator), so the patched urlopen is the one pyshacl
+    # would reach: the strip and the shapes allowlist are what is under test.
+    report = check_kg_consistency(_kg(_SSRF_TTL), timeout_seconds=None)
 
     assert calls == []
     # The checker still returns a usable report rather than failing closed.
@@ -438,7 +440,7 @@ def test_checking_a_graph_with_foreign_shape_constructs_still_works_and_stays_of
         raising=True,
     )
 
-    report = check_kg_consistency(_kg(_FOREIGN_SHAPE_TTL))
+    report = check_kg_consistency(_kg(_FOREIGN_SHAPE_TTL), timeout_seconds=None)
 
     assert calls == []
     # BESSER's own constraint on the same shape is still enforced: alice has no :name.

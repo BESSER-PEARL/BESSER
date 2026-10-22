@@ -151,6 +151,16 @@ class KGConsistencyReportResponse(BaseModel):
     version: str = "1.0.0"
 
 
+class KGConfigResponse(BaseModel):
+    """Response of ``GET /kg-config``: server-owned limits the KG editor must respect."""
+    llmRequestTimeoutSeconds: int = Field(
+        description="Overall server deadline, in seconds, for one KG LLM request.",
+    )
+    maxOrphanClassifyNodes: int = Field(
+        description="Most node ids one /classify-orphans-with-llm request may carry.",
+    )
+
+
 class KGPendingOrphanClassification(BaseModel):
     """Orphan nodes the user deferred to the per-node LLM classifier."""
     nodeIds: List[str]

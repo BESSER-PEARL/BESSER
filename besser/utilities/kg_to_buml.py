@@ -1,9 +1,53 @@
-import requests
-import json
+from typing import Any, Callable, Optional
+
 from besser.BUML.metamodel.structural import data_types
 from besser.BUML.metamodel.structural import DomainModel
-from besser.utilities.llm_utils import DEFAULT_OPENAI_MODEL, clean_json_response, parse_json_safely
+from besser.utilities.llm_utils import (
+    DEFAULT_OPENAI_MODEL,
+    DEFAULT_REQUEST_TIMEOUT,
+    LLMUpstreamError,
+    clean_json_response,
+    parse_json_safely,
+    post_openai_chat,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import process_class_diagram
+
+# Output budget of the single completion each conversion asks for.
+_MAX_COMPLETION_TOKENS = 10000
+
+
+def _ask_openai(
+    openai_token: str,
+    openai_model: str,
+    prompt: str,
+    kg: str,
+    *,
+    timeout: float,
+    http_post: Optional[Callable[..., Any]],
+) -> str:
+    """Send the conversion prompt plus the raw KG text; return the non-empty reply.
+
+    Goes through :func:`~besser.utilities.llm_utils.post_openai_chat`, so the
+    request has a timeout and a failure is an :class:`LLMUpstreamError` whose
+    message never carries the provider's response body.
+    """
+    payload = {
+        "model": openai_model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "text", "text": kg},
+                ],
+            }
+        ],
+        "max_completion_tokens": _MAX_COMPLETION_TOKENS,
+    }
+    content = post_openai_chat(openai_token, payload, http_post=http_post, timeout=timeout)
+    if not content:
+        raise LLMUpstreamError("The model returned an empty completion.")
+    return content
 
 
 def clean_plantuml_response(response: str) -> str:
@@ -152,7 +196,14 @@ def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
     return apollon_buml_json
 
 
-def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = DEFAULT_OPENAI_MODEL):
+def kg_to_plantuml(
+    kg_path: str,
+    openai_token: str,
+    openai_model: str = DEFAULT_OPENAI_MODEL,
+    *,
+    timeout: float = DEFAULT_REQUEST_TIMEOUT,
+    http_post: Optional[Callable[..., Any]] = None,
+) -> str:
     """
     Transform a Knowledge Graph (KG) into a PlantUML class diagram.
 
@@ -177,12 +228,24 @@ def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = DEFAULT_
     openai_token : str
         Your OpenAI API token.
     openai_model : str, optional
-        Model name to use, by default "gpt-5".
+        Model name to use, by default :data:`~besser.utilities.llm_utils.DEFAULT_OPENAI_MODEL`.
+    timeout : float, optional
+        Seconds before the OpenAI request is abandoned.
+    http_post : callable, optional
+        Transport override for tests; ``None`` uses :func:`requests.post`.
 
     Returns
     -------
     str
         A cleaned PlantUML diagram ready to render.
+
+    Raises
+    ------
+    LLMUpstreamError
+        The OpenAI call failed or returned nothing (the message never contains
+        the provider's response body).
+    RuntimeError
+        The KG file could not be read.
     """
 
 
@@ -229,52 +292,19 @@ def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = DEFAULT_
     IMPORTANT: Output ONLY the PlantUML code. Do not include explanations or metadata.
     """
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + openai_token
-    }
-
-    payload = {
-        "model": openai_model,
-        "messages": [
-        {
-            "role": "user",
-            "content": [
-            {
-                "type": "text",
-                "text": prompt
-            },
-            {
-                "type": "text",
-                "text": kg
-            }
-            ]
-        }
-        ],
-        "max_completion_tokens": 10000
-    }
-    try:
-        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-
-        if not response.ok:
-            raise RuntimeError(f"OpenAI API call failed: {response.status} {response.text}")
-
-        response_data = json.loads(response.text)
-
-        if ('error' in response_data):
-            raise RuntimeError(f"OpenAI API call failed: {response.status} {response.text}")
-
-        # Extracting the message
-        messages = [choice['message'] for choice in response_data.get('choices', {})]
-        message = messages[0]["content"]
-
-    except Exception as e:
-        raise RuntimeError(f"Failed to process the KG to PlantUML conversion: {e}") from e
+    message = _ask_openai(openai_token, openai_model, prompt, kg, timeout=timeout, http_post=http_post)
 
     plant_uml_chunk = clean_plantuml_response(message)
     return plant_uml_chunk
 
-def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = DEFAULT_OPENAI_MODEL):
+def kg_to_buml(
+    kg_path: str,
+    openai_token: str,
+    openai_model: str = DEFAULT_OPENAI_MODEL,
+    *,
+    timeout: float = DEFAULT_REQUEST_TIMEOUT,
+    http_post: Optional[Callable[..., Any]] = None,
+) -> DomainModel:
     """
     Convert a Knowledge Graph (KG) into a B-UML class diagram.
 
@@ -300,11 +330,23 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = DEFAULT_OPEN
         Your OpenAI API token.
     openai_model : str, optional
         Model name to use, by default :data:`~besser.utilities.llm_utils.DEFAULT_OPENAI_MODEL`.
+    timeout : float, optional
+        Seconds before the OpenAI request is abandoned.
+    http_post : callable, optional
+        Transport override for tests; ``None`` uses :func:`requests.post`.
 
     Returns
     -------
     domain (DomainModel): the B-UML model object.
 
+    Raises
+    ------
+    LLMUpstreamError
+        The OpenAI call failed or returned nothing (the message never contains
+        the provider's response body).
+    RuntimeError
+        The KG file could not be read, or the model's answer could not be
+        turned into a class diagram.
     """
 
 
@@ -378,45 +420,9 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = DEFAULT_OPEN
     IMPORTANT: Return ONLY the JSON, no explanations.
     """
 
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + openai_token
-    }
-
-    payload = {
-        "model": openai_model,
-        "messages": [
-        {
-            "role": "user",
-            "content": [
-            {
-                "type": "text",
-                "text": prompt
-            },
-            {
-                "type": "text",
-                "text": kg
-            }
-            ]
-        }
-        ],
-        "max_completion_tokens": 10000
-    }
+    raw_content = _ask_openai(openai_token, openai_model, prompt, kg, timeout=timeout, http_post=http_post)
 
     try:
-        response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-
-        if not response.ok:
-            raise RuntimeError(f"OpenAI API call failed: {response.status} {response.text}")
-
-        response_json = response.json()
-        raw_content = (response_json.get("choices", [{}])[0]
-                       .get("message", {})
-                       .get("content", ""))
-
-        if not raw_content:
-            raise ValueError("Empty response from OpenAI.")
-
         # --- Clean and parse JSON ---
         json_text = clean_json_response(raw_content)
         system_spec = parse_json_safely(json_text)

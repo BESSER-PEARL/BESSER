@@ -1,29 +1,34 @@
 """Applying the user's Refine-KG decisions to a Knowledge Graph.
 
-Three payload shapes arrive from the editor: v2 ``[{issueId, decision}]`` for
-the static preflight, v1 ``[{issueId, choice, parameters}]`` for the older
-conversion path, and round-tripped LLM issues. Each is dispatched through
-``kg_to_buml.resolutions``; a failed dispatch is a ``ConversionError``.
+Two payload shapes arrive from the editor: ``[{issueId, decision}]`` for the
+static preflight, and round-tripped LLM issues with the same decisions. Each is
+dispatched through ``kg_to_buml.resolutions``; a failed dispatch is a
+``ConversionError``.
 """
 
 from typing import Any, Dict, List, Optional
+
+from besser.BUML.metamodel.kg import KnowledgeGraph
 
 from besser.BUML.notations.kg_to_buml import (
     DeferredOrphanClassification,
     KGAction,
     KGIssue,
-    KGResolution,
     ResolutionError,
     analyze_kg_for_class_diagram,
-    apply_resolutions,
     dispatch_decision,
 )
 from besser.utilities.web_modeling_editor.backend.models import KGDiagramInput
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 
-def apply_v2_decisions(kg, decisions, *, deferred_orphan_node_ids=None):
-    """Apply v2-style ``[{issueId, decision}]`` choices.
+def apply_v2_decisions(
+    kg: KnowledgeGraph,
+    decisions: List[Any],
+    *,
+    deferred_orphan_node_ids: Optional[List[str]] = None,
+) -> KnowledgeGraph:
+    """Apply ``[{issueId, decision}]`` choices to the static preflight's issues.
 
     Re-runs the preflight on ``kg``, looks up each issue by id, dispatches its
     recommended/skip action. Returns the resolved KG (deep copy mutated).
@@ -74,37 +79,16 @@ def apply_v2_decisions(kg, decisions, *, deferred_orphan_node_ids=None):
     return resolved_kg
 
 
-def apply_v1_resolutions(kg, raw_list):
-    """Backward-compat: v1-style ``[{issueId, choice, parameters}]`` payload."""
-    parsed = []
-    for r in raw_list:
-        if not isinstance(r, dict):
-            continue
-        issue_id = r.get("issueId") or r.get("issue_id") or ""
-        choice = r.get("choice") or ""
-        parameters = r.get("parameters") or {}
-        if not choice:
-            raise ConversionError("Each resolution must include a 'choice' key.")
-        parsed.append(KGResolution(issue_id=issue_id, choice=choice, parameters=parameters))
-    try:
-        return apply_resolutions(kg, parsed)
-    except ResolutionError as exc:
-        raise ConversionError(str(exc)) from exc
+def resolve_kg(kg: KnowledgeGraph, input_data: KGDiagramInput) -> KnowledgeGraph:
+    """Apply ``input_data.resolutions`` (``[{issueId, decision}]``) to ``kg``.
 
-
-def resolve_kg(kg, input_data: KGDiagramInput):
-    """Apply ``input_data.resolutions`` to ``kg``. Auto-detects the payload shape:
-    v2 entries have ``decision``; v1 entries have ``choice``."""
+    Raises:
+        ConversionError: an entry lacks ``issueId`` / ``decision``, or its
+            decision cannot be applied (HTTP 400).
+    """
     if not input_data.resolutions:
         return kg
-    raw_list = input_data.resolutions
-    is_v2 = all(
-        isinstance(r, dict) and ("decision" in r and "choice" not in r)
-        for r in raw_list
-    )
-    if is_v2:
-        return apply_v2_decisions(kg, raw_list)
-    return apply_v1_resolutions(kg, raw_list)
+    return apply_v2_decisions(kg, input_data.resolutions)
 
 
 def issues_payload_to_objects(payload: Any) -> Dict[str, KGIssue]:
@@ -138,6 +122,7 @@ def issues_payload_to_objects(payload: Any) -> Dict[str, KGIssue]:
 
 
 def action_payload_to_object(action: Any) -> Optional[KGAction]:
+    """Rebuild a :class:`KGAction` from its JSON shape; ``None`` when it has no ``key``."""
     if not isinstance(action, dict):
         return None
     key = action.get("key")
@@ -151,12 +136,12 @@ def action_payload_to_object(action: Any) -> Optional[KGAction]:
 
 
 def apply_llm_decisions(
-    kg,
+    kg: KnowledgeGraph,
     issues_payload: Optional[List[Dict[str, Any]]],
     decisions: Optional[List[Dict[str, Any]]],
     *,
-    deferred_orphan_node_ids=None,
-):
+    deferred_orphan_node_ids: Optional[List[str]] = None,
+) -> KnowledgeGraph:
     """Apply round-tripped LLM-issue decisions to a deep-copied KG.
 
     Unlike :func:`apply_v2_decisions`, this does NOT re-run the analyzer

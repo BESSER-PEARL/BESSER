@@ -9,6 +9,8 @@ import os
 import tempfile
 import uuid
 import shutil
+from collections import Counter
+from typing import Dict, List, Sequence
 from besser.BUML.metamodel.structural.structural import DomainModel
 from besser.BUML.metamodel.kg import KnowledgeGraph
 from besser.BUML.metamodel.object.object import ObjectModel
@@ -77,6 +79,23 @@ def _suffixed_name(base_name: str, index: int, total: int) -> str:
     if total <= 1:
         return base_name
     return f"{base_name}_{index}"
+
+
+def _section_titles(models: Sequence, titles_by_id: Dict[int, str]) -> List[str]:
+    """Return the title each model's section banner carries, in order.
+
+    A model's diagram title (``titles_by_id``, keyed by ``id(model)``: the NN
+    and KG metamodels store only a sanitized ``name``), else its name. A title
+    that siblings share gets the model's 1-based position appended,
+    ``"Graph (2)"``, so the re-imported diagrams can be told apart; a title of
+    its own is kept as it is, so it survives any number of round trips.
+    """
+    titles = [titles_by_id.get(id(m)) or getattr(m, "name", "") or "" for m in models]
+    counts = Counter(titles)
+    return [
+        f"{title} ({idx})" if title and counts[title] > 1 else title
+        for idx, title in enumerate(titles, start=1)
+    ]
 
 
 def _write_temp_to_output(temp_path: str, out_file, section_header: str = ""):
@@ -244,6 +263,10 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
     # Variable names collected for the final Project(...) definition
     model_vars = []
+
+    # Diagram titles json_to_buml_project kept for the NN and KG sections; see
+    # _section_titles.
+    diagram_titles = getattr(project, "_diagram_titles", {}) or {}
 
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(buml_header())
@@ -435,18 +458,13 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             # ---------------------------------------------------------- #
             # KNOWLEDGE GRAPH MODELS                                     #
             # ---------------------------------------------------------- #
-            for idx, kgm in enumerate(kg_models, start=1):
+            kg_titles = _section_titles(kg_models, diagram_titles)
+            for idx, (kgm, title) in enumerate(zip(kg_models, kg_titles), start=1):
                 var_name = _suffixed_name("kg_model", idx, n_kg)
 
-                # kg_model_to_code writes the only section header, carrying the
-                # title when there are siblings to tell apart. A header of our
-                # own above the builder's banner would be read by
-                # project_to_json as an empty section and the KG dropped (the
-                # NN block below does the same, for the same reason).
-                title = None
-                if n_kg > 1:
-                    title = kgm.name or f"Knowledge Graph {idx}"
-
+                # kg_model_to_code writes the only section header, and it
+                # carries the title, which project_to_json reads back as the
+                # diagram's title (the NN block below does the same).
                 tmp_path = os.path.join(temp_dir, f"kg_model_{idx}.py")
                 kg_model_to_code(
                     model=kgm,
@@ -480,12 +498,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             # ---------------------------------------------------------- #
             # NN MODELS                                                  #
             # ---------------------------------------------------------- #
-            # Source of titles: json_to_buml_project attaches them to the
-            # Project as ``_nn_diagram_titles`` (id(nn) -> title) so we can
-            # round-trip the user-facing diagram title — the NN metamodel
-            # only stores a sanitized name.
-            nn_titles_by_id = getattr(project, "_nn_diagram_titles", {}) or {}
-            for idx, nm in enumerate(nn_models, start=1):
+            nn_titles = _section_titles(nn_models, diagram_titles)
+            for idx, (nm, title) in enumerate(zip(nn_models, nn_titles), start=1):
                 # Use the static "nn_model" prefix (suffixed when multiple)
                 # so the resulting Python identifier in `models=[...]` matches
                 # SECTION_CONFIG['nn_model'] in the importer. Previously we
@@ -494,14 +508,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 # silently dropping the diagram on round-trip.
                 var_name = _suffixed_name("nn_model", idx, n_nn)
 
-                # Header is written exclusively by nn_model_to_code to avoid
-                # double-headers (one from project_builder, one from the NN
-                # builder) that confused `_extract_all_sections` and erased
-                # titles even in the multi-NN case.
-                title = nn_titles_by_id.get(id(nm)) or getattr(nm, "name", None)
-                if n_nn > 1 and title and not str(title).strip().startswith(f"NN {idx}"):
-                    # Disambiguate within the file when there are siblings.
-                    title = f"{title} ({idx})"
+                # Header is written exclusively by nn_model_to_code, carrying
+                # the title, so there is one banner per section.
 
                 tmp_path = os.path.join(temp_dir, f"nn_model_{idx}.py")
                 # Thread the suffixed var_name through so the NN builder

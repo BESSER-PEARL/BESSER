@@ -8,8 +8,9 @@ recorded from the implementations *before* they shared a core, and must not chan
 The one deliberate change since: every output is now a valid Python identifier. A name
 that starts with a digit used to come back from ``safe_var_name`` still starting with one
 ("9lives"), because the tidy-up stripped the ``_`` prefix again, and characters such as
-``²`` passed ``str.isalnum()`` but not the parser. Those rows now get the prefix, and
-``²`` is NFKC-normalised to ``2`` (as the parser itself would read it).
+``²`` passed ``str.isalnum()`` but not the parser (``x² = 1`` is a SyntaxError). Those
+rows now get the prefix, and names are NFKC-normalised first, as Python normalises the
+identifiers it parses, so ``²`` becomes ``2``.
 """
 
 import pytest
@@ -92,7 +93,7 @@ def test_every_output_is_a_python_identifier(row):
 
 
 @pytest.mark.parametrize("text, expected", [
-    ("area m²", "area_m2"),          # NFKC: superscript two reads as 2
+    ("area m²", "area_m2"),          # ² is no identifier char (x² = 1 is a SyntaxError); NFKC makes it 2
     ("x½", "x1_2"),                  # NFKC gives 1⁄2; the fraction slash is not an identifier char
     ("①", "_1"),                     # NFKC gives 1, which cannot start an identifier
     ("①⃝", "_1"),          # an enclosing mark (Me) is not an identifier char either

@@ -17,8 +17,7 @@ verbatim, and the builder derives variable names separately.
 
 import copy
 from abc import ABC
-from types import MappingProxyType
-from typing import Any, Dict, List, Mapping, Optional, Set
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Set
 
 from besser.BUML.metamodel.structural import Element, Model
 from besser.BUML.metamodel.kg.axioms import KGAxiom
@@ -39,13 +38,59 @@ __all__ = [
 ]
 
 
+#: Values handed out as they are: immutable, so a reader cannot change the stored metadata through them.
+_IMMUTABLE_VALUE_TYPES = (str, int, float, bool, bytes, type(None))
+
+
+def _detached(value: Any) -> Any:
+    """``value`` itself when it is immutable, otherwise a deep copy of it."""
+    return value if isinstance(value, _IMMUTABLE_VALUE_TYPES) else copy.deepcopy(value)
+
+
+class _MetadataView(Mapping):
+    """Read-only view over an element's stored metadata dict.
+
+    Nothing is copied when the view is made, and a scalar entry is returned as
+    it is, so reading one field (``node.metadata.get("kind")``) costs a dict
+    lookup. A list or dict entry -- a constraint node's ``constraintSpecs`` --
+    is deep-copied when it is read, so no reference into the stored metadata
+    ever leaves the element. Every write stores a new dict, so a view keeps
+    showing the entries it was made over.
+    """
+
+    __slots__ = ("__data",)
+
+    def __init__(self, data: Dict[str, Any]):
+        self.__data = data
+
+    def __getitem__(self, key: str) -> Any:
+        return _detached(self.__data[key])
+
+    def __contains__(self, key: object) -> bool:
+        # Mapping's default goes through __getitem__ and would copy the value.
+        return key in self.__data
+
+    def get(self, key: str, default: Any = None) -> Any:
+        data = self.__data
+        return _detached(data[key]) if key in data else default
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.__data)
+
+    def __len__(self) -> int:
+        return len(self.__data)
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.__data!r})"
+
+
 class _KGAnnotatedElement(Element):
     """Label, IRI and metadata, shared by :class:`KGNode` and :class:`KGEdge`.
 
-    ``metadata`` is stored deep-copied and handed out as a read-only view whose
-    nested containers are fresh copies: nothing reachable from the getter
-    writes through to the element, so every change goes through the setter
-    (and a subclass's :meth:`_checked_metadata`).
+    ``metadata`` is stored deep-copied and handed out as a read-only view that
+    copies a nested list or dict as it is read: nothing reachable from the
+    getter writes through to the element, so every change goes through the
+    setter (and a subclass's :meth:`_checked_metadata`).
     """
 
     @property
@@ -90,13 +135,25 @@ class _KGAnnotatedElement(Element):
     def metadata(self) -> Mapping[str, Any]:
         """Mapping: Get a read-only view of the free-form annotations.
 
-        The view cannot be written to, and the lists and dicts inside it are
-        copies, so every change goes through the setter (and so through a
-        subclass's validation -- a constraint node checks its
-        ``constraintSpecs``). Change one entry with :meth:`set_metadata_item`,
-        several with :meth:`update_metadata`, or replace it all by assignment.
+        The view is made without copying and cannot be written to; a list or
+        dict read from it is a deep copy of the stored one. So every change
+        goes through the setter (and so through a subclass's validation -- a
+        constraint node checks its ``constraintSpecs``). Change one entry with
+        :meth:`set_metadata_item`, several with :meth:`update_metadata`, or
+        replace it all by assignment. ``dict(element.metadata)`` gives a
+        mutable copy.
         """
-        return MappingProxyType(copy.deepcopy(self.__metadata))
+        return _MetadataView(self.__metadata)
+
+    def get_metadata(self, key: str, default: Any = None) -> Any:
+        """Return one metadata entry, or ``default`` when it is absent.
+
+        Like ``element.metadata.get(key, default)``: a list or dict value is
+        a deep copy, so changing it does not change the element.
+        """
+        if key not in self.__metadata:
+            return default
+        return _detached(self.__metadata[key])
 
     @metadata.setter
     def metadata(self, value: Optional[Mapping[str, Any]]) -> None:
@@ -288,11 +345,7 @@ class _ConstraintNodeMixin:
         """
         if not is_valid_spec(spec):
             raise ValueError(f"Invalid constraint spec: {spec!r}")
-        meta = dict(self.metadata) if self.metadata else {}
-        specs = list(meta.get("constraintSpecs", []))
-        specs.append(spec)
-        meta["constraintSpecs"] = specs
-        self.metadata = meta
+        self.set_metadata_item("constraintSpecs", [*self.get_specs(), spec])
 
     def remove_spec(self, index: int) -> None:
         """Remove the spec at ``index``; an out-of-range index does nothing.
@@ -300,16 +353,14 @@ class _ConstraintNodeMixin:
         Args:
             index: Position in ``metadata['constraintSpecs']``.
         """
-        meta = dict(self.metadata) if self.metadata else {}
-        specs = list(meta.get("constraintSpecs", []))
+        specs = self.get_specs()
         if 0 <= index < len(specs):
             specs.pop(index)
-            meta["constraintSpecs"] = specs
-            self.metadata = meta
+            self.set_metadata_item("constraintSpecs", specs)
 
     def get_specs(self) -> List[Dict[str, Any]]:
-        """list[dict]: Get a copy of the node's constraint specs."""
-        return list(self.metadata.get("constraintSpecs", []))
+        """list[dict]: Get a deep copy of the node's constraint specs."""
+        return self.get_metadata("constraintSpecs", [])
 
 
 class KGNodeConstraint(_ConstraintNodeMixin, KGNode):
@@ -429,6 +480,12 @@ class KGEdge(_KGAnnotatedElement):
 class KnowledgeGraph(Model):
     """Top-level Knowledge Graph container.
 
+    ``nodes`` and ``edges`` hand out the graph's own sets, because the OWL
+    importer edits them in place while it lifts restrictions into constraint
+    nodes; :meth:`validate` catches what that lets through (a dangling edge, a
+    duplicate id). ``axioms`` hands out a copy, since nothing edits the list in
+    place; change it with :meth:`add_axiom` or by assignment.
+
     Args:
         name: Python-identifier-safe name for the model (``NamedElement.name`` rules apply).
         nodes: Initial set of nodes.
@@ -452,7 +509,11 @@ class KnowledgeGraph(Model):
 
     @property
     def nodes(self) -> Set[KGNode]:
-        """set[KGNode]: Get the graph's nodes."""
+        """set[KGNode]: Get the graph's own node set (not a copy).
+
+        Adding to it directly skips :meth:`add_node`'s duplicate-id check;
+        :meth:`validate` reports what that lets through.
+        """
         return self.__nodes
 
     @nodes.setter
@@ -477,7 +538,11 @@ class KnowledgeGraph(Model):
 
     @property
     def edges(self) -> Set[KGEdge]:
-        """set[KGEdge]: Get the graph's edges."""
+        """set[KGEdge]: Get the graph's own edge set (not a copy).
+
+        Adding to it directly skips :meth:`add_edge`'s endpoint check;
+        :meth:`validate` reports what that lets through.
+        """
         return self.__edges
 
     @edges.setter
@@ -546,8 +611,8 @@ class KnowledgeGraph(Model):
     def axioms(self) -> List[KGAxiom]:
         """list[KGAxiom]: Get a copy of the OWL axioms that relate several nodes at once.
 
-        Change them with :meth:`add_axiom` or by assigning the property, not by
-        mutating the list returned.
+        Unlike :attr:`nodes` and :attr:`edges`, the list is a copy: change it
+        with :meth:`add_axiom` or by assigning the property.
         """
         return list(self.__axioms)
 
@@ -610,8 +675,7 @@ class KnowledgeGraph(Model):
         self._validate_unique_node_ids(errors)
         self._validate_edge_endpoints(errors)
         self._validate_constraint_specs(errors)
-        self._validate_axiom_types(errors)
-        self._validate_axiom_references(warnings)
+        self._validate_axiom_references(errors)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -645,29 +709,20 @@ class KnowledgeGraph(Model):
                 if not is_valid_spec(spec):
                     errors.append(f"{type(n).__name__} {n.id!r} has an invalid constraint spec at index {idx}: {spec!r}")
 
-    def _validate_axiom_types(self, errors: List[str]) -> None:
-        """The setter checks this; catch state that got around it."""
-        for idx, axiom in enumerate(self.__axioms):
-            if not isinstance(axiom, KGAxiom):
-                errors.append(
-                    f"KnowledgeGraph.axioms[{idx}] is a {type(axiom).__name__}, not a KGAxiom."
-                )
+    def _validate_axiom_references(self, errors: List[str]) -> None:
+        """Report every axiom id that names no node of the graph.
 
-    def _validate_axiom_references(self, warnings: List[str]) -> None:
-        """Flag every axiom id that names no node of the graph.
-
-        A warning, not an error: an imported ontology may legitimately refer to
-        an IRI it does not define (a ``rdfs:subPropertyOf foaf:knows`` without
-        ``foaf:knows`` itself), and that should not block a conversion.
+        An error, like a dangling edge: nothing legitimate produces one. The
+        OWL importer makes a node of every IRI a triple mentions, including an
+        undeclared ``rdfs:subPropertyOf foaf:knows`` target, and the editor
+        prunes the axioms of the nodes it deletes.
         """
         node_ids = {n.id for n in self.__nodes}
         for axiom in self.__axioms:
-            if not isinstance(axiom, KGAxiom):
-                continue
             for field_name, refs in axiom.referenced_ids().items():
                 for ref in refs:
                     if ref not in node_ids:
-                        warnings.append(
+                        errors.append(
                             f"{type(axiom).__name__}.{field_name} references "
                             f"{ref!r}, which is not a node in the graph."
                         )

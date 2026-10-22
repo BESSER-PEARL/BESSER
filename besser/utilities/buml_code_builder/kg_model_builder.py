@@ -17,11 +17,11 @@ writes. Two constraints follow from that pairing and shape everything below:
 
 2. **The section banner is written here, and only here.** ``project_to_json``
    splits a project file on ``# KNOWLEDGE_GRAPH MODEL … #`` lines, so a lone KG
-   needs this banner to be found at all. When a project holds several KGs,
-   ``project_to_code`` passes each one's ``title`` rather than prepending a
-   header of its own: a second header right above this banner would be read
-   as an empty section and the KG lost (``nn_model_to_code`` takes a ``title``
-   for the same reason).
+   needs this banner to be found at all, and reads the diagram's title back
+   from it. ``project_to_code`` therefore passes every KG's ``title`` rather
+   than prepending a header of its own (``nn_model_to_code`` takes a ``title``
+   for the same reason); both builders write it with
+   :func:`~besser.utilities.buml_code_builder.common.section_banner`.
 
 Values are rendered with :func:`repr` rather than the usual
 ``_escape_python_string``. Node and edge ``metadata`` carries arbitrarily
@@ -48,7 +48,7 @@ from besser.BUML.metamodel.kg import (
     KnowledgeGraph,
 )
 from besser.BUML.metamodel.kg.ids import short_digest
-from besser.utilities.buml_code_builder.common import _comment_safe, buml_header, safe_var_name
+from besser.utilities.buml_code_builder.common import _comment_safe, buml_header, safe_var_name, section_banner
 
 
 __all__ = ["kg_model_to_code"]
@@ -89,8 +89,8 @@ def kg_model_to_code(
             any other name and the section is silently skipped on import.
         title (str, optional): Diagram title to embed in the section banner
             (``# KNOWLEDGE_GRAPH MODEL: "title" #``); ``project_to_json`` reads
-            it back as the diagram's title. ``project_to_code`` passes one per
-            KG when a project holds several.
+            it back as the diagram's title. ``project_to_code`` passes one for
+            every KG; without one the diagram comes back with the default title.
 
     Raises:
         TypeError: If a node, edge or axiom carries a value that is not
@@ -98,24 +98,12 @@ def kg_model_to_code(
     """
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(buml_header())
-        _write_banner(f, title)
+        f.write(section_banner("KNOWLEDGE_GRAPH", title) + "\n")
         _write_imports(f)
 
         node_vars = _write_nodes(f, model)
         edge_vars = _write_edges(f, model, node_vars)
         _write_graph(f, model, node_vars, edge_vars, model_var_name)
-
-
-def _write_banner(f: TextIO, title: Optional[str] = None) -> None:
-    if title:
-        # One line, and no `"`: the importer's regex captures the title as
-        # `"([^"]*)"`, so an embedded quote would truncate it.
-        safe_title = _comment_safe(title).replace('"', "'")
-        header_line = f'# KNOWLEDGE_GRAPH MODEL: "{safe_title}" #'
-    else:
-        header_line = "# KNOWLEDGE_GRAPH MODEL #"
-    border = "#" * len(header_line)
-    f.write(f"{border}\n{header_line}\n{border}\n\n")
 
 
 def _write_imports(f: TextIO) -> None:

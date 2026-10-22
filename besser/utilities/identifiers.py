@@ -5,8 +5,15 @@ They differ in policy, not in mechanism, so each is a thin wrapper that fixes th
 options:
 
 * :func:`besser.utilities.buml_code_builder.common.safe_var_name` -- names in
-  generated Python code; keeps any character Python accepts in an identifier,
-  tidies underscores, lowercases.
+  generated Python code, and file and folder names derived from them (the web app
+  generator's ``agent_slug`` directories, the BAF generator's ``guis/<module>.py``
+  modules and default workspace folders); keeps any character Python accepts in an
+  identifier, tidies underscores, lowercases.
+
+Every result is a valid Python identifier: a name that would start with a digit
+(or another character that cannot start one) gets a leading ``_`` -- ``9lives``
+becomes ``_9lives`` -- where ``safe_var_name`` used to return it unprefixed, so a
+generated file or folder name can change when it is regenerated.
 * ``besser.BUML.notations.kg_to_buml.owl2uml.naming.sanitize`` -- B-UML element names
   from ontologies; **ASCII only**, underscores left alone (auxiliary class names such
   as ``_some_p_D`` depend on their leading one).

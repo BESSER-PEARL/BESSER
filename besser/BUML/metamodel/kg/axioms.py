@@ -18,11 +18,15 @@ be a non-empty ``str`` (as ``KGNode.id`` must) and a list of ids a list of
 them, and a bad value fails at the assignment instead of surfacing later in a
 converter. The single ids an axiom is about are required constructor
 arguments; only the lists, which may be empty, and ``ImportAxiom``'s
-``source_ontology_iri`` have defaults. Each class lists its fields, in
-constructor order, in ``FIELDS``; :meth:`KGAxiom.to_dict` and the serialisers
-are driven by it. The fields that name graph nodes are listed in
-``NODE_REF_FIELDS``, which :meth:`KGAxiom.referenced_ids` and
-``KnowledgeGraph.validate`` read.
+``source_ontology_iri`` have defaults.
+
+Each class lists its fields, in constructor order, in ``FIELDS``;
+:meth:`KGAxiom.to_dict` and the serialisers are driven by it. A field a
+serialised axiom may leave out is listed in ``OPTIONAL_FIELDS``. Every field
+names a node of the graph unless the class lists it in ``NON_NODE_FIELDS``;
+``NODE_REF_FIELDS`` is derived from the two when the class is defined, so a new
+axiom class gets its references checked by :meth:`KGAxiom.referenced_ids` and
+``KnowledgeGraph.validate`` without having to opt in.
 
 The records are *informational*: the deterministic KG → BUML class diagram
 converter reads them in order to surface preflight issues and to lift
@@ -103,8 +107,26 @@ class KGAxiom:
 
     #: Field names in constructor order. Declared by each subclass.
     FIELDS: ClassVar[Tuple[str, ...]] = ()
-    #: The fields whose ids name nodes of the graph (an id, or a list of them).
+    #: The fields a serialised axiom may omit (the constructor has a default for them).
+    OPTIONAL_FIELDS: ClassVar[Tuple[str, ...]] = ()
+    #: The fields that do not name nodes of the graph (e.g. ontology IRIs).
+    NON_NODE_FIELDS: ClassVar[Tuple[str, ...]] = ()
+    #: The fields whose ids name nodes of the graph (an id, or a list of them):
+    #: ``FIELDS`` minus ``NON_NODE_FIELDS``. Derived, never declared.
     NODE_REF_FIELDS: ClassVar[Tuple[str, ...]] = ()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if "NODE_REF_FIELDS" in cls.__dict__:
+            raise TypeError(
+                f"{cls.__name__} declares NODE_REF_FIELDS; list the fields that are not "
+                "node ids in NON_NODE_FIELDS instead."
+            )
+        for attr in ("OPTIONAL_FIELDS", "NON_NODE_FIELDS"):
+            unknown = set(getattr(cls, attr)) - set(cls.FIELDS)
+            if unknown:
+                raise TypeError(f"{cls.__name__}.{attr} names unknown field(s): {sorted(unknown)}.")
+        cls.NODE_REF_FIELDS = tuple(f for f in cls.FIELDS if f not in cls.NON_NODE_FIELDS)
 
     def referenced_ids(self) -> Dict[str, List[str]]:
         """The node ids the axiom refers to, by field (a single id as a one-item list).
@@ -143,7 +165,6 @@ class EquivalentClassesAxiom(KGAxiom):
     """
 
     FIELDS = ("class_ids",)
-    NODE_REF_FIELDS = FIELDS
     class_ids = _id_list_property("class_ids", "list[str]: Ids of the equivalent classes.")
 
     def __init__(self, class_ids: Optional[List[str]] = None) -> None:
@@ -158,7 +179,6 @@ class EquivalentPropertiesAxiom(KGAxiom):
     """
 
     FIELDS = ("property_ids",)
-    NODE_REF_FIELDS = FIELDS
     property_ids = _id_list_property("property_ids", "list[str]: Ids of the equivalent properties.")
 
     def __init__(self, property_ids: Optional[List[str]] = None) -> None:
@@ -172,7 +192,6 @@ class DisjointClassesAxiom(KGAxiom):
     """
 
     FIELDS = ("class_ids",)
-    NODE_REF_FIELDS = FIELDS
     class_ids = _id_list_property("class_ids", "list[str]: Ids of the pairwise-disjoint classes.")
 
     def __init__(self, class_ids: Optional[List[str]] = None) -> None:
@@ -183,7 +202,6 @@ class DisjointUnionAxiom(KGAxiom):
     """``owl:disjointUnionOf``: the union class is the disjoint union of its parts."""
 
     FIELDS = ("union_class_id", "part_class_ids")
-    NODE_REF_FIELDS = FIELDS
     union_class_id = _id_property("union_class_id", "str: Id of the union class.")
     part_class_ids = _id_list_property("part_class_ids", "list[str]: Ids of the disjoint parts.")
 
@@ -196,7 +214,6 @@ class SubPropertyOfAxiom(KGAxiom):
     """``rdfs:subPropertyOf`` between two properties (sub ⊑ super)."""
 
     FIELDS = ("sub_property_id", "super_property_id")
-    NODE_REF_FIELDS = FIELDS
     sub_property_id = _id_property("sub_property_id", "str: Id of the sub-property.")
     super_property_id = _id_property("super_property_id", "str: Id of the super-property.")
 
@@ -209,7 +226,6 @@ class InversePropertiesAxiom(KGAxiom):
     """``owl:inverseOf`` between two object properties."""
 
     FIELDS = ("property_a_id", "property_b_id")
-    NODE_REF_FIELDS = FIELDS
     property_a_id = _id_property("property_a_id", "str: Id of the first property.")
     property_b_id = _id_property("property_b_id", "str: Id of its inverse.")
 
@@ -225,7 +241,6 @@ class PropertyChainAxiom(KGAxiom):
     """
 
     FIELDS = ("property_id", "chain_property_ids")
-    NODE_REF_FIELDS = FIELDS
     property_id = _id_property("property_id", "str: Id of the composed property.")
     chain_property_ids = _id_list_property(
         "chain_property_ids", "list[str]: Ids of the chained properties, in order."
@@ -240,7 +255,6 @@ class HasKeyAxiom(KGAxiom):
     """``owl:hasKey``: the listed properties uniquely identify instances of the class."""
 
     FIELDS = ("class_id", "property_ids")
-    NODE_REF_FIELDS = FIELDS
     class_id = _id_property("class_id", "str: Id of the keyed class.")
     property_ids = _id_list_property("property_ids", "list[str]: Ids of the key properties.")
 
@@ -257,8 +271,9 @@ class ImportAxiom(KGAxiom):
     """
 
     FIELDS = ("target_iri", "source_ontology_iri")
+    OPTIONAL_FIELDS = ("source_ontology_iri",)
     #: Both name ontologies, not nodes of the graph.
-    NODE_REF_FIELDS = ()
+    NON_NODE_FIELDS = FIELDS
     target_iri = _id_property("target_iri", "str: IRI of the imported ontology.")
     source_ontology_iri = _id_property(
         "source_ontology_iri", "str | None: IRI of the importing ontology, if known.", optional=True

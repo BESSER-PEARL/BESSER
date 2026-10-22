@@ -183,9 +183,9 @@ def _model_with(**parts):
         ({"kind": "SubPropertyOfAxiom", "sub_property_id": "", "super_property_id": "p2"},
          "sub_property_id must be a non-empty"),
         ({"kind": "SubPropertyOfAxiom", "sub_property_id": "p1", "super_property_id": "nope"},
-         "unknown node.*'nope'"),
+         "SubPropertyOfAxiom.super_property_id references 'nope', which is not a node"),
         ({"kind": "HasKeyAxiom", "class_id": "c1", "property_ids": ["p1", "ghost"]},
-         "unknown node.*'ghost'"),
+         "HasKeyAxiom.property_ids references 'ghost', which is not a node"),
         ({"kind": "ImportAxiom", "target_iri": "", "source_ontology_iri": None}, "target_iri must be a non-empty"),
     ],
 )
@@ -195,6 +195,21 @@ def test_incomplete_or_dangling_axiom_is_rejected(axiom, message):
     nodes = kg_to_json(_axiom_sample_graph())["model"]["nodes"]
     with pytest.raises(ConversionError, match=message):
         process_kg_diagram(_model_with(nodes=nodes, axioms=[axiom]))
+
+
+def test_every_model_level_error_is_reported_through_validate():
+    """The processor runs KnowledgeGraph.validate() rather than checks of its own."""
+    from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+
+    axioms = [
+        {"kind": "EquivalentClassesAxiom", "class_ids": ["c1", "ghost_a"]},
+        {"kind": "InversePropertiesAxiom", "property_a_id": "ghost_b", "property_b_id": "p1"},
+    ]
+    nodes = kg_to_json(_axiom_sample_graph())["model"]["nodes"]
+    with pytest.raises(ConversionError) as excinfo:
+        process_kg_diagram(_model_with(nodes=nodes, axioms=axioms))
+
+    assert "'ghost_a'" in str(excinfo.value) and "'ghost_b'" in str(excinfo.value)
 
 
 def test_import_axiom_needs_no_matching_node():

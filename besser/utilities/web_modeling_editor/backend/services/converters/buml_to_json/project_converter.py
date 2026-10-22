@@ -142,6 +142,11 @@ def _build_section_boundary_pattern() -> str:
     return rf'#\s*(?:{keyword_alts})\s+MODEL(?:\s+\d+)?(?:\s*:\s*"[^"]*")?\s*#|# PROJECT DEFINITION'
 
 
+def _has_code(section_code: str) -> bool:
+    """True when ``section_code`` holds a line that is neither blank nor a comment."""
+    return any(line.strip() and not line.lstrip().startswith("#") for line in section_code.splitlines())
+
+
 def _extract_all_sections(content: str, keyword: str) -> List[Tuple[str, str]]:
     """
     Extract ALL sections matching a given type keyword from the project content.
@@ -173,9 +178,13 @@ def _extract_all_sections(content: str, keyword: str) -> List[Tuple[str, str]]:
     boundary_pattern = _build_section_boundary_pattern()
 
     sections = []
+    # (number, title) of a header with no code under it, waiting for the header
+    # that follows it straight away.
+    carried = (None, None)
     for match in header_pattern.finditer(content):
-        number = match.group(1)  # e.g. "1", "2", or None
-        title = match.group(2)   # e.g. "User Model" or None
+        number = match.group(1) or carried[0]  # e.g. "1", "2", or None
+        title = match.group(2) or carried[1]   # e.g. "User Model" or None
+        carried = (None, None)
         section_start = match.end()
 
         # Find the next section boundary after this header
@@ -186,8 +195,15 @@ def _extract_all_sections(content: str, keyword: str) -> List[Tuple[str, str]]:
             # Last section in the file: take everything until end
             section_code = content[section_start:].strip()
 
-        if not section_code:
+        if not _has_code(section_code):
+            # A header with nothing but comments (the ``####`` border of a
+            # builder's own banner) under it. ``project_to_code`` writes a
+            # numbered, titled header for each of several models right above
+            # the banner its builder writes, so the title belongs to the
+            # section that banner opens.
             logger.debug("Empty section found for keyword '%s' (number=%s)", keyword, number)
+            if next_boundary and header_pattern.match(content, section_start + next_boundary.start()):
+                carried = (number, title)
             continue
 
         # Build a descriptive title

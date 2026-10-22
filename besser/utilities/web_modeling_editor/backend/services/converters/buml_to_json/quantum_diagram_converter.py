@@ -17,6 +17,7 @@ from besser.BUML.metamodel.quantum.quantum import (
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
+    strip_buml_imports,
 )
 
 
@@ -482,30 +483,15 @@ def quantum_buml_to_json(content: str) -> Dict[str, Any]:
         "tuple": tuple,
     }
     # Expose all public quantum module members so the BUML file can reference
-    # any of the gate classes it constructed.
+    # any of the gate classes it constructed (safe_load_buml drops any module
+    # among them).
     for name in dir(quantum_module):
         if not name.startswith("_"):
             allowed_names[name] = getattr(quantum_module, name)
 
-    # Strip import lines -- all required types are in allowed_names already.
-    # Handle multi-line imports (e.g. from ... import (\n    ...\n))
-    cleaned_lines = []
-    in_import_block = False
-    for line in content.splitlines():
-        stripped = line.lstrip()
-        if in_import_block:
-            if ")" in line:
-                in_import_block = False
-            continue
-        if stripped.startswith(("import ", "from ")):
-            if "(" in line and ")" not in line:
-                in_import_block = True
-            continue
-        cleaned_lines.append(line)
-    cleaned_content = "\n".join(cleaned_lines)
-
     try:
-        local_vars = safe_load_buml(cleaned_content, allowed_names)
+        # Imports are stripped: all required types are in allowed_names already.
+        local_vars = safe_load_buml(strip_buml_imports(content), allowed_names)
     except Exception as exc:
         raise ValueError(f"Failed to execute quantum BUML content: {exc}") from exc
 

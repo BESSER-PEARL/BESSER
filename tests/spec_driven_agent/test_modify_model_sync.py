@@ -408,3 +408,88 @@ def test_model_sync_keeps_existing_element_ids(tmp_path):
     assert get_element_by_id(updated, gui_ref)["name"] == "Book"
     user_ids = [k for k, e in updated["elements"].items() if e.get("name") == "User"]
     assert len(user_ids) == 1 and user_ids[0] not in ("cls-book", "attr-title")
+
+
+# ----------------------------------------------------------------------
+# (f) the model-sync call fits the planning model's output ceiling (#677)
+# ----------------------------------------------------------------------
+
+# Live (2026-10-22): gpt-4o-mini answers a 32768-token request with 400
+# "max_tokens is too large: 32768. This model supports at most 16384
+# completion tokens"; the same call at 16384 returns the tool call.
+_GPT_4O_MINI_MAX_OUTPUT = 16384
+
+
+def _tool_call_response(new_classes):
+    import json
+    from unittest.mock import MagicMock
+
+    call = MagicMock()
+    call.id = "call_1"
+    call.function.name = "derive_model_deltas"
+    call.function.arguments = json.dumps({"new_classes": new_classes})
+    choice = MagicMock()
+    choice.message.content = None
+    choice.message.tool_calls = [call]
+    choice.finish_reason = "tool_calls"
+    response = MagicMock()
+    response.usage = None
+    response.choices = [choice]
+    return response
+
+
+def _openai_client_like_the_api(monkeypatch, new_classes):
+    """An OpenAI client whose endpoint rejects gpt-4o-mini calls above its
+    output ceiling, as the live API does. Returns (client, sent requests)."""
+    from unittest.mock import MagicMock
+
+    from besser.spec_driven_agent.providers.llm_client import OpenAIProvider
+
+    monkeypatch.setenv("BESSER_LLM_PLANNING_MODEL", "gpt-4o-mini")
+    client = OpenAIProvider(api_key="k", model="gpt-4o")
+    assert client.planning_model == "gpt-4o-mini"
+    sent: list[dict] = []
+
+    def create(**kwargs):
+        sent.append(kwargs)
+        budget = kwargs.get("max_tokens") or kwargs.get("max_completion_tokens")
+        if kwargs["model"] == "gpt-4o-mini" and budget > _GPT_4O_MINI_MAX_OUTPUT:
+            raise Exception(
+                f"Error code: 400 - max_tokens is too large: {budget}. This model "
+                f"supports at most {_GPT_4O_MINI_MAX_OUTPUT} completion tokens")
+        return _tool_call_response(new_classes)
+
+    client._client = MagicMock()
+    client._client.chat.completions.create.side_effect = create
+    return client, sent
+
+
+def _neutralise_modify_phases(monkeypatch, orch):
+    monkeypatch.setattr(
+        "besser.spec_driven_agent.pipeline.orchestrator.build_inventory",
+        lambda *a, **k: "",
+    )
+    monkeypatch.setattr(orch, "_seed_generator_files_from_recipe", lambda: None)
+    monkeypatch.setattr(orch, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
+
+
+def test_modify_model_sync_runs_on_an_openai_key(tmp_path, monkeypatch):
+    """modify() raises the client to MODIFY_MAX_TOKENS for the agent loop;
+    the model-sync call on gpt-4o-mini must still ask for at most 16384."""
+    client, sent = _openai_client_like_the_api(
+        monkeypatch, [{"name": "User", "attributes": [{"name": "email", "type": "str"}]}])
+    orch = _make_orchestrator(tmp_path, client, source_export=_source_export())
+    _neutralise_modify_phases(monkeypatch, orch)
+    monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+
+    orch.modify("add user accounts")
+
+    assert client.max_tokens == 32768  # the agent loop keeps the raised ceiling
+    sync_calls = [k for k in sent if k["model"] == "gpt-4o-mini"]
+    assert [k["max_tokens"] for k in sync_calls] == [_GPT_4O_MINI_MAX_OUTPUT]
+    assert "User" in _class_names(orch.domain_model)
+    assert orch._updated_project_export is not None

@@ -311,3 +311,37 @@ class TestContextWindowsStayInCompaction:
         # the self-hosted qwen3 row -- which is why namespaced ids skip the
         # measured table.
         assert compaction.effective_threshold(NEBIUS_QWEN) > compaction.COMPACT_TOKEN_THRESHOLD
+
+
+class TestPlanningCallOutputCeiling:
+    """A planning call (``model_override``) is held to the planning model's
+    own output ceiling, not the raised ceiling of the agent loop (#677)."""
+
+    def test_openai_planning_call_is_capped_and_the_primary_is_not(self):
+        provider = OpenAIProvider(api_key="k", model="gpt-4o", max_tokens=32768)
+        response = MagicMock()
+        response.usage = None
+        response.choices = [MagicMock(finish_reason="stop")]
+        response.choices[0].message.content = "ok"
+        response.choices[0].message.tool_calls = None
+        provider._client = MagicMock()
+        provider._client.chat.completions.create.return_value = response
+
+        provider.chat(system="s", messages=[{"role": "user", "content": "u"}],
+                      tools=[], model_override="gpt-4o-mini")
+        assert provider._client.chat.completions.create.call_args.kwargs["max_tokens"] == 16384
+        provider.chat(system="s", messages=[{"role": "user", "content": "u"}], tools=[])
+        assert provider._client.chat.completions.create.call_args.kwargs["max_tokens"] == 32768
+
+    def test_a_lower_client_ceiling_still_wins_on_a_planning_call(self):
+        provider = OpenAIProvider(api_key="k", model="gpt-4o", max_tokens=4096)
+        assert provider._request_max_tokens("gpt-4o-mini") == 4096
+
+    def test_claude_planning_call_is_capped(self):
+        client = ClaudeLLMClient(api_key="k", model="claude-sonnet-5", max_tokens=32768)
+        client._client = MagicMock()
+        client._client.messages.create.return_value = MagicMock(
+            stop_reason="end_turn", content=[])
+        client.chat(system="s", messages=[{"role": "user", "content": "u"}],
+                    tools=[], model_override="claude-haiku-4-5")
+        assert client._client.messages.create.call_args.kwargs["max_tokens"] == 16384

@@ -601,6 +601,14 @@ class LLMProvider(ABC):
             raise ValueError("max_tokens must be positive")
         self._max_tokens = value
 
+    def _request_max_tokens(self, model_override: str | None) -> int:
+        """Output ceiling for one call. A planning call on a cheaper sibling
+        keeps to that model's own ceiling: the agent loop's raised ceiling
+        (32768) is a 400 on gpt-4o-mini, which allows 16384."""
+        if not model_override:
+            return self._max_tokens
+        return min(self._max_tokens, max_output_tokens(model_override))
+
     @abstractmethod
     def chat(
         self,
@@ -1049,7 +1057,7 @@ class ClaudeLLMClient(LLMProvider):
             try:
                 request_kwargs: dict[str, Any] = {
                     "model": effective_model,
-                    "max_tokens": self._max_tokens,
+                    "max_tokens": self._request_max_tokens(model_override),
                     "system": _with_cache_control(system),
                     "messages": _with_message_cache(messages),
                     "tools": _with_tool_cache(request_tools),
@@ -1762,7 +1770,7 @@ class OpenAIProvider(LLMProvider):
                 tok_key = _openai_max_tokens_key(effective_model)
                 kwargs: dict[str, Any] = {
                     "model": effective_model,
-                    tok_key: self._max_tokens,
+                    tok_key: self._request_max_tokens(model_override),
                     "messages": api_messages,
                 }
                 # Per-model sampling. Empty for every model not in the

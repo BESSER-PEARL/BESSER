@@ -197,6 +197,10 @@ Context and token budgets
   The same ceiling for modify and fix runs, which routinely rewrite a whole
   existing file in one turn.
 
+Both ceilings apply to the main model's turns. A planning-model call keeps to
+the planning model's own output ceiling (16384 by default), since a cheaper
+sibling such as ``gpt-4o-mini`` rejects a larger request.
+
 Storage and lifecycle
 ---------------------
 

@@ -57,6 +57,11 @@ metamodel they validate on assignment: an id must be a ``str`` and a list of ids
 a list of ``str``. Each class lists its fields in ``FIELDS``, and
 ``to_dict()`` gives the plain-dict form the converters serialise.
 
+The OWL importer stores each constraint parameter once, in the
+``constraintSpecs`` of its constraint node, which is what the editor edits; no
+raw edge repeats it. ``owl:hasKey`` in particular becomes only the ``hasKey``
+spec of a node constraint on the class, not a ``HasKeyAxiom``.
+
 Example
 -------
 

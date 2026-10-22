@@ -33,7 +33,7 @@ def test_a_non_object_node_is_a_400(client, path):
     response = client.post(f"{_API}{path}", json=_malformed())
 
     assert response.status_code == 400, response.text
-    assert "Malformed Knowledge Graph diagram payload" in response.json()["detail"]
+    assert "must be an object" in response.json()["detail"]
 
 
 def test_a_non_object_edge_is_a_400(client):
@@ -49,4 +49,4 @@ def test_validate_diagram_reports_a_non_object_node_as_invalid(client):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["isValid"] is False
-    assert any("Malformed Knowledge Graph diagram payload" in e for e in body["errors"])
+    assert any("must be an object" in e for e in body["errors"])

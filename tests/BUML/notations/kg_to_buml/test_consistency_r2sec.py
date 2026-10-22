@@ -102,12 +102,11 @@ def test_a_runaway_pattern_the_heuristic_misses_is_stopped_by_the_timeout():
 
 
 def _path_less_kg():
-    # ``:nickname`` is never declared as a property, so the importer keeps no
-    # sh:path for the property shape and pyshacl refuses to load it.
+    # A property shape without sh:path: pyshacl refuses to load the shapes graph.
     return _kg("""
-:alice a :Person ; :nickname "aaa" .
+:alice a :Person .
 :S a sh:NodeShape ; sh:targetClass :Person ; sh:property :PS .
-:PS a sh:PropertyShape ; sh:path :nickname ; sh:minCount 2 .
+:PS a sh:PropertyShape ; sh:minCount 2 .
 """)
 
 

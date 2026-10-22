@@ -112,12 +112,10 @@ def _build_axiom(raw: Dict[str, Any], nodes_by_id: Dict[str, Any]):
     malformed, matching :func:`_build_node` / :func:`_build_edge`. Returning
     ``None`` meant a bad axiom vanished from the model without a word.
 
-    Every field the axiom class declares in ``FIELDS`` must be present, every
-    id field non-empty, and every id must name a node of the graph: the
-    constructors default each field to ``""`` / ``[]``, so a bare
-    ``{"kind": "SubPropertyOfAxiom"}`` would otherwise build an axiom about
-    nothing. ``ImportAxiom`` is the exception: it carries ontology IRIs, not
-    node ids, and its ``source_ontology_iri`` is optional.
+    Every field the axiom class declares in ``FIELDS`` must be present (the
+    axiom constructors reject empty ids themselves), and every id must name a
+    node of the graph. ``ImportAxiom`` is the exception: it carries ontology
+    IRIs, not node ids, and its ``source_ontology_iri`` is optional.
     """
     kind = raw.get("kind")
     if not kind:
@@ -127,23 +125,16 @@ def _build_axiom(raw: Dict[str, Any], nodes_by_id: Dict[str, Any]):
         known = ", ".join(sorted(_AXIOM_KIND_TO_CLASS))
         raise ConversionError(f"Unknown KG axiom kind '{kind}'. Expected one of: {known}.")
     payload = {k: v for k, v in raw.items() if k != "kind"}
+    optional = {"source_ontology_iri"} if cls is ImportAxiom else set()
+    missing = [name for name in cls.FIELDS if name not in payload and name not in optional]
+    if missing:
+        raise ConversionError(f"Malformed '{kind}' axiom: missing field(s) {', '.join(missing)}.")
     try:
         axiom = cls(**payload)
     except (TypeError, ValueError) as exc:
-        # TypeError: an unknown or duplicated field; ValueError: a field of the wrong type.
+        # TypeError: an unknown or duplicated field; ValueError: an empty id or a field of the wrong type.
         raise ConversionError(f"Malformed '{kind}' axiom: {exc}") from exc
-    missing = [name for name in cls.FIELDS if name not in payload]
-    if missing:
-        raise ConversionError(f"Malformed '{kind}' axiom: missing field(s) {', '.join(missing)}.")
-    if cls is ImportAxiom:
-        if not axiom.target_iri:
-            raise ConversionError("Malformed 'ImportAxiom' axiom: 'target_iri' is empty.")
-        return axiom
-    for name in cls.FIELDS:
-        value = getattr(axiom, name)
-        ids = value if isinstance(value, list) else [value]
-        if not isinstance(value, list) and not value:
-            raise ConversionError(f"Malformed '{kind}' axiom: '{name}' is empty.")
+    for name, ids in axiom.referenced_ids().items():
         unknown = [node_id for node_id in ids if node_id not in nodes_by_id]
         if unknown:
             raise ConversionError(

@@ -130,7 +130,7 @@ def test_malformed_axiom_raises_instead_of_vanishing():
     # axiom's validating setters reject it, and it must not vanish either.
     with pytest.raises(ConversionError, match="Malformed 'HasKeyAxiom'.*class_id"):
         process_kg_diagram(
-            {"model": {**base, "axioms": [{"kind": "HasKeyAxiom", "class_id": 7}]}}
+            {"model": {**base, "axioms": [{"kind": "HasKeyAxiom", "class_id": 7, "property_ids": ["p"]}]}}
         )
     with pytest.raises(ConversionError, match="Malformed 'EquivalentClassesAxiom'.*list of str"):
         process_kg_diagram(
@@ -181,12 +181,12 @@ def _model_with(**parts):
         ({"kind": "SubPropertyOfAxiom"}, "missing field"),
         ({"kind": "SubPropertyOfAxiom", "sub_property_id": "p1"}, "missing field.*super_property_id"),
         ({"kind": "SubPropertyOfAxiom", "sub_property_id": "", "super_property_id": "p2"},
-         "'sub_property_id' is empty"),
+         "sub_property_id must be a non-empty"),
         ({"kind": "SubPropertyOfAxiom", "sub_property_id": "p1", "super_property_id": "nope"},
          "unknown node.*'nope'"),
         ({"kind": "HasKeyAxiom", "class_id": "c1", "property_ids": ["p1", "ghost"]},
          "unknown node.*'ghost'"),
-        ({"kind": "ImportAxiom", "target_iri": "", "source_ontology_iri": None}, "'target_iri' is empty"),
+        ({"kind": "ImportAxiom", "target_iri": "", "source_ontology_iri": None}, "target_iri must be a non-empty"),
     ],
 )
 def test_incomplete_or_dangling_axiom_is_rejected(axiom, message):

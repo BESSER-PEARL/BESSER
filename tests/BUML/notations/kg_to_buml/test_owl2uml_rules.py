@@ -703,11 +703,25 @@ def test_malformed_cardinality_skips_the_restriction_with_a_warning(tmp_path: Pa
         [ a owl:Restriction ; owl:onProperty :owns ; owl:minCardinality "-1"^^xsd:integer ] ,
         [ a owl:Restriction ; owl:onProperty :owns ; owl:cardinality "2"^^xsd:nonNegativeInteger ] .
     """)
+    # The OWL importer already drops the non-numeric "abc" (with its own import
+    # warning); the lowering reports the negative count it still receives.
     messages = [w.message for w in result.warnings if w.code == "OWL_CARDINALITY_INVALID"]
-    assert len(messages) == 2
-    assert any("'abc'" in m for m in messages) and any("'-1'" in m for m in messages)
+    assert len(messages) == 1 and "'-1'" in messages[0]
     # The well-formed restriction beside them is still mapped.
     assert "_exact_2_owns_Pet" in _classes_by_name(result.domain_model)
+
+
+def test_malformed_cardinality_reaching_the_lowering_directly_is_skipped_with_a_warning():
+    """The lowering's own guard, for graphs that don't come through the OWL importer."""
+    warnings: list = []
+    _plan("""
+    :Pet a owl:Class . :Person a owl:Class .
+    :owns a owl:ObjectProperty ; rdfs:domain :Person ; rdfs:range :Pet .
+    :Q a owl:Class ; rdfs:subClassOf
+        [ a owl:Restriction ; owl:onProperty :owns ; owl:maxCardinality "abc"^^xsd:nonNegativeInteger ] .
+    """, warnings)
+    messages = [w.message for w in warnings if w.code == "OWL_CARDINALITY_INVALID"]
+    assert len(messages) == 1 and "'abc'" in messages[0]
 
 
 def test_d38_key_on_an_unmodelled_property_names_it():

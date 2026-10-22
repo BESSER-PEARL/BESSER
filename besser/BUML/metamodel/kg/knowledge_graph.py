@@ -590,8 +590,12 @@ class KnowledgeGraph(Model):
 
     @property
     def axioms(self) -> List[KGAxiom]:
-        """list[KGAxiom]: Get the OWL axioms that relate several nodes at once."""
-        return self.__axioms
+        """list[KGAxiom]: Get a copy of the OWL axioms that relate several nodes at once.
+
+        Change them with :meth:`add_axiom` or by assigning the property, not by
+        mutating the list returned.
+        """
+        return list(self.__axioms)
 
     @axioms.setter
     def axioms(self, value: Optional[List[KGAxiom]]) -> None:
@@ -652,6 +656,7 @@ class KnowledgeGraph(Model):
         self._validate_unique_node_ids(errors)
         self._validate_edge_endpoints(errors)
         self._validate_constraint_specs(errors)
+        self._validate_axiom_types(errors)
         self._validate_axiom_references(warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
@@ -686,26 +691,28 @@ class KnowledgeGraph(Model):
                 if not is_valid_spec(spec):
                     errors.append(f"{type(n).__name__} {n.id!r} has an invalid constraint spec at index {idx}: {spec!r}")
 
-    def _validate_axiom_references(self, warnings: List[str]) -> None:
-        """Axioms name nodes by id; a missing one is reported but not fatal.
+    def _validate_axiom_types(self, errors: List[str]) -> None:
+        """The setter checks this; catch state that got around it."""
+        for idx, axiom in enumerate(self.__axioms):
+            if not isinstance(axiom, KGAxiom):
+                errors.append(
+                    f"KnowledgeGraph.axioms[{idx}] is a {type(axiom).__name__}, not a KGAxiom."
+                )
 
-        An imported ontology may legitimately reference an IRI it does not
-        define, so this is a warning -- it should not block a conversion.
+    def _validate_axiom_references(self, warnings: List[str]) -> None:
+        """Flag every axiom id that names no node of the graph.
+
+        A warning, not an error: an imported ontology may legitimately refer to
+        an IRI it does not define (a ``rdfs:subPropertyOf foaf:knows`` without
+        ``foaf:knows`` itself), and that should not block a conversion.
         """
         node_ids = {n.id for n in self.__nodes}
-        id_fields = (
-            "class_ids", "property_ids", "part_class_ids", "chain_property_ids",
-            "union_class_id", "sub_property_id", "super_property_id",
-            "property_a_id", "property_b_id", "class_id", "property_id",
-        )
         for axiom in self.__axioms:
-            for field_name in id_fields:
-                value = getattr(axiom, field_name, None)
-                if not value:
-                    continue
-                referenced = value if isinstance(value, list) else [value]
-                for ref in referenced:
-                    if isinstance(ref, str) and ref not in node_ids:
+            if not isinstance(axiom, KGAxiom):
+                continue
+            for field_name, refs in axiom.referenced_ids().items():
+                for ref in refs:
+                    if ref not in node_ids:
                         warnings.append(
                             f"{type(axiom).__name__}.{field_name} references "
                             f"{ref!r}, which is not a node in the graph."

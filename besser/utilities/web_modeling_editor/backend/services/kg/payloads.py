@@ -6,10 +6,11 @@ router so ``routers/kg_router.py`` holds only endpoints (the same split as
 ``services/spec_driven``).
 """
 
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from besser.BUML.metamodel.kg import KnowledgeGraph
 from besser.BUML.notations.kg_to_buml import KGAction, KGPreflightReport, kg_signature
+from besser.utilities.web_modeling_editor.backend.constants.constants import KG_DIAGRAM_TYPE
 from besser.utilities.web_modeling_editor.backend.models import DiagramInput, KGDiagramInput
 from besser.utilities.web_modeling_editor.backend.services.converters import process_kg_diagram
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
@@ -17,7 +18,7 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ValidationError,
 )
 
-if TYPE_CHECKING:  # pyshacl's module stays a lazy import at runtime
+if TYPE_CHECKING:
     from besser.BUML.notations.kg_to_buml.consistency import ConsistencyReport
 
 
@@ -35,11 +36,8 @@ def parse_kg_diagram(json_data: Dict[str, Any]) -> KnowledgeGraph:
         raise ConversionError(f"Malformed Knowledge Graph diagram payload: {exc}") from exc
 
 
-def kg_payload_to_kg(input_data: DiagramInput) -> Tuple[KnowledgeGraph, Dict[str, Any]]:
+def kg_payload_to_kg(input_data: DiagramInput) -> KnowledgeGraph:
     """Validate that ``input_data`` carries a KG diagram and parse it.
-
-    Returns:
-        The KG and the dumped request payload it was built from.
 
     Raises:
         ValidationError: when the payload isn't a ``KnowledgeGraphDiagram`` (HTTP 400).
@@ -47,11 +45,11 @@ def kg_payload_to_kg(input_data: DiagramInput) -> Tuple[KnowledgeGraph, Dict[str
     """
     json_data = input_data.model_dump()
     model = json_data.get("model") or {}
-    if model.get("type") != "KnowledgeGraphDiagram":
+    if model.get("type") != KG_DIAGRAM_TYPE:
         raise ValidationError(
-            "Expected a KnowledgeGraphDiagram payload (model.type must be 'KnowledgeGraphDiagram')."
+            f"Expected a {KG_DIAGRAM_TYPE} payload (model.type must be '{KG_DIAGRAM_TYPE}')."
         )
-    return parse_kg_diagram(json_data), json_data
+    return parse_kg_diagram(json_data)
 
 
 def enforce_signature(input_data: KGDiagramInput, kg: KnowledgeGraph) -> None:

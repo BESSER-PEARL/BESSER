@@ -1,9 +1,10 @@
 """Shared helpers for LLM integrations across BESSER utilities.
 
-Centralised here so both the deterministic ``kg_to_buml`` LLM call and
-the new KG-cleanup LLM flow can reuse the same response-cleaning logic, and
-so every OpenAI chat request in the codebase goes through one place that
-enforces a timeout and never echoes the upstream response body to a caller.
+Centralised here so the LLM KG conversion (``besser.utilities.kg_llm_to_buml``)
+and the KG-cleanup LLM flow (``besser.BUML.notations.kg_to_buml.llm_cleanup``)
+share the same response-cleaning logic, and so every OpenAI chat request in the
+codebase goes through one place that enforces a timeout and never echoes the
+upstream response body to a caller.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 OPENAI_CHAT_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 
 #: Model used when a caller does not name one. Defined here, in the lowest layer
-#: that talks to OpenAI, so the notation code, the legacy KG converter and the
+#: that talks to OpenAI, so the notation code, the LLM KG converter and the
 #: backend all share one value and cannot drift apart.
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 

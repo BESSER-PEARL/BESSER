@@ -1,15 +1,28 @@
+"""Tests for the LLM-assisted KG conversion, ``besser.utilities.kg_llm_to_buml``.
+
+The OpenAI transport is mocked (``requests.post``); the model's answer is
+turned into a real :class:`DomainModel`.
+"""
+
+import importlib
 import json
+import sys
+import warnings
+
 import pytest
 from unittest.mock import patch, mock_open, MagicMock
 
+from besser.BUML.metamodel.structural import DomainModel, IntegerType, StringType
 from besser.utilities.llm_utils import LLMUpstreamError
-from besser.utilities.kg_to_buml import (
+from besser.utilities.kg_llm_to_buml import (
+    LLMAnswerError,
     kg_to_buml,
     kg_to_plantuml,
     clean_plantuml_response,
     clean_json_response,
     parse_json_safely,
-    convert_spec_json_to_buml
+    convert_spec_json_to_buml,
+    spec_to_domain_model,
 )
 
 def _mock_plantuml_response():
@@ -290,34 +303,92 @@ def test_kg_to_plantuml_raises_on_file_not_found(mock_file):
 # --- Tests for kg_to_buml ---
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
 @patch('requests.post')
-@patch('besser.utilities.kg_to_buml.process_class_diagram')
-def test_kg_to_buml_returns_domain_model(mock_process, mock_post, mock_file):
-    """Test that kg_to_buml successfully transforms KG to DomainModel"""
-    # Mock the API response
+def test_kg_to_buml_returns_domain_model(mock_post, mock_file):
+    """The model's JSON answer becomes a DomainModel, without the web backend."""
     mock_response = MagicMock()
     mock_response.ok = True
     mock_response.json.return_value = _mock_openai_api_response(_mock_gpt_json_response())
     mock_post.return_value = mock_response
-    
-    # Mock the process_class_diagram to return a mock DomainModel
-    mock_domain_model = MagicMock()
-    mock_domain_model.name = "KnowledgeGraphSystem"
-    mock_process.return_value = mock_domain_model
-    
+
     result = kg_to_buml('fake_path.json', 'fake_token')
-    
-    # Verify file was read
+
     mock_file.assert_called_once_with('fake_path.json', 'r', encoding='utf-8')
-    
-    # Verify API was called
-    assert mock_post.called
-    
-    # Verify process_class_diagram was called
-    assert mock_process.called
-    
-    # Verify result is a DomainModel
-    assert result == mock_domain_model
-    assert result.name == "KnowledgeGraphSystem"
+    assert isinstance(result, DomainModel)
+    person = result.get_class_by_name("Person")
+    assert {(a.name, a.type, a.visibility) for a in person.attributes} == {
+        ("name", StringType, "private"), ("age", IntegerType, "private"),
+    }
+    (get_name,) = person.methods
+    assert (get_name.name, get_name.type) == ("getName", StringType)
+    (owns,) = result.associations
+    assert owns.name == "owns"
+    ends = {end.type.name: end for end in owns.ends}
+    assert (ends["Person"].multiplicity.min, ends["Person"].multiplicity.max) == (1, 1)
+    assert ends["Car"].multiplicity.max == 9999
+    assert result.validate(raise_exception=False)["success"]
+
+
+def test_the_library_does_not_import_the_web_backend():
+    module = importlib.import_module("besser.utilities.kg_llm_to_buml")
+    with open(module.__file__, encoding="utf-8") as source:
+        assert "web_modeling_editor" not in source.read()
+
+
+def test_spec_to_domain_model_builds_generalizations_and_compositions():
+    model = spec_to_domain_model({
+        "classes": [{"className": "Order"}, {"className": "Order Line"}, {"className": "Rush-Order"}],
+        "relationships": [
+            {"type": "Composition", "source": "Order Line", "target": "Order", "name": "has lines",
+             "sourceMultiplicity": "1..*", "targetMultiplicity": "1"},
+            {"type": "Inheritance", "source": "Rush-Order", "target": "Order"},
+            {"type": "Association", "source": "Order", "target": "Ghost"},
+        ],
+    })
+
+    assert {c.name for c in model.get_classes()} == {"Order", "Order_Line", "Rush_Order"}
+    (generalization,) = model.generalizations
+    assert (generalization.specific.name, generalization.general.name) == ("Rush_Order", "Order")
+    (composition,) = model.associations
+    assert composition.name == "has_lines"
+    ends = {end.type.name: end for end in composition.ends}
+    assert ends["Order"].is_composite and not ends["Order_Line"].is_composite
+    assert (ends["Order_Line"].multiplicity.min, ends["Order_Line"].multiplicity.max) == (1, 9999)
+
+
+def test_spec_to_domain_model_keeps_end_and_association_names_unique():
+    model = spec_to_domain_model({
+        "classes": [{"className": "Loan"}, {"className": "Member"}],
+        "relationships": [
+            {"type": "Association", "source": "Loan", "target": "Member", "name": "borrower"},
+            {"type": "Association", "source": "Loan", "target": "Member", "name": "borrower"},
+        ],
+    })
+    assert sorted(a.name for a in model.associations) == ["borrower", "borrower_1"]
+    assert model.validate(raise_exception=False)["success"]
+
+
+@pytest.mark.parametrize("spec, message", [
+    ({"classes": [{"className": "A", "attributes": [{"name": "x", "type": "List<String>"}]}]}, "Unknown type"),
+    ({"classes": [{"className": "A"}, {"className": "B"}],
+      "relationships": [{"type": "Association", "source": "A", "target": "B", "targetMultiplicity": "many"}]},
+     "Invalid multiplicity"),
+    ({"classes": [{"attributes": []}]}, "could not be built"),
+    (["not", "an", "object"], "not a JSON object"),
+])
+def test_an_unusable_specification_is_an_llm_answer_error(spec, message):
+    with pytest.raises(LLMAnswerError, match=message):
+        spec_to_domain_model(spec)
+
+
+def test_the_old_module_name_is_a_deprecated_alias():
+    sys.modules.pop("besser.utilities.kg_to_buml", None)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        alias = importlib.import_module("besser.utilities.kg_to_buml")
+    assert any(issubclass(w.category, DeprecationWarning) and "kg_llm_to_buml" in str(w.message)
+               for w in caught)
+    assert alias.kg_to_buml is kg_to_buml
+    assert alias.kg_to_plantuml is kg_to_plantuml
 
 
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
@@ -351,7 +422,7 @@ def test_kg_to_buml_handles_invalid_json(mock_post, mock_file):
     mock_response.json.return_value = _mock_openai_api_response("not valid json")
     mock_post.return_value = mock_response
     
-    with pytest.raises(RuntimeError, match="Failed to parse JSON"):
+    with pytest.raises(LLMAnswerError, match="Failed to parse JSON"):
         kg_to_buml('fake_path.json', 'fake_token')
 
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
@@ -406,17 +477,15 @@ def test_kg_to_buml_uses_specified_model(mock_post, mock_file):
 
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
 @patch('requests.post')
-@patch('besser.utilities.kg_to_buml.process_class_diagram')
-def test_kg_to_buml_handles_conversion_failure(mock_process, mock_post, mock_file):
-    """Test that kg_to_buml handles failure in convert_spec_json_to_buml"""
+def test_kg_to_buml_handles_conversion_failure(mock_post, mock_file):
+    """An answer that is JSON but not a usable class diagram is an LLMAnswerError."""
     mock_response = MagicMock()
     mock_response.ok = True
-    mock_response.json.return_value = _mock_openai_api_response(_mock_gpt_json_response())
+    mock_response.json.return_value = _mock_openai_api_response(json.dumps({
+        "classes": [{"className": "A", "attributes": [{"name": "x", "type": "Map<K,V>"}]}],
+    }))
     mock_post.return_value = mock_response
-    
-    # Mock process_class_diagram to raise an exception
-    mock_process.side_effect = Exception("Conversion failed")
-    
-    with pytest.raises(RuntimeError, match="Failed to process the KG to B-UML conversion"):
-        kg_to_buml('fake_path.json', 'fake_token')
 
+    with pytest.raises(LLMAnswerError, match="Unknown type") as excinfo:
+        kg_to_buml('fake_path.json', 'fake_token')
+    assert isinstance(excinfo.value, RuntimeError)  # what the released API raised

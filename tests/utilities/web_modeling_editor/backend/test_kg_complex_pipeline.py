@@ -36,7 +36,7 @@ def kg_payload() -> dict:
 
 
 def test_analyze_surfaces_expected_issue_codes(client, kg_payload: dict):
-    resp = client.post("/besser_api/analyze-kg-for-buml-conversion", json=kg_payload)
+    resp = client.post("/besser_api/kg/preflight", json=kg_payload)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     codes = {i["code"] for i in body["issues"]}
@@ -66,10 +66,10 @@ def test_analyze_surfaces_expected_issue_codes(client, kg_payload: dict):
 
 
 def test_class_diagram_with_all_accepts(client, kg_payload: dict):
-    pre = client.post("/besser_api/analyze-kg-for-buml-conversion", json=kg_payload).json()
+    pre = client.post("/besser_api/kg/preflight", json=kg_payload).json()
     resolutions = [{"issueId": i["id"], "decision": "accept"} for i in pre["issues"]]
     resp = client.post(
-        "/besser_api/kg-to-class-diagram",
+        "/besser_api/kg/to-class-diagram",
         json={**kg_payload, "kgSignature": pre["kgSignature"], "resolutions": resolutions},
     )
     assert resp.status_code == 200, resp.text
@@ -84,13 +84,13 @@ def test_class_diagram_with_all_accepts(client, kg_payload: dict):
 
 def test_class_diagram_with_skip_drops_property(client, kg_payload: dict):
     """When the user skips PROPERTY_NO_DOMAIN, the :likes property is dropped."""
-    pre = client.post("/besser_api/analyze-kg-for-buml-conversion", json=kg_payload).json()
+    pre = client.post("/besser_api/kg/preflight", json=kg_payload).json()
     resolutions = []
     for issue in pre["issues"]:
         decision = "skip" if issue["code"] == "PROPERTY_NO_DOMAIN" else "accept"
         resolutions.append({"issueId": issue["id"], "decision": decision})
     resp = client.post(
-        "/besser_api/kg-to-class-diagram",
+        "/besser_api/kg/to-class-diagram",
         json={**kg_payload, "kgSignature": pre["kgSignature"], "resolutions": resolutions},
     )
     assert resp.status_code == 200, resp.text
@@ -108,10 +108,10 @@ def test_class_diagram_with_all_skips(client, kg_payload: dict):
     reachable — and one of them (``keep_first_only``, behind MULTIVALUED_LITERAL)
     shipped raising ``NameError``, which this endpoint turns into a 500.
     """
-    pre = client.post("/besser_api/analyze-kg-for-buml-conversion", json=kg_payload).json()
+    pre = client.post("/besser_api/kg/preflight", json=kg_payload).json()
     resolutions = [{"issueId": i["id"], "decision": "skip"} for i in pre["issues"]]
     resp = client.post(
-        "/besser_api/kg-to-class-diagram",
+        "/besser_api/kg/to-class-diagram",
         json={**kg_payload, "kgSignature": pre["kgSignature"], "resolutions": resolutions},
     )
     assert resp.status_code == 200, resp.text
@@ -120,7 +120,7 @@ def test_class_diagram_with_all_skips(client, kg_payload: dict):
 
 def test_stale_signature_blocks_conversion(client, kg_payload: dict):
     resp = client.post(
-        "/besser_api/kg-to-class-diagram",
+        "/besser_api/kg/to-class-diagram",
         json={**kg_payload, "kgSignature": "deadbeef00000000"},
     )
     assert resp.status_code == 400

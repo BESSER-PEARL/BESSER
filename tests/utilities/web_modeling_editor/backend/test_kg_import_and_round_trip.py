@@ -3,7 +3,7 @@
 Covers:
   1. rdflib → KnowledgeGraph → JSON produces the expected shape.
   2. JSON → process_kg_diagram → kg_to_json is an identity (round-trip).
-  3. POST /import-owl returns a DiagramExportResponse that /validate-diagram accepts.
+  3. POST /kg/import-owl returns a DiagramExportResponse that /validate-diagram accepts.
   4. A project holding a KG survives project_to_code → project_to_json.
 """
 
@@ -244,7 +244,7 @@ def test_title_goes_through_the_shared_name_sanitizer():
 def test_import_owl_endpoint_and_validation(client, ttl_path: Path):
     with ttl_path.open("rb") as fh:
         resp = client.post(
-            "/besser_api/import-owl",
+            "/besser_api/kg/import-owl",
             files={"owl_file": ("tiny.ttl", fh.read(), "text/turtle")},
         )
     assert resp.status_code == 200, resp.text
@@ -273,7 +273,7 @@ def test_import_owl_rejects_unsupported_extension(client, tmp_path: Path):
     p.write_text("not an ontology", encoding="utf-8")
     with p.open("rb") as fh:
         resp = client.post(
-            "/besser_api/import-owl",
+            "/besser_api/kg/import-owl",
             files={"owl_file": ("bad.txt", fh.read(), "text/plain")},
         )
     assert resp.status_code == 415
@@ -293,7 +293,7 @@ def test_single_diagram_buml_round_trip(client, ttl_path: Path):
     /get-json-model's type sniffing had no KG branch at all.
     """
     imported = client.post(
-        "/besser_api/import-owl",
+        "/besser_api/kg/import-owl",
         files={"owl_file": ("tiny.ttl", ttl_path.read_bytes(), "text/turtle")},
     )
     assert imported.status_code == 200, imported.text
@@ -547,7 +547,7 @@ _BILLION_LAUGHS = """<?xml version="1.0"?>
 
 def test_import_owl_rejects_a_dtd_before_parsing(client):
     resp = client.post(
-        "/besser_api/import-owl",
+        "/besser_api/kg/import-owl",
         files={"owl_file": ("bomb.owl", _BILLION_LAUGHS.encode("utf-8"), "application/rdf+xml")},
     )
 
@@ -558,7 +558,7 @@ def test_import_owl_rejects_a_dtd_before_parsing(client):
 def test_import_owl_still_accepts_a_plain_ontology(client, ttl_path: Path):
     """The DTD guard must not reject the ontologies we actually import."""
     resp = client.post(
-        "/besser_api/import-owl",
+        "/besser_api/kg/import-owl",
         files={"owl_file": ("tiny.ttl", ttl_path.read_bytes(), "text/turtle")},
     )
 
@@ -570,7 +570,7 @@ def test_import_owl_returns_the_anomalies_it_skipped(client):
     from tests.utilities.test_owl_importer_constructs import _BAD_QUALIFIED_COUNT_TTL
 
     resp = client.post(
-        "/besser_api/import-owl",
+        "/besser_api/kg/import-owl",
         files={"owl_file": ("bad.ttl", _BAD_QUALIFIED_COUNT_TTL.encode("utf-8"), "text/turtle")},
     )
 
@@ -580,7 +580,7 @@ def test_import_owl_returns_the_anomalies_it_skipped(client):
 
 def test_import_owl_has_an_empty_warning_list_when_nothing_was_skipped(client, ttl_path: Path):
     resp = client.post(
-        "/besser_api/import-owl",
+        "/besser_api/kg/import-owl",
         files={"owl_file": ("tiny.ttl", ttl_path.read_bytes(), "text/turtle")},
     )
 

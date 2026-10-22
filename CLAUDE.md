@@ -89,7 +89,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 |------|------|
 | `besser/BUML/metamodel/` | Abstract syntax: `structural/` (DomainModel, Class, Property, associations, generalization), `state_machine/`, `gui/`, `action_language/` (BAL), `bpmn/`, `deployment/`, `feature_model/`, `nn/`, `object/`, `ocl/`, `project/`, `quantum/` |
 | `besser/BUML/notations/` | ANTLR-based parsers (PlantUML class/object, OCL, NN, deployment, BAL), draw.io import, LLM-assisted mockup → model, OWL/RDF → knowledge graph (`owl_to_kg/`), KG → class diagram (`kg_to_buml/`) |
-| `besser/utilities/image_to_buml.py`, `kg_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram |
+| `besser/utilities/image_to_buml.py`, `kg_llm_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram via an LLM (`kg_to_buml.py` is its deprecated alias) |
 | `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/` |
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
@@ -101,7 +101,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
 | `…/backend/services/validators/ocl_checker.py` | Metamodel + OCL validation behind `/validate-diagram` |
 | `…/backend/services/deployment/` | Docker Compose deploy, GitHub OAuth / deploy (these routers are registered from here, not `routers/`) |
-| `…/backend/services/kg/` | Knowledge Graph service layer behind `routers/kg_router.py`: request parsing, Refine-KG decisions, the user's-own-LLM adapter |
+| `…/backend/services/kg/` | Knowledge Graph service layer behind `routers/kg_router.py` (endpoints under `/besser_api/kg`): request parsing, Refine-KG decisions, the user's-own-LLM adapter, the consistency check under its concurrency cap |
 | `…/backend/services/spec_driven/` | Spec-Driven service layer (see below) |
 | `…/backend/services/exceptions.py` | `BesserError` → `ConversionError`, `ValidationError` (incl. `CodeValidationError` → 400), `GenerationError`, `ConfigurationError` |
 | `…/web_modeling_editor/agent_simulator/` | Separate container that runs generated BAF agents in a bubblewrap sandbox; only `agent_simulator_router.py` talks to it |

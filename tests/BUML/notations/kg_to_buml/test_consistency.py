@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import tempfile
 import os
+import time
 
 import pytest
 
@@ -569,3 +570,122 @@ def test_issue_ids_keep_their_exact_values():
     kg.nodes = {n2, n1}
     kg.add_edge(KGEdge(id="e1", source=n1, target=n2, iri="http://x/p"))
     assert kg_signature(kg) == "0950ab9576296782"
+
+
+# ---------------------------------------------------------------------------
+# Bounded evaluation: the validator child process, its time budget and
+# environment, and the sh:pattern length cap
+# ---------------------------------------------------------------------------
+
+
+_PERSON_NAME = _PREFIX + """
+:Person a owl:Class .
+:name a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:string .
+"""
+
+
+def _pattern_kg(pattern: str, value: str):
+    escaped = pattern.replace("\\", "\\\\")
+    return _kg(_PERSON_NAME + f"""
+:PersonShape a sh:NodeShape ; sh:targetClass :Person ;
+    sh:property [ sh:path :name ; sh:pattern "{escaped}" ; sh:maxLength 5 ] .
+:alice a :Person ; :name "{value}" .
+""")
+
+
+def test_a_runaway_pattern_is_stopped_by_the_timeout():
+    """``^(a+)+$`` backtracks exponentially on 40 a's and a '!': the child is killed."""
+    from besser.BUML.notations.kg_to_buml.consistency import ConsistencyCheckTimeout
+
+    kg = _pattern_kg("^(a+)+$", "a" * 40 + "!")
+
+    started = time.monotonic()
+    with pytest.raises(ConsistencyCheckTimeout, match="did not finish within 3 seconds"):
+        check_kg_consistency(kg, timeout_seconds=3)
+    assert time.monotonic() - started < 15
+
+
+def test_a_pattern_is_enforced():
+    report = check_kg_consistency(_pattern_kg("^[A-Z]", "lowercase"))
+    assert _has_issue(report, code="PatternConstraintComponent")
+    assert not _has_issue(report, code="UnsafePatternSkipped")
+
+
+def test_an_overlong_pattern_is_skipped_with_a_stable_warning():
+    from besser.BUML.notations.kg_to_buml.consistency import MAX_SHACL_PATTERN_LENGTH
+
+    kg = _pattern_kg("a" * (MAX_SHACL_PATTERN_LENGTH + 1), "bbbbbbbb")
+    report = check_kg_consistency(kg)
+
+    skipped = [i for i in report.issues if i.code == "UnsafePatternSkipped"]
+    assert len(skipped) == 1
+    assert skipped[0].severity == "warning"
+    assert skipped[0].spec_kind == "pattern"
+    assert f"longer than {MAX_SHACL_PATTERN_LENGTH} characters" in skipped[0].message
+    # The shape's other constraints are still checked, the pattern is not.
+    assert _has_issue(report, code="MaxLengthConstraintComponent")
+    assert not _has_issue(report, code="PatternConstraintComponent")
+    assert [i.id for i in check_kg_consistency(kg).issues if i.code == "UnsafePatternSkipped"] == [
+        skipped[0].id
+    ]
+
+
+def _path_less_kg():
+    # A property shape without sh:path: pyshacl refuses to load the shapes graph.
+    return _kg(_PERSON_NAME + """
+:alice a :Person .
+:S a sh:NodeShape ; sh:targetClass :Person ; sh:property :PS .
+:PS a sh:PropertyShape ; sh:minCount 2 .
+""")
+
+
+@pytest.mark.parametrize("timeout_seconds", [None, 30])
+def test_shapes_pyshacl_refuses_raise_a_consistency_check_error(timeout_seconds):
+    from besser.BUML.notations.kg_to_buml.consistency import ConsistencyCheckError
+
+    with pytest.raises(ConsistencyCheckError, match="sh:path"):
+        check_kg_consistency(_path_less_kg(), timeout_seconds=timeout_seconds)
+
+
+def test_the_child_process_reports_the_same_issues_as_in_process():
+    kg = _pattern_kg("^[A-Z]", "lowercase")
+    isolated = check_kg_consistency(kg)
+    in_process = check_kg_consistency(kg, timeout_seconds=None)
+    assert [(i.id, i.code, i.affected_node_ids, i.constraint_node_id) for i in isolated.issues] == [
+        (i.id, i.code, i.affected_node_ids, i.constraint_node_id) for i in in_process.issues
+    ]
+
+
+def test_the_child_process_gets_no_server_secrets(monkeypatch):
+    from besser.BUML.notations.kg_to_buml import consistency
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-should-not-leak")
+    monkeypatch.setenv("BESSER_DEPLOY_TOKEN", "should-not-leak")
+    seen = {}
+    real_run = consistency.subprocess.run
+
+    def spy(*args, **kwargs):
+        seen["env"] = kwargs.get("env")
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(consistency.subprocess, "run", spy)
+
+    report = check_kg_consistency(_pattern_kg("^[A-Z]", "lowercase"))
+
+    assert _has_issue(report, code="PatternConstraintComponent")
+    assert seen["env"] is not None
+    assert "OPENAI_API_KEY" not in seen["env"]
+    assert "BESSER_DEPLOY_TOKEN" not in seen["env"]
+
+
+def test_without_pyshacl_the_check_names_the_extra_to_install(monkeypatch):
+    from besser.BUML.notations.kg_to_buml import consistency
+
+    real_find_spec = consistency.importlib.util.find_spec
+    monkeypatch.setattr(
+        consistency.importlib.util, "find_spec",
+        lambda name, *a: None if name == "pyshacl" else real_find_spec(name, *a),
+    )
+
+    with pytest.raises(ImportError, match=r"besser\[kg\]"):
+        check_kg_consistency(_pattern_kg("^[A-Z]", "x"))

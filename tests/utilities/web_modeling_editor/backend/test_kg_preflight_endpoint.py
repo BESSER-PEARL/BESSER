@@ -44,7 +44,7 @@ def test_preflight_returns_no_domain_issue(client):
         {"id": "u1", "source": "alice", "target": "bob", "iri": EX + "likes"},
     ]
     resp = client.post(
-        "/besser_api/analyze-kg-for-buml-conversion",
+        "/besser_api/kg/preflight",
         json=_kg_payload(nodes, edges),
     )
     assert resp.status_code == 200, resp.text
@@ -71,7 +71,7 @@ def test_preflight_clean_kg_returns_no_issues(client):
         {"id": "e2", "source": "name", "target": "xsd_str", "iri": RDFS + "range"},
     ]
     resp = client.post(
-        "/besser_api/analyze-kg-for-buml-conversion",
+        "/besser_api/kg/preflight",
         json=_kg_payload(nodes, edges),
     )
     assert resp.status_code == 200, resp.text
@@ -81,13 +81,13 @@ def test_preflight_clean_kg_returns_no_issues(client):
 
 def test_preflight_rejects_non_kg_payload(client):
     resp = client.post(
-        "/besser_api/analyze-kg-for-buml-conversion",
+        "/besser_api/kg/preflight",
         json={"title": "wrong", "model": {"type": "ClassDiagram"}},
     )
     assert resp.status_code == 400
 
 
-# -- /kg-to-class-diagram backward compat ----------------------------------
+# -- /kg/to-class-diagram backward compat ----------------------------------
 
 
 def test_class_diagram_without_resolutions_still_works(client):
@@ -100,7 +100,7 @@ def test_class_diagram_without_resolutions_still_works(client):
         {"id": "e1", "source": "name", "target": "Person", "iri": RDFS + "domain"},
         {"id": "e2", "source": "name", "target": "xsd_str", "iri": RDFS + "range"},
     ]
-    resp = client.post("/besser_api/kg-to-class-diagram", json=_kg_payload(nodes, edges))
+    resp = client.post("/besser_api/kg/to-class-diagram", json=_kg_payload(nodes, edges))
     assert resp.status_code == 200, resp.text
     assert resp.json()["diagramType"] == "ClassDiagram"
 
@@ -124,7 +124,7 @@ def test_class_diagram_with_accept_decision(client):
         {"id": "u1", "source": "alice", "target": "rex", "iri": EX + "likes"},
     ]
     payload = _kg_payload(nodes, edges)
-    pre = client.post("/besser_api/analyze-kg-for-buml-conversion", json=payload).json()
+    pre = client.post("/besser_api/kg/preflight", json=payload).json()
     sig = pre["kgSignature"]
     no_domain = next(i for i in pre["issues"] if i["code"] == "PROPERTY_NO_DOMAIN")
 
@@ -135,7 +135,7 @@ def test_class_diagram_with_accept_decision(client):
             {"issueId": no_domain["id"], "decision": "accept"},
         ],
     }
-    resp = client.post("/besser_api/kg-to-class-diagram", json=payload2)
+    resp = client.post("/besser_api/kg/to-class-diagram", json=payload2)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     # Thing class should be present after attach_to_thing.
@@ -160,7 +160,7 @@ def test_class_diagram_with_skip_decision(client):
         {"id": "u1", "source": "alice", "target": "rex", "iri": EX + "likes"},
     ]
     payload = _kg_payload(nodes, edges)
-    pre = client.post("/besser_api/analyze-kg-for-buml-conversion", json=payload).json()
+    pre = client.post("/besser_api/kg/preflight", json=payload).json()
     sig = pre["kgSignature"]
     no_domain = next(i for i in pre["issues"] if i["code"] == "PROPERTY_NO_DOMAIN")
 
@@ -171,7 +171,7 @@ def test_class_diagram_with_skip_decision(client):
             {"issueId": no_domain["id"], "decision": "skip"},
         ],
     }
-    resp = client.post("/besser_api/kg-to-class-diagram", json=payload2)
+    resp = client.post("/besser_api/kg/to-class-diagram", json=payload2)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     rel_types = {r.get("name") for r in body["model"]["relationships"].values()}
@@ -192,7 +192,7 @@ def test_stale_kg_signature_returns_400(client):
         {"id": "e2", "source": "name", "target": "xsd_str", "iri": RDFS + "range"},
     ]
     payload = {**_kg_payload(nodes, edges), "kgSignature": "deadbeef00000000"}
-    resp = client.post("/besser_api/kg-to-class-diagram", json=payload)
+    resp = client.post("/besser_api/kg/to-class-diagram", json=payload)
     assert resp.status_code == 400
 
 
@@ -215,9 +215,10 @@ def test_v1_resolution_payload_is_rejected(client):
             }
         ],
     }
-    resp = client.post("/besser_api/kg-to-class-diagram", json=payload)
-    assert resp.status_code == 400
-    assert "decision" in resp.json()["detail"]
+    resp = client.post("/besser_api/kg/to-class-diagram", json=payload)
+    # ``resolutions`` is typed (KGResolutionInput): a missing ``decision`` is a shape error.
+    assert resp.status_code == 422
+    assert any(err["loc"][-1] == "decision" for err in resp.json()["detail"])
 
 
 def test_unknown_resolution_choice_returns_400(client):
@@ -228,8 +229,8 @@ def test_unknown_resolution_choice_returns_400(client):
         **_kg_payload(nodes, []),
         "resolutions": [{"issueId": "x", "choice": "totally_made_up"}],
     }
-    resp = client.post("/besser_api/kg-to-class-diagram", json=payload)
-    assert resp.status_code == 400
+    resp = client.post("/besser_api/kg/to-class-diagram", json=payload)
+    assert resp.status_code == 422
 
 
 def test_unknown_decision_string_returns_400(client):
@@ -243,12 +244,12 @@ def test_unknown_decision_string_returns_400(client):
         {"id": "u1", "source": "alice", "target": "alice", "iri": EX + "likes"},
     ]
     payload = _kg_payload(nodes, edges)
-    pre = client.post("/besser_api/analyze-kg-for-buml-conversion", json=payload).json()
+    pre = client.post("/besser_api/kg/preflight", json=payload).json()
     issue_id = pre["issues"][0]["id"]
     payload2 = {
         **payload,
         "kgSignature": pre["kgSignature"],
         "resolutions": [{"issueId": issue_id, "decision": "totally_made_up"}],
     }
-    resp = client.post("/besser_api/kg-to-class-diagram", json=payload2)
+    resp = client.post("/besser_api/kg/to-class-diagram", json=payload2)
     assert resp.status_code == 400

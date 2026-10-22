@@ -1,12 +1,13 @@
 """Applying the user's Refine-KG decisions to a Knowledge Graph.
 
-Two payload shapes arrive from the editor: ``[{issueId, decision}]`` for the
-static preflight, and round-tripped LLM issues with the same decisions. Each is
-dispatched through ``kg_to_buml.resolutions``; a failed dispatch is a
-``ConversionError``.
+A decision is a :class:`KGResolutionInput` (``issueId`` + ``"accept"`` /
+``"skip"``). It refers either to an issue of the static preflight, which is
+re-run here, or to one of the LLM issues the editor round-trips in
+``llmIssues``. Each is dispatched through ``kg_to_buml.resolutions``; a decision
+that cannot be applied is a ``ConversionError`` (HTTP 400).
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from besser.BUML.metamodel.kg import KnowledgeGraph
 
@@ -19,172 +20,144 @@ from besser.BUML.notations.kg_to_buml import (
     dispatch_decision,
 )
 from besser.utilities.web_modeling_editor.backend.models import KGDiagramInput
+from besser.utilities.web_modeling_editor.backend.models.kg import KGResolutionInput
+from besser.utilities.web_modeling_editor.backend.models.responses import (
+    KGActionResponse,
+    KGIssueResponse,
+)
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 
-def apply_v2_decisions(
+def _dispatch(
     kg: KnowledgeGraph,
-    decisions: List[Any],
+    issue: KGIssue,
+    decision: str,
+    deferred_orphan_node_ids: Optional[List[str]],
+) -> KnowledgeGraph:
+    """Apply one decision; a deferred orphan classification is collected, not applied.
+
+    With ``deferred_orphan_node_ids`` given, the deferred-LLM action
+    (``defer_to_llm_classification``) leaves the KG unchanged and adds its node
+    ids to that list, so ``/kg/apply-refinement`` can hand them to the AI tab.
+    Without it (``/kg/to-class-diagram``) the deferral cannot be routed and
+    fails the request.
+    """
+    try:
+        return dispatch_decision(kg, issue, decision)
+    except DeferredOrphanClassification as deferred:
+        if deferred_orphan_node_ids is None:
+            raise ConversionError(
+                "An orphan-classification decision was deferred to the LLM, but this "
+                "endpoint cannot route deferred decisions. Use /kg/apply-refinement instead."
+            ) from deferred
+        for nid in deferred.node_ids:
+            if nid not in deferred_orphan_node_ids:
+                deferred_orphan_node_ids.append(nid)
+        return kg
+    except ResolutionError as exc:
+        raise ConversionError(str(exc)) from exc
+
+
+def apply_decisions(
+    kg: KnowledgeGraph,
+    decisions: List[KGResolutionInput],
     *,
     deferred_orphan_node_ids: Optional[List[str]] = None,
 ) -> KnowledgeGraph:
-    """Apply ``[{issueId, decision}]`` choices to the static preflight's issues.
+    """Apply ``decisions`` to the issues of the static preflight of ``kg``.
 
-    Re-runs the preflight on ``kg``, looks up each issue by id, dispatches its
-    recommended/skip action. Returns the resolved KG (deep copy mutated).
+    The preflight is re-run after every applied decision, because each one
+    changes the graph the next issue is looked up in. A decision whose issue
+    no longer exists (an earlier decision resolved it) is skipped. See
+    :func:`_dispatch` for ``deferred_orphan_node_ids``.
 
-    If ``deferred_orphan_node_ids`` is a list, the deferred-LLM action
-    (``defer_to_llm_classification``) does not abort the loop — its node ids
-    are accumulated into the list and the orphans stay in the KG so the AI
-    tab can classify them next. Without that argument the deferred handler
-    raises and the request fails (preserving back-compat with the legacy
-    ``/kg-to-class-diagram`` path, which doesn't surface the deferred
-    branch to the user).
+    Returns:
+        The resolved KG (a mutated deep copy; ``kg`` itself is untouched).
     """
-    report = analyze_kg_for_class_diagram(kg)
-    issues_by_id = {i.id: i for i in report.issues}
+    issues_by_id = {i.id: i for i in analyze_kg_for_class_diagram(kg).issues}
     resolved_kg = kg
     for entry in decisions:
-        if not isinstance(entry, dict):
-            continue
-        issue_id = entry.get("issueId") or entry.get("issue_id")
-        decision = entry.get("decision")
-        if not issue_id or not decision:
-            raise ConversionError("Each resolution must include 'issueId' and 'decision'.")
-        issue = issues_by_id.get(issue_id)
+        issue = issues_by_id.get(entry.issueId)
         if issue is None:
-            # Issue might have already been resolved by a prior decision, or the
-            # signature check would catch a stale graph; tolerate silently.
             continue
-        try:
-            resolved_kg = dispatch_decision(resolved_kg, issue, decision)
-        except DeferredOrphanClassification as deferred:
-            if deferred_orphan_node_ids is None:
-                # No deferred channel available — propagate as a conversion error.
-                raise ConversionError(
-                    "An orphan-classification decision was deferred to the LLM, "
-                    "but this endpoint cannot route deferred decisions. Use "
-                    "/apply-kg-refinement instead."
-                ) from deferred
-            # Deferred → KG unchanged; accumulate node ids and continue.
-            for nid in deferred.node_ids:
-                if nid not in deferred_orphan_node_ids:
-                    deferred_orphan_node_ids.append(nid)
-            continue
-        except ResolutionError as exc:
-            raise ConversionError(str(exc)) from exc
-        # Refresh the issues map after each apply: the topology has shifted.
-        report = analyze_kg_for_class_diagram(resolved_kg)
-        issues_by_id = {i.id: i for i in report.issues}
+        before = resolved_kg
+        resolved_kg = _dispatch(resolved_kg, issue, entry.decision, deferred_orphan_node_ids)
+        if resolved_kg is not before:
+            # The topology has shifted: look the next issues up in the new graph.
+            issues_by_id = {i.id: i for i in analyze_kg_for_class_diagram(resolved_kg).issues}
     return resolved_kg
 
 
 def resolve_kg(kg: KnowledgeGraph, input_data: KGDiagramInput) -> KnowledgeGraph:
-    """Apply ``input_data.resolutions`` (``[{issueId, decision}]``) to ``kg``.
+    """Apply ``input_data.resolutions`` to ``kg`` (``/kg/to-class-diagram``).
 
     Raises:
-        ConversionError: an entry lacks ``issueId`` / ``decision``, or its
-            decision cannot be applied (HTTP 400).
+        ConversionError: a decision cannot be applied (HTTP 400).
     """
     if not input_data.resolutions:
         return kg
-    return apply_v2_decisions(kg, input_data.resolutions)
+    return apply_decisions(kg, input_data.resolutions)
 
 
-def issues_payload_to_objects(payload: Any) -> Dict[str, KGIssue]:
-    """Reconstruct KGIssue / KGAction objects from the JSON shape returned by
-    ``/llm-clean-kg``. Returns a dict keyed by issue id for fast lookup."""
-    if not isinstance(payload, list):
-        return {}
+def _action(action: Optional[KGActionResponse]) -> Optional[KGAction]:
+    if action is None or not action.key:
+        return None
+    return KGAction(key=action.key, parameters=dict(action.parameters), label=action.label)
+
+
+def llm_issues_by_id(issues: List[KGIssueResponse]) -> Dict[str, KGIssue]:
+    """Rebuild the :class:`KGIssue` objects of a round-tripped LLM issue list, by id.
+
+    An issue without a recommended action has nothing to apply and is left out;
+    one without a skip action gets a "keep as-is" no-op.
+    """
     out: Dict[str, KGIssue] = {}
-    for entry in payload:
-        if not isinstance(entry, dict):
+    for entry in issues:
+        recommended = _action(entry.recommendedAction)
+        if recommended is None:
             continue
-        issue_id = entry.get("id")
-        code = entry.get("code") or "LLM_CLEANUP"
-        description = entry.get("description") or ""
-        affected_node_ids = list(entry.get("affectedNodeIds") or entry.get("affected_node_ids") or [])
-        affected_edge_ids = list(entry.get("affectedEdgeIds") or entry.get("affected_edge_ids") or [])
-        recommended = action_payload_to_object(entry.get("recommendedAction") or entry.get("recommended_action"))
-        skip = action_payload_to_object(entry.get("skipAction") or entry.get("skip_action"))
-        if not issue_id or recommended is None:
-            continue
-        out[issue_id] = KGIssue(
-            id=issue_id,
-            code=code,
-            description=description,
-            affected_node_ids=affected_node_ids,
-            affected_edge_ids=affected_edge_ids,
+        out[entry.id] = KGIssue(
+            id=entry.id,
+            code=entry.code or "LLM_CLEANUP",
+            description=entry.description,
+            affected_node_ids=list(entry.affectedNodeIds),
+            affected_edge_ids=list(entry.affectedEdgeIds),
             recommended_action=recommended,
-            skip_action=skip if skip is not None else KGAction(key="noop", parameters={}, label="Keep as-is"),
+            skip_action=_action(entry.skipAction) or KGAction(key="noop", parameters={}, label="Keep as-is"),
         )
     return out
 
 
-def action_payload_to_object(action: Any) -> Optional[KGAction]:
-    """Rebuild a :class:`KGAction` from its JSON shape; ``None`` when it has no ``key``."""
-    if not isinstance(action, dict):
-        return None
-    key = action.get("key")
-    if not key:
-        return None
-    parameters = action.get("parameters") or {}
-    if not isinstance(parameters, dict):
-        parameters = {}
-    label = action.get("label") or ""
-    return KGAction(key=key, parameters=parameters, label=label)
-
-
 def apply_llm_decisions(
     kg: KnowledgeGraph,
-    issues_payload: Optional[List[Dict[str, Any]]],
-    decisions: Optional[List[Dict[str, Any]]],
+    issues: Optional[List[KGIssueResponse]],
+    decisions: Optional[List[KGResolutionInput]],
     *,
     deferred_orphan_node_ids: Optional[List[str]] = None,
 ) -> KnowledgeGraph:
-    """Apply round-tripped LLM-issue decisions to a deep-copied KG.
+    """Apply decisions to round-tripped LLM issues.
 
-    Unlike :func:`apply_v2_decisions`, this does NOT re-run the analyzer
-    between decisions: re-calling the LLM per decision would be slow,
-    non-deterministic, and unnecessary because the issue list is already
-    a contract between client and server.
+    Unlike :func:`apply_decisions`, the issues are not recomputed between
+    decisions: re-calling the LLM per decision would be slow and
+    non-deterministic, and the issue list is already a contract between client
+    and server. A decision for an issue not in the list is skipped.
 
-    Symmetrical with :func:`apply_v2_decisions`: ``deferred_orphan_node_ids``
-    enables routing the deferred-LLM action through ``pendingOrphanClassification``.
+    Raises:
+        ConversionError: there are decisions but no usable ``llmIssues``, or a
+            decision cannot be applied (HTTP 400).
     """
     if not decisions:
         return kg
-    issues_by_id = issues_payload_to_objects(issues_payload or [])
+    issues_by_id = llm_issues_by_id(issues or [])
     if not issues_by_id:
         raise ConversionError(
-            "No 'llmIssues' provided; the LLM-cleanup apply endpoint needs the "
-            "issue list returned by /llm-clean-kg."
+            "No 'llmIssues' provided; applying LLM decisions needs the issue list "
+            "returned by /kg/llm-clean or /kg/classify-orphans."
         )
     resolved = kg
     for entry in decisions:
-        if not isinstance(entry, dict):
-            continue
-        issue_id = entry.get("issueId") or entry.get("issue_id")
-        decision = entry.get("decision")
-        if not issue_id or decision not in {"accept", "skip"}:
-            raise ConversionError(
-                "Each LLM decision must include 'issueId' and 'decision' ('accept' or 'skip')."
-            )
-        issue = issues_by_id.get(issue_id)
+        issue = issues_by_id.get(entry.issueId)
         if issue is None:
-            # Issue not in the round-tripped list — tolerate silently.
             continue
-        try:
-            resolved = dispatch_decision(resolved, issue, decision)
-        except DeferredOrphanClassification as deferred:
-            if deferred_orphan_node_ids is None:
-                raise ConversionError(
-                    "Orphan-classification deferral is not supported on this endpoint."
-                ) from deferred
-            for nid in deferred.node_ids:
-                if nid not in deferred_orphan_node_ids:
-                    deferred_orphan_node_ids.append(nid)
-            continue
-        except ResolutionError as exc:
-            raise ConversionError(str(exc)) from exc
+        resolved = _dispatch(resolved, issue, entry.decision, deferred_orphan_node_ids)
     return resolved

@@ -1,0 +1,154 @@
+Version 8.3.0
+=============
+
+Minor release: **a second Spec-Driven run that follows the model change, and
+stable element ids**. When the class diagram changes between two Spec-Driven
+Agent runs, the editor asks before a large change, the agent gets the exact
+list of what changed, and a check after the run verifies the code follows
+it. Model elements keep their ids through every conversion, so modify runs,
+object diagrams and GUI references survive renames. No breaking metamodel or
+API changes: element ids are optional, and ``.py`` exports are unchanged.
+
+Spec-Driven Agent
+-----------------
+
+* **The model change, compared before the run.** Each run records the class
+  model the user sent. A second run compares it with the new model and
+  classifies the change as small, large or a different app.
+  ``POST /spec-driven/preview`` returns the comparison as ``model_change``:
+  the verdict, the share of the model removed or with attributes renamed, and
+  the removed, added and renamed elements. Before, a second run within 30
+  minutes always edited the existing app, so reworking most attributes left
+  the old and new fields side by side (create requests failed with 422 while
+  the run reported no blockers), and a different model was built next to the
+  old app.
+* **The full change list in every modify run.** The agent gets each change:
+  type changes, attributes added or removed, required and optional changes,
+  relationship ends and renames (``class Person renamed to Customer``). On a
+  vague request ("I changed several attributes"), the change was applied in
+  3 of 3 runs instead of 0 of 3, for $0.09–0.11 per run.
+* **A conformance check after the run.** For the generated FastAPI backend,
+  ``sql_alchemy.py`` and ``pydantic_classes.py`` are compared with the model.
+  A removed attribute still defined, an added one missing, or a type that
+  does not match becomes a Phase 3 blocker the agent must fix. See
+  :doc:`/spec_driven_agent/validation`.
+* **Rules broken by the user's model change are dropped, not restored.**
+  Removing an attribute that an OCL rule uses (``phone`` with ``validPhone``)
+  used to turn the rule into a requirement "resolve in favor of the original
+  specification", and the agent put the attribute back, once as a required
+  field. A rule is now reported as dropped only if the same rule converted in
+  the previous run and the model change removed what it uses. A typo in a
+  rule is still repaired, and a renamed attribute keeps its rule on the new
+  name.
+* **Feature requests are no longer read as bug reports.** Words such as
+  "error", "fixed" or "regenerate" in a feature request turned the run into a
+  fix with a made-up target. A run is now a fix only on evidence of a failure
+  (a traceback, a status code the app returned, "doesn't work", ...) in the
+  user's newest message.
+* **The primary generators run once.** After the app is built, the agent can
+  no longer call ``generate_web_app`` and the other primary generators again,
+  which would have overwritten every edit since (#666). To change the stack,
+  start a fresh run.
+
+Element ids
+-----------
+
+* **Ids kept through the class-diagram converters.** The editor gives every
+  class, attribute, literal, method, relationship and generalization an id.
+  The conversion to B-UML dropped it and the conversion back minted new ones,
+  so a Spec-Driven modify run re-keyed the whole diagram and GUI widgets lost
+  their bindings. Ids are now kept: 513 of 513 ids and 167 of 167 GUI
+  references survive a modify run, against 0 before.
+* **Cross-diagram references follow renames.** Object diagrams find their
+  class and attributes by id, so renaming a class no longer breaks them, and
+  links on compositions and aggregations keep their association. The GUI
+  export writes ids, and table lookup columns are no longer dropped.
+  Importing an image into an existing diagram keeps the existing classes'
+  ids.
+* **Writing ids into** ``.py`` **exports is off by default.** Set
+  ``BESSER_BUML_EMIT_IDS=1`` to write ``id="..."`` in exported B-UML code.
+  It is off in this release so files stay loadable by older BESSER versions;
+  a later release turns it on. See :doc:`/web_editor_backend`.
+
+Web modeling editor
+-------------------
+
+* **A question before a second run on a changed model.** For a large change
+  the editor asks "Your class diagram changed a lot", and for a different
+  model "This looks like a different app", with **Update the existing app**
+  and **Start fresh**. The question comes before the run starts, and Stop
+  cancels it. Small changes run as before.
+* **Assistant rebuilds keep element ids.** Replacing the class diagram from
+  the assistant keeps the ids of classes, attributes, methods and
+  relationships it matches by name, so GUI and object-diagram references stay
+  valid.
+* **"Keep and add alongside" keeps the diagram.** It replaced the existing
+  diagram with the new classes. It now merges them in, below the existing
+  layout.
+* **A GitHub star prompt** after the first successful generation, shown once.
+
+Planning model and builds
+-------------------------
+
+* **Model-sync works on OpenAI keys.** In a modify run, the step that adds
+  the agent's new classes back into the model asked the planning model for
+  32,768 output tokens, the agent's own budget. ``gpt-4o-mini`` accepts at
+  most 16,384, so the call failed, was logged at debug level only, and the
+  model was never updated. The gap analysis and requirement checks hit the
+  same limit and silently retried on the more expensive primary model.
+  Planning calls now keep to the planning model's own output ceiling. A
+  failed model-sync is a warning in the run trace and recipe, and it retries
+  on the primary model when the user's key cannot reach the planning model.
+* **gpt-6-luna plans for OpenAI keys.** It replaces ``gpt-4o-mini`` as the
+  planning model ($0.10 / $0.50 per million tokens instead of $0.15 / $0.60),
+  and judged requirements more accurately in side-by-side checks. A run whose
+  primary model is already a luna model plans on itself.
+  ``BESSER_LLM_PLANNING_MODEL`` still overrides the choice.
+* **Unpinned npm versions are blockers.** The agent sometimes wrote
+  ``"latest"`` as a dependency version (8 of 24 recorded runs), which now
+  resolves to vite 8. npm 10.8.2 crashes installing any vite 8 tree, so the
+  generated frontend could not be built. Phase 3 now flags ``"latest"``,
+  ``"*"``, ``"x"`` and empty versions, the Spec-Driven worker image moves to
+  Node 22, and generated frontend Dockerfiles use ``node:22-alpine``.
+
+Generator output
+----------------
+
+* **RDF and smart-data output is deterministic.** Attributes, associations,
+  parents and enumerations came out in set order, which changed between
+  runs, and an association could be described from its other end.
+* **JSON Schema output is valid JSON.** 6 of 29 editor models produced a
+  schema with a missing comma. The schema is now built as data and written
+  with ``json.dumps``, in a stable order.
+* **Flutter** writes ``pubspec.yaml`` into the output folder instead of the
+  current working directory.
+* **Exported B-UML scripts are stable.** GUI menu items are written in editor
+  order, method parameters are written as a list (``parameters=[...]``) so
+  their order survives loading the script, and associations keep their drawn
+  direction through a ``.py`` round trip.
+
+Other changes
+-------------
+
+* Generated output (``BESSER_GENERATION.md``, deployed READMEs, the React and
+  agent READMEs) links back to the BESSER repository.
+* Agent generator: shared custom-code bodies resolve whatever the ``session``
+  annotation, and generated agents no longer reset the host's logging
+  configuration.
+* Local setup: ``http://127.0.0.1`` on ports 8080, 5173 and 3000 is allowed by
+  default CORS, GitHub OAuth variables are optional at startup, and Django
+  tests skip without ``django-admin``.
+* The free-tier fallback moves on when the provider reports exhausted credits
+  (already deployed as a hotfix).
+
+Deploy alongside
+----------------
+
+Deploy the modeling agent with this release:
+
+* Object diagrams take class and attribute ids from the reference class
+  diagram instead of the LLM's copy (modeling-agent #34).
+* The assistant's class refactors work: merging, extracting, splitting
+  classes, promoting an attribute and adding an enumeration produced
+  placeholder classes such as ``MergedClass`` because the handlers read
+  fields the model never sends (modeling-agent #35).

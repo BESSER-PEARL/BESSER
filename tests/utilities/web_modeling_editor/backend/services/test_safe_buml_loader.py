@@ -494,3 +494,28 @@ def test_gui_domain_context_gets_its_own_primitive_types(monkeypatch):
     for type_name in ("StringType", "IntegerType", "DateTimeType"):
         assert context_names[type_name] is not getattr(structural, type_name)
         assert context_names[type_name].name == getattr(structural, type_name).name
+
+
+def _classes_source(count: int, with_ids: bool) -> str:
+    return "\n".join(
+        f'C{i} = Class(name="C{i}"' + (f', id="cls-{i}"' if with_ids else "") + ")" for i in range(count)
+    )
+
+
+def test_element_ids_do_not_count_towards_the_node_cap(allowed_names):
+    """A model that fits without ``id=`` keywords still loads with them (issue #659)."""
+    # 8 nodes per line without an id, 10 with: 2,400 lines are 19,200 vs 24,000 nodes.
+    loaded = safe_load_buml(_classes_source(2_400, with_ids=True), allowed_names)
+    assert loaded["C2399"].id == "cls-2399"
+
+
+def test_only_one_id_keyword_per_call_is_exempt(allowed_names):
+    """A repeated ``id=`` parses, so without this a short file could carry any number of nodes."""
+    source = 'c = Class(name="A"' + ', id=""' * 10_100 + ")"
+    with pytest.raises(SafeBumlLoaderError, match="too complex"):
+        safe_load_buml(source, allowed_names)
+
+
+def test_the_node_cap_still_applies(allowed_names):
+    with pytest.raises(SafeBumlLoaderError, match="too complex"):
+        safe_load_buml(_classes_source(2_600, with_ids=False), allowed_names)

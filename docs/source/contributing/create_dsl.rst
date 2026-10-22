@@ -31,7 +31,7 @@ For a full cross-repo checklist (editor package + webapp + backend), see
 4. Integrate with the Web Modeling Editor
 -----------------------------------------
 
-The Web Modeling Editor (WME) frontend lives in the separate ``BESSER-WEB-MODELING-EDITOR`` repository and is vendored
+The Web Modeling Editor (WME) frontend lives in the separate ``BESSER-Web-Modeling-Editor`` repository and is vendored
 here as a git submodule at ``besser/utilities/web_modeling_editor/frontend``. Frontend changes should be committed in
 that repository, then the submodule pointer updated in BESSER.
 

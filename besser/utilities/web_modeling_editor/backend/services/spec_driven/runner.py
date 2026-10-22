@@ -54,6 +54,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     is_free_fallback_choice,
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
 from besser.spec_driven_agent.state import agent_trace
@@ -337,6 +338,14 @@ def build_verification_report(recipe: dict) -> VerificationReport:
                 "ocl_constraint", label, what,
                 how="rejected by the OCL converter, then recovered in code: "
                     + str(verdict.get("evidence") or "no citation"),
+            ))
+            continue
+        if is_dropped_by_model_change(issue):
+            unenforced.append(_item(
+                "ocl_constraint", label, what,
+                why="dropped by your model change: it uses "
+                    + ", ".join(map(str, issue[DROPPED]))
+                    + ", which the current model no longer has",
             ))
             continue
         why = (

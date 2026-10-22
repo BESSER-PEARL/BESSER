@@ -75,6 +75,10 @@ def _env_path(name: str) -> str | None:
     return os.path.abspath(os.path.expanduser(value))
 
 
+# Write element ids (id="...") into exported B-UML files. Off until every
+# install in use reads them: releases before Element.id reject such a file.
+BUML_EMIT_IDS = _env_bool("BESSER_BUML_EMIT_IDS", False)
+
 # Per-run spend / runtime caps. The HARD_CAP values are the absolute
 # ceiling a request's fields are clamped to; DEFAULT values are what
 # clients get when they don't send an explicit number.
@@ -232,6 +236,10 @@ DEFAULT_CORS_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:8080",
+    # Browsers treat 127.0.0.1 as a different origin from localhost.
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8080",
 ]
 
 VALID_PRIMITIVE_TYPES = {

@@ -480,13 +480,13 @@ def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[s
         return
     domain = getattr(binding, "domain_concept", None)
     if domain and getattr(domain, "name", None):
-        attrs.setdefault("data-source", domain.name)
+        attrs.setdefault("data-source", _element_ref(domain))
     label_name = (
-        getattr(getattr(binding, "label_field", None), "name", None)
+        _element_ref(getattr(binding, "label_field", None))
         or getattr(binding, "label_field_name", None)
     )
     data_name = (
-        getattr(getattr(binding, "data_field", None), "name", None)
+        _element_ref(getattr(binding, "data_field", None))
         or getattr(binding, "data_field_name", None)
     )
     if label_name:
@@ -624,11 +624,14 @@ def _apply_table_attributes(chart: Table, attrs: Dict[str, Any]) -> None:
 
         elif isinstance(col, LookupColumn):
             column_dict["columnType"] = "lookup"
-            # Store the relationship end name as lookupPath
-            column_dict["lookupPath"] = col.path.name if hasattr(col.path, "name") else str(col.path)
-            # Store the target class ID as lookupEntity
+            # The relationship end name. ``field`` is the key the editor and
+            # parse_columns read; ``lookupPath`` stays for compatibility.
+            path_name = col.path.name if hasattr(col.path, "name") else str(col.path)
+            column_dict["field"] = path_name
+            column_dict["lookupPath"] = path_name
+            # The target class, by id when it has one (the editor keys it by id)
             if hasattr(col.path, "type") and hasattr(col.path.type, "name"):
-                column_dict["lookupEntity"] = col.path.type.name
+                column_dict["lookupEntity"] = _element_ref(col.path.type)
             # Store the attribute name as lookupField
             column_dict["lookupField"] = col.field.name if hasattr(col.field, "name") else str(col.field)
 
@@ -791,7 +794,7 @@ def _apply_form_attributes(form: Form, attrs: Dict[str, Any]) -> None:
         attrs.setdefault("data-columns", form.columns)
     domain = getattr(getattr(form, "data_binding", None), "domain_concept", None)
     if domain is not None:
-        attrs.setdefault("data-source", domain.name)
+        attrs.setdefault("data-source", _element_ref(domain))
 def _apply_image_attributes(image: Image, attrs: Dict[str, Any]) -> None:
     if getattr(image, "source", None):
         attrs.setdefault("src", image.source)
@@ -1045,6 +1048,12 @@ def _slugify(name: Optional[str]) -> str:
         return ""
     cleaned = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip())
     return cleaned.strip("-").lower()
+def _element_ref(element: Any) -> Optional[str]:
+    """How the editor refers to a domain element: its id when it has one, else its name."""
+    element_id = getattr(element, "id", None)
+    if isinstance(element_id, str) and element_id:
+        return element_id
+    return getattr(element, "name", None)
 def _generate_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
 def _enum_value(value: Any) -> Optional[str]:

@@ -172,6 +172,16 @@ instead of writing it from scratch.
    * - ``generate_tensorflow``
      - :doc:`TensorFlow <../generators/tensorflow>`
 
+The whole-application generators (``generate_web_app``, ``generate_django``,
+``generate_flutter``, ``generate_fastapi_backend``, ``generate_rest_api``) run
+at most once per application. Once one of them has built the app (in Phase 1,
+or in the run a modify run continues), all of them are removed from the
+toolset and the agent's calls to them are refused: running one again would
+overwrite every edit made since. In a modify run on any other seed, only the
+generators whose output folder the seed already has (``backend/``,
+``web_app/``, ``django/``, ``flutter/``, ``rest_api/``) are refused. A resumed
+run keeps the same lock. To change the stack, start a fresh run.
+
 .. _spec-driven-shell-tools:
 
 Shell tools

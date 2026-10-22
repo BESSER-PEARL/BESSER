@@ -1,11 +1,19 @@
 import os
 import shutil
 
+import pytest
+
 from besser.generators.django import DjangoGenerator
 from besser.BUML.metamodel.structural import DomainModel, Property, Class, \
     BinaryAssociation, Multiplicity
 from besser.BUML.metamodel.gui import GUIModel, Module, DataList, \
     DataSourceElement, Screen
+
+# DjangoGenerator shells out to ``django-admin startproject``.
+pytestmark = pytest.mark.skipif(
+    shutil.which("django-admin") is None,
+    reason="django-admin is not on PATH (activate the virtual environment)",
+)
 
 
 @staticmethod

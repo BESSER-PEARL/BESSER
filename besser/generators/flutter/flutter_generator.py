@@ -208,7 +208,7 @@ class FlutterPubspecGenerator(GeneratorInterface):
     """
 
     def __init__(self, gui_model: GUIModel, output_dir: str = None):
-        super().__init__(output_dir)
+        super().__init__(gui_model, output_dir)
         self.gui_model: GUIModel = gui_model
 
 

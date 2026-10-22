@@ -444,8 +444,11 @@ class BAFGenerator(GeneratorInterface):
             if func:
                 # Replace 'AgentSession' with 'Session' in the code
                 code = func.code.replace('AgentSession', 'Session')
-                # Extract function name using regex
-                match = re.search(r'def\s+(\w+)\s*\(.*session\s*:\s*Session.*\)', code)
+                # Extract function name using regex. The first parameter only needs to be
+                # named 'session'; its type annotation is irrelevant here (and may be
+                # quoted, e.g. session: 'Session', unquoted, e.g. session: Session, or
+                # absent altogether).
+                match = re.search(r'def\s+(\w+)\s*\(\s*session\b', code)
                 if match:
                     code = code + "\n" + f"{func.name} = {match.group(1)}\n"
                 return textwrap.dedent(code)

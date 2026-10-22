@@ -71,9 +71,9 @@ from baf.library.state import new_reasoning_state
 from baf.utils.web_crawl import crawl_website
 {% endif %}
 
-# Configure the logging module
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
+{% if a2a %}
 logger = logging.getLogger(__name__)
+{% endif %}
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 {% if personalization_mapping is defined and personalization_mapping %}
@@ -964,8 +964,8 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
 
 {% if state.body != None %}
 {% set body_name = state.body.name ~ suffix_part %}
-{% if body_name not in ns.bodies %}
 {% set body_has_custom_ns = namespace(value=false, func_name='') %}
+{% if body_name not in ns.bodies %}
 {% for action in state.body.actions %}{% if is_class(action, 'CustomCodeAction') %}{% set body_has_custom_ns.value = true %}{% set body_has_custom_ns.func_name = extract_function_name(action.code) %}{% endif %}{% endfor %}
 {% if state.body.actions and body_has_custom_ns.value %}
 {{ replace_bot_session_with_session_in_signature(state.body) | replace(state.body.name, body_name) }}
@@ -994,8 +994,8 @@ def {{ body_name }}(session: Session):
 {% endif %}
 {% if state.fallback_body != None %}
 {% set fallback_name = state.fallback_body.name ~ suffix_part %}
-{% if fallback_name not in ns.bodies %}
 {% set fallback_has_custom_ns = namespace(value=false, func_name='') %}
+{% if fallback_name not in ns.bodies %}
 {% for action in state.fallback_body.actions %}{% if is_class(action, 'CustomCodeAction') %}{% set fallback_has_custom_ns.value = true %}{% set fallback_has_custom_ns.func_name = extract_function_name(action.code) %}{% endif %}{% endfor %}
 {% if state.fallback_body.actions and fallback_has_custom_ns.value %}
 {{ replace_bot_session_with_session_in_signature(state.fallback_body) | replace(state.fallback_body.name, fallback_name) }}

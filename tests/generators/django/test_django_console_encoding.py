@@ -8,6 +8,7 @@ The status messages now go through ``logging`` rather than ``print``.
 """
 import io
 import logging
+import shutil
 import subprocess
 import sys
 
@@ -35,6 +36,8 @@ def _cp1252_stdout(monkeypatch):
 
 def test_generation_succeeds_on_a_cp1252_console(tmp_path, monkeypatch, caplog):
     pytest.importorskip("django")
+    if shutil.which("django-admin") is None:
+        pytest.skip("django-admin is not on PATH (activate the virtual environment)")
     _cp1252_stdout(monkeypatch)
     with caplog.at_level(logging.INFO, logger="besser.generators.django.django_generator"):
         DjangoGenerator(model=_model(), project_name="myproject", app_name="app",

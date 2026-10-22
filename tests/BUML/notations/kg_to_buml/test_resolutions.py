@@ -474,3 +474,59 @@ def test_breaking_an_absent_edge_changes_nothing_and_says_so():
 def test_breaking_an_edge_without_naming_it_raises():
     with pytest.raises(ResolutionError, match="requires 'edge_id'"):
         apply_resolutions(_two_cycles_sharing_an_edge(), [KGResolution("i", "break_at_edge", {})])
+
+
+# --- Removing a node removes it from the axioms -----------------------------
+
+
+def _kg_with_axioms_on(ex: str = "http://ex.org/"):
+    """Classes A, B, C and properties p, q, r, each named by an axiom."""
+    from besser.BUML.metamodel.kg import KGProperty
+    from besser.BUML.metamodel.kg.axioms import (
+        DisjointClassesAxiom,
+        EquivalentPropertiesAxiom,
+        HasKeyAxiom,
+        SubPropertyOfAxiom,
+    )
+
+    classes = [KGClass(id=f"{ex}{x}", label=x, iri=f"{ex}{x}") for x in "ABC"]
+    properties = [KGProperty(id=f"{ex}{x}", label=x, iri=f"{ex}{x}") for x in "pqr"]
+    a, b, c = (n.id for n in classes)
+    p, q, r = (n.id for n in properties)
+    axioms = [
+        DisjointClassesAxiom(class_ids=[a, b, c]),
+        HasKeyAxiom(class_id=a, property_ids=[p, q]),
+        SubPropertyOfAxiom(sub_property_id=p, super_property_id=q),
+        EquivalentPropertiesAxiom(property_ids=[p, r]),
+    ]
+    return KnowledgeGraph("k", nodes={*classes, *properties}, axioms=axioms)
+
+
+def _dangling(kg):
+    live = {n.id for n in kg.nodes}
+    return [
+        (type(axiom).__name__, field, ids)
+        for axiom in kg.axioms
+        for field, ids in axiom.referenced_ids().items()
+        if not set(ids) <= live
+    ]
+
+
+@pytest.mark.parametrize("resolution", [
+    KGResolution("i", "drop_node", {"node_id": "http://ex.org/p"}),
+    KGResolution("i", "drop_property", {"property_iri": "http://ex.org/p"}),
+    KGResolution("i", "drop_node", {"node_id": "http://ex.org/A"}),
+], ids=["drop_node-property", "drop_property", "drop_node-class"])
+def test_removing_a_node_leaves_no_axiom_naming_it(resolution):
+    """A dangling axiom reference fails ``KnowledgeGraph.validate()``, so a
+    refined graph that kept one could not be loaded again. Every handler
+    removes nodes through ``_replace_graph``, which now cleans the axioms."""
+    kg = _kg_with_axioms_on()
+    new_kg = apply_resolutions(kg, [resolution])
+
+    removed = {n.id for n in kg.nodes} - {n.id for n in new_kg.nodes}
+    assert len(removed) == 1
+    assert _dangling(new_kg) == []
+    assert new_kg.validate(raise_exception=False)["errors"] == []
+    # Axioms that still hold among the remaining nodes are kept, shrunk if need be.
+    assert len(new_kg.axioms) >= 2

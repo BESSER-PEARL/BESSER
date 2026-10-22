@@ -32,6 +32,7 @@ from besser.BUML.metamodel.kg.axioms import (
     DisjointClassesAxiom,
     DisjointUnionAxiom,
     EquivalentClassesAxiom,
+    EquivalentPropertiesAxiom,
     HasKeyAxiom,
     InversePropertiesAxiom,
     PropertyChainAxiom,
@@ -787,7 +788,6 @@ def _h_drop_class(kg: KnowledgeGraph, res: KGResolution) -> None:
     surviving_nodes = {n for n in kg.nodes if n.id != node_id}
     surviving_edges = {e for e in kg.edges if e.source.id != node_id and e.target.id != node_id}
     _replace_graph(kg, surviving_nodes, surviving_edges)
-    _strip_dangling_axioms(kg)
 
 
 def _h_drop_individual(kg: KnowledgeGraph, res: KGResolution) -> None:
@@ -803,7 +803,6 @@ def _h_drop_individual(kg: KnowledgeGraph, res: KGResolution) -> None:
     surviving_nodes = {n for n in kg.nodes if n.id != node_id}
     surviving_edges = {e for e in kg.edges if e.source.id != node_id and e.target.id != node_id}
     _replace_graph(kg, surviving_nodes, surviving_edges)
-    _strip_dangling_axioms(kg)
 
 
 def _h_promote_individual_to_class(kg: KnowledgeGraph, res: KGResolution) -> None:
@@ -889,7 +888,6 @@ def _h_drop_orphan_nodes(kg: KnowledgeGraph, res: KGResolution) -> None:
         e for e in kg.edges if e.source.id not in drop and e.target.id not in drop
     }
     _replace_graph(kg, surviving_nodes, surviving_edges)
-    _strip_dangling_axioms(kg)
 
 
 def _h_defer_to_llm_classification(kg: KnowledgeGraph, res: KGResolution) -> None:
@@ -996,6 +994,11 @@ def _strip_dangling_axioms(kg: KnowledgeGraph) -> None:
             kept = [c for c in axiom.class_ids if c in live_ids]
             if len(kept) >= 2:
                 axiom.class_ids = kept
+                surviving.append(axiom)
+        elif isinstance(axiom, EquivalentPropertiesAxiom):
+            kept = [p for p in axiom.property_ids if p in live_ids]
+            if len(kept) >= 2:
+                axiom.property_ids = kept
                 surviving.append(axiom)
         elif isinstance(axiom, DisjointUnionAxiom):
             if axiom.union_class_id in live_ids:
@@ -1105,8 +1108,15 @@ def _find_property_by_iri(kg: KnowledgeGraph, iri: str) -> Optional[KGProperty]:
 
 
 def _replace_graph(kg: KnowledgeGraph, nodes: Set[KGNode], edges: Set[KGEdge]) -> None:
-    """Replace the KG's nodes and edges in place, preserving validation order."""
+    """Replace the KG's nodes and edges in place, preserving validation order.
+
+    Every handler that removes a node goes through here, so this is also where
+    the axioms that referenced it are shrunk or dropped
+    (:func:`_strip_dangling_axioms`): a dangling axiom reference fails
+    ``KnowledgeGraph.validate()``, and with it every later load of the graph.
+    """
     # Setting nodes first invalidates edge endpoint validation, so clear edges then nodes.
     kg.edges = set()
     kg.nodes = nodes
     kg.edges = edges
+    _strip_dangling_axioms(kg)

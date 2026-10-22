@@ -38,6 +38,7 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 
+from besser.spec_driven_agent.planning.model_change import compare_with_base
 from besser.spec_driven_agent.state.agent_trace import ATTRIBUTION_FILENAME
 from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
@@ -625,7 +626,8 @@ async def smart_preview(request: SmartPreviewRequest) -> dict:
           "estimated_cost_usd": 0.59,
           "estimated_duration_seconds": 195,
           "notes": [...],
-          "model_summary": {"primary": "class", "present": [...]}
+          "model_summary": {"primary": "class", "present": [...]},
+          "model_change": {"verdict": "large", "gone": 0.54, ...}  # modify only
         }
 
     Errors are mapped by ``handle_endpoint_errors`` (``ValueError`` -> 400).
@@ -642,6 +644,15 @@ async def smart_preview(request: SmartPreviewRequest) -> dict:
     )
     payload = plan.to_dict()
     payload["model_summary"] = assembled.summary()
+    # For a modify: how the model relates to the base app's, so the UI can ask
+    # "update the existing app / start fresh". None = unknown, keep modifying.
+    model_change = None
+    if request.mode == "modify" and request.base_run_id:
+        base = await SMART_RUN_REGISTRY.get(request.base_run_id)
+        if base is not None and base.temp_dir:
+            change = compare_with_base(base.temp_dir, assembled.domain_model)
+            model_change = change.to_dict() if change else None
+    payload["model_change"] = model_change
     return payload
 
 

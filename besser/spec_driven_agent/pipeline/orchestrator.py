@@ -44,6 +44,7 @@ from besser.spec_driven_agent.agent.compaction import (
     maybe_compact,
     _summarize_messages,
 )
+from besser.spec_driven_agent.planning.model_change import model_summary
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.agent.history_eviction import evict_stale_file_bodies
@@ -281,6 +282,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     ):
         self.client = llm_client
         self.domain_model = domain_model
+        # The model as the user sent it, for the recipe: a modify run's
+        # model-sync adds classes to self.domain_model that the editor never sees.
+        try:
+            self._user_model = model_summary(domain_model) if domain_model is not None else None
+        except Exception:
+            self._user_model = None
         self.gui_model = gui_model
         self._assembly_issues = [
             {key: str(issue.get(key, ""))[:limit] for key, limit in (
@@ -4354,6 +4361,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "classes": [c.name for c in self.domain_model.get_classes()],
                     "enumerations": [e.name for e in self.domain_model.get_enumerations()],
                     "associations": len(self.domain_model.associations),
+                    # The next modify run compares the user's model with this one.
+                    "user_model": self._user_model,
                 })
             except Exception:
                 # Domain model is present but malformed — don't fail

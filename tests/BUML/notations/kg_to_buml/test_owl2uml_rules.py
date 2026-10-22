@@ -708,3 +708,24 @@ def test_malformed_cardinality_skips_the_restriction_with_a_warning(tmp_path: Pa
     assert any("'abc'" in m for m in messages) and any("'-1'" in m for m in messages)
     # The well-formed restriction beside them is still mapped.
     assert "_exact_2_owns_Pet" in _classes_by_name(result.domain_model)
+
+
+def test_d38_key_on_an_unmodelled_property_names_it():
+    warnings: list = []
+    _plan("""
+    :P a owl:Class ; owl:hasKey ( :ghost ) .
+    """, warnings)
+    assert [(w.code, w.message) for w in warnings if w.code == "KEY_SKIPPED"] == [
+        ("KEY_SKIPPED", "Key of 'P' skipped: ghost is not modelled as a feature of it."),
+    ]
+
+
+def test_disjoint_object_and_data_property_is_reported_not_dropped_silently():
+    warnings: list = []
+    plan = _plan("""
+    :P a owl:Class .
+    :o a owl:ObjectProperty ; rdfs:domain :P ; rdfs:range :P .
+    :d a owl:DatatypeProperty ; rdfs:domain :P ; owl:propertyDisjointWith :o .
+    """, warnings)
+    assert "DISJOINT_PROPERTIES_SKIPPED" in {w.code for w in warnings}
+    assert not [i for i in plan.ocl_constraints() if i.origin_rule in ("O21", "O28")]

@@ -5,22 +5,27 @@ it into a BUML ``DomainModel``. It is a separate structure rather than BUML
 objects built as the rules fire because BUML validates eagerly and the rules
 cannot satisfy it one step at a time:
 
-* a class's name is only final once *every* type name is known (primitive
-  shadowing, a class and a datatype sharing a name, ``_2`` suffixes);
 * a ``Generalization`` registers itself on both classes at construction and
   ``Class.all_parents()`` has no visited set, so one cycle hangs the process
   before any model exists to report it;
 * association end names must be unique across a class's whole hierarchy, and
   merging associations that would collide needs all of them at once;
-* the OCL can only be checked against a finished model.
+* the OCL can only be checked against a finished model;
+* names are settled once every type name is known (primitive shadowing, a
+  class and a datatype sharing a name, ``_2`` suffixes). BUML classes *can*
+  be renamed after construction, but the setter also rewrites association
+  end names that match the old class name, and the plan's invariants refer
+  to ends by name -- deciding names before anything is built keeps the two
+  in step. This one is a convenience, not a hard constraint.
 
 So this is deliberately only data: no rdflib, no BUML. Every ``name`` is the
 canonicaliser's choice; ``uri`` keeps the original IRI for provenance. Upper
 bounds use the string ``"*"`` for "unbounded".
 
-Only what the lowering reads lives here. The reference implementation this
-package ports also modelled individuals, links, ontology metadata and
-``owl:hasKey`` identifiers; nothing consumed them, so they are not carried.
+Only what the lowering reads lives here. ``owl:hasKey`` (D38) is carried as an
+invariant plus, for a single functional key, ``PlannedAttribute.is_id``. The
+reference implementation this package ports also modelled individuals, links
+and ontology metadata as such; nothing consumed them, so they are not carried.
 """
 from __future__ import annotations
 

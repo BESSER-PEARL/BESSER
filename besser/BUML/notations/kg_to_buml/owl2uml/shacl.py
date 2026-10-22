@@ -27,9 +27,6 @@ from besser.BUML.metamodel.kg.constants import (
 SH = Namespace(SH_NS)
 
 
-_regex_literal = naming.regex_literal
-
-
 # SHACL rows with no OCL equivalent (see the note at the end of
 # ShaclMapper.rules). Skipping these is a decision, not an omission, so they
 # must not warn.
@@ -328,7 +325,7 @@ class ShaclMapper:
         return [(f"self.{pname}->forAll(v | v {op} {n})", pred.split("#")[-1])]
 
     def _c_pattern(self, ps, pname):
-        return [(f"self.{pname}->forAll(v | v.matches({_regex_literal(str(o))}))", "pattern")
+        return [(f"self.{pname}->forAll(v | v.matches({naming.regex_literal(str(o))}))", "pattern")
                 for o in sorted(self.g.objects(ps, SH.pattern), key=str)]
 
     def _c_uniquelang(self, ps, pname):

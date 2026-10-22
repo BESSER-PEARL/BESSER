@@ -9,6 +9,7 @@ back into.
 from __future__ import annotations
 
 from rdflib import URIRef, BNode, Literal
+from rdflib.collection import Collection as RDFList
 from rdflib.namespace import OWL, RDF, RDFS, XSD
 
 from besser.BUML.metamodel.structural import data_types as _buml_data_types
@@ -441,7 +442,6 @@ class Mapper:
 
     def _materialize_data_range(self, node, name: str | None = None) -> str:
         """Materialise the anonymous data range ``node`` (O01-O05, D17), under ``name`` when one is given."""
-        from rdflib.collection import Collection as RDFList
         base = self.g.value(node, OWL.onDatatype)
         if base is not None:                          # DatatypeRestriction (O05)
             return self._restricted_datatype(node, base, name)
@@ -487,7 +487,6 @@ class Mapper:
 
     def _restricted_datatype(self, node, base, name: str | None) -> str:
         """O05: ``owl:onDatatype`` + ``owl:withRestrictions`` -> a datatype carrying the facets as an invariant."""
-        from rdflib.collection import Collection as RDFList
         base_name = self.resolve_data_range(base)
         facets: list[str] = []
         tests: list[str] = []
@@ -650,7 +649,6 @@ class Mapper:
         restriction, a union operand, ...) stays a class, with a warning, and
         the ``oneOf`` is materialised beside it as before.
         """
-        from rdflib.collection import Collection as RDFList
         for c in self.ax.sorted_named_classes:
             if self.canon.is_alias(c):
                 continue
@@ -712,7 +710,6 @@ class Mapper:
                              f"not self.oclIsKindOf({self.ensure_class(b)})", origin="O16")
         # O17 DisjointUnion
         for c, lst in _sorted_pairs(self.g.subject_objects(OWL.disjointUnionOf)):
-            from rdflib.collection import Collection as RDFList
             members = [self.resolver.resolve_class(m) for m in RDFList(self.g, lst)]
             cname = self.ensure_class(c)
             for m in members:
@@ -1003,6 +1000,13 @@ class Mapper:
                 self.add_ocl(ctx, f"self.{an}->forAll(o | self.{bn}->excludes(o))", origin="O21")
             elif self.ax.is_data_property(a) and self.ax.is_data_property(b):
                 self.add_ocl(ctx, f"self.{an}->asSet()->intersection(self.{bn}->asSet())->isEmpty()", origin="O28")
+            else:
+                # OWL 2 only defines disjointness between two object or two
+                # data properties; a mixed pair (or an undeclared property) has
+                # no O21/O28 reading.
+                self.warn("DISJOINT_PROPERTIES_SKIPPED",
+                          f"'{an}' and '{bn}' are declared disjoint but are not both object "
+                          f"properties or both data properties; no invariant emitted.")
 
     def _map_keys(self) -> None:
         """D38: ``owl:hasKey`` -> a uniqueness invariant, plus an identifier for a single functional key.
@@ -1017,10 +1021,15 @@ class Mapper:
                 continue
             cname = self.ensure_class(cls_iri)
             names = [self.canon.name(k) for k in keys]
-            missing = [n for n in names if not self._has_property(cname, n)]
-            if missing or cname not in self.model.classes:
+            if cname not in self.model.classes:
                 self.warn("KEY_SKIPPED",
-                          f"Key of '{cname}' skipped: {', '.join(missing) or cname} is not modelled as a feature.")
+                          f"Key of '{cname}' skipped: '{cname}' is not modelled as a class.")
+                continue
+            missing = [n for n in names if not self._has_property(cname, n)]
+            if missing:
+                self.warn("KEY_SKIPPED",
+                          f"Key of '{cname}' skipped: {', '.join(missing)} "
+                          f"{'is' if len(missing) == 1 else 'are'} not modelled as a feature of it.")
                 continue
             if len(names) == 1:
                 body = f"{cname}.allInstances()->isUnique({names[0]})"

@@ -2,6 +2,7 @@ import json
 import pytest
 from unittest.mock import patch, mock_open, MagicMock
 
+from besser.utilities.llm_utils import LLMUpstreamError
 from besser.utilities.kg_to_buml import (
     kg_to_buml,
     kg_to_plantuml,
@@ -237,12 +238,13 @@ def test_convert_spec_json_to_buml_handles_custom_title():
 
 # --- Tests for kg_to_plantuml ---
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
-@patch('besser.utilities.requests.post')
+@patch('requests.post')
 def test_kg_to_plantuml_returns_cleaned_diagram(mock_post, mock_file):
     """Test that kg_to_plantuml successfully transforms KG to PlantUML"""
     # Mock the API response
     mock_response = MagicMock()
-    mock_response.text = json.dumps(_mock_openai_api_response(_mock_plantuml_response()))
+    mock_response.ok = True
+    mock_response.json.return_value = _mock_openai_api_response(_mock_plantuml_response())
     mock_post.return_value = mock_response
     
     result = kg_to_plantuml('fake_path.ttl', 'fake_token')
@@ -259,23 +261,25 @@ def test_kg_to_plantuml_returns_cleaned_diagram(mock_post, mock_file):
     assert 'class Person' in result
 
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
-@patch('besser.utilities.requests.post')
+@patch('requests.post')
 def test_kg_to_plantuml_handles_api_error(mock_post, mock_file):
     """Test that kg_to_plantuml raises error on API failure"""
     # Mock an error response
     mock_response = MagicMock()
     mock_response.ok = False
-    mock_response.status = 401
+    mock_response.status_code = 401
     mock_response.text = json.dumps({
         'error': {
-            'message': 'Invalid API key'
+            'message': 'Invalid API key sk-secret'
         }
     })
     mock_post.return_value = mock_response
     
-    # Function should raise RuntimeError on API error
-    with pytest.raises(RuntimeError, match="Failed to process the KG to PlantUML conversion"):
+    # The upstream error carries the status, never the provider's response body
+    with pytest.raises(LLMUpstreamError, match="OpenAI API call failed: HTTP 401") as excinfo:
         kg_to_plantuml('fake_path.ttl', 'fake_token')
+    assert "Invalid API key" not in str(excinfo.value)
+    assert "sk-secret" not in str(excinfo.value)
 
 @patch('builtins.open', side_effect=FileNotFoundError())
 def test_kg_to_plantuml_raises_on_file_not_found(mock_file):
@@ -285,7 +289,7 @@ def test_kg_to_plantuml_raises_on_file_not_found(mock_file):
 
 # --- Tests for kg_to_buml ---
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
-@patch('besser.utilities.kg_to_buml.requests.post')
+@patch('requests.post')
 @patch('besser.utilities.kg_to_buml.process_class_diagram')
 def test_kg_to_buml_returns_domain_model(mock_process, mock_post, mock_file):
     """Test that kg_to_buml successfully transforms KG to DomainModel"""
@@ -317,7 +321,7 @@ def test_kg_to_buml_returns_domain_model(mock_process, mock_post, mock_file):
 
 
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
-@patch('besser.utilities.requests.post')
+@patch('requests.post')
 def test_kg_to_buml_handles_empty_response(mock_post, mock_file):
     """Test that kg_to_buml handles empty API responses"""
     # Mock an empty response
@@ -334,11 +338,11 @@ def test_kg_to_buml_handles_empty_response(mock_post, mock_file):
     }
     mock_post.return_value = mock_response
     
-    with pytest.raises(RuntimeError, match="Empty response from OpenAI"):
+    with pytest.raises(LLMUpstreamError, match="empty completion"):
         kg_to_buml('fake_path.json', 'fake_token')
 
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
-@patch('besser.utilities.requests.post')
+@patch('requests.post')
 def test_kg_to_buml_handles_invalid_json(mock_post, mock_file):
     """Test that kg_to_buml handles invalid JSON responses"""
     # Mock a response with invalid JSON
@@ -351,18 +355,32 @@ def test_kg_to_buml_handles_invalid_json(mock_post, mock_file):
         kg_to_buml('fake_path.json', 'fake_token')
 
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
-@patch('besser.utilities.requests.post')
+@patch('requests.post')
 def test_kg_to_buml_handles_api_failure(mock_post, mock_file):
     """Test that kg_to_buml handles API call failures"""
     # Mock a failed API response
     mock_response = MagicMock()
     mock_response.ok = False
-    mock_response.status = 401
+    mock_response.status_code = 401
     mock_response.text = "Unauthorized"
     mock_post.return_value = mock_response
     
-    with pytest.raises(RuntimeError, match="OpenAI API call failed"):
+    with pytest.raises(LLMUpstreamError, match="OpenAI API call failed: HTTP 401") as excinfo:
         kg_to_buml('fake_path.json', 'fake_token')
+    assert "Unauthorized" not in str(excinfo.value)
+
+
+@patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
+@patch('requests.post')
+def test_kg_to_plantuml_always_sends_a_timeout(mock_post, mock_file):
+    """The legacy path goes through the shared transport, which never posts without a timeout."""
+    mock_response = MagicMock()
+    mock_response.ok = True
+    mock_response.json.return_value = _mock_openai_api_response(_mock_plantuml_response())
+    mock_post.return_value = mock_response
+
+    kg_to_plantuml('fake_path.ttl', 'fake_token', timeout=7)
+    assert mock_post.call_args.kwargs["timeout"] == 7
 
 @patch('builtins.open', side_effect=IOError("Permission denied"))
 def test_kg_to_buml_raises_on_file_read_error(mock_file):
@@ -371,7 +389,7 @@ def test_kg_to_buml_raises_on_file_read_error(mock_file):
         kg_to_buml('protected.json', 'fake_token')
 
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
-@patch('besser.utilities.requests.post')
+@patch('requests.post')
 def test_kg_to_buml_uses_specified_model(mock_post, mock_file):
     """Test that kg_to_buml uses the specified OpenAI model"""
     mock_response = MagicMock()
@@ -387,7 +405,7 @@ def test_kg_to_buml_uses_specified_model(mock_post, mock_file):
     assert payload['model'] == 'gpt-3.5-turbo'
 
 @patch('builtins.open', new_callable=mock_open, read_data='mock kg data')
-@patch('besser.utilities.kg_to_buml.requests.post')
+@patch('requests.post')
 @patch('besser.utilities.kg_to_buml.process_class_diagram')
 def test_kg_to_buml_handles_conversion_failure(mock_process, mock_post, mock_file):
     """Test that kg_to_buml handles failure in convert_spec_json_to_buml"""

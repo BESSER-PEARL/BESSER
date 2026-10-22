@@ -21,10 +21,12 @@ from typing import Dict, List
 
 from fastapi import APIRouter, File, UploadFile, Body, Form
 from fastapi.responses import Response
+from pydantic import SecretStr
 
 # Backend response models
 from besser.utilities.web_modeling_editor.backend.models.responses import (
     DiagramExportResponse,
+    KGConfigResponse,
     KGConsistencyReportResponse,
     KGPreflightReportResponse,
     KGRefinementResponse,
@@ -47,6 +49,7 @@ from besser.utilities.llm_utils import LLMUpstreamError
 
 # Custom exception types translated to HTTP codes by @handle_endpoint_errors.
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
     UpstreamServiceError,
     ValidationError,
 )
@@ -73,7 +76,11 @@ from besser.utilities.web_modeling_editor.backend.services.kg.decisions import (
     apply_v2_decisions,
     resolve_kg,
 )
-from besser.utilities.web_modeling_editor.backend.services.kg.llm import build_completer
+from besser.utilities.web_modeling_editor.backend.services.kg.llm import (
+    RequestDeadline,
+    build_completer,
+    run_with_deadline,
+)
 from besser.utilities.web_modeling_editor.backend.services.kg.payloads import (
     consistency_report_to_response,
     enforce_signature,
@@ -91,6 +98,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     KG_CONSISTENCY_TIMEOUT_SECONDS,
     MAX_BUML_SIZE,
     MAX_ORPHAN_CLASSIFY_NODES,
+    KG_LLM_REQUEST_TIMEOUT_SECONDS,
     ALLOWED_KG_EXTENSIONS,
     ALLOWED_OWL_EXTENSIONS,
 )
@@ -113,45 +121,69 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/besser_api", tags=["conversion"])
 
 
+@router.get("/kg-config", response_model=KGConfigResponse)
+@handle_endpoint_errors("get_kg_config")
+async def get_kg_config() -> KGConfigResponse:
+    """Server-owned limits the KG editor must respect.
+
+    ``llmRequestTimeoutSeconds`` is the overall deadline of one KG LLM request;
+    ``maxOrphanClassifyNodes`` is the most node ids one
+    ``/classify-orphans-with-llm`` request may carry (longer lists are rejected
+    with HTTP 400, so the editor splits them).
+    """
+    return KGConfigResponse(
+        llmRequestTimeoutSeconds=KG_LLM_REQUEST_TIMEOUT_SECONDS,
+        maxOrphanClassifyNodes=MAX_ORPHAN_CLASSIFY_NODES,
+    )
+
+
 @router.post("/get-json-model-from-kg", response_model=DiagramExportResponse)
 @handle_endpoint_errors("get_json_model_from_kg")
 async def get_json_model_from_kg(
     kg_file: UploadFile = File(...),
-    api_key: str = Form(...)
+    api_key: SecretStr = Form(...),
 ):
     """
     Accepts an .TTL, .RDF, or .JSON knowledge graphs and an OpenAI API key, uses BESSER's kgtouml feature to transform the kg into a BUML class diagram in JSON.
     """
-    # Save uploaded KG to a temp folder
     kg_content = await kg_file.read()
     validate_upload(kg_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_KG_EXTENSIONS, content=kg_content)
+    openai_token = api_key.get_secret_value()
+    if not openai_token.strip():
+        raise ValidationError("An API key is required.")
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        safe_filename = os.path.basename(kg_file.filename)
-        kg_path = os.path.join(temp_dir, safe_filename)
+    deadline = RequestDeadline.start(KG_LLM_REQUEST_TIMEOUT_SECONDS)
+    with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
+        # The extension was validated above; the name itself is never trusted.
+        _, ext = os.path.splitext(kg_file.filename or "")
+        kg_path = os.path.join(temp_dir, f"knowledge_graph{ext.lower()}")
         await write_file_async(kg_path, kg_content)
-        # Create a folder for the kg as expected by mockup_to_buml
-        kg_folder = os.path.join(temp_dir, "kgs")
-        os.makedirs(kg_folder, exist_ok=True)
-        os.rename(kg_path, os.path.join(kg_folder, safe_filename))
-        # Use kg_to_buml to generate DomainModel from kg and API key
-        # Find the kg file path
-        kg_files = [f for f in os.listdir(kg_folder) if f.lower().endswith(('.ttl', '.json', '.rdf'))]
-        if not kg_files:
-            raise ValidationError("No valid KG file found.")
-        kg_path = os.path.join(kg_folder, kg_files[0])
-        domain_model = kg_to_buml(kg_path=kg_path, openai_token=api_key)
-        diagram_json = class_buml_to_json(domain_model)
+        try:
+            # One blocking OpenAI call (up to the deadline) plus the conversion.
+            domain_model = await run_with_deadline(
+                deadline, kg_to_buml, kg_path, openai_token, timeout=deadline.remaining(),
+            )
+        except LLMUpstreamError as exc:
+            # Its message never carries the provider's response body.
+            raise UpstreamServiceError(str(exc)) from exc
+        except RuntimeError as exc:
+            # The model's answer did not make a class diagram; the details (which
+            # can quote that answer) stay in the server log.
+            logger.warning("KG -> B-UML conversion of the LLM answer failed: %s", exc)
+            raise ConversionError(
+                "The LLM's answer could not be turned into a class diagram. Please try again."
+            ) from exc
+    diagram_json = class_buml_to_json(domain_model)
 
-        diagram_title = diagram_json.get("title", "Imported Class Diagram")
-        diagram_type = "ClassDiagram"
-        return {
-            "title": diagram_title,
-            "model": {**diagram_json, "type": diagram_type},
-            "diagramType": diagram_type,
-            "exportedAt": datetime.now(timezone.utc).isoformat(),
-            "version": API_VERSION,
-        }
+    diagram_title = diagram_json.get("title", "Imported Class Diagram")
+    diagram_type = "ClassDiagram"
+    return {
+        "title": diagram_title,
+        "model": {**diagram_json, "type": diagram_type},
+        "diagramType": diagram_type,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "version": API_VERSION,
+    }
 
 
 @router.post("/import-owl", response_model=DiagramExportResponse)
@@ -243,7 +275,8 @@ async def analyze_kg_for_buml_conversion_endpoint(input_data: KGDiagramInput):
     checkbox + 2 buttons.
     """
     kg, _json_data = kg_payload_to_kg(input_data)
-    return report_to_response(analyze_kg_for_class_diagram(kg))
+    report = await asyncio.to_thread(analyze_kg_for_class_diagram, kg)
+    return report_to_response(report)
 
 
 @router.post("/kg-to-class-diagram", response_model=DiagramExportResponse)
@@ -259,9 +292,14 @@ async def kg_to_class_diagram_endpoint(input_data: KGDiagramInput):
     kg, _json_data = kg_payload_to_kg(input_data)
     enforce_signature(input_data, kg)
     base_title = (input_data.title or kg.name or "Knowledge Graph")
-    resolved_kg = resolve_kg(kg, input_data)
-    result = kg_to_class_diagram_buml(resolved_kg, model_name=base_title)
-    diagram_json = class_buml_to_json(result.domain_model)
+
+    def lower():
+        # Re-runs the preflight per decision, then lowers: CPU-bound, so off the loop.
+        resolved_kg = resolve_kg(kg, input_data)
+        result = kg_to_class_diagram_buml(resolved_kg, model_name=base_title)
+        return result, class_buml_to_json(result.domain_model)
+
+    result, diagram_json = await asyncio.to_thread(lower)
     return {
         "title": f"{base_title} (Class Diagram)",
         "model": {**diagram_json, "type": "ClassDiagram"},
@@ -290,12 +328,12 @@ async def llm_clean_kg_endpoint(request: KGLLMRequest):
     existing accept/skip suggestion UI.
     """
     kg, _json_data = kg_payload_to_kg(request.diagram)
+    deadline = RequestDeadline.start(KG_LLM_REQUEST_TIMEOUT_SECONDS)
     try:
-        complete = build_completer(request)
-        # Blocking HTTP with a 120 s timeout: on the event loop it freezes the
-        # whole backend for the duration (generation_router does the same).
-        report = await asyncio.to_thread(
-            analyze_kg_with_description, kg, request.description, complete=complete
+        complete = build_completer(request, deadline)
+        # Blocking HTTP, so off the event loop, and bounded by the request deadline.
+        report = await run_with_deadline(
+            deadline, analyze_kg_with_description, kg, request.description, complete=complete,
         )
     except (ValueError, TypeError) as exc:
         raise ValidationError(str(exc)) from exc
@@ -340,14 +378,18 @@ async def apply_kg_refinement_endpoint(input_data: KGDiagramInput):
 
     deferred_orphan_node_ids: List[str] = []
 
+    # Both appliers are CPU-bound (the static one re-runs the preflight after
+    # every decision), so they run off the event loop.
     if source == "static":
-        resolved_kg = apply_v2_decisions(
+        resolved_kg = await asyncio.to_thread(
+            apply_v2_decisions,
             kg,
             input_data.resolutions or [],
             deferred_orphan_node_ids=deferred_orphan_node_ids,
         )
     else:  # source == "llm"
-        resolved_kg = apply_llm_decisions(
+        resolved_kg = await asyncio.to_thread(
+            apply_llm_decisions,
             kg,
             input_data.llmIssues,
             input_data.resolutions,
@@ -400,11 +442,13 @@ async def classify_orphans_with_llm_endpoint(request: KGOrphanClassifyRequest):
 
     kg, _json_data = kg_payload_to_kg(request.diagram)
     enforce_signature(request.diagram, kg)
+    deadline = RequestDeadline.start(KG_LLM_REQUEST_TIMEOUT_SECONDS)
     try:
-        complete = build_completer(request)
+        complete = build_completer(request, deadline)
         # One blocking LLM request per 40 nodes, sequentially; the cap above
-        # bounds the chain and to_thread keeps it off the event loop.
-        report = await asyncio.to_thread(
+        # bounds the chain, and the deadline bounds the request as a whole.
+        report = await run_with_deadline(
+            deadline,
             classify_orphan_nodes_with_llm,
             kg,
             node_ids,

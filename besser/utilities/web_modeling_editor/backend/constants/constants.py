@@ -51,11 +51,18 @@ MAX_OWL_SIZE = 5 * 1024 * 1024  # 5 MB
 KG_CONSISTENCY_TIMEOUT_SECONDS = 60
 
 
+# Overall server deadline, in seconds, for one KG LLM request
+# (``/llm-clean-kg``, ``/classify-orphans-with-llm``, ``/get-json-model-from-kg``),
+# however many model calls it makes. Each call is given what is left of it as its
+# own timeout. Published to the editor by ``GET /kg-config``.
+KG_LLM_REQUEST_TIMEOUT_SECONDS = 120
+
 # Largest number of orphan nodes one ``/classify-orphans-with-llm`` call may
-# carry. The classifier sends one blocking OpenAI request per 40 nodes with no
-# internal ceiling, so an unbounded list turns a single request into an
-# arbitrarily long chain of upstream calls.
-MAX_ORPHAN_CLASSIFY_NODES = 400
+# carry. The classifier sends one model call per ``MAX_ORPHAN_BATCH`` (40) nodes,
+# sequentially, so this is two calls: what fits in the request deadline above
+# with room to spare. The editor splits longer lists into several requests
+# (it reads this value from ``GET /kg-config``).
+MAX_ORPHAN_CLASSIFY_NODES = 80
 
 # Accepted upload extensions.
 ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}

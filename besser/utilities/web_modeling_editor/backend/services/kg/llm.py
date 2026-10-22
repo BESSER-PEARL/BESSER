@@ -14,21 +14,35 @@ Whatever the provider, a failure leaves here as ``LLMUpstreamError`` with a fixe
 message. The provider clients build their exception text from the SDK's, which
 can echo request fragments such as part of the key, so that text is logged
 (key redacted, truncated) and never returned to the client.
+
+Every KG LLM request has **one** time budget (:class:`RequestDeadline`), however
+many model calls it makes: each call gets the time that is left as its own
+timeout, a call that would start with too little left is refused, and
+:func:`run_with_deadline` stops waiting when the budget is spent, even if a
+provider client is still retrying underneath.
 """
 
+import asyncio
 import logging
-from typing import List
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, List, TypeVar
 
 from besser.BUML.notations.kg_to_buml import Completer
 from besser.utilities.llm_utils import LLMUpstreamError, call_openai_chat_json
 from besser.utilities.web_modeling_editor.backend.models import KGLLMRequest
-from besser.utilities.web_modeling_editor.backend.services.exceptions import ValidationError
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    UpstreamServiceError,
+    ValidationError,
+)
 
 logger = logging.getLogger(__name__)
 
 # Matches the OpenAI path's ``max_completion_tokens`` for these prompts.
 _MAX_OUTPUT_TOKENS = 4000
 _LOGGED_CHARS = 500
+# A model call is not started with less time than this left in the budget.
+_MIN_CALL_SECONDS = 5.0
 _PROVIDER_NAMES = {
     "anthropic": "Anthropic",
     "openai": "OpenAI",
@@ -36,9 +50,58 @@ _PROVIDER_NAMES = {
     "nebius": "Nebius",
 }
 
+_T = TypeVar("_T")
 
-def build_completer(request: KGLLMRequest) -> Completer:
+
+@dataclass(frozen=True)
+class RequestDeadline:
+    """The single time budget of one KG LLM request."""
+
+    budget_seconds: float
+    expires_at: float
+
+    @classmethod
+    def start(cls, budget_seconds: float) -> "RequestDeadline":
+        """A deadline ``budget_seconds`` from now."""
+        return cls(budget_seconds=budget_seconds, expires_at=time.monotonic() + budget_seconds)
+
+    def exceeded_message(self) -> str:
+        """The user-facing message for a request that ran out of time."""
+        return f"The LLM did not finish within the {self.budget_seconds:g}-second limit for this request."
+
+    def remaining(self) -> float:
+        """Seconds left for the next model call.
+
+        Raises:
+            LLMUpstreamError: too little time is left to start another call.
+        """
+        left = self.expires_at - time.monotonic()
+        if left < _MIN_CALL_SECONDS:
+            raise LLMUpstreamError(self.exceeded_message())
+        return left
+
+
+async def run_with_deadline(deadline: RequestDeadline, func: Callable[..., _T], *args: Any, **kwargs: Any) -> _T:
+    """Run blocking ``func`` off the event loop and stop waiting at the deadline.
+
+    The worker thread cannot be cancelled. It finishes its current model call
+    (whose own timeout is at most the budget) and then fails fast, because every
+    further call made through a completer built for ``deadline`` is refused.
+
+    Raises:
+        UpstreamServiceError: the deadline passed first (HTTP 502).
+    """
+    timeout = max(deadline.expires_at - time.monotonic(), 0.0)
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        raise UpstreamServiceError(deadline.exceeded_message()) from exc
+
+
+def build_completer(request: KGLLMRequest, deadline: RequestDeadline) -> Completer:
     """Return the ``(system, user) -> text`` callable for ``request``'s provider and key.
+
+    Each call it makes is given the time left in ``deadline`` as its timeout.
 
     Raises:
         ValidationError: the key is blank (HTTP 400).
@@ -51,31 +114,38 @@ def build_completer(request: KGLLMRequest) -> Completer:
     if request.provider == "openai":
         def complete_openai(system_msg: str, user_msg: str) -> str:
             return call_openai_chat_json(
-                api_key, model, system_msg, user_msg, max_completion_tokens=_MAX_OUTPUT_TOKENS,
+                api_key, model, system_msg, user_msg,
+                max_completion_tokens=_MAX_OUTPUT_TOKENS, timeout=deadline.remaining(),
             )
 
         return complete_openai
-    return _provider_completer(request.provider, api_key.strip(), model)
+    return _provider_completer(request.provider, api_key.strip(), model, deadline)
 
 
-def _provider_completer(provider: str, api_key: str, model: str) -> Completer:
+def _provider_completer(provider: str, api_key: str, model: str, deadline: RequestDeadline) -> Completer:
     # Imported here: the provider SDKs are heavy, and OpenAI never needs them.
     from besser.spec_driven_agent.providers.llm_client import create_llm_client
 
     name = _PROVIDER_NAMES[provider]
-    try:
-        client = create_llm_client(
-            provider=provider, api_key=api_key, model=model, max_tokens=_MAX_OUTPUT_TOKENS,
-        )
-    except ImportError as exc:
-        # The server lacks the provider's SDK: a deployment problem, not the user's.
-        logger.warning("%s client unavailable: %s", name, exc)
-        raise LLMUpstreamError(f"{name} is not available on this server.") from exc
-    except ValueError as exc:
-        logger.warning("%s client could not be created: %s", name, _redact(str(exc), api_key))
-        raise LLMUpstreamError(f"{name} could not be reached with this key.") from exc
+
+    def new_client(timeout: float) -> Any:
+        # One client per call: the SDK timeout is fixed when the client is built,
+        # and each call may only use what is left of the request's budget.
+        try:
+            return create_llm_client(
+                provider=provider, api_key=api_key, model=model,
+                max_tokens=_MAX_OUTPUT_TOKENS, timeout=timeout,
+            )
+        except ImportError as exc:
+            # The server lacks the provider's SDK: a deployment problem, not the user's.
+            logger.warning("%s client unavailable: %s", name, exc)
+            raise LLMUpstreamError(f"{name} is not available on this server.") from exc
+        except ValueError as exc:
+            logger.warning("%s client could not be created: %s", name, _redact(str(exc), api_key))
+            raise LLMUpstreamError(f"{name} could not be reached with this key.") from exc
 
     def complete(system_msg: str, user_msg: str) -> str:
+        client = new_client(deadline.remaining())
         try:
             result = client.chat(
                 system=system_msg,

@@ -29,6 +29,10 @@ Construction order is deliberate: generalizations are built *before*
 associations because ``Generalization``'s setters re-run the end-name
 validator, which is a no-op while no associations exist. That makes
 association construction the single place a validation error can surface.
+Consumers that reload the model (JSON processor, generated code) build in the
+opposite order, so the association pass checks the end-name rule in its
+order-independent form (:func:`_navigable_names`), not just the subset the
+metamodel's own setter enforces.
 """
 
 from __future__ import annotations
@@ -588,24 +592,37 @@ def _widest(bounds: Sequence[Tuple[int, Any]]) -> Tuple[int, Any]:
 
 
 def _navigable_names(cls: Class) -> Set[str]:
-    """End names already navigable anywhere in ``cls``'s hierarchy.
+    """End names a new end on ``cls`` would collide with.
 
-    BUML's association-end-name rule (``Class._validate_unique_end_names``)
-    requires a new end name to be unused across the class, its ancestors and its
-    descendants, where "used" means appearing in ``Class.association_ends()`` --
-    the *opposite* ends, i.e. the names that class can navigate. Attribute names
-    do not participate. Reading that off the metamodel, instead of keeping a
-    parallel table, keeps this check in step with the rule it guards: it lets the
-    lowering rename the free end before construction instead of catching a
-    ``ValueError`` afterwards and losing the association.
+    BUML requires every class to reach at most one association end of a given
+    name through ``Class.all_association_ends()`` -- the *opposite* ends, i.e.
+    the names that class can navigate, own and inherited. Attribute names do
+    not participate. An end declared on ``cls`` is inherited by every
+    descendant, so it collides with whatever any descendant already reaches,
+    including ends inherited from that descendant's *other* parents.
+
+    ``Class._validate_unique_end_names`` only looks at the descendants' own
+    ends, so a model that misses the other-parent case still builds when
+    generalizations come first -- and then fails to reload in every consumer
+    that re-creates generalizations after associations (the JSON processor,
+    the generated code). Checking the full rule here, against the metamodel's
+    own ``all_association_ends``, keeps the output reloadable.
 
     The hierarchy is acyclic here (``_break_cycles`` has run), so the metamodel's
     ``all_parents`` / ``all_specializations`` terminate.
     """
-    names = {end.name for end in cls.association_ends()}
-    for relative in cls.all_parents() | cls.all_specializations():
-        names |= {end.name for end in relative.association_ends()}
+    names = {end.name for end in cls.all_association_ends()}
+    for descendant in cls.all_specializations():
+        names |= {end.name for end in descendant.all_association_ends()}
     return names
+
+
+def _descendants_navigating(cls: Class, name: str) -> List[str]:
+    """Sorted names of ``cls``'s descendants that already reach an end ``name``."""
+    return sorted(
+        descendant.name for descendant in cls.all_specializations()
+        if name in {end.name for end in descendant.all_association_ends()}
+    )
 
 
 def _ancestors_first(planned, generalizations):
@@ -653,7 +670,7 @@ def _instantiate_associations(planned, classes, generalizations, out: ClassConve
             continue
 
         target_role = assoc.role
-        if target_role in _navigable_names(source_class):
+        if target_role in {end.name for end in source_class.all_association_ends()}:
             # The role name is already navigable from this class (usually via an
             # ancestor that declares the same property). The inherited feature
             # satisfies every ``self.<role>`` reference, so the duplicate is
@@ -663,6 +680,23 @@ def _instantiate_associations(planned, classes, generalizations, out: ClassConve
                 "ASSOC_INHERITED_SHADOWED",
                 f"{assoc.source}.{target_role} is already navigable from this class's "
                 f"hierarchy; the redundant association was dropped.",
+            )
+            continue
+        clashing = _descendants_navigating(source_class, target_role)
+        if clashing:
+            # A descendant already reaches the name through *another* parent
+            # (typically two sibling restriction classes on the same property).
+            # Declaring it here too would give that descendant two ends of one
+            # name, which BUML rejects as soon as the generalizations are
+            # re-created after the associations (JSON / code round-trips).
+            add_warning(
+                out.warnings,
+                "ASSOC_END_CONFLICT_DROPPED",
+                f"{assoc.source}.{target_role} would give {', '.join(clashing[:5])}"
+                f"{' …' if len(clashing) > 5 else ''} a second '{target_role}' end, "
+                f"already inherited from another parent; BUML allows one end per name, "
+                f"so the association (and any invariant on {assoc.source} navigating it) "
+                f"was dropped.",
             )
             continue
         if target_role in attribute_names.get(assoc.source, set()):

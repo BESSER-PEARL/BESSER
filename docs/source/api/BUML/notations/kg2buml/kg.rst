@@ -1,10 +1,9 @@
 KG to B-UML
 ==============
 
-Two independent paths turn a knowledge graph into B-UML, and they share a name
-without sharing any code:
+Two independent paths turn a knowledge graph into B-UML, sharing no code:
 
-* ``besser.utilities.kg_to_buml`` — the **LLM-assisted** path. It asks a model to
+* ``besser.utilities.kg_llm_to_buml`` — the **LLM-assisted** path. It asks a model to
   read an arbitrary graph and propose a class diagram. Needs an API key, and its
   output is a best-effort interpretation.
 * ``besser.BUML.notations.kg_to_buml`` — the **deterministic** path. It applies
@@ -17,11 +16,14 @@ version of both.
 LLM-assisted conversion
 -----------------------
 
-.. automodule:: besser.utilities.kg_to_buml
+.. automodule:: besser.utilities.kg_llm_to_buml
    :members:
-   :private-members:
    :undoc-members:
    :show-inheritance:
+
+.. note::
+   ``besser.utilities.kg_to_buml``, the module's former name, is a deprecated
+   alias that warns on import; import from ``besser.utilities.kg_llm_to_buml``.
 
 Deterministic conversion
 ------------------------

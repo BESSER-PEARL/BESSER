@@ -89,7 +89,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 |------|------|
 | `besser/BUML/metamodel/` | Abstract syntax: `structural/` (DomainModel, Class, Property, associations, generalization), `state_machine/`, `gui/`, `action_language/` (BAL), `bpmn/`, `deployment/`, `feature_model/`, `nn/`, `object/`, `ocl/`, `project/`, `quantum/` |
 | `besser/BUML/notations/` | ANTLR-based parsers (PlantUML class/object, OCL, NN, deployment, BAL), draw.io import, LLM-assisted mockup → model, OWL/RDF → knowledge graph (`owl_to_kg/`), KG → class diagram (`kg_to_buml/`) |
-| `besser/utilities/image_to_buml.py`, `kg_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram |
+| `besser/utilities/image_to_buml.py`, `kg_llm_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram via an LLM (`kg_to_buml.py` is its deprecated alias) |
 | `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/` |
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |

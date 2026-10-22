@@ -33,7 +33,7 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
 )
 
 # BESSER image-to-UML and BUML utilities
-from besser.utilities.kg_to_buml import kg_to_buml
+from besser.utilities.kg_llm_to_buml import LLMAnswerError, kg_to_buml
 from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 from besser.utilities.kg_to_owl import serialize_knowledge_graph
 
@@ -100,7 +100,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     API_VERSION,
     TEMP_DIR_PREFIX,
     MAX_OWL_SIZE,
-    MAX_BUML_SIZE,
+    MAX_KG_SIZE,
     MAX_ORPHAN_CLASSIFY_NODES,
     KG_LLM_REQUEST_TIMEOUT_SECONDS,
     ALLOWED_KG_EXTENSIONS,
@@ -141,17 +141,27 @@ async def get_kg_config() -> KGConfigResponse:
     )
 
 
-@router.post("/get-json-model-from-kg", response_model=DiagramExportResponse)
+@router.post("/get-json-model-from-kg", response_model=DiagramExportResponse, deprecated=True)
 @handle_endpoint_errors("get_json_model_from_kg")
 async def get_json_model_from_kg(
     kg_file: UploadFile = File(...),
     api_key: SecretStr = Form(...),
 ):
-    """
-    Accepts an .TTL, .RDF, or .JSON knowledge graphs and an OpenAI API key, uses BESSER's kgtouml feature to transform the kg into a BUML class diagram in JSON.
+    """Ask OpenAI to turn an uploaded knowledge graph into a class diagram (deprecated).
+
+    Accepts a ``.ttl``, ``.rdf`` or Neo4j ``.json`` export and an OpenAI API key,
+    and returns the class diagram :func:`besser.utilities.kg_llm_to_buml.kg_to_buml`
+    proposes. Deprecated: the editor imports an ontology with
+    ``POST /kg/import-owl`` and converts it, deterministically and without a
+    key, with ``POST /kg/to-class-diagram``.
     """
     kg_content = await kg_file.read()
-    validate_upload(kg_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_KG_EXTENSIONS, content=kg_content)
+    validate_upload(kg_file, max_size=MAX_KG_SIZE, allowed_extensions=ALLOWED_KG_EXTENSIONS, content=kg_content)
+    try:
+        # kg_to_buml reads the file as UTF-8; anything else is the upload's fault.
+        kg_content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValidationError("The knowledge graph file is not valid UTF-8 text.") from exc
     openai_token = api_key.get_secret_value()
     if not openai_token.strip():
         raise ValidationError("An API key is required.")
@@ -170,7 +180,7 @@ async def get_json_model_from_kg(
         except LLMUpstreamError as exc:
             # Its message never carries the provider's response body.
             raise UpstreamServiceError(str(exc)) from exc
-        except RuntimeError as exc:
+        except LLMAnswerError as exc:
             # The model's answer did not make a class diagram; the details (which
             # can quote that answer) stay in the server log.
             logger.warning("KG -> B-UML conversion of the LLM answer failed: %s", exc)

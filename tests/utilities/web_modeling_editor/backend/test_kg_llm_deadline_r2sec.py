@@ -19,6 +19,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     TEMP_DIR_PREFIX,
 )
 from besser.BUML.notations.kg_to_buml.llm_cleanup import MAX_ORPHAN_BATCH
+from besser.utilities.kg_llm_to_buml import LLMAnswerError
 from tests.utilities.web_modeling_editor.backend.test_llm_clean_kg_endpoint import _kg_diagram
 
 _API = "/besser_api"
@@ -197,7 +198,7 @@ def test_legacy_uses_a_prefixed_temp_dir_and_a_server_chosen_name(client, monkey
 
     def fake_kg_to_buml(kg_path, openai_token, *, timeout):
         seen.update(path=kg_path, token=openai_token, timeout=timeout)
-        raise RuntimeError("Failed to process the KG to B-UML conversion: the answer quoted secrets")
+        raise LLMAnswerError("Failed to parse JSON from the model's answer: it quoted secrets")
 
     monkeypatch.setattr(f"{_ROUTER}.kg_to_buml", fake_kg_to_buml)
     response = _legacy(client, filename="../../evil.ttl")
@@ -209,6 +210,37 @@ def test_legacy_uses_a_prefixed_temp_dir_and_a_server_chosen_name(client, monkey
     assert os.path.basename(seen["path"]) == "knowledge_graph.ttl"
     assert seen["token"] == KEY
     assert 0 < seen["timeout"] <= KG_LLM_REQUEST_TIMEOUT_SECONDS
+
+
+def test_legacy_failure_outside_the_llm_is_not_blamed_on_it(client, monkeypatch):
+    def fake_kg_to_buml(kg_path, openai_token, *, timeout):
+        raise RuntimeError("Failed to read KG file: disk on fire")
+
+    monkeypatch.setattr(f"{_ROUTER}.kg_to_buml", fake_kg_to_buml)
+    response = _legacy(client)
+
+    assert response.status_code == 500
+    assert "LLM" not in response.json()["detail"]
+    assert "disk on fire" not in response.text
+
+
+def test_legacy_rejects_a_file_that_is_not_utf8_before_calling_the_llm(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(f"{_ROUTER}.kg_to_buml", lambda *a, **k: called.append(a))
+    response = client.post(
+        f"{_API}/get-json-model-from-kg",
+        files={"kg_file": ("graph.ttl", b"\xff\xfe not utf-8 \x80", "text/turtle")},
+        data={"api_key": KEY},
+    )
+
+    assert response.status_code == 400
+    assert "UTF-8" in response.json()["detail"]
+    assert called == []
+
+
+def test_legacy_endpoint_is_marked_deprecated_in_openapi(client):
+    operation = client.get("/openapi.json").json()["paths"]["/besser_api/get-json-model-from-kg"]["post"]
+    assert operation.get("deprecated") is True
 
 
 def test_legacy_blank_key_is_a_400(client):

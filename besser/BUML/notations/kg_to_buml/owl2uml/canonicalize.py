@@ -14,7 +14,16 @@ from .naming import local_name, sanitize, namespace_hint
 
 
 class Canonicalizer:
-    def __init__(self, graph: Graph, base: str | None):
+    """Folds equivalent IRIs onto one representative and gives each a unique UML name.
+
+    Args:
+        graph: The OWL graph whose ``owl:equivalentClass`` /
+            ``owl:equivalentProperty`` pairs define the groups.
+        base: The ontology's base namespace; a member inside it is preferred
+            as a group's representative.
+    """
+
+    def __init__(self, graph: Graph, base: str | None) -> None:
         self.graph = graph
         self.base = base or ""
         self._parent: dict[str, str] = {}

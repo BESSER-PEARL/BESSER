@@ -17,8 +17,13 @@ The counts are asserted at three layers, because they legitimately differ:
 * on the ``DomainModel`` converted after the preflight's recommendations are
   accepted, which is the flow the editor puts users through. BIBO declares 42
   properties with no ``rdfs:domain``, and an invariant that navigates one of
-  them can only resolve if the user accepts ``attach_to_thing`` for it. That is
-  the only layer where nothing is dropped.
+  them can only resolve if the user accepts ``attach_to_thing`` for it.
+
+At both BUML layers some ``dc:hasPart`` / ``dc:isPartOf`` restrictions are
+lost: several sibling auxiliary restriction classes each declare the property's
+end, and a class inheriting two of them would reach two ends of the same name,
+which BUML rejects (``ASSOC_END_CONFLICT_DROPPED``). Keeping them would make
+the model fail to reload in the editor and the generated code.
 
 This is also the regression that pins the failure that motivated the rewrite:
 the previous implementation silently dropped classes that carried a shape, and
@@ -183,30 +188,44 @@ def test_domain_model_counts(result):
     assert len(classes) == 81
     assert sum(1 for c in classes if c.is_abstract) == 2
     assert len(domain_model.generalizations) == 81
-    assert len(domain_model.associations) == 62
-    # 128 emitted, 20 dropped — see test_only_domainless_properties_are_dropped.
-    assert len(domain_model.constraints) == 108
+    # 62 planned; five sibling ``hasPart`` restriction ends are dropped
+    # (ASSOC_END_CONFLICT_DROPPED) so the model reloads.
+    assert len(domain_model.associations) == 57
+    # 128 emitted, 24 dropped — see test_only_domainless_properties_are_dropped.
+    assert len(domain_model.constraints) == 104
     assert len([t for t in domain_model.types if isinstance(t, Enumeration)]) == 0
 
 
-def test_refined_domain_model_keeps_every_constraint(refined_result):
-    """Accepting the recommendations costs nothing structurally and loses no
-    invariant: the same 81 classes and 62 associations, 13 more generalizations
-    (the top-level classes now inherit from ``Thing``), and all 128 invariants."""
+def test_refined_domain_model_keeps_every_resolvable_constraint(refined_result):
+    """Accepting the recommendations resolves every domain-less invariant: the
+    same 81 classes, 13 more generalizations (the top-level classes now inherit
+    from ``Thing``), and 119 of the 128 invariants.
+
+    The nine lost are the O07 ``hasPart`` invariants: ``Thing`` now declares
+    ``hasPart`` and every named class inherits it, so none of the auxiliary
+    restriction classes above them can declare a second ``hasPart`` end
+    (``ASSOC_END_CONFLICT_DROPPED``), and their invariants have nothing to
+    navigate. 62 planned associations, 11 dropped that way."""
     domain_model = refined_result.domain_model
     classes = [t for t in domain_model.types if isinstance(t, Class)]
     assert len(classes) == 81
-    assert len(domain_model.associations) == 62
+    assert len(domain_model.associations) == 51
     assert len(domain_model.generalizations) == 94
-    assert len(domain_model.constraints) == 128
+    assert len(domain_model.constraints) == 119
+    codes = Counter(w.code for w in refined_result.warnings)
+    assert codes["ASSOC_END_CONFLICT_DROPPED"] == 11
+    assert codes["OCL_DROPPED_UNRESOLVED_FEATURE"] == 9
 
 
 def test_no_construct_is_dropped(refined_result):
-    """Nothing may be silently lost: every warning is informational."""
+    """Nothing may be silently lost: apart from the end-name conflicts pinned in
+    ``test_refined_domain_model_keeps_every_resolvable_constraint``, every
+    warning is informational."""
     codes = Counter(w.code for w in refined_result.warnings)
     assert codes["ASSOC_DROPPED"] == 0
     assert codes["ASSOC_INHERITED_SHADOWED"] == 0
-    assert codes["OCL_DROPPED_UNRESOLVED_FEATURE"] == 0
+    unresolved = [w for w in refined_result.warnings if w.code == "OCL_DROPPED_UNRESOLVED_FEATURE"]
+    assert all("navigates self.hasPart," in w.message for w in unresolved)
     assert codes["OCL_DROPPED_UNKNOWN_TYPE"] == 0
     assert codes["OCL_DROPPED_MALFORMED_BODY"] == 0
     assert codes["ORPHANED_CONSTRAINT"] == 0
@@ -216,15 +235,23 @@ def test_no_construct_is_dropped(refined_result):
 
 
 def test_only_domainless_properties_are_dropped(result, combined_ttl: str):
-    """Converting without refining drops 20 invariants, and every one of them
-    is a property the preflight offered to fix.
+    """Converting without refining drops 24 invariants: 20 navigate a property
+    the preflight offered to fix, 4 sit on a restriction class whose end was
+    dropped as an end-name conflict.
 
     A domain-less property is attached to ``Thing``, which nothing inherits from
     unless the user says so — so ``self.<property>`` resolves from no context at
     all and the invariant would fail in any evaluator. Dropping it with a warning
     is the honest outcome; the way to keep it is to accept the recommendation."""
     dropped = [w for w in result.warnings if w.code == "OCL_DROPPED_UNRESOLVED_FEATURE"]
-    assert len(dropped) == 20
+    assert len(dropped) == 24
+    conflicted = {
+        w.message.split(".", 1)[0]
+        for w in result.warnings if w.code == "ASSOC_END_CONFLICT_DROPPED"
+    }
+    by_conflict = [w for w in dropped if w.message.split("Invariant on ")[1].split(" ")[0] in conflicted]
+    assert len(by_conflict) == 4
+    dropped = [w for w in dropped if w not in by_conflict]
 
     report = analyze_kg_for_class_diagram(owl_file_to_knowledge_graph(combined_ttl))
     offered = {
@@ -462,6 +489,39 @@ def test_every_constraint_is_navigable_from_its_context(request, conversion: str
             assert feature in _OCL_OPERATIONS or feature in available, (
                 f"{constraint.name}: self.{feature} is not navigable from {context.name}"
             )
+
+
+@pytest.mark.parametrize("with_shapes", [False, True], ids=["schema", "schema+shapes"])
+def test_model_reloads_through_json_and_generated_code(with_shapes, combined_ttl, tmp_path):
+    """Both reload paths re-create associations *before* generalizations, so a
+    class inheriting two same-named ends from unrelated parents (BIBO's
+    sibling ``hasPart`` restriction classes) is rejected there even though the
+    lowering, which builds generalizations first, accepted it."""
+    import runpy
+
+    from besser.BUML.metamodel.structural import DomainModel
+    from besser.utilities.buml_code_builder import domain_model_to_code
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+        class_buml_to_json,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
+        process_class_diagram,
+    )
+
+    source = combined_ttl if with_shapes else str(SCHEMA)
+    domain_model = kg_to_class_diagram(owl_file_to_knowledge_graph(source), model_name="Bibo").domain_model
+
+    reloaded = process_class_diagram({"title": "Bibo", "model": class_buml_to_json(domain_model)})
+    assert len(reloaded.associations) == len(domain_model.associations)
+    assert len(reloaded.generalizations) == len(domain_model.generalizations)
+    assert len(reloaded.constraints) == len(domain_model.constraints)
+
+    path = tmp_path / "bibo_model.py"
+    domain_model_to_code(domain_model, str(path))
+    namespace = runpy.run_path(str(path))
+    regenerated = next(v for v in namespace.values() if isinstance(v, DomainModel))
+    assert len(regenerated.associations) == len(domain_model.associations)
+    assert len(regenerated.generalizations) == len(domain_model.generalizations)
 
 
 def test_every_constraint_is_well_formed(result):

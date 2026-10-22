@@ -56,13 +56,17 @@ def kg_to_class_diagram(
             applied to a deep copy, so ``kg`` is never mutated.
         emit_ocl: When ``False``, produce the structure only and skip every
             OCL invariant.
+
+    Returns:
+        ClassConversionResult: The domain model, the IRI maps the object
+        diagram needs, and every warning (resolution notes included).
     """
+    warnings: List[KGConversionWarning] = []
     if resolutions:
         from besser.BUML.notations.kg_to_buml.resolutions import apply_resolutions
 
-        kg = apply_resolutions(kg, resolutions)
+        kg = apply_resolutions(kg, resolutions, warnings=warnings)
 
-    warnings: List[KGConversionWarning] = []
     graph, base = kg_to_rdf(kg, warnings=warnings)
     plan = plan_domain_model(graph, base, shapes=graph, warnings=warnings)
     result = build_domain_model(

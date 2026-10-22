@@ -9,6 +9,7 @@ back into.
 from __future__ import annotations
 
 from rdflib import URIRef, BNode, Literal
+from rdflib.collection import Collection as RDFList
 from rdflib.namespace import OWL, RDF, RDFS, XSD
 
 from besser.BUML.metamodel.structural import data_types as _buml_data_types
@@ -44,7 +45,7 @@ class Mapper:
     only gated PlantUML rendering; all five are dropped.
     """
 
-    def __init__(self, graph, base, *, shapes=None, warnings=None):
+    def __init__(self, graph, base, *, shapes=None, warnings=None) -> None:
         self.g = graph
         self.base = base
         self.ax = AxiomIndex(graph)
@@ -59,6 +60,7 @@ class Mapper:
         self._datarange_cache: dict = {}          # BNode -> DataType name (dedup shared anon data ranges)
         self._composite_datarange_cache: dict = {}  # (kind, members) -> DataType name (dedup by structure)
         self._enum_defs: dict[URIRef, BNode] = {}  # D20: named class -> the oneOf node it is an enumeration of
+        self._datatypes_in_progress: set[str] = set()  # D37: datatype names whose definition is being followed
         self.resolver = ExpressionResolver(self)
 
         primary = (list(self.ax.sorted_named_classes) + list(self.ax.sorted_object_props)
@@ -369,8 +371,19 @@ class Mapper:
         if isinstance(node, URIRef):
             if node in self.ax.datatypes():          # custom rdfs:Datatype (D09/D37)
                 dt = self.canon.name(node)
-                if dt not in self.model.datatypes and dt not in self.model.enumerations:
+                if dt in self._datatypes_in_progress:
+                    # Reached again while its own definition is being followed
+                    # (``A ≡ unionOf(B, …)``, ``B ≡ unionOf(A, …)``). The name is
+                    # registered and the outer call finishes the type, so this
+                    # reference just uses the name.
+                    self.warn("DATATYPE_CYCLIC",
+                              f"Datatype '{dt}' is defined in terms of itself; OWL 2 requires "
+                              f"datatype definitions to be acyclic. The definition is followed "
+                              f"once and the inner reference kept as a reference to '{dt}'.")
+                elif dt not in self.model.datatypes and dt not in self.model.enumerations:
+                    self._datatypes_in_progress.add(dt)
                     self._define_datatype(node, dt)
+                    self._datatypes_in_progress.discard(dt)
                 self._name_to_iri.setdefault(dt, node)
                 return dt
             return self.register_primitive(primitive_for(node))
@@ -383,8 +396,24 @@ class Mapper:
         return self.register_primitive("String")
 
     def _datatype_definition(self, dt):
-        """The data range a custom datatype is defined as (D37), or ``None`` for a bare declaration."""
-        for definition in sorted(self.g.objects(dt, OWL.equivalentClass), key=str):
+        """The data range a custom datatype is defined as (D37), or ``None`` for a bare declaration.
+
+        Read off every IRI the canonicaliser folded into ``dt``'s group (D27), so
+        a definition stated on an alias is not lost. An ``owl:equivalentClass``
+        to another custom datatype of that same group (``A ≡ A``, ``A ≡ B ≡ A``,
+        a plain ``A ≡ B``) is the merge itself, not a definition: following it
+        would make the datatype a ``value`` wrapper of itself, or recurse
+        forever. (An XSD datatype in the group, ``A ≡ xsd:string``, is a real
+        definition.)
+        """
+        group = set(self.canon.group(dt))
+        candidates = {
+            definition
+            for member in group
+            for definition in self.g.objects(URIRef(member), OWL.equivalentClass)
+            if not (str(definition) in group and definition in self.ax.datatypes())
+        }
+        for definition in sorted(candidates, key=str):
             if isinstance(definition, BNode) or definition in self.ax.datatypes() \
                     or str(definition).startswith(str(XSD)):
                 return definition
@@ -413,7 +442,6 @@ class Mapper:
 
     def _materialize_data_range(self, node, name: str | None = None) -> str:
         """Materialise the anonymous data range ``node`` (O01-O05, D17), under ``name`` when one is given."""
-        from rdflib.collection import Collection as RDFList
         base = self.g.value(node, OWL.onDatatype)
         if base is not None:                          # DatatypeRestriction (O05)
             return self._restricted_datatype(node, base, name)
@@ -459,7 +487,6 @@ class Mapper:
 
     def _restricted_datatype(self, node, base, name: str | None) -> str:
         """O05: ``owl:onDatatype`` + ``owl:withRestrictions`` -> a datatype carrying the facets as an invariant."""
-        from rdflib.collection import Collection as RDFList
         base_name = self.resolve_data_range(base)
         facets: list[str] = []
         tests: list[str] = []
@@ -622,7 +649,6 @@ class Mapper:
         restriction, a union operand, ...) stays a class, with a warning, and
         the ``oneOf`` is materialised beside it as before.
         """
-        from rdflib.collection import Collection as RDFList
         for c in self.ax.sorted_named_classes:
             if self.canon.is_alias(c):
                 continue
@@ -684,7 +710,6 @@ class Mapper:
                              f"not self.oclIsKindOf({self.ensure_class(b)})", origin="O16")
         # O17 DisjointUnion
         for c, lst in _sorted_pairs(self.g.subject_objects(OWL.disjointUnionOf)):
-            from rdflib.collection import Collection as RDFList
             members = [self.resolver.resolve_class(m) for m in RDFList(self.g, lst)]
             cname = self.ensure_class(c)
             for m in members:
@@ -975,6 +1000,13 @@ class Mapper:
                 self.add_ocl(ctx, f"self.{an}->forAll(o | self.{bn}->excludes(o))", origin="O21")
             elif self.ax.is_data_property(a) and self.ax.is_data_property(b):
                 self.add_ocl(ctx, f"self.{an}->asSet()->intersection(self.{bn}->asSet())->isEmpty()", origin="O28")
+            else:
+                # OWL 2 only defines disjointness between two object or two
+                # data properties; a mixed pair (or an undeclared property) has
+                # no O21/O28 reading.
+                self.warn("DISJOINT_PROPERTIES_SKIPPED",
+                          f"'{an}' and '{bn}' are declared disjoint but are not both object "
+                          f"properties or both data properties; no invariant emitted.")
 
     def _map_keys(self) -> None:
         """D38: ``owl:hasKey`` -> a uniqueness invariant, plus an identifier for a single functional key.
@@ -989,10 +1021,15 @@ class Mapper:
                 continue
             cname = self.ensure_class(cls_iri)
             names = [self.canon.name(k) for k in keys]
-            missing = [n for n in names if not self._has_property(cname, n)]
-            if missing or cname not in self.model.classes:
+            if cname not in self.model.classes:
                 self.warn("KEY_SKIPPED",
-                          f"Key of '{cname}' skipped: {', '.join(missing) or cname} is not modelled as a feature.")
+                          f"Key of '{cname}' skipped: '{cname}' is not modelled as a class.")
+                continue
+            missing = [n for n in names if not self._has_property(cname, n)]
+            if missing:
+                self.warn("KEY_SKIPPED",
+                          f"Key of '{cname}' skipped: {', '.join(missing)} "
+                          f"{'is' if len(missing) == 1 else 'are'} not modelled as a feature of it.")
                 continue
             if len(names) == 1:
                 body = f"{cname}.allInstances()->isUnique({names[0]})"

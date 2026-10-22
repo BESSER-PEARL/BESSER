@@ -159,11 +159,22 @@ def test_enumeration_literals_are_sanitised_and_deduplicated():
     """``Mapper.literal_value`` quotes strings, and a value like ``"foo bar"``
     would be rejected outright by ``NamedElement.name``."""
     model = _model(_enum("Color", ['"deep red"', '"deep-red"', '"green"']))
-    result, _ = _lower(model)
+    result, warnings = _lower(model)
 
     enum = next(t for t in result.domain_model.types if isinstance(t, Enumeration))
     names = {literal.name for literal in enum.literals}
     assert names == {"deep_red", "deep_red_2", "green"}
+    # Renames are reported, once per enumeration; a literal kept as-is is not.
+    renamed = [w.message for w in warnings if w.code == "ENUM_LITERAL_RENAMED"]
+    assert renamed == [
+        "Enumeration Color: 2 literal(s) renamed to valid, unique BUML names: "
+        "'deep red' -> deep_red, 'deep-red' -> deep_red_2."
+    ]
+
+
+def test_enumeration_with_valid_literals_reports_nothing():
+    result, warnings = _lower(_model(_enum("Color", ['"red"', '"green"'])))
+    assert "ENUM_LITERAL_RENAMED" not in _codes(warnings)
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +268,27 @@ def test_generalization_cycles_are_broken():
         cls.all_parents()
 
 
+def test_cycle_breaking_survives_a_chain_deeper_than_the_recursion_limit():
+    """``_break_cycles`` used to recurse once per level (RecursionError at ~1000).
+
+    Called directly: lowering a chain this deep still needs the metamodel's own
+    ``all_parents`` / ``all_specializations``, which recurse too.
+    """
+    from besser.BUML.notations.kg_to_buml.to_buml import _break_cycles
+
+    depth = 3000
+    pairs = [_gen(f"C{i:04d}", f"C{i + 1:04d}") for i in range(depth)]
+    warnings: list = []
+    kept = _break_cycles(_model(*pairs), {}, warnings)
+    assert len(kept) == depth and warnings == []
+
+    kept = _break_cycles(_model(*pairs, _gen(f"C{depth:04d}", "C0000")), {}, warnings)
+    assert len(kept) == depth
+    assert [w.message for w in warnings] == [
+        f"Generalization C{depth:04d} -> C0000 closes an inheritance cycle; dropped."
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Associations
 # ---------------------------------------------------------------------------
@@ -343,6 +375,57 @@ def test_a_role_an_ancestor_already_provides_is_dropped(tmp_path: Path):
     target = next(e for e in owns[0].ends if e.type.name == "Pet")
     assert target.multiplicity.min == 1
     assert "ASSOC_INHERITED_SHADOWED" in _codes(result.warnings)
+
+
+def _sibling_restrictions_model():
+    """Two unrelated parents of ``Code`` each declaring a ``hasPart`` end."""
+    return _model(
+        _cls("RestrictA"), _cls("RestrictB"), _cls("Code"), _cls("Part"),
+        _gen("Code", "RestrictA"), _gen("Code", "RestrictB"),
+        _assoc("hasPart", "RestrictA", "Part", "hasPart"),
+        _assoc("hasPart", "RestrictB", "Part", "hasPart"),
+    )
+
+
+def test_an_end_a_descendant_inherits_from_another_parent_is_dropped():
+    """A descendant may reach one end per name across *all* its parents.
+
+    The metamodel's setter only compares against the descendants' own ends, so
+    the second ``hasPart`` used to build here (generalizations first) and then
+    fail in every consumer that re-creates generalizations after associations.
+    """
+    result, warnings = _lower(_sibling_restrictions_model())
+
+    has_part = [a for a in result.domain_model.associations if a.name.startswith("hasPart")]
+    assert len(has_part) == 1
+    assert "ASSOC_END_CONFLICT_DROPPED" in _codes(warnings)
+    message = next(w.message for w in warnings if w.code == "ASSOC_END_CONFLICT_DROPPED")
+    assert message.startswith("RestrictB.hasPart would give Code")
+    code = _classes(result)["Code"]
+    assert [e.name for e in code.all_association_ends()].count("hasPart") == 1
+
+
+def test_sibling_end_conflict_reloads_in_the_editor_and_as_code(tmp_path: Path):
+    """Both reload paths build associations before generalizations."""
+    import runpy
+
+    from besser.BUML.metamodel.structural import DomainModel
+    from besser.utilities.buml_code_builder import domain_model_to_code
+    from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+        class_buml_to_json,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
+        process_class_diagram,
+    )
+
+    domain_model = _lower(_sibling_restrictions_model())[0].domain_model
+    reloaded = process_class_diagram({"title": "Test", "model": class_buml_to_json(domain_model)})
+    assert len(reloaded.associations) == len(domain_model.associations)
+
+    path = tmp_path / "model.py"
+    domain_model_to_code(domain_model, str(path))
+    namespace = runpy.run_path(str(path))
+    assert any(isinstance(value, DomainModel) for value in namespace.values())
 
 
 # ---------------------------------------------------------------------------

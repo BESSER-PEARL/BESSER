@@ -43,7 +43,9 @@ from besser.BUML.notations.kg_to_buml._common import (
     RDFS_RANGE,
     RDFS_SUBCLASS_OF,
     RDF_TYPE,
+    KGConversionWarning,
     acknowledge_issue,
+    add_warning,
     is_meta_vocab,
     looks_like_datatype_iri as _looks_like_datatype_iri,
     normalize_predicate,
@@ -81,7 +83,7 @@ class DeferredOrphanClassification(Exception):
     stay in place until the user reviews the LLM's per-node suggestions.
     """
 
-    def __init__(self, node_ids: List[str]):
+    def __init__(self, node_ids: List[str]) -> None:
         super().__init__(
             f"Deferred to LLM classification: {len(node_ids)} node(s)"
         )
@@ -110,19 +112,41 @@ class KGResolution:
 # ----------------------------------------------------------------------
 
 
-def apply_resolutions(kg: KnowledgeGraph, resolutions: List[KGResolution]) -> KnowledgeGraph:
+def apply_resolutions(
+    kg: KnowledgeGraph,
+    resolutions: List[KGResolution],
+    *,
+    warnings: Optional[List[KGConversionWarning]] = None,
+) -> KnowledgeGraph:
     """Apply a list of resolutions to a *deep copy* of ``kg`` and return it.
 
     Resolutions are dispatched by ``choice`` key. Unknown choices raise
     :class:`ResolutionError`.
+
+    Two cycles can recommend breaking the same edge (two cycles sharing it),
+    and accepting both in one batch then names an edge the first already
+    removed. That second resolution is already satisfied, so it is skipped and
+    noted in ``warnings`` (``RESOLUTION_ALREADY_APPLIED``) rather than failing
+    the batch; an edge the graph never had still raises.
     """
     if not resolutions:
         return kg
     new_kg = copy.deepcopy(kg)
+    original_edge_ids = {edge.id for edge in new_kg.edges}
     for res in resolutions:
         handler = _HANDLERS.get(res.choice)
         if handler is None:
             raise ResolutionError(f"Unknown resolution choice {res.choice!r}.")
+        edge_id = res.parameters.get("edge_id") if res.choice == "break_at_edge" else None
+        if edge_id in original_edge_ids and all(edge.id != edge_id for edge in new_kg.edges):
+            add_warning(
+                warnings if warnings is not None else [],
+                "RESOLUTION_ALREADY_APPLIED",
+                f"Resolution for issue {res.issue_id!r}: edge {edge_id!r} was already removed "
+                f"by an earlier resolution in this batch; skipped.",
+                edge_id=edge_id,
+            )
+            continue
         handler(new_kg, res)
     return new_kg
 

@@ -205,48 +205,68 @@ def sorted_by_id(items: Iterable[Any]) -> List[Any]:
     return sorted(items, key=lambda x: x.id)
 
 
+def find_back_edges(parents: Dict[str, Iterable[str]]) -> List[Tuple[str, str, Tuple[str, ...]]]:
+    """Walk a ``child -> parents`` map depth-first and return every edge that closes a cycle.
+
+    Each entry is ``(child, parent, path)``: ``child -> parent`` is the closing
+    edge and ``path`` the cycle it closes, from ``parent`` down to ``child``. A
+    self-loop is reported with a one-node path. Entries come in visiting order,
+    which is deterministic: roots and parents are visited in sorted order.
+
+    Three-colour DFS: a node is grey while it is on the current path and black
+    once fully explored, and only a grey hit is a cycle, so every node and edge
+    is visited once. (A walk that only tracked the current path re-explored a
+    node once per route to it -- every simple path rather than every cycle,
+    exponential on a stack of diamonds.)
+
+    Iterative, with an explicit stack: an ontology can nest ``rdfs:subClassOf``
+    far deeper than Python's recursion limit.
+
+    This is the one cycle walk for the notation: :func:`find_cycles` (preflight)
+    and ``to_buml._break_cycles`` (lowering) both read it.
+    """
+    GREY, BLACK = 0, 1
+    state: Dict[str, int] = {}
+    found: List[Tuple[str, str, Tuple[str, ...]]] = []
+    for root in sorted(parents):
+        if root in state:
+            continue
+        state[root] = GREY
+        path: List[str] = [root]
+        pending = [iter(sorted(parents.get(root, ())))]
+        while pending:
+            node = path[-1]
+            for parent in pending[-1]:
+                colour = state.get(parent)
+                if colour == GREY:
+                    found.append((node, parent, tuple(path[path.index(parent):])))
+                elif colour is None:
+                    state[parent] = GREY
+                    path.append(parent)
+                    pending.append(iter(sorted(parents.get(parent, ()))))
+                    break
+            else:                       # every parent of `node` explored
+                pending.pop()
+                state[path.pop()] = BLACK
+    return found
+
+
 def find_cycles(parents: Dict[str, Set[str]]) -> List[Tuple[str, ...]]:
     """Find the ``rdfs:subClassOf`` cycles in a ``child -> {parents}`` map.
 
     Returns one canonical tuple per cycle, each closed (first id repeated last)
     and rotated to start at its lexicographically smallest member, so the same
     cycle is never reported twice under a different rotation. Sorted, so the
-    result is stable across runs and hash seeds.
-
-    Uses the three-colour DFS that :func:`to_buml._break_cycles` already relies
-    on: a node is grey while it is on the current path and black once fully
-    explored, and only a grey hit is a cycle. The earlier implementation here
-    tracked just the current path, so a node reachable by several routes was
-    re-explored once per route -- it enumerated every simple path rather than
-    every cycle, and a cycle-free stack of diamonds was enough to make it
-    quadratic then exponential (55 classes took 1.7 s, and preflight runs this
-    on every call and again after each decision).
+    result is stable across runs and hash seeds. The walk is
+    :func:`find_back_edges`.
     """
-    GREY, BLACK = 0, 1
-    state: Dict[str, int] = {}
-    path: List[str] = []
     found: Set[Tuple[str, ...]] = set()
-
-    def visit(node: str) -> None:
-        state[node] = GREY
-        path.append(node)
-        for parent in sorted(parents.get(node, ())):
-            if state.get(parent) == GREY:
-                cycle = path[path.index(parent):]
-                # Rotate so the smallest id leads: A->B->A and B->A->B are one
-                # cycle, and reporting both makes applying both decisions fail.
-                pivot = cycle.index(min(cycle))
-                rotated = cycle[pivot:] + cycle[:pivot]
-                found.add(tuple(rotated) + (rotated[0],))
-            elif parent not in state:
-                visit(parent)
-        path.pop()
-        state[node] = BLACK
-
-    for node in sorted(parents):
-        if node not in state:
-            visit(node)
-
+    for _child, _parent, cycle in find_back_edges(parents):
+        # Rotate so the smallest id leads: A->B->A and B->A->B are one
+        # cycle, and reporting both makes applying both decisions fail.
+        pivot = cycle.index(min(cycle))
+        rotated = cycle[pivot:] + cycle[:pivot]
+        found.add(rotated + (rotated[0],))
     return sorted(found)
 
 
@@ -268,6 +288,7 @@ def add_warning(
 
 
 __all__ = [
+    "find_back_edges",
     "find_cycles",
     "short_digest",
     "RDF_TYPE",

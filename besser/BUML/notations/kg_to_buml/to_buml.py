@@ -29,6 +29,10 @@ Construction order is deliberate: generalizations are built *before*
 associations because ``Generalization``'s setters re-run the end-name
 validator, which is a no-op while no associations exist. That makes
 association construction the single place a validation error can surface.
+Consumers that reload the model (JSON processor, generated code) build in the
+opposite order, so the association pass checks the end-name rule in its
+order-independent form (:func:`_navigable_names`), not just the subset the
+metamodel's own setter enforces.
 """
 
 from __future__ import annotations
@@ -52,7 +56,7 @@ from besser.BUML.metamodel.structural import (
     StringType,
 )
 
-from besser.BUML.notations.kg_to_buml._common import KGConversionWarning, add_warning
+from besser.BUML.notations.kg_to_buml._common import KGConversionWarning, add_warning, find_back_edges
 from besser.BUML.notations.kg_to_buml.datatype_mapping import PRIMITIVE_BY_NAME
 from besser.BUML.notations.kg_to_buml.owl2uml import naming
 from besser.BUML.notations.ocl.api import parse_ocl
@@ -164,13 +168,21 @@ def _plan_renames(model: ModelPlan, warnings) -> Dict[str, str]:
                 f"Class {name!r} collides with the BUML primitive of the same name; "
                 f"renamed to {safe!r}.",
             )
-        candidate, index = safe, 2
-        while candidate in taken:
-            candidate = f"{safe}_{index}"
-            index += 1
-        taken.add(candidate)
-        renames[name] = candidate
+        renames[name] = _claim(safe, taken)
     return renames
+
+
+def _claim(candidate: str, taken: Set[str]) -> str:
+    """Return ``candidate``, or the first free ``candidate_2``, ``candidate_3`` …, and add it to ``taken``.
+
+    The one suffixing scheme every uniquified name in the lowering uses.
+    """
+    name, index = candidate, 2
+    while name in taken:
+        name = f"{candidate}_{index}"
+        index += 1
+    taken.add(name)
+    return name
 
 
 def _resolve(name: str, renames: Dict[str, str]) -> str:
@@ -198,33 +210,15 @@ def _break_cycles(model: ModelPlan, renames, warnings) -> List[Tuple[str, str]]:
     for sub, sup in edges:
         parents.setdefault(sub, []).append(sup)
 
-    kept: List[Tuple[str, str]] = []
-    state: Dict[str, int] = {}  # 0 = visiting, 1 = done
     dropped: Set[Tuple[str, str]] = set()
-
-    def visit(node: str) -> None:
-        state[node] = 0
-        for parent in parents.get(node, []):
-            if state.get(parent) == 0:
-                dropped.add((node, parent))
-                add_warning(
-                    warnings,
-                    "CYCLIC_SUBCLASS",
-                    f"Generalization {node} -> {parent} closes an inheritance cycle; dropped.",
-                )
-                continue
-            if parent not in state:
-                visit(parent)
-        state[node] = 1
-
-    for sub, _ in edges:
-        if sub not in state:
-            visit(sub)
-
-    for sub, sup in edges:
-        if sub != sup and (sub, sup) not in dropped:
-            kept.append((sub, sup))
-    return kept
+    for node, parent, _cycle in find_back_edges(parents):
+        dropped.add((node, parent))
+        add_warning(
+            warnings,
+            "CYCLIC_SUBCLASS",
+            f"Generalization {node} -> {parent} closes an inheritance cycle; dropped.",
+        )
+    return [(sub, sup) for sub, sup in edges if sub != sup and (sub, sup) not in dropped]
 
 
 def _build_generalizations(pairs, classes) -> List[Generalization]:
@@ -320,22 +314,33 @@ def _report_stereotypes(out: ClassConversionResult) -> None:
 
 
 def _build_enumerations(model: ModelPlan, renames, warnings) -> Dict[str, Enumeration]:
+    """Create one ``Enumeration`` per planned enumeration, with BUML-valid literal names.
+
+    A literal value is not necessarily a valid name (``"extra large"``), and two
+    values can sanitise to the same one (``"extra-large"``). Both are renamed --
+    BUML has nowhere to keep the original value -- and the renames are reported,
+    since an instance holding the original value no longer matches by name.
+    """
     enumerations: Dict[str, Enumeration] = {}
     for name in sorted(model.enumerations):
         uml_enum = model.enumerations[name]
         safe = _resolve(name, renames)
-        literals, taken = [], set()
+        literals, taken, renamed = [], set(), []
         for raw in uml_enum.literals:
             # ``Mapper.literal_value`` quotes strings; a literal like "foo bar"
             # would otherwise be rejected by ``NamedElement.name``.
             text = str(raw).strip().strip('"')
-            candidate = naming.sanitize(text) or "_"
-            base, index = candidate, 2
-            while candidate in taken:
-                candidate = f"{base}_{index}"
-                index += 1
-            taken.add(candidate)
-            literals.append(EnumerationLiteral(name=candidate))
+            literal = _claim(naming.sanitize(text) or "_", taken)
+            if literal != text:
+                renamed.append(f"{text!r} -> {literal}")
+            literals.append(EnumerationLiteral(name=literal))
+        if renamed:
+            add_warning(
+                warnings,
+                "ENUM_LITERAL_RENAMED",
+                f"Enumeration {safe}: {len(renamed)} literal(s) renamed to valid, unique "
+                f"BUML names: {', '.join(renamed[:8])}{' …' if len(renamed) > 8 else ''}.",
+            )
         enumerations[safe] = Enumeration(name=safe, literals=set(literals))
     return enumerations
 
@@ -588,24 +593,37 @@ def _widest(bounds: Sequence[Tuple[int, Any]]) -> Tuple[int, Any]:
 
 
 def _navigable_names(cls: Class) -> Set[str]:
-    """End names already navigable anywhere in ``cls``'s hierarchy.
+    """End names a new end on ``cls`` would collide with.
 
-    BUML's association-end-name rule (``Class._validate_unique_end_names``)
-    requires a new end name to be unused across the class, its ancestors and its
-    descendants, where "used" means appearing in ``Class.association_ends()`` --
-    the *opposite* ends, i.e. the names that class can navigate. Attribute names
-    do not participate. Reading that off the metamodel, instead of keeping a
-    parallel table, keeps this check in step with the rule it guards: it lets the
-    lowering rename the free end before construction instead of catching a
-    ``ValueError`` afterwards and losing the association.
+    BUML requires every class to reach at most one association end of a given
+    name through ``Class.all_association_ends()`` -- the *opposite* ends, i.e.
+    the names that class can navigate, own and inherited. Attribute names do
+    not participate. An end declared on ``cls`` is inherited by every
+    descendant, so it collides with whatever any descendant already reaches,
+    including ends inherited from that descendant's *other* parents.
+
+    ``Class._validate_unique_end_names`` only looks at the descendants' own
+    ends, so a model that misses the other-parent case still builds when
+    generalizations come first -- and then fails to reload in every consumer
+    that re-creates generalizations after associations (the JSON processor,
+    the generated code). Checking the full rule here, against the metamodel's
+    own ``all_association_ends``, keeps the output reloadable.
 
     The hierarchy is acyclic here (``_break_cycles`` has run), so the metamodel's
     ``all_parents`` / ``all_specializations`` terminate.
     """
-    names = {end.name for end in cls.association_ends()}
-    for relative in cls.all_parents() | cls.all_specializations():
-        names |= {end.name for end in relative.association_ends()}
+    names = {end.name for end in cls.all_association_ends()}
+    for descendant in cls.all_specializations():
+        names |= {end.name for end in descendant.all_association_ends()}
     return names
+
+
+def _descendants_navigating(cls: Class, name: str) -> List[str]:
+    """Sorted names of ``cls``'s descendants that already reach an end ``name``."""
+    return sorted(
+        descendant.name for descendant in cls.all_specializations()
+        if name in {end.name for end in descendant.all_association_ends()}
+    )
 
 
 def _ancestors_first(planned, generalizations):
@@ -653,7 +671,7 @@ def _instantiate_associations(planned, classes, generalizations, out: ClassConve
             continue
 
         target_role = assoc.role
-        if target_role in _navigable_names(source_class):
+        if target_role in {end.name for end in source_class.all_association_ends()}:
             # The role name is already navigable from this class (usually via an
             # ancestor that declares the same property). The inherited feature
             # satisfies every ``self.<role>`` reference, so the duplicate is
@@ -663,6 +681,23 @@ def _instantiate_associations(planned, classes, generalizations, out: ClassConve
                 "ASSOC_INHERITED_SHADOWED",
                 f"{assoc.source}.{target_role} is already navigable from this class's "
                 f"hierarchy; the redundant association was dropped.",
+            )
+            continue
+        clashing = _descendants_navigating(source_class, target_role)
+        if clashing:
+            # A descendant already reaches the name through *another* parent
+            # (typically two sibling restriction classes on the same property).
+            # Declaring it here too would give that descendant two ends of one
+            # name, which BUML rejects as soon as the generalizations are
+            # re-created after the associations (JSON / code round-trips).
+            add_warning(
+                out.warnings,
+                "ASSOC_END_CONFLICT_DROPPED",
+                f"{assoc.source}.{target_role} would give {', '.join(clashing[:5])}"
+                f"{' …' if len(clashing) > 5 else ''} a second '{target_role}' end, "
+                f"already inherited from another parent; BUML allows one end per name, "
+                f"so the association (and any invariant on {assoc.source} navigating it) "
+                f"was dropped.",
             )
             continue
         if target_role in attribute_names.get(assoc.source, set()):
@@ -675,7 +710,7 @@ def _instantiate_associations(planned, classes, generalizations, out: ClassConve
 
         # The reverse end can always be renamed; the forward one cannot without
         # invalidating the generated OCL.
-        source_role = _unique_name(
+        source_role = _claim(
             assoc.source_role or _default_source_role(assoc),
             _navigable_names(target_class) | {target_role},
         )
@@ -728,26 +763,12 @@ def _default_source_role(assoc: PlannedAssociation) -> str:
     return naming.sanitize(base) or "source"
 
 
-def _unique_name(candidate: str, taken: Set[str]) -> str:
-    name, index = candidate, 2
-    while name in taken:
-        name = f"{candidate}_{index}"
-        index += 1
-    return name
-
-
 def _unique_association_name(assoc: PlannedAssociation, used: Set[str]) -> str:
-    for candidate in (assoc.name, f"{assoc.name}_{assoc.source}"):
-        if candidate not in used:
-            used.add(candidate)
-            return candidate
-    base, index = f"{assoc.name}_{assoc.source}", 2
-    name = f"{base}_{index}"
-    while name in used:
-        index += 1
-        name = f"{base}_{index}"
-    used.add(name)
-    return name
+    """The association's own name, else qualified by its source class, else numbered."""
+    if assoc.name not in used:
+        used.add(assoc.name)
+        return assoc.name
+    return _claim(f"{assoc.name}_{assoc.source}", used)
 
 
 # ----------------------------------------------------------------------
@@ -862,10 +883,4 @@ def _types_resolve(body, type_names, out, label) -> bool:
 
 def _unique_constraint_name(context_name, invariant, used: Set[str]) -> str:
     hint = invariant.name or invariant.origin_rule or "inv"
-    base = naming.sanitize(f"{context_name}_{hint}") or f"{context_name}_inv"
-    name, index = base, 2
-    while name in used:
-        name = f"{base}_{index}"
-        index += 1
-    used.add(name)
-    return name
+    return _claim(naming.sanitize(f"{context_name}_{hint}") or f"{context_name}_inv", used)

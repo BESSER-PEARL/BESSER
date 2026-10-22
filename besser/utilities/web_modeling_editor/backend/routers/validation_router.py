@@ -36,6 +36,7 @@ from besser.utilities.web_modeling_editor.backend.constants.user_buml_model impo
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     BPMN_DIAGRAM_TYPE,
     DEPLOYMENT_DIAGRAM_TYPE,
+    KG_CONSISTENCY_TIMEOUT_SECONDS,
 )
 
 # Backend services - Validators
@@ -188,19 +189,30 @@ async def validate_diagram(input_data: DiagramInput):
             # owlrl would otherwise make them a hard requirement to *start* the
             # backend, even for deployments that never open a KG. Run off the
             # event loop — it is seconds of CPU on a mid-sized ontology.
-            from besser.BUML.notations.kg_to_buml.consistency import check_kg_consistency
+            from besser.BUML.notations.kg_to_buml.consistency import (
+                ConsistencyCheckError,
+                check_kg_consistency,
+            )
 
-            consistency = await asyncio.to_thread(check_kg_consistency, kg)
-            for issue in consistency.issues:
-                line = _format_kg_issue(
-                    issue.code,
-                    issue.constraint_label or issue.message,
-                    issue.affected_node_ids,
+            try:
+                consistency = await asyncio.to_thread(
+                    check_kg_consistency, kg, timeout_seconds=KG_CONSISTENCY_TIMEOUT_SECONDS,
                 )
-                if issue.severity == "violation":
-                    validation_errors.append(line)
-                else:
-                    validation_warnings.append(line)
+            except ConsistencyCheckError as exc:
+                # The KG could not be checked at all (unloadable shapes, a pattern
+                # that ran out the clock): that is itself a finding about the KG.
+                validation_errors.append(str(exc))
+            else:
+                for issue in consistency.issues:
+                    line = _format_kg_issue(
+                        issue.code,
+                        issue.constraint_label or issue.message,
+                        issue.affected_node_ids,
+                    )
+                    if issue.severity == "violation":
+                        validation_errors.append(line)
+                    else:
+                        validation_warnings.append(line)
         elif diagram_type == "GUINoCodeDiagram":
             return {
                 "isValid": True,

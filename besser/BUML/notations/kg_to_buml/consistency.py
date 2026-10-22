@@ -18,14 +18,29 @@ The validation report is parsed back into our
 :class:`ConsistencyIssue` shape, with focus-node IRIs mapped to KG
 node ids. The shim shapes never escape this module — they live only
 in the in-memory graphs passed to pyshacl.
+
+pyshacl runs in a child process (``_shacl_worker.py``) that is killed when its
+time budget runs out: ``sh:pattern`` is user-authored and evaluated with
+:mod:`re`, which a catastrophically backtracking pattern can pin, GIL and all,
+for as long as it likes. Patterns that are recognisably dangerous are dropped
+up front and reported as a warning instead.
+
+Requires :mod:`pyshacl`, which is a dependency of the web editor backend only
+(``besser/utilities/web_modeling_editor/backend/requirements.txt``), not of the
+``besser`` library. Import this module lazily from code that must work without it.
 """
 
 from __future__ import annotations
 
+import logging
+import os
+import pickle
+import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import pyshacl
 import rdflib
 from rdflib import BNode, Literal, RDF, URIRef, XSD
 from rdflib.namespace import OWL, RDFS
@@ -54,13 +69,43 @@ from besser.BUML.metamodel.kg.constants import (
 
 
 __all__ = [
+    "ConsistencyCheckError",
+    "ConsistencyCheckTimeout",
     "ConsistencyIssue",
     "ConsistencyReport",
+    "DEFAULT_CONSISTENCY_TIMEOUT_SECONDS",
+    "MAX_SHACL_PATTERN_LENGTH",
     "check_kg_consistency",
 ]
 
+logger = logging.getLogger(__name__)
 
 SH = rdflib.Namespace(SH_NS)
+
+#: Seconds the validator child process may run before it is killed.
+DEFAULT_CONSISTENCY_TIMEOUT_SECONDS = 60.0
+
+#: Longest ``sh:pattern`` that is evaluated at all; a longer one is skipped with
+#: a warning. BESSER's own patterns are a few dozen characters.
+MAX_SHACL_PATTERN_LENGTH = 1000
+
+# The child process that runs pyshacl (see ``_validate``).
+_WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_shacl_worker.py")
+# How much of the child's stderr is logged when it dies.
+_LOGGED_STDERR_CHARS = 2000
+
+
+class ConsistencyCheckError(RuntimeError):
+    """The KG could not be checked, for a reason that lies in the KG itself.
+
+    The message is written for the end user (the web backend returns it as an
+    HTTP 400). Raised when pyshacl rejects the KG's shapes, and, through
+    :class:`ConsistencyCheckTimeout`, when the check exceeds its time budget.
+    """
+
+
+class ConsistencyCheckTimeout(ConsistencyCheckError):
+    """The check ran out of time and its validator process was killed."""
 
 
 # SHACL-AF constructs that make a validator EXECUTE something the KG author
@@ -144,6 +189,8 @@ class ConsistencyIssue:
 
 @dataclass
 class ConsistencyReport:
+    """The outcome of :func:`check_kg_consistency`: every issue, most severe first."""
+
     issues: List[ConsistencyIssue]
     issue_count: int
     severity_counts: Dict[str, int]
@@ -199,6 +246,7 @@ def check_kg_consistency(
     kg: KnowledgeGraph,
     *,
     inference: str = "owlrl",
+    timeout_seconds: Optional[float] = DEFAULT_CONSISTENCY_TIMEOUT_SECONDS,
 ) -> ConsistencyReport:
     """Validate ``kg``'s ABox against its OWL/SHACL constraints.
 
@@ -207,10 +255,18 @@ def check_kg_consistency(
         inference: ``"rdfs"`` (faster, SHACL-only checks) or ``"owlrl"``
             (default; runs OWL2-RL pre-inference so OWL DL constructs
             are also checked).
+        timeout_seconds: Budget for the validation, which runs in a child
+            process that is killed when the budget is spent. ``None`` runs
+            pyshacl in this process with no limit: only for a KG whose
+            ``sh:pattern`` values are trusted.
 
     Returns:
         :class:`ConsistencyReport` whose ``issues`` list is empty when
         the KG is fully conformant.
+
+    Raises:
+        ConsistencyCheckTimeout: the validation did not finish in time.
+        ConsistencyCheckError: pyshacl rejected the KG's shapes.
     """
     data_graph = knowledge_graph_to_rdf(kg, vocab="both")
     _normalize_count_literals(data_graph)
@@ -221,25 +277,19 @@ def check_kg_consistency(
     # BESSER writes as a shape (see ``_SHAPE_PREDICATES``), so nothing an imported
     # ontology carries beyond that is ever a shape, let alone one that runs.
     shapes_graph = _extract_shapes(data_graph)
+    skipped_patterns = _drop_unsafe_patterns(shapes_graph)
 
-    # ``advanced=False`` (pyshacl's own default) stays as a second line of defence:
-    # it gates SHACL-AF features (sh:Function/sh:expression, sh:Rule, custom
-    # sh:target) that BESSER's constraint model cannot express. Implicit class
-    # targeting, which BESSER's shapes DO rely on, is a separate always-on code
-    # path and keeps working. ``_strip_executable_shacl`` above removes the same
-    # constructs from the data graph as a third.
-    _conforms, results_graph, _results_text = pyshacl.validate(
-        data_graph,
-        shacl_graph=shapes_graph,
-        ont_graph=data_graph,
-        inference=inference,
-        allow_warnings=True,
-        advanced=False,
-        meta_shacl=False,
-        debug=False,
-    )
+    # pyshacl runs with ``advanced=False`` (its own default) as a second line of
+    # defence: it gates SHACL-AF features (sh:Function/sh:expression, sh:Rule,
+    # custom sh:target) that BESSER's constraint model cannot express. Implicit
+    # class targeting, which BESSER's shapes DO rely on, is a separate always-on
+    # code path and keeps working. ``_strip_executable_shacl`` above removes the
+    # same constructs from the data graph as a third. See ``_shacl_worker``.
+    results_graph = _validate(data_graph, shapes_graph, inference, timeout_seconds)
 
     issues = _parse_validation_report(results_graph, kg, data_graph)
+    issues.extend(_skipped_pattern_issues(skipped_patterns, kg, data_graph))
+    issues.sort(key=lambda i: (_SEVERITY_RANK.get(i.severity, 99), i.code, i.id))
     issues = _dedupe(issues)
 
     return ConsistencyReport(
@@ -249,6 +299,198 @@ def check_kg_consistency(
         kg_signature=kg_signature(kg),
         inference_used=inference,
     )
+
+
+# ---------------------------------------------------------------------------
+# Running pyshacl under a time budget
+# ---------------------------------------------------------------------------
+
+
+def _validate(
+    data_graph: rdflib.Graph,
+    shapes_graph: rdflib.Graph,
+    inference: str,
+    timeout_seconds: Optional[float],
+) -> rdflib.Graph:
+    """Run pyshacl and return its results graph, in a killable child process.
+
+    Graphs cross the process boundary pickled, which keeps blank-node labels
+    intact: the report's focus nodes and source shapes still name the nodes
+    of ``data_graph``.
+    """
+    if timeout_seconds is None:
+        from besser.BUML.notations.kg_to_buml._shacl_worker import run_validation
+
+        return _unwrap_outcome(run_validation(data_graph, shapes_graph, inference))
+
+    payload = pickle.dumps((data_graph, shapes_graph, inference), protocol=pickle.HIGHEST_PROTOCOL)
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-P", _WORKER_SCRIPT],
+            input=payload,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # ``run`` has already killed the child.
+        raise ConsistencyCheckTimeout(
+            f"The consistency check did not finish within {timeout_seconds:g} seconds and was "
+            "stopped. A SHACL pattern (sh:pattern) that backtracks heavily, or a very large "
+            "ontology, can cause this."
+        ) from exc
+    if completed.returncode != 0:
+        stderr = completed.stderr.decode("utf-8", "replace")[-_LOGGED_STDERR_CHARS:]
+        logger.error("SHACL validator process exited with %s: %s", completed.returncode, stderr)
+        raise RuntimeError(f"SHACL validator process exited with status {completed.returncode}.")
+    return _unwrap_outcome(pickle.loads(completed.stdout))
+
+
+def _unwrap_outcome(outcome: Tuple[str, Any]) -> rdflib.Graph:
+    """The results graph of a worker outcome, or the error it carries."""
+    kind, value = outcome
+    if kind == "shape_error":
+        # pyshacl's own wording names the offending construct, e.g. "A shape defined
+        # as a PropertyShape must include one `sh:path` property."
+        raise ConsistencyCheckError(f"The KG's SHACL shapes could not be loaded: {value}")
+    return value
+
+
+# A quantifier that can repeat its atom more than once: ``*``, ``+``, ``{n,}``,
+# ``{n,m}`` (m > 1) or ``{n}`` (n > 1). ``?`` cannot, so ``(https?://)?`` is fine.
+_REPEAT_RE = re.compile(r"[*+]|\{(\d*)(,?)(\d*)\}")
+
+
+def _repeat_at(pattern: str, index: int) -> Optional[Tuple[int, bool]]:
+    """``(end, variable)`` for a repeating quantifier at ``index``, else ``None``.
+
+    ``variable`` is False for a fixed count (``{3}``), which repeats its atom
+    but cannot backtrack over how many times.
+    """
+    match = _REPEAT_RE.match(pattern, index)
+    if match is None:
+        return None
+    if match.group(0) in ("*", "+"):
+        return match.end(), True
+    low, comma, high = match.groups()
+    if not low and not high:
+        return None                         # "{}" / "{,}": literal braces
+    if not comma:
+        return (match.end(), False) if int(low) > 1 else None
+    if not high:
+        return match.end(), True
+    if int(high) <= 1:
+        return None
+    return match.end(), int(high) > int(low or 0)
+
+
+def _has_nested_quantifier(pattern: str) -> bool:
+    """True when a repeated group contains a variable repetition: ``(a+)+``, ``(.*a){9}``.
+
+    The classic shape of catastrophic backtracking ("star height" above one, the
+    rule tools such as safe-regex apply). A heuristic in both directions: it
+    also flags unambiguous patterns such as ``([a-z]+\\.)+``, and it misses
+    overlapping alternations such as ``(a|aa)+``, which the validator's time
+    budget still bounds.
+    """
+    group_varies: List[bool] = []   # per open group: does it contain a variable repeat?
+    index = 0
+    in_class = False
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "\\":
+            index += 2
+            continue
+        if in_class:
+            in_class = char != "]"
+            index += 1
+            continue
+        if char == "[":
+            # A "]" first in the class (after an optional "^") is a member, not the end.
+            index += 1
+            if pattern[index:index + 1] == "^":
+                index += 1
+            if pattern[index:index + 1] == "]":
+                index += 1
+            in_class = True
+            continue
+        if char == "(":
+            group_varies.append(False)
+            # "(?:", "(?P<name>", "(?=": that "?" is syntax, not a quantifier.
+            index += 2 if pattern[index + 1:index + 2] == "?" else 1
+            continue
+        if char == ")":
+            inner = group_varies.pop() if group_varies else False
+            repeat = _repeat_at(pattern, index + 1)
+            if repeat is not None and inner:
+                return True
+            if group_varies and (inner or (repeat is not None and repeat[1])):
+                group_varies[-1] = True
+            index = repeat[0] if repeat is not None else index + 1
+            continue
+        repeat = _repeat_at(pattern, index)
+        if repeat is not None:
+            if group_varies and repeat[1]:
+                group_varies[-1] = True
+            index = repeat[0]
+            continue
+        index += 1
+    return False
+
+
+def _drop_unsafe_patterns(shapes_graph: rdflib.Graph) -> List[Tuple[Any, str, str]]:
+    """Remove every ``sh:pattern`` that could make the validator backtrack for ages.
+
+    Mutates ``shapes_graph``. A shape whose pattern goes also loses its
+    ``sh:flags``, which only qualify a pattern. Returns ``(shape, pattern,
+    reason)`` for each pattern removed, so it can be reported.
+    """
+    skipped: List[Tuple[Any, str, str]] = []
+    for shape, pattern in list(shapes_graph.subject_objects(SH.pattern)):
+        text = str(pattern)
+        if len(text) > MAX_SHACL_PATTERN_LENGTH:
+            reason = f"it is longer than {MAX_SHACL_PATTERN_LENGTH} characters"
+        elif _has_nested_quantifier(text):
+            reason = (
+                "it repeats a group that itself contains a repetition, which can make "
+                "matching take exponential time"
+            )
+        else:
+            continue
+        shapes_graph.remove((shape, SH.pattern, pattern))
+        skipped.append((shape, text, reason))
+    for shape, _text, _reason in skipped:
+        if (shape, SH.pattern, None) not in shapes_graph:
+            shapes_graph.remove((shape, SH.flags, None))
+    return skipped
+
+
+def _skipped_pattern_issues(
+    skipped: List[Tuple[Any, str, str]],
+    kg: KnowledgeGraph,
+    data_graph: rdflib.Graph,
+) -> List[ConsistencyIssue]:
+    """One warning per pattern :func:`_drop_unsafe_patterns` removed."""
+    if not skipped:
+        return []
+    iri_to_node_id = _build_iri_to_node_id(kg)
+    issues: List[ConsistencyIssue] = []
+    for shape, text, reason in skipped:
+        constraint_node_id = _term_to_node_id(shape, iri_to_node_id)
+        path = _shape_value(data_graph, shape, SH.path)
+        path_iri = str(path) if isinstance(path, URIRef) else None
+        shown = text if len(text) <= 80 else text[:77] + "..."
+        issues.append(ConsistencyIssue(
+            id=_hash_id("UnsafePatternSkipped", constraint_node_id or "", path_iri or "", text),
+            code="UnsafePatternSkipped",
+            severity="warning",
+            message=f"The pattern {shown!r} was not checked: {reason}.",
+            affected_node_ids=[constraint_node_id] if constraint_node_id else [],
+            constraint_node_id=constraint_node_id,
+            spec_kind="pattern",
+            path_iri=path_iri,
+        ))
+    return issues
 
 
 # ---------------------------------------------------------------------------

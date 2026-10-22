@@ -46,6 +46,10 @@ DEFAULT_KG_LLM_MODEL = DEFAULT_OPENAI_MODEL
 # Upload ceiling for an OWL/RDF ontology (``/import-owl``).
 MAX_OWL_SIZE = 5 * 1024 * 1024  # 5 MB
 
+# Seconds ``/check-kg-consistency`` may spend validating before its pyshacl
+# child process is killed (a user-authored sh:pattern can backtrack forever).
+KG_CONSISTENCY_TIMEOUT_SECONDS = 60
+
 
 # Largest number of orphan nodes one ``/classify-orphans-with-llm`` call may
 # carry. The classifier sends one blocking OpenAI request per 40 nodes with no

@@ -438,18 +438,23 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             for idx, kgm in enumerate(kg_models, start=1):
                 var_name = _suffixed_name("kg_model", idx, n_kg)
 
-                section = ""
+                # kg_model_to_code writes the only section header, carrying the
+                # title when there are siblings to tell apart. A header of our
+                # own above the builder's banner would be read by
+                # project_to_json as an empty section and the KG dropped (the
+                # NN block below does the same, for the same reason).
+                title = None
                 if n_kg > 1:
-                    label = _comment_safe(getattr(kgm, "name", "")) or f"Knowledge Graph {idx}"
-                    section = f"# KNOWLEDGE_GRAPH MODEL {idx}: \"{label}\" #\n\n"
+                    title = kgm.name or f"Knowledge Graph {idx}"
 
                 tmp_path = os.path.join(temp_dir, f"kg_model_{idx}.py")
                 kg_model_to_code(
                     model=kgm,
                     file_path=tmp_path,
                     model_var_name=var_name,
+                    title=title,
                 )
-                _write_temp_to_output(tmp_path, f, section_header=section)
+                _write_temp_to_output(tmp_path, f)
                 model_vars.append(var_name)
 
             # ---------------------------------------------------------- #

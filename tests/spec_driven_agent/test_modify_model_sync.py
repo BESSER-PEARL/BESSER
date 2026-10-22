@@ -351,3 +351,60 @@ def test_no_domain_model_skips_without_error(tmp_path):
     orch._derive_and_apply_model_deltas("add auth")  # must not raise
     assert orch._updated_project_export is None
     assert client.chat_calls == 0
+
+
+# ----------------------------------------------------------------------
+# (e) the re-serialised class diagram keeps the editor's element ids
+# ----------------------------------------------------------------------
+
+
+def test_model_sync_keeps_existing_element_ids(tmp_path):
+    """Adding a class must not re-id the rest of the diagram (issue #659).
+
+    The GUI diagram binds a form to the Book class by its element id; that
+    reference must still resolve in the pushed (updated) class diagram.
+    """
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
+        process_class_diagram,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_processors.utils import (
+        get_element_by_id,
+    )
+
+    bounds = {"x": 0, "y": 0, "width": 160, "height": 100}
+    class_model = {
+        "type": "ClassDiagram",
+        "elements": {
+            "cls-book": {"id": "cls-book", "name": "Book", "type": "Class", "owner": None,
+                         "bounds": bounds, "attributes": ["attr-title"], "methods": []},
+            "attr-title": {"id": "attr-title", "name": "title", "type": "ClassAttribute",
+                           "owner": "cls-book", "bounds": bounds,
+                           "visibility": "public", "attributeType": "str"},
+        },
+        "relationships": {},
+    }
+    export = _source_export()
+    export["diagrams"]["ClassDiagram"][0]["model"] = class_model
+    export["diagrams"]["GUINoCodeDiagram"] = [{"id": "gui1", "title": "UI", "model": {
+        "pages": [{"frames": [{"component": {"components": [
+            {"type": "gui-form", "attributes": {"data-source": "cls-book"}}]}}]}]}}]
+
+    orch = LLMOrchestrator(
+        llm_client=_DeltaClient([{"name": "User", "attributes": [{"name": "email", "type": "str"}]}]),
+        domain_model=process_class_diagram({"title": "Library", "model": class_model}),
+        output_dir=str(tmp_path),
+        enable_tracing=False,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+        source_project_export=export,
+    )
+    orch._derive_and_apply_model_deltas("add users")
+
+    updated = orch._updated_project_export["diagrams"]["ClassDiagram"][0]["model"]
+    assert updated["elements"]["cls-book"]["name"] == "Book"
+    assert updated["elements"]["attr-title"]["owner"] == "cls-book"
+    gui_ref = orch._updated_project_export["diagrams"]["GUINoCodeDiagram"][0]["model"][
+        "pages"][0]["frames"][0]["component"]["components"][0]["attributes"]["data-source"]
+    assert get_element_by_id(updated, gui_ref)["name"] == "Book"
+    user_ids = [k for k, e in updated["elements"].items() if e.get("name") == "User"]
+    assert len(user_ids) == 1 and user_ids[0] not in ("cls-book", "attr-title")

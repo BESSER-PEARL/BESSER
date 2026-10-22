@@ -75,6 +75,10 @@ def _env_path(name: str) -> str | None:
     return os.path.abspath(os.path.expanduser(value))
 
 
+# Write element ids (id="...") into exported B-UML files. Off until every
+# install in use reads them: releases before Element.id reject such a file.
+BUML_EMIT_IDS = _env_bool("BESSER_BUML_EMIT_IDS", False)
+
 # Per-run spend / runtime caps. The HARD_CAP values are the absolute
 # ceiling a request's fields are clamped to; DEFAULT values are what
 # clients get when they don't send an explicit number.

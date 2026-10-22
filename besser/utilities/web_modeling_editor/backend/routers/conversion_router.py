@@ -100,6 +100,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_MODEL_FILENAME,
     BPMN_DIAGRAM_TYPE,
     DEPLOYMENT_DIAGRAM_TYPE,
+    BUML_EMIT_IDS,
 )
 
 # Centralized error handling
@@ -301,7 +302,7 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
 
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         output_file_path = os.path.join(temp_dir, "project.py")
-        project_to_code(project=buml_project, file_path=output_file_path)
+        project_to_code(project=buml_project, file_path=output_file_path, emit_ids=BUML_EMIT_IDS)
         file_content = await _read_file(output_file_path, "r", encoding="utf-8")
         return Response(
             content=file_content,
@@ -333,7 +334,7 @@ async def export_buml(input_data: DiagramInput):
         elif elements_data.get("type") == "ClassDiagram":
             buml_model = process_class_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "domain_model.py")
-            domain_model_to_code(model=buml_model, file_path=output_file_path)
+            domain_model_to_code(model=buml_model, file_path=output_file_path, emit_ids=BUML_EMIT_IDS)
             file_content = await _read_file(output_file_path, "rb")
             return Response(
                 content=file_content,
@@ -355,7 +356,9 @@ async def export_buml(input_data: DiagramInput):
 
             # Generate a single file with both domain model and object model
             output_file_path = os.path.join(temp_dir, "complete_model.py")
-            domain_model_to_code(model=buml_model, file_path=output_file_path, objectmodel=object_model)
+            domain_model_to_code(
+                model=buml_model, file_path=output_file_path, objectmodel=object_model, emit_ids=BUML_EMIT_IDS,
+            )
             file_content = await _read_file(output_file_path, "rb")
             return Response(
                 content=file_content,

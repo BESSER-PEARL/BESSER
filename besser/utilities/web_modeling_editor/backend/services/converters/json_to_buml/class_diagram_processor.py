@@ -153,7 +153,8 @@ def _process_enumerations(
                         )
                     seen_literal_names.add(literal_name)
                     literal_obj = EnumerationLiteral(
-                        name=literal_name, timestamp=parse_iso_timestamp(literal.get("timestamp"))
+                        name=literal_name, timestamp=parse_iso_timestamp(literal.get("timestamp")),
+                        id=literal_id,
                     )
                     literals.append(literal_obj)
             # Store the ordered list for later use in buml_to_json conversion,
@@ -161,6 +162,7 @@ def _process_enumerations(
             enum = Enumeration(
                 name=element_name, literals=set(literals),
                 timestamp=parse_iso_timestamp(element.get("timestamp")),
+                id=element_id,
             )
             # Preserve insertion order from the JSON for round-trip fidelity.
             enum._ordered_literals = list(literals)
@@ -217,6 +219,7 @@ def _process_classes(
                 cls = Class(
                     name=class_name, is_abstract=is_abstract, metadata=metadata,
                     timestamp=parse_iso_timestamp(element.get("timestamp")),
+                    id=element_id,
                 )
                 # Use add_type() which triggers validation through the setter
                 domain_model.add_type(cls)
@@ -278,7 +281,7 @@ def _process_classes(
                     # Resolve the attribute type via O(1) lookup
                     type_obj = _resolve_type(attr_type, type_lookup)
                     property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, is_id=is_id, is_external_id=is_external_id, is_derived=is_derived, default_value=default_value,
-                                         timestamp=parse_iso_timestamp(attr.get("timestamp")))
+                                         timestamp=parse_iso_timestamp(attr.get("timestamp")), id=attr_id)
                     cls.add_attribute(property_)
 
             # Add methods
@@ -378,6 +381,7 @@ def _process_classes(
                         code=method_code,
                         implementation_type=implementation_type,
                         timestamp=parse_iso_timestamp(method.get("timestamp")),
+                        id=method_id,
                     )
 
                     # Store diagram references in a separate mapping for later resolution.
@@ -639,6 +643,7 @@ def _process_relationships(
                 name=association_name,
                 ends={source_property, target_property},
                 timestamp=parse_iso_timestamp(relationship.get("timestamp")),
+                id=rel_id,
             )
             domain_model.associations.add(association)
 
@@ -670,6 +675,7 @@ def _process_relationships(
             generalization = Generalization(
                 general=target_class, specific=source_class,
                 timestamp=parse_iso_timestamp(relationship.get("timestamp")),
+                id=rel_id,
             )
             domain_model.generalizations.add(generalization)
 
@@ -745,6 +751,7 @@ def _process_association_classes(
             attributes=attributes,
             association=association,
             timestamp=class_obj.timestamp if class_obj.has_explicit_timestamp else None,
+            id=class_obj.id,
         )
 
         # Add methods to the association class if they exist

@@ -5,10 +5,11 @@ all run on ``besser.utilities.identifiers.sanitize_identifier``. Their outputs a
 saved projects, generated code and the golden outputs depend on, so the table below was
 recorded from the implementations *before* they shared a core, and must not change with it.
 
-Two entries show quirks that are pinned as they are, not endorsed: a name that starts
-with a digit comes back from ``safe_var_name`` still starting with one ("9lives"),
-because the leading-underscore prefix is stripped again by the tidy-up. Fixing that is a
-behaviour change to every builder that uses it, so it is a separate change.
+The one deliberate change since: every output is now a valid Python identifier. A name
+that starts with a digit used to come back from ``safe_var_name`` still starting with one
+("9lives"), because the tidy-up stripped the ``_`` prefix again, and characters such as
+``²`` passed ``str.isalnum()`` but not the parser. Those rows now get the prefix, and
+``²`` is NFKC-normalised to ``2`` (as the parser itself would read it).
 """
 
 import pytest
@@ -25,8 +26,8 @@ ROWS = [
     (' ', 'unnamed', 'unnamed', '_', 'n', 'node'),
     ('a b', 'a_b', 'a_b', 'a_b', 'a_b', 'a_b'),
     ('a-b', 'a_b', 'a_b', 'a_b', 'a_b', 'a_b'),
-    ('9lives', '9lives', '9lives', '_9lives', 'n_9lives', 'node_9lives'),
-    ('_9', '9', '9', '_9', '9', '9'),
+    ('9lives', '_9lives', '_9lives', '_9lives', 'n_9lives', 'node_9lives'),
+    ('_9', '_9', '_9', '_9', 'n_9', 'node_9'),
     ('__a__b__', 'a_b', 'a_b', '__a__b__', 'a__b', 'a__b'),
     ('Café', 'café', 'Café', 'Caf_', 'Caf', 'Caf'),
     ('naïve façade', 'naïve_façade', 'naïve_façade', 'na_ve_fa_ade', 'na_ve_fa_ade', 'na_ve_fa_ade'),
@@ -38,8 +39,8 @@ ROWS = [
     ('-', 'unnamed', 'unnamed', '_', 'n', 'node'),
     ('a.b/c#d', 'a_b_c_d', 'a_b_c_d', 'a_b_c_d', 'a_b_c_d', 'a_b_c_d'),
     ('日本語', '日本語', '日本語', '___', 'n', 'node'),
-    ('x²', 'x²', 'x²', 'x_', 'x', 'x'),
-    ('٣abc', '٣abc', '٣abc', '_abc', 'abc', 'abc'),
+    ('x²', 'x2', 'x2', 'x_', 'x', 'x'),
+    ('٣abc', '_٣abc', '_٣abc', '_abc', 'abc', 'abc'),
     ('a\nb', 'a_b', 'a_b', 'a_b', 'a_b', 'a_b'),
     ('tab\t', 'tab', 'tab', 'tab_', 'tab', 'tab'),
     ('  padded  ', 'padded', 'padded', '__padded__', 'padded', 'padded'),
@@ -47,8 +48,8 @@ ROWS = [
     ('a__b', 'a_b', 'a_b', 'a__b', 'a__b', 'a__b'),
     ('_leading', 'leading', 'leading', '_leading', 'leading', 'leading'),
     ('trailing_', 'trailing', 'trailing', 'trailing_', 'trailing', 'trailing'),
-    ('123', '123', '123', '_123', 'n_123', 'node_123'),
-    ('1_2', '1_2', '1_2', '_1_2', 'n_1_2', 'node_1_2'),
+    ('123', '_123', '_123', '_123', 'n_123', 'node_123'),
+    ('1_2', '_1_2', '_1_2', '_1_2', 'n_1_2', 'node_1_2'),
     ('with😀emoji', 'with_emoji', 'with_emoji', 'with_emoji', 'with_emoji', 'with_emoji'),
     ('None', 'none', 'None_', 'None', 'None_', 'None_'),
     ('async', 'async_', 'async_', 'async', 'async_', 'async_'),
@@ -82,6 +83,35 @@ def test_naming_sanitize_is_unchanged(row):
 def test_sanitize_python_identifier_is_unchanged(row):
     assert sanitize_python_identifier(row[0], "n", set()) == row[4]
     assert sanitize_python_identifier(row[0], "node", set()) == row[5]
+
+
+@pytest.mark.parametrize("row", ROWS, ids=lambda r: repr(r[0]))
+def test_every_output_is_a_python_identifier(row):
+    for out in (*row[1:], safe_var_name(row[0]), safe_var_name(row[0], lowercase=False)):
+        assert out.isidentifier(), out
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("area m²", "area_m2"),          # NFKC: superscript two reads as 2
+    ("x½", "x1_2"),                  # NFKC gives 1⁄2; the fraction slash is not an identifier char
+    ("①", "_1"),                     # NFKC gives 1, which cannot start an identifier
+    ("①⃝", "_1"),          # an enclosing mark (Me) is not an identifier char either
+    ("̀abc", "_̀abc"),     # a combining mark may continue but not start one
+    ("ℌilbert", "Hilbert"),          # NFKC: the parser would read ℌ as H anyway
+    ("__2__4__5_OneOf", "_2_4_5_OneOf"),   # owl2uml's oneOf class names for numeric literals
+    ("2 4 5", "_2_4_5"),
+])
+def test_safe_var_name_makes_identifiers_the_parser_accepts(text, expected):
+    result = safe_var_name(text, lowercase=False)
+
+    assert result == expected
+    assert result.isidentifier()
+    compile(f"{result} = 1", "<test>", "exec")
+
+
+def test_the_digit_prefix_survives_stripping():
+    assert sanitize_identifier("_9", strip_underscores=True) == "_9"
+    assert sanitize_identifier("__9__", strip_underscores=True, digit_prefix="n_") == "n_9"
 
 
 def test_sanitize_python_identifier_still_makes_names_unique():

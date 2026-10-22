@@ -33,7 +33,8 @@ from besser.spec_driven_agent.planning.requirements_ledger import original_reque
 # The modeling-agent sends its own summary first (machine prose such as "show
 # clear error messages", "return 404 for unknown tasks"), then the user's words
 # (``original_request``), each later message under this heading. Only the
-# user's newest message can report a failure.
+# user's newest message can report a failure. Must match the heading in the
+# modeling-agent's generation_handler.py (pinned in test_fix_target.py).
 _LATER_REQUEST_MARKER = "## Subsequent user request, verbatim"
 
 # Evidence that the user reports a failure of the existing app. Feature wording

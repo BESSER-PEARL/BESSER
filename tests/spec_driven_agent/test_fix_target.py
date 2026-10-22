@@ -15,11 +15,13 @@ from besser.BUML.metamodel.structural import (
     Property,
 )
 from besser.spec_driven_agent.planning.fix_target import (
+    _LATER_REQUEST_MARKER,
     ReportedTarget,
     finding_matches_target,
     looks_like_fix_request,
     parse_reported_target,
 )
+from besser.spec_driven_agent.planning.requirements_ledger import VERBATIM_MARKER
 
 
 def _domain(*class_names: str) -> DomainModel:
@@ -244,6 +246,17 @@ class TestOnlyTheNewestUserMessageCounts:
         )
         assert target is not None and target.kind == "http"
         assert target.entities == ("Loan",)  # not Book, named only in the spec
+
+    def test_only_the_last_of_several_follow_ups_counts(self):
+        earlier = "POST /loan/ returns 500 when I save\n\n## Subsequent user request, verbatim\n\n"
+        assert not looks_like_fix_request(_framed(self.SPEC, earlier + "Add a due date to Loan"))
+
+    def test_headings_match_the_modeling_agent(self):
+        # Copied from modeling-agent src/handlers/smart_generation_handler.py and
+        # generation_handler.py. If they change there, the detector falls back to
+        # reading the whole text (summary and spec included).
+        assert VERBATIM_MARKER == "## The user's original request, verbatim"
+        assert _LATER_REQUEST_MARKER == "## Subsequent user request, verbatim"
 
 
 class TestReviewCorpus:

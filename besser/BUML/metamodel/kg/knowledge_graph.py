@@ -480,6 +480,12 @@ class KGEdge(_KGAnnotatedElement):
 class KnowledgeGraph(Model):
     """Top-level Knowledge Graph container.
 
+    ``nodes`` and ``edges`` hand out the graph's own sets, because the OWL
+    importer edits them in place while it lifts restrictions into constraint
+    nodes; :meth:`validate` catches what that lets through (a dangling edge, a
+    duplicate id). ``axioms`` hands out a copy, since nothing edits the list in
+    place; change it with :meth:`add_axiom` or by assignment.
+
     Args:
         name: Python-identifier-safe name for the model (``NamedElement.name`` rules apply).
         nodes: Initial set of nodes.
@@ -503,7 +509,11 @@ class KnowledgeGraph(Model):
 
     @property
     def nodes(self) -> Set[KGNode]:
-        """set[KGNode]: Get the graph's nodes."""
+        """set[KGNode]: Get the graph's own node set (not a copy).
+
+        Adding to it directly skips :meth:`add_node`'s duplicate-id check;
+        :meth:`validate` reports what that lets through.
+        """
         return self.__nodes
 
     @nodes.setter
@@ -528,7 +538,11 @@ class KnowledgeGraph(Model):
 
     @property
     def edges(self) -> Set[KGEdge]:
-        """set[KGEdge]: Get the graph's edges."""
+        """set[KGEdge]: Get the graph's own edge set (not a copy).
+
+        Adding to it directly skips :meth:`add_edge`'s endpoint check;
+        :meth:`validate` reports what that lets through.
+        """
         return self.__edges
 
     @edges.setter
@@ -597,8 +611,8 @@ class KnowledgeGraph(Model):
     def axioms(self) -> List[KGAxiom]:
         """list[KGAxiom]: Get a copy of the OWL axioms that relate several nodes at once.
 
-        Change them with :meth:`add_axiom` or by assigning the property, not by
-        mutating the list returned.
+        Unlike :attr:`nodes` and :attr:`edges`, the list is a copy: change it
+        with :meth:`add_axiom` or by assigning the property.
         """
         return list(self.__axioms)
 

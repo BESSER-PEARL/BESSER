@@ -12,14 +12,15 @@ Constraints are serialised using either the OWL vocabulary (anonymous
 ``sh:PropertyShape``), or both. The ``vocab`` argument on
 :func:`serialize_knowledge_graph` controls which vocabularies are emitted.
 
-This is one of **two** KG → RDF projections, built for different jobs. The
-other, :func:`besser.BUML.notations.kg_to_buml.kg_to_rdf.kg_to_rdf`, is the input
-to the KG → UML conversion; it treats raw edges as authoritative and so keeps
-what this exporter drops around constraint nodes. They share their leaf emitters
-(the ``emit_*`` aliases at the end of this module), and
+This is the *export*. The KG → UML conversion and the consistency check both
+read a different projection,
+:func:`besser.BUML.notations.kg_to_buml.kg_to_rdf.kg_to_rdf`, which keeps what
+this exporter drops around constraint nodes (punned ``rdfs:subClassOf``,
+``sh:targetClass`` …). The two share the leaf emitters and spec-kind tables
+defined here (``emit_*``, ``*_KINDS``), read constraint parameters from the
+same ``constraintSpecs``, and
 ``tests/BUML/notations/kg_to_buml/test_projection_contract.py`` pins where they
-may differ. The consistency check validates *this* projection, because it needs
-the OWL → SHACL mirroring the exporter performs.
+may differ.
 """
 
 from __future__ import annotations
@@ -33,12 +34,10 @@ from rdflib import BNode, Literal, Namespace, RDF, RDFS, OWL, URIRef, XSD
 
 from besser.BUML.metamodel.kg import (
     KGBlank,
-    KGClass,
     KGEdge,
     KGLiteral,
     KGNode,
     KGNodeConstraint,
-    KGProperty,
     KGPropertyConstraint,
     KnowledgeGraph,
     PropertyChainAxiom,
@@ -49,7 +48,9 @@ from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_PROPERTY,
     BESSER_KG_NS,
     SH as SH_NS,
+    SH_PATH,
     SH_PROPERTY,
+    SH_TARGET_CLASS,
 )
 
 
@@ -57,6 +58,21 @@ __all__ = [
     "DEFAULT_NAMESPACE",
     "knowledge_graph_to_rdf",
     "serialize_knowledge_graph",
+    # Leaf emitters and spec-kind tables, shared with
+    # :mod:`besser.BUML.notations.kg_to_buml.kg_to_rdf`.
+    "OWL_RESTRICTION_KINDS",
+    "SHACL_LOGICAL_KINDS",
+    "SHACL_NODE_KINDS",
+    "SHACL_PROPERTY_KINDS",
+    "emit_nodeconstraint_owl_axioms",
+    "emit_owl_restriction",
+    "emit_rdf_list",
+    "emit_shacl_constraint",
+    "emit_shacl_node_constraint",
+    "predicate_for_edge",
+    "slugify",
+    "spec_to_literal",
+    "term_for_node",
 ]
 
 
@@ -86,7 +102,7 @@ _OWL_LIST_VALUED_PREDICATES: Set[str] = {
 }
 
 
-_OWL_RESTRICTION_KINDS: Dict[str, URIRef] = {
+OWL_RESTRICTION_KINDS: Dict[str, URIRef] = {
     "minCardinality": OWL.minCardinality,
     "maxCardinality": OWL.maxCardinality,
     "exactCardinality": OWL.cardinality,
@@ -100,7 +116,7 @@ _OWL_RESTRICTION_KINDS: Dict[str, URIRef] = {
 }
 
 
-_SHACL_PROPERTY_KINDS: Dict[str, URIRef] = {
+SHACL_PROPERTY_KINDS: Dict[str, URIRef] = {
     "minCardinality": SH.minCount,
     "maxCardinality": SH.maxCount,
     "minQualifiedCardinality": SH.qualifiedMinCount,
@@ -137,7 +153,7 @@ _SHACL_PROPERTY_KINDS: Dict[str, URIRef] = {
 }
 
 
-_SHACL_NODE_KINDS: Dict[str, URIRef] = {
+SHACL_NODE_KINDS: Dict[str, URIRef] = {
     "shaclClosed": SH.closed,
     "shaclIgnoredProperties": SH.ignoredProperties,
     "shaclDisjoint": SH.disjoint,
@@ -162,14 +178,14 @@ _NODECONSTRAINT_OWL_AXIOM_KINDS: Set[str] = {
 }
 
 
-def _slugify(text: str) -> str:
+def slugify(text: str) -> str:
     if not text:
         return "node"
     cleaned = re.sub(r"[^A-Za-z0-9_\-]+", "_", text).strip("_")
     return cleaned or "node"
 
 
-def _term_for_node(node: KGNode, default_ns: str) -> Union[URIRef, BNode, Literal]:
+def term_for_node(node: KGNode, default_ns: str) -> Union[URIRef, BNode, Literal]:
     """Map a KGNode to the appropriate rdflib term."""
     if isinstance(node, KGLiteral):
         if node.datatype:
@@ -191,19 +207,19 @@ def _term_for_node(node: KGNode, default_ns: str) -> Union[URIRef, BNode, Litera
         # `sh:sourceShape` (the emitted blank-node subject of the shape's
         # SHACL triples) back to the original KG constraint-node id. We
         # slugify because BNode ids must be valid blank-node labels.
-        return BNode(_slugify(node.id))
+        return BNode(slugify(node.id))
     if node.iri:
         return URIRef(node.iri)
-    return URIRef(default_ns + _slugify(node.label or node.id))
+    return URIRef(default_ns + slugify(node.label or node.id))
 
 
-def _predicate_for_edge(edge: KGEdge, default_ns: str) -> URIRef:
+def predicate_for_edge(edge: KGEdge, default_ns: str) -> URIRef:
     if edge.iri:
         return URIRef(edge.iri)
-    return URIRef(default_ns + _slugify(edge.label or "relatedTo"))
+    return URIRef(default_ns + slugify(edge.label or "relatedTo"))
 
 
-def _spec_to_literal(value: Any) -> Optional[Literal]:
+def spec_to_literal(value: Any) -> Optional[Literal]:
     """Convert a spec value to an rdflib Literal, picking an XSD datatype."""
     if value is None:
         return None
@@ -225,7 +241,7 @@ def _spec_to_literal(value: Any) -> Optional[Literal]:
     return Literal(str(value))
 
 
-def _emit_rdf_list(g: rdflib.Graph, items: Iterable[Any]) -> BNode:
+def emit_rdf_list(g: rdflib.Graph, items: Iterable[Any]) -> BNode:
     """Emit an ``rdf:List`` for an iterable of items, returning the list head."""
     items = list(items)
     if not items:
@@ -236,7 +252,7 @@ def _emit_rdf_list(g: rdflib.Graph, items: Iterable[Any]) -> BNode:
         if isinstance(item, (URIRef, BNode, Literal)):
             node = item
         else:
-            node = URIRef(str(item)) if isinstance(item, str) and ":" in item else _spec_to_literal(item)
+            node = URIRef(str(item)) if isinstance(item, str) and ":" in item else spec_to_literal(item)
         g.add((cursor, RDF.first, node))
         if i == len(items) - 1:
             g.add((cursor, RDF.rest, RDF.nil))
@@ -273,17 +289,17 @@ def _emit_restriction_value(
         if isinstance(value, str) and value in blank_handles:
             target = BNode(value)
         else:
-            target = URIRef(str(value)) if isinstance(value, str) else _spec_to_literal(value)
+            target = URIRef(str(value)) if isinstance(value, str) else spec_to_literal(value)
         if target is not None:
             g.add((restriction, predicate, target))
     elif kind == "hasValue":
-        target = URIRef(value) if isinstance(value, str) and "://" in value else _spec_to_literal(value)
+        target = URIRef(value) if isinstance(value, str) and "://" in value else spec_to_literal(value)
         if target is not None:
             g.add((restriction, predicate, target))
     elif kind == "hasSelf":
         g.add((restriction, predicate, Literal(bool(value), datatype=XSD.boolean)))
     else:
-        literal = _spec_to_literal(value)
+        literal = spec_to_literal(value)
         if literal is not None:
             g.add((restriction, predicate, literal))
         if on_class and str(kind).endswith("QualifiedCardinality"):
@@ -291,7 +307,7 @@ def _emit_restriction_value(
             g.add((restriction, OWL.onClass, on_class_term))
 
 
-def _emit_owl_restriction(
+def emit_owl_restriction(
     g: rdflib.Graph,
     pc: KGPropertyConstraint,
     property_iri: Optional[str],
@@ -316,7 +332,7 @@ def _emit_owl_restriction(
         return
     for spec in pc.get_specs():
         kind = spec.get("kind")
-        pred = _OWL_RESTRICTION_KINDS.get(kind)
+        pred = OWL_RESTRICTION_KINDS.get(kind)
         if pred is None:
             continue
         restr = subject if subject is not None else BNode()
@@ -329,7 +345,7 @@ def _emit_owl_restriction(
 
 #: SHACL logical operators → predicates. shaclNot takes a single shape
 #: object; the others take an ``rdf:List`` of shapes.
-_SHACL_LOGICAL_KINDS: Dict[str, URIRef] = {
+SHACL_LOGICAL_KINDS: Dict[str, URIRef] = {
     "shaclNot": SH["not"],
     "shaclAnd": SH["and"],
     "shaclOr": SH["or"],
@@ -339,7 +355,8 @@ _SHACL_LOGICAL_KINDS: Dict[str, URIRef] = {
 # The metamodel owns the set of logical-operator kinds (the four above); this
 # module only maps each to its SHACL predicate. Fail at import, not at export
 # time, if the two ever disagree.
-assert LOGICAL_KINDS == set(_SHACL_LOGICAL_KINDS), "LOGICAL_KINDS drifted from _SHACL_LOGICAL_KINDS"
+if LOGICAL_KINDS != set(SHACL_LOGICAL_KINDS):
+    raise RuntimeError("LOGICAL_KINDS drifted from SHACL_LOGICAL_KINDS")
 
 
 def _emit_inline_shape(
@@ -363,11 +380,11 @@ def _emit_inline_shape(
     bnode = BNode()
     g.add((bnode, RDF.type, inner_shape_type))
     for spec in inline_specs:
-        _emit_single_shacl_constraint(g, bnode, spec, resolve_ref, inner_shape_type)
+        emit_shacl_constraint(g, bnode, spec, resolve_ref, inner_shape_type)
     return bnode
 
 
-def _emit_single_shacl_constraint(
+def emit_shacl_constraint(
     g: rdflib.Graph,
     shape_subject: Any,
     spec: Dict[str, Any],
@@ -376,7 +393,7 @@ def _emit_single_shacl_constraint(
 ) -> None:
     """Emit a single SHACL constraint triple onto ``shape_subject``.
 
-    Handles every kind in ``_SHACL_PROPERTY_KINDS`` (simple predicates and
+    Handles every kind in ``SHACL_PROPERTY_KINDS`` (simple predicates and
     list-valued constraints) plus the four logical operators. ``resolve_ref``
     is a callable mapping constraint-node ids to rdflib terms so refs in
     nested shapes resolve to the same blank node / IRI as the top-level
@@ -391,8 +408,8 @@ def _emit_single_shacl_constraint(
     on_class = spec.get("on_class")
 
     # Logical operators first — these recurse via _emit_inline_shape.
-    if kind in _SHACL_LOGICAL_KINDS:
-        pred = _SHACL_LOGICAL_KINDS[kind]
+    if kind in SHACL_LOGICAL_KINDS:
+        pred = SHACL_LOGICAL_KINDS[kind]
         entries = value if isinstance(value, list) else []
         shape_terms = [_emit_inline_shape(g, e, resolve_ref, inner_shape_type) for e in entries]
         shape_terms = [t for t in shape_terms if t is not None]
@@ -402,39 +419,39 @@ def _emit_single_shacl_constraint(
             return
         if not shape_terms:
             return
-        head = _emit_rdf_list(g, shape_terms)
+        head = emit_rdf_list(g, shape_terms)
         g.add((shape_subject, pred, head))
         return
 
     # SHACL doesn't have `sh:exactCount` / `sh:qualifiedExactCount`; the spec
     # recommends emitting BOTH min+max with the same value. Handled before the
-    # `_SHACL_PROPERTY_KINDS` lookup because these kinds aren't in that map.
+    # `SHACL_PROPERTY_KINDS` lookup because these kinds aren't in that map.
     if kind == "exactQualifiedCardinality" and on_class:
         qv_shape = BNode()
         g.add((qv_shape, RDF.type, SH.NodeShape))
         g.add((qv_shape, SH["class"], URIRef(on_class)))
         g.add((shape_subject, SH.qualifiedValueShape, qv_shape))
-        lit = _spec_to_literal(value)
+        lit = spec_to_literal(value)
         if lit is not None:
             g.add((shape_subject, SH.qualifiedMinCount, lit))
             g.add((shape_subject, SH.qualifiedMaxCount, lit))
         return
     if kind == "exactCardinality":
-        lit = _spec_to_literal(value)
+        lit = spec_to_literal(value)
         if lit is not None:
             g.add((shape_subject, SH.minCount, lit))
             g.add((shape_subject, SH.maxCount, lit))
         return
 
-    pred = _SHACL_PROPERTY_KINDS.get(kind)
+    pred = SHACL_PROPERTY_KINDS.get(kind)
     if pred is None:
         return
     if kind == "in":
-        head = _emit_rdf_list(g, value or [])
+        head = emit_rdf_list(g, value or [])
         g.add((shape_subject, pred, head))
         return
     if kind == "languageIn":
-        head = _emit_rdf_list(g, value or [])
+        head = emit_rdf_list(g, value or [])
         g.add((shape_subject, pred, head))
         return
     if kind in ("minQualifiedCardinality", "maxQualifiedCardinality") and on_class:
@@ -442,7 +459,7 @@ def _emit_single_shacl_constraint(
         g.add((qv_shape, RDF.type, SH.NodeShape))
         g.add((qv_shape, SH["class"], URIRef(on_class)))
         g.add((shape_subject, SH.qualifiedValueShape, qv_shape))
-        lit = _spec_to_literal(value)
+        lit = spec_to_literal(value)
         if lit is not None:
             g.add((shape_subject, pred, lit))
         return
@@ -453,10 +470,10 @@ def _emit_single_shacl_constraint(
         g.add((shape_subject, pred, URIRef(value)))
         return
     if kind == "hasValue":
-        term = URIRef(value) if isinstance(value, str) and "://" in value else _spec_to_literal(value)
+        term = URIRef(value) if isinstance(value, str) and "://" in value else spec_to_literal(value)
         g.add((shape_subject, pred, term))
         return
-    lit = _spec_to_literal(value)
+    lit = spec_to_literal(value)
     if lit is not None:
         g.add((shape_subject, pred, lit))
 
@@ -477,7 +494,7 @@ def _emit_shacl_property_shape_into(
     if property_iri:
         g.add((shape_term, SH.path, URIRef(property_iri)))
     for spec in pc.get_specs():
-        _emit_single_shacl_constraint(g, shape_term, spec, resolve_ref, SH.PropertyShape)
+        emit_shacl_constraint(g, shape_term, spec, resolve_ref, SH.PropertyShape)
     return shape_term
 
 
@@ -499,31 +516,44 @@ def _emit_shacl_node_shape_into(
     for ps in property_shapes:
         g.add((shape, SH.property, ps))
     for spec in nc.get_specs():
-        kind = spec.get("kind")
-        value = spec.get("value")
-        # Logical operators: delegate to the shared helper. Inner inline
-        # shapes default to NodeShape here (the outer is a NodeShape) so
-        # nested constraints semantically match the parent's shape kind.
-        if kind in _SHACL_LOGICAL_KINDS:
-            _emit_single_shacl_constraint(g, shape, spec, resolve_ref, SH.NodeShape)
-            continue
-        pred = _SHACL_NODE_KINDS.get(kind)
-        if pred is None:
-            continue
-        if kind == "shaclIgnoredProperties" and isinstance(value, list):
-            head = _emit_rdf_list(g, [URIRef(str(v)) for v in value])
-            g.add((shape, pred, head))
-            continue
-        if kind in ("shaclSeverity", "shaclGroup", "shaclDisjoint") and isinstance(value, str):
-            g.add((shape, pred, URIRef(value)))
-            continue
-        lit = _spec_to_literal(value)
-        if lit is not None:
-            g.add((shape, pred, lit))
+        emit_shacl_node_constraint(g, shape, spec, resolve_ref)
     return shape
 
 
-def _emit_nodeconstraint_owl_axioms(
+def emit_shacl_node_constraint(
+    g: rdflib.Graph,
+    shape: Any,
+    spec: Dict[str, Any],
+    resolve_ref,
+) -> bool:
+    """Emit one node-shape-level spec (a ``SHACL_NODE_KINDS`` kind or a logical
+    operator) onto ``shape``. Returns ``False`` for any other kind, emitting nothing.
+    """
+    kind = spec.get("kind")
+    value = spec.get("value")
+    # Logical operators: delegate to the shared helper. Inner inline
+    # shapes default to NodeShape here (the outer is a NodeShape) so
+    # nested constraints semantically match the parent's shape kind.
+    if kind in SHACL_LOGICAL_KINDS:
+        emit_shacl_constraint(g, shape, spec, resolve_ref, SH.NodeShape)
+        return True
+    pred = SHACL_NODE_KINDS.get(kind)
+    if pred is None:
+        return False
+    if kind == "shaclIgnoredProperties" and isinstance(value, list):
+        head = emit_rdf_list(g, [URIRef(str(v)) for v in value])
+        g.add((shape, pred, head))
+        return True
+    if kind in ("shaclSeverity", "shaclGroup", "shaclDisjoint") and isinstance(value, str):
+        g.add((shape, pred, URIRef(value)))
+        return True
+    lit = spec_to_literal(value)
+    if lit is not None:
+        g.add((shape, pred, lit))
+    return True
+
+
+def emit_nodeconstraint_owl_axioms(
     g: rdflib.Graph,
     nc: KGNodeConstraint,
     target_class_iris: List[str],
@@ -551,19 +581,19 @@ def _emit_nodeconstraint_owl_axioms(
         elif kind == "complementOf" and isinstance(value, str):
             g.add((anchor, OWL.complementOf, URIRef(value)))
         elif kind == "disjointUnionOf" and isinstance(value, list):
-            head = _emit_rdf_list(g, [URIRef(v) for v in value])
+            head = emit_rdf_list(g, [URIRef(v) for v in value])
             g.add((anchor, OWL.disjointUnionOf, head))
         elif kind == "unionOf" and isinstance(value, list):
-            head = _emit_rdf_list(g, [URIRef(v) for v in value])
+            head = emit_rdf_list(g, [URIRef(v) for v in value])
             g.add((anchor, OWL.unionOf, head))
         elif kind == "intersectionOf" and isinstance(value, list):
-            head = _emit_rdf_list(g, [URIRef(v) for v in value])
+            head = emit_rdf_list(g, [URIRef(v) for v in value])
             g.add((anchor, OWL.intersectionOf, head))
         elif kind == "oneOf" and isinstance(value, list):
-            head = _emit_rdf_list(g, [URIRef(v) for v in value])
+            head = emit_rdf_list(g, [URIRef(v) for v in value])
             g.add((anchor, OWL.oneOf, head))
         elif kind == "hasKey" and isinstance(value, list):
-            head = _emit_rdf_list(g, [URIRef(v) for v in value])
+            head = emit_rdf_list(g, [URIRef(v) for v in value])
             g.add((anchor, OWL.hasKey, head))
 
 
@@ -615,14 +645,23 @@ def knowledge_graph_to_rdf(
     pc_to_owner_classes: Dict[str, List[str]] = {}
     nc_to_target_classes: Dict[str, List[str]] = {}
     nc_to_pcs: Dict[str, List[str]] = {}
-    for e in kg.edges:
-        if e.iri == CONSTRAINT_TARGET_PROPERTY and isinstance(e.source, KGPropertyConstraint) \
-                and isinstance(e.target, KGProperty):
-            pc_to_property_iri[e.source.id] = e.target.iri or e.target.id
-        elif e.iri == CONSTRAINT_TARGET_CLASS and isinstance(e.source, KGNodeConstraint) \
-                and isinstance(e.target, KGClass):
+    # The editor wiring (constraintTargetProperty / constraintTargetClass) and
+    # the raw SHACL edges (sh:path / sh:targetClass) are both read: the importer
+    # only adds the wiring when the path or target is a *declared* property or
+    # class, so a shapes file imported on its own (paths to undeclared
+    # properties) used to export property shapes with no sh:path at all, which
+    # the validator then rejects as malformed.
+    for e in sorted(kg.edges, key=lambda edge: edge.id):
+        if e.iri in (CONSTRAINT_TARGET_PROPERTY, SH_PATH) and isinstance(e.source, KGPropertyConstraint) \
+                and not isinstance(e.target, KGLiteral):
+            if e.iri == CONSTRAINT_TARGET_PROPERTY or e.source.id not in pc_to_property_iri:
+                pc_to_property_iri[e.source.id] = e.target.iri or e.target.id
+        elif e.iri in (CONSTRAINT_TARGET_CLASS, SH_TARGET_CLASS) and isinstance(e.source, KGNodeConstraint) \
+                and not isinstance(e.target, KGLiteral):
             target_iri = e.target.iri or e.target.id
-            nc_to_target_classes.setdefault(e.source.id, []).append(target_iri)
+            targets = nc_to_target_classes.setdefault(e.source.id, [])
+            if target_iri not in targets:
+                targets.append(target_iri)
         elif e.iri == SH_PROPERTY and isinstance(e.source, KGNodeConstraint) \
                 and isinstance(e.target, KGPropertyConstraint):
             nc_to_pcs.setdefault(e.source.id, []).append(e.target.id)
@@ -659,9 +698,9 @@ def knowledge_graph_to_rdf(
                 or isinstance(tgt, (KGNodeConstraint, KGPropertyConstraint)):
             # Constraint nodes are emitted via the dedicated paths below.
             continue
-        s = _term_for_node(src, default_namespace)
-        p = _predicate_for_edge(edge, default_namespace)
-        o = _term_for_node(tgt, default_namespace)
+        s = term_for_node(src, default_namespace)
+        p = predicate_for_edge(edge, default_namespace)
+        o = term_for_node(tgt, default_namespace)
         g.add((s, p, o))
 
     # Re-emit owl:unionOf/intersectionOf/oneOf as a proper rdf:List for any
@@ -679,9 +718,9 @@ def knowledge_graph_to_rdf(
         members = node.metadata.get("members") or []
         if combinator not in ("unionOf", "intersectionOf", "oneOf") or not members:
             continue
-        subj_term = _term_for_node(node, default_namespace)
+        subj_term = term_for_node(node, default_namespace)
         member_terms = [URIRef(m) for m in members]
-        g.add((subj_term, OWL[combinator], _emit_rdf_list(g, member_terms)))
+        g.add((subj_term, OWL[combinator], emit_rdf_list(g, member_terms)))
 
     # owl:propertyChainAxiom has no dedicated node-based representation in
     # the KG (unlike unionOf/hasKey/etc., which get a KGNodeConstraint/
@@ -693,9 +732,9 @@ def knowledge_graph_to_rdf(
         prop_node = nodes_by_id.get(axiom.property_id)
         if prop_node is None:
             continue
-        subj_term = _term_for_node(prop_node, default_namespace)
+        subj_term = term_for_node(prop_node, default_namespace)
         chain_terms = [URIRef(p) for p in axiom.chain_property_ids]
-        g.add((subj_term, OWL.propertyChainAxiom, _emit_rdf_list(g, chain_terms)))
+        g.add((subj_term, OWL.propertyChainAxiom, emit_rdf_list(g, chain_terms)))
 
     # Constraint emission.
     #
@@ -709,15 +748,15 @@ def knowledge_graph_to_rdf(
     nc_to_shape_term: Dict[str, URIRef | BNode] = {}
     for node in kg.nodes:
         if isinstance(node, KGPropertyConstraint):
-            # Mirror `_term_for_node`: stable BNode handle from node.id so
+            # Mirror `term_for_node`: stable BNode handle from node.id so
             # downstream consumers (the consistency checker) can map
             # pyshacl's `sh:sourceShape` back to this KG node.
             pc_to_shape_term[node.id] = (
-                URIRef(node.iri) if node.iri else BNode(_slugify(node.id))
+                URIRef(node.iri) if node.iri else BNode(slugify(node.id))
             )
         elif isinstance(node, KGNodeConstraint):
             nc_to_shape_term[node.id] = (
-                URIRef(node.iri) if node.iri else BNode(_slugify(node.id))
+                URIRef(node.iri) if node.iri else BNode(slugify(node.id))
             )
 
     def resolve_ref(node_id: str):
@@ -753,12 +792,12 @@ def knowledge_graph_to_rdf(
             if isinstance(node, KGPropertyConstraint):
                 prop_iri = pc_to_property_iri.get(node.id) or node.metadata.get("onPropertyIri")
                 owner_iris = pc_to_owner_classes.get(node.id, [])
-                _emit_owl_restriction(
+                emit_owl_restriction(
                     g, node, prop_iri, owner_iris, default_namespace, blank_handles=blank_handles,
                 )
             elif isinstance(node, KGNodeConstraint):
                 target_iris = nc_to_target_classes.get(node.id, [])
-                _emit_nodeconstraint_owl_axioms(g, node, target_iris)
+                emit_nodeconstraint_owl_axioms(g, node, target_iris)
 
     return g
 
@@ -784,32 +823,3 @@ def serialize_knowledge_graph(
     g = knowledge_graph_to_rdf(kg, default_namespace=default_namespace, vocab=vocab)
     # rdflib >= 6 (7.0 is the pinned floor) returns ``str`` here.
     return g.serialize(format=fmt)
-
-
-# ----------------------------------------------------------------------
-# Public aliases for the leaf emitters
-# ----------------------------------------------------------------------
-# The KG → UML conversion pipeline
-# (:mod:`besser.BUML.notations.kg_to_buml.kg_to_rdf`) builds its own,
-# conversion-oriented RDF projection of a KnowledgeGraph rather than reusing
-# :func:`knowledge_graph_to_rdf` — the exporter deliberately drops every edge
-# touching a constraint node, which is right for a user-facing TTL export but
-# lossy for conversion. It does, however, need the *leaf* emitters and the
-# spec↔vocabulary tables below. Sharing them (instead of forking) keeps the
-# two paths from drifting whenever a kind is added to
-# :data:`~besser.BUML.metamodel.kg.constraint_specs.CONSTRAINT_VOCAB_MAP`.
-
-slugify = _slugify
-term_for_node = _term_for_node
-predicate_for_edge = _predicate_for_edge
-spec_to_literal = _spec_to_literal
-emit_rdf_list = _emit_rdf_list
-emit_owl_restriction = _emit_owl_restriction
-emit_shacl_constraint = _emit_single_shacl_constraint
-emit_nodeconstraint_owl_axioms = _emit_nodeconstraint_owl_axioms
-
-#: Spec kind → vocabulary predicate tables (see the note above).
-OWL_RESTRICTION_KINDS = _OWL_RESTRICTION_KINDS
-SHACL_PROPERTY_KINDS = _SHACL_PROPERTY_KINDS
-SHACL_NODE_KINDS = _SHACL_NODE_KINDS
-SHACL_LOGICAL_KINDS = _SHACL_LOGICAL_KINDS

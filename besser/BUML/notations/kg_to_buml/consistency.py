@@ -39,14 +39,14 @@ from besser.BUML.metamodel.kg import (
     KGPropertyConstraint,
 )
 from besser.BUML.notations.kg_to_buml._common import short_digest
+from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
 from besser.BUML.notations.kg_to_buml.preflight import kg_signature
 from besser.utilities.kg_to_owl import (
     DEFAULT_NAMESPACE,
     SHACL_LOGICAL_KINDS,
     SHACL_NODE_KINDS,
     SHACL_PROPERTY_KINDS,
-    _slugify,
-    knowledge_graph_to_rdf,
+    slugify as _slugify,
 )
 from besser.BUML.metamodel.kg.constants import (
     SH as SH_NS,
@@ -212,7 +212,7 @@ def check_kg_consistency(
         :class:`ConsistencyReport` whose ``issues`` list is empty when
         the KG is fully conformant.
     """
-    data_graph = knowledge_graph_to_rdf(kg, vocab="both")
+    data_graph, _ = kg_to_rdf(kg, mirror_shapes=True)
     _normalize_count_literals(data_graph)
     _augment_with_owl_shim(data_graph)
     _strip_executable_shacl(data_graph)

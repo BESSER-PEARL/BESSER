@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
 import rdflib
 from rdflib import RDF, RDFS, OWL, BNode, Literal, Namespace, URIRef
@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 SH = Namespace(SH_NS)
 
 
-__all__ = ["owl_file_to_knowledge_graph"]
+__all__ = ["owl_file_to_knowledge_graph", "spec_folded_predicates"]
 
 
 _PROPERTY_TYPES = {
@@ -593,6 +593,39 @@ _SHACL_NODE_COMPONENTS: Dict[Any, Tuple[str, Any]] = {
     SH.description: ("shaclDescription", _shacl_literal_str),
     SH.deactivated: ("shaclDeactivated", _shacl_literal_bool),
 }
+
+
+_OWL_RESTRICTION_FOLDED: FrozenSet[str] = frozenset(
+    str(p) for p in (*_CARDINALITY_RESTRICTIONS, *_VALUE_RESTRICTIONS, OWL.onClass)
+)
+_OWL_EXPRESSION_FOLDED: FrozenSet[str] = frozenset({str(OWL.complementOf)})
+# The property components are collected for every shape, the node components
+# for node shapes only (see _decode_shacl_shapes); sh:not becomes a shaclNot spec.
+_SHACL_PROPERTY_SHAPE_FOLDED: FrozenSet[str] = frozenset(
+    str(p) for p in (*_SHACL_PROPERTY_COMPONENTS, SH["not"])
+)
+_SHACL_NODE_SHAPE_FOLDED: FrozenSet[str] = _SHACL_PROPERTY_SHAPE_FOLDED | frozenset(
+    str(p) for p in _SHACL_NODE_COMPONENTS
+)
+
+
+def spec_folded_predicates(node: KGNode) -> FrozenSet[str]:
+    """The predicates whose value the importer folds into ``node``'s ``constraintSpecs``.
+
+    For an OWL restriction: its cardinality or filler and the qualified
+    ``owl:onClass``; for a class expression: ``owl:complementOf``; for a SHACL
+    shape: every component with a spec kind (``sh:qualifiedValueShape`` and the
+    qualified counts are not folded and stay raw edges). The raw edge stays so
+    the canvas can show it, but the spec is what the editor edits, so a
+    projection must take the value from the spec (``kg_to_rdf``). Empty for any
+    node that is not a constraint node.
+    """
+    shacl = node.metadata.get("source") == "shacl"
+    if isinstance(node, KGPropertyConstraint):
+        return _SHACL_PROPERTY_SHAPE_FOLDED if shacl else _OWL_RESTRICTION_FOLDED
+    if isinstance(node, KGNodeConstraint):
+        return _SHACL_NODE_SHAPE_FOLDED if shacl else _OWL_EXPRESSION_FOLDED
+    return frozenset()
 
 
 def _restriction_payload_to_specs(payload: Dict[str, Any]) -> List[Dict[str, Any]]:

@@ -1,39 +1,50 @@
-"""The contract between the two KG -> RDF projections.
+"""The contract between the TTL export and the projection BESSER reasons over.
 
-BESSER projects a ``KnowledgeGraph`` into RDF in two deliberately different ways:
+BESSER writes a ``KnowledgeGraph`` as RDF in two places:
 
 =================  =========================================  ==========================
-                   ``knowledge_graph_to_rdf`` (exporter)      ``kg_to_rdf`` (converter)
+                   ``knowledge_graph_to_rdf`` (exporter)      ``kg_to_rdf`` (projection)
 =================  =========================================  ==========================
-Purpose            the user-facing Turtle / RDF-XML export,   input to the KG -> UML
-                   and the data the consistency check         conversion
-                   validates
+Purpose            the user-facing Turtle / RDF-XML export    input to the KG -> UML
+                                                              conversion and, with
+                                                              ``mirror_shapes=True``, to
+                                                              the consistency check
 Constraint nodes   rebuilt from their structured specs in     re-materialised onto the
                    the vocabulary the caller chooses          node's own term
-``vocab``          ``owl`` / ``shacl`` / ``both``             always both
+Vocabularies       ``owl`` / ``shacl`` / ``both``             the source's own;
+                                                              ``mirror_shapes`` adds the
+                                                              other (as ``both`` does)
 Individuals        as the KG has them                         also declared
                                                               ``owl:NamedIndividual``
 =================  =========================================  ==========================
 
-They share their leaf emitters (``kg_to_owl.emit_*``) so they cannot drift on
-how any single construct is written. This module pins what is left: with the
-SHACL vocabulary set aside, the two graphs must be isomorphic apart from the
-converter's ``owl:NamedIndividual`` declarations.
+Both take constraint *parameters* from the specs (the projection keeps a raw
+edge's exact term only when it carries the same value), and they share their
+leaf emitters (``kg_to_owl.emit_*``), so they cannot drift on how any single
+construct is written. This module pins what is left:
 
-That turns "two views of the same KG" from an unstated assumption into a
-documented, drift-detecting contract. It deliberately does NOT assert that the
-exporter and converter agree on SHACL: the exporter mirrors OWL-sourced
-restrictions as shapes for the consistency check, which the converter must not.
+* OWL only: isomorphic apart from the projection's ``owl:NamedIndividual``
+  declarations.
+* SHACL included (``vocab="both"`` against ``mirror_shapes=True``): isomorphic
+  on OWL-sourced fixtures once each restriction the projection also wrote as a
+  shape is split into the two nodes the exporter uses; on a shapes graph, the
+  same constraint parameters, except the SHACL qualified counts only the
+  projection has (the importer does not fold them into specs).
+* The consistency check reads the mirrored projection, so a spec edit reaches
+  the class diagram and the consistency report alike.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from rdflib import OWL, RDF, Graph, Namespace, URIRef
+import pytest
+from rdflib import OWL, RDF, BNode, Graph, Literal, Namespace, URIRef
 from rdflib.compare import isomorphic
 
-from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
+from besser.BUML.notations.kg_to_buml import consistency
+from besser.BUML.notations.kg_to_buml.kg_to_rdf import _value_key, kg_to_rdf
+from besser.utilities.kg_to_owl import OWL_RESTRICTION_KINDS, SHACL_PROPERTY_KINDS
 from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
 from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
@@ -143,3 +154,152 @@ def test_a_blank_node_filler_is_the_same_node_the_kg_declares():
     assert blank_fillers, "bibo has a restriction over an anonymous class"
     for filler in blank_fillers:
         assert any(True for _ in graph.triples((filler, None, None))), f"{filler} has no description"
+
+
+# ---------------------------------------------------------------------------
+# With SHACL included
+# ---------------------------------------------------------------------------
+
+
+def _split_restriction_shapes(graph: Graph) -> Graph:
+    """Move the SHACL half of each node that is both an ``owl:Restriction`` and a
+    ``sh:PropertyShape`` onto a node of its own, as the exporter writes it.
+
+    The projection mirrors an OWL restriction onto the constraint's own term, so
+    ``sh:sourceShape`` in a validation report still names the KG node; the
+    exporter puts the shape on that term and the restriction on a fresh blank
+    node. The two are the same statements either way.
+    """
+    merged = {
+        s for s in graph.subjects(RDF.type, OWL.Restriction) if (s, RDF.type, SH.PropertyShape) in graph
+    }
+    twin = {node: BNode() for node in merged}
+    out = Graph()
+    for s, p, o in graph:
+        if s in twin and (str(p).startswith(str(SH)) or (p == RDF.type and o == SH.PropertyShape)):
+            s = twin[s]
+        if o in twin and p == SH.property:
+            o = twin[o]
+        out.add((s, p, o))
+    return out
+
+
+@pytest.mark.parametrize(
+    "path", [_FIXTURES / "complex_kg.ttl", _KG / "bibo" / "bibo.ttl"], ids=lambda p: p.name,
+)
+def test_with_shacl_included_the_projections_agree(path: Path):
+    kg = owl_file_to_knowledge_graph(str(path))
+    exported = _without_individual_declarations(knowledge_graph_to_rdf(kg, vocab="both"))
+    projected = _without_individual_declarations(kg_to_rdf(kg, mirror_shapes=True)[0])
+
+    assert any(projected.triples((None, RDF.type, SH.PropertyShape))), "nothing was mirrored"
+    assert isomorphic(exported, _split_restriction_shapes(projected))
+
+
+_QUALIFIED_COUNTS = {SH.qualifiedMinCount, SH.qualifiedMaxCount}
+
+
+def _parameters(graph: Graph):
+    """Every constraint parameter, as ``(vocabulary, property, predicate, value)``."""
+    out = set()
+    for shape, path in graph.subject_objects(SH.path):
+        for predicate, value in graph.predicate_objects(shape):
+            if predicate in set(SHACL_PROPERTY_KINDS.values()) and predicate not in (SH["in"], SH.languageIn):
+                out.add(("sh", str(path), str(predicate), _value_key(value)))
+    for restriction, prop in graph.subject_objects(OWL.onProperty):
+        for predicate, value in graph.predicate_objects(restriction):
+            if predicate in set(OWL_RESTRICTION_KINDS.values()):
+                out.add(("owl", str(prop), str(predicate), _value_key(value)))
+    return out
+
+
+def test_on_a_shapes_graph_the_projections_set_the_same_parameters():
+    """A shapes file is all punning and SHACL, where the structure legitimately
+    differs (the export drops edges around constraint nodes). The parameters must
+    not: both read them from the specs."""
+    kg = owl_file_to_knowledge_graph(str(_KG / "bibo" / "bibo-shapes.ttl"))
+    exported = _parameters(knowledge_graph_to_rdf(kg, vocab="both"))
+    projected = _parameters(kg_to_rdf(kg, mirror_shapes=True)[0])
+
+    assert exported, "the export lost every property shape's sh:path"
+    only_projected = {p for p in projected - exported if URIRef(p[2]) not in _QUALIFIED_COUNTS}
+    assert exported - projected == set()
+    assert only_projected == set()
+
+
+# ---------------------------------------------------------------------------
+# One projection for both consumers
+# ---------------------------------------------------------------------------
+
+
+_EDITABLE_SHAPE_TTL = """
+@prefix ex: <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:name a owl:DatatypeProperty ; rdfs:domain ex:Person ; rdfs:range xsd:string .
+ex:Person a owl:Class, sh:NodeShape ;
+   sh:property [ sh:path ex:name ; sh:minCount 1 ] .
+ex:bob a ex:Person ; ex:name "Bob" .
+"""
+
+
+def _edited(tmp_path: Path, min_count: int):
+    """Import, then change ``minCount`` as the inspector does: only
+    ``metadata.constraintSpecs`` changes, the imported edge stays."""
+    from besser.utilities.web_modeling_editor.backend.services.converters import (
+        kg_to_json,
+        process_kg_diagram,
+    )
+
+    path = tmp_path / "shape.ttl"
+    path.write_text(_EDITABLE_SHAPE_TTL, encoding="utf-8")
+    payload = kg_to_json(owl_file_to_knowledge_graph(str(path)))
+    for node in payload["model"]["nodes"]:
+        for spec in (node.get("metadata") or {}).get("constraintSpecs", []):
+            if spec["kind"] == "minCardinality":
+                spec["value"] = min_count
+    return process_kg_diagram(payload)
+
+
+def test_a_spec_edit_reaches_the_class_diagram_and_the_consistency_check(tmp_path: Path):
+    """Editing ``minCount`` 1 -> 3 used to change the consistency report (the
+    exporter reads specs) but not the class diagram (the conversion trusted the
+    imported edge)."""
+    from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
+
+    kg = _edited(tmp_path, 3)
+
+    bodies = [c.expression for c in kg_to_class_diagram(kg).domain_model.constraints]
+    assert any("self.name->size() >= 3" in b for b in bodies), bodies
+    assert not any(">= 1" in b for b in bodies), bodies
+
+    messages = [issue.message for issue in consistency.check_kg_consistency(kg).issues]
+    assert any("Less than 3 values" in m for m in messages), messages
+
+
+def test_the_consistency_check_reads_the_mirrored_projection(tmp_path: Path, monkeypatch):
+    calls = []
+
+    def spy(kg, **kwargs):
+        calls.append(kwargs)
+        return kg_to_rdf(kg, **kwargs)
+
+    monkeypatch.setattr(consistency, "kg_to_rdf", spy)
+    consistency.check_kg_consistency(_edited(tmp_path, 1))
+
+    assert calls == [{"mirror_shapes": True}]
+
+
+def test_both_consumers_see_the_same_parameter(tmp_path: Path):
+    kg = _edited(tmp_path, 3)
+
+    for mirror in (False, True):
+        graph, _ = kg_to_rdf(kg, mirror_shapes=mirror)
+        assert sorted(o.toPython() for o in graph.objects(None, SH.minCount)) == [3], mirror
+    assert [o for o in knowledge_graph_to_rdf(kg).objects(None, SH.minCount)] == [Literal(3, datatype=_XSD_NNI)]
+
+
+_XSD_NNI = URIRef("http://www.w3.org/2001/XMLSchema#nonNegativeInteger")

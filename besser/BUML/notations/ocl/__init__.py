@@ -4,6 +4,8 @@ Public surface:
 
 - :func:`parse_ocl` — parse a B-OCL constraint string into an AST.
 - :func:`pretty_print` — render an AST back to OCL source text.
+- :func:`normalize` — rewrite an AST into chapter-3 normal form.
+- :func:`simplify_constraint` — normalize one invariant and keep the original text as its comment when the body changes.
 - :class:`WrappingVisitor` — bug-fixed visitor (used internally by
   :func:`parse_ocl`); expose for callers that drive the ANTLR pipeline directly.
 - :class:`BOCLSyntaxError` — raised on parse errors.
@@ -17,7 +19,7 @@ from besser.BUML.notations.ocl.api import parse_ocl
 from besser.BUML.notations.ocl.pretty_printer import pretty_print
 from besser.BUML.notations.ocl.wrapping_visitor import WrappingVisitor
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
-from besser.BUML.notations.ocl.normalization import normalize
+from besser.BUML.notations.ocl.normalization import normalize, simplify_constraint
 
 # Re-exports from the metamodel for one-stop import.
 from besser.BUML.metamodel.ocl import (
@@ -33,7 +35,7 @@ from besser.BUML.metamodel.ocl import (
 
 __all__ = [
     "parse_ocl", "pretty_print", "WrappingVisitor", "BOCLSyntaxError",
-    "normalize",
+    "normalize", "simplify_constraint",
     "walk", "clone", "substitute", "ScopeStack",
     "is_op", "is_and", "is_or", "is_xor", "is_implies", "is_not",
     "is_size", "is_isempty", "is_allinstances",

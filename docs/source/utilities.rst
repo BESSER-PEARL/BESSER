@@ -9,6 +9,7 @@ and the web modeling editor backend. The most commonly used utilities are listed
    utilities/serializer
    utilities/buml_code_builder
    utilities/agent_simulator
+   utilities/incremental_constraint_analysis
 
 General Utilities
 -----------------

@@ -342,6 +342,8 @@ def get_api_root():
             "get_project_json_model": "/besser_api/get-project-json-model",
             "get_json_model": "/besser_api/get-json-model",
             "validate_diagram": "/besser_api/validate-diagram",
+            "ocl_incremental_preanalysis": "/besser_api/ocl/incremental-preanalysis",
+            "ocl_constraint_simplification": "/besser_api/ocl/constraint-simplification",
             "csv_to_domain_model": "/besser_api/csv-to-domain-model",
             "get_json_model_from_image": "/besser_api/get-json-model-from-image",
             "get_json_model_from_kg": "/besser_api/get-json-model-from-kg",

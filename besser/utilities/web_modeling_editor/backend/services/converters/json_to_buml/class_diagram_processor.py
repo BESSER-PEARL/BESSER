@@ -21,6 +21,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
     legacy_body_only_to_text, process_ocl_constraints,
 )
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
+from besser.BUML.metamodel.structural_event import event_from_dict
 from besser.utilities.utils import parse_iso_timestamp
 
 
@@ -884,6 +885,57 @@ def _ocl_box_to_full_text(
         return None
 
 
+def _restore_violating_events(
+    elements: dict[str, Any],
+    domain_model: DomainModel,
+    by_name: dict[str, Any],
+    names_by_element: dict[str, list[str]],
+    all_warnings: list[str],
+) -> None:
+    """Rebuild ViolatingEvent links for constraints that have stored events.
+
+    The constraint expression is already the text those events belong to.
+    A box with no events has nothing to restore.
+    """
+    for element_id, element in elements.items():
+        if element.get("type") != "ClassOCLConstraint":
+            continue
+        payloads = element.get("violatingEvents")
+        if not payloads:
+            continue
+        if not isinstance(payloads, list):
+            all_warnings.append(
+                f"Warning: OCL element {element_id} has a violatingEvents value "
+                f"that is not a list; ignoring it."
+            )
+            continue
+        box_names = names_by_element.get(element_id, [])
+        for payload in payloads or []:
+            if not isinstance(payload, dict):
+                all_warnings.append(
+                    f"Warning: OCL element {element_id} has a violating event "
+                    f"that is not an object; ignoring it."
+                )
+                continue
+            name = payload.get("constraint")
+            constraint = by_name.get(name) if name else None
+            if constraint is None and len(box_names) == 1:
+                constraint = by_name.get(box_names[0])
+            if constraint is None:
+                all_warnings.append(
+                    f"Warning: stored violating event on {element_id} does not match "
+                    f"an invariant ({payload.get('kind')}, {name}); ignoring it."
+                )
+                continue
+            link = event_from_dict(payload, constraint, domain_model)
+            if link is None:
+                all_warnings.append(
+                    f"Warning: could not restore {payload.get('kind')} for "
+                    f"'{name}' on {element_id}; a class, attribute or association is missing."
+                )
+                continue
+
+
 def _process_constraints(
     elements: dict[str, Any],
     relationships: dict[str, Any],
@@ -993,6 +1045,9 @@ def _process_constraints(
             f"ambiguous. Closest definition wins."
         )
 
+    # element id and box text of each invariant, so a later pre-analysis can
+    # write its events back onto the editor box that declared it.
+    origin_meta: dict[int, tuple[str, str]] = {}
     # Use a list (not a set) so the iteration order at de-dup time matches
     # the order constraints were encountered in ``elements.items()``. With
     # a set, "first wins" would silently become "any-wins" on Python
@@ -1055,6 +1110,7 @@ def _process_constraints(
             try:
                 if kind == "invariant":
                     extra_invariants.append((constraint, origin))
+                    origin_meta[id(constraint)] = (element_id, text)
                 else:
                     method = method_by_qualified_name.get((class_name, method_name)) if method_name else None
                     if method is None:
@@ -1094,6 +1150,53 @@ def _process_constraints(
         by_name[c.name] = c
     domain_model.ocl_warnings = all_warnings
     domain_model.constraints = set(by_name.values())
+    element_ids: dict[str, str] = {}
+    box_text: dict[str, str] = {}
+    names_by_element: dict[str, list[str]] = {}
+    for constraint in domain_model.constraints:
+        meta = origin_meta.get(id(constraint))
+        if meta is None:
+            continue
+        element_id, text = meta
+        element_ids[constraint.name] = element_id
+        box_text[constraint.name] = text
+        names_by_element.setdefault(element_id, []).append(constraint.name)
+    domain_model.ocl_element_ids = element_ids
+    domain_model.ocl_box_text = box_text
+    constraints_by_element: dict[str, list] = {}
+    for constraint in domain_model.constraints:
+        element_id = element_ids.get(constraint.name)
+        if element_id is None:
+            continue
+        constraints_by_element.setdefault(element_id, []).append(constraint)
+    domain_model.ocl_constraints_by_element = constraints_by_element
+    _restore_violating_events(
+        elements, domain_model, by_name, names_by_element, all_warnings,
+    )
+    domain_model.ocl_warnings = all_warnings
+
+
+def _append_comment(element, comment_text: str) -> None:
+    """Attach ``comment_text`` to ``element`` without repeating it.
+
+    Diagram comments are stored on the annotated element's metadata, which
+    is the relationship a class comment already uses. The natural-language
+    ``description`` of a constraint is a different field and is left alone.
+    """
+    text = (comment_text or "").strip()
+    if not text:
+        return
+    metadata = getattr(element, "metadata", None)
+    if metadata is None:
+        element.metadata = Metadata(description=text)
+        return
+    current = (metadata.description or "").strip()
+    if not current:
+        metadata.description = text
+        return
+    if text in (part.strip() for part in current.split("\n")):
+        return
+    metadata.description = f"{current}\n{text}"
 
 
 def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
@@ -1163,26 +1266,35 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
         diagram_id=json_data.get("id"), diagram_title=json_data.get("title", ""),
     )
 
-    # Process comments and apply them to class or domain model metadata
+    # Process comments and apply them to class or domain model metadata.
+    # A comment linked to an OCL constraint uses the same Link relationship
+    # as a comment linked to a class; its text is kept on the constraint.
     for comment_id, comment_text in comment_elements.items():
         if comment_id in comment_links:
             # Comment is linked to specific elements
             for linked_element_id in comment_links[comment_id]:
                 linked_element = elements.get(linked_element_id)
-                if linked_element:
-                    element_name = linked_element.get("name", "").strip()
-                    # Find the class in the domain model via O(1) lookup
-                    type_obj = type_lookup.get(element_name)
-                    if isinstance(type_obj, Class):
-                        # Add comment to class metadata
-                        if not type_obj.metadata:
-                            type_obj.metadata = Metadata(description=comment_text)
+                if not linked_element:
+                    continue
+                if linked_element.get("type") == "ClassOCLConstraint":
+                    for constraint in getattr(
+                        domain_model, "ocl_constraints_by_element", {},
+                    ).get(linked_element_id, []):
+                        _append_comment(constraint, comment_text)
+                    continue
+                element_name = linked_element.get("name", "").strip()
+                # Find the class in the domain model via O(1) lookup
+                type_obj = type_lookup.get(element_name)
+                if isinstance(type_obj, Class):
+                    # Add comment to class metadata
+                    if not type_obj.metadata:
+                        type_obj.metadata = Metadata(description=comment_text)
+                    else:
+                        # Append to existing description
+                        if type_obj.metadata.description:
+                            type_obj.metadata.description += f"\n{comment_text}"
                         else:
-                            # Append to existing description
-                            if type_obj.metadata.description:
-                                type_obj.metadata.description += f"\n{comment_text}"
-                            else:
-                                type_obj.metadata.description = comment_text
+                            type_obj.metadata.description = comment_text
         else:
             # Comment is not linked, add to domain model metadata
             if not domain_model.metadata:

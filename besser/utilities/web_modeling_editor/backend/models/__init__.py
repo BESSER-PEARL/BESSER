@@ -12,6 +12,7 @@ from .responses import (
     SimulationSessionResponse,
     SimulationSessionStopResponse,
     SimulationValidationResponse,
+    IncrementalPreanalysisResponse,
     ValidationResponse,
 )
 from .spec_driven import SmartGenerateRequest
@@ -31,6 +32,7 @@ __all__ = [
     'SimulationSessionResponse',
     'SimulationSessionStopResponse',
     'SimulationValidationResponse',
+    'IncrementalPreanalysisResponse',
     'ValidationResponse',
     'SmartGenerateRequest',
 ]

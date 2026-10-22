@@ -376,6 +376,8 @@ Validation
 ^^^^^^^^^^
 
 - ``POST /validate-diagram`` -- Unified diagram validation (metamodel + OCL constraints)
+- ``POST /ocl/incremental-preanalysis`` -- Class diagrams only. Computes the structural events that may violate each OCL invariant and returns them grouped by constraint name and OCL-box element id. Not a generator and not a file download. The editor calls it from **Generate → Constraints → Incremental pre-analysis**.
+- ``POST /ocl/constraint-simplification`` -- Class diagrams only. Rewrites each invariant into the simplified form of chapter 3 and returns the normalized text together with the original text when the two differ. The editor calls it from **Generate → Constraints → Constraint simplification**. Not a generator and not a file download.
 - ``POST /check-ocl`` -- **Deprecated.** Kept for backwards compatibility; delegates to ``/validate-diagram``.
 
 Deployment

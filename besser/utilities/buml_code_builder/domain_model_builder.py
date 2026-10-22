@@ -15,6 +15,12 @@ from besser.BUML.metamodel.structural.structural import (
     Enumeration,
     MethodImplementationType,
 )
+from besser.BUML.metamodel.structural_event.structural_event import (
+    LinkEvent,
+    ObjectEvent,
+    UpdateAttribute,
+    violating_events,
+)
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.utilities import sort_by_timestamp as sort
 from besser.utilities.buml_code_builder.common import (
@@ -34,6 +40,22 @@ from besser.utilities.buml_code_builder.common import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _event_classes_used(model) -> list[str]:
+    """Event class names the generated file must import, in a stable order."""
+    names = set()
+    constraints = list(getattr(model, "constraints", ()) or ())
+    for cls in getattr(model, "types", ()) or ():
+        if not isinstance(cls, Class):
+            continue
+        for method in cls.methods:
+            constraints.extend(getattr(method, "pre", ()) or ())
+            constraints.extend(getattr(method, "post", ()) or ())
+    for constraint in constraints:
+        for link in violating_events(constraint):
+            names.add(type(link.structural_event).__name__)
+    return sorted(names)
 
 
 def _set_literal(items: str) -> str:
@@ -190,6 +212,7 @@ def domain_model_to_code(
         f.write("####################\n")
         f.write("# STRUCTURAL MODEL #\n")
         f.write("####################\n\n")
+        event_classes = _event_classes_used(model)
         f.write("from besser.BUML.metamodel.structural import (\n")
         f.write("    Class, Property, Method, Parameter,\n")
         f.write("    BinaryAssociation, Generalization, DomainModel,\n")
@@ -198,6 +221,12 @@ def domain_model_to_code(
         f.write("    TimeType, DateType, DateTimeType, TimeDeltaType,\n")
         f.write("    AnyType, Constraint, AssociationClass, Metadata, MethodImplementationType\n")
         f.write(")\n")
+        if event_classes:
+            f.write("from besser.BUML.metamodel.structural_event import (\n")
+            f.write("    ViolatingEvent,\n")
+            for event_class in event_classes:
+                f.write(f"    {event_class},\n")
+            f.write(")\n")
         # ``datetime`` rebuilds element timestamps (and object slot values).
         f.write("import datetime\n")
 
@@ -530,6 +559,34 @@ def domain_model_to_code(
                         f"(general={general_var_name}, specific={specific_var_name}{timestamp_kwarg(gen)})\n")
             f.write("\n")
 
+        def _emit_violating_events(constraint, var_name: str) -> None:
+            """Emit one association-class link per stored structural event."""
+            events = list(violating_events(constraint))
+            if not events:
+                return
+            for link in sorted(events, key=lambda item: (
+                item.structural_event.kind(),
+                getattr(getattr(item.structural_event, "class_", None), "name", "")
+                or getattr(getattr(item.structural_event, "association", None), "name", "")
+                or "",
+                getattr(getattr(item.structural_event, "attribute", None), "name", "") or "",
+            )):
+                event = link.structural_event
+                approximated = ", approximated=True" if link.approximated else ""
+                if isinstance(event, UpdateAttribute):
+                    owner = event.attribute.owner
+                    ctor = (
+                        f"UpdateAttribute("
+                        f"{attribute_var_name(owner.name, event.attribute.name)})"
+                    )
+                elif isinstance(event, ObjectEvent):
+                    ctor = f"{event.kind()}({safe_class_name(event.class_.name)})"
+                elif isinstance(event, LinkEvent):
+                    ctor = f"{event.kind()}({element_vars.name_for(event.association)})"
+                else:
+                    continue
+                f.write(f"ViolatingEvent({var_name}, {ctor}{approximated})\n")
+
         # Helper: emit a single ``Constraint(...)`` declaration. Reused for
         # invariants (top-level) and for method ``pre`` / ``post`` contracts
         # (which are then attached via ``Method.add_pre`` / ``add_post``).
@@ -544,8 +601,16 @@ def domain_model_to_code(
             if description:
                 f.write(",\n")
                 f.write(f"    description=\"{_escape_python_string(description)}\"")
+            metadata = getattr(constraint, "metadata", None)
+            if metadata and metadata.description:
+                f.write(",\n")
+                f.write(
+                    "    metadata=Metadata("
+                    f'description="{_escape_python_string(metadata.description)}")'
+                )
             f.write(_timestamp_line(constraint))
             f.write("\n)\n")
+            _emit_violating_events(constraint, var_name)
 
         # Collect every method's pre / post contracts. Emit them alongside
         # invariants so the generated file round-trips back to the editor

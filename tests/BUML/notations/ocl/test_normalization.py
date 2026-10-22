@@ -11,7 +11,90 @@ normalizes to (the rewrite system itself never produces ``notEmpty``).
 
 import pytest
 
+from besser.BUML.metamodel.structural import (
+    BinaryAssociation, Class, DateType, DomainModel, FloatType, Generalization,
+    IntegerType, Multiplicity, Property, StringType,
+)
+from besser.BUML.metamodel.ocl.ocl import PropertyCallExpression
 from besser.BUML.notations.ocl import normalize, parse_ocl, pretty_print
+
+
+@pytest.fixture(scope="module")
+def product_model() -> DomainModel:
+    """The thesis ecommerce fragment used by CorrectProduct'."""
+    product = Class("Product", attributes={
+        Property("price", FloatType),
+        Property("maxDiscount", IntegerType),
+    })
+    return DomainModel("Shop", types={product}, associations=set())
+
+
+@pytest.fixture(scope="module")
+def staff_model() -> DomainModel:
+    """Two collections of employees, so ``union`` has two different sources."""
+    department = Class("Department")
+    employee = Class("Employee", attributes={Property("age", IntegerType)})
+    staff = BinaryAssociation("StaffOf", ends={
+        Property("staffDept", department, multiplicity=Multiplicity(1, 1)),
+        Property("staff", employee, multiplicity=Multiplicity(0, "*")),
+    })
+    interns = BinaryAssociation("InternsOf", ends={
+        Property("internDept", department, multiplicity=Multiplicity(1, 1)),
+        Property("interns", employee, multiplicity=Multiplicity(0, "*")),
+    })
+    return DomainModel(
+        "StaffModel",
+        types={department, employee},
+        associations={staff, interns},
+    )
+
+
+@pytest.fixture(scope="module")
+def running_example() -> DomainModel:
+    """Fig. 4 of Cabot and Teniente, Sci. Comput. Program. 68 (2007).
+
+    Role names are the ones used on page 8 and in Table 5: ``employee`` /
+    ``employer`` (WorksIn), ``boss`` / ``managed`` (Manages), ``project``
+    (Develops, from a department), ``employee`` / ``project`` (AssignedTo),
+    and ``category``.
+    """
+    department = Class("Department", attributes={
+        Property("maxJuniorSal", FloatType),
+    })
+    employee = Class("Employee", attributes={
+        Property("age", IntegerType),
+        Property("salary", FloatType),
+        Property("expirationDate", DateType),
+    })
+    project = Class("Project", attributes={Property("dueDate", DateType)})
+    category = Class("Category", attributes={Property("name", StringType)})
+    freelance = Class("Freelance", attributes={Property("hoursWeek", IntegerType)})
+    works_in = BinaryAssociation("WorksIn", ends={
+        Property("employer", department, multiplicity=Multiplicity(1, 1)),
+        Property("employee", employee, multiplicity=Multiplicity(0, "*")),
+    })
+    manages = BinaryAssociation("Manages", ends={
+        Property("managed", department, multiplicity=Multiplicity(0, 1)),
+        Property("boss", employee, multiplicity=Multiplicity(1, 1)),
+    })
+    develops = BinaryAssociation("Develops", ends={
+        Property("department", department, multiplicity=Multiplicity(1, 1)),
+        Property("project", project, multiplicity=Multiplicity(0, "*")),
+    })
+    assigned = BinaryAssociation("AssignedTo", ends={
+        Property("project", project, multiplicity=Multiplicity(0, "*")),
+        Property("employee", employee, multiplicity=Multiplicity(0, "*")),
+    })
+    belongs = BinaryAssociation("BelongsTo", ends={
+        Property("category", category, multiplicity=Multiplicity(1, 1)),
+        Property("member", employee, multiplicity=Multiplicity(0, "*")),
+    })
+    return DomainModel(
+        "RunningExample",
+        types={department, employee, project, category, freelance},
+        associations={works_in, manages, develops, assigned, belongs},
+        generalizations={Generalization(general=employee, specific=freelance)},
+    )
 
 
 def _normalize_to_string(input_str, model):
@@ -118,7 +201,7 @@ def test_T8_paper_maxsalary_integration(model):
 # ---------------------------------------------------------------------------
 
 from besser.BUML.metamodel.ocl import (
-    is_implies, is_xor, is_isempty, is_loop, is_atomic_type_test, walk,
+    is_implies, is_xor, is_isempty, is_loop, walk,
 )
 from besser.BUML.metamodel.ocl.ocl import IfExp
 
@@ -174,6 +257,266 @@ def test_if_with_non_boolean_branches_is_left_alone(model):
     assert len(if_nodes) == 1, (
         f"IfExp with non-boolean branches should survive; got: "
         f"{pretty_print(normalized)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chapter 3 — Cabot, Incremental Integrity Checking, tables 3.1–3.3 and §3.2–3.3
+# ---------------------------------------------------------------------------
+
+def test_chapter_correct_product(product_model):
+    """CorrectProduct' simplifies to the form used in the thesis."""
+    assert_normalizes_to(
+        "context Product inv: not Product.allInstances()->exists("
+        "p | p.price <= 0 or p.maxDiscount > 60)",
+        "context Product inv: self.price > 0 and self.maxDiscount <= 60",
+        product_model,
+    )
+
+
+def test_chapter_unique_name_replaces_only_the_first_iterator(model):
+    """§3.2 multi-iterator allInstances, then implies is eliminated."""
+    assert_normalizes_to(
+        "context Employee inv: Employee.allInstances()->forAll("
+        "e1, e2 | e1 <> e2 implies e1.name <> e2.name)",
+        "context Employee inv: Employee::allInstances()->forAll("
+        "e2 | self = e2 or self.name <> e2.name)",
+        model,
+    )
+
+
+def test_allinstances_is_kept_when_the_body_already_uses_self(model):
+    assert_normalizes_to(
+        "context Employee inv: Employee.allInstances()->forAll("
+        "e | e.salary <= self.salary)",
+        "context Employee inv: Employee::allInstances()->forAll("
+        "e | e.salary <= self.salary)",
+        model,
+    )
+
+
+def test_allinstances_is_kept_when_the_body_uses_an_implicit_self_attribute(model):
+    assert_normalizes_to(
+        "context Employee inv: Employee.allInstances()->forAll(e | e.age > age)",
+        "context Employee inv: Employee::allInstances()->forAll(e | e.age > age)",
+        model,
+    )
+
+
+def test_table_boolean_bounds_and_equality(model):
+    assert_normalizes_to(
+        "context Employee inv: self.age > 16 and self.age <= 16",
+        "context Employee inv: false",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: self.age > 16 or self.age <= 16",
+        "context Employee inv: true",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: self.age > 16 or self.age < 16",
+        "context Employee inv: self.age <> 16",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: (self.age > 16) = true",
+        "context Employee inv: self.age > 16",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: (self.age > 16) = false",
+        "context Employee inv: self.age <= 16",
+        model,
+    )
+
+
+def test_table_boolean_equality_reaches_conjunctive_form(model):
+    # Table 3.1 turns X = Y into (X and Y) or (not X and not Y). Distribution
+    # then yields the two clauses of (X iff Y). Negated comparisons land on
+    # the left of each disjunction, so the text is the chapter form with
+    # clauses and disjuncts swapped.
+    assert_normalizes_to(
+        "context Employee inv: (self.age > 16) = (self.salary > 0.0)",
+        "context Employee inv: (self.age <= 16 or self.salary > 0.0) "
+        "and (self.salary <= 0.0 or self.age > 16)",
+        model,
+    )
+
+
+def test_table_size_or_forall_and_negated_emptiness(model):
+    assert_normalizes_to(
+        "context Department inv: self.employee->size() <= 0 or "
+        "self.employee->forAll(e | e.age > 16)",
+        "context Department inv: self.employee->forAll(e | e.age > 16)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Department inv: not self.employee->isEmpty()",
+        "context Department inv: self.employee->size() > 0",
+        model,
+    )
+    assert_normalizes_to(
+        "context Department inv: not self.employee->notEmpty()",
+        "context Department inv: self.employee->size() = 0",
+        model,
+    )
+
+
+def test_table_iterator_fusions(model):
+    assert_normalizes_to(
+        "context Department inv: self.employee->select(e | e.age > 16)->size() "
+        "= self.employee->size()",
+        "context Department inv: self.employee->forAll(e | e.age > 16)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Department inv: self.employee->select(e | e.age > 25)->exists("
+        "e | e.salary > 1.0)",
+        "context Department inv: not self.employee->forAll("
+        "e | e.age <= 25 or e.salary <= 1.0)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Department inv: self.employee->forAll(e | e.age > 16) and "
+        "self.employee->forAll(e | e.salary > 0.0)",
+        "context Department inv: self.employee->forAll("
+        "e | e.age > 16 and e.salary > 0.0)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Department inv: self.employee->forAll("
+        "e | e.age > 16 and self.employee->forAll(f | f.salary > 0.0))",
+        "context Department inv: self.employee->forAll("
+        "e, f | e.age > 16 and f.salary > 0.0)",
+        model,
+    )
+
+
+def test_table_is_unique(model):
+    assert_normalizes_to(
+        "context Department inv: self.employee->isUnique(age)",
+        "context Department inv: self.employee->forAll("
+        "x1, x2 | x1 = x2 or x1.age <> x2.age)",
+        model,
+    )
+
+
+def test_table_union_forall(staff_model):
+    assert_normalizes_to(
+        "context Department inv: self.staff->union(self.interns)->forAll("
+        "e | e.age > 16)",
+        "context Department inv: self.staff->forAll(e | e.age > 16) and "
+        "self.interns->forAll(e | e.age > 16)",
+        staff_model,
+    )
+    assert_normalizes_to(
+        "context Department inv: self.staff->union(self.interns).age->forAll("
+        "a | a > 16)",
+        "context Department inv: self.staff.age->forAll(a | a > 16) and "
+        "self.interns.age->forAll(a | a > 16)",
+        staff_model,
+    )
+
+
+def test_chapter_xor_and_if_and_distribution(model):
+    assert_normalizes_to(
+        "context Employee inv: self.age > 16 xor self.salary > 0.0",
+        "context Employee inv: (self.age > 16 or self.salary > 0.0) and "
+        "(self.age <= 16 or self.salary <= 0.0)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: if self.age > 16 then self.salary > 0.0 "
+        "else self.salary < 0.0 endif",
+        "context Employee inv: (self.age <= 16 or self.salary > 0.0) and "
+        "(self.age > 16 or self.salary < 0.0)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: self.age > 16 or self.salary > 0.0 and self.name = 'a'",
+        "context Employee inv: (self.age > 16 or self.salary > 0.0) and "
+        "(self.age > 16 or self.name = 'a')",
+        model,
+    )
+
+
+def test_paper_page8_same_context_forms(running_example):
+    """Page 8 invariants, compared with the same-context row of Table 5.
+
+    MaxSalary, ValidAge, AtLeastTwoProjectManagers and ValidNHours are
+    already that row. NotBossFreelance continues to conjunctive form:
+    Table 5 still writes ``implies`` on Department. PossibleEmployee keeps
+    the operands written on page 8; Table 5 swaps them.
+    """
+    assert_normalizes_to(
+        "context Department inv MaxSalary: self.employee->forAll("
+        "e | e.age >= 25 or e.salary <= self.maxJuniorSal)",
+        "context Department inv: self.employee->forAll("
+        "e | e.age >= 25 or e.salary <= self.maxJuniorSal)",
+        running_example,
+    )
+    assert_normalizes_to(
+        "context Employee inv ValidAge: self.age > 16",
+        "context Employee inv: self.age > 16",
+        running_example,
+    )
+    assert_normalizes_to(
+        "context Department inv NotBossFreelance: self.employee->size() > 5 "
+        "implies not self.boss.oclIsTypeOf(Freelance)",
+        "context Department inv: self.employee->size() <= 5 or "
+        "not self.boss.oclIsTypeOf(Freelance)",
+        running_example,
+    )
+    assert_normalizes_to(
+        "context Department inv AtLeastTwoProjectManagers: "
+        "self.project->forAll(p | p.employee->select("
+        "e | e.category.name = 'PM')->size() >= 2)",
+        "context Department inv: self.project->forAll(p | p.employee->select("
+        "e | e.category.name = 'PM')->size() >= 2)",
+        running_example,
+    )
+    parsed = parse_ocl(
+        "context Department inv AtLeastTwoProjectManagers: "
+        "self.project->forAll(p | p.employee->select("
+        "e | e.category.name = 'PM')->size() >= 2)",
+        running_example,
+    )
+    employee_navs = [
+        node for node in walk(parsed.ast)
+        if isinstance(node, PropertyCallExpression) and node.property.name == "employee"
+    ]
+    assert employee_navs
+    assert all(node.property.owner.name == "AssignedTo" for node in employee_navs)
+    assert_normalizes_to(
+        "context Project inv PossibleEmployee: self.employee->forAll("
+        "e | e.expirationDate > self.dueDate)",
+        "context Project inv: self.employee->forAll("
+        "e | e.expirationDate > self.dueDate)",
+        running_example,
+    )
+    assert_normalizes_to(
+        "context Freelance inv ValidNHours: "
+        "self.hoursWeek >= 5 and self.hoursWeek <= 30",
+        "context Freelance inv: self.hoursWeek >= 5 and self.hoursWeek <= 30",
+        running_example,
+    )
+
+
+def test_context_changed_maxsalary_keeps_the_round_trip(running_example):
+    """Table 5's Employee MaxSalary needs §3.1.3 rule 3, which is not applied.
+
+    Rules 1 and 2 remove ``notEmpty`` and the ``forAll`` over ``employer``.
+    ``self.employer.employee`` stays. The table's final body is
+    ``self.age >= 25 or self.salary <= self.employer.maxJuniorSal``.
+    """
+    assert_normalizes_to(
+        "context Employee inv: self.employer->notEmpty() implies "
+        "self.employer->forAll(d | d.employee->forAll("
+        "e | e.age >= 25 or e.salary <= d.maxJuniorSal))",
+        "context Employee inv: self.employer.employee->forAll("
+        "e | e.age >= 25 or e.salary <= self.employer.maxJuniorSal)",
+        running_example,
     )
 
 

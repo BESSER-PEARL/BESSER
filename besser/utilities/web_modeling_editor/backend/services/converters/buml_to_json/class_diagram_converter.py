@@ -35,6 +35,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers.mu
     format_multiplicity_label,
 )
 from besser.utilities.utils import explicit_timestamp_iso
+from besser.BUML.metamodel.structural_event import event_payloads
 
 
 def _set_timestamp(target: dict, element) -> dict:
@@ -49,6 +50,31 @@ def _set_timestamp(target: dict, element) -> dict:
     if iso is not None:
         target["timestamp"] = iso
     return target
+
+
+def _queue_constraint_comment(comments_to_create: list, constraint, element_id: str) -> None:
+    """Queue a diagram comment for the original text kept on a constraint.
+
+    The comment is a ``Comments`` element linked to the OCL box. It is not
+    copied onto the box's ``description``, which is the natural-language
+    explanation shown when validation fails.
+    """
+    metadata = getattr(constraint, "metadata", None)
+    if metadata and metadata.description:
+        comments_to_create.append((metadata.description, element_id))
+
+
+def _attach_violating_events(element_data: dict, constraint) -> None:
+    """Copy stored violating-event links onto an OCL box.
+
+    Omitted when the constraint has no links. The source recorded for the
+    editor is the constraint expression those events were computed from.
+    """
+    events = event_payloads(constraint)
+    if not events:
+        return
+    element_data["violatingEvents"] = events
+    element_data["violatingEventsSource"] = constraint.expression
 
 
 def fresh_primitive_types() -> dict:
@@ -482,6 +508,9 @@ def class_buml_to_json(domain_model):
             # Surface natural-language constraint descriptions for the editor
             if isinstance(type_obj, Constraint) and getattr(type_obj, 'description', None):
                 element_data["description"] = type_obj.description
+            if isinstance(type_obj, Constraint):
+                _attach_violating_events(element_data, type_obj)
+                _queue_constraint_comment(comments_to_create, type_obj, element_id)
 
             # Add metadata fields for classes if they exist
             if isinstance(type_obj, Class) and hasattr(type_obj, 'metadata') and type_obj.metadata:
@@ -742,6 +771,8 @@ def class_buml_to_json(domain_model):
                     # are symmetric for method contracts too.
                     if getattr(constraint, "description", None):
                         elements[box_id]["description"] = constraint.description
+                    _attach_violating_events(elements[box_id], constraint)
+                    _queue_constraint_comment(comments_to_create, constraint, box_id)
                     _set_timestamp(elements[box_id], constraint)
                     rel_id = str(uuid.uuid4())
                     relationships[rel_id] = {

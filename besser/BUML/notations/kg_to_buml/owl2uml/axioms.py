@@ -54,7 +54,7 @@ class AxiomIndex:
     different digests). Always iterate the sorted views.
     """
 
-    def __init__(self, graph: Graph):
+    def __init__(self, graph: Graph) -> None:
         self.g = graph
         self.object_props: set = set(graph.subjects(RDF.type, OWL.ObjectProperty))
         self.data_props: set = set(graph.subjects(RDF.type, OWL.DatatypeProperty))

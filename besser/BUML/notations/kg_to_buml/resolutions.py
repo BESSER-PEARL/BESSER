@@ -83,7 +83,7 @@ class DeferredOrphanClassification(Exception):
     stay in place until the user reviews the LLM's per-node suggestions.
     """
 
-    def __init__(self, node_ids: List[str]):
+    def __init__(self, node_ids: List[str]) -> None:
         super().__init__(
             f"Deferred to LLM classification: {len(node_ids)} node(s)"
         )

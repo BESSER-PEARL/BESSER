@@ -43,7 +43,15 @@ _STRUCTURAL_SHACL = frozenset({
 
 
 class ShaclMapper:
-    def __init__(self, mapper, shapes):
+    """Translates the property shapes of a SHACL graph into OCL invariants on the plan.
+
+    Args:
+        mapper: The OWL :class:`~owl2uml.mapping.Mapper` that already built the
+            plan; its canonicaliser and helpers are reused.
+        shapes: The SHACL shapes graph (may be the OWL graph itself).
+    """
+
+    def __init__(self, mapper, shapes) -> None:
         self.m = mapper
         self.g = shapes                       # the SHACL graph (separate from the OWL graph)
         self.canon = mapper.canon             # OWL-built canonicalizer (shared)

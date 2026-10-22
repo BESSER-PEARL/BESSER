@@ -47,6 +47,8 @@ class PlannedInvariant:
 
 @dataclass
 class PlannedDataType:
+    """A datatype: a BUML primitive (``is_primitive``) or a materialised data range (O01-O05, D37)."""
+
     name: str
     uri: str | None = None
     is_primitive: bool = False
@@ -57,6 +59,8 @@ class PlannedDataType:
 
 @dataclass
 class PlannedEnumeration:
+    """An enumeration (D17, D20); ``literals`` are the raw values, sanitised by the lowering."""
+
     name: str
     uri: str | None = None
     literals: list[str] = field(default_factory=list)
@@ -64,6 +68,8 @@ class PlannedEnumeration:
 
 @dataclass
 class PlannedAttribute:
+    """An attribute of a class or datatype, typed by a plan or primitive type name."""
+
     name: str
     type: str = "String"
     lower: int = 0
@@ -75,6 +81,8 @@ class PlannedAttribute:
 
 @dataclass
 class PlannedClass:
+    """A class: declared in the ontology, or materialised for an expression (``is_auxiliary``)."""
+
     name: str
     uri: str | None = None
     is_abstract: bool = False       # union aux (D19), complement aux (O06)
@@ -120,6 +128,8 @@ class PlannedAssociation:
 
 @dataclass
 class ModelPlan:
+    """Everything the rules produced, keyed by plan name, for ``to_buml`` to lower."""
+
     classes: dict[str, PlannedClass] = field(default_factory=dict)
     datatypes: dict[str, PlannedDataType] = field(default_factory=dict)
     enumerations: dict[str, PlannedEnumeration] = field(default_factory=dict)

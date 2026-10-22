@@ -45,7 +45,7 @@ class Mapper:
     only gated PlantUML rendering; all five are dropped.
     """
 
-    def __init__(self, graph, base, *, shapes=None, warnings=None):
+    def __init__(self, graph, base, *, shapes=None, warnings=None) -> None:
         self.g = graph
         self.base = base
         self.ax = AxiomIndex(graph)

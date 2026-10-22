@@ -37,7 +37,18 @@ _CARD_DATA_RULE = {"min": "O13", "max": "O14", "exact": "O15"}
 
 
 class ExpressionResolver:
-    def __init__(self, mapper):
+    """Resolves anonymous class and data expressions bottom-up into plan names.
+
+    Materialises one auxiliary class per distinct expression (de-duplicated by
+    signature) and records it, with the feature it constrains and its
+    invariant, on the ``Mapper``'s plan.
+
+    Args:
+        mapper: The :class:`~owl2uml.mapping.Mapper` whose graph is read and
+            whose plan is extended.
+    """
+
+    def __init__(self, mapper) -> None:
         self.m = mapper
         self.g = mapper.g
         self.ax = mapper.ax

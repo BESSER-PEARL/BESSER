@@ -860,6 +860,14 @@ class GuiSerializationMixin:
         if layout:
             style.update(self._extract_layout_style(layout))
 
+        # React inline styles do not accept "!important" (the declaration is
+        # dropped by the browser). Personalized variants store sizes, fonts and
+        # line heights with that flag, so strip it here for every property.
+        style = {
+            key: (value.replace(" !important", "").replace("!important", "").strip() if isinstance(value, str) else value)
+            for key, value in style.items()
+        }
+
         return self._filter_style(style)
 
     def _extract_size_style(self, size) -> Dict[str, Any]:

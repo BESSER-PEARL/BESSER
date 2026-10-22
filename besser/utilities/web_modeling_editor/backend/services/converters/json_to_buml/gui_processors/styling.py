@@ -387,12 +387,22 @@ def build_style_map(styles_list) -> Dict[str, Styling]:
     Returns:
         Dictionary mapping selectors to Styling objects
     """
-    style_map: Dict[str, Styling] = {}
+    # Several rules can target the same selector (for example the original rule
+    # of an element plus a personalization rule). Merge them like the CSS
+    # cascade instead of letting the last rule replace the others: later rules
+    # override earlier ones, but "!important" declarations always win.
+    merged_styles: Dict[str, Dict[str, Any]] = {}
+
+    def _is_important(value: Any) -> bool:
+        return isinstance(value, str) and "!important" in value
 
     for style_entry in styles_list or []:
-        selectors = style_entry.get("selectors", [])
+        selectors = list(style_entry.get("selectors", []) or [])
+        # Rules created by personalization list their targets in "selectorsAdd".
+        selectors_add = style_entry.get("selectorsAdd")
+        if isinstance(selectors_add, str):
+            selectors.extend(part.strip() for part in selectors_add.split(",") if part.strip())
         style = style_entry.get("style", {}) or {}
-        styling = styling_from_css(style)
 
         for selector in selectors:
             key = None
@@ -400,10 +410,15 @@ def build_style_map(styles_list) -> Dict[str, Styling]:
                 key = selector.get("name")
             elif isinstance(selector, str):
                 key = selector
-            if key:
-                style_map[key] = styling
+            if not key:
+                continue
+            target = merged_styles.setdefault(key, {})
+            for prop, value in style.items():
+                if prop in target and _is_important(target[prop]) and not _is_important(value):
+                    continue
+                target[prop] = value
 
-    return style_map
+    return {key: styling_from_css(merged) for key, merged in merged_styles.items()}
 
 
 def resolve_component_styling(component: Dict[str, Any], style_map: Dict[str, Styling]) -> Styling:

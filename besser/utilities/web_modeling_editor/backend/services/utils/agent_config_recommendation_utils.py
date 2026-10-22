@@ -14,7 +14,7 @@ RECOMMENDATION_ALLOWED_VALUES = {
     "explanationStyle": ["original", "direct", "step-by-step", "narrative"],
     "languageComplexity": ["original", "simple", "medium", "complex"],
     "sentenceLength": ["original", "concise", "verbose"],
-    "font": ["sans", "serif", "monospace", "neutral", "grotesque", "condensed", "hyperlegible", "lexend", "dyslexia", "verdana"],
+    "font": ["sans", "serif", "monospace", "neutral", "grotesque", "condensed", "hyperlegible", "lexend", "dyslexia", "verdana", "fredoka"],
     "alignment": ["left", "center", "justify"],
     "color": [
         "var(--apollon-primary-contrast)",

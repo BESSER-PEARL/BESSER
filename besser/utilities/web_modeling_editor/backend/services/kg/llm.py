@@ -7,8 +7,10 @@ key belongs to.
 * **OpenAI** keeps the dedicated chat transport in ``besser.utilities.llm_utils``
   (timeout, every failure raised as ``LLMUpstreamError``).
 * **Anthropic, Mistral and Nebius** go through the Spec-Driven Agent's provider
-  clients (``create_llm_client``), so their SDK handling, retries and model
-  quirks are shared rather than re-implemented.
+  clients (``create_llm_client``), so their SDK handling and model quirks are
+  shared rather than re-implemented. Their retry loop is switched off
+  (``max_retries=0``): a retry with backoff could otherwise start after the
+  request's deadline, in a worker thread nobody waits for any more.
 
 Whatever the provider, a failure leaves here as ``LLMUpstreamError`` with a fixed
 message. The provider clients build their exception text from the SDK's, which
@@ -16,10 +18,11 @@ can echo request fragments such as part of the key, so that text is logged
 (key redacted, truncated) and never returned to the client.
 
 Every KG LLM request has **one** time budget (:class:`RequestDeadline`), however
-many model calls it makes: each call gets the time that is left as its own
-timeout, a call that would start with too little left is refused, and
-:func:`run_with_deadline` stops waiting when the budget is spent, even if a
-provider client is still retrying underneath.
+many model calls it makes: each call is a single attempt whose timeout is the
+time that is left, a call that would start with too little left is refused, and
+:func:`run_with_deadline` stops waiting when the budget is spent. A model call
+already in flight then ends by its own timeout, which never reaches past the
+deadline, and nothing is attempted after it.
 """
 
 import asyncio
@@ -135,6 +138,8 @@ def _provider_completer(provider: str, api_key: str, model: str, deadline: Reque
             return create_llm_client(
                 provider=provider, api_key=api_key, model=model,
                 max_tokens=_MAX_OUTPUT_TOKENS, timeout=timeout,
+                # One attempt per call: the deadline, not the client, bounds the request.
+                max_retries=0,
             )
         except ImportError as exc:
             # The server lacks the provider's SDK: a deployment problem, not the user's.

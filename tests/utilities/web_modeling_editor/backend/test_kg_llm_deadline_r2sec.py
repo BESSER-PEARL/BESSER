@@ -90,6 +90,7 @@ def test_each_provider_call_gets_the_remaining_budget_as_its_timeout(client, slo
     assert response.status_code == 200, response.text
     (created,) = slow_provider.created
     assert 0 < created["timeout"] <= KG_LLM_REQUEST_TIMEOUT_SECONDS
+    assert created["max_retries"] == 0
 
 
 def test_a_call_that_outlives_the_deadline_is_a_502(client, slow_provider, monkeypatch):
@@ -215,3 +216,65 @@ def test_legacy_blank_key_is_a_400(client):
 
     assert response.status_code == 400
     assert response.json()["detail"] == "An API key is required."
+
+
+def test_a_provider_call_is_one_attempt_so_no_retry_outlives_the_deadline(monkeypatch):
+    """The spec-driven clients retry with backoff by default; the KG completer turns that off.
+
+    A retry would start after ``run_with_deadline`` has given up, in a worker
+    thread nobody waits for, so a failed call must fail at once.
+    """
+    from besser.spec_driven_agent.providers import llm_client
+    from besser.utilities.llm_utils import LLMUpstreamError
+    from besser.utilities.web_modeling_editor.backend.models import KGLLMRequest
+    from besser.utilities.web_modeling_editor.backend.services.kg.llm import (
+        RequestDeadline,
+        build_completer,
+    )
+
+    attempts, sleeps = [], []
+
+    class _OverloadedCompletions:
+        def create(self, **kwargs):
+            attempts.append(kwargs)
+            raise Exception("Error code: 503 - the model is overloaded")  # retryable
+
+    real_create = llm_client.create_llm_client
+
+    def create(**kwargs):
+        provider_client = real_create(**kwargs)
+        provider_client._client = SimpleNamespace(chat=SimpleNamespace(completions=_OverloadedCompletions()))
+        return provider_client
+
+    monkeypatch.setattr(llm_client, "create_llm_client", create)
+    monkeypatch.setattr(llm_client.time, "sleep", sleeps.append)
+    request = KGLLMRequest(diagram=_kg_diagram(), api_key=KEY, provider="mistral")
+    complete = build_completer(request, RequestDeadline.start(60))
+
+    with pytest.raises(LLMUpstreamError):
+        complete("system", "user")
+
+    assert len(attempts) == 1
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("max_retries, attempts", [(None, 5), (0, 1), (2, 3)])
+def test_the_provider_retry_budget_is_a_constructor_knob(monkeypatch, max_retries, attempts):
+    from besser.spec_driven_agent.errors import UpstreamLLMError
+    from besser.spec_driven_agent.providers import llm_client
+
+    calls = []
+
+    class _Overloaded:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            raise Exception("Error code: 503 - the model is overloaded")
+
+    provider_client = llm_client.MistralProvider(api_key="k", max_retries=max_retries)
+    provider_client._client = SimpleNamespace(chat=SimpleNamespace(completions=_Overloaded()))
+    monkeypatch.setattr(llm_client.time, "sleep", lambda _s: None)
+
+    with pytest.raises(UpstreamLLMError):
+        provider_client.chat("system", [{"role": "user", "content": "hi"}], tools=[])
+
+    assert len(calls) == attempts

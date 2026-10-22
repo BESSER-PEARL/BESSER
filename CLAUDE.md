@@ -101,7 +101,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
 | `…/backend/services/validators/ocl_checker.py` | Metamodel + OCL validation behind `/validate-diagram` |
 | `…/backend/services/deployment/` | Docker Compose deploy, GitHub OAuth / deploy (these routers are registered from here, not `routers/`) |
-| `…/backend/services/kg/` | Knowledge Graph service layer behind `routers/kg_router.py`: request parsing, Refine-KG decisions, the user's-own-LLM adapter |
+| `…/backend/services/kg/` | Knowledge Graph service layer behind `routers/kg_router.py` (endpoints under `/besser_api/kg`): request parsing, Refine-KG decisions, the user's-own-LLM adapter, the consistency check under its concurrency cap |
 | `…/backend/services/spec_driven/` | Spec-Driven service layer (see below) |
 | `…/backend/services/exceptions.py` | `BesserError` → `ConversionError`, `ValidationError` (incl. `CodeValidationError` → 400), `GenerationError`, `ConfigurationError` |
 | `…/web_modeling_editor/agent_simulator/` | Separate container that runs generated BAF agents in a bubblewrap sandbox; only `agent_simulator_router.py` talks to it |

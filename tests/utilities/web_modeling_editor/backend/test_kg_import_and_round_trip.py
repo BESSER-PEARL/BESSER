@@ -138,6 +138,109 @@ def test_malformed_axiom_raises_instead_of_vanishing():
         )
 
 
+def _axiom_sample_graph():
+    """A KG holding a node for every id AXIOM_SAMPLES names, plus one of each axiom."""
+    from besser.BUML.metamodel.kg import KGClass, KGProperty, KnowledgeGraph
+    from tests.BUML.metamodel.kg.axiom_samples import AXIOM_SAMPLES
+
+    kg = KnowledgeGraph(name="axioms")
+    for cid in ("c1", "c2", "c3"):
+        kg.add_node(KGClass(id=cid, label=cid, iri=f"http://ex.org/{cid}"))
+    for pid in ("p1", "p2", "p3"):
+        kg.add_node(KGProperty(id=pid, label=pid, iri=f"http://ex.org/{pid}"))
+    for cls, kwargs in AXIOM_SAMPLES.items():
+        kg.add_axiom(cls(**kwargs))
+    return kg
+
+
+def test_every_axiom_kind_survives_the_json_round_trip():
+    """The fixtures only carry four of the nine axiom kinds; this covers all of them."""
+    from besser.BUML.metamodel.kg import KGAxiom
+    from tests.BUML.metamodel.kg.axiom_samples import AXIOM_SAMPLES
+
+    assert set(AXIOM_SAMPLES) == set(KGAxiom.__subclasses__())
+    kg = _axiom_sample_graph()
+
+    j1 = kg_to_json(kg)
+    kg2 = process_kg_diagram(j1)
+
+    assert kg2.axioms == kg.axioms
+    assert kg_to_json(kg2) == j1
+
+
+_BASE_MODEL = {"type": "KnowledgeGraphDiagram", "version": "1.0.0"}
+
+
+def _model_with(**parts):
+    return {"model": {**_BASE_MODEL, "nodes": [], "edges": [], **parts}}
+
+
+@pytest.mark.parametrize(
+    "axiom, message",
+    [
+        ({"kind": "SubPropertyOfAxiom"}, "missing field"),
+        ({"kind": "SubPropertyOfAxiom", "sub_property_id": "p1"}, "missing field.*super_property_id"),
+        ({"kind": "SubPropertyOfAxiom", "sub_property_id": "", "super_property_id": "p2"},
+         "'sub_property_id' is empty"),
+        ({"kind": "SubPropertyOfAxiom", "sub_property_id": "p1", "super_property_id": "nope"},
+         "unknown node.*'nope'"),
+        ({"kind": "HasKeyAxiom", "class_id": "c1", "property_ids": ["p1", "ghost"]},
+         "unknown node.*'ghost'"),
+        ({"kind": "ImportAxiom", "target_iri": "", "source_ontology_iri": None}, "'target_iri' is empty"),
+    ],
+)
+def test_incomplete_or_dangling_axiom_is_rejected(axiom, message):
+    from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+
+    nodes = kg_to_json(_axiom_sample_graph())["model"]["nodes"]
+    with pytest.raises(ConversionError, match=message):
+        process_kg_diagram(_model_with(nodes=nodes, axioms=[axiom]))
+
+
+def test_import_axiom_needs_no_matching_node():
+    """ImportAxiom carries ontology IRIs, not node ids."""
+    kg = process_kg_diagram(_model_with(axioms=[
+        {"kind": "ImportAxiom", "target_iri": "http://ex.org/other", "source_ontology_iri": None},
+    ]))
+    assert len(kg.axioms) == 1
+
+
+@pytest.mark.parametrize("key", ["nodes", "edges", "axioms"])
+@pytest.mark.parametrize("bad", ["a string", 7, None, ["x"]])
+def test_non_object_entries_raise_conversion_error(key, bad):
+    """A non-dict node/edge/axiom used to raise AttributeError (a 500)."""
+    from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+
+    entries = bad if isinstance(bad, list) else [bad]
+    with pytest.raises(ConversionError):
+        process_kg_diagram(_model_with(**{key: entries}))
+
+
+def test_non_list_section_raises_conversion_error():
+    from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+
+    with pytest.raises(ConversionError, match="'nodes' must be a list"):
+        process_kg_diagram(_model_with(nodes={"id": "a"}))
+
+
+def test_edge_with_non_string_endpoint_raises_conversion_error():
+    from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+
+    nodes = [{"id": "a", "nodeType": "class", "label": "A"}]
+    edges = [{"id": "e", "source": {"id": "a"}, "target": "a"}]
+    with pytest.raises(ConversionError, match="by id"):
+        process_kg_diagram(_model_with(nodes=nodes, edges=edges))
+
+
+def test_title_goes_through_the_shared_name_sanitizer():
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import (
+        sanitize_name,
+    )
+
+    kg = process_kg_diagram({"title": "My Ontology-v2", "model": {**_BASE_MODEL, "nodes": []}})
+    assert kg.name == sanitize_name("My Ontology-v2") == "My_Ontology_v2"
+
+
 def test_import_owl_endpoint_and_validation(client, ttl_path: Path):
     with ttl_path.open("rb") as fh:
         resp = client.post(
@@ -355,6 +458,49 @@ def test_kg_buml_loader_blocks_dunder_attribute_access():
     )
     with pytest.raises(ConversionError):
         kg_buml_to_json(payload)
+
+
+def test_kg_buml_loader_exposes_no_modules():
+    """``dir(kg_module)`` lists the package's submodules too; exposing them let an
+    upload reach ``knowledge_graph.copy.dispatch_table.clear()`` and empty the
+    interpreter-wide ``copyreg.dispatch_table``."""
+    import copyreg
+
+    from besser.utilities.web_modeling_editor.backend.services.converters import (
+        kg_buml_to_json,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+        ConversionError,
+    )
+
+    before = dict(copyreg.dispatch_table)
+    assert before, "copyreg.dispatch_table is never empty in a running interpreter"
+    payload = (
+        "kg_model = KnowledgeGraph(name='x')\n"
+        "knowledge_graph.copy.dispatch_table.clear()\n"
+    )
+    try:
+        with pytest.raises(ConversionError):
+            kg_buml_to_json(payload)
+        assert copyreg.dispatch_table == before
+    finally:
+        copyreg.dispatch_table.update(before)
+
+
+def test_kg_to_json_rejects_an_unknown_node_type():
+    """No silent fallback to "individual" for a node class the editor cannot show."""
+    from besser.BUML.metamodel.kg import KGIndividual, KnowledgeGraph
+    from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+        ConversionError,
+    )
+
+    class CustomIndividual(KGIndividual):
+        pass
+
+    kg = KnowledgeGraph(name="x")
+    kg.add_node(CustomIndividual(id="n1", label="n1"))
+    with pytest.raises(ConversionError, match="unsupported type CustomIndividual"):
+        kg_to_json(kg)
 
 
 def test_kg_buml_loader_still_loads_generated_code(tmp_path: Path, ttl_path: Path):

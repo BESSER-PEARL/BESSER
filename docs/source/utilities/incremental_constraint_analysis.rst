@@ -140,7 +140,9 @@ becomes ``self.price > 0 and self.maxDiscount <= 60``. The constraint then
 shows that normalized expression. The text from before the rewrite is kept
 as a comment linked to the constraint, the same comment relationship a
 class already uses. When the rewrite does not change the expression, no
-comment is added.
+comment is added. Which chapter-3 rules are applied, and which table rows
+the OCL grammar cannot express, is recorded with the normalizer
+(:doc:`/buml_language/model_types/ocl/normalization`).
 
 Web modeling editor
 -------------------

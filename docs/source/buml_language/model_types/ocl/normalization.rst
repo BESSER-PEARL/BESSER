@@ -26,11 +26,34 @@ downstream tool define semantics for fewer node shapes.
   # c_norm.ast is now an `or` of `(not self.is_active)` and the original RHS.
 
 The driver runs each rule in a fixed order and walks the AST in
-post-order until no rule applies. Each rule is designed to strictly
-decrease a lexicographic measure ⟨#sugar-operators, AST size, #negations⟩,
-so the pipeline reaches a fixpoint in a bounded number of iterations. A
-``max_iterations`` guard surfaces a developer bug (a rule that violates
-the measure) instead of looping forever.
+post-order until no rule applies. A ``max_iterations`` guard stops a
+rule set that fails to reach a fixed point.
+
+The rules follow chapter 3 of Cabot's thesis. Two chapter-3 shapes are
+kept in an equivalent form so the fixed point does not undo itself:
+
+- ``X->exists(Y)`` becomes ``not X->forAll(not Y)``, which is how
+  ``not exists`` reaches the ``forAll(not …)`` step of CorrectProduct'.
+  The table also writes ``exists`` as ``select(Y)->size() > 0``; applying
+  both directions would cycle, and ``select->size() > 0`` is rewritten on
+  to the ``forAll`` form.
+- ``not (X = Y)`` becomes ``X <> Y``. The table's ``X <> Y → not (X = Y)``
+  is the opposite direction and is not applied.
+
+``xor`` and a boolean ``if`` use the chapter's conjunctive shapes,
+``(X or Y) and (not X or not Y)`` and ``(not X or Y) and (X or Z)``.
+``or`` is distributed over ``and``. ``allInstances()->forAll`` over the
+context class is removed only when the body does not already mention
+``self``; with several iterators only the first is replaced.
+
+B-OCL has no production for ``count``, ``at``, ``includesAll``,
+``excludesAll``, ``excluding``, ``including``, ``one``, ``any``,
+``asSequence``, or a collection literal, so those table rows are not
+rewrites. Derived elements, query operations, and ``let`` variables are
+not unfolded, and a short-form iterator (no variable before ``|``) is
+left implicit. Multiplicity collapses from the 2007 paper
+(``size() > 0`` on a mandatory chain, ``forAll`` on a chain of maximum
+1) also run; chapter 3 does not list them.
 
 The input is not mutated: ``normalize`` clones the AST internally before
 rewriting.

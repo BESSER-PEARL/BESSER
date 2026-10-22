@@ -11,7 +11,41 @@ normalizes to (the rewrite system itself never produces ``notEmpty``).
 
 import pytest
 
+from besser.BUML.metamodel.structural import (
+    BinaryAssociation, Class, DomainModel, FloatType, IntegerType, Multiplicity,
+    Property,
+)
 from besser.BUML.notations.ocl import normalize, parse_ocl, pretty_print
+
+
+@pytest.fixture(scope="module")
+def product_model() -> DomainModel:
+    """The thesis ecommerce fragment used by CorrectProduct'."""
+    product = Class("Product", attributes={
+        Property("price", FloatType),
+        Property("maxDiscount", IntegerType),
+    })
+    return DomainModel("Shop", types={product}, associations=set())
+
+
+@pytest.fixture(scope="module")
+def staff_model() -> DomainModel:
+    """Two collections of employees, so ``union`` has two different sources."""
+    department = Class("Department")
+    employee = Class("Employee", attributes={Property("age", IntegerType)})
+    staff = BinaryAssociation("StaffOf", ends={
+        Property("staffDept", department, multiplicity=Multiplicity(1, 1)),
+        Property("staff", employee, multiplicity=Multiplicity(0, "*")),
+    })
+    interns = BinaryAssociation("InternsOf", ends={
+        Property("internDept", department, multiplicity=Multiplicity(1, 1)),
+        Property("interns", employee, multiplicity=Multiplicity(0, "*")),
+    })
+    return DomainModel(
+        "StaffModel",
+        types={department, employee},
+        associations={staff, interns},
+    )
 
 
 def _normalize_to_string(input_str, model):
@@ -118,7 +152,7 @@ def test_T8_paper_maxsalary_integration(model):
 # ---------------------------------------------------------------------------
 
 from besser.BUML.metamodel.ocl import (
-    is_implies, is_xor, is_isempty, is_loop, is_atomic_type_test, walk,
+    is_implies, is_xor, is_isempty, is_loop, walk,
 )
 from besser.BUML.metamodel.ocl.ocl import IfExp
 
@@ -174,6 +208,187 @@ def test_if_with_non_boolean_branches_is_left_alone(model):
     assert len(if_nodes) == 1, (
         f"IfExp with non-boolean branches should survive; got: "
         f"{pretty_print(normalized)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chapter 3 — Cabot, Incremental Integrity Checking, tables 3.1–3.3 and §3.2–3.3
+# ---------------------------------------------------------------------------
+
+def test_chapter_correct_product(product_model):
+    """CorrectProduct' simplifies to the form used in the thesis."""
+    assert_normalizes_to(
+        "context Product inv: not Product.allInstances()->exists("
+        "p | p.price <= 0 or p.maxDiscount > 60)",
+        "context Product inv: self.price > 0 and self.maxDiscount <= 60",
+        product_model,
+    )
+
+
+def test_chapter_unique_name_replaces_only_the_first_iterator(model):
+    """§3.2 multi-iterator allInstances, then implies is eliminated."""
+    assert_normalizes_to(
+        "context Employee inv: Employee.allInstances()->forAll("
+        "e1, e2 | e1 <> e2 implies e1.name <> e2.name)",
+        "context Employee inv: Employee::allInstances()->forAll("
+        "e2 | self = e2 or self.name <> e2.name)",
+        model,
+    )
+
+
+def test_allinstances_is_kept_when_the_body_already_uses_self(model):
+    assert_normalizes_to(
+        "context Employee inv: Employee.allInstances()->forAll("
+        "e | e.salary <= self.salary)",
+        "context Employee inv: Employee::allInstances()->forAll("
+        "e | e.salary <= self.salary)",
+        model,
+    )
+
+
+def test_allinstances_is_kept_when_the_body_uses_an_implicit_self_attribute(model):
+    assert_normalizes_to(
+        "context Employee inv: Employee.allInstances()->forAll(e | e.age > age)",
+        "context Employee inv: Employee::allInstances()->forAll(e | e.age > age)",
+        model,
+    )
+
+
+def test_table_boolean_bounds_and_equality(model):
+    assert_normalizes_to(
+        "context Employee inv: self.age > 16 and self.age <= 16",
+        "context Employee inv: false",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: self.age > 16 or self.age <= 16",
+        "context Employee inv: true",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: self.age > 16 or self.age < 16",
+        "context Employee inv: self.age <> 16",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: (self.age > 16) = true",
+        "context Employee inv: self.age > 16",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: (self.age > 16) = false",
+        "context Employee inv: self.age <= 16",
+        model,
+    )
+
+
+def test_table_boolean_equality_reaches_conjunctive_form(model):
+    # Table 3.1 turns X = Y into (X and Y) or (not X and not Y). Distribution
+    # then yields the two clauses of (X iff Y). Negated comparisons land on
+    # the left of each disjunction, so the text is the chapter form with
+    # clauses and disjuncts swapped.
+    assert_normalizes_to(
+        "context Employee inv: (self.age > 16) = (self.salary > 0.0)",
+        "context Employee inv: (self.age <= 16 or self.salary > 0.0) "
+        "and (self.salary <= 0.0 or self.age > 16)",
+        model,
+    )
+
+
+def test_table_size_or_forall_and_negated_emptiness(model):
+    assert_normalizes_to(
+        "context Department inv: self.employee->size() <= 0 or "
+        "self.employee->forAll(e | e.age > 16)",
+        "context Department inv: self.employee->forAll(e | e.age > 16)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Department inv: not self.employee->isEmpty()",
+        "context Department inv: self.employee->size() > 0",
+        model,
+    )
+    assert_normalizes_to(
+        "context Department inv: not self.employee->notEmpty()",
+        "context Department inv: self.employee->size() = 0",
+        model,
+    )
+
+
+def test_table_iterator_fusions(model):
+    assert_normalizes_to(
+        "context Department inv: self.employee->select(e | e.age > 16)->size() "
+        "= self.employee->size()",
+        "context Department inv: self.employee->forAll(e | e.age > 16)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Department inv: self.employee->select(e | e.age > 25)->exists("
+        "e | e.salary > 1.0)",
+        "context Department inv: not self.employee->forAll("
+        "e | e.age <= 25 or e.salary <= 1.0)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Department inv: self.employee->forAll(e | e.age > 16) and "
+        "self.employee->forAll(e | e.salary > 0.0)",
+        "context Department inv: self.employee->forAll("
+        "e | e.age > 16 and e.salary > 0.0)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Department inv: self.employee->forAll("
+        "e | e.age > 16 and self.employee->forAll(f | f.salary > 0.0))",
+        "context Department inv: self.employee->forAll("
+        "e, f | e.age > 16 and f.salary > 0.0)",
+        model,
+    )
+
+
+def test_table_is_unique(model):
+    assert_normalizes_to(
+        "context Department inv: self.employee->isUnique(age)",
+        "context Department inv: self.employee->forAll("
+        "x1, x2 | x1 = x2 or x1.age <> x2.age)",
+        model,
+    )
+
+
+def test_table_union_forall(staff_model):
+    assert_normalizes_to(
+        "context Department inv: self.staff->union(self.interns)->forAll("
+        "e | e.age > 16)",
+        "context Department inv: self.staff->forAll(e | e.age > 16) and "
+        "self.interns->forAll(e | e.age > 16)",
+        staff_model,
+    )
+    assert_normalizes_to(
+        "context Department inv: self.staff->union(self.interns).age->forAll("
+        "a | a > 16)",
+        "context Department inv: self.staff.age->forAll(a | a > 16) and "
+        "self.interns.age->forAll(a | a > 16)",
+        staff_model,
+    )
+
+
+def test_chapter_xor_and_if_and_distribution(model):
+    assert_normalizes_to(
+        "context Employee inv: self.age > 16 xor self.salary > 0.0",
+        "context Employee inv: (self.age > 16 or self.salary > 0.0) and "
+        "(self.age <= 16 or self.salary <= 0.0)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: if self.age > 16 then self.salary > 0.0 "
+        "else self.salary < 0.0 endif",
+        "context Employee inv: (self.age <= 16 or self.salary > 0.0) and "
+        "(self.age > 16 or self.salary < 0.0)",
+        model,
+    )
+    assert_normalizes_to(
+        "context Employee inv: self.age > 16 or self.salary > 0.0 and self.name = 'a'",
+        "context Employee inv: (self.age > 16 or self.salary > 0.0) and "
+        "(self.age > 16 or self.name = 'a')",
+        model,
     )
 
 

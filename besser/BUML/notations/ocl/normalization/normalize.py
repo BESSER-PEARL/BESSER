@@ -8,6 +8,9 @@ lexicographic measure ``⟨#sugar-operators, AST size, #negations⟩`` — every
 rule strictly decreases that measure.
 
 The driver returns a fresh :class:`OCLConstraint`. Inputs are not mutated.
+Distributing ``or`` over ``and`` (chapter 3.3) grows the tree; every other
+rewrite removes an operator the thesis simplifies away. ``max_iterations``
+stops a rule set that fails to reach a fixed point.
 """
 
 from dataclasses import dataclass, field

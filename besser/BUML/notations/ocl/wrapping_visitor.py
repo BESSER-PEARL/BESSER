@@ -61,6 +61,9 @@ class WrappingVisitor(BOCLVisitorImpl):
             return receiver.property.type
         if isinstance(receiver, Property):  # implicit-source navigation
             return receiver.type
+        if isinstance(receiver, OperationCallExpression) and receiver.operation == "UNION":
+            # ``X->union(Y).attr`` navigates the element type, as an implicit collect.
+            return self._infer_collection_element_type(receiver)
         return None
 
     def _infer_collection_element_type(self, source):
@@ -80,6 +83,11 @@ class WrappingVisitor(BOCLVisitorImpl):
                 type_exp = source.source
                 if isinstance(type_exp, TypeExp):
                     return self._get_class_by_name(type_exp.name)
+            if source.operation == "UNION":
+                element = self._infer_collection_element_type(source.source)
+                if element is None and source.arguments:
+                    element = self._infer_collection_element_type(source.arguments[0])
+                return element
             if source.operation == "ASSET" or source.operation in _ORDERED_OPERATIONS:
                 return self._infer_collection_element_type(source.source)
             return None
@@ -222,6 +230,19 @@ class WrappingVisitor(BOCLVisitorImpl):
                     if prop is not None:
                         return prop
         return super().visitIdExpr(ctx)
+
+    def visitIsunique(self, ctx):
+        # ``isUnique(body)`` has an implicit iterator, same as ``forAll(body)``.
+        # Without it, ``name`` resolves against the constraint context.
+        source = self.visit(ctx.expression(0))
+        self._implicit_iterator_types.append(self._infer_collection_element_type(source))
+        try:
+            argument = self.visit(ctx.expression(1))
+        finally:
+            self._implicit_iterator_types.pop()
+        call = OperationCallExpression(name="ISUNIQUE", operation="ISUNIQUE", arguments=[argument])
+        call.source = source
+        return call
 
     def visitArrowIteratorShort(self, ctx: BOCLParser.ArrowIteratorShortContext):
         source = self.visit(ctx.expression(0))

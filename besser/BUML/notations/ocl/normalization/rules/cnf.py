@@ -1,45 +1,22 @@
-"""Paper §2.3 — sugar elimination toward CNF.
+"""Chapter 3.3 — sugar elimination and conjunctive normal form.
 
-Eliminates ``implies``, ``xor``, and boolean ``if`` expressions in favour of
-``and`` / ``or`` / ``not``. CNF distribution (OR over AND) is intentionally
-omitted — see PRD §7.1; it can blow up AST size exponentially and is rarely
-needed by downstream consumers.
+Eliminates ``implies``, ``xor``, and boolean ``if`` expressions, then
+distributes ``or`` over ``and``. The shapes match the thesis:
+
+- ``X implies Y`` → ``not X or Y``
+- ``X xor Y`` → ``(X or Y) and (not X or not Y)``
+- ``if X then Y else Z`` → ``(not X or Y) and (X or Z)`` when both branches
+  are boolean
+- ``X or (Y and Z)`` → ``(X or Y) and (X or Z)``
+
+Distribution grows the tree. The driver caps the number of passes.
 """
 
-from besser.BUML.metamodel.ocl import clone, is_implies, is_xor
-from besser.BUML.metamodel.ocl.ocl import (
-    BooleanLiteralExpression, IfExp, LoopExp, OperationCallExpression,
-)
+from besser.BUML.metamodel.ocl import is_and, is_implies, is_or, is_xor
+from besser.BUML.metamodel.ocl.ocl import IfExp
 from besser.BUML.notations.ocl.normalization.rules._helpers import (
-    make_and, make_not, make_or,
+    is_boolean_expr, make_and, make_not, make_or,
 )
-
-
-_BOOLEAN_OPS = {
-    "and", "or", "not", "xor", "implies",
-    "=", "<>", "<", ">", "<=", ">=",
-    "IsEmpty", "NotEmpty", "OCLISTYPEOF", "OCLISKINDOF",
-}
-_BOOLEAN_LOOPS = {"forAll", "exists"}
-
-
-def _is_boolean_expr(node) -> bool:
-    """True when `node` is statically known to evaluate to a boolean.
-
-    Used by :class:`IfBoolElim` to skip ``IfExp`` whose branches return
-    something other than a boolean — rewriting those would produce
-    ``and``/``or`` over non-boolean operands, which is not OCL-valid.
-    """
-    if isinstance(node, BooleanLiteralExpression):
-        return True
-    if isinstance(node, OperationCallExpression):
-        return node.operation in _BOOLEAN_OPS
-    if isinstance(node, LoopExp):
-        return node.name in _BOOLEAN_LOOPS
-    if isinstance(node, IfExp):
-        return (_is_boolean_expr(node.thenExpression)
-                and _is_boolean_expr(node.elseCondition))
-    return False
 
 
 class ImpliesElim:
@@ -61,11 +38,11 @@ class XorElim:
         return is_xor(node) and len(node.arguments) == 2
 
     def rewrite(self, node, ctx):
-        # A xor B  →  (A and not B) or (not A and B)
+        # A xor B  →  (A or B) and (not A or not B)
         left, right = node.arguments
-        return make_or(
-            make_and(clone(left), make_not(right)),
-            make_and(make_not(left), clone(right)),
+        return make_and(
+            make_or(left, right),
+            make_or(make_not(left), make_not(right)),
         )
 
 
@@ -73,21 +50,38 @@ class IfBoolElim:
     name = "IfBoolElim"
 
     def applies(self, node, ctx):
-        # Only fold IfExp whose branches are themselves boolean — rewriting
-        # ``if C then 5 else 10 endif`` to ``(C and 5) or ((not C) and 10)``
-        # would produce ``and``/``or`` over integers, which isn't OCL-valid.
-        # Non-boolean IfExp are left in place for downstream consumers.
+        # Only fold IfExp whose branches are themselves boolean. Folding
+        # ``if C then 5 else 10 endif`` would put integers under ``or``.
         if not isinstance(node, IfExp):
             return False
-        return (_is_boolean_expr(node.thenExpression)
-                and _is_boolean_expr(node.elseCondition))
+        return (is_boolean_expr(node.thenExpression)
+                and is_boolean_expr(node.elseCondition))
 
     def rewrite(self, node, ctx):
-        # if C then T else E endif  →  (C and T) or ((not C) and E)
-        return make_or(
-            make_and(node.ifCondition, node.thenExpression),
-            make_and(make_not(node.ifCondition), node.elseCondition),
+        # if C then T else E  →  (not C or T) and (C or E)
+        return make_and(
+            make_or(make_not(node.ifCondition), node.thenExpression),
+            make_or(node.ifCondition, node.elseCondition),
         )
 
 
-CNF_RULES = [ImpliesElim(), XorElim(), IfBoolElim()]
+class OrOverAnd:
+    """``X or (Y and Z)`` → ``(X or Y) and (X or Z)`` (either side)."""
+    name = "OrOverAnd"
+
+    def applies(self, node, ctx):
+        if not is_or(node) or len(node.arguments) != 2:
+            return False
+        return is_and(node.arguments[0]) or is_and(node.arguments[1])
+
+    def rewrite(self, node, ctx):
+        left, right = node.arguments
+        if is_and(right):
+            disjunct, conjunction = left, right
+        else:
+            conjunction, disjunct = left, right
+        first, second = conjunction.arguments
+        return make_and(make_or(disjunct, first), make_or(disjunct, second))
+
+
+CNF_RULES = [ImpliesElim(), XorElim(), IfBoolElim(), OrOverAnd()]

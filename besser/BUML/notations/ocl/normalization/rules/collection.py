@@ -7,7 +7,7 @@
 from besser.BUML.metamodel.ocl import clone, is_isempty, is_loop, is_op
 from besser.BUML.metamodel.ocl.ocl import LoopExp, OperationCallExpression
 from besser.BUML.notations.ocl.normalization.rules._helpers import (
-    make_comparison, make_int, make_not,
+    make_comparison, make_int, make_not, size_compared_with_zero,
 )
 
 
@@ -58,4 +58,20 @@ class RejectToSelect:
         return new_loop
 
 
-COLLECTION_RULES = [IsEmptyToSize(), NotEmptyToSize(), RejectToSelect()]
+class SizeAtMostZero:
+    """``X->size() <= 0`` → ``X->size() = 0``.
+
+    ``size`` is a natural, so this is the same test as ``isEmpty``. It lets
+    ``not X->notEmpty()`` reach ``X->size() = 0``, the form ``isEmpty`` uses.
+    """
+    name = "SizeAtMostZero"
+
+    def applies(self, node, ctx):
+        return size_compared_with_zero(node, {"<="}) is not None
+
+    def rewrite(self, node, ctx):
+        size = size_compared_with_zero(node, {"<="})
+        return make_comparison(size, "=", make_int(0))
+
+
+COLLECTION_RULES = [IsEmptyToSize(), NotEmptyToSize(), RejectToSelect(), SizeAtMostZero()]

@@ -1163,10 +1163,40 @@ def _process_constraints(
         names_by_element.setdefault(element_id, []).append(constraint.name)
     domain_model.ocl_element_ids = element_ids
     domain_model.ocl_box_text = box_text
+    constraints_by_element: dict[str, list] = {}
+    for constraint in domain_model.constraints:
+        element_id = element_ids.get(constraint.name)
+        if element_id is None:
+            continue
+        constraints_by_element.setdefault(element_id, []).append(constraint)
+    domain_model.ocl_constraints_by_element = constraints_by_element
     _restore_violating_events(
         elements, domain_model, by_name, names_by_element, all_warnings,
     )
     domain_model.ocl_warnings = all_warnings
+
+
+def _append_comment(element, comment_text: str) -> None:
+    """Attach ``comment_text`` to ``element`` without repeating it.
+
+    Diagram comments are stored on the annotated element's metadata, which
+    is the relationship a class comment already uses. The natural-language
+    ``description`` of a constraint is a different field and is left alone.
+    """
+    text = (comment_text or "").strip()
+    if not text:
+        return
+    metadata = getattr(element, "metadata", None)
+    if metadata is None:
+        element.metadata = Metadata(description=text)
+        return
+    current = (metadata.description or "").strip()
+    if not current:
+        metadata.description = text
+        return
+    if text in (part.strip() for part in current.split("\n")):
+        return
+    metadata.description = f"{current}\n{text}"
 
 
 def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
@@ -1236,26 +1266,35 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
         diagram_id=json_data.get("id"), diagram_title=json_data.get("title", ""),
     )
 
-    # Process comments and apply them to class or domain model metadata
+    # Process comments and apply them to class or domain model metadata.
+    # A comment linked to an OCL constraint uses the same Link relationship
+    # as a comment linked to a class; its text is kept on the constraint.
     for comment_id, comment_text in comment_elements.items():
         if comment_id in comment_links:
             # Comment is linked to specific elements
             for linked_element_id in comment_links[comment_id]:
                 linked_element = elements.get(linked_element_id)
-                if linked_element:
-                    element_name = linked_element.get("name", "").strip()
-                    # Find the class in the domain model via O(1) lookup
-                    type_obj = type_lookup.get(element_name)
-                    if isinstance(type_obj, Class):
-                        # Add comment to class metadata
-                        if not type_obj.metadata:
-                            type_obj.metadata = Metadata(description=comment_text)
+                if not linked_element:
+                    continue
+                if linked_element.get("type") == "ClassOCLConstraint":
+                    for constraint in getattr(
+                        domain_model, "ocl_constraints_by_element", {},
+                    ).get(linked_element_id, []):
+                        _append_comment(constraint, comment_text)
+                    continue
+                element_name = linked_element.get("name", "").strip()
+                # Find the class in the domain model via O(1) lookup
+                type_obj = type_lookup.get(element_name)
+                if isinstance(type_obj, Class):
+                    # Add comment to class metadata
+                    if not type_obj.metadata:
+                        type_obj.metadata = Metadata(description=comment_text)
+                    else:
+                        # Append to existing description
+                        if type_obj.metadata.description:
+                            type_obj.metadata.description += f"\n{comment_text}"
                         else:
-                            # Append to existing description
-                            if type_obj.metadata.description:
-                                type_obj.metadata.description += f"\n{comment_text}"
-                            else:
-                                type_obj.metadata.description = comment_text
+                            type_obj.metadata.description = comment_text
         else:
             # Comment is not linked, add to domain model metadata
             if not domain_model.metadata:

@@ -124,16 +124,40 @@ it is linked, and that is ``InsertLink(DeliveredIn)``.
 Deleting a customer who is not linked to the category does not change
 the count. The link deletion ``DeleteLink(BelongsTo)`` does.
 
+Simplifying a constraint
+------------------------
+
+Chapter 3 rewrites an invariant into a smaller set of OCL operators before
+later steps look at it. BESSER does that with the same parser: the text is
+parsed to an AST and :func:`besser.BUML.notations.ocl.simplify_constraint`
+rewrites the tree until no rule applies. The context class is left as it
+is. CorrectProduct' from the thesis::
+
+    context Product inv CorrectProduct:
+        not Product.allInstances()->exists(p | p.price <= 0 or p.maxDiscount > 60)
+
+becomes ``self.price > 0 and self.maxDiscount <= 60``. The constraint then
+shows that normalized expression. The text from before the rewrite is kept
+as a comment linked to the constraint, the same comment relationship a
+class already uses. When the rewrite does not change the expression, no
+comment is added.
+
 Web modeling editor
 -------------------
 
-On a class diagram the same computation is **Generate → Constraints →
-Incremental pre-analysis** (``POST /besser_api/ocl/incremental-preanalysis``).
-Opening an OCL constraint afterwards lists the events. The editor
-remembers the expression that was analyzed, and shows the list as out
-of date if the constraint text changes afterwards. Choosing the menu
-item again discards the stored events and computes a new list from the
-current constraint text.
+On a class diagram, **Generate → Constraints** has two actions.
+**Constraint simplification**
+(``POST /besser_api/ocl/constraint-simplification``) rewrites every
+invariant and, when the text changes, attaches the original expression as
+a comment on that constraint.
+**Incremental pre-analysis** (``POST /besser_api/ocl/incremental-preanalysis``)
+computes the events for the text currently in each box. Opening an OCL
+constraint afterwards lists the events. The editor remembers the expression
+that was analyzed, and shows the list as out of date if the constraint text
+changes afterwards. Choosing the menu item again discards the stored events
+and computes a new list from the current constraint text. Simplifying an
+invariant changes that text, so a previous event list is shown as out of
+date until pre-analysis is run again.
 
 API
 ---
@@ -144,5 +168,9 @@ API
    :show-inheritance:
 
 .. automodule:: besser.BUML.notations.ocl.incremental.analyze
+   :members:
+   :undoc-members:
+
+.. automodule:: besser.BUML.notations.ocl.normalization.simplify
    :members:
    :undoc-members:

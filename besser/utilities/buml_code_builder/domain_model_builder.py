@@ -601,6 +601,13 @@ def domain_model_to_code(
             if description:
                 f.write(",\n")
                 f.write(f"    description=\"{_escape_python_string(description)}\"")
+            metadata = getattr(constraint, "metadata", None)
+            if metadata and metadata.description:
+                f.write(",\n")
+                f.write(
+                    "    metadata=Metadata("
+                    f'description="{_escape_python_string(metadata.description)}")'
+                )
             f.write(_timestamp_line(constraint))
             f.write("\n)\n")
             _emit_violating_events(constraint, var_name)

@@ -13,6 +13,7 @@ from besser.utilities.web_modeling_editor.backend.models import (
     DiagramInput,
 )
 from besser.utilities.web_modeling_editor.backend.models.responses import (
+    ConstraintSimplificationResponse,
     IncrementalPreanalysisResponse,
     ValidationResponse,
 )
@@ -39,6 +40,9 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 # Backend services - Validators
 from besser.utilities.web_modeling_editor.backend.services.validators import (
     check_ocl_constraint,
+)
+from besser.utilities.web_modeling_editor.backend.services.ocl.constraint_simplification import (
+    constraint_simplification,
 )
 from besser.utilities.web_modeling_editor.backend.services.ocl.incremental_preanalysis import (
     incremental_preanalysis,
@@ -277,6 +281,22 @@ async def ocl_incremental_preanalysis(input_data: DiagramInput):
     Parsing and validation are unchanged.
     """
     return incremental_preanalysis({
+        "id": input_data.id,
+        "title": input_data.title,
+        "model": input_data.model,
+    })
+
+
+@router.post("/ocl/constraint-simplification", response_model=ConstraintSimplificationResponse)
+@handle_endpoint_errors("constraint_simplification")
+async def ocl_constraint_simplification(input_data: DiagramInput):
+    """Rewrite each invariant into chapter-3 normal form.
+
+    Class diagrams only. The editor asks for it from Generate → Constraints
+    → Constraint simplification. An unchanged expression is left as it is
+    and gets no comment.
+    """
+    return constraint_simplification({
         "id": input_data.id,
         "title": input_data.title,
         "model": input_data.model,

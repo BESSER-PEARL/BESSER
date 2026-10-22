@@ -46,6 +46,25 @@ class IncrementalPreanalysisResponse(BaseModel):
     warnings: List[str] = []
 
 
+class ConstraintSimplificationItem(BaseModel):
+    """One OCL box after chapter-3 simplification."""
+    elementId: Optional[str] = None
+    changed: bool = False
+    expression: Optional[str] = None
+    original: Optional[str] = None
+
+
+class ConstraintSimplificationResponse(BaseModel):
+    """On-demand simplification of the invariants in a class diagram.
+
+    ``original`` is present only when the normalized expression differs from
+    the text in the box. The editor keeps that text as a comment linked to
+    the constraint.
+    """
+    constraints: List[ConstraintSimplificationItem] = []
+    warnings: List[str] = []
+
+
 class ApiInfoResponse(BaseModel):
     """Response for the API root endpoint."""
     message: str

@@ -316,9 +316,9 @@ class ModifyRunMixin:
         """MODIFY-only: parse the user-reported failure into a target.
 
         Sets ``self._fix_target`` and ``self._is_fix_run``. Best-effort — a
-        parse failure (or a modify run with no fix/error vocabulary) leaves
-        the run ungated, so a plain feature-add modify is not gated on a
-        target. NEVER invoked from run()/resume(); from-scratch generation
+        parse failure, or a newest user message with no evidence of a failure
+        (``fix_target._EVIDENCE_RULES``), leaves the run ungated, so a plain
+        feature-add modify is not gated on a target. NEVER invoked from run()/resume(); from-scratch generation
         is untouched.
         """
         try:

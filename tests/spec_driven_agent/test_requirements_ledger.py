@@ -80,6 +80,17 @@ def test_without_the_marker_the_whole_instructions_are_the_request():
     assert ledger.original_request("  build a todo app  ") == "build a todo app"
 
 
+def test_the_latest_user_message_is_the_last_follow_up():
+    later = (
+        f"\n\n{ledger.LATER_REQUEST_MARKER}\n\n"
+        "This later request takes precedence where it changes earlier requirements.\n\n"
+    )
+    instructions = INSTRUCTIONS + later + "add a due date" + later + "  POST /loan/ returns 500  "
+    assert ledger.latest_user_message(instructions) == "POST /loan/ returns 500"
+    assert ledger.latest_user_message(INSTRUCTIONS) == SPEC
+    assert ledger.latest_user_message("  build a todo app  ") == "build a todo app"
+
+
 # -------------------------------------------------------------- extraction
 
 

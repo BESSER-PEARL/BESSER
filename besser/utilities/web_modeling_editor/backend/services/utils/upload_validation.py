@@ -9,6 +9,7 @@ they run before any service code, on the raw request body.
 import ast
 import asyncio
 import os
+from typing import AbstractSet
 
 from fastapi import HTTPException, UploadFile
 
@@ -20,7 +21,7 @@ RDF_EXTENSIONS = frozenset({".owl", ".ttl", ".rdf", ".xml", ".nt", ".n3"})
 _DTD_MARKERS = ("<!DOCTYPE", "<!ENTITY")
 
 
-def validate_upload(file: UploadFile, *, max_size: int, allowed_extensions: set[str], content: bytes) -> None:
+def validate_upload(file: UploadFile, *, max_size: int, allowed_extensions: AbstractSet[str], content: bytes) -> None:
     """Validate an uploaded file's size and extension.
 
     Raises ``HTTPException`` with status 413 (payload too large) or 415

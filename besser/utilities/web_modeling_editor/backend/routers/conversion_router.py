@@ -28,8 +28,6 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
 # BESSER image-to-UML and BUML utilities
 from besser.utilities.image_to_buml import image_to_buml
 
-# BESSER KG → B-UML (deterministic, offline)
-
 # Custom exception types translated to HTTP codes by @handle_endpoint_errors.
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
@@ -61,7 +59,6 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_object_diagram,
     process_nn_diagram,
     process_bpmn_diagram,
-    process_kg_diagram,
     process_component_diagram,
     process_deployment_diagram,
     json_to_buml_project,
@@ -92,6 +89,7 @@ from besser.utilities.web_modeling_editor.backend.services.reverse_engineering i
 from besser.utilities.web_modeling_editor.backend.services.svg_postprocess import (
     fit_svg_viewbox_to_content,
 )
+from besser.utilities.web_modeling_editor.backend.services.kg.payloads import parse_kg_diagram
 
 # Backend configuration
 from besser.utilities.web_modeling_editor.backend.config import (
@@ -108,9 +106,13 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_MODEL_FILENAME,
     BPMN_DIAGRAM_TYPE,
     DEPLOYMENT_DIAGRAM_TYPE,
+    KG_DIAGRAM_TYPE,
     MAX_CSV_SIZE,
     MAX_IMAGE_SIZE,
     MAX_BUML_SIZE,
+    ALLOWED_SPREADSHEET_EXTENSIONS,
+    ALLOWED_IMAGE_EXTENSIONS,
+    ALLOWED_BUML_EXTENSIONS,
 )
 
 # Upload validation and async file I/O, shared with kg_router
@@ -127,13 +129,6 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 )
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Allowed MIME / extension sets per upload type
-# ---------------------------------------------------------------------------
-ALLOWED_SPREADSHEET_EXTENSIONS = {".csv", ".xlsx"}
-ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
-ALLOWED_BUML_EXTENSIONS = {".py"}
 
 
 def _xlsx_bytes_to_csv_file(xlsx_bytes: bytes, csv_path: str) -> None:
@@ -309,13 +304,8 @@ async def export_buml(input_data: DiagramInput):
                 headers={"Content-Disposition": 'attachment; filename="nn_model.py"'},
             )
 
-        elif elements_data.get("type") == "KnowledgeGraphDiagram":
-            try:
-                kg_model = process_kg_diagram(json_data)
-            except (KeyError, TypeError, AttributeError) as exc:
-                raise ConversionError(
-                    f"Malformed Knowledge Graph diagram payload: {exc}"
-                ) from exc
+        elif elements_data.get("type") == KG_DIAGRAM_TYPE:
+            kg_model = parse_kg_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "knowledge_graph.py")
             # ``model_var_name`` must stay "kg_model": ``project_to_json``'s
             # SECTION_CONFIG keys on that name, so any other value makes the
@@ -496,7 +486,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
                 "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
                 "QuantumCircuitDiagram", BPMN_DIAGRAM_TYPE,
-                "KnowledgeGraphDiagram", "ComponentDiagram",
+                KG_DIAGRAM_TYPE, "ComponentDiagram",
                 DEPLOYMENT_DIAGRAM_TYPE,
             ):
                 if dtype not in priority:
@@ -599,7 +589,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             "title": diagram_title,
             "model": kg_buml_to_json(buml_content),
         }
-        diagram_type = "KnowledgeGraphDiagram"
+        diagram_type = KG_DIAGRAM_TYPE
 
     elif is_uml_component:
         # A ConversionError from the converter names the actual problem and is

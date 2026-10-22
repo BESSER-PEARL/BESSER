@@ -5,6 +5,7 @@ from besser.BUML.metamodel.uml_component import AgentCategory, AgenticEdgeKind
 from besser.BUML.metamodel.uml_component import Locality as ComponentLocality
 from besser.BUML.metamodel.uml_deployment import NodeKind
 from besser.utilities.llm_utils import DEFAULT_OPENAI_MODEL
+from besser.BUML.notations.kg_to_buml.consistency import DEFAULT_CONSISTENCY_TIMEOUT_SECONDS
 from besser.generators.spring.spring_backend_generator import (
     DEFAULT_JAVA_VERSION as _SPRING_DEFAULT_JAVA_VERSION,
     DEFAULT_SPRING_APP_NAME as _SPRING_DEFAULT_APP_NAME,
@@ -30,10 +31,26 @@ TEMP_DIR_PREFIXES = (
     USER_PROFILE_TEMP_DIR_PREFIX,
 )
 
-# Upload size ceilings (see ``services/utils/upload_validation.py``).
+# Upload size ceilings and accepted extensions, per upload kind (see
+# ``services/utils/upload_validation.py``).
 MAX_CSV_SIZE = 5 * 1024 * 1024       # 5 MB
 MAX_IMAGE_SIZE = 10 * 1024 * 1024    # 10 MB
 MAX_BUML_SIZE = 2 * 1024 * 1024      # 2 MB
+# OWL/RDF ontology (``/kg/import-owl``).
+MAX_OWL_SIZE = 5 * 1024 * 1024       # 5 MB
+# Raw knowledge graph sent whole to the LLM (``/get-json-model-from-kg``).
+MAX_KG_SIZE = 2 * 1024 * 1024        # 2 MB
+
+ALLOWED_SPREADSHEET_EXTENSIONS = frozenset({".csv", ".xlsx"})
+ALLOWED_IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg"})
+ALLOWED_BUML_EXTENSIONS = frozenset({".py"})
+ALLOWED_KG_EXTENSIONS = frozenset({".ttl", ".rdf", ".json"})
+# Every RDF serialisation the OWL importer reads; the content of each is
+# checked by ``validate_file_content``.
+ALLOWED_OWL_EXTENSIONS = frozenset({".owl", ".ttl", ".rdf", ".xml", ".nt", ".n3"})
+# The subset of the above that rdflib parses as RDF/XML (``guess_format`` ->
+# ``"xml"``), i.e. the uploads that go through an XML parser.
+RDF_XML_EXTENSIONS = frozenset({".owl", ".rdf", ".xml"})
 
 # ---------------------------------------------------------------------
 # Knowledge Graph (KG) endpoints
@@ -43,30 +60,28 @@ MAX_BUML_SIZE = 2 * 1024 * 1024      # 2 MB
 # the shared OpenAI default rather than restating it.
 DEFAULT_KG_LLM_MODEL = DEFAULT_OPENAI_MODEL
 
-# Upload ceiling for an OWL/RDF ontology (``/import-owl``).
-MAX_OWL_SIZE = 5 * 1024 * 1024  # 5 MB
+# Seconds one consistency check (``/kg/consistency``, and the KG branch of
+# ``/validate-diagram``) may spend before its pyshacl child process is killed
+# (a user-authored sh:pattern can backtrack forever). The library's default.
+KG_CONSISTENCY_TIMEOUT_SECONDS = DEFAULT_CONSISTENCY_TIMEOUT_SECONDS
 
-# Seconds ``/check-kg-consistency`` may spend validating before its pyshacl
-# child process is killed (a user-authored sh:pattern can backtrack forever).
-KG_CONSISTENCY_TIMEOUT_SECONDS = 60
-
+# Consistency checks allowed to run at once in this process. Each one is a
+# Python child process holding pyshacl + owlrl and up to the timeout above of
+# CPU; a request beyond the cap is refused (HTTP 429), not queued.
+KG_CONSISTENCY_MAX_CONCURRENT = 4
 
 # Overall server deadline, in seconds, for one KG LLM request
-# (``/llm-clean-kg``, ``/classify-orphans-with-llm``, ``/get-json-model-from-kg``),
+# (``/kg/llm-clean``, ``/kg/classify-orphans``, ``/get-json-model-from-kg``),
 # however many model calls it makes. Each call is given what is left of it as its
-# own timeout. Published to the editor by ``GET /kg-config``.
+# own timeout. Published to the editor by ``GET /kg/config``.
 KG_LLM_REQUEST_TIMEOUT_SECONDS = 120
 
-# Largest number of orphan nodes one ``/classify-orphans-with-llm`` call may
+# Largest number of orphan nodes one ``/kg/classify-orphans`` call may
 # carry. The classifier sends one model call per ``MAX_ORPHAN_BATCH`` (40) nodes,
 # sequentially, so this is two calls: what fits in the request deadline above
 # with room to spare. The editor splits longer lists into several requests
-# (it reads this value from ``GET /kg-config``).
+# (it reads this value from ``GET /kg/config``).
 MAX_ORPHAN_CLASSIFY_NODES = 80
-
-# Accepted upload extensions.
-ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}
-ALLOWED_OWL_EXTENSIONS = {".owl", ".ttl", ".rdf", ".xml", ".nt", ".n3"}
 
 # ---------------------------------------------------------------------
 # LLM spec-driven generation caps & feature flags
@@ -319,6 +334,9 @@ BPMN_RELATIONSHIP_TYPE = "BPMNFlow"
 
 # UML Deployment diagram type (the Docker Compose generator's input).
 DEPLOYMENT_DIAGRAM_TYPE = "DeploymentDiagram"
+
+# Knowledge Graph diagram type (the KG editor's model, see ``routers/kg_router.py``).
+KG_DIAGRAM_TYPE = "KnowledgeGraphDiagram"
 
 # ---------------------------------------------------------------------------
 # UML Component / Deployment stereotype tokens

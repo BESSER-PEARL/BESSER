@@ -18,7 +18,7 @@ from besser.BUML.metamodel.structural import (
     PrimitiveDataType,
 )
 from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
-from besser.BUML.notations.kg_to_buml.owl2uml._plan import (
+from besser.BUML.notations.kg_to_buml.owl2uml.plan import (
     ModelPlan,
     PlannedAssociation,
     PlannedAttribute,

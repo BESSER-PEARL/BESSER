@@ -19,7 +19,7 @@ from . import naming
 from .axioms import AxiomIndex, primitive_for
 from .canonicalize import Canonicalizer
 from .expressions import ExpressionResolver
-from ._plan import (
+from .plan import (
     ModelPlan, PlannedClass, PlannedAttribute, PlannedDataType, PlannedEnumeration, PlannedAssociation,
     PlannedInvariant,
 )

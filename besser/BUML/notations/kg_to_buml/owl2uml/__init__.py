@@ -12,7 +12,7 @@ paper's three rule tables:
   the classes the OWL phase already produced.
 
 It reads an :class:`rdflib.Graph` and produces the pure-data
-:class:`~besser.BUML.notations.kg_to_buml.owl2uml._plan.ModelPlan` — no BESSER
+:class:`~besser.BUML.notations.kg_to_buml.owl2uml.plan.ModelPlan` — no BESSER
 metamodel types are involved. Lowering the plan onto a BUML
 ``DomainModel`` is the job of
 :mod:`besser.BUML.notations.kg_to_buml.to_buml`, and projecting a
@@ -43,7 +43,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from besser.BUML.notations.kg_to_buml._common import KGConversionWarning
-from besser.BUML.notations.kg_to_buml.owl2uml._plan import ModelPlan
+from besser.BUML.notations.kg_to_buml.owl2uml.plan import ModelPlan
 
 
 def plan_domain_model(

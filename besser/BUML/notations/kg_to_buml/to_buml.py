@@ -60,7 +60,7 @@ from besser.BUML.notations.kg_to_buml._common import KGConversionWarning, add_wa
 from besser.BUML.notations.kg_to_buml.datatype_mapping import PRIMITIVE_BY_NAME
 from besser.BUML.notations.kg_to_buml.owl2uml import naming
 from besser.BUML.notations.ocl.api import parse_ocl
-from besser.BUML.notations.kg_to_buml.owl2uml._plan import (
+from besser.BUML.notations.kg_to_buml.owl2uml.plan import (
     ModelPlan,
     PlannedAssociation,
     PlannedClass,

@@ -14,7 +14,6 @@ the editor's default settings and is laid out afresh.
 
 from __future__ import annotations
 
-import inspect
 from typing import Any, Dict
 
 
@@ -108,17 +107,11 @@ def kg_buml_to_json(content: str) -> Dict[str, Any]:
         # attribute access, not from withholding these.
         "float": float,
     }
-    # Classes and functions only. ``dir`` also lists the package's submodules
-    # (``knowledge_graph``, ``axioms``, ``constraint_specs``, …), and handing a
-    # module to the loader hands over everything it imported: an upload could
-    # reach ``knowledge_graph.copy.dispatch_table.clear()`` and mutate the
-    # interpreter's global state.
+    # ``dir`` also lists the package's submodules (``knowledge_graph``,
+    # ``axioms``, ...); safe_load_buml drops module values itself.
     for name in dir(kg_module):
-        if name.startswith("_"):
-            continue
-        member = getattr(kg_module, name)
-        if inspect.isclass(member) or inspect.isfunction(member):
-            allowed_names[name] = member
+        if not name.startswith("_"):
+            allowed_names[name] = getattr(kg_module, name)
 
     try:
         local_vars = safe_load_buml(strip_buml_imports(content), allowed_names)

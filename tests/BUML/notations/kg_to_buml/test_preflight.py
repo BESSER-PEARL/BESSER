@@ -437,6 +437,47 @@ def test_cycle_detection_stays_fast_on_an_acyclic_diamond_stack():
     assert time.perf_counter() - started < 1.0
 
 
+_SUBCLASS_OF = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
+
+
+def test_cycle_detection_survives_a_chain_deeper_than_the_recursion_limit():
+    """The walk used to recurse once per level and hit RecursionError at ~1000."""
+    from besser.BUML.metamodel.kg import KGClass, KGEdge, KnowledgeGraph
+    from besser.BUML.notations.kg_to_buml._common import find_cycles
+
+    depth = 3000
+    parents = {f"c{i:04d}": {f"c{i + 1:04d}"} for i in range(depth)}
+    assert find_cycles(parents) == []
+    # Closing the chain makes it one cycle, reported once from its smallest id.
+    parents[f"c{depth:04d}"] = {"c0000"}
+    (cycle,) = find_cycles(parents)
+    assert cycle[0] == cycle[-1] == "c0000" and len(cycle) == depth + 2
+
+    # End to end through the preflight.
+    classes = [KGClass(id=f"c{i:04d}", label=f"C{i}", iri=f"http://ex.org/C{i}") for i in range(depth + 1)]
+    kg = KnowledgeGraph(name="deep", nodes=set(classes))
+    for i in range(depth):
+        kg.add_edge(KGEdge(id=f"e{i:04d}", source=classes[i], target=classes[i + 1], iri=_SUBCLASS_OF))
+    assert "CYCLIC_SUBCLASS" not in _codes(analyze_kg_for_class_diagram(kg))
+
+
+def test_find_cycles_reports_each_cycle_once_in_canonical_rotation():
+    from besser.BUML.notations.kg_to_buml._common import find_back_edges, find_cycles
+
+    parents = {
+        "B": {"A"}, "A": {"B", "C"}, "C": {"D"}, "D": {"C"},   # two 2-cycles, entered mid-way
+        "X": {"X"},                                           # a self-loop
+        "P": {"Q"}, "Q": {"R"}, "R": {"P"},                   # a 3-cycle
+    }
+    assert find_cycles(parents) == [
+        ("A", "B", "A"), ("C", "D", "C"), ("P", "Q", "R", "P"), ("X", "X"),
+    ]
+    # The closing edges, in visiting order (roots and parents sorted).
+    assert [(child, parent) for child, parent, _ in find_back_edges(parents)] == [
+        ("B", "A"), ("D", "C"), ("R", "P"), ("X", "X"),
+    ]
+
+
 # --- PROPERTY_NO_RANGE ----------------------------------------------------
 
 

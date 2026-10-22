@@ -268,6 +268,27 @@ def test_generalization_cycles_are_broken():
         cls.all_parents()
 
 
+def test_cycle_breaking_survives_a_chain_deeper_than_the_recursion_limit():
+    """``_break_cycles`` used to recurse once per level (RecursionError at ~1000).
+
+    Called directly: lowering a chain this deep still needs the metamodel's own
+    ``all_parents`` / ``all_specializations``, which recurse too.
+    """
+    from besser.BUML.notations.kg_to_buml.to_buml import _break_cycles
+
+    depth = 3000
+    pairs = [_gen(f"C{i:04d}", f"C{i + 1:04d}") for i in range(depth)]
+    warnings: list = []
+    kept = _break_cycles(_model(*pairs), {}, warnings)
+    assert len(kept) == depth and warnings == []
+
+    kept = _break_cycles(_model(*pairs, _gen(f"C{depth:04d}", "C0000")), {}, warnings)
+    assert len(kept) == depth
+    assert [w.message for w in warnings] == [
+        f"Generalization C{depth:04d} -> C0000 closes an inheritance cycle; dropped."
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Associations
 # ---------------------------------------------------------------------------

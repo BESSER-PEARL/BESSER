@@ -56,7 +56,7 @@ from besser.BUML.metamodel.structural import (
     StringType,
 )
 
-from besser.BUML.notations.kg_to_buml._common import KGConversionWarning, add_warning
+from besser.BUML.notations.kg_to_buml._common import KGConversionWarning, add_warning, find_back_edges
 from besser.BUML.notations.kg_to_buml.datatype_mapping import PRIMITIVE_BY_NAME
 from besser.BUML.notations.kg_to_buml.owl2uml import naming
 from besser.BUML.notations.ocl.api import parse_ocl
@@ -210,33 +210,15 @@ def _break_cycles(model: ModelPlan, renames, warnings) -> List[Tuple[str, str]]:
     for sub, sup in edges:
         parents.setdefault(sub, []).append(sup)
 
-    kept: List[Tuple[str, str]] = []
-    state: Dict[str, int] = {}  # 0 = visiting, 1 = done
     dropped: Set[Tuple[str, str]] = set()
-
-    def visit(node: str) -> None:
-        state[node] = 0
-        for parent in parents.get(node, []):
-            if state.get(parent) == 0:
-                dropped.add((node, parent))
-                add_warning(
-                    warnings,
-                    "CYCLIC_SUBCLASS",
-                    f"Generalization {node} -> {parent} closes an inheritance cycle; dropped.",
-                )
-                continue
-            if parent not in state:
-                visit(parent)
-        state[node] = 1
-
-    for sub, _ in edges:
-        if sub not in state:
-            visit(sub)
-
-    for sub, sup in edges:
-        if sub != sup and (sub, sup) not in dropped:
-            kept.append((sub, sup))
-    return kept
+    for node, parent, _cycle in find_back_edges(parents):
+        dropped.add((node, parent))
+        add_warning(
+            warnings,
+            "CYCLIC_SUBCLASS",
+            f"Generalization {node} -> {parent} closes an inheritance cycle; dropped.",
+        )
+    return [(sub, sup) for sub, sup in edges if sub != sup and (sub, sup) not in dropped]
 
 
 def _build_generalizations(pairs, classes) -> List[Generalization]:

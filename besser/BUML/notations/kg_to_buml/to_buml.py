@@ -56,7 +56,12 @@ from besser.BUML.metamodel.structural import (
     StringType,
 )
 
-from besser.BUML.notations.kg_to_buml._common import KGConversionWarning, add_warning, find_back_edges
+from besser.BUML.notations.kg_to_buml._common import (
+    KGConversionWarning,
+    _unique_name,
+    add_warning,
+    find_back_edges,
+)
 from besser.BUML.notations.kg_to_buml.datatype_mapping import PRIMITIVE_BY_NAME
 from besser.BUML.notations.kg_to_buml.owl2uml import naming
 from besser.BUML.notations.ocl.api import parse_ocl
@@ -168,21 +173,8 @@ def _plan_renames(model: ModelPlan, warnings) -> Dict[str, str]:
                 f"Class {name!r} collides with the BUML primitive of the same name; "
                 f"renamed to {safe!r}.",
             )
-        renames[name] = _claim(safe, taken)
+        renames[name] = _unique_name(safe, taken)
     return renames
-
-
-def _claim(candidate: str, taken: Set[str]) -> str:
-    """Return ``candidate``, or the first free ``candidate_2``, ``candidate_3`` …, and add it to ``taken``.
-
-    The one suffixing scheme every uniquified name in the lowering uses.
-    """
-    name, index = candidate, 2
-    while name in taken:
-        name = f"{candidate}_{index}"
-        index += 1
-    taken.add(name)
-    return name
 
 
 def _resolve(name: str, renames: Dict[str, str]) -> str:
@@ -330,7 +322,7 @@ def _build_enumerations(model: ModelPlan, renames, warnings) -> Dict[str, Enumer
             # ``Mapper.literal_value`` quotes strings; a literal like "foo bar"
             # would otherwise be rejected by ``NamedElement.name``.
             text = str(raw).strip().strip('"')
-            literal = _claim(naming.sanitize(text) or "_", taken)
+            literal = _unique_name(naming.sanitize(text) or "_", taken)
             if literal != text:
                 renamed.append(f"{text!r} -> {literal}")
             literals.append(EnumerationLiteral(name=literal))
@@ -710,7 +702,7 @@ def _instantiate_associations(planned, classes, generalizations, out: ClassConve
 
         # The reverse end can always be renamed; the forward one cannot without
         # invalidating the generated OCL.
-        source_role = _claim(
+        source_role = _unique_name(
             assoc.source_role or _default_source_role(assoc),
             _navigable_names(target_class) | {target_role},
         )
@@ -768,7 +760,7 @@ def _unique_association_name(assoc: PlannedAssociation, used: Set[str]) -> str:
     if assoc.name not in used:
         used.add(assoc.name)
         return assoc.name
-    return _claim(f"{assoc.name}_{assoc.source}", used)
+    return _unique_name(f"{assoc.name}_{assoc.source}", used)
 
 
 # ----------------------------------------------------------------------
@@ -883,4 +875,4 @@ def _types_resolve(body, type_names, out, label) -> bool:
 
 def _unique_constraint_name(context_name, invariant, used: Set[str]) -> str:
     hint = invariant.name or invariant.origin_rule or "inv"
-    return _claim(naming.sanitize(f"{context_name}_{hint}") or f"{context_name}_inv", used)
+    return _unique_name(naming.sanitize(f"{context_name}_{hint}") or f"{context_name}_inv", used)

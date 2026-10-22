@@ -29,6 +29,6 @@ bocl==1.0.3
 tiktoken>=0.7,<1
 # RDF graph handling for the Knowledge Graph metamodel and its OWL/TTL
 # importers, which are part of the library surface (besser.BUML.metamodel.kg).
-# pyshacl lives in the backend requirements instead: it is only reached from
-# lazily imported web-editor code, so the library does not need it installed.
+# pyshacl, which only the KG consistency check needs, is the optional
+# ``besser[kg]`` extra (setup.cfg) and a backend requirement.
 rdflib>=7.0.0

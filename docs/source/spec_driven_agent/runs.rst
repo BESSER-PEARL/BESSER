@@ -89,6 +89,32 @@ asked for a change, so a change is made. When the base has expired the runner
 warns and falls back to normal from-scratch generation rather than failing the
 request.
 
+Every run records the class diagram it was given (classes with attribute
+types and optional/required, enumerations with their literals, associations
+with their ends and multiplicities) in the run's ``.besser_recipe.json`` as
+``model.user_model``. A modify run compares the current diagram with it before
+any LLM call. When anything changed, the agent receives the full change list,
+for example ``Booking.bookingNumber type str -> int; Person.phone removed;
+association handledBy: Booking.handledBy[1..1] - ... -> Booking.handledBy[0..1]
+- ...``, in its project inventory and as a Phase 2 issue, with the instruction
+that the new model wins. The user's own request text is not changed. Elements
+are matched by their editor id when both models carry one, so a rename reads as
+``class Book renamed to Publication``; otherwise they are matched by name. A
+base run recorded before this existed only names its classes, and those include
+classes the agent added itself, so it gets no change list.
+
+After Phase 2 a deterministic check compares the FastAPI backend
+(``sql_alchemy.py`` and the ``<Class>Create`` schemas in
+``pydantic_classes.py``) with the changed attributes. A removed attribute still
+defined, an added one missing, a type still declared as the old one, or an
+optionality the code contradicts is a ``model conformance:`` blocker for the
+Phase 3 fix loop (see :doc:`validation`). Other stacks are not checked.
+
+The same comparison is available before the run: ``/preview`` returns it as
+``model_change`` (see :ref:`spec-driven-preview-model-change`), so a client can
+ask whether to update the existing app or start fresh when the model changed a
+lot.
+
 A repository that was pushed to GitHub by a previous run can be brought back
 the same way: ``POST /besser_api/spec-driven/import-github-run`` re-imports it
 as a run whose ``run_id`` can then seed a ``mode: "modify"`` run. See

@@ -47,6 +47,11 @@ and no Docker. Missing runtime prerequisites do not count as verified execution:
   an unimplemented method.
 - Framework coherence — generated code importing a rival framework into the
   chosen scaffold (Flask into a FastAPI project).
+- Model conformance (modify runs whose class diagram changed, FastAPI backend
+  only) — ``sql_alchemy.py`` or a ``<Class>Create`` schema that still defines
+  a removed attribute, lacks an added one, declares a changed type as the old
+  one, or contradicts a changed optional/required flag. Blocker; only the
+  changed attributes are checked. See :ref:`spec-driven-modify-mode`.
 - Generated model-action contracts — actual handler paths and functions, with
   deterministic checks for missing handlers and known unimplemented bodies.
   Absence of a known stub is structural evidence, not proof of business behavior.

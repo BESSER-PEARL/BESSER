@@ -24,7 +24,8 @@ Endpoints
    * - ``/spec-driven/preview``
      - POST
      - Pre-flight plan (primary model + target generator). No API key, no
-       LLM call.
+       LLM call. For ``mode: "modify"`` it also returns ``model_change``
+       (see :ref:`spec-driven-preview-model-change`).
    * - ``/spec-driven/config``
      - GET
      - Caps, feature flags, provider default models, and free-tier
@@ -146,6 +147,45 @@ Request body
    per deployment via ``BESSER_LLM_*`` environment variables — read the live
    values from ``GET /besser_api/spec-driven/config`` rather than hardcoding
    them in a client. The full variable reference is in :doc:`configuration`.
+
+.. _spec-driven-preview-model-change:
+
+Model change in the preview
+---------------------------
+
+With ``mode: "modify"`` and a
+``base_run_id`` whose workspace is still available, the ``/preview`` response
+carries ``model_change``: how the project's class diagram relates to the one
+the base run was built from. It is ``null`` for ``mode: "generate"``, an
+unknown or expired base run, or a base run without a recorded class model.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Field
+     - Meaning
+   * - ``verdict``
+     - ``small``, ``large`` or ``unrelated``. ``large`` means more than 15% of
+       the base model's class and attribute names are gone. ``unrelated``
+       means most of it is gone and the new model mostly reuses no base names;
+       deleting classes alone is never ``unrelated``.
+   * - ``basis``
+     - ``attributes``, or ``classes`` when the base run predates attribute
+       recording (then ``changes`` is empty).
+   * - ``gone`` / ``overlap``
+     - Share of the base model no longer present, and share of its names
+       still in use (0 to 1).
+   * - ``removed`` / ``added``
+     - ``Class`` and ``Class.attribute`` names, for display. Renamed elements
+       are not listed here.
+   * - ``renamed``
+     - ``[{"from": "Room", "to": "Suite"}, {"from": "Room.floorType", "to":
+       "Room.floor"}]``: classes and attributes paired across a name change
+       (by element id, or by the same name ignoring case). Empty when none.
+   * - ``changes``
+     - One line per change, the list a modify run receives (see
+       :ref:`spec-driven-modify-mode`).
 
 SSE event types
 ---------------

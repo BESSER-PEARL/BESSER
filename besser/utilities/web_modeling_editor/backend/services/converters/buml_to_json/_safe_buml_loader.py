@@ -517,6 +517,11 @@ def safe_load_buml(
     allowed_names:
         Mapping of names that may appear at the top level of an expression.
         Typically the BUML classes and helper constants the file constructs.
+        A module value is dropped, so its name is refused like any unknown
+        one: a module hands over everything it imported (an upload could
+        reach ``knowledge_graph.copy.dispatch_table.clear()`` and change
+        interpreter-wide state). Callers may therefore build the mapping
+        from ``dir(package)``, which lists submodules too.
 
     Returns
     -------
@@ -538,6 +543,11 @@ def safe_load_buml(
         raise SafeBumlLoaderError(
             f"BUML content too large ({len(content)} chars > {_MAX_CONTENT_BYTES})"
         )
+
+    allowed_names = {
+        name: value for name, value in allowed_names.items()
+        if not isinstance(value, types.ModuleType)
+    }
 
     tree = ast.parse(content, mode="exec")
 

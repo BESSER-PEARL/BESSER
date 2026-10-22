@@ -1,0 +1,261 @@
+"""Shared helpers for the KG → BUML notation."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+
+from besser.BUML.metamodel.kg import KGEdge, KGNode, KnowledgeGraph
+from besser.BUML.metamodel.kg.ids import short_digest
+from besser.utilities.identifiers import sanitize_identifier
+from besser.BUML.metamodel.kg.iri import local_name as _local_name
+from besser.BUML.metamodel.kg.constants import (
+    RDF as RDF_NS,
+    RDFS as RDFS_NS,
+    XSD as XSD_NS,
+)
+from besser.BUML.notations.kg_rdf._common import (
+    KGConversionWarning,
+    add_warning,
+    is_meta_vocab,
+    looks_like_datatype_iri,
+)
+
+# --- Well-known predicate IRIs (full form, as emitted by rdflib) ---
+RDF_TYPE = f"{RDF_NS}type"
+RDFS_SUBCLASS_OF = f"{RDFS_NS}subClassOf"
+RDFS_DOMAIN = f"{RDFS_NS}domain"
+RDFS_RANGE = f"{RDFS_NS}range"
+RDFS_LABEL = f"{RDFS_NS}label"
+
+# --- Framework namespaces, used by the datatype-IRI predicates below ---
+XSD_NAMESPACE = XSD_NS
+RDF_NAMESPACE = RDF_NS
+RDFS_NAMESPACE = RDFS_NS
+
+
+def all_datatype_refs(members: List[str]) -> bool:
+    """True when ``members`` is non-empty and every member is a datatype IRI."""
+    return bool(members) and all(looks_like_datatype_iri(m) for m in members)
+
+
+#: ``KGNode.metadata`` key listing the preflight issue ids the user already reviewed and
+#: resolved with a "keep as is" choice. Those choices change nothing in the graph (the
+#: converter's default already does the right thing), so without a durable record the
+#: analyzer would report the same issue again on every re-run. The marker lives in node
+#: metadata because that survives the JSON and BUML round-trips; its owner is the first
+#: node the issue affects.
+ACKNOWLEDGED_ISSUES_KEY = "acknowledgedIssues"
+
+
+def acknowledge_issue(kg: KnowledgeGraph, issue_id: str, affected_node_ids: List[str]) -> None:
+    """Record on ``kg`` that ``issue_id`` was reviewed and kept as is.
+
+    A no-op when the issue names no node present in the graph — it then simply keeps being
+    reported, as it did before acknowledgements existed.
+    """
+    owner = kg.get_node(affected_node_ids[0]) if affected_node_ids else None
+    if owner is None or not issue_id:
+        return
+    acknowledged = list(owner.metadata.get(ACKNOWLEDGED_ISSUES_KEY, ()))
+    if issue_id not in acknowledged:
+        acknowledged.append(issue_id)
+        owner.set_metadata_item(ACKNOWLEDGED_ISSUES_KEY, acknowledged)
+
+
+def is_issue_acknowledged(kg: KnowledgeGraph, issue_id: str, affected_node_ids: List[str]) -> bool:
+    """True when :func:`acknowledge_issue` recorded ``issue_id`` on ``kg``."""
+    owner = kg.get_node(affected_node_ids[0]) if affected_node_ids else None
+    return owner is not None and issue_id in owner.metadata.get(ACKNOWLEDGED_ISSUES_KEY, ())
+
+
+# Private aliases kept for call sites that imported the underscore names.
+_looks_like_datatype_iri = looks_like_datatype_iri
+_all_datatype_refs = all_datatype_refs
+
+# Compact forms occasionally appear when KGs are hand-edited in the web
+# editor; treat both forms as equivalent.
+_PREDICATE_ALIASES: Dict[str, str] = {
+    "rdf:type": RDF_TYPE,
+    "a": RDF_TYPE,
+    "rdfs:subClassOf": RDFS_SUBCLASS_OF,
+    "rdfs:domain": RDFS_DOMAIN,
+    "rdfs:range": RDFS_RANGE,
+    "rdfs:label": RDFS_LABEL,
+}
+
+
+def normalize_predicate(iri_or_label: Optional[str]) -> Optional[str]:
+    """Normalise a predicate identifier to its canonical full IRI when possible."""
+    if not iri_or_label:
+        return iri_or_label
+    return _PREDICATE_ALIASES.get(iri_or_label, iri_or_label)
+
+
+# Re-exported: the one implementation lives in the metamodel package.
+local_name = _local_name
+
+
+def _unique_name(base: str, used: Set[str]) -> str:
+    """Return ``base``, or the first free ``base_2``, ``base_3`` …, and add it to ``used``.
+
+    The one suffixing scheme of the notation: every name it uniquifies (BUML
+    type, literal, role and constraint names, the canonicaliser's UML names,
+    preflight identifiers) goes through it.
+    """
+    candidate, counter = base, 2
+    while candidate in used:
+        candidate = f"{base}_{counter}"
+        counter += 1
+    used.add(candidate)
+    return candidate
+
+
+def sanitize_python_identifier(
+    label: Optional[str],
+    fallback_prefix: str,
+    used_names: Set[str],
+) -> str:
+    """Produce a unique Python-identifier-safe name based on ``label``.
+
+    - Replaces any non-identifier characters with ``_``.
+    - Prefixes a leading digit with the fallback prefix.
+    - Avoids collisions by suffixing ``_2``, ``_3``, … against ``used_names``.
+    - Avoids Python keywords.
+
+    The chosen name is added to ``used_names`` before returning.
+    """
+    base = sanitize_identifier(
+        (label or "").strip() or fallback_prefix,
+        ascii_only=True,
+        strip_underscores=True,
+        digit_prefix=f"{fallback_prefix}_",
+        empty=fallback_prefix,
+        escape_keywords=True,
+    )
+    return _unique_name(base, used_names)
+
+
+@dataclass
+class GraphIndexes:
+    """Pre-computed lookup tables over a :class:`KnowledgeGraph`."""
+
+    nodes_by_id: Dict[str, KGNode] = field(default_factory=dict)
+    out_edges: Dict[str, List[KGEdge]] = field(default_factory=lambda: defaultdict(list))
+    in_edges: Dict[str, List[KGEdge]] = field(default_factory=lambda: defaultdict(list))
+
+    def out_with_predicate(self, node_id: str, predicate_iri: str) -> List[KGEdge]:
+        """All outgoing edges of ``node_id`` whose predicate matches ``predicate_iri``."""
+        return [e for e in self.out_edges.get(node_id, []) if normalize_predicate(e.iri) == predicate_iri]
+
+    def in_with_predicate(self, node_id: str, predicate_iri: str) -> List[KGEdge]:
+        """All incoming edges of ``node_id`` whose predicate matches ``predicate_iri``."""
+        return [e for e in self.in_edges.get(node_id, []) if normalize_predicate(e.iri) == predicate_iri]
+
+
+def build_indexes(kg: KnowledgeGraph) -> GraphIndexes:
+    """Build :class:`GraphIndexes` from a :class:`KnowledgeGraph`."""
+    idx = GraphIndexes()
+    for node in kg.nodes:
+        idx.nodes_by_id[node.id] = node
+    for edge in kg.edges:
+        idx.out_edges[edge.source.id].append(edge)
+        idx.in_edges[edge.target.id].append(edge)
+    return idx
+
+
+def sorted_by_id(items: Iterable[Any]) -> List[Any]:
+    """Stable sort by ``.id`` for deterministic output."""
+    return sorted(items, key=lambda x: x.id)
+
+
+def find_back_edges(parents: Dict[str, Iterable[str]]) -> List[Tuple[str, str, Tuple[str, ...]]]:
+    """Walk a ``child -> parents`` map depth-first and return every edge that closes a cycle.
+
+    Each entry is ``(child, parent, path)``: ``child -> parent`` is the closing
+    edge and ``path`` the cycle it closes, from ``parent`` down to ``child``. A
+    self-loop is reported with a one-node path. Entries come in visiting order,
+    which is deterministic: roots and parents are visited in sorted order.
+
+    Three-colour DFS: a node is grey while it is on the current path and black
+    once fully explored, and only a grey hit is a cycle, so every node and edge
+    is visited once. (A walk that only tracked the current path re-explored a
+    node once per route to it -- every simple path rather than every cycle,
+    exponential on a stack of diamonds.)
+
+    Iterative, with an explicit stack: an ontology can nest ``rdfs:subClassOf``
+    far deeper than Python's recursion limit.
+
+    This is the one cycle walk for the notation: :func:`find_cycles` (preflight)
+    and ``to_buml._break_cycles`` (lowering) both read it.
+    """
+    GREY, BLACK = 0, 1
+    state: Dict[str, int] = {}
+    found: List[Tuple[str, str, Tuple[str, ...]]] = []
+    for root in sorted(parents):
+        if root in state:
+            continue
+        state[root] = GREY
+        path: List[str] = [root]
+        pending = [iter(sorted(parents.get(root, ())))]
+        while pending:
+            node = path[-1]
+            for parent in pending[-1]:
+                colour = state.get(parent)
+                if colour == GREY:
+                    found.append((node, parent, tuple(path[path.index(parent):])))
+                elif colour is None:
+                    state[parent] = GREY
+                    path.append(parent)
+                    pending.append(iter(sorted(parents.get(parent, ()))))
+                    break
+            else:                       # every parent of `node` explored
+                pending.pop()
+                state[path.pop()] = BLACK
+    return found
+
+
+def find_cycles(parents: Dict[str, Set[str]]) -> List[Tuple[str, ...]]:
+    """Find the ``rdfs:subClassOf`` cycles in a ``child -> {parents}`` map.
+
+    Returns one canonical tuple per cycle, each closed (first id repeated last)
+    and rotated to start at its lexicographically smallest member, so the same
+    cycle is never reported twice under a different rotation. Sorted, so the
+    result is stable across runs and hash seeds. The walk is
+    :func:`find_back_edges`.
+    """
+    found: Set[Tuple[str, ...]] = set()
+    for _child, _parent, cycle in find_back_edges(parents):
+        # Rotate so the smallest id leads: A->B->A and B->A->B are one
+        # cycle, and reporting both makes applying both decisions fail.
+        pivot = cycle.index(min(cycle))
+        rotated = cycle[pivot:] + cycle[:pivot]
+        found.add(rotated + (rotated[0],))
+    return sorted(found)
+
+
+__all__ = [
+    "find_back_edges",
+    "find_cycles",
+    "short_digest",
+    "RDF_TYPE",
+    "RDFS_SUBCLASS_OF",
+    "RDFS_DOMAIN",
+    "RDFS_RANGE",
+    "RDFS_LABEL",
+    "XSD_NAMESPACE",
+    "RDF_NAMESPACE",
+    "RDFS_NAMESPACE",
+    "looks_like_datatype_iri",
+    "all_datatype_refs",
+    "is_meta_vocab",
+    "normalize_predicate",
+    "local_name",
+    "sanitize_python_identifier",
+    "KGConversionWarning",
+    "GraphIndexes",
+    "build_indexes",
+    "sorted_by_id",
+    "add_warning",
+]

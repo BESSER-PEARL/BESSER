@@ -66,6 +66,7 @@ from besser.utilities.web_modeling_editor.backend.services.deployment import (
 from besser.utilities.web_modeling_editor.backend.routers import (
     generation_router,
     conversion_router,
+    kg_router,
     validation_router,
     deployment_router,
     spec_driven_router,
@@ -285,6 +286,8 @@ app.include_router(github_deploy_router, prefix="/besser_api")
 # Include application routers
 app.include_router(generation_router.router)
 app.include_router(conversion_router.router)
+app.include_router(kg_router.router)
+app.include_router(kg_router.legacy_router)
 app.include_router(validation_router.router)
 app.include_router(deployment_router.router)
 app.include_router(spec_driven_router.router)
@@ -344,7 +347,8 @@ def get_api_root():
             "validate_diagram": "/besser_api/validate-diagram",
             "csv_to_domain_model": "/besser_api/csv-to-domain-model",
             "get_json_model_from_image": "/besser_api/get-json-model-from-image",
-            "get_json_model_from_kg": "/besser_api/get-json-model-from-kg",
+            "get_json_model_from_kg": "/besser_api/get-json-model-from-kg (deprecated, use kg/import-owl + kg/to-class-diagram)",
+            "knowledge_graph": "/besser_api/kg/...",
             "transform_agent_model": "/besser_api/transform-agent-model-json",
             "recommend_agent_config_llm": "/besser_api/recommend-agent-config-llm",
             "get_agent_config_manual_mapping": "/besser_api/agent-config-manual-mapping",

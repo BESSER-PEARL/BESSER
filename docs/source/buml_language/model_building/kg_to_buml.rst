@@ -81,3 +81,225 @@ The result of this transformation is a string with the code specified in the Pla
         Organization "0..1" -- "0..1" Place : location
 
         @enduml
+
+From OWL 2 / SHACL to B-UML + OCL
+---------------------------------
+
+The LLM-based transformation above is a best-effort reading of an arbitrary
+graph. When the knowledge graph is a proper **OWL 2 ontology** — optionally with
+**SHACL shapes** — BESSER offers a second, fully deterministic path that needs no
+API key and preserves the graph's formal semantics, translating them into a
+:doc:`../model_types/structural` enriched with OCL constraints.
+
+It implements the transformation rules of *"Translating OWL 2 Ontologies and
+SHACL Shapes into UML/OCL Models"* (Dalle Lucca Tosi, Ul Haq & Cabot, KGMDSE
+2026): OWL 2 constructs that map directly onto UML (classes, associations,
+attributes, generalizations, enumerations, cardinality restrictions), those that
+additionally need an OCL invariant (class expressions, property
+characteristics, disjointness), and SHACL shapes, which become further OCL
+invariants over the classes the OWL phase produced.
+
+.. code-block:: python
+
+    from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
+    from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
+
+    kg = owl_file_to_knowledge_graph("ontology.ttl")
+    result = kg_to_class_diagram(kg, model_name="MyDomain")
+
+    domain_model = result.domain_model          # classes, associations, generalizations
+    constraints = domain_model.constraints      # OCL invariants
+    for warning in result.warnings:             # non-fatal diagnostics
+        print(warning.code, warning.message)
+
+The same function serves knowledge graphs drawn directly in the
+`web modeling editor <https://editor.besser-pearl.org/>`_: the editor's node
+types (class, property, individual) stand in for the OWL declarations an
+imported ontology carries explicitly.
+
+Every generated invariant is a standard ``Constraint`` with ``language="OCL"``
+and an expression of the form ``context <Class> inv <name>: <body>``, so it
+round-trips through the editor and feeds the OCL-aware generators.
+
+How it works
+~~~~~~~~~~~~
+
+The conversion runs in three stages, each independently testable:
+
+``kg_to_rdf``
+    Projects the :class:`~besser.BUML.metamodel.kg.KnowledgeGraph` — however it
+    was built — into an in-memory RDF graph.
+
+``owl2uml``
+    Applies the paper's rule tables to that graph, producing a small,
+    dependency-free intermediate UML model.
+
+``to_buml``
+    Lowers the intermediate model onto B-UML, reconciling it with the
+    metamodel's validation rules (association end-name uniqueness, the fixed
+    primitive set, multiplicity bounds), and checks that every invariant can
+    navigate what it references from its own context.
+
+The transformation is deterministic: identical input always produces an
+identical model.
+
+.. note::
+
+    A few OWL constructs cannot be represented one-to-one in UML. Where the
+    lowering has to make a choice — merging associations that would otherwise
+    give a class two identically-named ends, clamping an out-of-range
+    multiplicity, breaking an inheritance cycle — it records a
+    ``KGConversionWarning`` on ``result.warnings`` rather than failing or
+    silently dropping the construct (see `Lowering warnings`_). A SHACL count or length that is not a
+    whole number (``sh:minCount "lots"``) is skipped with a
+    ``SHACL_COUNT_INVALID`` warning instead of becoming a meaningless
+    comparison.
+
+.. note::
+
+    Names reach OCL, whose identifiers are ASCII (``[a-zA-Z_][a-zA-Z0-9_]*``), so
+    the conversion maps every other character of a class, property or role name
+    to ``_`` (``Café`` becomes ``Caf_``). A name that kept its accent would make
+    ``self.café`` unparseable and the invariant would be dropped.
+
+Coverage and deviations
+~~~~~~~~~~~~~~~~~~~~~~~
+
+The conversion is TBox-only: it produces a class diagram, so rules that act on
+individuals (``NamedIndividual``, ``ClassAssertion``, property assertions and
+their negative forms) are not translated. Where B-UML has no counterpart for
+what a rule asks for, the conversion makes these choices:
+
+* **Custom datatypes are classes.** B-UML has nine fixed primitives and a
+  ``DataType`` cannot own attributes, so a custom ``rdfs:Datatype``, a
+  datatype restriction (facets become an OCL invariant on its ``value``) and a
+  typed data ``owl:oneOf`` become a class carrying one ``value`` attribute and
+  an invariant. A ``oneOf`` over plain strings becomes an ``Enumeration``.
+* **A named class that is exactly a ``oneOf`` of individuals is an
+  enumeration.** Properties ranging over it become attributes typed by it. If
+  the class also takes part in other axioms it stays a class and a
+  ``ONEOF_CLASS_KEPT`` warning is recorded.
+* **``owl:hasKey``** becomes a uniqueness invariant; a single functional key
+  that is an attribute of the class is also marked ``is_id``.
+* **Derived properties.** B-OCL has no ``def`` form, so a property chain
+  (``owl:propertyChainAxiom``) or a data property that only its
+  sub-properties feed is stated as an invariant, and its association end or
+  attribute is marked ``is_derived``. Such a property is "exclusively derived"
+  when no individual asserts it directly; otherwise the chain only implies it.
+* **Disjointness** is emitted as pairwise OCL invariants. No
+  ``GeneralizationSet`` is built.
+* **One association end per name and class.** B-UML lets a class reach only
+  one association end of each name, its own or inherited. The rules declare a
+  property's end on every class that constrains it — its domain and each
+  restriction class — so a class below two of them would inherit two. Ends are
+  never renamed (every ``self.<property>`` in the generated OCL navigates by
+  that name); they are merged instead. A property one class declares towards
+  several targets gets one end to a union class over the targets
+  (``ASSOC_FANOUT_MERGED``). A property several classes declare for a shared
+  subclass gets one end, on the declaring class that is an ancestor of the
+  others (``ASSOC_INHERITED_SHADOWED``) or else on a new abstract
+  ``_<property>_Domain`` parent of them all (``ASSOC_END_HOISTED``); whatever
+  a class's own end said beyond the merged one — a minimum, a maximum, a
+  narrower target — is restated as an invariant on that class, such as
+  ``self.hasPart->size() >= 1`` for ``owl:minCardinality 1``.
+
+Before converting, the KG can be checked with
+``analyze_kg_for_class_diagram()``, which reports ambiguities (a property with
+no domain, a class referenced but never declared, …) together with the
+resolutions available for each. This is what the editor's KG refinement dialog
+drives.
+
+Properties without a domain
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A property declared without an ``rdfs:domain`` has no class to attach to, so it
+is placed on a synthetic ``Thing``. In OWL every class is implicitly a subclass
+of ``owl:Thing``, but UML has no such rule: unless the classes are actually made
+to inherit from it, an OCL invariant that navigates the property resolves from
+nowhere, because OCL looks a feature up on the context class and its
+*ancestors* — never its subclasses.
+
+``analyze_kg_for_class_diagram()`` therefore raises a ``PROPERTY_NO_DOMAIN``
+issue for each such property that something references — an ABox assertion, an
+``rdfs:subPropertyOf`` axiom, or a SHACL ``sh:path``. Accepting the recommended
+``attach_to_thing`` resolution gives the property a domain *and* makes every
+top-level class inherit from ``Thing`` — including the auxiliary classes the
+conversion materialises, except one that redeclares an attribute ``Thing``
+carries — so those invariants resolve. A restriction class on such a property
+then inherits ``Thing``'s end, and the two merge as described above.
+
+Converting without accepting it is still fine: the invariants that navigate
+the property from a class that does not inherit from ``Thing`` are dropped
+with an ``OCL_DROPPED_UNRESOLVED_FEATURE`` warning rather than shipped in a
+form no evaluator can read. Nothing else is lost either way. On BIBO, for
+instance, 108 of the 128 invariants survive an unrefined conversion (the other
+20 navigate a domain-less property) and all 128 a refined one; in both, the
+``owl:minCardinality 1`` on ``dc:hasPart`` that ``bibo:Periodical`` and its
+siblings share is kept as an invariant on the restriction class.
+
+Lowering warnings
+~~~~~~~~~~~~~~~~~
+
+The lowering onto B-UML reports these codes on ``result.warnings``. A
+``*_DROPPED_*`` code means the construct is not in the model; every other code
+is informational.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
+
+   * - Code
+     - Meaning
+   * - ``NAME_SHADOWS_PRIMITIVE``
+     - A class is named after a B-UML primitive; it is renamed with a ``_`` suffix.
+   * - ``ENUM_LITERAL_RENAMED``
+     - Enumeration literals that are not valid or unique names are renamed.
+   * - ``CYCLIC_SUBCLASS``
+     - A generalization closing an inheritance cycle is dropped.
+   * - ``AUX_CLASSES_MATERIALISED``, ``DATA_RANGES_MATERIALISED``,
+       ``EXTERNAL_CLASSES_STUBBED``, ``DEPRECATED_CLASSES``
+     - Classifications B-UML has nowhere to store; also on ``result.class_stereotypes``.
+   * - ``TYPE_UNRESOLVED``
+     - A type name resolves to nothing; the feature is typed ``String``.
+   * - ``MULTIPLICITY_CLAMPED``
+     - An upper bound of 0 is clamped to 1 (an invariant keeps the original).
+   * - ``ATTR_INHERITED_SHADOWED``
+     - An attribute an ancestor already declares is not declared again.
+   * - ``ASSOC_FANOUT_MERGED``
+     - One class's associations of one name to several targets are merged
+       onto a union class.
+   * - ``ASSOC_INHERITED_SHADOWED``
+     - An end an ancestor also declares is merged into the ancestor's; any
+       narrower bound or target is restated as an invariant.
+   * - ``ASSOC_END_HOISTED``
+     - An end several classes declare for a shared subclass is declared once,
+       on a new abstract parent; each class's narrower bound or target is
+       restated as an invariant.
+   * - ``NAME_SHADOWS_ATTRIBUTE``
+     - A name is both an attribute and an association end of a class; kept.
+   * - ``ASSOC_DROPPED``
+     - B-UML rejected an association; the message carries its reason.
+   * - ``OCL_DROPPED_UNRESOLVED_FEATURE``
+     - An invariant navigates a feature its context cannot reach.
+   * - ``OCL_DROPPED_UNKNOWN_TYPE``
+     - An invariant names a type the model does not have.
+   * - ``OCL_DROPPED_MALFORMED_BODY``
+     - An invariant contains a bare ``context`` token.
+   * - ``OCL_DROPPED_INVALID``
+     - The OCL parser rejects an invariant against the model.
+
+Round-tripping a knowledge graph
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A knowledge graph is a first-class project model, so it round-trips through
+B-UML source like every other diagram type — on its own via ``/export-buml``
+and ``/get-json-model``, or as one section of a whole project via
+``/export-project-as-buml`` and ``/get-project-json-model``. In Python, the
+same pair is :func:`besser.utilities.buml_code_builder.kg_model_to_code` and
+the ``kg_buml_to_json`` converter.
+
+Independently of B-UML, the graph can be written back out as RDF —
+:func:`besser.BUML.notations.kg_rdf.exporter.serialize_knowledge_graph` emits Turtle or
+RDF/XML, and chooses between OWL restrictions, SHACL shapes, or both. Importing
+an ontology, editing it in the graphical editor, and exporting it again is
+designed to be lossless.

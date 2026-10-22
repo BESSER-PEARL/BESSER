@@ -243,27 +243,44 @@ def _var_set(var_names: List[str]) -> str:
 def _literal(value: Any) -> str:
     """Render ``value`` as a Python literal safe to ``exec``.
 
-    Only JSON-safe types are rendered structurally; anything else degrades to
-    its ``str()`` form so a stray object can never emit a ``repr`` that is not
-    valid Python (``<Foo object at 0x…>``).
+    Only JSON-compatible types are accepted. A subclass of a scalar type (an
+    rdflib ``URIRef`` is a ``str``, an ``IntEnum`` an ``int``) is written as
+    its base type, whose ``repr`` is a literal where the subclass's is not. A
+    ``set`` becomes a list in sorted order, so the output does not depend on
+    hash order.
+
+    Raises:
+        TypeError: For any other type. Writing its ``str()`` instead would
+            silently change the value's type on the way back.
     """
-    if isinstance(value, float) and not math.isfinite(value):
-        # repr() gives bare `nan` / `inf`, which are names Python does not
-        # define -- the generated module then fails to load with NameError.
-        if math.isnan(value):
-            return "float('nan')"
-        return "float('inf')" if value > 0 else "float('-inf')"
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None:
+        return "None"
+    if isinstance(value, bool):
+        return repr(bool(value))
+    if isinstance(value, int):
+        return repr(int(value))
+    if isinstance(value, float):
+        value = float(value)
+        if not math.isfinite(value):
+            # repr() gives bare `nan` / `inf`, which are names Python does not
+            # define -- the generated module then fails to load with NameError.
+            if math.isnan(value):
+                return "float('nan')"
+            return "float('inf')" if value > 0 else "float('-inf')"
         return repr(value)
     if isinstance(value, str):
-        return repr(value)
+        return repr(str(value))
     if isinstance(value, Mapping):      # includes the read-only view node.metadata returns
         items = ", ".join(f"{_literal(k)}: {_literal(v)}" for k, v in value.items())
         return "{" + items + "}"
-    if isinstance(value, (list, tuple, set)):
-        rendered = ", ".join(_literal(v) for v in value)
-        return "[" + rendered + "]"
-    return repr(str(value))
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_literal(v) for v in value) + "]"
+    if isinstance(value, (set, frozenset)):
+        return "[" + ", ".join(sorted(_literal(v) for v in value)) + "]"
+    raise TypeError(
+        f"kg_model_to_code: cannot write a {type(value).__name__} value; "
+        "node, edge and axiom data must be JSON-compatible."
+    )
 
 
 def _unique_var(prefix: str, hint: str, used: Set[str]) -> str:

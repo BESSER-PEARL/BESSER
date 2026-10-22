@@ -59,6 +59,7 @@ class Mapper:
         self._datarange_cache: dict = {}          # BNode -> DataType name (dedup shared anon data ranges)
         self._composite_datarange_cache: dict = {}  # (kind, members) -> DataType name (dedup by structure)
         self._enum_defs: dict[URIRef, BNode] = {}  # D20: named class -> the oneOf node it is an enumeration of
+        self._datatypes_in_progress: set[str] = set()  # D37: datatype names whose definition is being followed
         self.resolver = ExpressionResolver(self)
 
         primary = (list(self.ax.sorted_named_classes) + list(self.ax.sorted_object_props)
@@ -369,8 +370,19 @@ class Mapper:
         if isinstance(node, URIRef):
             if node in self.ax.datatypes():          # custom rdfs:Datatype (D09/D37)
                 dt = self.canon.name(node)
-                if dt not in self.model.datatypes and dt not in self.model.enumerations:
+                if dt in self._datatypes_in_progress:
+                    # Reached again while its own definition is being followed
+                    # (``A ≡ unionOf(B, …)``, ``B ≡ unionOf(A, …)``). The name is
+                    # registered and the outer call finishes the type, so this
+                    # reference just uses the name.
+                    self.warn("DATATYPE_CYCLIC",
+                              f"Datatype '{dt}' is defined in terms of itself; OWL 2 requires "
+                              f"datatype definitions to be acyclic. The definition is followed "
+                              f"once and the inner reference kept as a reference to '{dt}'.")
+                elif dt not in self.model.datatypes and dt not in self.model.enumerations:
+                    self._datatypes_in_progress.add(dt)
                     self._define_datatype(node, dt)
+                    self._datatypes_in_progress.discard(dt)
                 self._name_to_iri.setdefault(dt, node)
                 return dt
             return self.register_primitive(primitive_for(node))
@@ -383,8 +395,24 @@ class Mapper:
         return self.register_primitive("String")
 
     def _datatype_definition(self, dt):
-        """The data range a custom datatype is defined as (D37), or ``None`` for a bare declaration."""
-        for definition in sorted(self.g.objects(dt, OWL.equivalentClass), key=str):
+        """The data range a custom datatype is defined as (D37), or ``None`` for a bare declaration.
+
+        Read off every IRI the canonicaliser folded into ``dt``'s group (D27), so
+        a definition stated on an alias is not lost. An ``owl:equivalentClass``
+        to another custom datatype of that same group (``A ≡ A``, ``A ≡ B ≡ A``,
+        a plain ``A ≡ B``) is the merge itself, not a definition: following it
+        would make the datatype a ``value`` wrapper of itself, or recurse
+        forever. (An XSD datatype in the group, ``A ≡ xsd:string``, is a real
+        definition.)
+        """
+        group = set(self.canon.group(dt))
+        candidates = {
+            definition
+            for member in group
+            for definition in self.g.objects(URIRef(member), OWL.equivalentClass)
+            if not (str(definition) in group and definition in self.ax.datatypes())
+        }
+        for definition in sorted(candidates, key=str):
             if isinstance(definition, BNode) or definition in self.ax.datatypes() \
                     or str(definition).startswith(str(XSD)):
                 return definition

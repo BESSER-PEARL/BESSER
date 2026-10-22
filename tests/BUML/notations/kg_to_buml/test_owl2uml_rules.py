@@ -628,3 +628,66 @@ def test_exact_cardinality_zero_on_an_object_property_emits_is_empty(tmp_path: P
         owl:cardinality "0"^^xsd:nonNegativeInteger ] .
     """)
     assert any("self.owns->isEmpty()" in c.expression for c in result.domain_model.constraints)
+
+
+# ---------------------------------------------------------------------------
+# D37 datatype definitions that refer back to themselves
+# ---------------------------------------------------------------------------
+
+
+def _plan(body: str, warnings: list):
+    from rdflib import Graph
+
+    from besser.BUML.notations.kg_to_buml.owl2uml import plan_domain_model
+
+    graph = Graph().parse(data=_PREFIXES + body, format="turtle")
+    return plan_domain_model(graph, "http://ex.org/", warnings=warnings)
+
+
+def test_d37_datatype_equivalent_to_itself_is_a_bare_declaration(tmp_path: Path):
+    """``A ≡ A`` used to recurse until RecursionError."""
+    result = _convert(tmp_path, """
+    :P a owl:Class .
+    :A a rdfs:Datatype ; owl:equivalentClass :A .
+    :x a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range :A .
+    """)
+    assert _attr(result, "P", "x").type.name == "A"
+    assert _class(result.domain_model, "A").attributes == set()
+
+
+def test_d37_mutually_equivalent_datatypes_merge_without_recursing(tmp_path: Path):
+    """``A ≡ B ≡ A`` is one canonical datatype (D27); the equivalence is the
+    merge, not a definition to follow."""
+    result = _convert(tmp_path, """
+    :P a owl:Class .
+    :A a rdfs:Datatype ; owl:equivalentClass :B .
+    :B a rdfs:Datatype ; owl:equivalentClass :A .
+    :x a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range :A .
+    """)
+    assert _attr(result, "P", "x").type.name == "A"
+    # Not a ``value`` slot typed by itself.
+    assert _class(result.domain_model, "A").attributes == set()
+
+
+def test_d37_definition_stated_on_an_alias_is_kept(tmp_path: Path):
+    result = _convert(tmp_path, """
+    :P a owl:Class .
+    :A a rdfs:Datatype ; owl:equivalentClass :B .
+    :B a rdfs:Datatype ; owl:equivalentClass xsd:string .
+    :x a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range :A .
+    """)
+    assert _attr(result, "A", "value").type.name == "str"
+
+
+def test_d37_cyclic_datatype_definitions_are_cut_with_a_warning():
+    """``A ≡ unionOf(B, int)``, ``B ≡ unionOf(A, string)``: a genuine definition
+    cycle (illegal in OWL 2) is followed once, then reported."""
+    warnings: list = []
+    plan = _plan("""
+    :P a owl:Class .
+    :A a rdfs:Datatype ; owl:equivalentClass [ a rdfs:Datatype ; owl:unionOf ( :B xsd:integer ) ] .
+    :B a rdfs:Datatype ; owl:equivalentClass [ a rdfs:Datatype ; owl:unionOf ( :A xsd:string ) ] .
+    :x a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range :A .
+    """, warnings)
+    assert {"A", "B"} <= set(plan.datatypes)
+    assert [w.code for w in warnings].count("DATATYPE_CYCLIC") == 1

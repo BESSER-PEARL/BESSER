@@ -389,6 +389,33 @@ def test_validate_reports_a_constraint_spec_that_got_around_the_setter():
     assert "'nc'" in result["errors"][0]
 
 
+def test_get_metadata_returns_one_entry_detached_from_the_node():
+    node = KGNodeConstraint(id="nc", label="N", metadata={"constraintSpecs": [_VALID_SPEC], "source": "owl"})
+
+    specs = node.get_metadata("constraintSpecs")
+    specs[0]["params"]["value"] = 99
+
+    assert node.get_metadata("source") == "owl"
+    assert node.get_metadata("absent") is None
+    assert node.get_metadata("absent", []) == []
+    assert node.get_specs() == [_VALID_SPEC]
+
+
+def test_the_metadata_view_reads_like_a_dict_without_exposing_the_stored_one():
+    node = KGClass(id="c1", metadata={"kind": "restriction", "members": ["a"]})
+    view = node.metadata
+
+    assert "kind" in view and "other" not in view
+    assert view.get("kind") == "restriction" and view.get("other", 0) == 0
+    assert sorted(view) == ["kind", "members"] and len(view) == 2
+    assert view == {"kind": "restriction", "members": ["a"]}
+    view.get("members").append("b")
+    for value in view.values():
+        if isinstance(value, list):
+            value.append("c")
+    assert node.metadata["members"] == ["a"]
+
+
 def test_a_mapping_is_accepted_wherever_a_dict_was():
     source = KGBlank(id="_:b", label="", metadata={"kind": "restriction"})
 

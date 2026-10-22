@@ -613,11 +613,17 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
 
             if domain_class and lookup_path:
                 # Find the relationship end (path) - including inherited associations
-                path_end = None
-                for end in domain_class.all_association_ends():
-                    if end.name == lookup_path:
-                        path_end = end
-                        break
+                ends = domain_class.all_association_ends()
+                path_end = next((end for end in ends if end.name == lookup_path), None)
+                if path_end is None:
+                    # For an end without a role the editor writes the target class
+                    # name in 'field'; lookupEntity (the target class id) picks the end.
+                    entity = col_data.get('lookupEntity')
+                    target = get_element_by_id(class_model, entity)
+                    target_name = target.get('name') if target else entity
+                    matches = [end for end in ends if getattr(end.type, 'name', None) == target_name]
+                    if len(matches) == 1:
+                        path_end = matches[0]
 
                 if path_end and path_end.type:
                     target_class = path_end.type

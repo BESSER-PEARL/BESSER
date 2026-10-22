@@ -1,14 +1,24 @@
-"""References from object diagrams to class-diagram elements keep resolving (issue #659).
+"""References from other diagrams to class-diagram elements keep resolving (issue #659).
 
-An object's ``classId``, a slot's ``attributeId`` and a link's
-``associationId`` point at class-diagram element ids. An object diagram whose
-class was renamed failed to convert (the class was looked up by its old name),
-and after a project export -> ``.py`` -> import an object link on a
-composition came back without its association.
+Object diagrams (``classId``/``attributeId``/``associationId``), GUI diagrams
+(``data-source``, ``data-method``, a table's ``lookupEntity``) and component
+diagrams (``realizes``) point at class-diagram element ids. Measured on a
+project export -> project ``.py`` (ids written) -> import:
+class ids came back, but an object link on a composition lost its
+association, a table's lookup columns came back keyed by class name, and a
+lookup column whose ``field`` holds the target class name (the editor's label
+for an end without a role) was dropped on conversion.
 """
 import copy
 import os
 
+from besser.BUML.metamodel.gui import GUIModel, Module, Screen
+from besser.BUML.metamodel.gui.binding import DataBinding
+from besser.BUML.metamodel.gui.dashboard import BarChart, LookupColumn, Table
+from besser.BUML.metamodel.project import Project
+from besser.BUML.metamodel.structural import (
+    BinaryAssociation, Class, DomainModel, IntegerType, Metadata, Multiplicity, Property, StringType,
+)
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
@@ -20,6 +30,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
     process_class_diagram,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_processors import (
+    process_gui_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.object_diagram_processor import (
     process_object_diagram,
@@ -139,6 +152,21 @@ def _model(project, diagram_type):
     return project["diagrams"][diagram_type][0]["model"]
 
 
+def _components(gui):
+    found = {}
+
+    def walk(component):
+        attributes = component.get("attributes") or {}
+        if attributes.get("id"):
+            found[attributes["id"]] = attributes
+        for child in component.get("components") or []:
+            walk(child)
+
+    for page in gui["pages"]:
+        walk(page["frames"][0]["component"])
+    return found
+
+
 def _object_refs(object_model):
     elements = object_model["elements"]
     names = {key: e["name"] for key, e in elements.items()}
@@ -148,6 +176,27 @@ def _object_refs(object_model):
     links = {frozenset((names[r["source"]["element"]], names[r["target"]["element"]])): r["associationId"]
              for r in object_model["relationships"].values() if r["type"] == "ObjectLink"}
     return objects, slots, links
+
+
+def test_project_python_round_trip_keeps_ids_and_every_reference(tmp_path):
+    back = _round_trip(_project(), tmp_path, emit_ids=True)
+
+    class_model = _model(back, "ClassDiagram")
+    assert set(_class_model()["elements"]) <= set(class_model["elements"])
+    assert {"r-holds", "r-contains"} <= set(class_model["relationships"])
+
+    assert _object_refs(_model(back, "ObjectDiagram")) == _object_refs(_object_model(_class_model()))
+
+    components = _components(_model(back, "GUINoCodeDiagram"))
+    assert components["t-books"]["data-source"] == "c-book"
+    lookup = [c for c in components["t-books"]["columns"] if c["columnType"] == "lookup"]
+    assert [(c["field"], c["lookupEntity"]) for c in lookup] == [("library", "c-library")]
+    assert components["b-renew"]["data-method"] == "m-renew"
+    assert components["b-renew"]["data-method-class"] == "c-book"
+
+    assert _model(back, "ComponentDiagram")["elements"]["k-api"]["realizes"] == ["c-book"]
+    reimported = json_to_buml_project(ProjectInput.model_validate(back))
+    assert reimported._cross_diagram_errors["errors"] == []
 
 
 def test_object_links_on_compositions_keep_their_association(tmp_path):
@@ -177,6 +226,46 @@ def test_objects_resolve_a_renamed_class_and_attribute_by_id():
     dune = next(o for o in object_model.objects if o.name == "dune")
     assert dune.classifier.name == "Novel"
     assert [(slot.attribute.name, slot.value.value) for slot in dune.slots] == [("heading", "Dune")]
+
+
+def test_a_lookup_column_named_after_its_target_class_resolves_by_lookup_entity():
+    class_model = _class_model()
+    domain = process_class_diagram({"title": "Library", "model": class_model})
+
+    gui = process_gui_diagram(_gui_model(), class_model, domain)
+
+    table = next(e for m in gui.modules for s in m.screens for e in s.view_elements if isinstance(e, Table))
+    lookups = [c for c in table.columns if isinstance(c, LookupColumn)]
+    assert [(c.path.name, c.path.type.name, c.field.name) for c in lookups] == [("library", "Library", "name")]
+
+
+def test_gui_export_names_domain_elements_by_id_when_they_have_one(tmp_path):
+    name = Property(name="name", type=StringType, id="a-name")
+    pages = Property(name="pages", type=IntegerType, id="a-pages")
+    author = Class(name="Author", attributes={name}, id="c-author")
+    book = Class(name="Book", attributes={pages}, id="c-book")
+    writes = BinaryAssociation(name="writes", ends={
+        Property(name="author", type=author, multiplicity=Multiplicity(1, 1)),
+        Property(name="books", type=book, multiplicity=Multiplicity(0, "*")),
+    })
+    domain = DomainModel(name="Library", types={author, book}, associations={writes})
+    author_end = next(end for end in writes.ends if end.name == "author")
+    table = Table(name="books_table", label="Books", component_id="t-books", display_order=0,
+                  columns=[LookupColumn(label="Author", path=author_end, field=name)],
+                  data_binding=DataBinding(domain_concept=book))
+    chart = BarChart(name="pages_chart", title="Pages", component_id="ch-pages", display_order=1,
+                     data_binding=DataBinding(domain_concept=book, label_field=pages, data_field=pages))
+    screen = Screen(name="Books", description="Books", view_elements={table, chart}, is_main_page=True)
+    gui = GUIModel(name="ui", package="", versionCode="1", versionName="1", description="",
+                   modules={Module(name="M", screens={screen})})
+    path = os.path.join(tmp_path, "project.py")
+    project_to_code(Project(name="p", models=[domain, gui], metadata=Metadata(description="d")), path, emit_ids=True)
+    with open(path, encoding="utf-8") as handle:
+        components = _components(_model(project_to_json(handle.read()), "GUINoCodeDiagram"))
+
+    assert components["t-books"]["data-source"] == "c-book"
+    assert [(c["field"], c["lookupEntity"]) for c in components["t-books"]["columns"]] == [("author", "c-author")]
+    assert (components["ch-pages"]["data-source"], components["ch-pages"]["data-field"]) == ("c-book", "a-pages")
 
 
 def test_object_model_code_links_a_composition_to_its_association(tmp_path):

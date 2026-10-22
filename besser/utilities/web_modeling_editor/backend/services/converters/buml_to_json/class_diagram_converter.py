@@ -34,7 +34,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.multiplicity_parser import (
     format_multiplicity_label,
 )
-from besser.utilities.utils import explicit_timestamp_iso
+from besser.utilities.utils import explicit_timestamp_iso, sort_by_timestamp
 from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import is_valid_element_id
 
 
@@ -530,8 +530,9 @@ def class_buml_to_json(domain_model):
         try:
             rel_id = take_id(association)
             name = association.name if association.name else ""
-            # Sort ends by name for deterministic source/target assignment.
-            ends = sorted(association.ends, key=lambda e: e.name)
+            # Declaration order is the drawn orientation: the JSON -> BUML processor creates
+            # the source end first and an exported script recreates the ends in that order.
+            ends = sort_by_timestamp(association.ends)
             if len(ends) == 2:
                 source_prop, target_prop = ends
                 saved_rel = layout_positions.get(f"rel_{name}")

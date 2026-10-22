@@ -1738,7 +1738,7 @@ class OpenAIProvider(LLMProvider):
         env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
         if env:
             return None if env.lower() == "primary" else env
-        if any(tier in self._model.lower() for tier in ("mini", "nano")):
+        if any(tier in self._model.lower() for tier in ("mini", "nano", "luna")):
             return None  # already on a cheap tier
         # Self-hosted / free-local models (ollama gateways) and the keyless
         # route (not in its catalog): the OpenAI cheap sibling doesn't exist

@@ -173,7 +173,7 @@ The cheap **planning** call (the *gap* phase, see :doc:`how_it_works`) uses the
 small sibling model above rather than the main one, so planning never costs
 more than it needs to. Cheap routing is skipped when it would not help or would
 not work: when the main model is already on the cheap tier (a ``haiku`` model
-on Anthropic, a ``mini`` / ``nano`` model on OpenAI), and — on the
+on Anthropic, a ``mini`` / ``nano`` / ``luna`` model on OpenAI), and — on the
 OpenAI-compatible providers — when the model reads as self-hosted or
 open-weight, whose endpoint has no such sibling. That last test is name-based
 (a ``name:size`` tag, or a known open-weight family). The ``free`` tier always

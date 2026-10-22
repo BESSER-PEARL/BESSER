@@ -345,3 +345,12 @@ class TestPlanningCallOutputCeiling:
         client.chat(system="s", messages=[{"role": "user", "content": "u"}],
                     tools=[], model_override="claude-haiku-4-5")
         assert client._client.messages.create.call_args.kwargs["max_tokens"] == 16384
+
+
+@pytest.mark.parametrize("model", ["gpt-5.6-luna", "gpt-6-luna"])
+def test_a_luna_primary_plans_on_itself(model, monkeypatch):
+    # luna is OpenAI's cheap tier: routing its planning calls to gpt-4o-mini
+    # buys an older model, and for gpt-6-luna a pricier one.
+    monkeypatch.delenv("BESSER_LLM_PLANNING_MODEL", raising=False)
+    assert OpenAIProvider(api_key="k", model=model).planning_model is None
+    assert OpenAIProvider(api_key="k", model="gpt-6-sol").planning_model is not None

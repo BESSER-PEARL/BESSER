@@ -88,9 +88,17 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     API_VERSION,
     TEMP_DIR_PREFIX,
     MAX_OWL_SIZE,
+    MAX_BUML_SIZE,
     MAX_ORPHAN_CLASSIFY_NODES,
     ALLOWED_KG_EXTENSIONS,
     ALLOWED_OWL_EXTENSIONS,
+)
+
+# Upload validation and async file I/O, shared with conversion_router
+from besser.utilities.web_modeling_editor.backend.services.utils.upload_validation import (
+    validate_file_content,
+    validate_upload,
+    write_file_async,
 )
 
 # Centralized error handling
@@ -99,15 +107,6 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 )
 
 logger = logging.getLogger(__name__)
-
-# The upload validation helpers are shared with the other conversion endpoints and
-# stay in ``conversion_router``; this router only borrows them.
-from besser.utilities.web_modeling_editor.backend.routers.conversion_router import (
-    MAX_BUML_SIZE,
-    _validate_file_content,
-    _validate_upload,
-    _write_file,
-)
 
 # Same OpenAPI tag as before the split, so the published API schema is unchanged.
 router = APIRouter(prefix="/besser_api", tags=["conversion"])
@@ -124,12 +123,12 @@ async def get_json_model_from_kg(
     """
     # Save uploaded KG to a temp folder
     kg_content = await kg_file.read()
-    _validate_upload(kg_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_KG_EXTENSIONS, content=kg_content)
+    validate_upload(kg_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_KG_EXTENSIONS, content=kg_content)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         safe_filename = os.path.basename(kg_file.filename)
         kg_path = os.path.join(temp_dir, safe_filename)
-        await _write_file(kg_path, kg_content)
+        await write_file_async(kg_path, kg_content)
         # Create a folder for the kg as expected by mockup_to_buml
         kg_folder = os.path.join(temp_dir, "kgs")
         os.makedirs(kg_folder, exist_ok=True)
@@ -164,18 +163,18 @@ async def import_owl(owl_file: UploadFile = File(...)):
     ``edges``) wrapped in the standard diagram-export envelope.
     """
     owl_content = await owl_file.read()
-    _validate_upload(
+    validate_upload(
         owl_file,
         max_size=MAX_OWL_SIZE,
         allowed_extensions=ALLOWED_OWL_EXTENSIONS,
         content=owl_content,
     )
-    _validate_file_content(owl_content, owl_file.filename or "")
+    validate_file_content(owl_content, owl_file.filename or "")
 
     with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
         safe_filename = os.path.basename(owl_file.filename or "ontology.owl")
         owl_path = os.path.join(temp_dir, safe_filename)
-        await _write_file(owl_path, owl_content)
+        await write_file_async(owl_path, owl_content)
         # rdflib's parse is CPU-bound and can run for seconds on a large
         # ontology; on the event loop it stalls every other request.
         import_warnings: List[Dict[str, str]] = []

@@ -4,7 +4,6 @@ Conversion Router
 Handles all conversion, export, and import endpoints for the BESSER web modeling editor backend.
 """
 
-import ast
 import asyncio
 import logging
 import os
@@ -109,7 +108,17 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_MODEL_FILENAME,
     BPMN_DIAGRAM_TYPE,
     DEPLOYMENT_DIAGRAM_TYPE,
-    KG_DTD_PROBE_CHARS,
+    MAX_CSV_SIZE,
+    MAX_IMAGE_SIZE,
+    MAX_BUML_SIZE,
+)
+
+# Upload validation and async file I/O, shared with kg_router
+from besser.utilities.web_modeling_editor.backend.services.utils.upload_validation import (
+    read_file_async,
+    validate_file_content,
+    validate_upload,
+    write_file_async,
 )
 
 # Centralized error handling
@@ -120,154 +129,11 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# File upload size limits
-# ---------------------------------------------------------------------------
-MAX_CSV_SIZE = 5 * 1024 * 1024       # 5 MB
-MAX_IMAGE_SIZE = 10 * 1024 * 1024     # 10 MB
-MAX_BUML_SIZE = 2 * 1024 * 1024       # 2 MB
-
-
-# ---------------------------------------------------------------------------
 # Allowed MIME / extension sets per upload type
 # ---------------------------------------------------------------------------
 ALLOWED_SPREADSHEET_EXTENSIONS = {".csv", ".xlsx"}
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 ALLOWED_BUML_EXTENSIONS = {".py"}
-
-
-def _validate_upload(file: UploadFile, *, max_size: int, allowed_extensions: set[str], content: bytes) -> None:
-    """Validate an uploaded file's size and extension.
-
-    Raises ``HTTPException`` with status 413 (payload too large) or 415
-    (unsupported media type) when the check fails.
-    """
-    # --- size check ---
-    if len(content) > max_size:
-        max_mb = max_size / (1024 * 1024)
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum allowed size is {max_mb:.0f} MB.",
-        )
-
-    # --- extension check ---
-    filename = file.filename or ""
-    _, ext = os.path.splitext(filename)
-    if ext.lower() not in allowed_extensions:
-        raise HTTPException(
-            status_code=415,
-            detail=(
-                f"Unsupported file type '{ext}'. "
-                f"Allowed extensions: {', '.join(sorted(allowed_extensions))}."
-            ),
-        )
-
-
-def _validate_file_content(content: bytes, filename: str) -> None:
-    """Validate uploaded file content based on its extension.
-
-    Raises ``HTTPException`` with status 400 when the content does not match
-    the expected format for the given file type.
-    """
-    _, ext = os.path.splitext(filename)
-    ext = ext.lower()
-
-    if ext == ".csv":
-        # Must be valid UTF-8 text with at least one line containing comma or semicolon separators
-        try:
-            text = content.decode("utf-8")
-        except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail="CSV file is not valid UTF-8 text.")
-        lines = [line for line in text.splitlines() if line.strip()]
-        if not lines:
-            raise HTTPException(status_code=400, detail="CSV file is empty.")
-        has_separator = any("," in line or ";" in line for line in lines)
-        if not has_separator:
-            raise HTTPException(
-                status_code=400,
-                detail="CSV file does not contain comma or semicolon separators.",
-            )
-
-    elif ext == ".xlsx":
-        # XLSX files are ZIP archives — check the ZIP magic bytes.
-        if not content.startswith(b"PK\x03\x04"):
-            raise HTTPException(
-                status_code=400,
-                detail="XLSX file appears to be corrupted or is not a valid Excel workbook.",
-            )
-
-    elif ext == ".py":
-        # Must be valid Python syntax. Decode with utf-8-sig so a leading UTF-8
-        # BOM (common from Windows editors) is stripped instead of tripping the
-        # parser with "invalid non-printable character U+FEFF".
-        try:
-            text = content.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail="Python file is not valid UTF-8 text.")
-        try:
-            ast.parse(text, filename=filename)
-        except SyntaxError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Python file contains invalid syntax: {e.msg} (line {e.lineno}).",
-            )
-
-    elif ext in (".png", ".jpg", ".jpeg"):
-        # Check magic bytes
-        if ext == ".png":
-            if not content.startswith(b'\x89PNG'):
-                raise HTTPException(
-                    status_code=400,
-                    detail="File content does not match PNG format (invalid magic bytes).",
-                )
-        else:  # .jpg / .jpeg
-            if not content.startswith(b'\xff\xd8\xff'):
-                raise HTTPException(
-                    status_code=400,
-                    detail="File content does not match JPEG format (invalid magic bytes).",
-                )
-
-    elif ext in (".owl", ".ttl", ".rdf", ".xml", ".nt", ".n3"):
-        # RDF / OWL: must be non-empty and decodable as UTF-8. The real parser
-        # (rdflib) performs the structural validation.
-        if not content.strip():
-            raise HTTPException(status_code=400, detail="OWL/RDF file is empty.")
-        try:
-            text = content.decode("utf-8")
-        except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail="OWL/RDF file is not valid UTF-8 text.")
-
-        # Reject a DTD before rdflib sees it. rdflib's RDF/XML parser builds its
-        # parser with xml.sax.make_parser() and never disables entity
-        # resolution, and stock expat has no expansion limit -- so a few hundred
-        # bytes of nested internal entities ("billion laughs") expand into
-        # minutes of CPU inside the request. No ontology BESSER imports needs a
-        # DTD, so this costs nothing real.
-        probe = text.lstrip()[:KG_DTD_PROBE_CHARS].upper()
-        if "<!DOCTYPE" in probe or "<!ENTITY" in probe:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "OWL/RDF file declares a DTD (<!DOCTYPE/<!ENTITY), which is "
-                    "not accepted: entity expansion can be used to exhaust server "
-                    "resources. Please re-export the ontology without a DTD."
-                ),
-            )
-
-
-async def _read_file(path: str, mode: str = "r", **kwargs) -> str | bytes:
-    """Read a file without blocking the event loop."""
-    def _do_read():
-        with open(path, mode, **kwargs) as fh:
-            return fh.read()
-    return await asyncio.to_thread(_do_read)
-
-
-async def _write_file(path: str, data: bytes | str, mode: str = "wb") -> None:
-    """Write data to a file without blocking the event loop."""
-    def _do_write():
-        with open(path, mode) as fh:
-            fh.write(data)
-    await asyncio.to_thread(_do_write)
 
 
 def _xlsx_bytes_to_csv_file(xlsx_bytes: bytes, csv_path: str) -> None:
@@ -336,7 +202,7 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         output_file_path = os.path.join(temp_dir, "project.py")
         project_to_code(project=buml_project, file_path=output_file_path)
-        file_content = await _read_file(output_file_path, "r", encoding="utf-8")
+        file_content = await read_file_async(output_file_path, "r", encoding="utf-8")
         return Response(
             content=file_content,
             media_type="text/plain",
@@ -355,7 +221,7 @@ async def export_buml(input_data: DiagramInput):
             state_machine = process_state_machine(json_data)
             output_file_path = os.path.join(temp_dir, "state_machine.py")
             state_machine_to_code(model=state_machine, file_path=output_file_path)
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -368,7 +234,7 @@ async def export_buml(input_data: DiagramInput):
             buml_model = process_class_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "domain_model.py")
             domain_model_to_code(model=buml_model, file_path=output_file_path)
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -390,7 +256,7 @@ async def export_buml(input_data: DiagramInput):
             # Generate a single file with both domain model and object model
             output_file_path = os.path.join(temp_dir, "complete_model.py")
             domain_model_to_code(model=buml_model, file_path=output_file_path, objectmodel=object_model)
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -401,7 +267,7 @@ async def export_buml(input_data: DiagramInput):
             agent_model = process_agent_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "agent_buml.py")
             agent_model_to_code(agent_model, output_file_path)
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -417,7 +283,7 @@ async def export_buml(input_data: DiagramInput):
                 raise ConversionError(f"Malformed BPMN diagram payload: {exc}") from exc
             output_file_path = os.path.join(temp_dir, "bpmn_model.py")
             bpmn_model_to_code(model=bpmn_model, file_path=output_file_path)
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -436,7 +302,7 @@ async def export_buml(input_data: DiagramInput):
             # @handle_endpoint_errors — no explicit re-raise needed.
             output_file_path = os.path.join(temp_dir, "nn_model.py")
             nn_model_to_code(model=nn_model, file_path=output_file_path)
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -455,7 +321,7 @@ async def export_buml(input_data: DiagramInput):
             # SECTION_CONFIG keys on that name, so any other value makes the
             # emitted section unreadable on the way back in.
             kg_model_to_code(model=kg_model, file_path=output_file_path, model_var_name="kg_model")
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -473,7 +339,7 @@ async def export_buml(input_data: DiagramInput):
             component_model_to_code(
                 model=component_model, file_path=output_file_path,
             )
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -493,7 +359,7 @@ async def export_buml(input_data: DiagramInput):
             deployment_model_to_code(
                 model=deployment_model, file_path=output_file_path,
             )
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -512,8 +378,8 @@ async def export_buml(input_data: DiagramInput):
 @handle_endpoint_errors("get_project_json_model")
 async def get_project_json_model(buml_file: UploadFile = File(...)):
     content = await buml_file.read()
-    _validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
-    _validate_file_content(content, buml_file.filename or "")
+    validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
+    validate_file_content(content, buml_file.filename or "")
     buml_content = content.decode("utf-8")
 
     parsed_project = project_to_json(buml_content)
@@ -532,8 +398,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     This endpoint handles both full project files and single diagram files.
     """
     content = await buml_file.read()
-    _validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
-    _validate_file_content(content, buml_file.filename or "")
+    validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
+    validate_file_content(content, buml_file.filename or "")
     buml_content = content.decode("utf-8")
 
     # First, try to detect what type of file this is by analyzing the content
@@ -786,8 +652,8 @@ async def get_svg(buml_file: UploadFile = File(...)):
     from the WME_NODE_SERVER_URL env var (default http://localhost:8080).
     """
     content = await buml_file.read()
-    _validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
-    _validate_file_content(content, buml_file.filename or "")
+    validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
+    validate_file_content(content, buml_file.filename or "")
     buml_content = content.decode("utf-8")
 
     domain_model = parse_buml_content(buml_content)
@@ -834,13 +700,13 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
         # Save uploaded files to temp dir
         for file in files:
             file_content = await file.read()
-            _validate_upload(
+            validate_upload(
                 file,
                 max_size=MAX_CSV_SIZE,
                 allowed_extensions=ALLOWED_SPREADSHEET_EXTENSIONS,
                 content=file_content,
             )
-            _validate_file_content(file_content, file.filename or "")
+            validate_file_content(file_content, file.filename or "")
             safe_filename = os.path.basename(file.filename)
             _, ext = os.path.splitext(safe_filename)
             ext = ext.lower()
@@ -851,7 +717,7 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
                 _xlsx_bytes_to_csv_file(file_content, file_path)
             else:
                 file_path = os.path.join(temp_dir, safe_filename)
-                await _write_file(file_path, file_content)
+                await write_file_async(file_path, file_content)
             file_paths.append(file_path)
 
         # Generate DomainModel from CSVs
@@ -904,8 +770,8 @@ async def get_json_model_from_image(
     """
     # Save uploaded image to a temp folder
     image_content = await image_file.read()
-    _validate_upload(image_file, max_size=MAX_IMAGE_SIZE, allowed_extensions=ALLOWED_IMAGE_EXTENSIONS, content=image_content)
-    _validate_file_content(image_content, image_file.filename or "")
+    validate_upload(image_file, max_size=MAX_IMAGE_SIZE, allowed_extensions=ALLOWED_IMAGE_EXTENSIONS, content=image_content)
+    validate_file_content(image_content, image_file.filename or "")
 
     existing_domain_model = None
     if existing_model:
@@ -920,7 +786,7 @@ async def get_json_model_from_image(
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         safe_filename = os.path.basename(image_file.filename)
         image_path = os.path.join(temp_dir, safe_filename)
-        await _write_file(image_path, image_content)
+        await write_file_async(image_path, image_content)
 
         # Create a folder for the image as expected by mockup_to_buml
         image_folder = os.path.join(temp_dir, "images")
@@ -1013,7 +879,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
                 personalized_agent_file = os.path.join(temp_dir, "personalized_agent_model.py")
                 agent_model_to_code(generator_instance.model, personalized_agent_file)
 
-                personalized_buml = await _read_file(personalized_agent_file, "r", encoding="utf-8")
+                personalized_buml = await read_file_async(personalized_agent_file, "r", encoding="utf-8")
                 personalized_json = agent_buml_to_json(personalized_buml)
             except Exception as conversion_error:
                 logger.exception("Failed to build fallback personalized agent JSON")

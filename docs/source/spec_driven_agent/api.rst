@@ -166,8 +166,8 @@ unknown or expired base run, or a base run without a recorded class model.
    * - Field
      - Meaning
    * - ``verdict``
-     - ``small``, ``large`` or ``unrelated``. ``large`` means more than 15% of
-       the base model's classes and attributes are gone. ``unrelated`` means
+     - ``small``, ``large`` or ``unrelated``. ``large`` means ``gone`` is
+       above 0.15. ``unrelated`` means
        more than half of it is gone, most of the new model is new elements,
        and either most base classes or three quarters of the base model are
        gone. Deleting classes, even all of them, is ``large``.
@@ -175,7 +175,10 @@ unknown or expired base run, or a base run without a recorded class model.
      - ``attributes``, or ``classes`` when the base run predates the recorded
        model (then only class names are compared and ``changes`` is empty).
    * - ``gone``
-     - Share of the base model's classes and attributes not kept (0 to 1).
+     - Share of the base model's classes and attributes (0 to 1) that are
+       removed, or are attributes now under another name. A renamed attribute
+       counts because the code still changes everywhere it is used; a renamed
+       class, and a change of letter case only, do not.
    * - ``removed`` / ``added``
      - ``Class`` and ``Class.attribute`` names, for display. Renamed elements
        are not listed here.

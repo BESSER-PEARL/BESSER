@@ -225,6 +225,27 @@ def test_a_rename_matched_by_id_names_both_sides(tmp_path):
     assert len(issues) == 4  # description still there, amenities missing; ORM and schema
 
 
+def test_a_renamed_class_is_checked_under_its_new_name(tmp_path):
+    old = {"classes": {"Room": {"id": "c1", "attributes": {
+        "description": {"type": "str", "optional": False}, "roomNumber": {"type": "str", "optional": False}}}}}
+    new = {"classes": {"Suite": {"id": "c1", "attributes": {
+        "roomNumber": {"type": "str", "optional": False}, "floor": {"type": "int", "optional": False}}}}}
+    renamed_orm = TODAY_ORM.replace("class Room(Base)", "class Suite(Base)")
+    renamed_schemas = TODAY_SCHEMAS.replace("class RoomCreate", "class SuiteCreate")
+    assert _rules(model_conformance_issues(_app(tmp_path / "a", renamed_orm, renamed_schemas), old, new)) == [
+        "Suite.description was removed [orm]", "Suite.description was removed [schema]",
+        "Suite.floor was added [orm]", "Suite.floor was added [schema]",
+    ]
+    # Code that still carries the old class name.
+    stale = model_conformance_issues(_app(tmp_path / "b", TODAY_ORM, TODAY_SCHEMAS), old, new)
+    assert stale == [
+        "model conformance: class Room was renamed to Suite in the class diagram, but "
+        "backend/sql_alchemy.py still defines Room, not Suite.",
+        "model conformance: class Room was renamed to Suite in the class diagram, but "
+        "backend/pydantic_classes.py still defines RoomCreate, not SuiteCreate.",
+    ]
+
+
 ORM_OPTIONAL = _HEADER + '''
 class Person(Base):
     __tablename__ = "person"

@@ -323,6 +323,17 @@ def _schema_findings(module: _Module, rel: str, checks, missing: set) -> list[st
     return issues
 
 
+def _class_rename_findings(module: _Module, rel: str, renames, schema: bool) -> list[str]:
+    """A renamed class whose code still carries only the old name."""
+    suffix = "Create" if schema else ""
+    return [
+        f"model conformance: class {old} was renamed to {new} in the class diagram, but "
+        f"{rel} still defines {old}{suffix}, not {new}{suffix}."
+        for old, new in renames
+        if f"{new}{suffix}" not in module.fields and f"{old}{suffix}" in module.fields
+    ]
+
+
 def model_conformance_issues(workspace: str, base: dict, new: dict) -> list[str] | None:
     """Findings for the attribute changes between two ``model_summary`` dicts.
 
@@ -330,7 +341,9 @@ def model_conformance_issues(workspace: str, base: dict, new: dict) -> list[str]
     file (another stack), so nothing was checked.
     """
     checks = list(_attribute_checks(base, new))
-    if not checks:
+    renames = [(o, n) for o, n, _ in match_classes(base.get("classes") or {},
+                                                  new.get("classes") or {}) if o != n]
+    if not checks and not renames:
         return []
     issues, missing, found = [], set(), False
     for name, findings in ((_ORM_FILE, _orm_findings), (_SCHEMA_FILE, _schema_findings)):
@@ -339,6 +352,7 @@ def model_conformance_issues(workspace: str, base: dict, new: dict) -> list[str]
             module = _parse(path, workspace)
             if module is not None:
                 rel = os.path.relpath(path, workspace).replace("\\", "/")
+                issues.extend(_class_rename_findings(module, rel, renames, name == _SCHEMA_FILE))
                 issues.extend(findings(module, rel, checks, missing))
     if missing:
         logger.warning("Model conformance: not checked, class not found: %s",

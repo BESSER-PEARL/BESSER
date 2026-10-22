@@ -158,12 +158,25 @@ def test_renames_matched_by_id():
         "Room.description renamed to Room.amenities",
     ]
     change = compare_models(old, new)
-    assert change.verdict == SMALL and change.gone == 0
+    # The class rename is kept; the attribute rename counts as gone.
+    assert change.verdict == SMALL and change.gone == pytest.approx(1 / 15)
     assert change.removed == () and change.added == ()
     assert change.to_dict()["renamed"] == [
         {"from": "Person", "to": "Guest"},
         {"from": "Room.description", "to": "Room.amenities"},
     ]
+
+
+def test_renaming_most_attributes_in_place_is_large_even_with_ids():
+    # Hotel second-run case b: the classes stay, their attributes are renamed in
+    # place. With ids every attribute pairs; the code still changes everywhere.
+    ids = {f"{c}.{a}": f"{c}-{a}" for c, attrs in HOTEL.items() for a in attrs}
+    old = model_summary(_with_ids(_domain(HOTEL), ids))
+    renamed = {c: {f"{a}New": t for a, t in attrs.items()} for c, attrs in HOTEL.items()}
+    new_ids = {f"{c}.{a}New": i for c_a, i in ids.items() for c, a in [c_a.split(".")]}
+    change = compare_models(old, model_summary(_with_ids(_domain(renamed), new_ids)))
+    assert change.verdict == LARGE and len(change.renamed) == 11
+    assert change.removed == () and change.added == ()
 
 
 def test_without_ids_the_same_rename_reads_as_remove_and_add():

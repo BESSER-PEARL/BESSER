@@ -33,7 +33,8 @@ SMALL, LARGE, UNRELATED = "small", "large", "unrelated"
 FULL_MODEL, CLASS_NAMES = "attributes", "classes"
 
 # Share of the base model (classes and attributes) gone above which a change
-# is large. Hotel model: add an attribute 0, change ~25% of the attributes
+# is large. A renamed attribute counts as gone (the code still changes
+# everywhere it is used); a renamed class does not. Hotel model: add an attribute 0, change ~25% of the attributes
 # 0.11, ~50% 0.32, keep the classes and change everything else 0.54-0.64.
 LARGE_GONE = 0.15
 # Another app: more than half of the base model is gone, the new model is
@@ -260,7 +261,7 @@ def describe_model_change(old: dict, new: dict) -> list[str]:
 class ModelChange:
     verdict: str          # small | large | unrelated
     basis: str            # FULL_MODEL, or CLASS_NAMES for an older recipe
-    gone: float           # share of the base model's classes and attributes not kept
+    gone: float           # share of the base classes and attributes removed, or attributes renamed
     removed: tuple[str, ...]  # "Class" / "Class.attribute"; renamed elements excluded
     added: tuple[str, ...]
     # Classes ("Room") and attributes ("Room.floor") kept under a new name.
@@ -324,7 +325,7 @@ def compare_models(base: dict, new: dict) -> ModelChange | None:
     renamed = [(o, n) for o, n, _ in matched if o != n]
     kept = len(matched)
     for o, n, attribute_pairs in matched:
-        kept += len(attribute_pairs)
+        kept += sum(1 for oa, na in attribute_pairs if oa.lower() == na.lower())
         before, after = _attributes(old_c[o]), _attributes(new_c[n])
         removed += [f"{o}.{a}" for a in sorted(set(before) - {oa for oa, _ in attribute_pairs})]
         added += [f"{n}.{a}" for a in sorted(set(after) - {na for _, na in attribute_pairs})]

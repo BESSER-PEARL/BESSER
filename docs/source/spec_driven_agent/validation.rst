@@ -50,9 +50,10 @@ and no Docker. Missing runtime prerequisites do not count as verified execution:
 - Model conformance (modify runs whose class diagram changed, FastAPI backend
   only) — ``sql_alchemy.py`` or a ``<Class>Create`` schema that still defines
   a removed attribute, lacks an added one, declares a changed type as the old
-  one, or contradicts a changed optional/required flag. Blocker; only the
-  changed attributes are checked, and an app without these files reports the
-  check as not run. See :ref:`spec-driven-modify-mode`.
+  one, or contradicts a changed optional/required flag, and a renamed class
+  still defined only under its old name. Blocker; only the changed attributes
+  are checked (a renamed class under its new name), and an app without these
+  files reports the check as not run. See :ref:`spec-driven-modify-mode`.
 - Generated model-action contracts — actual handler paths and functions, with
   deterministic checks for missing handlers and known unimplemented bodies.
   Absence of a known stub is structural evidence, not proof of business behavior.

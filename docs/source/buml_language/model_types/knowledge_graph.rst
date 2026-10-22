@@ -81,9 +81,9 @@ Building and consuming a KG
 ---------------------------
 
 * Import an ontology with
-  :func:`besser.BUML.notations.owl_to_kg.owl_to_kg.owl_file_to_knowledge_graph`.
+  :func:`besser.BUML.notations.kg_rdf.importer.owl_file_to_knowledge_graph`.
 * Export one with
-  :func:`besser.utilities.kg_to_owl.serialize_knowledge_graph` (Turtle or
+  :func:`besser.BUML.notations.kg_rdf.exporter.serialize_knowledge_graph` (Turtle or
   RDF/XML, with OWL restrictions, SHACL shapes, or both).
 * Transform one into a :doc:`structural model <structural>` with OCL
   constraints — see :doc:`../model_building/kg_to_buml`.

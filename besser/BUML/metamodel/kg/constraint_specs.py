@@ -36,14 +36,20 @@ table in ``constraint-catalog.ts``.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, FrozenSet, List, Literal
+
+from besser.BUML.metamodel.kg.constants import OWL, SH
 
 
 __all__ = [
     "Vocab",
     "CONSTRAINT_VOCAB_MAP",
     "LOGICAL_KINDS",
+    "OWL_RESTRICTION_PREDICATES",
+    "SHACL_PROPERTY_COMPONENTS",
+    "SHACL_NODE_COMPONENTS",
     "is_valid_spec",
+    "spec_folded_predicates",
 ]
 
 
@@ -79,7 +85,7 @@ CONSTRAINT_VOCAB_MAP: Dict[str, List[str]] = {
     # decodes to allValuesFrom (forall), not someValuesFrom (exists) — so
     # someValuesFrom is owl-only.
     "someValuesFrom": ["owl"],
-    # sh:class also decodes to this kind (see owl_to_kg._SHACL_PROPERTY_COMPONENTS).
+    # sh:class also decodes to this kind (see SHACL_PROPERTY_COMPONENTS).
     "allValuesFrom": ["owl", "shacl"],
     "hasValue": ["owl", "shacl"],
     "hasSelf": ["owl"],
@@ -175,3 +181,102 @@ def is_valid_spec(spec: Any) -> bool:
         if kind == "shaclNot" and len(value) != 1:
             return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Which RDF predicates a spec holds
+# ---------------------------------------------------------------------------
+
+#: OWL restriction spec kind -> the predicate carrying its value.
+OWL_RESTRICTION_PREDICATES: Dict[str, str] = {
+    "minCardinality": f"{OWL}minCardinality",
+    "maxCardinality": f"{OWL}maxCardinality",
+    "exactCardinality": f"{OWL}cardinality",
+    "minQualifiedCardinality": f"{OWL}minQualifiedCardinality",
+    "maxQualifiedCardinality": f"{OWL}maxQualifiedCardinality",
+    "exactQualifiedCardinality": f"{OWL}qualifiedCardinality",
+    "someValuesFrom": f"{OWL}someValuesFrom",
+    "allValuesFrom": f"{OWL}allValuesFrom",
+    "hasValue": f"{OWL}hasValue",
+    "hasSelf": f"{OWL}hasSelf",
+}
+
+#: SHACL constraint component a shape of either kind can carry -> its spec kind.
+#: The SHACL qualified counts are not here: they stay raw edges.
+SHACL_PROPERTY_COMPONENTS: Dict[str, str] = {
+    f"{SH}minCount": "minCardinality",
+    f"{SH}maxCount": "maxCardinality",
+    f"{SH}minInclusive": "minInclusive",
+    f"{SH}maxInclusive": "maxInclusive",
+    f"{SH}minExclusive": "minExclusive",
+    f"{SH}maxExclusive": "maxExclusive",
+    f"{SH}minLength": "minLength",
+    f"{SH}maxLength": "maxLength",
+    f"{SH}pattern": "pattern",
+    f"{SH}flags": "flags",
+    f"{SH}datatype": "datatype",
+    f"{SH}nodeKind": "nodeKind",
+    f"{SH}hasValue": "hasValue",
+    f"{SH}uniqueLang": "uniqueLang",
+    f"{SH}languageIn": "languageIn",
+    # sh:class means "every value must be of this type" (forall), matching the
+    # allValuesFrom kind's OCL translation — NOT someValuesFrom (exists).
+    f"{SH}class": "allValuesFrom",
+    f"{SH}in": "in",
+    f"{SH}equals": "equals",
+    f"{SH}lessThan": "lessThan",
+    f"{SH}lessThanOrEquals": "lessThanOrEquals",
+    f"{SH}severity": "shaclSeverity",
+    f"{SH}message": "shaclMessage",
+    f"{SH}name": "shaclName",
+    f"{SH}description": "shaclDescription",
+    f"{SH}deactivated": "shaclDeactivated",
+    f"{SH}order": "shaclOrder",
+    f"{SH}group": "shaclGroup",
+}
+
+#: SHACL component only a node shape carries (closure, plus the shape-level
+#: meta it shares with property shapes) -> its spec kind.
+SHACL_NODE_COMPONENTS: Dict[str, str] = {
+    f"{SH}closed": "shaclClosed",
+    f"{SH}ignoredProperties": "shaclIgnoredProperties",
+    f"{SH}disjoint": "shaclDisjoint",
+    f"{SH}severity": "shaclSeverity",
+    f"{SH}message": "shaclMessage",
+    f"{SH}name": "shaclName",
+    f"{SH}description": "shaclDescription",
+    f"{SH}deactivated": "shaclDeactivated",
+}
+
+_OWL_RESTRICTION_FOLDED: FrozenSet[str] = frozenset(OWL_RESTRICTION_PREDICATES.values()) | {f"{OWL}onClass"}
+_OWL_EXPRESSION_FOLDED: FrozenSet[str] = frozenset(
+    f"{OWL}{name}" for name in ("complementOf", "unionOf", "intersectionOf", "oneOf")
+)
+# The property components are read on every shape, the node components on node
+# shapes only; sh:not becomes a shaclNot spec.
+_SHACL_PROPERTY_SHAPE_FOLDED: FrozenSet[str] = frozenset(SHACL_PROPERTY_COMPONENTS) | {f"{SH}not"}
+_SHACL_NODE_SHAPE_FOLDED: FrozenSet[str] = _SHACL_PROPERTY_SHAPE_FOLDED | frozenset(SHACL_NODE_COMPONENTS)
+
+
+def spec_folded_predicates(node: Any) -> FrozenSet[str]:
+    """The predicates whose value ``node``'s ``constraintSpecs`` hold.
+
+    For an OWL restriction: its cardinality or filler and the qualified
+    ``owl:onClass``; for a class expression: its operator (``owl:unionOf``,
+    ``owl:intersectionOf``, ``owl:oneOf``, ``owl:complementOf``); for a SHACL
+    shape: every component with a spec kind (``sh:qualifiedValueShape`` and the
+    qualified counts are not folded and stay raw edges). The spec is what the
+    editor edits, so it is the only stored copy: the importer keeps no raw edge
+    (and flattens no list) with these predicates, and the exporter and the
+    projection write them from the spec, ignoring any such edge drawn by hand.
+    Empty for any node that is not a constraint node.
+    """
+    # Imported here: knowledge_graph imports this module (is_valid_spec).
+    from besser.BUML.metamodel.kg.knowledge_graph import KGNodeConstraint, KGPropertyConstraint
+
+    shacl = node.metadata.get("source") == "shacl"
+    if isinstance(node, KGPropertyConstraint):
+        return _SHACL_PROPERTY_SHAPE_FOLDED if shacl else _OWL_RESTRICTION_FOLDED
+    if isinstance(node, KGNodeConstraint):
+        return _SHACL_NODE_SHAPE_FOLDED if shacl else _OWL_EXPRESSION_FOLDED
+    return frozenset()

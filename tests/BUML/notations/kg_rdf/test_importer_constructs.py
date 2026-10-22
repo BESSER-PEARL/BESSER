@@ -28,7 +28,7 @@ from besser.BUML.metamodel.kg import (
     SubPropertyOfAxiom,
 )
 from besser.BUML.metamodel.kg.constants import CONSTRAINT_TARGET_CLASS
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 
 
 def _write_ttl(tmp_path: Path, content: str, name: str = "ontology.ttl") -> str:
@@ -666,7 +666,7 @@ def test_punned_class_and_shape_round_trip_through_rdf(tmp_path: Path):
     from rdflib import URIRef
     from rdflib.namespace import OWL, RDF, RDFS
 
-    from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
+    from besser.BUML.notations.kg_rdf import knowledge_graph_to_rdf
 
     SH = "http://www.w3.org/ns/shacl#"
     ttl = """
@@ -807,7 +807,7 @@ def test_a_skipped_cardinality_does_not_reach_the_class_diagram(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-_COMPLEX_KG = Path(__file__).resolve().parents[1] / "fixtures" / "complex_kg.ttl"
+_COMPLEX_KG = Path(__file__).resolve().parents[3] / "fixtures" / "complex_kg.ttl"
 
 
 def _import_json(path: Path) -> dict:
@@ -844,11 +844,11 @@ def test_import_ids_do_not_depend_on_the_hash_seed():
 
     script = (
         "import json, sys\n"
-        "from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph\n"
+        "from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph\n"
         "from besser.utilities.web_modeling_editor.backend.services.converters import kg_to_json\n"
         "print(json.dumps(kg_to_json(owl_file_to_knowledge_graph(sys.argv[1])), sort_keys=True))\n"
     )
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[4]
     outputs = []
     for seed in ("1", "2"):
         env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONPATH": str(root)}

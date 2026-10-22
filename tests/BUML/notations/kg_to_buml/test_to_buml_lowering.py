@@ -28,7 +28,7 @@ from besser.BUML.notations.kg_to_buml.owl2uml._plan import (
     PlannedInvariant,
 )
 from besser.BUML.notations.kg_to_buml.to_buml import build_domain_model
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 
 
 def _write_ttl(tmp_path: Path, content: str) -> str:

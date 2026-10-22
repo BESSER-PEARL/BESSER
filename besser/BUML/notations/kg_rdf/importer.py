@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import rdflib
 from rdflib import RDF, RDFS, OWL, BNode, Literal, Namespace, URIRef
@@ -55,12 +55,15 @@ from besser.BUML.metamodel.kg.iri import local_name as _local_name
 from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_CLASS,
     CONSTRAINT_TARGET_PROPERTY,
-    RDF as RDF_NS,
-    RDFS as RDFS_NS,
     SH as SH_NS,
     SH_PROPERTY,
-    XSD as XSD_NS,
 )
+from besser.BUML.metamodel.kg.constraint_specs import (
+    SHACL_NODE_COMPONENTS,
+    SHACL_PROPERTY_COMPONENTS,
+    spec_folded_predicates,
+)
+from besser.BUML.notations.kg_rdf._common import looks_like_datatype_iri
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +71,7 @@ logger = logging.getLogger(__name__)
 SH = Namespace(SH_NS)
 
 
-__all__ = ["owl_file_to_knowledge_graph", "spec_folded_predicates"]
+__all__ = ["owl_file_to_knowledge_graph"]
 
 
 _PROPERTY_TYPES = {
@@ -78,15 +81,6 @@ _PROPERTY_TYPES = {
     RDF.Property,
 }
 _CLASS_TYPES = {OWL.Class, RDFS.Class}
-
-_XSD_NAMESPACE = XSD_NS
-_RDF_NAMESPACE = RDF_NS
-_RDFS_NAMESPACE = RDFS_NS
-_DATATYPE_IRIS = {
-    f"{_RDF_NAMESPACE}langString",
-    f"{_RDF_NAMESPACE}PlainLiteral",
-    f"{_RDFS_NAMESPACE}Literal",
-}
 
 # OWL property characteristics: each maps a term type to a metadata flag
 # stored on KGProperty.metadata.characteristics (a set of strings).
@@ -119,21 +113,6 @@ _VALUE_RESTRICTIONS = {
 }
 
 
-def _is_datatype_iri(iri: str) -> bool:
-    """Return True for XSD datatype IRIs and the few RDF/RDFS literal-shaped IRIs.
-
-    Datatype IRIs sometimes appear as objects of ``rdfs:range`` even though they
-    are never declared via ``rdf:type owl:Class``. Treat them as KGClass nodes
-    so the BUML class-diagram converter can filter them out via its existing
-    ``_looks_like_datatype_iri`` check (rather than letting them leak into the
-    graph as KGIndividual nodes).
-    """
-    if not iri:
-        return False
-    return iri.startswith(_XSD_NAMESPACE) or iri in _DATATYPE_IRIS
-
-
-
 def _literal_id(lit: Literal) -> str:
     """Stable id for a literal based on lexical form + datatype."""
     raw = f"{lit}\0{lit.datatype or ''}\0{lit.language or ''}"
@@ -159,7 +138,7 @@ def _classify(term, classes: set, properties: set) -> str:
             return "class"
         if term in properties:
             return "property"
-        if _is_datatype_iri(str(term)):
+        if looks_like_datatype_iri(str(term)):
             return "class"
         return "individual"
     return "individual"
@@ -582,87 +561,37 @@ def _shacl_literal_list(_g, o, lists):
     return [str(o)]
 
 
-# Single-value SHACL property-shape constraints.
+#: How each spec kind's value is read from its RDF object.
+_SPEC_VALUE_READERS: Dict[str, Any] = {
+    **dict.fromkeys(("minCardinality", "maxCardinality", "minLength", "maxLength"), _shacl_literal_int),
+    **dict.fromkeys(
+        ("minInclusive", "maxInclusive", "minExclusive", "maxExclusive", "hasValue", "shaclOrder"),
+        _shacl_literal_value,
+    ),
+    **dict.fromkeys(
+        ("pattern", "flags", "shaclMessage", "shaclName", "shaclDescription"), _shacl_literal_str,
+    ),
+    **dict.fromkeys(
+        ("datatype", "nodeKind", "allValuesFrom", "equals", "lessThan", "lessThanOrEquals",
+         "shaclSeverity", "shaclGroup", "shaclDisjoint"),
+        _shacl_iri,
+    ),
+    **dict.fromkeys(("uniqueLang", "shaclDeactivated", "shaclClosed"), _shacl_literal_bool),
+    **dict.fromkeys(("languageIn", "in"), _shacl_literal_list),
+    "shaclIgnoredProperties": _shacl_iri_list,
+}
+
+# SHACL predicate -> (spec kind, value reader). Which predicates map to which
+# kind is the metamodel's (constraint_specs); this module only knows how to read
+# each kind's value.
 _SHACL_PROPERTY_COMPONENTS: Dict[Any, Tuple[str, Any]] = {
-    SH.minCount: ("minCardinality", _shacl_literal_int),
-    SH.maxCount: ("maxCardinality", _shacl_literal_int),
-    SH.minInclusive: ("minInclusive", _shacl_literal_value),
-    SH.maxInclusive: ("maxInclusive", _shacl_literal_value),
-    SH.minExclusive: ("minExclusive", _shacl_literal_value),
-    SH.maxExclusive: ("maxExclusive", _shacl_literal_value),
-    SH.minLength: ("minLength", _shacl_literal_int),
-    SH.maxLength: ("maxLength", _shacl_literal_int),
-    SH.pattern: ("pattern", _shacl_literal_str),
-    SH.flags: ("flags", _shacl_literal_str),
-    SH.datatype: ("datatype", _shacl_iri),
-    SH.nodeKind: ("nodeKind", _shacl_iri),
-    SH.hasValue: ("hasValue", _shacl_literal_value),
-    SH.uniqueLang: ("uniqueLang", _shacl_literal_bool),
-    SH.languageIn: ("languageIn", _shacl_literal_list),
-    # sh:class means "every value must be of this type" (forall), matching the
-    # allValuesFrom kind's OCL translation — NOT someValuesFrom (exists).
-    SH["class"]: ("allValuesFrom", _shacl_iri),
-    SH["in"]: ("in", _shacl_literal_list),
-    SH.equals: ("equals", _shacl_iri),
-    SH.lessThan: ("lessThan", _shacl_iri),
-    SH.lessThanOrEquals: ("lessThanOrEquals", _shacl_iri),
-    SH.severity: ("shaclSeverity", _shacl_iri),
-    SH.message: ("shaclMessage", _shacl_literal_str),
-    SH.name: ("shaclName", _shacl_literal_str),
-    SH.description: ("shaclDescription", _shacl_literal_str),
-    SH.deactivated: ("shaclDeactivated", _shacl_literal_bool),
-    SH.order: ("shaclOrder", _shacl_literal_value),
-    SH.group: ("shaclGroup", _shacl_iri),
+    URIRef(predicate): (kind, _SPEC_VALUE_READERS[kind])
+    for predicate, kind in SHACL_PROPERTY_COMPONENTS.items()
 }
-
-# Node-shape components (closure plus shape-level shaclXXX meta).
 _SHACL_NODE_COMPONENTS: Dict[Any, Tuple[str, Any]] = {
-    SH.closed: ("shaclClosed", _shacl_literal_bool),
-    SH.ignoredProperties: ("shaclIgnoredProperties", _shacl_iri_list),
-    SH.disjoint: ("shaclDisjoint", _shacl_iri),
-    SH.severity: ("shaclSeverity", _shacl_iri),
-    SH.message: ("shaclMessage", _shacl_literal_str),
-    SH.name: ("shaclName", _shacl_literal_str),
-    SH.description: ("shaclDescription", _shacl_literal_str),
-    SH.deactivated: ("shaclDeactivated", _shacl_literal_bool),
+    URIRef(predicate): (kind, _SPEC_VALUE_READERS[kind])
+    for predicate, kind in SHACL_NODE_COMPONENTS.items()
 }
-
-
-_OWL_RESTRICTION_FOLDED: FrozenSet[str] = frozenset(
-    str(p) for p in (*_CARDINALITY_RESTRICTIONS, *_VALUE_RESTRICTIONS, OWL.onClass)
-)
-_OWL_EXPRESSION_FOLDED: FrozenSet[str] = frozenset(
-    str(p) for p in (OWL.complementOf, OWL.unionOf, OWL.intersectionOf, OWL.oneOf)
-)
-# The property components are collected for every shape, the node components
-# for node shapes only (see _decode_shacl_shapes); sh:not becomes a shaclNot spec.
-_SHACL_PROPERTY_SHAPE_FOLDED: FrozenSet[str] = frozenset(
-    str(p) for p in (*_SHACL_PROPERTY_COMPONENTS, SH["not"])
-)
-_SHACL_NODE_SHAPE_FOLDED: FrozenSet[str] = _SHACL_PROPERTY_SHAPE_FOLDED | frozenset(
-    str(p) for p in _SHACL_NODE_COMPONENTS
-)
-
-
-def spec_folded_predicates(node: KGNode) -> FrozenSet[str]:
-    """The predicates whose value the importer folds into ``node``'s ``constraintSpecs``.
-
-    For an OWL restriction: its cardinality or filler and the qualified
-    ``owl:onClass``; for a class expression: its operator (``owl:unionOf``,
-    ``owl:intersectionOf``, ``owl:oneOf``, ``owl:complementOf``); for a SHACL
-    shape: every component with a spec kind (``sh:qualifiedValueShape`` and the
-    qualified counts are not folded and stay raw edges). The spec is what the
-    editor edits, so it is the only stored copy: the importer drops the raw
-    edges (and does not flatten the lists) these predicates name, and the
-    exporter and the projection write them from the spec, ignoring any such
-    edge drawn by hand. Empty for any node that is not a constraint node.
-    """
-    shacl = node.metadata.get("source") == "shacl"
-    if isinstance(node, KGPropertyConstraint):
-        return _SHACL_PROPERTY_SHAPE_FOLDED if shacl else _OWL_RESTRICTION_FOLDED
-    if isinstance(node, KGNodeConstraint):
-        return _SHACL_NODE_SHAPE_FOLDED if shacl else _OWL_EXPRESSION_FOLDED
-    return frozenset()
 
 
 def _restriction_payload_to_specs(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1607,7 +1536,7 @@ def owl_file_to_knowledge_graph(
             classes.add(o)
     # Datatype IRIs used as rdfs:range targets must classify as "class" too.
     for _, _, o in g.triples((None, RDFS.range, None)):
-        if isinstance(o, URIRef) and _is_datatype_iri(str(o)):
+        if isinstance(o, URIRef) and looks_like_datatype_iri(str(o)):
             classes.add(o)
 
     # Decoder pass: pre-compute structured annotations and axioms.

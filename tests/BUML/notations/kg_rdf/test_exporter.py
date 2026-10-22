@@ -1,4 +1,4 @@
-"""Unit tests for ``besser.utilities.kg_to_owl``.
+"""Unit tests for :mod:`besser.BUML.notations.kg_rdf.exporter`.
 
 Covers the in-memory serializer in isolation: TTL/RDF-XML output, round-trip
 isomorphism with the OWL importer, and edge cases around missing IRIs,
@@ -22,12 +22,12 @@ from besser.BUML.metamodel.kg import (
     KGProperty,
     KnowledgeGraph,
 )
-from besser.utilities.kg_to_owl import (
+from besser.BUML.notations.kg_rdf import (
     DEFAULT_NAMESPACE,
     knowledge_graph_to_rdf,
+    owl_file_to_knowledge_graph,
     serialize_knowledge_graph,
 )
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
 
 TTL_FIXTURE = """
@@ -121,7 +121,7 @@ _:b0 a :Person .
 
 def test_sh_class_round_trips_through_all_values_from(tmp_path: Path):
     """sh:class means "every value is of this type" (forall) and decodes to
-    the allValuesFrom spec kind (see owl_to_kg._SHACL_PROPERTY_COMPONENTS);
+    the allValuesFrom spec kind (see constraint_specs.SHACL_PROPERTY_COMPONENTS);
     exporting that spec back with vocab="shacl" must re-emit sh:class, not
     silently drop the constraint or mis-emit it as something else."""
     ttl = """

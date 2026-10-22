@@ -1,38 +1,21 @@
-"""KnowledgeGraph → OWL / RDF serialization.
+"""RDF writing shared by the KG exporter and the KG projection.
 
-Deterministic, offline serializer that converts the typed KG metamodel back
-into an ``rdflib.Graph`` and emits Turtle or RDF/XML. Designed to round-trip
-with :mod:`besser.BUML.notations.owl_to_kg.owl_to_kg`: import an OWL/TTL file, edit the KG
-in the web editor, then export and the resulting RDF should be isomorphic to
-the original.
-
-Constraints are serialised using either the OWL vocabulary (anonymous
-``owl:Restriction`` blank nodes hung off the target class via
-``rdfs:subClassOf``) or the SHACL Core vocabulary (``sh:NodeShape`` /
-``sh:PropertyShape``), or both. The ``vocab`` argument on
-:func:`serialize_knowledge_graph` controls which vocabularies are emitted.
-
-This is the *export*. The KG → UML conversion and the consistency check both
-read a different projection,
-:func:`besser.BUML.notations.kg_to_buml.kg_to_rdf.kg_to_rdf`, which keeps what
-this exporter drops around constraint nodes (punned ``rdfs:subClassOf``,
-``sh:targetClass`` …). The two share what is defined here: the leaf emitters
-and spec-kind tables (``emit_*``, ``*_KINDS``), the constraint indexes
-(:func:`build_constraint_indexes`) and the rebuilding of flattened lists
-(:func:`emit_flattened_lists`); both read constraint parameters from
-``constraintSpecs`` only, and
-``tests/BUML/notations/kg_to_buml/test_projection_contract.py`` pins where they
-may differ.
+:mod:`~besser.BUML.notations.kg_rdf.exporter` (the user-facing Turtle / RDF-XML
+export) and :mod:`~besser.BUML.notations.kg_rdf.projection` (the graph the KG ->
+B-UML conversion and the consistency check reason over) write the same
+constructs, so everything that decides *how* a construct is written lives here
+once: node terms, the spec-kind -> predicate tables, the leaf emitters for OWL
+restrictions, class axioms, class expressions and SHACL components, the
+constraint indexes, and the rebuilding of the lists the importer flattened.
+``tests/BUML/notations/kg_rdf/test_projection_contract.py`` pins where the two
+writers may still differ.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from typing import (
-    Any, Callable, Dict, FrozenSet, Iterable, List, Literal as TypingLiteral, Optional, Set,
-    Tuple, Union,
-)
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple, Union
 
 import rdflib
 from rdflib import BNode, Literal, Namespace, RDF, RDFS, OWL, URIRef, XSD
@@ -44,34 +27,33 @@ from besser.BUML.metamodel.kg import (
     KGNode,
     KGNodeConstraint,
     KGPropertyConstraint,
-    KnowledgeGraph,
     PropertyChainAxiom,
 )
-from besser.BUML.metamodel.kg.constraint_specs import LOGICAL_KINDS
-from besser.BUML.notations.owl_to_kg.owl_to_kg import spec_folded_predicates
 from besser.BUML.metamodel.kg.constants import (
+    BESSER_KG_NS,
     CONSTRAINT_TARGET_CLASS,
     CONSTRAINT_TARGET_PROPERTY,
-    BESSER_KG_NS,
     SH as SH_NS,
     SH_PATH,
     SH_PROPERTY,
     SH_TARGET_CLASS,
 )
-
+from besser.BUML.metamodel.kg.constraint_specs import (
+    LOGICAL_KINDS,
+    OWL_RESTRICTION_PREDICATES,
+    SHACL_NODE_COMPONENTS,
+    SHACL_PROPERTY_COMPONENTS,
+    spec_folded_predicates,
+)
 
 __all__ = [
     "DEFAULT_NAMESPACE",
-    "knowledge_graph_to_rdf",
-    "serialize_knowledge_graph",
-    # Leaf emitters and spec-kind tables, shared with
-    # :mod:`besser.BUML.notations.kg_to_buml.kg_to_rdf`.
+    "CLASS_EXPRESSION_PREDICATES",
+    "FLATTENED_LIST_PREDICATES",
     "OWL_RESTRICTION_KINDS",
     "SHACL_LOGICAL_KINDS",
     "SHACL_NODE_KINDS",
     "SHACL_PROPERTY_KINDS",
-    "CLASS_EXPRESSION_PREDICATES",
-    "FLATTENED_LIST_PREDICATES",
     "BlankHandles",
     "ConstraintIndexes",
     "blank_handles",
@@ -93,18 +75,12 @@ __all__ = [
 ]
 
 
-#: Base for the IRIs the exporter mints: BESSER's one namespace.
+#: Base for the IRIs the writers mint: BESSER's one namespace.
 DEFAULT_NAMESPACE = BESSER_KG_NS
 SH = Namespace(SH_NS)
 
 logger = logging.getLogger(__name__)
 
-
-_INTERNAL_PREDICATES: Set[str] = {
-    CONSTRAINT_TARGET_CLASS,
-    CONSTRAINT_TARGET_PROPERTY,
-    SH_PROPERTY,
-}
 
 #: OWL list-valued predicates the importer *flattens*: it sweeps the
 #: ``rdf:first``/``rdf:rest`` spine and leaves one direct subject->member edge per
@@ -124,79 +100,26 @@ FLATTENED_LIST_PREDICATES: FrozenSet[str] = frozenset({
 _UNORDERED_LIST_PREDICATES: FrozenSet[str] = frozenset({str(OWL.hasKey), str(OWL.members)})
 
 
+#: Spec kind -> predicate, for each vocabulary. Derived from the metamodel's
+#: predicate -> kind tables (:mod:`besser.BUML.metamodel.kg.constraint_specs`),
+#: which the importer reads with, so the two directions cannot drift.
 OWL_RESTRICTION_KINDS: Dict[str, URIRef] = {
-    "minCardinality": OWL.minCardinality,
-    "maxCardinality": OWL.maxCardinality,
-    "exactCardinality": OWL.cardinality,
-    "minQualifiedCardinality": OWL.minQualifiedCardinality,
-    "maxQualifiedCardinality": OWL.maxQualifiedCardinality,
-    "exactQualifiedCardinality": OWL.qualifiedCardinality,
-    "someValuesFrom": OWL.someValuesFrom,
-    "allValuesFrom": OWL.allValuesFrom,
-    "hasValue": OWL.hasValue,
-    "hasSelf": OWL.hasSelf,
+    kind: URIRef(predicate) for kind, predicate in OWL_RESTRICTION_PREDICATES.items()
 }
 
-
+# sh:class means "every value must be of this type" (forall): it pairs with
+# allValuesFrom, not someValuesFrom (exists). SHACL has no faithful
+# existential-quantification predicate, so someValuesFrom is owl-only. The
+# qualified counts are written (with a sh:qualifiedValueShape) but not read
+# into specs.
 SHACL_PROPERTY_KINDS: Dict[str, URIRef] = {
-    "minCardinality": SH.minCount,
-    "maxCardinality": SH.maxCount,
+    **{kind: URIRef(predicate) for predicate, kind in SHACL_PROPERTY_COMPONENTS.items()},
     "minQualifiedCardinality": SH.qualifiedMinCount,
     "maxQualifiedCardinality": SH.qualifiedMaxCount,
-    # sh:class means "every value must be of this type" (forall) — it pairs
-    # with allValuesFrom, not someValuesFrom (exists). SHACL has no faithful
-    # existential-quantification predicate, so someValuesFrom is deliberately
-    # absent here (owl-only, see CONSTRAINT_VOCAB_MAP) rather than mis-mapped.
-    "allValuesFrom": SH["class"],
-    "hasValue": SH.hasValue,
-    "datatype": SH.datatype,
-    "nodeKind": SH.nodeKind,
-    "pattern": SH.pattern,
-    "flags": SH.flags,
-    "minLength": SH.minLength,
-    "maxLength": SH.maxLength,
-    "minInclusive": SH.minInclusive,
-    "maxInclusive": SH.maxInclusive,
-    "minExclusive": SH.minExclusive,
-    "maxExclusive": SH.maxExclusive,
-    "languageIn": SH.languageIn,
-    "uniqueLang": SH.uniqueLang,
-    "in": SH["in"],
-    "equals": SH.equals,
-    "lessThan": SH.lessThan,
-    "lessThanOrEquals": SH.lessThanOrEquals,
-    "shaclSeverity": SH.severity,
-    "shaclMessage": SH.message,
-    "shaclName": SH.name,
-    "shaclDescription": SH.description,
-    "shaclDeactivated": SH.deactivated,
-    "shaclOrder": SH.order,
-    "shaclGroup": SH.group,
 }
-
 
 SHACL_NODE_KINDS: Dict[str, URIRef] = {
-    "shaclClosed": SH.closed,
-    "shaclIgnoredProperties": SH.ignoredProperties,
-    "shaclDisjoint": SH.disjoint,
-    "shaclSeverity": SH.severity,
-    "shaclMessage": SH.message,
-    "shaclName": SH.name,
-    "shaclDescription": SH.description,
-    "shaclDeactivated": SH.deactivated,
-}
-
-
-_NODECONSTRAINT_OWL_AXIOM_KINDS: Set[str] = {
-    "equivalentClasses",
-    "disjointWith",
-    "subClassOf",
-    "complementOf",
-    "oneOf",
-    "hasKey",
-    "disjointUnionOf",
-    "unionOf",
-    "intersectionOf",
+    kind: URIRef(predicate) for predicate, kind in SHACL_NODE_COMPONENTS.items()
 }
 
 
@@ -632,46 +555,6 @@ def emit_shacl_constraint(
         g.add((shape_subject, pred, lit))
 
 
-def _emit_shacl_property_shape_into(
-    g: rdflib.Graph,
-    pc: KGPropertyConstraint,
-    property_term: Optional[Any],
-    resolve_ref,
-    *,
-    shape_term: Any,
-) -> Any:
-    """Emit a ``sh:PropertyShape`` into ``shape_term`` (a pre-allocated rdflib
-    term shared across the emit pass so cross-references resolve cleanly).
-    """
-    g.add((shape_term, RDF.type, SH.PropertyShape))
-    if property_term is not None:
-        g.add((shape_term, SH.path, property_term))
-    for spec in pc.get_specs():
-        emit_shacl_constraint(g, shape_term, spec, resolve_ref, SH.PropertyShape)
-    return shape_term
-
-
-def _emit_shacl_node_shape_into(
-    g: rdflib.Graph,
-    nc: KGNodeConstraint,
-    target_classes: List[Any],
-    property_shapes: List[URIRef | BNode],
-    resolve_ref,
-    *,
-    shape_term: Any,
-) -> Any:
-    """Emit a ``sh:NodeShape`` into ``shape_term`` (pre-allocated)."""
-    shape = shape_term
-    g.add((shape, RDF.type, SH.NodeShape))
-    for target in target_classes:
-        g.add((shape, SH.targetClass, target))
-    for ps in property_shapes:
-        g.add((shape, SH.property, ps))
-    for spec in nc.get_specs():
-        emit_shacl_node_constraint(g, shape, spec, resolve_ref)
-    return shape
-
-
 def emit_shacl_node_constraint(
     g: rdflib.Graph,
     shape: Any,
@@ -857,150 +740,3 @@ def emit_property_chains(g: rdflib.Graph, axioms: Iterable[Any], terms: Dict[str
             subject = terms.get(axiom.property_id, URIRef(str(axiom.property_id)))
             members = [URIRef(str(m)) for m in axiom.chain_property_ids]
             g.add((subject, OWL.propertyChainAxiom, emit_rdf_list(g, members)))
-
-
-VocabChoice = TypingLiteral["owl", "shacl", "both"]
-
-
-def _vocab_set(vocab: VocabChoice) -> Set[str]:
-    if vocab == "owl":
-        return {"owl"}
-    if vocab == "shacl":
-        return {"shacl"}
-    return {"owl", "shacl"}
-
-
-def knowledge_graph_to_rdf(
-    kg: KnowledgeGraph,
-    *,
-    default_namespace: str = DEFAULT_NAMESPACE,
-    vocab: VocabChoice = "both",
-) -> rdflib.Graph:
-    """Build an ``rdflib.Graph`` from a ``KnowledgeGraph``.
-
-    For each non-constraint edge, one triple is emitted. Internal predicates
-    (``constraintTargetClass``, ``constraintTargetProperty``, ``sh:property``
-    when used as bookkeeping between constraint nodes) are filtered out and
-    replaced by vocabulary-appropriate constraint emission.
-
-    Args:
-        kg: The KnowledgeGraph to serialise.
-        default_namespace: Namespace used when synthesising IRIs for nodes or
-            predicates that lack one.
-        vocab: Which constraint vocabularies to emit. ``"owl"`` emits
-            anonymous ``owl:Restriction`` blank nodes hung from
-            ``rdfs:subClassOf``; ``"shacl"`` emits ``sh:NodeShape`` /
-            ``sh:PropertyShape``; ``"both"`` emits both.
-    """
-    g = rdflib.Graph()
-    g.bind("owl", OWL)
-    g.bind("rdfs", RDFS)
-    g.bind("rdf", RDF)
-    g.bind("xsd", XSD)
-    g.bind("sh", SH)
-
-    nodes_by_id = {n.id: n for n in kg.nodes}
-    vocabs = _vocab_set(vocab)
-    terms: Dict[str, Any] = {n.id: term_for_node(n, default_namespace) for n in kg.nodes}
-    folded = spec_folded_by_term(kg.nodes, terms)
-    handles = blank_handles(kg.nodes, terms)
-    idx = build_constraint_indexes(kg.edges, terms)
-
-    # Emit ordinary triples (skipping internal predicates and skipping triples
-    # involving constraint nodes — they're handled by the constraint emitters).
-    for edge in kg.edges:
-        src = nodes_by_id.get(edge.source.id, edge.source)
-        tgt = nodes_by_id.get(edge.target.id, edge.target)
-        if src.id not in nodes_by_id or tgt.id not in nodes_by_id:
-            logger.warning(
-                "Skipping KGEdge %r: source/target not in graph (source=%r, target=%r).",
-                edge.id, edge.source.id, edge.target.id,
-            )
-            continue
-        if isinstance(src, KGLiteral):
-            logger.warning(
-                "Skipping KGEdge %r: subject is a literal, which is not valid RDF.",
-                edge.id,
-            )
-            continue
-        if edge.iri in _INTERNAL_PREDICATES or edge.iri in FLATTENED_LIST_PREDICATES:
-            continue
-        if isinstance(src, (KGNodeConstraint, KGPropertyConstraint)) \
-                or isinstance(tgt, (KGNodeConstraint, KGPropertyConstraint)):
-            # Constraint nodes are emitted via the dedicated paths below.
-            continue
-        s, p, o = terms[src.id], predicate_for_edge(edge, default_namespace), terms[tgt.id]
-        if str(p) in folded.get(s, ()):
-            continue  # a punned shape's parameter: its spec is written below
-        g.add((s, p, o))
-
-    emit_flattened_lists(g, kg.nodes, kg.edges, terms, folded, kg.axioms)
-    emit_property_chains(g, kg.axioms, terms)
-
-    # Constraint emission. Every constraint node already has its term in
-    # ``terms`` (named: its IRI; anonymous: a blank node named after its id, so
-    # the consistency checker can map pyshacl's ``sh:sourceShape`` back to the
-    # KG node), so a logical-operator spec like ``shaclAnd: [ {ref: "pc-other"} ]``
-    # resolves whatever the emission order, and reference cycles terminate.
-    def resolve_ref(node_id: str):
-        node = nodes_by_id.get(node_id)
-        return terms[node_id] if isinstance(node, (KGNodeConstraint, KGPropertyConstraint)) else None
-
-    if "shacl" in vocabs:
-        # Emit property shapes first (they may be referenced by node shapes
-        # via sh:property and by logical operators via ref).
-        for node in kg.nodes:
-            if isinstance(node, KGPropertyConstraint):
-                _emit_shacl_property_shape_into(
-                    g, node, idx.pc_property.get(node.id), resolve_ref, shape_term=terms[node.id],
-                )
-        for node in kg.nodes:
-            if isinstance(node, KGNodeConstraint):
-                ps_terms = [terms[pc_id] for pc_id in idx.nc_pcs.get(node.id, [])]
-                _emit_shacl_node_shape_into(
-                    g, node, idx.nc_targets.get(node.id, []), ps_terms, resolve_ref,
-                    shape_term=terms[node.id],
-                )
-
-    if "owl" in vocabs:
-        owners = idx.pc_owners()
-        for node in kg.nodes:
-            if isinstance(node, KGPropertyConstraint):
-                emit_owl_restriction(
-                    g, node, idx.pc_property.get(node.id) or node.metadata.get("onPropertyIri"),
-                    owners.get(node.id, []), blank_handles=handles,
-                )
-            elif isinstance(node, KGNodeConstraint):
-                targets = idx.nc_targets.get(node.id, [])
-                emit_nodeconstraint_owl_axioms(g, node, targets, handles)
-                # A class expression the importer lifted stays anonymous: the
-                # target class is subclassed by the expression's own node.
-                if any(spec.get("kind") in CLASS_EXPRESSION_PREDICATES for spec in node.get_specs()):
-                    emit_owl_class_expression(g, node, terms[node.id], handles)
-                    for target in targets:
-                        g.add((target, RDFS.subClassOf, terms[node.id]))
-
-    return g
-
-
-def serialize_knowledge_graph(
-    kg: KnowledgeGraph,
-    fmt: str = "turtle",
-    *,
-    default_namespace: str = DEFAULT_NAMESPACE,
-    vocab: VocabChoice = "both",
-) -> str:
-    """Serialize a ``KnowledgeGraph`` to OWL (RDF/XML) or Turtle.
-
-    Args:
-        kg: The KnowledgeGraph instance to serialize.
-        fmt: rdflib serialization format. ``"turtle"`` produces TTL,
-            ``"xml"`` produces RDF/XML (the default OWL serialization).
-        default_namespace: Namespace used when synthesising IRIs for nodes or
-            predicates that lack one.
-        vocab: Which constraint vocabularies to emit (``"owl"`` /
-            ``"shacl"`` / ``"both"``). See :func:`knowledge_graph_to_rdf`.
-    """
-    g = knowledge_graph_to_rdf(kg, default_namespace=default_namespace, vocab=vocab)
-    # rdflib >= 6 (7.0 is the pinned floor) returns ``str`` here.
-    return g.serialize(format=fmt)

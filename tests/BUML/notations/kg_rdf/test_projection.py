@@ -31,16 +31,16 @@ from besser.BUML.metamodel.kg.constants import (
     CONSTRAINT_TARGET_PROPERTY,
     SH_PROPERTY,
 )
-from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
+from besser.BUML.notations.kg_rdf import kg_to_rdf
 from besser.BUML.notations.kg_to_buml.owl2uml import plan_domain_model
 from besser.BUML.notations.kg_to_buml.to_buml import build_domain_model
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 
 SH = "http://www.w3.org/ns/shacl#"
 EX = "http://ex.org/"
 XSD = "http://www.w3.org/2001/XMLSchema#"
 
-FIXTURES = Path(__file__).parent / "fixtures" / "bibo"
+FIXTURES = Path(__file__).resolve().parents[1] / "kg_to_buml" / "fixtures" / "bibo"
 
 
 def _write_ttl(tmp_path: Path, content: str) -> str:

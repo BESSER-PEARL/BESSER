@@ -19,7 +19,7 @@ Individuals        as the KG has them                         also declared
 =================  =========================================  ==========================
 
 Both take constraint *parameters* from the specs (the importer keeps no raw
-edge for them), and they share their leaf emitters (``kg_to_owl.emit_*``), the
+edge for them), and they share their leaf emitters (``kg_rdf._emit.emit_*``), the
 constraint indexes and the list rebuilding, so they cannot drift on how any
 single construct is written. This module pins what is left:
 
@@ -43,15 +43,13 @@ from rdflib import OWL, RDF, BNode, Graph, Literal, Namespace, URIRef
 from rdflib.compare import isomorphic
 
 from besser.BUML.notations.kg_to_buml import consistency
-from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
-from besser.utilities.kg_to_owl import OWL_RESTRICTION_KINDS, SHACL_PROPERTY_KINDS
-from besser.utilities.kg_to_owl import knowledge_graph_to_rdf
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import kg_to_rdf, knowledge_graph_to_rdf, owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf._emit import OWL_RESTRICTION_KINDS, SHACL_PROPERTY_KINDS
 
 SH = Namespace("http://www.w3.org/ns/shacl#")
 
 _FIXTURES = Path(__file__).resolve().parents[3] / "fixtures"      # tests/fixtures
-_KG = Path(__file__).resolve().parent / "fixtures"
+_KG = Path(__file__).resolve().parents[1] / "kg_to_buml" / "fixtures"
 
 
 def _without_shacl(graph: Graph) -> Graph:

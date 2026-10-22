@@ -17,7 +17,7 @@ from besser.BUML.notations.kg_to_buml import (
     analyze_kg_for_class_diagram,
     kg_signature,
 )
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 
 
 def _write_ttl(tmp_path: Path, content: str) -> str:
@@ -571,7 +571,7 @@ def test_blank_node_instance(tmp_path: Path):
 def test_blank_node_instance_not_raised_for_list_valued_constructs(tmp_path: Path):
     """RDF-list spines behind unionOf/oneOf/hasKey/disjointUnionOf must never
     be recommended for promotion to an individual — the importer sweeps them
-    away entirely (see test_owl_importer_constructs.py), so none should even
+    away entirely (see kg_rdf/test_importer_constructs.py), so none should even
     reach the preflight analyzer as a KGBlank."""
     ttl = """
     @prefix : <http://ex.org/> .

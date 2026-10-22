@@ -16,7 +16,7 @@ from pathlib import Path
 
 from besser.BUML.metamodel.structural import Class, Enumeration
 from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 
 
 def _write_ttl(tmp_path: Path, content: str) -> str:

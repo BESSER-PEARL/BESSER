@@ -2,7 +2,7 @@
 
 Delegates the actual validation to :mod:`pyshacl` (which itself wraps
 :mod:`owlrl` for OWL2-RL inference). The KG is first serialised to an
-``rdflib.Graph`` via :func:`~besser.BUML.notations.kg_to_buml.kg_to_rdf.kg_to_rdf`
+``rdflib.Graph`` via :func:`~besser.BUML.notations.kg_rdf.projection.kg_to_rdf`
 with ``mirror_shapes=True`` (the same projection the class-diagram conversion
 uses, plus the OWL restrictions mirrored as SHACL shapes),
 then augmented with a small set of synthetic SHACL shapes for OWL DL
@@ -55,9 +55,9 @@ from besser.BUML.metamodel.kg import (
     KGPropertyConstraint,
 )
 from besser.BUML.notations.kg_to_buml._common import short_digest
-from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
+from besser.BUML.notations.kg_rdf import kg_to_rdf
 from besser.BUML.notations.kg_to_buml.preflight import kg_signature
-from besser.utilities.kg_to_owl import (
+from besser.BUML.notations.kg_rdf._emit import (
     DEFAULT_NAMESPACE,
     SHACL_LOGICAL_KINDS,
     SHACL_NODE_KINDS,
@@ -115,7 +115,7 @@ class ConsistencyCheckTimeout(ConsistencyCheckError):
 # no allowlist -- so on a shared host an uploaded ontology could make the
 # server fetch a URL of the author's choosing (link-local metadata endpoints
 # included). BESSER's own constraint vocabulary (``_SHACL_PROPERTY_KINDS`` /
-# ``_SHACL_NODE_KINDS`` / ``_SHACL_LOGICAL_KINDS`` in ``kg_to_owl``) cannot
+# ``_SHACL_NODE_KINDS`` / ``_SHACL_LOGICAL_KINDS`` in ``kg_rdf._emit``) cannot
 # author any of these, so dropping them costs nothing a BESSER model expresses;
 # they can only arrive as raw triples through an imported OWL/TTL file.
 #
@@ -917,7 +917,7 @@ def _build_iri_to_node_id(kg: KnowledgeGraph) -> Dict[str, str]:
     """Map every rdflib-term-as-string to the KG node id that produced it.
 
     The projection names nodes through the shared
-    :func:`besser.utilities.kg_to_owl.term_for_node`, which uses three
+    :func:`besser.BUML.notations.kg_rdf._emit.term_for_node`, which uses three
     strategies for non-literal nodes:
 
     1. ``node.iri`` directly when set;

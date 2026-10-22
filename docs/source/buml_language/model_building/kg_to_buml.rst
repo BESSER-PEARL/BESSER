@@ -102,7 +102,7 @@ invariants over the classes the OWL phase produced.
 .. code-block:: python
 
     from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
-    from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+    from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 
     kg = owl_file_to_knowledge_graph("ontology.ttl")
     result = kg_to_class_diagram(kg, model_name="MyDomain")
@@ -225,7 +225,7 @@ same pair is :func:`besser.utilities.buml_code_builder.kg_model_to_code` and
 the ``kg_buml_to_json`` converter.
 
 Independently of B-UML, the graph can be written back out as RDF —
-:func:`besser.utilities.kg_to_owl.serialize_knowledge_graph` emits Turtle or
+:func:`besser.BUML.notations.kg_rdf.exporter.serialize_knowledge_graph` emits Turtle or
 RDF/XML, and chooses between OWL restrictions, SHACL shapes, or both. Importing
 an ontology, editing it in the graphical editor, and exporting it again is
 designed to be lossless.

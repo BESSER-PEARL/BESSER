@@ -7,7 +7,7 @@ conversion reads it, and so does the consistency check (with
 while the KG metamodel stores a triple store *plus* an editor-oriented
 "constraint node" view layered on top. This module reconciles the two.
 
-The user-facing TTL export, :func:`besser.utilities.kg_to_owl.knowledge_graph_to_rdf`,
+The user-facing TTL export, :func:`~besser.BUML.notations.kg_rdf.exporter.knowledge_graph_to_rdf`,
 is a separate function: it skips every edge touching a constraint node and
 rebuilds the constraint structure from specs, which is right for a clean export
 but lossy as a reasoning input. On a graph that uses the SHACL punning idiom,
@@ -19,12 +19,12 @@ constraint *parameters* from the same place, though:
 **Constraint specs are the single source of truth for constraint parameters.**
 The importer folds ``_:shape sh:minCount 1`` into the node's
 ``constraintSpecs`` and keeps no raw edge for it
-(:func:`~besser.BUML.notations.owl_to_kg.owl_to_kg.spec_folded_predicates`
+(:func:`~besser.BUML.metamodel.kg.constraint_specs.spec_folded_predicates`
 names those predicates), and the inspector edits only the spec. Both writers
 emit those parameters from the spec and ignore any such edge drawn by hand, so
 a spec edit reaches the class diagram and the consistency report alike. Both
 also share the leaf emitters, the constraint indexes and the list rebuilding
-(:mod:`besser.utilities.kg_to_owl`).
+(:mod:`~besser.BUML.notations.kg_rdf._emit`).
 
 ``mirror_shapes`` is the one difference between the two consumers. The
 conversion applies its OWL and SHACL rules separately, so each constraint node
@@ -70,7 +70,13 @@ from besser.BUML.metamodel.kg import (
     KGPropertyConstraint,
     KnowledgeGraph,
 )
-from besser.utilities.kg_to_owl import (
+from besser.BUML.notations.kg_rdf._common import (
+    KGConversionWarning,
+    add_warning,
+    is_meta_vocab,
+    looks_like_datatype_iri,
+)
+from besser.BUML.notations.kg_rdf._emit import (
     CLASS_EXPRESSION_PREDICATES,
     DEFAULT_NAMESPACE,
     FLATTENED_LIST_PREDICATES,
@@ -90,13 +96,6 @@ from besser.utilities.kg_to_owl import (
     predicate_for_edge,
     spec_folded_by_term,
     term_for_node,
-)
-
-from besser.BUML.notations.kg_to_buml._common import (
-    KGConversionWarning,
-    add_warning,
-    is_meta_vocab,
-    looks_like_datatype_iri,
 )
 
 SH = rdflib.Namespace(SH_NS)
@@ -317,7 +316,7 @@ def _property_declaration(node: KGProperty, range_iris: List[str]) -> URIRef:
 def _pass_b_lists(g, kg: KnowledgeGraph, nodes, edges, terms, folded, warnings) -> None:
     """Rebuild the ``rdf:List`` spines the importer flattened into direct edges,
     and the property chains from their records (see
-    :func:`~besser.utilities.kg_to_owl.emit_flattened_lists`).
+    :func:`~besser.BUML.notations.kg_rdf._emit.emit_flattened_lists`).
 
     Order matters: the auxiliary class materialised for an ``owl:unionOf`` is
     *named* after its operands, so a reordered list renames the class. Where no

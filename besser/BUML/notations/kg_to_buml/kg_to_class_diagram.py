@@ -7,7 +7,7 @@ Models"* (KGMDSE 2026).
 
 The work is split across three stages, each independently testable:
 
-1. :mod:`~besser.BUML.notations.kg_to_buml.kg_to_rdf` projects the KG — whether
+1. :mod:`~besser.BUML.notations.kg_rdf.projection` projects the KG — whether
    it came from a TTL import or was drawn in the editor — into an in-memory
    RDF graph.
 2. :mod:`~besser.BUML.notations.kg_to_buml.owl2uml` applies the paper's D, O
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 from besser.BUML.metamodel.kg import KnowledgeGraph
 from besser.BUML.notations.kg_to_buml._common import KGConversionWarning
-from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
+from besser.BUML.notations.kg_rdf import kg_to_rdf
 from besser.BUML.notations.kg_to_buml.owl2uml import plan_domain_model
 from besser.BUML.notations.kg_to_buml.owl2uml import naming
 from besser.BUML.notations.kg_to_buml.to_buml import ClassConversionResult, build_domain_model

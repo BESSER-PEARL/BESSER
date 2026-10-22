@@ -23,7 +23,7 @@ from besser.BUML.notations.kg_to_buml.consistency import (
     _has_nested_quantifier,
     check_kg_consistency,
 )
-from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
+from besser.BUML.notations.kg_rdf import owl_file_to_knowledge_graph
 
 _PREFIX = """
 @prefix : <http://example.org/> .

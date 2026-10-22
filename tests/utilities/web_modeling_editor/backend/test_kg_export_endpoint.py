@@ -1,4 +1,4 @@
-"""End-to-end tests for the ``/export-kg-rdf/{fmt}`` endpoint.
+"""End-to-end tests for the ``/kg/export/{fmt}`` endpoint.
 
 Drives the full pipeline: import an OWL/TTL fixture, then export it back as
 either Turtle or RDF/XML and assert the response shape (status, content type,
@@ -37,10 +37,10 @@ def ttl_path(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def kg_diagram_payload(client, ttl_path: Path) -> dict:
-    """Import the fixture via /import-owl and reshape into a DiagramInput."""
+    """Import the fixture via /kg/import-owl and reshape into a DiagramInput."""
     with ttl_path.open("rb") as fh:
         resp = client.post(
-            "/besser_api/import-owl",
+            "/besser_api/kg/import-owl",
             files={"owl_file": ("tiny.ttl", fh.read(), "text/turtle")},
         )
     assert resp.status_code == 200, resp.text
@@ -49,7 +49,7 @@ def kg_diagram_payload(client, ttl_path: Path) -> dict:
 
 
 def test_export_kg_ttl_returns_turtle(client, kg_diagram_payload: dict):
-    resp = client.post("/besser_api/export-kg-rdf/ttl", json=kg_diagram_payload)
+    resp = client.post("/besser_api/kg/export/ttl", json=kg_diagram_payload)
     assert resp.status_code == 200, resp.text
     assert "text/turtle" in resp.headers.get("content-type", "")
     assert ".ttl" in resp.headers.get("content-disposition", "")
@@ -58,7 +58,7 @@ def test_export_kg_ttl_returns_turtle(client, kg_diagram_payload: dict):
 
 
 def test_export_kg_owl_returns_rdfxml(client, kg_diagram_payload: dict):
-    resp = client.post("/besser_api/export-kg-rdf/owl", json=kg_diagram_payload)
+    resp = client.post("/besser_api/kg/export/owl", json=kg_diagram_payload)
     assert resp.status_code == 200, resp.text
     assert "application/rdf+xml" in resp.headers.get("content-type", "")
     assert ".owl" in resp.headers.get("content-disposition", "")
@@ -67,7 +67,7 @@ def test_export_kg_owl_returns_rdfxml(client, kg_diagram_payload: dict):
 
 
 def test_export_kg_unsupported_format_returns_400(client, kg_diagram_payload: dict):
-    resp = client.post("/besser_api/export-kg-rdf/json", json=kg_diagram_payload)
+    resp = client.post("/besser_api/kg/export/json", json=kg_diagram_payload)
     assert resp.status_code == 400
     assert "owl" in resp.json()["detail"] or "ttl" in resp.json()["detail"]
 
@@ -82,14 +82,14 @@ def test_export_kg_rejects_non_kg_payload(client):
             "relationships": {},
         },
     }
-    resp = client.post("/besser_api/export-kg-rdf/ttl", json=class_payload)
+    resp = client.post("/besser_api/kg/export/ttl", json=class_payload)
     assert resp.status_code == 400
     assert "KnowledgeGraphDiagram" in resp.json()["detail"]
 
 
 def test_export_kg_filename_uses_diagram_title(client, kg_diagram_payload: dict):
     payload = {**kg_diagram_payload, "title": "My Ontology"}
-    resp = client.post("/besser_api/export-kg-rdf/ttl", json=payload)
+    resp = client.post("/besser_api/kg/export/ttl", json=payload)
     assert resp.status_code == 200
     cd = resp.headers.get("content-disposition", "")
     assert "My_Ontology.ttl" in cd or "my_ontology.ttl" in cd.lower()
@@ -99,7 +99,7 @@ def test_round_trip_via_endpoints(client, ttl_path: Path, tmp_path: Path):
     """Import → export → re-import should preserve node/edge counts."""
     with ttl_path.open("rb") as fh:
         first = client.post(
-            "/besser_api/import-owl",
+            "/besser_api/kg/import-owl",
             files={"owl_file": ("tiny.ttl", fh.read(), "text/turtle")},
         )
     assert first.status_code == 200
@@ -108,7 +108,7 @@ def test_round_trip_via_endpoints(client, ttl_path: Path, tmp_path: Path):
     first_edge_count = len(first_body["model"]["edges"])
 
     export_resp = client.post(
-        "/besser_api/export-kg-rdf/ttl",
+        "/besser_api/kg/export/ttl",
         json={"title": first_body["title"], "model": first_body["model"]},
     )
     assert export_resp.status_code == 200
@@ -118,7 +118,7 @@ def test_round_trip_via_endpoints(client, ttl_path: Path, tmp_path: Path):
     out_path.write_text(exported_ttl, encoding="utf-8")
     with out_path.open("rb") as fh:
         second = client.post(
-            "/besser_api/import-owl",
+            "/besser_api/kg/import-owl",
             files={"owl_file": ("round.ttl", fh.read(), "text/turtle")},
         )
     assert second.status_code == 200, second.text

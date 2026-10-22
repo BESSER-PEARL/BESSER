@@ -143,7 +143,7 @@ def test_malformed_kg_payload_is_rejected(client):
 # Graphs the validator cannot check, or not in time
 # --------------------------------------------------------------------------
 
-_CONSISTENCY = "/besser_api/check-kg-consistency"
+_CONSISTENCY = "/besser_api/kg/consistency"
 
 _SHACL_PREFIX = """
 @prefix : <http://ex.org/> .

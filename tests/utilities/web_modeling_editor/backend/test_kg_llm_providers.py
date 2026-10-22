@@ -68,7 +68,7 @@ def fake_factory(monkeypatch):
 
 def _clean(client, **over):
     body = {"diagram": _kg_diagram(), "description": "people", "api_key": KEY, "provider": "anthropic", **over}
-    return client.post(f"{_API}/llm-clean-kg", json=body)
+    return client.post(f"{_API}/kg/llm-clean", json=body)
 
 
 @pytest.mark.parametrize("provider", ["anthropic", "mistral", "nebius"])
@@ -116,9 +116,9 @@ def test_classify_orphans_uses_the_provider_too(client, fake_factory):
     }]}
     fake_factory.client = _FakeClient([_text_block(json.dumps(reply))])
 
-    response = client.post(f"{_API}/classify-orphans-with-llm", json={
+    response = client.post(f"{_API}/kg/classify-orphans", json={
         "diagram": _kg_with_orphan_diagram(), "api_key": KEY, "provider": "mistral",
-        "node_ids": ["ghost1"],
+        "nodeIds": ["ghost1"],
     })
 
     assert response.status_code == 200, response.text

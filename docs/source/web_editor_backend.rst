@@ -33,11 +33,11 @@ Additional infrastructure:
 - **``services/cleanup.py``** -- Background temp-file cleanup (removes stale directories every hour)
 - **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError`` and ``ConfigurationError``.
   ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
-- **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions) and ``llm.py`` (reaching the user's own LLM provider)
+- **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions), ``llm.py`` (reaching the user's own LLM provider under one request deadline) and ``validation.py`` (the consistency check under its concurrency cap, and the KG findings of ``/validate-diagram``)
 - **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``sse_events.py`` (the typed event schema), ``secret_redaction.py``, ``telemetry.py``, ``incidents.py``
 - **``constants/constants.py``** -- API version, temp prefixes, generator defaults, CORS origins, and the ``BESSER_LLM_*`` caps and feature flags
 - **``models/responses.py``** -- Standardized Pydantic response models
-- **``models/kg.py``** -- Request models of the KG endpoints: ``KGDiagramInput`` (a ``DiagramInput`` plus the refinement fields) and the LLM requests (provider, model, and the key as a ``SecretStr``)
+- **``models/kg.py``** -- Request models of the KG endpoints: ``KGDiagramInput`` (a ``DiagramInput`` plus the refinement fields, with typed ``resolutions`` and ``llmIssues``) and the LLM requests, which share ``KGLLMCredentials`` (``provider``, ``llm_model``, and the key as a ``SecretStr``). Data fields are camelCase; only the credentials keep the snake_case names of the other LLM features
 - **``models/spec_driven.py``** -- Request/response models for the spec-driven endpoints (the API key is a ``SecretStr``; the caps are clamped by field validators)
 
 Multi-Diagram Projects
@@ -133,8 +133,11 @@ Knowledge Graph Diagrams
 backend maps it to a ``KnowledgeGraph`` (see
 :doc:`the KG metamodel <buml_language/model_types/knowledge_graph>`).
 
-**Import and export.** ``/import-owl`` parses an OWL/RDF ontology into the
-diagram JSON, and ``/export-kg-rdf/{fmt}`` writes it back as Turtle or RDF/XML.
+All KG endpoints live under ``/besser_api/kg`` (see the `Knowledge Graph`_
+endpoint list); the paths below are relative to it.
+
+**Import and export.** ``/kg/import-owl`` parses an OWL/RDF ontology into the
+diagram JSON, and ``/kg/export/{fmt}`` writes it back as Turtle or RDF/XML.
 Imports go through the upload checks described under *File Upload Limits*.
 
 **JSON ↔ BUML.** ``/export-buml`` writes executable BUML Python
@@ -142,32 +145,44 @@ Imports go through the upload checks described under *File Upload Limits*.
 auto-detects KG content and reads it back; the file is validated by an AST
 allowlist (``safe_load_buml``) and is never passed to ``exec``.
 
-**Conversion.** ``/analyze-kg-for-buml-conversion`` reports every element with
-no clean 1-to-1 B-UML mapping, each with a recommended and a skip action;
-``/kg-to-class-diagram`` then produces the ``ClassDiagram``, applying the
-chosen resolutions. See :doc:`buml_language/model_building/kg_to_buml`.
+**Conversion.** ``/kg/preflight`` reports every element with no clean 1-to-1
+B-UML mapping, each with a recommended and a skip action;
+``/kg/to-class-diagram`` then produces the ``ClassDiagram``, applying the
+chosen ``resolutions`` (``[{"issueId", "decision"}]``, ``decision`` being
+``accept`` or ``skip``). See :doc:`buml_language/model_building/kg_to_buml`.
 
 **Validation.** ``/validate-diagram`` runs the same preflight and OWL/SHACL
-consistency checks as the editor's Refine KG dialog and reports findings only.
+consistency checks as the editor's Refine KG dialog and reports findings only:
+preflight issues and consistency violations are errors, other consistency
+findings warnings. A consistency check that cannot finish (out of time, too
+many checks running, pyshacl not installed) is a warning and leaves the diagram
+valid; shapes pyshacl refuses to load are an error.
 
-**LLM endpoints.** ``/llm-clean-kg`` and ``/classify-orphans-with-llm`` take a
+**LLM endpoints.** ``/kg/llm-clean`` and ``/kg/classify-orphans`` take a
 JSON body: the ``diagram``, an optional ``description``, the ``provider``
 (``anthropic``, ``openai`` -- the default -- ``mistral`` or ``nebius``), an
 optional ``llm_model`` (the provider's default otherwise) and the caller's own
-``api_key``. ``/classify-orphans-with-llm`` also takes ``node_ids``, at most
+``api_key``. ``/kg/classify-orphans`` also takes ``nodeIds``, at most
 ``maxOrphanClassifyNodes`` per request (80 by default; the editor reads the
-limit from ``/kg-config`` and sends larger sets in batches). The key is a
+limit from ``/kg/config`` and sends larger sets in batches). The key is a
 ``SecretStr`` and is never logged. OpenAI is reached
 through the transport in ``besser.utilities.llm_utils``; the other providers go
-through the Spec-Driven Agent's provider clients. The server-paid tiers and the
+through the Spec-Driven Agent's provider clients, with their retry loop off:
+each model call is one attempt bounded by what is left of the request's
+deadline (``llmRequestTimeoutSeconds``). The server-paid tiers and the
 providers that need a ``base_url`` are not offered, so the server never opens a
 URL the caller chose. A provider failure is an HTTP 502 whose message names the
 provider but never carries the provider's response, which can echo part of the
 key; the detail is logged instead. Request-shape errors (a missing field, an
-unknown provider) are FastAPI's 422; blank keys and empty or oversized
-``node_ids`` are 400s.
+unknown provider, a malformed ``llm_model``) are FastAPI's 422; blank keys and
+empty or oversized ``nodeIds`` are 400s.
 
-**Consistency report.** ``/check-kg-consistency`` returns ``issues`` whose
+Request fields follow one rule: data fields are camelCase (``kgSignature``,
+``llmIssues``, ``nodeIds``, ``issueId``), while the LLM credentials keep the
+``provider`` / ``api_key`` / ``llm_model`` names used by every LLM feature of
+the editor.
+
+**Consistency report.** ``/kg/consistency`` returns ``issues`` whose
 fields are camelCase like the rest of the API (``affectedNodeIds``,
 ``constraintNodeId``, ``specKind``, ``pathIri``, ``constraintLabel``, ...).
 The validator reads its shapes from a graph built only from the shapes BESSER
@@ -175,17 +190,22 @@ itself writes (the constraint vocabulary of the RDF exporter, plus the shapes
 the check adds for OWL disjointness and functional properties); every other
 triple of an imported ontology is data, never a shape. SPARQL- and
 JavaScript-based SHACL constructs are therefore never executed, and the server
-never opens a URL the KG author chose.
+never opens a URL the KG author chose. pyshacl runs in a child process with a
+scrubbed environment that is killed after ``KG_CONSISTENCY_TIMEOUT_SECONDS``
+(an ``sh:pattern`` can backtrack for ever; one longer than 1000 characters is
+skipped with a warning). At most ``KG_CONSISTENCY_MAX_CONCURRENT`` checks run at
+once; beyond that ``/kg/consistency`` answers HTTP 429. Outside the web backend
+the check needs the ``kg`` extra: ``pip install besser[kg]``.
 
-**Import warnings.** ``/import-owl`` returns a ``warnings`` list of
+**Import warnings.** ``/kg/import-owl`` returns a ``warnings`` list of
 ``{code, message}`` entries for anything the importer had to skip (for example
 ``SHACL_QUALIFIED_COUNT_INVALID``, a ``sh:qualifiedMinCount`` that is not an
-integer). The editor shows them as toasts. ``/kg-to-class-diagram`` returns its
+integer). The editor shows them as toasts. ``/kg/to-class-diagram`` returns its
 own, for example ``SHACL_COUNT_INVALID`` when a ``sh:minCount`` or
 ``sh:maxLength`` is not a whole number and the constraint is skipped.
 
 **Determinism.** Importing the same ontology file twice through
-``/import-owl`` yields the same diagram JSON, blank-node ids included, and the
+``/kg/import-owl`` yields the same diagram JSON, blank-node ids included, and the
 preflight and consistency reports computed on a given diagram carry the same
 issue ids every time. A test imports one file twice and compares the two
 results.
@@ -435,7 +455,7 @@ Conversion
 - ``POST /get-json-model`` -- BUML Python file to JSON (auto-detects diagram type)
 - ``POST /get-project-json-model`` -- BUML project file to JSON
 - ``POST /get-json-model-from-image`` -- Image to ClassDiagram JSON (requires OpenAI API key)
-- ``POST /get-json-model-from-kg`` -- Knowledge graph (TTL/RDF/JSON) to ClassDiagram JSON
+- ``POST /get-json-model-from-kg`` -- **Deprecated.** Knowledge graph (TTL/RDF/JSON) to ClassDiagram JSON through OpenAI (requires an OpenAI API key). Use ``/kg/import-owl`` and ``/kg/to-class-diagram`` instead
 - ``POST /csv-to-domain-model`` -- CSV **or XLSX** files to domain model JSON (both extensions are accepted; XLSX needs ``openpyxl``)
 - ``POST /transform-agent-model-json`` -- Agent model transformation with personalization
 - ``POST /get-svg`` -- B-UML class-diagram file to an auto-laid-out SVG. Rendering is delegated to the WME Node server (``WME_NODE_SERVER_URL``, default ``http://localhost:8080``), which runs ELK auto-layout headlessly.
@@ -443,19 +463,20 @@ Conversion
 Knowledge Graph
 ^^^^^^^^^^^^^^^
 
-The KG editor's own endpoints. ``/import-owl`` and ``/export-kg-rdf`` are the
+The KG editor's own endpoints, all under ``/besser_api/kg`` (OpenAPI tag
+``knowledge-graph``). ``/kg/import-owl`` and ``/kg/export/{fmt}`` are the
 ontology round trip; the rest support the KG-to-ClassDiagram conversion and the
 Refine KG dialog that precedes it.
 
-- ``POST /import-owl`` -- OWL/RDF ontology file (``.owl``/``.ttl``/``.rdf``/``.xml``/``.nt``/``.n3``) to KnowledgeGraphDiagram JSON
-- ``POST /export-kg-rdf/{fmt}`` -- KnowledgeGraphDiagram to Turtle (``ttl``) or RDF/XML (``owl``); the body's ``vocab`` field selects OWL restrictions, SHACL shapes, or both
-- ``POST /kg-to-class-diagram`` -- KnowledgeGraphDiagram to ClassDiagram JSON with OCL constraints, applying any preflight resolutions
-- ``POST /analyze-kg-for-buml-conversion`` -- Preflight report: every KG element with no clean 1-to-1 BUML mapping, each with a recommended and a skip action
-- ``POST /check-kg-consistency`` -- OWL 2 + SHACL validation (pyshacl with OWL2-RL inference)
-- ``POST /apply-kg-refinement`` -- Apply Refine KG decisions (``source`` selects the static analyzer or the LLM suggestions) and return the cleaned KG
-- ``POST /llm-clean-kg`` -- LLM-suggested cleanup of the graph, using the caller's own LLM key (see below); the optional ``description`` adds context, otherwise the model infers the domain from the KG
-- ``POST /classify-orphans-with-llm`` -- Per-node classification for orphan nodes deferred from the Refine dialog (``description`` is optional here too)
-- ``GET /kg-config`` -- The server-owned limits the editor reads before calling the LLM endpoints: ``{"llmRequestTimeoutSeconds": int, "maxOrphanClassifyNodes": int}``. Both values come from ``constants.py``, so the editor never hard-codes a limit the server enforces
+- ``GET /kg/config`` -- The server-owned limits the editor reads before calling the LLM endpoints: ``{"llmRequestTimeoutSeconds": int, "maxOrphanClassifyNodes": int}``. Both values come from ``constants.py``, so the editor never hard-codes a limit the server enforces
+- ``POST /kg/import-owl`` -- OWL/RDF ontology file (multipart field ``owl_file``; ``.owl``/``.ttl``/``.rdf``/``.xml``/``.nt``/``.n3``) to KnowledgeGraphDiagram JSON
+- ``POST /kg/export/{fmt}`` -- KnowledgeGraphDiagram to Turtle (``ttl``) or RDF/XML (``owl``); the body's ``vocab`` field selects OWL restrictions, SHACL shapes, or both
+- ``POST /kg/consistency`` -- OWL 2 + SHACL validation (pyshacl with OWL2-RL inference); 429 when too many checks are running
+- ``POST /kg/preflight`` -- Preflight report: every KG element with no clean 1-to-1 BUML mapping, each with a recommended and a skip action
+- ``POST /kg/to-class-diagram`` -- KnowledgeGraphDiagram to ClassDiagram JSON with OCL constraints, applying any preflight resolutions
+- ``POST /kg/llm-clean`` -- LLM-suggested cleanup of the graph, using the caller's own LLM key (see above); the optional ``description`` adds context, otherwise the model infers the domain from the KG
+- ``POST /kg/classify-orphans`` -- Per-node classification for orphan nodes deferred from the Refine dialog (``description`` is optional here too)
+- ``POST /kg/apply-refinement`` -- Apply Refine KG decisions (``source`` selects the static analyzer or the LLM suggestions in ``llmIssues``) and return the cleaned KG
 
 Validation
 ^^^^^^^^^^
@@ -626,7 +647,7 @@ Environment Variables
   Endpoints that never read it: image-to-model (``/get-json-model-from-image``)
   and knowledge-graph-to-model (``/get-json-model-from-kg``) take the key as a
   required ``api_key`` form field, and the Knowledge Graph LLM endpoints
-  (``/llm-clean-kg``, ``/classify-orphans-with-llm``) take ``provider``,
+  (``/kg/llm-clean``, ``/kg/classify-orphans``) take ``provider``,
   ``llm_model`` and ``api_key`` in the request body, so they also accept
   Anthropic, Mistral and Nebius keys.
 

@@ -1,7 +1,7 @@
 """End-to-end tests for the KG → Class diagram endpoint.
 
 Posts a hand-built KnowledgeGraphDiagram payload to
-``/besser_api/kg-to-class-diagram`` and asserts the response shape the
+``/besser_api/kg/to-class-diagram`` and asserts the response shape the
 frontend depends on.
 """
 
@@ -55,7 +55,7 @@ def kg_payload() -> dict:
 
 
 def test_class_endpoint_returns_class_diagram(client, kg_payload: dict):
-    response = client.post("/besser_api/kg-to-class-diagram", json=kg_payload)
+    response = client.post("/besser_api/kg/to-class-diagram", json=kg_payload)
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["diagramType"] == "ClassDiagram"
@@ -81,7 +81,7 @@ def test_class_endpoint_returns_class_diagram(client, kg_payload: dict):
 
 def test_endpoints_reject_non_kg_payload(client):
     response = client.post(
-        "/besser_api/kg-to-class-diagram",
+        "/besser_api/kg/to-class-diagram",
         json={"title": "wrong", "model": {"type": "ClassDiagram"}},
     )
     assert response.status_code == 400
@@ -130,7 +130,7 @@ def test_class_endpoint_emits_ocl_constraint_for_constraint_bearing_kg(client):
             ],
         },
     }
-    response = client.post("/besser_api/kg-to-class-diagram", json=payload)
+    response = client.post("/besser_api/kg/to-class-diagram", json=payload)
     assert response.status_code == 200, response.text
     body = response.json()
     elements = body["model"]["elements"]

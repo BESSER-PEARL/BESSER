@@ -1,4 +1,4 @@
-"""One server deadline per KG LLM request, published through ``GET /kg-config``.
+"""One server deadline per KG LLM request, published through ``GET /kg/config``.
 
 Also covers the legacy ``/get-json-model-from-kg`` endpoint, which now goes
 through the shared OpenAI transport, off the event loop, under the same deadline.
@@ -30,12 +30,12 @@ EX = "http://example.org/"
 
 
 # --------------------------------------------------------------------------
-# GET /kg-config
+# GET /kg/config
 # --------------------------------------------------------------------------
 
 
 def test_kg_config_publishes_the_server_limits(client):
-    response = client.get(f"{_API}/kg-config")
+    response = client.get(f"{_API}/kg/config")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -84,7 +84,7 @@ def _budget(monkeypatch, seconds: float, min_call: float) -> None:
 
 
 def test_each_provider_call_gets_the_remaining_budget_as_its_timeout(client, slow_provider):
-    response = client.post(f"{_API}/llm-clean-kg", json={
+    response = client.post(f"{_API}/kg/llm-clean", json={
         "diagram": _kg_diagram(), "api_key": KEY, "provider": "anthropic",
     })
 
@@ -99,7 +99,7 @@ def test_a_call_that_outlives_the_deadline_is_a_502(client, slow_provider, monke
     slow_provider.client.delay = 2.0
 
     started = time.monotonic()
-    response = client.post(f"{_API}/llm-clean-kg", json={
+    response = client.post(f"{_API}/kg/llm-clean", json={
         "diagram": _kg_diagram(), "api_key": KEY, "provider": "anthropic",
     })
 
@@ -125,9 +125,9 @@ def test_no_further_batch_starts_once_the_budget_is_nearly_spent(client, slow_pr
     slow_provider.client.delay = 0.8
     count = MAX_ORPHAN_BATCH + 1
 
-    response = client.post(f"{_API}/classify-orphans-with-llm", json={
+    response = client.post(f"{_API}/kg/classify-orphans", json={
         "diagram": _many_orphans_diagram(count), "api_key": KEY, "provider": "mistral",
-        "node_ids": [f"ghost{i}" for i in range(count)],
+        "nodeIds": [f"ghost{i}" for i in range(count)],
     })
 
     assert response.status_code == 502
@@ -137,9 +137,9 @@ def test_no_further_batch_starts_once_the_budget_is_nearly_spent(client, slow_pr
 
 def test_the_orphan_cap_is_enforced_with_the_published_value(client):
     count = MAX_ORPHAN_CLASSIFY_NODES + 1
-    response = client.post(f"{_API}/classify-orphans-with-llm", json={
+    response = client.post(f"{_API}/kg/classify-orphans", json={
         "diagram": _many_orphans_diagram(count), "api_key": KEY,
-        "node_ids": [f"ghost{i}" for i in range(count)],
+        "nodeIds": [f"ghost{i}" for i in range(count)],
     })
 
     assert response.status_code == 400
@@ -155,7 +155,7 @@ def test_the_openai_path_passes_the_remaining_budget_too(client, monkeypatch):
                                json=lambda: {"choices": [{"message": {"content": '{"suggestions": []}'}}]})
 
     monkeypatch.setattr("requests.post", fake_post)
-    response = client.post(f"{_API}/llm-clean-kg", json={"diagram": _kg_diagram(), "api_key": KEY})
+    response = client.post(f"{_API}/kg/llm-clean", json={"diagram": _kg_diagram(), "api_key": KEY})
 
     assert response.status_code == 200, response.text
     assert 0 < seen["timeout"] <= KG_LLM_REQUEST_TIMEOUT_SECONDS

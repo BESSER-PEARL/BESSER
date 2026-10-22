@@ -51,7 +51,7 @@ def _assert_preflight_shape(body: dict) -> None:
 
 
 def test_analyze_response_shape(client):
-    body = client.post(f"{_API}/analyze-kg-for-buml-conversion", json=_kg_with_orphan_diagram()).json()
+    body = client.post(f"{_API}/kg/preflight", json=_kg_with_orphan_diagram()).json()
 
     _assert_preflight_shape(body)
     assert body["issues"], "fixture should raise at least one issue to pin the issue shape"
@@ -66,9 +66,9 @@ def test_llm_clean_and_classify_share_the_preflight_shape(client, monkeypatch):
     monkeypatch.setattr("requests.post", lambda *a, **kw: _FakeResp(reply))
     common = {"diagram": _kg_diagram(), "description": "people", "api_key": "sk-x"}
 
-    clean = client.post(f"{_API}/llm-clean-kg", json=common).json()
+    clean = client.post(f"{_API}/kg/llm-clean", json=common).json()
     classify = client.post(
-        f"{_API}/classify-orphans-with-llm", json={**common, "node_ids": ["alice"]},
+        f"{_API}/kg/classify-orphans", json={**common, "nodeIds": ["alice"]},
     ).json()
 
     _assert_preflight_shape(clean)
@@ -77,12 +77,12 @@ def test_llm_clean_and_classify_share_the_preflight_shape(client, monkeypatch):
 
 def test_consistency_response_is_camel_case_throughout(client):
     imported = client.post(
-        f"{_API}/import-owl",
+        f"{_API}/kg/import-owl",
         files={"owl_file": ("d.ttl", DISJOINT_TTL.encode(), "text/turtle")},
     ).json()
 
     body = client.post(
-        f"{_API}/check-kg-consistency", json={"title": "t", "model": imported["model"]},
+        f"{_API}/kg/consistency", json={"title": "t", "model": imported["model"]},
     ).json()
 
     assert set(body) == CONSISTENCY_KEYS
@@ -93,10 +93,10 @@ def test_consistency_response_is_camel_case_throughout(client):
 
 def test_apply_refinement_response_shape(client):
     diagram = _kg_with_orphan_diagram()
-    pre = client.post(f"{_API}/analyze-kg-for-buml-conversion", json=diagram).json()
+    pre = client.post(f"{_API}/kg/preflight", json=diagram).json()
     orphan = next(i for i in pre["issues"] if i["code"] == "ORPHAN_NODE_NO_CLASS_LINK")
 
-    body = client.post(f"{_API}/apply-kg-refinement", json={
+    body = client.post(f"{_API}/kg/apply-refinement", json={
         **diagram, "source": "static", "kgSignature": pre["kgSignature"],
         "resolutions": [{"issueId": orphan["id"], "decision": "skip"}],
     }).json()

@@ -118,8 +118,8 @@ class KGIssueResponse(BaseModel):
 
 
 class KGPreflightReportResponse(BaseModel):
-    """Response of ``/analyze-kg-for-buml-conversion``, ``/llm-clean-kg`` and
-    ``/classify-orphans-with-llm``."""
+    """Response of ``/kg/preflight``, ``/kg/llm-clean`` and
+    ``/kg/classify-orphans``."""
     kgSignature: str
     diagramType: str
     issueCount: int
@@ -141,7 +141,7 @@ class KGConsistencyIssueResponse(BaseModel):
 
 
 class KGConsistencyReportResponse(BaseModel):
-    """Response of ``/check-kg-consistency``."""
+    """Response of ``/kg/consistency``."""
     issues: List[KGConsistencyIssueResponse] = Field(default_factory=list)
     issueCount: int
     severityCounts: Dict[str, int]
@@ -152,12 +152,12 @@ class KGConsistencyReportResponse(BaseModel):
 
 
 class KGConfigResponse(BaseModel):
-    """Response of ``GET /kg-config``: server-owned limits the KG editor must respect."""
+    """Response of ``GET /kg/config``: server-owned limits the KG editor must respect."""
     llmRequestTimeoutSeconds: int = Field(
         description="Overall server deadline, in seconds, for one KG LLM request.",
     )
     maxOrphanClassifyNodes: int = Field(
-        description="Most node ids one /classify-orphans-with-llm request may carry.",
+        description="Most node ids one /kg/classify-orphans request may carry.",
     )
 
 
@@ -168,7 +168,7 @@ class KGPendingOrphanClassification(BaseModel):
 
 
 class KGRefinementResponse(BaseModel):
-    """Response of ``/apply-kg-refinement``: the cleaned KG plus its new signature."""
+    """Response of ``/kg/apply-refinement``: the cleaned KG plus its new signature."""
     title: str
     model: Dict[str, Any]
     diagramType: str

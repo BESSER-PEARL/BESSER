@@ -114,7 +114,7 @@ def test_an_empty_upload_is_rejected():
 def test_import_owl_rejects_the_padded_bomb_quickly(client):
     started = time.monotonic()
     resp = client.post(
-        "/besser_api/import-owl",
+        "/besser_api/kg/import-owl",
         files={"owl_file": ("bomb.owl", _bomb(5000), "application/rdf+xml")},
     )
     assert resp.status_code == 400
@@ -126,7 +126,7 @@ def test_import_owl_accepts_a_commented_ontology(client):
     content = ('<?xml version="1.0"?>\n<!-- <!DOCTYPE in a comment -->\n<!--' + "x" * 5000 + "-->\n"
                + _RDF_BODY % "Thing").encode()
     resp = client.post(
-        "/besser_api/import-owl",
+        "/besser_api/kg/import-owl",
         files={"owl_file": ("ok.owl", content, "application/rdf+xml")},
     )
     assert resp.status_code == 200, resp.text

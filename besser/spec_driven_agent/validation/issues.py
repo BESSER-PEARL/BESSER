@@ -211,6 +211,11 @@ def _classify_issue(message: str) -> ValidationIssue:
     # and fall through to the default warning below.
     if lower.startswith("data contract:"):
         return ValidationIssue("blocker", text)
+    # The backend's ORM / schemas disagree with a model change made since the
+    # previous run (model_conformance.py): a removed attribute still defined,
+    # an added one missing, a stale type or optionality.
+    if lower.startswith("model conformance:"):
+        return ValidationIssue("blocker", text)
 
     # An import naming a module the app does not ship is fatal at startup, and
     # ruff is structurally blind to it (a star import excuses every name rather

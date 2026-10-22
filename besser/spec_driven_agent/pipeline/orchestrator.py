@@ -3059,6 +3059,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         raw_issues.extend(self._collect_framework_switch_issues())
         raw_issues.extend(self._collect_missing_frontend_issue())
         raw_issues.extend(self._collect_data_contract_issues())
+        raw_issues.extend(self._collect_model_conformance_issues())
 
         # Model-derived acceptance matrix: per entity — route present,
         # page present, create wired. REPORT-ONLY (warnings + recipe

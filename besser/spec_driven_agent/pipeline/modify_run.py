@@ -32,7 +32,8 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_SNAPSHOT,
     EVENT_VALIDATION_ISSUE,
 )
-from besser.spec_driven_agent.validation.issues import ValidationIssue
+from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run
+from besser.spec_driven_agent.validation.model_conformance import model_conformance_issues
 from besser.spec_driven_agent.execution.workspace_fs import open_plain
 
 logger = logging.getLogger(__name__)
@@ -259,6 +260,18 @@ class ModifyRunMixin:
             + ". Update the code (generated and hand-written files) to this model "
             "change. The new model wins: do not bring back removed or renamed elements."
         )
+
+    def _collect_model_conformance_issues(self) -> list[str]:
+        """Phase 3: the FastAPI backend's ORM and schemas against the model change."""
+        change = getattr(self, "_model_change", None)
+        if not self._modify_mode or change is None or not change.changes:
+            return []
+        try:
+            return model_conformance_issues(self.output_dir, change.base, change.new)
+        except Exception as exc:
+            logger.warning("Model conformance check failed", exc_info=True)
+            return [_check_did_not_run(
+                "the model conformance check", f"it crashed: {type(exc).__name__}")]
 
     def _render_seed_history(self) -> str:
         """Format the seed recipe's session history for the inventory."""

@@ -35,6 +35,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers.mu
     format_multiplicity_label,
 )
 from besser.utilities.utils import explicit_timestamp_iso
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import is_valid_element_id
 
 
 def _set_timestamp(target: dict, element) -> dict:
@@ -49,6 +50,34 @@ def _set_timestamp(target: dict, element) -> dict:
     if iso is not None:
         target["timestamp"] = iso
     return target
+
+
+def _make_id_taker():
+    """Return ``take(element)``: the element's own ``id`` while valid and unused, else a fresh uuid.
+
+    Reusing the id keeps it stable across round trips; the uniqueness check
+    keeps two elements that share an id (a copied element, a merged model)
+    from overwriting each other in the JSON maps.
+    """
+    used = set()
+
+    def take(element) -> str:
+        element_id = getattr(element, "id", None)
+        if element_id is not None:
+            if not is_valid_element_id(element_id):
+                reason = "invalid"
+            elif element_id in used:
+                reason = "duplicate"
+            else:
+                used.add(element_id)
+                return element_id
+            logger.warning("Replacing %s element id %.60r of %s %r with a new one.",
+                           reason, element_id, type(element).__name__, getattr(element, "name", ""))
+        element_id = str(uuid.uuid4())
+        used.add(element_id)
+        return element_id
+
+    return take
 
 
 def fresh_primitive_types() -> dict:
@@ -217,16 +246,15 @@ def class_buml_to_json(domain_model):
 
     # First pass: Create all class and enumeration elements
     class_id_map = {}  # Store mapping between Class objects and their IDs
+    take_id = _make_id_taker()
 
     # Sort types/constraints by name for deterministic output across runs.
     for type_obj in sorted(
         (t for t in domain_model.types | domain_model.constraints if isinstance(t, (Class, Enumeration, Constraint))),
         key=lambda t: t.name,
     ):
-            # Generate UUID for the element. OCL pre/post are emitted as
-            # full text including the Class::method header, so element-id
-            # stability is no longer required.
-            element_id = str(uuid.uuid4())
+            # Reuse the element's id (from the editor JSON); mint one if absent.
+            element_id = take_id(type_obj)
             class_id_map[type_obj] = element_id
 
             # Use saved layout position if available, otherwise fall back to grid layout
@@ -259,7 +287,7 @@ def class_buml_to_json(domain_model):
             y_offset = y + header_height  # Members start below the header
             if isinstance(type_obj, Class):
                 for attr in sorted(type_obj.attributes, key=lambda a: a.name):
-                    attr_id = str(uuid.uuid4())
+                    attr_id = take_id(attr)
                     attr_type = (
                         attr.type.name if hasattr(attr.type, "name") else str(attr.type)
                     )
@@ -298,7 +326,7 @@ def class_buml_to_json(domain_model):
 
                 # Process methods
                 for method in sorted(type_obj.methods, key=lambda m: m.name):
-                    method_id = str(uuid.uuid4())
+                    method_id = take_id(method)
                     visibility_symbol = next(
                         k for k, v in VISIBILITY_MAP.items() if v == method.visibility
                     )
@@ -416,7 +444,7 @@ def class_buml_to_json(domain_model):
                 else:
                     literals_iter = sorted(type_obj.literals, key=lambda lit: lit.name)
                 for literal in literals_iter:
-                    literal_id = str(uuid.uuid4())
+                    literal_id = take_id(literal)
                     elements[literal_id] = _set_timestamp({
                         "id": literal_id,
                         "name": literal.name,
@@ -500,7 +528,7 @@ def class_buml_to_json(domain_model):
     # Second pass: Create relationships
     for association in sorted(domain_model.associations, key=lambda a: a.name):
         try:
-            rel_id = str(uuid.uuid4())
+            rel_id = take_id(association)
             name = association.name if association.name else ""
             # Sort ends by name for deterministic source/target assignment.
             ends = sorted(association.ends, key=lambda e: e.name)
@@ -608,7 +636,7 @@ def class_buml_to_json(domain_model):
 
     # Handle generalizations
     for generalization in sorted(domain_model.generalizations, key=lambda g: (g.specific.name, g.general.name)):
-        rel_id = str(uuid.uuid4())
+        rel_id = take_id(generalization)
         if (
             generalization.general in class_id_map
             and generalization.specific in class_id_map

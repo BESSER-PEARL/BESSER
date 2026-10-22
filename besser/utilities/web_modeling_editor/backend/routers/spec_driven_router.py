@@ -42,6 +42,7 @@ from besser.spec_driven_agent.planning.model_change import compare_with_base
 from besser.spec_driven_agent.state.agent_trace import ATTRIBUTION_FILENAME
 from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    BUML_EMIT_IDS,
     LLM_CANCEL_ABANDONED_RUNS,
     LLM_DISCONNECTED_GRACE_SECONDS,
 )
@@ -894,6 +895,7 @@ def _write_smart_model_to_buml(workdir: str, project_export: Optional[dict]) -> 
                 domain_model_to_code(
                     model=assembled.domain_model,
                     file_path=os.path.join(buml_dir, "domain_model.py"),
+                    emit_ids=BUML_EMIT_IDS,
                 )
             if assembled.gui_model is not None:
                 gui_model_to_code(

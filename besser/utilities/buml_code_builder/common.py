@@ -122,6 +122,20 @@ def timestamp_kwarg(element: Any) -> str:
     return f", timestamp={expr}" if expr else ""
 
 
+def id_kwarg(element: Any, emit_ids: bool) -> str:
+    """Return a ``, id="..."`` constructor argument for ``element``.
+
+    Empty string when ``emit_ids`` is false or the element has no id, so the
+    source is then the same as before ids existed.
+    """
+    if not emit_ids:
+        return ""
+    element_id = getattr(element, "id", None)
+    if not isinstance(element_id, str) or not element_id:
+        return ""
+    return f', id="{_escape_python_string(element_id)}"'
+
+
 def safe_var_name(name: str, lowercase: bool = True) -> str:
     """
     Convert a name to a safe Python variable name.

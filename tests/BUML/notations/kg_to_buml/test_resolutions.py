@@ -403,3 +403,52 @@ def test_applying_the_same_resolutions_twice_yields_identical_edge_ids():
     kg.add_node(person)
 
     assert _next_edge_id(kg) == _next_edge_id(kg)
+
+
+# --- break_at_edge shared by two cycles -------------------------------------
+
+
+def _two_cycles_sharing_an_edge() -> KnowledgeGraph:
+    """``A -> B -> A`` and ``A -> B -> C -> A`` share ``e9`` (A -> B), the
+    lexicographically last edge of both, so both recommend breaking it."""
+    from besser.BUML.metamodel.kg import KGEdge
+
+    sub_class_of = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
+    a, b, c = (KGClass(id=f"http://ex.org/{x}", label=x, iri=f"http://ex.org/{x}") for x in "ABC")
+    edges = {
+        KGEdge("e9", a, b, iri=sub_class_of), KGEdge("e1", b, a, iri=sub_class_of),
+        KGEdge("e2", b, c, iri=sub_class_of), KGEdge("e3", c, a, iri=sub_class_of),
+    }
+    return KnowledgeGraph("k", nodes={a, b, c}, edges=edges)
+
+
+def _accept_all_cycles(kg):
+    cycles = [i for i in analyze_kg_for_class_diagram(kg).issues if i.code == "CYCLIC_SUBCLASS"]
+    assert [i.recommended_action.parameters["edge_id"] for i in cycles] == ["e9", "e9"]
+    return [KGResolution(i.id, i.recommended_action.key, dict(i.recommended_action.parameters)) for i in cycles]
+
+
+def test_breaking_an_edge_an_earlier_resolution_removed_is_skipped_with_a_note():
+    """Used to raise ``ResolutionError: Edge 'e9' not found`` and fail the batch."""
+    kg = _two_cycles_sharing_an_edge()
+    warnings: list = []
+    new_kg = apply_resolutions(kg, _accept_all_cycles(kg), warnings=warnings)
+
+    assert sorted(e.id for e in new_kg.edges) == ["e1", "e2", "e3"]
+    assert [w.code for w in warnings] == ["RESOLUTION_ALREADY_APPLIED"]
+    assert warnings[0].edge_id == "e9"
+    # Breaking the shared edge breaks both cycles.
+    assert not [i for i in analyze_kg_for_class_diagram(new_kg).issues if i.code == "CYCLIC_SUBCLASS"]
+
+
+def test_shared_edge_batch_converts_and_reports_the_note():
+    kg = _two_cycles_sharing_an_edge()
+    result = kg_to_class_diagram(kg, resolutions=_accept_all_cycles(kg))
+    assert "RESOLUTION_ALREADY_APPLIED" in {w.code for w in result.warnings}
+    assert len(result.domain_model.generalizations) == 3
+
+
+def test_breaking_an_edge_the_graph_never_had_still_raises():
+    kg = _two_cycles_sharing_an_edge()
+    with pytest.raises(ResolutionError, match="not found"):
+        apply_resolutions(kg, [KGResolution("i", "break_at_edge", {"edge_id": "nope"})])

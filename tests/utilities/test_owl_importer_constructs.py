@@ -710,3 +710,134 @@ def test_a_clean_ontology_reports_nothing(tmp_path: Path):
 
 def test_the_warnings_argument_is_optional(tmp_path: Path):
     owl_file_to_knowledge_graph(_write_ttl(tmp_path, _BAD_QUALIFIED_COUNT_TTL))
+
+
+
+# ---------------------------------------------------------------------------
+# Non-integer cardinalities are reported and skipped, not stored as strings
+# ---------------------------------------------------------------------------
+
+
+_BAD_CARDINALITY_TTL = """
+@prefix : <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+
+:Person a owl:Class ;
+  rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :name ; owl:maxCardinality "lots" ] .
+:name a owl:DatatypeProperty ; rdfs:domain :Person .
+:PersonShape a sh:NodeShape ; sh:targetClass :Person ;
+  sh:property [ sh:path :name ; sh:minCount "some" ; sh:maxLength "x" ; sh:maxCount 2 ] .
+"""
+
+
+def test_a_non_integer_cardinality_is_reported_and_skipped(tmp_path: Path):
+    warnings: list = []
+
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, _BAD_CARDINALITY_TTL), warnings)
+
+    assert sorted(w["code"] for w in warnings) == [
+        "OWL_CARDINALITY_INVALID", "SHACL_COUNT_INVALID", "SHACL_COUNT_INVALID",
+    ]
+    messages = " | ".join(w["message"] for w in warnings)
+    assert "owl:maxCardinality 'lots'" in messages
+    assert "sh:minCount 'some'" in messages and "sh:maxLength 'x'" in messages
+    assert "http://ex.org/name" in messages
+
+    specs = [s for n in kg.nodes if isinstance(n, KGPropertyConstraint) for s in n.get_specs()]
+    # Only the readable count survives, and nothing is stored as a string.
+    assert specs == [{"kind": "maxCardinality", "value": 2}]
+    # The unreadable triples are not left behind as raw edges either.
+    predicates = {e.iri for e in kg.edges}
+    assert "http://www.w3.org/2002/07/owl#maxCardinality" not in predicates
+    assert "http://www.w3.org/ns/shacl#minCount" not in predicates
+
+
+def test_a_skipped_cardinality_does_not_reach_the_class_diagram(tmp_path: Path):
+    from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
+
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, _BAD_CARDINALITY_TTL), [])
+    bodies = [c.expression for c in kg_to_class_diagram(kg).domain_model.constraints]
+
+    assert any("->size() <= 2" in b for b in bodies), bodies
+    assert not any(">=" in b for b in bodies), bodies
+
+
+# ---------------------------------------------------------------------------
+# Deterministic ids: importing the same file twice gives the same graph
+# ---------------------------------------------------------------------------
+
+
+_COMPLEX_KG = Path(__file__).resolve().parents[1] / "fixtures" / "complex_kg.ttl"
+
+
+def _import_json(path: Path) -> dict:
+    from besser.utilities.web_modeling_editor.backend.services.converters import kg_to_json
+
+    return kg_to_json(owl_file_to_knowledge_graph(str(path)))
+
+
+def test_importing_the_same_file_twice_gives_identical_json():
+    first, second = _import_json(_COMPLEX_KG), _import_json(_COMPLEX_KG)
+
+    assert any(n["id"].startswith("_:") for n in first["model"]["nodes"]), "fixture has blank nodes"
+    assert first == second
+
+
+def test_importing_the_same_file_twice_gives_identical_preflight_issue_ids():
+    from besser.BUML.notations.kg_to_buml.preflight import analyze_kg_for_class_diagram
+
+    def issue_ids():
+        return sorted(i.id for i in analyze_kg_for_class_diagram(owl_file_to_knowledge_graph(str(_COMPLEX_KG))).issues)
+
+    first = issue_ids()
+    assert first, "complex_kg.ttl raises preflight issues"
+    assert first == issue_ids()
+
+
+def test_import_ids_do_not_depend_on_the_hash_seed():
+    """Blank-node labels, edge ids and axiom order must not follow Python's
+    per-process string hashing either, or a server restart changes them."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    script = (
+        "import json, sys\n"
+        "from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph\n"
+        "from besser.utilities.web_modeling_editor.backend.services.converters import kg_to_json\n"
+        "print(json.dumps(kg_to_json(owl_file_to_knowledge_graph(sys.argv[1])), sort_keys=True))\n"
+    )
+    root = Path(__file__).resolve().parents[2]
+    outputs = []
+    for seed in ("1", "2"):
+        env = {**os.environ, "PYTHONHASHSEED": seed, "PYTHONPATH": str(root)}
+        done = subprocess.run(
+            [sys.executable, "-c", script, str(_COMPLEX_KG)],
+            capture_output=True, text=True, env=env, check=True,
+        )
+        outputs.append(json.loads(done.stdout))
+    assert outputs[0] == outputs[1]
+
+
+def test_blank_node_ids_name_their_content_not_their_position(tmp_path: Path):
+    """Two files that differ only in what comes *before* a restriction keep its id."""
+    body = (
+        "@prefix : <http://ex.org/> .\n"
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+        "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+        ":p a owl:ObjectProperty .\n"
+        ":A a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p ; owl:someValuesFrom :B ] .\n"
+    )
+    extra = body + ":C a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; owl:onProperty :p ; owl:allValuesFrom :A ] .\n"
+
+    def restriction_ids(text, name):
+        kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, text, name))
+        return {
+            n.id for n in kg.nodes
+            if isinstance(n, KGPropertyConstraint) and n.get_specs()[0]["kind"] == "someValuesFrom"
+        }
+
+    assert restriction_ids(body, "a.ttl") == restriction_ids(extra, "b.ttl")

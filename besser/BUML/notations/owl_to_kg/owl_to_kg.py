@@ -315,6 +315,7 @@ def _consumed_list_heads(g: rdflib.Graph) -> Set[BNode]:
 def _decode_restrictions(
     g: rdflib.Graph,
     lists: Dict[BNode, List[Any]],
+    warnings: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[BNode, Dict[str, Any]]:
     """Decode every ``owl:Restriction`` blank node into a structured payload.
 
@@ -331,6 +332,7 @@ def _decode_restrictions(
         }
     """
     out: Dict[BNode, Dict[str, Any]] = {}
+    unreadable: List[Tuple[Any, Any, Any]] = []
     for restriction, _, _ in g.triples((None, RDF.type, OWL.Restriction)):
         if not isinstance(restriction, BNode):
             continue
@@ -346,11 +348,20 @@ def _decode_restrictions(
             v = next(g.objects(restriction, pred), None)
             if v is not None:
                 try:
-                    payload["restriction_type"] = label
                     payload["value"] = int(str(v))
-                except (TypeError, ValueError):
                     payload["restriction_type"] = label
-                    payload["value"] = str(v)
+                except (TypeError, ValueError):
+                    # Kept as a string before, so a cardinality of "many"
+                    # reached the class diagram. Skipped and reported instead,
+                    # like a bad SHACL count: the triple is dropped and the
+                    # restriction stays a plain blank node with no constraint.
+                    payload["restriction_type"] = "unknown"
+                    unreadable.append((restriction, pred, v))
+                    where = f"the restriction on {on_prop}" if on_prop is not None else "a restriction"
+                    _warn(
+                        warnings, "OWL_CARDINALITY_INVALID",
+                        f"Ignored owl:{label} {str(v)!r} on {where}: not an integer.",
+                    )
                 break
         else:
             # Value-flavoured.
@@ -369,6 +380,8 @@ def _decode_restrictions(
                 # Restriction with no recognised predicate — keep it but flag it.
                 payload["restriction_type"] = "unknown"
         out[restriction] = payload
+    for triple in unreadable:
+        g.remove(triple)
     return out
 
 
@@ -498,11 +511,16 @@ def _emit_imports(g: rdflib.Graph) -> List[ImportAxiom]:
 
 # Maps SHACL predicate → (constraint kind, value extractor).
 # Each extractor receives (graph, object_term, lists) and returns the spec value.
+#: Returned by an extractor for a value it cannot read; the caller warns and
+#: skips the constraint rather than storing a value of the wrong type.
+_UNREADABLE = object()
+
+
 def _shacl_literal_int(_g, o, _lists):
     try:
         return int(str(o))
     except (TypeError, ValueError):
-        return str(o)
+        return _UNREADABLE
 
 
 def _shacl_literal_value(_g, o, _lists):
@@ -706,6 +724,12 @@ def _warn(warnings: Optional[List[Dict[str, str]]], code: str, message: str) -> 
         warnings.append({"code": code, "message": message})
 
 
+def _shape_name(term) -> str:
+    """How a warning names a shape: by IRI, or generically for a blank node
+    (whose label means nothing to the user)."""
+    return f"the shape {term}" if isinstance(term, URIRef) else "an anonymous shape"
+
+
 def _decode_shacl_shapes(
     g: rdflib.Graph,
     lists: Dict[BNode, List[Any]],
@@ -825,14 +849,27 @@ def _decode_shacl_shapes(
         if s in out:
             out[s]["property_shape_terms"].append(o)
 
-    # Simple constraint components on property shapes.
+    # Simple constraint components on property shapes. An unreadable value is
+    # reported and its triple dropped, so no edge is left carrying it either.
+    unreadable: List[Tuple[Any, Any, Any]] = []
     for pred, (kind, extractor) in _SHACL_PROPERTY_COMPONENTS.items():
         for s, _, o in g.triples((None, pred, None)):
             if s not in out:
                 continue
             spec_value = extractor(g, o, lists)
+            if spec_value is _UNREADABLE:
+                unreadable.append((s, pred, o))
+                path = next(g.objects(s, SH.path), None)
+                where = f"the shape for {path}" if path is not None else _shape_name(s)
+                _warn(
+                    warnings, "SHACL_COUNT_INVALID",
+                    f"Ignored sh:{_local_name(str(pred))} {str(o)!r} on {where}: not an integer.",
+                )
+                continue
             spec: Dict[str, Any] = {"kind": kind, "value": spec_value}
             out[s]["constraint_specs"].append(spec)
+    for triple in unreadable:
+        g.remove(triple)
 
     # Node-shape components (these may overlap with property-shape preds for
     # the SHACL meta vocabulary, but the predicate set above keeps both shapes
@@ -1409,6 +1446,32 @@ def _lift_to_constraint_nodes(
         edges_by_id.clear()
         edges_by_id.update({e.id: e for e in kg.edges})
 
+    _renumber_constraint_edges(kg)
+
+
+def _renumber_constraint_edges(kg: KnowledgeGraph) -> None:
+    """Give the ``cedge:<n>`` edges the lifter added ids that depend on content only.
+
+    The lifter numbers edges as it adds them, walking sets and dicts whose order
+    follows string hashing, which Python randomises per process. Renumbering by
+    ``(source, predicate, target)`` makes the ids the same on every import.
+    """
+    lifted = sorted(
+        (e for e in kg.edges if e.id.startswith("cedge:")),
+        key=lambda e: (e.source.id, e.iri or "", e.target.id),
+    )
+    if not lifted:
+        return
+    kept = {e for e in kg.edges if not e.id.startswith("cedge:")}
+    first = len(kept) + 1
+    for offset, edge in enumerate(lifted):
+        edge.id = f"cedge:{first + offset}"
+    kg.edges = kept | set(lifted)
+
+
+def _triple_sort_key(triple) -> Tuple[str, str, str]:
+    return tuple(term.n3() for term in triple)
+
 
 def owl_file_to_knowledge_graph(
     path: str,
@@ -1434,6 +1497,7 @@ def owl_file_to_knowledge_graph(
         ext = os.path.splitext(path)[1].lower()
         fmt = "xml" if ext in (".owl", ".rdf") else None
     g.parse(path, format=fmt) if fmt else g.parse(path)
+    g = _with_deterministic_blank_nodes(g)
 
     # First pass: collect explicit class and property IRIs.
     classes: set = set()
@@ -1464,7 +1528,7 @@ def owl_file_to_knowledge_graph(
     # Decoder pass: pre-compute structured annotations and axioms.
     property_kinds = _collect_property_kinds(g)
     list_resolutions = _decode_lists(g)
-    restriction_payloads = _decode_restrictions(g, list_resolutions)
+    restriction_payloads = _decode_restrictions(g, list_resolutions, warnings)
     combinator_payloads = _decode_class_combinators(g, list_resolutions)
     descriptions = _collect_descriptions(g)
     punned = _detect_punning(g, classes)
@@ -1542,7 +1606,9 @@ def owl_file_to_knowledge_graph(
 
     edges = []
     edge_counter = 0
-    for s, p, o in g:
+    # Sorted, so the ``edge:<n>`` ids do not depend on the store's iteration
+    # order (which follows per-process string hashing).
+    for s, p, o in sorted(g, key=_triple_sort_key):
         # For punned subjects, route NamedIndividual-typed triples to the
         # individual twin; everything else stays on the class node so the
         # TBox round-trip remains intact.
@@ -1568,6 +1634,12 @@ def owl_file_to_knowledge_graph(
     # Axioms.
     axioms = _emit_axioms(g, list_resolutions)
     axioms.extend(_emit_imports(g))
+    # Same reason: the decoders walk the store, so order the records by content
+    # (keeping each kind's group where the decoder put it).
+    group: Dict[type, int] = {}
+    for axiom in axioms:
+        group.setdefault(type(axiom), len(group))
+    axioms.sort(key=lambda a: (group[type(a)], repr(a)))
 
     kg = KnowledgeGraph(name="knowledge_graph", nodes=set(nodes_by_key.values()), axioms=axioms)
     for e in edges:
@@ -1601,6 +1673,83 @@ def owl_file_to_knowledge_graph(
         kg, g, restriction_terms, combinator_terms, shacl_payloads, shacl_term_to_id
     )
     return kg
+
+
+#: Rounds of neighbourhood refinement used to tell blank nodes apart. Each round
+#: lets a blank node's label see one hop further; past this, any remaining ties
+#: are broken by order of first appearance, which is just as deterministic.
+_BLANK_LABEL_ROUNDS = 8
+
+
+def _with_deterministic_blank_nodes(g: rdflib.Graph) -> rdflib.Graph:
+    """Return ``g`` with every blank node relabelled from what it describes.
+
+    rdflib mints a fresh random label per blank node on every parse, and the
+    importer turns those labels into node ids (``_:<label>``), so importing the
+    same file twice produced different KG JSON and different preflight issue
+    ids. Here a blank node's label is a digest of its neighbourhood: the
+    predicates and named terms around it, refined a few rounds through
+    neighbouring blank nodes (colour refinement). Blank nodes that are still
+    indistinguishable after that are numbered in order of first appearance.
+
+    The triple order is kept, so edge ids (``edge:<n>``) are unchanged.
+    """
+    triples = list(g)
+    blanks: List[BNode] = []
+    seen: Set[BNode] = set()
+    for triple in triples:
+        for term in (triple[0], triple[2]):
+            if isinstance(term, BNode) and term not in seen:
+                seen.add(term)
+                blanks.append(term)
+    if not blanks:
+        return g
+
+    out_edges: Dict[BNode, List[Tuple[Any, Any]]] = {b: [] for b in blanks}
+    in_edges: Dict[BNode, List[Tuple[Any, Any]]] = {b: [] for b in blanks}
+    for s, p, o in triples:
+        if isinstance(s, BNode):
+            out_edges[s].append((p, o))
+        if isinstance(o, BNode):
+            in_edges[o].append((s, p))
+
+    color: Dict[BNode, str] = {b: "" for b in blanks}
+
+    def key(term) -> str:
+        return f"_:{color[term]}" if isinstance(term, BNode) else term.n3()
+
+    distinct = 1
+    for _ in range(_BLANK_LABEL_ROUNDS):
+        refined = {
+            b: short_digest(
+                "\n".join(sorted(
+                    [f"> {p.n3()} {key(o)}" for p, o in out_edges[b]]
+                    + [f"< {key(s)} {p.n3()}" for s, p in in_edges[b]]
+                )),
+                16,
+            )
+            for b in blanks
+        }
+        color = refined
+        now = len(set(color.values()))
+        if now == distinct or now == len(blanks):
+            break
+        distinct = now
+
+    occurrences: Dict[str, int] = {}
+    mapping: Dict[BNode, BNode] = {}
+    for b in blanks:
+        base = color[b]
+        n = occurrences.get(base, 0)
+        occurrences[base] = n + 1
+        mapping[b] = BNode(f"b{base}" if n == 0 else f"b{base}_{n}")
+
+    relabelled = rdflib.Graph()
+    for prefix, namespace in g.namespaces():
+        relabelled.bind(prefix, namespace, override=True, replace=True)
+    for s, p, o in triples:
+        relabelled.add((mapping.get(s, s), p, mapping.get(o, o)))
+    return relabelled
 
 
 def _label_for(g: rdflib.Graph, term) -> Optional[str]:

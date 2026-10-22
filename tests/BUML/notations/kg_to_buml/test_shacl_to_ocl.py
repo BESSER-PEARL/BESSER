@@ -346,12 +346,22 @@ def test_each_rule_survives_the_editor_round_trip(tmp_path: Path, shape_body: st
 
 @pytest.mark.parametrize("predicate", ["sh:minCount", "sh:maxCount", "sh:minLength", "sh:maxLength"])
 def test_a_non_numeric_count_or_length_is_skipped_with_a_warning(tmp_path: Path, predicate: str):
-    """``size() >= 'lots'`` parses, so it used to ship as a meaningless invariant."""
-    result = _convert(tmp_path, f'    sh:property [ sh:path :owns ; {predicate} "lots" ] .')
+    """``size() >= 'lots'`` parses, so it used to ship as a meaningless invariant.
+
+    The importer now reports and drops the unreadable value itself (it no
+    longer reaches the KG as a spec or an edge), so the warning comes from the
+    import, not the conversion.
+    """
+    ttl = (f"{PREAMBLE}\n:PersonShape a sh:NodeShape ; sh:targetClass :Person ;\n"
+           f'    sh:property [ sh:path :owns ; {predicate} "lots" ] .\n')
+    path = tmp_path / "ontology.ttl"
+    path.write_text(ttl.strip(), encoding="utf-8")
+    import_warnings: list = []
+    result = kg_to_class_diagram(owl_file_to_knowledge_graph(str(path), import_warnings))
 
     assert not any("'lots'" in b for b in _bodies(result)), _bodies(result)
-    warning = next(w for w in result.warnings if w.code == "SHACL_COUNT_INVALID")
-    assert predicate in warning.message and "'lots'" in warning.message and "owns" in warning.message
+    warning = next(w for w in import_warnings if w["code"] == "SHACL_COUNT_INVALID")
+    assert predicate in warning["message"] and "'lots'" in warning["message"] and "owns" in warning["message"]
 
 
 def test_a_string_typed_whole_number_is_read_as_a_number(tmp_path: Path):

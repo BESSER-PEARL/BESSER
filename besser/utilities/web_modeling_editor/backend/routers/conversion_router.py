@@ -70,6 +70,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     component_buml_to_json,
     deployment_buml_to_json,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import adopt_element_ids
 
 # Backend services - Other services
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
@@ -872,6 +873,9 @@ async def get_json_model_from_image(
             openai_token=api_key,
             existing_model=existing_domain_model,
         )
+        if existing_domain_model is not None:
+            # The merge rebuilds the model; keep the ids of the elements that were there.
+            adopt_element_ids(domain_model, existing_domain_model)
         diagram_json = class_buml_to_json(domain_model)
 
         diagram_title = diagram_json.get("title", "Imported Class Diagram")

@@ -28,6 +28,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.project_converter import (
     project_to_json,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import adopt_element_ids
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
     process_class_diagram,
 )
@@ -279,3 +280,105 @@ def test_object_model_code_links_a_composition_to_its_association(tmp_path):
 
     associations = sorted(r["associationId"] for r in exported["relationships"].values() if r["type"] == "ObjectLink")
     assert associations == ["r-contains", "r-holds"]
+
+
+def test_an_image_merged_into_a_diagram_keeps_the_existing_ids(monkeypatch):
+    """The merge rebuilds the whole model from the image; the classes that were
+    already in the diagram must keep the ids the other diagrams point at."""
+    import asyncio
+    import json
+
+    import httpx
+
+    from besser.utilities.web_modeling_editor.backend.backend import app
+    from besser.utilities.web_modeling_editor.backend.routers import conversion_router
+
+    def rebuilt(image_path, openai_token, existing_model=None, **_):
+        title = Property(name="title", type=StringType)
+        library = Class(name="Library", attributes={Property(name="name", type=StringType)})
+        book = Class(name="Book", attributes={title})
+        author = Class(name="Author")
+        holds = BinaryAssociation(name="holds", ends={
+            Property(name="library", type=library, multiplicity=Multiplicity(1, 1)),
+            Property(name="books", type=book, multiplicity=Multiplicity(0, "*")),
+        })
+        return DomainModel(name="Library", types={library, book, author}, associations={holds})
+
+    monkeypatch.setattr(conversion_router, "image_to_buml", rebuilt)
+    existing = {"title": "Library", "model": _class_model()}
+
+    async def post():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(
+                "/besser_api/get-json-model-from-image",
+                files={"image_file": ("diagram.png", b"\x89PNG\r\n\x1a\n" + b"\0" * 16, "image/png")},
+                data={"api_key": "unused", "existing_model": json.dumps(existing)},
+            )
+
+    response = asyncio.run(post())
+
+    assert response.status_code == 200, response.text
+    model = response.json()["model"]
+    names = {key: e["name"] for key, e in model["elements"].items() if e["type"] in ("Class", "ClassAttribute")}
+    assert {key: names.get(key) for key in ("c-library", "a-lib-name", "c-book", "a-title")} == {
+        "c-library": "Library", "a-lib-name": "name", "c-book": "Book", "a-title": "title"}
+    assert "Author" in names.values()
+    assert "r-holds" in model["relationships"]
+
+
+def _library(book_name="Book", title_name="title", association_name="writes", book_id=None):
+    title = Property(name=title_name, type=StringType)
+    book = Class(name=book_name, attributes={title}, id=book_id)
+    author = Class(name="Author")
+    writes = BinaryAssociation(name=association_name, ends={
+        Property(name="books", type=book, multiplicity=Multiplicity(0, "*")),
+        Property(name="author", type=author, multiplicity=Multiplicity(1, 1)),
+    })
+    return DomainModel(name="Library", types={book, author}, associations={writes})
+
+
+def _previous():
+    model = _library()
+    for cls in model.get_classes():
+        cls.id = f"id-{cls.name}"
+        for attribute in cls.attributes:
+            attribute.id = f"id-{cls.name}-{attribute.name}"
+    for association in model.associations:
+        association.id = "id-writes"
+    return model
+
+
+def _ids_by_name(model):
+    return ({c.name: c.id for c in model.get_classes()},
+            {a.name: a.id for c in model.get_classes() for a in c.attributes},
+            {a.name: a.id for a in model.associations})
+
+
+def test_adopted_ids_match_names_case_insensitively():
+    rebuilt = _library(book_name="book", title_name="Title", association_name="Writes")
+    adopt_element_ids(rebuilt, _previous())
+    assert _ids_by_name(rebuilt) == ({"book": "id-Book", "Author": "id-Author"}, {"Title": "id-Book-title"},
+                                     {"Writes": "id-writes"})
+
+
+def test_an_element_with_an_id_is_matched_by_it_and_its_members_follow():
+    rebuilt = _library(book_name="Novel", book_id="id-Book")
+    adopt_element_ids(rebuilt, _previous())
+    classes, attributes, _ = _ids_by_name(rebuilt)
+    assert classes == {"Novel": "id-Book", "Author": "id-Author"}
+    assert attributes == {"title": "id-Book-title"}
+
+
+def test_an_id_is_never_given_twice():
+    rebuilt = _library()
+    rebuilt.add_type(Class(name="Copy", id="id-Book"))  # already carries Book's id
+    adopt_element_ids(rebuilt, _previous())
+    classes, _, _ = _ids_by_name(rebuilt)
+    assert classes == {"Book": None, "Author": "id-Author", "Copy": "id-Book"}
+
+
+def test_a_merge_does_not_guess_renames():
+    rebuilt = _library(association_name="Author_Book")
+    adopt_element_ids(rebuilt, _previous())
+    assert _ids_by_name(rebuilt)[2] == {"Author_Book": None}

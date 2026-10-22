@@ -188,6 +188,13 @@ what a rule asks for, the conversion makes these choices:
   when no individual asserts it directly; otherwise the chain only implies it.
 * **Disjointness** is emitted as pairwise OCL invariants. No
   ``GeneralizationSet`` is built.
+* **An anonymous inverse property** (``owl:onProperty [ owl:inverseOf :p ]``)
+  is the opposite end of ``p``'s association (D16), and a restriction on it is
+  built over that end like any other. The paper names no such end, so it takes
+  the name of the inverse property the ontology declares, if any, and is
+  otherwise called ``inverse_<p>``. ``p``'s own association then carries it as
+  a navigable end. A restriction on any other anonymous property expression is
+  skipped with an ``OWL_PROPERTY_EXPRESSION_UNSUPPORTED`` warning.
 * **One association end per name and class.** B-UML lets a class reach only
   one association end of each name, its own or inherited. The rules declare a
   property's end on every class that constrains it — its domain and each

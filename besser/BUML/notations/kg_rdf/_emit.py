@@ -226,10 +226,28 @@ class ConstraintIndexes:
         self.nc_targets: Dict[str, List[Any]] = {}
         #: Property constraint id -> the property it constrains.
         self.pc_property: Dict[str, Any] = {}
+        #: Property constraint id -> the object of its raw ``owl:onProperty`` edge.
+        #: The importer records a property IRI as ``onPropertyIri`` too, but an
+        #: anonymous property expression (``[ owl:inverseOf :p ]``) only as this
+        #: edge, to the expression's blank node.
+        self.pc_on_property: Dict[str, Any] = {}
         #: Node constraint id -> the property constraints it lists (``sh:property``).
         self.nc_pcs: Dict[str, List[str]] = {}
         #: Node constraints with a target that is no usable RDF subject (a literal).
         self.nc_unresolved_targets: Set[str] = set()
+
+    def restricted_property(self, pc: KGPropertyConstraint) -> Optional[Any]:
+        """The property an OWL restriction of ``pc`` is ``owl:onProperty``, as an IRI string or term.
+
+        The editor wiring and ``onPropertyIri`` name it when it is a property;
+        the raw edge is the fallback, so an inverse property expression is not
+        dropped for having no IRI.
+        """
+        return (
+            self.pc_property.get(pc.id)
+            or pc.metadata.get("onPropertyIri")
+            or self.pc_on_property.get(pc.id)
+        )
 
     def pc_owners(self) -> Dict[str, List[Any]]:
         """Property constraint id -> the classes of the node constraints listing it."""
@@ -248,8 +266,10 @@ def build_constraint_indexes(edges: Iterable[KGEdge], terms: Dict[str, Any]) -> 
     importer only adds the wiring when the target is a *declared* class or
     property, and a graph drawn in the editor may only have the SHACL edges.
     When a property constraint has both, ``constraintTargetProperty`` wins: it is
-    what the editor lets the user change. Edges are read in id order, so the
-    result does not depend on set iteration order.
+    what the editor lets the user change. Raw ``owl:onProperty`` edges are kept
+    apart, in ``pc_on_property``: they are the OWL restrictions' fallback only
+    (:meth:`ConstraintIndexes.restricted_property`), never a SHACL path. Edges
+    are read in id order, so the result does not depend on set iteration order.
     """
     idx = ConstraintIndexes()
     targeted: Set[str] = set()
@@ -272,6 +292,9 @@ def build_constraint_indexes(edges: Iterable[KGEdge], terms: Dict[str, Any]) -> 
                         continue
                     targeted.add(source.id)
                 idx.pc_property[source.id] = term
+        elif predicate == str(OWL.onProperty) and isinstance(source, KGPropertyConstraint):
+            if usable:
+                idx.pc_on_property.setdefault(source.id, term)
         elif predicate == SH_PROPERTY and isinstance(source, KGNodeConstraint) \
                 and isinstance(target, KGPropertyConstraint):
             if target.id not in idx.nc_pcs.setdefault(source.id, []):

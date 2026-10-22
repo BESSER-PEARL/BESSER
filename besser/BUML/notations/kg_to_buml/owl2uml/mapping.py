@@ -57,6 +57,7 @@ class Mapper:
         self._gen_seen: set[tuple[str, str]] = set()
         self._instances_seen: set[str] = set()    # individuals already named (see ensure_instance)
         self._handled_props: set = set()          # object props consumed by inverse pairs
+        self._inverse_roles: dict[str, str] = {}  # D16: property IRI -> the end its anonymous inverse navigates
         self._datarange_cache: dict = {}          # BNode -> DataType name (dedup shared anon data ranges)
         self._composite_datarange_cache: dict = {}  # (kind, members) -> DataType name (dedup by structure)
         self._enum_defs: dict[URIRef, BNode] = {}  # D20: named class -> the oneOf node it is an enumeration of
@@ -82,6 +83,7 @@ class Mapper:
         Returns:
             ModelPlan: The classes, associations, generalizations and invariants the rules produced.
         """
+        self._name_anonymous_inverses()  # D16
         self._map_enum_classes()      # D20
         self._map_datatypes()         # D09, D17, D37, O04, O05
         self._map_classes()           # D08
@@ -834,9 +836,74 @@ class Mapper:
             tgt_mult = (0, 1) if self.ax.is_functional(p) else (0, "*")
             src_mult = (0, 1) if self.ax.is_inverse_functional(p) else (0, "*")
             pname = self.canon.name(p)
-            self.add_feature(src, tgt, pname, src_mult=src_mult, tgt_mult=tgt_mult, uri=str(p))
+            self.add_feature(src, tgt, pname, src_mult=src_mult, tgt_mult=tgt_mult, uri=str(p),
+                             source_role=self._inverse_roles.get(str(p)))      # D16
             if self.ax.is_inverse_functional(p) and tgt not in self.model.enumerations:     # O22
                 self._add_inverse_functional_ocl(src, tgt, pname)
+
+    # ---- D16: anonymous inverse properties ------------------------------
+    def _name_anonymous_inverses(self) -> None:
+        """Name, up front, the opposite end of each property an anonymous ``owl:inverseOf`` inverts.
+
+        Before any association exists, so the property's own association gets
+        that end (:meth:`_map_object_properties`) whichever rule meets the
+        inverse first; in property order, so a name that needs a suffix gets
+        the same one on every run.
+        """
+        nodes = {n for n in self.g.subjects(OWL.inverseOf) if isinstance(n, BNode)}
+        for node in sorted(nodes, key=lambda n: str(self.follow_inverse(n)[0])):
+            self.inverse_property(node)
+
+    def follow_inverse(self, node) -> tuple[URIRef | None, bool]:
+        """``(property, inverted)`` at the end of the ``owl:inverseOf`` chain from ``node``.
+
+        ``property`` is ``None`` when the chain does not end at a named property:
+        it loops, or a blank node on it has no ``owl:inverseOf``.
+        """
+        inverted, seen = False, set()
+        while isinstance(node, BNode) and node not in seen:
+            seen.add(node)
+            node = self.g.value(node, OWL.inverseOf)
+            inverted = not inverted
+        return (node if isinstance(node, URIRef) else None), inverted
+
+    def inverse_property(self, node) -> tuple[str, list] | None:
+        """D16: the plan name and the range of the property expression ``node``.
+
+        Navigating ``[ owl:inverseOf p ]`` is navigating ``p``'s association from
+        its other end, so the expression takes that end's name: the inverse the
+        ontology names, if any (D29 already made it that end), and otherwise
+        ``inverse_<p>``, the name :meth:`_map_object_properties` gives the other
+        end of ``p``'s own association. Its range is ``p``'s domain. An inverse
+        of an inverse is ``p`` itself.
+
+        Returns:
+            ``(name, range nodes)``, or ``None`` when ``node`` is not an inverse
+            chain ending at an object property.
+        """
+        prop, inverted = self.follow_inverse(node)
+        if prop is None or self.ax.is_data_property(prop):
+            return None
+        if not inverted:
+            return self.canon.name(prop), self.ax.ranges(prop)
+        named = self._named_inverse(prop)
+        if named is not None:
+            return self.canon.name(named), self.ax.ranges(named) or self.ax.domains(prop)
+        rep = self.canon.rep(prop)
+        if rep not in self._inverse_roles:
+            self._inverse_roles[rep] = self.canon.reserve(naming.inverse_name(self.canon.name(rep)))
+        return self._inverse_roles[rep], self.ax.domains(prop)
+
+    def _named_inverse(self, prop) -> URIRef | None:
+        """The first named property declared ``owl:inverseOf`` ``prop``, in D29's pair order."""
+        rep = self.canon.rep(prop)
+        for a, b in self.ax.inverse_pairs():
+            if isinstance(a, URIRef) and isinstance(b, URIRef):
+                if self.canon.rep(a) == rep:
+                    return b
+                if self.canon.rep(b) == rep:
+                    return a
+        return None
 
     def _add_inverse_functional_ocl(self, src: str, tgt: str, role: str) -> None:
         """O22: no ``tgt`` instance is the ``role`` of more than one ``src`` instance."""

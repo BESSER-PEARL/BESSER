@@ -67,6 +67,16 @@ def domain_name(prop: str) -> str:
     return f"_{prop}_Domain"
 
 
+def inverse_name(prop: str) -> str:
+    """Name of the opposite end of ``prop``'s association, which ``[ owl:inverseOf prop ]`` navigates (D16).
+
+    Not one of the paper's tokens: D16 maps an inverse to the opposite end but
+    names none, and a restriction on the inverse needs a name to navigate by.
+    Used only when the ontology names no inverse of ``prop`` itself.
+    """
+    return f"inverse_{prop}"
+
+
 def not_name(cls: str) -> str:
     """Name of the auxiliary class for the complement of ``cls``."""
     return f"_not_{cls}"

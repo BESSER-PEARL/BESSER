@@ -477,11 +477,6 @@ def _copy_staged(g, staged, known_terms, folded) -> None:
                 add_with_closure((s, p, o), set())
 
 
-def _restricted_property(pc: KGPropertyConstraint, idx) -> Optional[str]:
-    property_term = idx.pc_property.get(pc.id)
-    return str(property_term) if property_term is not None else pc.metadata.get("onPropertyIri")
-
-
 def _stage_owl_restriction(staged, pc: KGPropertyConstraint, idx, terms, handles) -> None:
     """Re-materialise an OWL restriction onto the constraint node's own term.
 
@@ -491,7 +486,7 @@ def _stage_owl_restriction(staged, pc: KGPropertyConstraint, idx, terms, handles
     ``owner_class_iris`` stays empty for the same reason.
     """
     emit_owl_restriction(
-        staged, pc, _restricted_property(pc, idx), [], subject=terms[pc.id], blank_handles=handles,
+        staged, pc, idx.restricted_property(pc), [], subject=terms[pc.id], blank_handles=handles,
     )
 
 
@@ -578,7 +573,7 @@ def _pass_e_mirror(g, nodes, terms, idx, handles) -> None:
                     emit_shacl_constraint(g, term, spec, resolve_ref, SH.PropertyShape)
             else:
                 emit_owl_restriction(
-                    g, node, _restricted_property(node, idx), owners.get(node.id, []),
+                    g, node, idx.restricted_property(node), owners.get(node.id, []),
                     blank_handles=handles,
                 )
         elif _is_owlish(node):

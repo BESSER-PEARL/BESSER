@@ -257,6 +257,29 @@ def test_attached_restriction_not_flagged(tmp_path: Path):
     assert "RESTRICTION_UNATTACHED" not in _codes(report)
 
 
+def test_restriction_on_an_inverse_property_is_schema_not_data(tmp_path: Path):
+    """``[ owl:inverseOf :employs ]`` is a property the conversion reads (D16):
+    the restriction on it is attached, and the blank node is neither an
+    instance to promote nor an orphan to drop. Each used to be recommended,
+    and accepting them deleted the restriction the conversion now keeps."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :Org a owl:Class . :Person a owl:Class .
+    :employs a owl:ObjectProperty ; rdfs:domain :Org ; rdfs:range :Person .
+    :Employee a owl:Class ; rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty [ owl:inverseOf [ owl:inverseOf [ owl:inverseOf :employs ] ] ] ;
+        owl:someValuesFrom :Org
+    ] .
+    """
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl))
+    report = analyze_kg_for_class_diagram(kg)
+    assert not _codes(report) & {"RESTRICTION_UNATTACHED", "BLANK_NODE_INSTANCE", "ORPHAN_NODE_NO_CLASS_LINK"}
+
+
 # --- RESTRICTION_UNSUPPORTED ----------------------------------------------
 
 

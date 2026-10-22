@@ -516,6 +516,69 @@ def test_d21_relational_one_of_links_every_individual(tmp_path: Path):
         assert end.type.name == "Planet" and (end.multiplicity.min, end.multiplicity.max) == (1, 1)
 
 
+_EMPLOYS = """
+:Org a owl:Class . :Person a owl:Class .
+:employs a owl:ObjectProperty ; rdfs:domain :Org ; rdfs:range :Person .
+"""
+
+
+def _restricted_on(on_property: str, restriction: str, cls: str = "Employee") -> str:
+    return (f":{cls} a owl:Class ; rdfs:subClassOf [ a owl:Restriction ; "
+            f"owl:onProperty {on_property} ; {restriction} ] .")
+
+
+def test_d16_restriction_on_an_anonymous_inverse_navigates_the_opposite_end(tmp_path: Path):
+    """``inverse(employs) some Org`` is D22 over the opposite end of ``employs``.
+    It used to lose its filler on the way to the rules, and the empty
+    restriction that was left put every class under a stub Thing."""
+    result = _convert(tmp_path, _EMPLOYS + _restricted_on("[ owl:inverseOf :employs ]", "owl:someValuesFrom :Org"))
+    domain_model = result.domain_model
+    opposite = _end(result, "employs", "inverse_employs")                    # D16: employs, read backwards
+    assert opposite.type.name == "Org" and opposite.is_navigable
+    assert _generalizes_to(domain_model, "Employee", "_some_inverse_employs_Org")
+    end = _end(result, "inverse_employs", "inverse_employs")                 # D22 over that end
+    assert end.type.name == "Org" and end.multiplicity.min == 1
+    assert "Thing" not in _classes_by_name(domain_model)
+    assert domain_model.validate(raise_exception=False)["errors"] == []
+
+
+def test_d16_anonymous_inverse_of_a_property_with_a_named_inverse_is_that_inverse(tmp_path: Path):
+    result = _convert(tmp_path, _EMPLOYS + ":employedBy a owl:ObjectProperty ; owl:inverseOf :employs .\n"
+                      + _restricted_on("[ owl:inverseOf :employs ]", "owl:someValuesFrom :Org"))
+    assert _generalizes_to(result.domain_model, "Employee", "_some_employedBy_Org")
+    assert not any(e.name == "inverse_employs" for a in result.domain_model.associations for e in a.ends)
+
+
+def test_d16_inverse_of_an_inverse_is_the_property_itself(tmp_path: Path):
+    result = _convert(tmp_path, _EMPLOYS + _restricted_on(
+        "[ owl:inverseOf [ owl:inverseOf :employs ] ]", "owl:someValuesFrom :Person", cls="Boss"))
+    assert _generalizes_to(result.domain_model, "Boss", "_some_employs_Person")
+
+
+def test_d16_unqualified_cardinality_on_an_inverse_ranges_over_the_domain(tmp_path: Path):
+    result = _convert(tmp_path, _EMPLOYS + _restricted_on(
+        "[ owl:inverseOf :employs ]", 'owl:minCardinality "2"^^xsd:nonNegativeInteger'))
+    assert _generalizes_to(result.domain_model, "Employee", "_min_2_inverse_employs_Org")
+    end = _end(result, "inverse_employs", "inverse_employs")
+    assert end.type.name == "Org" and end.multiplicity.min == 2
+
+
+def test_d16_inverse_end_name_does_not_take_a_property_name(tmp_path: Path):
+    result = _convert(tmp_path, _EMPLOYS + ":inverse_employs a owl:ObjectProperty ; rdfs:domain :Person .\n"
+                      + _restricted_on("[ owl:inverseOf :employs ]", "owl:someValuesFrom :Org"))
+    assert _end(result, "employs", "inverse_employs_2").type.name == "Org"
+    assert _generalizes_to(result.domain_model, "Employee", "_some_inverse_employs_2_Org")
+
+
+def test_d16_inverse_of_a_data_property_is_reported_and_skipped(tmp_path: Path):
+    result = _convert(tmp_path, _EMPLOYS + ":age a owl:DatatypeProperty ; rdfs:domain :Person ; rdfs:range xsd:integer .\n"
+                      + _restricted_on("[ owl:inverseOf :age ]", "owl:someValuesFrom :Org", cls="Kid"))
+    warning = next(w for w in result.warnings if w.code == "OWL_PROPERTY_EXPRESSION_UNSUPPORTED")
+    assert "data property age" in warning.message
+    # Skipped, not read as owl:Thing: that would make Kid, and with it every root class, a Thing.
+    assert not _class(result.domain_model, "Kid").parents()
+
+
 def test_d32_functional_and_inverse_functional_on_an_inverse_pair(tmp_path: Path):
     result = _convert(tmp_path, """
     :A a owl:Class . :B a owl:Class .

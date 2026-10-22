@@ -228,8 +228,8 @@ def knowledge_graph_to_rdf(
         for node in kg.nodes:
             if isinstance(node, KGPropertyConstraint):
                 emit_owl_restriction(
-                    g, node, idx.pc_property.get(node.id) or node.metadata.get("onPropertyIri"),
-                    owners.get(node.id, []), blank_handles=handles,
+                    g, node, idx.restricted_property(node), owners.get(node.id, []),
+                    blank_handles=handles,
                 )
             elif isinstance(node, KGNodeConstraint):
                 targets = idx.nc_targets.get(node.id, [])

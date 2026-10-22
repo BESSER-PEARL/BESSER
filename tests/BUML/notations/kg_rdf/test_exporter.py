@@ -205,6 +205,31 @@ def test_some_values_from_is_owl_only_not_exported_as_shacl(tmp_path: Path):
     assert (None, OWL.someValuesFrom, EX.Pet) in g_owl
 
 
+def test_restriction_on_an_anonymous_inverse_is_exported(tmp_path: Path):
+    """Its property has no IRI, only the blank node the raw ``owl:onProperty``
+    edge points at; the restriction used to be left out of the export."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :Org a owl:Class .
+    :employs a owl:ObjectProperty ; rdfs:domain :Org .
+    :Employee a owl:Class ; rdfs:subClassOf [
+        a owl:Restriction ; owl:onProperty [ owl:inverseOf :employs ] ;
+        owl:someValuesFrom :Org ] .
+    """
+    p = tmp_path / "inverse.ttl"
+    p.write_text(ttl.strip(), encoding="utf-8")
+    kg = owl_file_to_knowledge_graph(str(p))
+    g = rdflib.Graph().parse(data=serialize_knowledge_graph(kg, fmt="turtle", vocab="owl"), format="turtle")
+    OWL, RDFS = rdflib.namespace.OWL, rdflib.namespace.RDFS
+    EX = rdflib.Namespace("http://ex.org/")
+    (restriction,) = g.objects(EX.Employee, RDFS.subClassOf)
+    assert g.value(restriction, OWL.someValuesFrom) == EX.Org
+    assert g.value(g.value(restriction, OWL.onProperty), OWL.inverseOf) == EX.employs
+
+
 def test_sh_equals_round_trips(tmp_path: Path):
     ttl = """
     @prefix : <http://ex.org/> .

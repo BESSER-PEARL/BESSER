@@ -77,6 +77,7 @@ __all__ = [
 _XSD_STRING = f"{XSD_NS}string"
 _RDF_FIRST = f"{RDF_NS}first"
 _RDF_REST = f"{RDF_NS}rest"
+_OWL_INVERSE_OF = f"{OWL_NS}inverseOf"
 
 ORPHAN_DESCRIPTION_TRUNCATE = 25
 _CLASS_ANCHOR_PREDICATES = frozenset({RDF_TYPE, RDFS_DOMAIN, RDFS_RANGE, RDFS_SUBCLASS_OF})
@@ -390,6 +391,33 @@ def _descendants_of(node_id: str, parents_of: Dict[str, Set[str]]) -> Set[str]:
     return seen
 
 
+def _inverse_property_blanks(kg: KnowledgeGraph, indexes) -> Set[str]:
+    """Ids of the blank nodes that are ``[ owl:inverseOf :p ]`` property expressions.
+
+    Schema structure, like a restriction, not data: the conversion reads a
+    restriction on one as a restriction over the opposite end of ``p``'s
+    association (D16). The inverse of such a blank node counts too. One of a
+    data or annotation property does not: OWL 2 has no such inverse, and the
+    conversion skips it.
+    """
+    def invertible(node: KGNode) -> bool:
+        return isinstance(node, KGProperty) and node.metadata.get("kind") not in ("Datatype", "Annotation")
+
+    blanks = [n for n in kg.nodes if isinstance(n, KGBlank)]
+    found: Set[str] = set()
+    grew = True
+    while grew:
+        grew = False
+        for blank in blanks:
+            if blank.id not in found and any(
+                invertible(e.target) or e.target.id in found
+                for e in indexes.out_with_predicate(blank.id, _OWL_INVERSE_OF)
+            ):
+                found.add(blank.id)
+                grew = True
+    return found
+
+
 def _detect_unattached_restrictions(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
     """Flag restrictions whose target is missing.
 
@@ -421,11 +449,13 @@ def _detect_unattached_restrictions(kg: KnowledgeGraph, indexes) -> List[KGIssue
     # canvas auto-tagging fix — where the user drew the edge in the editor
     # but the edge was saved without an explicit IRI — don't keep tripping
     # this detector. The exporter is stricter and only emits constraint
-    # triples when the canonical IRI is present.
+    # triples when the canonical IRI is present. An ``owl:onProperty`` edge to
+    # an inverse property expression attaches it too: that is a property.
+    inverses = _inverse_property_blanks(kg, indexes)
     pc_with_property: Set[str] = {
         e.source.id for e in kg.edges
         if isinstance(e.source, KGPropertyConstraint)
-        and isinstance(e.target, KGProperty)
+        and (isinstance(e.target, KGProperty) or e.target.id in inverses)
     }
     # Class attachment via the legacy KGBlank path.
     class_attached: Set[str] = set()
@@ -873,8 +903,9 @@ def _detect_blank_node_instance(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
     rather than restriction or class-expression markers."""
     out: List[KGIssue] = []
     structural_kinds = {"restriction", "class_expression"}
+    inverses = _inverse_property_blanks(kg, indexes)
     for blank in sorted_by_id([n for n in kg.nodes if isinstance(n, KGBlank)]):
-        if blank.metadata.get("kind") in structural_kinds:
+        if blank.metadata.get("kind") in structural_kinds or blank.id in inverses:
             continue
         # Pure RDF-list plumbing (an rdf:first/rdf:rest "cons cell" with no
         # other predicate) carries no domain content regardless of whether the
@@ -1052,9 +1083,10 @@ def _detect_orphan_nodes(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
       LLM classification step (raises a typed exception caught by the
       apply endpoint).
 
-    Structural blank nodes (``kind in {restriction, class_expression}``) are
-    excluded — they're handled by their own detectors and live as auxiliary
-    schema graph fragments rather than data.
+    Structural blank nodes (``kind in {restriction, class_expression}``, and
+    ``[ owl:inverseOf :p ]`` property expressions) are excluded — they're
+    handled by their own detectors and live as auxiliary schema graph
+    fragments rather than data.
 
     Literals are never orphan on their own: they are only ever read through
     the node they hang off, so they inherit that node's fate (Step 2b). A
@@ -1107,11 +1139,12 @@ def _detect_orphan_nodes(kg: KnowledgeGraph, indexes) -> List[KGIssue]:
                 anchored.add(neighbor_id)
 
     # Step 2 — collect orphan candidates among individuals and blanks.
+    inverses = _inverse_property_blanks(kg, indexes)
     orphan_ids: Set[str] = set()
     for node in kg.nodes:
         if not isinstance(node, eligible_kinds):
             continue
-        if isinstance(node, KGBlank) and node.metadata.get("kind") in structural_kinds:
+        if isinstance(node, KGBlank) and (node.metadata.get("kind") in structural_kinds or node.id in inverses):
             continue
         if node.id in anchored:
             continue

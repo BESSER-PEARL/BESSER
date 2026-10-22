@@ -248,6 +248,27 @@ def test_owl_restriction_is_reattached_to_its_owner(tmp_path: Path):
     assert (restriction, OWL.onProperty, URIRef(EX + "owns")) in graph
 
 
+def test_restriction_on_an_anonymous_inverse_keeps_its_filler(tmp_path: Path):
+    """The importer keeps ``owl:onProperty [ owl:inverseOf :p ]`` only as a raw
+    edge, with no ``onPropertyIri``; the restriction's filler, which lives in its
+    spec, used to be dropped for want of a property."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+    :Org a owl:Class .
+    :employs a owl:ObjectProperty ; rdfs:domain :Org .
+    :Employee a owl:Class ; rdfs:subClassOf [
+        a owl:Restriction ; owl:onProperty [ owl:inverseOf :employs ] ;
+        owl:someValuesFrom :Org ] .
+    """
+    graph, _ = _project(tmp_path, ttl)
+    (restriction,) = graph.objects(URIRef(EX + "Employee"), RDFS.subClassOf)
+    assert graph.value(restriction, OWL.someValuesFrom) == URIRef(EX + "Org")
+    assert graph.value(graph.value(restriction, OWL.onProperty), OWL.inverseOf) == URIRef(EX + "employs")
+
+
 def test_spec_backfill_does_not_duplicate_a_raw_triple(tmp_path: Path):
     """A raw ``sh:maxCount`` edge and the equivalent spec must collapse to one
     triple, not two with different XSD types."""

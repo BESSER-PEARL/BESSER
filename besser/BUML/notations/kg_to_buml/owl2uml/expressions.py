@@ -192,12 +192,21 @@ class ExpressionResolver:
                 if isinstance(s, URIRef) and s != iri}
 
     # ---- restrictions (D22-D25, O07, O08, O09-O15) ----------------------
-    def _restriction(self, node) -> str:
+    def _restriction(self, node) -> str | None:
         prop = self.g.value(node, OWL.onProperty)
         if prop is None:
             return self.m.ensure_class(OWL.Thing)
-        p = self.m.canon.name(prop)
-        is_obj = self.ax.is_object_property(prop) or not self.ax.is_data_property(prop)
+        if isinstance(prop, URIRef):
+            p = self.m.canon.name(prop)
+            is_obj = self.ax.is_object_property(prop) or not self.ax.is_data_property(prop)
+            ranges = self.ax.ranges(prop)
+        else:
+            # D16: OWL 2's only anonymous property expression is an inverse.
+            inverse = self.m.inverse_property(prop)
+            if inverse is None:
+                self._warn_unreadable_property(prop)
+                return None
+            (p, ranges), is_obj = inverse, True
 
         val = self.g.value(node, OWL.someValuesFrom)
         if val is not None:
@@ -218,8 +227,20 @@ class ExpressionResolver:
                 k = self._cardinality_value(n, kind, p)
                 if k is None:
                     break
-                return self._cardinality(node, prop, p, is_obj, kind, k)
+                return self._cardinality(node, ranges, p, is_obj, kind, k)
         return self.m.ensure_class(OWL.Thing)
+
+    def _warn_unreadable_property(self, prop) -> None:
+        """Report a restriction skipped because its ``owl:onProperty`` names no object property."""
+        target, _ = self.m.follow_inverse(prop)
+        if target is not None:
+            reason = (f"it inverts the data property {naming.local_name(target)}, and OWL 2 "
+                      f"defines owl:inverseOf only for object properties")
+        else:
+            reason = "it is neither a property nor an owl:inverseOf chain ending at one"
+        self.m.warn("OWL_PROPERTY_EXPRESSION_UNSUPPORTED",
+                    f"Skipping a restriction whose owl:onProperty is an anonymous expression: {reason}. "
+                    f"The class keeps its other axioms.")
 
     def _cardinality_value(self, value, kind: str, p: str) -> int | None:
         """``value`` as a cardinality, or ``None`` (with a warning) when it is not one.
@@ -295,10 +316,10 @@ class ExpressionResolver:
             self.m.add_ocl(name, f"self.{p}->includes(self)", origin="O09")
         return name
 
-    def _cardinality(self, node, prop, p, is_obj, kind, k) -> str:   # D23-25 / O13-15
+    def _cardinality(self, node, ranges, p, is_obj, kind, k) -> str:   # D23-25 / O13-15
         if is_obj:
             filler = self.g.value(node, OWL.onClass)
-            d = self.resolve_class(filler) if filler is not None else self._range_filler(prop)
+            d = self.resolve_class(filler) if filler is not None else self._range_filler(ranges)
             name, new = self._aux((kind, p, d, k, True), naming.restriction_name(kind, p, d, n=k))
             if new:
                 self.m.add_feature(name, d, p, tgt_mult=_CARD_MULT[kind](k))
@@ -330,9 +351,8 @@ class ExpressionResolver:
                 )
         return name
 
-    def _range_filler(self, prop) -> str:
-        rng = self.ax.ranges(prop)
-        return self.resolve_class(rng[0]) if rng else self.m.ensure_class(OWL.Thing)
+    def _range_filler(self, ranges) -> str:
+        return self.resolve_class(ranges[0]) if ranges else self.m.ensure_class(OWL.Thing)
 
     def _is_relational(self, ind) -> bool:
         return any(p in self.ax.object_props for p, _ in self.g.predicate_objects(ind))

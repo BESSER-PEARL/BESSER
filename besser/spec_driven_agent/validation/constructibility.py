@@ -794,13 +794,25 @@ def _outcome(status) -> str:
 _VERDICT_ORDER = ("created", "crashed", "rejected", "unauthorized", "invalid")
 
 
+def _routes(app):
+    """Every route of ``app`` with its full path. Newer FastAPI keeps an
+    included router as one nested entry in ``app.routes``; older versions
+    copied its routes in, so ``app.routes`` is already flat there."""
+    routes = getattr(app, "routes", [])
+    try:
+        from fastapi.routing import iter_route_contexts
+    except ImportError:
+        return routes
+    return iter_route_contexts(routes)
+
+
 def _handler_site(app, path: str, entity: str) -> dict | None:
     """The function serving ``POST path``, and inside it the line that
     constructs ``entity`` - the place the fix goes. ``also`` lists the other
     lines of that file constructing the entity (a bulk route, typically),
     which need the same change."""
     import inspect
-    for route in getattr(app, "routes", []):
+    for route in _routes(app):
         if getattr(route, "path", None) != path or "POST" not in (getattr(route, "methods", None) or ()):
             continue
         fn = inspect.unwrap(route.endpoint)
@@ -972,7 +984,7 @@ def _action_routes(spec: dict, creates: dict) -> dict:
 def _action_handler_site(app, path: str) -> dict | None:
     """File/function/line of the POST handler serving ``path``."""
     import inspect
-    for route in getattr(app, "routes", []):
+    for route in _routes(app):
         if getattr(route, "path", None) != path or "POST" not in (getattr(route, "methods", None) or ()):
             continue
         fn = inspect.unwrap(route.endpoint)

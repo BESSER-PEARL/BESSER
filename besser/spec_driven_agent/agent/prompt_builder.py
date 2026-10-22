@@ -550,7 +550,8 @@ def build_system_prompt(
       read is half-built (rule 12).
     - Loading, empty, and error states on every data fetch.
 {stylesheet_bullet}
-    - Internal consistency: `package.json` dependencies match the imports; the
+    - Internal consistency: `package.json` dependencies match the imports, each
+      with a concrete semver range (`"^18.3.1"`, never `"latest"` or `"*"`); the
       dev/build scripts actually run the app.
     - Request/form consistency: when a field becomes server-owned, remove its
       writable controls and client validation too, while keeping its read-only

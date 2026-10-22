@@ -222,3 +222,13 @@ def test_readme_keeps_a_user_chosen_folder_name(tmp_path):
     ensure_frontend_scaffold(str(app_dir))
     first = (app_dir / "README.md").read_text(encoding="utf-8").splitlines()[0]
     assert first == "# library site"
+
+
+def test_frontend_dockerfile_builds_on_node_22(tmp_path):
+    """npm 10.8.2 (Node 20's) crashes installing a vite 8 tree with "Cannot
+    read properties of null (reading 'edgesOut')"; Node 22's npm installs it."""
+    frontend = _flat_app(tmp_path)
+    ensure_frontend_scaffold(str(tmp_path))
+
+    first = (frontend / "Dockerfile").read_text(encoding="utf-8").splitlines()[0]
+    assert first == "FROM node:22-alpine"

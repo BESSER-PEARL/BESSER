@@ -18,6 +18,9 @@ The checks deliberately stay narrow - an unresolvable path, an undeclared
 package, a JSX file with no React in scope and no automatic runtime
 configured. Anything needing a bundler's resolution rules (aliases,
 conditional exports, monorepo links) is skipped rather than guessed.
+
+The same pass flags a dependency whose version is "latest", "*", "x" or
+empty: the install then depends on what npm publishes that day.
 """
 
 from __future__ import annotations
@@ -94,6 +97,23 @@ def _declared_packages(manifest: dict) -> set[str]:
         elif isinstance(block, list):
             names.update(block)
     return names
+
+
+# Specs that name no version range: npm installs whatever is newest at build
+# time. Peer ranges are left out; "*" is a normal peer range.
+_UNPINNED_VERSIONS = {"latest", "*", "x", ""}
+
+
+def _unpinned_dependencies(manifest: dict) -> list[tuple[str, str, str]]:
+    found = []
+    for key in ("dependencies", "devDependencies", "optionalDependencies"):
+        block = manifest.get(key)
+        if not isinstance(block, dict):
+            continue
+        for name, version in block.items():
+            if isinstance(version, str) and version.strip().lower() in _UNPINNED_VERSIONS:
+                found.append((key, name, version))
+    return found
 
 
 def _resolves(base_dir: str, spec: str) -> bool:
@@ -185,7 +205,8 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
     bundler can still satisfy (hoisting, a workspace link, an implicit peer),
     so it carries ``frontend dependency:``, which classifies as a warning:
     recorded, not driving the repair loop (an undeclared ``axios`` can still
-    leave the page blank).
+    leave the page blank). A dependency with no version range is a
+    ``frontend contract:`` blocker too.
     """
     workspace = os.path.realpath(output_dir)
     issues: list[str] = []
@@ -205,6 +226,14 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
         automatic_jsx = _automatic_jsx_runtime(project_dir, manifest)
         rel_project = os.path.relpath(project_dir, workspace).replace("\\", "/")
         prefix = "" if rel_project == "." else rel_project + "/"
+
+        for key, package, version in _unpinned_dependencies(manifest):
+            issues.append(
+                f"frontend contract: {prefix}package.json {key} '{package}' is "
+                f"\"{version}\", which is not a version range. npm installs whatever "
+                f"major is newest at build time; with \"latest\" the vite 8 tree crashes "
+                f"npm 10.8's install (\"Cannot read properties of null (reading "
+                f"'edgesOut')\"). Pin a concrete semver range such as \"^18.3.1\".")
 
         missing_paths: list[tuple[str, str]] = []
         missing_packages: dict[str, str] = {}

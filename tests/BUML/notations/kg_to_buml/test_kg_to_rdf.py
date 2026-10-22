@@ -605,3 +605,151 @@ def test_all_disjoint_properties_members_are_the_properties_themselves(tmp_path:
     graph = _projected(tmp_path)
     (axiom,) = list(graph.subjects(RDF.type, OWL.AllDisjointProperties))
     assert sorted(Collection(graph, graph.value(axiom, OWL.members))) == [URIRef(EX + "a1"), URIRef(EX + "a2")]
+
+
+# ---------------------------------------------------------------------------
+# Several chains / keys on one subject, one list per axiom
+# ---------------------------------------------------------------------------
+
+
+_MULTI_LIST_TTL = """
+@prefix : <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+:P a owl:Class ; owl:hasKey ( :ssn ) ; owl:hasKey ( :first :last ) .
+:ssn a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range xsd:string .
+:first a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range xsd:string .
+:last a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range xsd:string .
+
+:q a owl:ObjectProperty . :r a owl:ObjectProperty . :s a owl:ObjectProperty .
+:p a owl:ObjectProperty ;
+   owl:propertyChainAxiom ( :q :r ) ;
+   owl:propertyChainAxiom ( :s :q ) .
+:a1 a owl:ObjectProperty . :a2 a owl:ObjectProperty . :a3 a owl:ObjectProperty .
+[] a owl:AllDisjointProperties ; owl:members ( :a1 :a2 :a3 ) .
+"""
+
+
+def _lists(graph: Graph, subject: str, predicate) -> list:
+    from rdflib.collection import Collection
+
+    return sorted(
+        [list(Collection(graph, head)) for head in graph.objects(URIRef(EX + subject), predicate)],
+        key=str,
+    )
+
+
+def test_two_property_chains_on_one_property_are_both_kept(tmp_path: Path):
+    """Each chain record used to clear the one before it, so only the last
+    survived — and O19 then stated the property *equals* that one chain."""
+    graph, _ = _project(tmp_path, _MULTI_LIST_TTL)
+
+    assert _lists(graph, "p", OWL.propertyChainAxiom) == sorted(
+        [[URIRef(EX + "q"), URIRef(EX + "r")], [URIRef(EX + "s"), URIRef(EX + "q")]], key=str,
+    )
+
+
+def test_two_keys_on_one_class_stay_two_keys(tmp_path: Path):
+    """The flattened member edges of both keys were merged into one composite key."""
+    graph, _ = _project(tmp_path, _MULTI_LIST_TTL)
+
+    assert _lists(graph, "P", OWL.hasKey) == sorted(
+        [[URIRef(EX + "ssn")], [URIRef(EX + "first"), URIRef(EX + "last")]], key=str,
+    )
+
+
+def test_two_keys_do_not_become_one_composite_key(tmp_path: Path):
+    from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
+
+    kg = owl_file_to_knowledge_graph(_write_ttl(tmp_path, _MULTI_LIST_TTL))
+    bodies = [c.expression for c in kg_to_class_diagram(kg).domain_model.constraints]
+
+    # The merged key used to come out as one invariant over ssn, first and last.
+    # (Whether the mapper then emits the second key is owl2uml's business.)
+    assert not any("ssn" in b and "first" in b for b in bodies), bodies
+
+
+def test_rebuilt_lists_leave_no_stray_list_cells(tmp_path: Path):
+    """Every ``rdf:first`` cell hangs off a list head something points at."""
+    graph, _ = _project(tmp_path, _MULTI_LIST_TTL)
+
+    referenced = set(graph.objects())
+    orphans = [cell for cell in graph.subjects(RDF.first, None) if cell not in referenced]
+    assert orphans == []
+
+
+def test_an_import_does_not_warn_about_list_order(tmp_path: Path):
+    """``LIST_ORDER_INFERRED`` fired on every TTL import with a key, a chain or
+    an ``owl:members`` list: keys and member sets have no order, and chains are
+    rebuilt from their records."""
+    _, warnings = _project(tmp_path, _MULTI_LIST_TTL)
+
+    assert [w for w in warnings if w.code == "LIST_ORDER_INFERRED"] == []
+
+
+# ---------------------------------------------------------------------------
+# Constraint specs are the source of truth for constraint parameters
+# ---------------------------------------------------------------------------
+
+
+_MIN_COUNT_TTL = """
+@prefix ex: <http://ex.org/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ex:name a owl:DatatypeProperty ; rdfs:domain ex:Person ; rdfs:range xsd:string .
+ex:Person a owl:Class, sh:NodeShape ;
+   sh:property [ sh:path ex:name ; sh:minCount 1 ] .
+ex:bob a ex:Person ; ex:name "Bob" .
+"""
+
+
+def _with_min_count(tmp_path: Path, value):
+    """Import, then change (or, with ``None``, delete) the minCount spec the way
+    the inspector does: through ``metadata.constraintSpecs`` only."""
+    from besser.utilities.web_modeling_editor.backend.services.converters import (
+        kg_to_json,
+        process_kg_diagram,
+    )
+
+    payload = kg_to_json(owl_file_to_knowledge_graph(_write_ttl(tmp_path, _MIN_COUNT_TTL)))
+    for node in payload["model"]["nodes"]:
+        meta = node.get("metadata") or {}
+        specs = meta.get("constraintSpecs")
+        if not specs:
+            continue
+        if value is None:
+            meta["constraintSpecs"] = [s for s in specs if s["kind"] != "minCardinality"]
+        else:
+            for spec in specs:
+                if spec["kind"] == "minCardinality":
+                    spec["value"] = value
+    return process_kg_diagram(payload)
+
+
+@pytest.mark.parametrize("mirror", [False, True], ids=["conversion", "consistency"])
+def test_an_edited_spec_wins_over_the_imported_edge(tmp_path: Path, mirror: bool):
+    graph, _ = kg_to_rdf(_with_min_count(tmp_path, 3), mirror_shapes=mirror)
+
+    assert [o.toPython() for o in graph.objects(None, URIRef(SH + "minCount"))] == [3]
+
+
+@pytest.mark.parametrize("mirror", [False, True], ids=["conversion", "consistency"])
+def test_a_deleted_spec_takes_its_parameter_with_it(tmp_path: Path, mirror: bool):
+    graph, _ = kg_to_rdf(_with_min_count(tmp_path, None), mirror_shapes=mirror)
+
+    assert list(graph.objects(None, URIRef(SH + "minCount"))) == []
+
+
+def test_an_unedited_parameter_keeps_the_source_literal(tmp_path: Path):
+    """When the spec and the edge agree, the edge's exact term is kept."""
+    graph, _ = _project(tmp_path, _MIN_COUNT_TTL)
+
+    assert list(graph.objects(None, URIRef(SH + "minCount"))) == [Literal("1", datatype=XSD_INTEGER)]
+
+
+XSD_INTEGER = URIRef(XSD + "integer")

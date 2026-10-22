@@ -2,10 +2,19 @@
 
 Inverse of ``process_kg_diagram``: serializes a ``KnowledgeGraph`` metamodel
 instance to the JSON shape consumed by the frontend.
+
+Not carried through B-UML: the editor's view state. A node's canvas
+``position`` and the model-level ``settings`` (layout, visibility limits, …;
+``KnowledgeGraphData`` in the frontend's ``shared/types/project.ts``) have no
+counterpart in the ``KnowledgeGraph`` metamodel, so ``process_kg_diagram``
+ignores them and this module never emits them. A graph that goes through B-UML
+(project export/import, ``/export-buml`` → ``/get-json-model``) comes back with
+the editor's default settings and is laid out afresh.
 """
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, Dict
 
 
@@ -99,9 +108,17 @@ def kg_buml_to_json(content: str) -> Dict[str, Any]:
         # attribute access, not from withholding these.
         "float": float,
     }
+    # Classes and functions only. ``dir`` also lists the package's submodules
+    # (``knowledge_graph``, ``axioms``, ``constraint_specs``, …), and handing a
+    # module to the loader hands over everything it imported: an upload could
+    # reach ``knowledge_graph.copy.dispatch_table.clear()`` and mutate the
+    # interpreter's global state.
     for name in dir(kg_module):
-        if not name.startswith("_"):
-            allowed_names[name] = getattr(kg_module, name)
+        if name.startswith("_"):
+            continue
+        member = getattr(kg_module, name)
+        if inspect.isclass(member) or inspect.isfunction(member):
+            allowed_names[name] = member
 
     try:
         local_vars = safe_load_buml(strip_buml_imports(content), allowed_names)
@@ -119,14 +136,21 @@ def kg_buml_to_json(content: str) -> Dict[str, Any]:
 
 
 def _node_to_dict(n: KGNode) -> Dict[str, Any]:
-    node_type = _CLASS_TO_NODE_TYPE.get(type(n), "individual")
+    node_type = _CLASS_TO_NODE_TYPE.get(type(n))
+    if node_type is None:
+        # Exact-type lookup on purpose: a subclass the editor does not know
+        # would otherwise be passed off as an individual and lose its kind.
+        raise ConversionError(
+            f"KG node {n.id!r} has unsupported type {type(n).__name__}; expected one of "
+            + ", ".join(sorted(cls.__name__ for cls in _CLASS_TO_NODE_TYPE))
+            + "."
+        )
     d: Dict[str, Any] = {
         "id": n.id,
         "nodeType": node_type,
         "label": n.label,
     }
-    if node_type == "literal":
-        assert isinstance(n, KGLiteral)
+    if isinstance(n, KGLiteral):
         d["value"] = n.value
         if n.datatype:
             d["datatype"] = n.datatype

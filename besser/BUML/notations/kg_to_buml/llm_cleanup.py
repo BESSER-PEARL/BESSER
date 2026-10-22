@@ -744,8 +744,8 @@ def _build_orphan_node_snapshot(node: KGNode, kg: KnowledgeGraph) -> Dict[str, A
         "incident_edges": incident,
     }
     if isinstance(node, KGLiteral):
-        snap["value"] = getattr(node, "value", None)
-        snap["datatype"] = getattr(node, "datatype", None)
+        snap["value"] = node.value
+        snap["datatype"] = node.datatype
     return snap
 
 

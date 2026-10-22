@@ -156,6 +156,7 @@ class ModifyRunMixin:
             fix_run=self._is_fix_run,
             fix_target=(self._fix_target.descriptor if self._fix_target else None),
             model_change=(self._model_change.to_dict() if self._model_change else None),
+            model_sync_error=self._model_sync_error,
         )
 
         # -- Phase 0: the model itself ------------------------------------
@@ -589,9 +590,11 @@ class ModifyRunMixin:
             unit tests driving the full ``modify()`` loop with a scripted
             client are unaffected.
           * Any failure (LLM error, malformed delta, serialisation error)
-            is swallowed: ``modify()`` proceeds exactly as without it —
-            no model change beyond what already applied, no crash. An empty
-            result is the common, expected case.
+            is logged as a warning: ``modify()`` proceeds exactly as without
+            it — no model change beyond what already applied, no crash. A
+            failed LLM call is also kept in ``_model_sync_error`` for the
+            trace and the recipe. An empty result is the common, expected
+            case.
 
         NEVER invoked from ``run()`` / ``resume()`` / ``_run_phase1`` — the
         from-scratch path is untouched and byte-identical.
@@ -609,11 +612,12 @@ class ModifyRunMixin:
 
         try:
             new_classes = self._request_model_deltas(instructions)
-        except Exception:
-            logger.debug(
-                "modify: model-delta LLM call failed; proceeding without "
-                "model sync", exc_info=True,
+        except Exception as exc:
+            logger.warning(
+                "modify: model-sync LLM call failed; proceeding without "
+                "model sync: %s", exc, exc_info=True,
             )
+            self._model_sync_error = str(exc)[:500]
             return
 
         if not new_classes:

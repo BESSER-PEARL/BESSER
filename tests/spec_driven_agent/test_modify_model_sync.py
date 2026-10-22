@@ -493,3 +493,44 @@ def test_modify_model_sync_runs_on_an_openai_key(tmp_path, monkeypatch):
     assert [k["max_tokens"] for k in sync_calls] == [_GPT_4O_MINI_MAX_OUTPUT]
     assert "User" in _class_names(orch.domain_model)
     assert orch._updated_project_export is not None
+
+
+def test_model_sync_failure_is_a_warning_in_the_trace_and_recipe(
+        tmp_path, monkeypatch, caplog):
+    """A failed model-sync call must not be silent: WARNING log, and the
+    reason in the run_start trace event and the saved recipe."""
+    import json
+    import logging
+
+    from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
+
+    client, _ = _openai_client_like_the_api(monkeypatch, [])
+    client._client.chat.completions.create.side_effect = Exception(
+        "Error code: 400 - invalid_request_error")
+    orch = LLMOrchestrator(
+        llm_client=client,
+        domain_model=_make_domain(),
+        output_dir=str(tmp_path),
+        enable_tracing=True,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+        source_project_export=_source_export(),
+    )
+    _neutralise_modify_phases(monkeypatch, orch)
+
+    with caplog.at_level(logging.DEBUG):
+        orch.modify("add user accounts")
+
+    warnings = [r for r in caplog.records
+                if r.levelno == logging.WARNING and "model-sync" in r.getMessage()]
+    assert warnings, "a failed model-sync call must log at WARNING"
+    assert _class_names(orch.domain_model) == ["Book"]  # the run went on
+
+    with open(tmp_path / TRACE_FILENAME, encoding="utf-8") as f:
+        events = [json.loads(line) for line in f if line.strip()]
+    run_start = next(e for e in events if e["event"] == "run_start")
+    assert "invalid_request_error" in run_start["payload"]["model_sync_error"]
+
+    with open(tmp_path / ".besser_recipe.json", encoding="utf-8") as f:
+        recipe = json.load(f)
+    assert "invalid_request_error" in recipe["model_sync_error"]

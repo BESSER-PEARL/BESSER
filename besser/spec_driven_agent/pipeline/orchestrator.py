@@ -599,6 +599,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # is ``None`` unless at least one new class was actually added.
         self._source_project_export: dict | None = source_project_export
         self._updated_project_export: dict | None = None
+        # Why the model-sync call failed, for the trace and the recipe.
+        self._model_sync_error: str | None = None
 
         # Fix/modify success gate (modify() only). When a modify run is
         # seeded by a user-reported error (a pasted traceback, a broken
@@ -4512,6 +4514,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # recipe's flattened summaries.
             "trace_file": TRACE_FILENAME if self._trace.path else None,
         }
+        if self._model_sync_error:
+            recipe["model_sync_error"] = self._model_sync_error
         # Fix/modify success-gate outcome. Present ONLY on a fix run so the
         # from-scratch recipe stays byte-identical; records the reported
         # target and whether it was confirmed fixed, so a later "what did

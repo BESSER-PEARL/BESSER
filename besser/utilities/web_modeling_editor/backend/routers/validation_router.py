@@ -27,9 +27,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_component_diagram,
     process_deployment_diagram,
     process_bpmn_diagram,
-    process_kg_diagram,
 )
 from besser.BUML.notations.kg_to_buml import analyze_kg_for_class_diagram
+from besser.utilities.web_modeling_editor.backend.services.kg.payloads import parse_kg_diagram
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
@@ -175,7 +175,7 @@ async def validate_diagram(input_data: DiagramInput):
                 validation_errors.extend(str(e).splitlines())
 
         elif diagram_type == "KnowledgeGraphDiagram":
-            kg = process_kg_diagram(input_data.model_dump())
+            kg = parse_kg_diagram(input_data.model_dump())
 
             # Same two checks the editor's Refine KG modal runs, so validating
             # through the API and validating through the UI agree. Only the

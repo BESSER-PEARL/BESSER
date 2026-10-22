@@ -6,7 +6,10 @@ router so ``routers/kg_router.py`` holds only endpoints (the same split as
 ``services/spec_driven``).
 """
 
-from besser.BUML.notations.kg_to_buml import kg_signature
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+
+from besser.BUML.metamodel.kg import KnowledgeGraph
+from besser.BUML.notations.kg_to_buml import KGAction, KGPreflightReport, kg_signature
 from besser.utilities.web_modeling_editor.backend.models import DiagramInput, KGDiagramInput
 from besser.utilities.web_modeling_editor.backend.services.converters import process_kg_diagram
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
@@ -14,12 +17,33 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ValidationError,
 )
 
+if TYPE_CHECKING:  # pyshacl's module stays a lazy import at runtime
+    from besser.BUML.notations.kg_to_buml.consistency import ConsistencyReport
 
-def kg_payload_to_kg(input_data: DiagramInput):
+
+def parse_kg_diagram(json_data: Dict[str, Any]) -> KnowledgeGraph:
+    """Build the :class:`KnowledgeGraph` of a dumped KG diagram payload.
+
+    Raises:
+        ConversionError: the payload is malformed, e.g. a node or edge that is not
+            an object (HTTP 400; the converter itself would fail with a bare
+            ``AttributeError`` and a generic 500). Same wrapping as ``export_buml``.
+    """
+    try:
+        return process_kg_diagram(json_data)
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise ConversionError(f"Malformed Knowledge Graph diagram payload: {exc}") from exc
+
+
+def kg_payload_to_kg(input_data: DiagramInput) -> Tuple[KnowledgeGraph, Dict[str, Any]]:
     """Validate that ``input_data`` carries a KG diagram and parse it.
+
+    Returns:
+        The KG and the dumped request payload it was built from.
 
     Raises:
         ValidationError: when the payload isn't a ``KnowledgeGraphDiagram`` (HTTP 400).
+        ConversionError: when the KG diagram itself is malformed (HTTP 400).
     """
     json_data = input_data.model_dump()
     model = json_data.get("model") or {}
@@ -27,10 +51,10 @@ def kg_payload_to_kg(input_data: DiagramInput):
         raise ValidationError(
             "Expected a KnowledgeGraphDiagram payload (model.type must be 'KnowledgeGraphDiagram')."
         )
-    return process_kg_diagram(json_data), json_data
+    return parse_kg_diagram(json_data), json_data
 
 
-def enforce_signature(input_data: KGDiagramInput, kg) -> None:
+def enforce_signature(input_data: KGDiagramInput, kg: KnowledgeGraph) -> None:
     """If the request includes a ``kgSignature``, ensure it matches the current KG."""
     if not input_data.kgSignature:
         return
@@ -42,13 +66,15 @@ def enforce_signature(input_data: KGDiagramInput, kg) -> None:
         )
 
 
-def action_to_dict(action):
+def action_to_dict(action: Optional[KGAction]) -> Optional[Dict[str, Any]]:
+    """The ``KGActionResponse`` body of ``action`` (``None`` stays ``None``)."""
     if action is None:
         return None
     return {"key": action.key, "parameters": action.parameters, "label": action.label}
 
 
-def report_to_response(report):
+def report_to_response(report: KGPreflightReport) -> Dict[str, Any]:
+    """Shape a ``KGPreflightReport`` into the ``KGPreflightReportResponse`` body."""
     return {
         "kgSignature": report.kg_signature,
         "diagramType": report.diagram_type,
@@ -68,7 +94,7 @@ def report_to_response(report):
     }
 
 
-def consistency_report_to_response(report):
+def consistency_report_to_response(report: "ConsistencyReport") -> Dict[str, Any]:
     """Shape a ``ConsistencyReport`` into the ``KGConsistencyReportResponse`` body.
 
     The dataclass keeps Python's snake_case; the wire format is camelCase.

@@ -17,8 +17,10 @@ from besser.BUML.metamodel.kg import (
     KnowledgeGraph,
 )
 from besser.BUML.metamodel.kg.axioms import (
+    DisjointClassesAxiom,
     EquivalentClassesAxiom,
     InversePropertiesAxiom,
+    SubPropertyOfAxiom,
 )
 from besser.BUML.notations.kg_to_buml import (
     DeferredOrphanClassification,
@@ -405,3 +407,39 @@ def test_defer_to_llm_classification_rejects_non_list():
             "defer_to_llm_classification",
             {"node_ids": "not_a_list"},
         )
+
+
+# --------------------------------------------------------------------------
+# merges keep their axioms
+# --------------------------------------------------------------------------
+
+
+def test_merge_classes_retargets_axioms_to_the_kept_class():
+    person = KGClass(id="Person", label="Person", iri=EX + "Person")
+    human = KGClass(id="Human", label="Human", iri=EX + "Human")
+    car = KGClass(id="Car", label="Car", iri=EX + "Car")
+    kg = KnowledgeGraph(name="K", nodes={person, human, car})
+    kg.add_axiom(DisjointClassesAxiom(class_ids=["Human", "Car"]))
+    kg.add_axiom(EquivalentClassesAxiom(class_ids=["Person", "Human"]))
+
+    out = _resolve(kg, "merge_classes", {"keep_class_id": "Person", "drop_class_id": "Human"})
+
+    # The disjointness now names the kept class; the equivalence of Person with
+    # itself has a single member left and is dropped.
+    assert [(type(a).__name__, a.class_ids) for a in out.axioms] == [
+        ("DisjointClassesAxiom", ["Person", "Car"]),
+    ]
+    assert out.validate(raise_exception=False)["success"]
+
+
+def test_merge_properties_retargets_axioms_to_the_kept_property():
+    name = KGProperty(id="name", label="name", iri=EX + "name")
+    title = KGProperty(id="title", label="title", iri=EX + "title")
+    label = KGProperty(id="label", label="label", iri=EX + "label")
+    kg = KnowledgeGraph(name="K", nodes={name, title, label})
+    kg.add_axiom(SubPropertyOfAxiom(sub_property_id="title", super_property_id="label"))
+
+    out = _resolve(kg, "merge_properties", {"property_iris": [EX + "name", EX + "title"]})
+
+    assert [(a.sub_property_id, a.super_property_id) for a in out.axioms] == [("name", "label")]
+    assert out.validate(raise_exception=False)["success"]

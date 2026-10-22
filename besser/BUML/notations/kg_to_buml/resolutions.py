@@ -488,6 +488,7 @@ def _h_merge_classes(kg: KnowledgeGraph, res: KGResolution) -> None:
                 label=e.label, iri=e.iri, metadata=dict(e.metadata),
             ))
     new_nodes = {n for n in kg.nodes if n.id != drop.id}
+    _retarget_axioms(kg, {drop.id: keep.id})
     _replace_graph(kg, new_nodes, new_edges)
 
 
@@ -507,11 +508,14 @@ def _h_merge_properties(kg: KnowledgeGraph, res: KGResolution) -> None:
             new_edges.add(KGEdge(id=e.id, source=e.source, target=e.target, label=e.label, iri=keep_iri, metadata=dict(e.metadata)))
         else:
             new_edges.add(e)
+    merged_ids: Dict[str, str] = {}
     for drop_iri in drop_iris:
         drop = _find_property_by_iri(kg, drop_iri)
         if drop is not None:
+            merged_ids[drop.id] = keep.id
             new_nodes = {n for n in new_nodes if n.id != drop.id}
             new_edges = {e for e in new_edges if e.source.id != drop.id and e.target.id != drop.id}
+    _retarget_axioms(kg, merged_ids)
     _replace_graph(kg, new_nodes, new_edges)
 
 
@@ -977,6 +981,28 @@ def _swap_node(
                 label=e.label, iri=e.iri, metadata=dict(e.metadata),
             ))
     _replace_graph(kg, new_nodes, new_edges)
+
+
+def _retarget_axioms(kg: KnowledgeGraph, merged_ids: Dict[str, str]) -> None:
+    """Point every axiom reference to a merged-away node at the node it was merged into.
+
+    Called by the merge handlers before :func:`_replace_graph`, so a merge keeps
+    its axioms instead of leaving them for :func:`_strip_dangling_axioms`. An id
+    list that ends up naming the same node twice keeps it once; the strip then
+    drops an axiom left with too few distinct members (e.g. an equivalence of a
+    class with itself).
+    """
+    if not merged_ids:
+        return
+    for axiom in kg.axioms:
+        for name in axiom.NODE_REF_FIELDS:
+            value = getattr(axiom, name)
+            if isinstance(value, list):
+                retargeted = list(dict.fromkeys(merged_ids.get(v, v) for v in value))
+                if retargeted != value:
+                    setattr(axiom, name, retargeted)
+            elif value in merged_ids:
+                setattr(axiom, name, merged_ids[value])
 
 
 def _strip_dangling_axioms(kg: KnowledgeGraph) -> None:

@@ -358,6 +358,66 @@ def test_a_project_with_one_knowledge_graph_round_trips(sample_kg, tmp_path):
     assert len(diagram["model"]["nodes"]) == 6
 
 
+def _project_round_trip(models, tmp_path, retitle=None):
+    """Export a project with ``models``, read it back as editor JSON and, when
+    ``retitle`` is given, set those KG titles and take the JSON back to B-UML and
+    out again, as the editor does on every save and reload.
+
+    Returns:
+        list: The KnowledgeGraphDiagram entries of the final project JSON.
+    """
+    from besser.BUML.metamodel.project import Metadata, Project
+    from besser.utilities.buml_code_builder import project_to_code
+    from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+    from besser.utilities.web_modeling_editor.backend.services.converters import (
+        json_to_buml_project,
+        project_to_json,
+    )
+
+    project = Project(name="proj", models=models, owner="o", metadata=Metadata(description="d"))
+    first = tmp_path / "first.py"
+    project_to_code(project, str(first))
+    project_json = project_to_json(first.read_text(encoding="utf-8"))
+    if retitle is None:
+        return project_json["diagrams"]["KnowledgeGraphDiagram"]
+
+    for diagram, title in zip(project_json["diagrams"]["KnowledgeGraphDiagram"], retitle):
+        diagram["title"] = title
+    second = tmp_path / "second.py"
+    project_to_code(json_to_buml_project(ProjectInput(**project_json)), str(second))
+    return project_to_json(second.read_text(encoding="utf-8"))["diagrams"]["KnowledgeGraphDiagram"]
+
+
+def test_a_single_knowledge_graph_keeps_its_title_through_a_project_round_trip(sample_kg, tmp_path):
+    """The banner of a lone KG carried no title, so it came back as the default
+    "Knowledge Graph Diagram"; and the KG's name is sanitized, so the title the
+    user typed has to travel separately."""
+    (diagram,) = _project_round_trip([sample_kg], tmp_path, retitle=["My Ontology v2"])
+
+    assert diagram["title"] == "My Ontology v2"
+    assert len(diagram["model"]["nodes"]) == 6
+
+
+def test_two_knowledge_graphs_with_the_same_name_both_come_back_told_apart(tmp_path):
+    def make(node_id):
+        return KnowledgeGraph(name="kg", nodes={KGClass(id=node_id, label="C")})
+
+    diagrams = _project_round_trip([make("a"), make("b")], tmp_path)
+
+    assert [(d["title"], [n["id"] for n in d["model"]["nodes"]]) for d in diagrams] == [
+        ("kg (1)", ["a"]),
+        ("kg (2)", ["b"]),
+    ]
+
+
+def test_distinct_titles_do_not_grow_a_number_on_each_round_trip(tmp_path):
+    graphs = [KnowledgeGraph(name="kg", nodes={KGClass(id=i, label="C")}) for i in ("a", "b")]
+
+    diagrams = _project_round_trip(graphs, tmp_path, retitle=["People", "Places"])
+
+    assert [d["title"] for d in diagrams] == ["People", "Places"]
+
+
 def test_a_set_in_metadata_is_written_in_a_stable_order(tmp_path):
     """A set's iteration order follows string hashing, which changes per run."""
     from besser.utilities.buml_code_builder.kg_model_builder import _literal

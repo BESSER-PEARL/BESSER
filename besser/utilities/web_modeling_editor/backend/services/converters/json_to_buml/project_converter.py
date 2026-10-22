@@ -313,6 +313,11 @@ def json_to_buml_project(project):
         quantum_model = process_quantum_diagram(quantum_diag.model_dump())
         model_list.append(quantum_model)
 
+    # The user-facing title of each NN and KG diagram, by id(model): those
+    # metamodels store only a sanitized name, so project_to_code writes this
+    # title into the section banner for project_to_json to read back.
+    diagram_titles: dict = {}
+
     # ── Process ALL KnowledgeGraphDiagrams ────────────────────────────
     for kg_diag in diagrams.get("KnowledgeGraphDiagram", []):
         # Errors propagate, as they do for every other diagram type above and
@@ -321,6 +326,8 @@ def json_to_buml_project(project):
         # was a line in the server log the user never sees.
         kg_model = process_kg_diagram(kg_diag.model_dump())
         model_list.append(kg_model)
+        if kg_diag.title:
+            diagram_titles[id(kg_model)] = kg_diag.title
 
     # ── Process ALL StateMachineDiagrams ──────────────────────────────
     for sm_diag in diagrams.get("StateMachineDiagram", []):
@@ -331,18 +338,13 @@ def json_to_buml_project(project):
     # ── Process ALL NNDiagrams ────────────────────────────────────────
     from .nn_diagram_processor import process_nn_diagram
 
-    nn_titles: dict = {}
     processed_nn_models = {}  # diagram ID -> NN, reused to link methods
     for nn_diag in diagrams.get("NNDiagram", []):
         nn_model = process_nn_diagram(nn_diag.model_dump())
         model_list.append(nn_model)
         processed_nn_models[nn_diag.id or id(nn_diag)] = nn_model
-        # Preserve the diagram's user-facing title so project_to_code can
-        # emit it in the section header — the NN metamodel only stores a
-        # sanitized name, so without this the title is lost on round-trip.
-        nn_title = getattr(nn_diag, "title", None)
-        if nn_title:
-            nn_titles[id(nn_model)] = nn_title
+        if nn_diag.title:
+            diagram_titles[id(nn_model)] = nn_diag.title
 
     # Methods implemented by a neural network point at the NN models above.
     for cd_model in processed_class_diagrams.values():
@@ -381,10 +383,10 @@ def json_to_buml_project(project):
         metadata=metadata
     )
 
-    # Attach NN titles as an attribute on the project so project_to_code
+    # Attach the titles as an attribute on the project so project_to_code
     # can read them without changing this function's return type (the
     # public API stays a single Project instance).
-    project_instance._nn_diagram_titles = nn_titles
+    project_instance._diagram_titles = diagram_titles
 
     # Project-level cross-diagram-reference promotion.
     # Classify the already-built models and promote dangling cross-refs

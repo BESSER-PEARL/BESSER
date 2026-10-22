@@ -1,4 +1,5 @@
 from abc import ABC
+from collections import Counter as _Counter  # aliased: `from .structural import *` would re-export it
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Union, List, TYPE_CHECKING, Literal
@@ -1516,31 +1517,41 @@ class Class(Type):
         """Association: Add an association to the set of class associations."""
         self.__associations.add(association)
 
+    def _duplicate_end_names(self, extra_ends=()) -> set[str]:
+        """set[str]: Get the names of more than one association end this class reaches.
+
+        The ends counted are ``all_association_ends()`` -- the class's own and
+        every ancestor's -- plus ``extra_ends``. They are counted by identity: an
+        end reached along two inheritance paths (a diamond) is one end, while two
+        distinct ends of the same name are a duplicate.
+
+        This is the one statement of the end-name rule; construction
+        (``_validate_unique_end_names``) and ``DomainModel.validate()`` both
+        read it.
+        """
+        names = _Counter(end.name for end in self.all_association_ends().union(extra_ends))
+        return {name for name, count in names.items() if count > 1}
+
     def _validate_unique_end_names(self, ends):
-        """Ensure that no association end has a duplicate name in this class or its specializations."""
-        # Check for duplicate end names within the provided ends
-        new_names = [e.name for e in ends]
-        if len(new_names) != len(set(new_names)):
-            raise ValueError(
-                f"The association introduces duplicate end names: {', '.join(n for n in new_names if new_names.count(n) > 1)}"
-            )
+        """Ensure that reaching ``ends`` gives no class two association ends of the same name.
 
-        # Check against current class's ends
-        existing_end_names = {e.name for e in self.all_association_ends()}
-        for end in ends:
-            if end.name in existing_end_names:
+        ``ends`` become reachable from this class and, through inheritance, from
+        every class that specialises it, so each of those is checked against its
+        whole inherited set, including what a specialization inherits from its
+        *other* parents. Only clashes involving a name in ``ends`` are raised;
+        a pre-existing one is reported by ``DomainModel.validate()``.
+
+        Raises:
+            ValueError: if this class or one of its specializations would reach
+                two distinct association ends with the same name.
+        """
+        new_names = {end.name for end in ends}
+        for cls in [self, *sorted(self.all_specializations(), key=lambda c: c.name)]:
+            clashes = sorted(cls._duplicate_end_names(ends) & new_names)
+            if clashes:
                 raise ValueError(
-                    f"The class '{self.name}' cannot have two association ends with the same name: '{end.name}'"
+                    f"The class '{cls.name}' cannot have two association ends with the same name: '{clashes[0]}'"
                 )
-
-        # Check against children/specialized classes' ends
-        for child in self.all_specializations():
-            child_end_names = {e.name for e in child.association_ends()}
-            for end in ends:
-                if end.name in child_end_names:
-                    raise ValueError(
-                        f"The class '{child.name}' cannot have two association ends with the same name: '{end.name}'"
-                    )
 
     def _delete_association(self, association):
         """Association: Remove an association to the set of class associations."""
@@ -2740,9 +2751,8 @@ class DomainModel(Model):
         Construction checks this, but renaming an end (or a class, which
         propagates to role names) afterwards does not.
         """
-        for cls in self.get_classes():
-            names = [end.name for end in cls.all_association_ends()]
-            for name in sorted({n for n in names if names.count(n) > 1}):
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for name in sorted(cls._duplicate_end_names()):
                 errors.append(
                     f"Class '{cls.name}' has more than one association end named '{name}'."
                 )

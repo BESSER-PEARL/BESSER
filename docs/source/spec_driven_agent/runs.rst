@@ -89,26 +89,32 @@ asked for a change, so a change is made. When the base has expired the runner
 warns and falls back to normal from-scratch generation rather than failing the
 request.
 
-Every run records the class diagram it was given (classes with attribute
-types and optional/required, enumerations with their literals, associations
-with their ends and multiplicities) in the run's ``.besser_recipe.json`` as
-``model.user_model``. A modify run compares the current diagram with it before
-any LLM call. When anything changed, the agent receives the full change list,
-for example ``Booking.bookingNumber type str -> int; Person.phone removed;
-association handledBy: Booking.handledBy[1..1] - ... -> Booking.handledBy[0..1]
-- ...``, in its project inventory and as a Phase 2 issue, with the instruction
-that the new model wins. The user's own request text is not changed. Elements
-are matched by their editor id when both models carry one, so a rename reads as
-``class Book renamed to Publication``; otherwise they are matched by name. A
-base run recorded before this existed only names its classes, and those include
-classes the agent added itself, so it gets no change list.
+Every run records the class diagram it was given in the run's
+``.besser_recipe.json`` as ``model.user_model``: classes (abstract, parents,
+attributes with their type and optional/required), enumerations with their
+literals, and associations with their ends and multiplicities. A modify run
+compares the current diagram with it before any LLM call. When anything
+changed, the agent receives the list of changes, for example
+``Booking.bookingNumber type str -> int; Person.phone removed; association
+handledBy: Booking.handledBy[1..1] - ... -> Booking.handledBy[0..1] - ...``,
+in its project inventory and as a Phase 2 issue, with the instruction that the
+new model wins. In a fix run it follows the reported failure. The user's own
+request text is not changed. The list covers classes (added, removed, renamed,
+abstract, parents), attributes (added, removed, renamed, type,
+optional/required), enumeration literals and association ends; methods and
+OCL constraints are not compared. Elements are matched as described in
+:ref:`spec-driven-preview-model-change`, so with editor ids a rename reads as
+``class Book renamed to Publication``. A base run recorded before this existed
+only names its classes, and those include classes the agent added itself, so
+it gets no change list (logged as a warning).
 
 After Phase 2 a deterministic check compares the FastAPI backend
 (``sql_alchemy.py`` and the ``<Class>Create`` schemas in
 ``pydantic_classes.py``) with the changed attributes. A removed attribute still
 defined, an added one missing, a type still declared as the old one, or an
 optionality the code contradicts is a ``model conformance:`` blocker for the
-Phase 3 fix loop (see :doc:`validation`). Other stacks are not checked.
+Phase 3 fix loop (see :doc:`validation`). For another stack the check is
+reported as not run.
 
 The same comparison is available before the run: ``/preview`` returns it as
 ``model_change`` (see :ref:`spec-driven-preview-model-change`), so a client can

@@ -11,19 +11,22 @@ checked against the changed attributes only:
 * a changed optionality the code still contradicts (ORM: now optional but
   NOT NULL; schema: now optional but required, or now required but Optional).
 
-Only unambiguous findings: classes missing from a file, non-primitive types,
-relationships, inherited definitions and other stacks are skipped silently.
-Findings start with ``model conformance:`` and are Phase 3 blockers.
+Only unambiguous findings: non-primitive types, relationships, primary keys
+and inherited definitions are not judged. Classes missing from a file are
+logged; an app without these files (another stack) returns ``None`` so the
+caller can report the check as not run. Findings start with
+``model conformance:`` and are Phase 3 blockers.
 """
 
 from __future__ import annotations
 
 import ast
+import logging
 import os
 import re
 
 from besser.spec_driven_agent.execution.workspace_fs import read_plain_text, walk_plain
-from besser.spec_driven_agent.planning.model_change import pair_elements
+from besser.spec_driven_agent.planning.model_change import match_classes
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 
 _ORM_FILE = "sql_alchemy.py"
@@ -45,6 +48,8 @@ _COLUMN_TYPES = {
 _COLUMN_CALLS = {"mapped_column", "Column", "column_property"}
 _SERVER_OWNED = {"id", "createdat", "updatedat"}
 
+logger = logging.getLogger(__name__)
+
 
 def _name(node) -> str | None:
     if isinstance(node, ast.Name):
@@ -63,8 +68,19 @@ def _bare(name: str | None) -> str | None:
     return name[:-1] if name and name.endswith("_") and len(name) > 1 else name
 
 
+def _parsed(node):
+    """A string annotation (``Mapped["Optional[str]"]``) as the expression it names."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            return ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return node
+    return node
+
+
 def _unwrap_optional(node) -> tuple[object, bool]:
     """``(inner annotation, is optional)`` for ``Optional[X]``, ``Union[X, None]``, ``X | None``."""
+    node = _parsed(node)
     if isinstance(node, ast.Subscript) and _bare(_name(node.value)) == "Optional":
         return node.slice, True
     if isinstance(node, ast.Subscript) and _bare(_name(node.value)) == "Union":
@@ -88,18 +104,38 @@ class _Field:
     def is_relationship(self) -> bool:
         return isinstance(self.value, ast.Call) and _name(self.value.func) == "relationship"
 
-    def mapped(self) -> tuple[object, bool]:
-        """The ORM annotation inside ``Mapped[...]`` and whether it is Optional."""
-        node = self.annotation
+    def mapped_annotation(self):
+        """The annotation inside ``Mapped[...]``, or ``None`` without one."""
+        node = _parsed(self.annotation)
         if isinstance(node, ast.Subscript) and _bare(_name(node.value)) == "Mapped":
-            node = node.slice
-        return _unwrap_optional(node) if node is not None else (None, False)
+            return node.slice
+        return None
 
     def column_call(self):
         call = self.value
         if isinstance(call, ast.Call) and _bare(_name(call.func)) in _COLUMN_CALLS:
             return call
         return None
+
+    def _keyword(self, name: str):
+        call = self.column_call()
+        return next((k.value for k in (call.keywords if call is not None else ())
+                     if k.arg == name), None)
+
+    @property
+    def is_primary_key(self) -> bool:
+        return self._keyword("primary_key") is not None
+
+    @property
+    def is_not_null(self) -> bool:
+        """SQLAlchemy's rule: an explicit ``nullable`` decides, else a
+        ``Mapped[X]`` annotation without Optional; a bare ``Column()`` or
+        ``mapped_column()`` is nullable."""
+        nullable = self._keyword("nullable")
+        if isinstance(nullable, ast.Constant) and isinstance(nullable.value, bool):
+            return not nullable.value
+        annotation = self.mapped_annotation()
+        return annotation is not None and not _unwrap_optional(annotation)[1]
 
 
 class _Module:
@@ -182,10 +218,9 @@ def _attribute_checks(base: dict, new: dict):
     """
     old_c, new_c = base.get("classes") or {}, new.get("classes") or {}
     ends = _end_names(new)
-    for old_cls, cls in pair_elements(old_c, new_c):
+    for old_cls, cls, pairs in match_classes(old_c, new_c):
         before = old_c[old_cls].get("attributes") or {}
         after = new_c[cls].get("attributes") or {}
-        pairs = pair_elements(before, after)
         renamed = {o: n for o, n in pairs if o != n}
         kept = {n for o, n in pairs if o == n}
         in_use = set(after) | ends.get(cls, set())
@@ -202,14 +237,17 @@ def _attribute_checks(base: dict, new: dict):
                 yield cls, "optional", cur, b, a, None
 
 
-def _orm_findings(module: _Module, rel: str, checks) -> list[str]:
+def _orm_findings(module: _Module, rel: str, checks, missing: set) -> list[str]:
     issues = []
     for cls, rule, attr, old, new, renamed in checks:
         if cls not in module.fields:
+            missing.add(f"{cls} in {rel}")
             continue
         field = module.fields[cls].get(attr)
         if rule == "removed":
-            if field is not None and not field.is_relationship:
+            # The generator's own surrogate key, not the user's attribute.
+            surrogate = attr.lower() == "id" and field is not None and field.is_primary_key
+            if field is not None and not field.is_relationship and not surrogate:
                 how = f"renamed to {cls}.{renamed}" if renamed else "removed"
                 issues.append(
                     f"model conformance: {cls}.{attr} was {how} in the class diagram, but "
@@ -221,12 +259,13 @@ def _orm_findings(module: _Module, rel: str, checks) -> list[str]:
                     f"model conformance: {cls}.{attr} was added to the class diagram, but {rel} "
                     f"does not define it on {cls}. Add the column, then the API schemas and the UI.")
         elif field is not None and not field.is_relationship:
-            inner, optional = field.mapped()
             call = field.column_call()
             if rule == "type":
                 was, now = old["type"], new["type"]
                 if was not in _COLUMN_TYPES.values() or now not in _COLUMN_TYPES.values():
                     continue
+                inner = field.mapped_annotation()
+                inner = _unwrap_optional(inner)[0] if inner is not None else None
                 declared = _ANNOTATION_TYPES.get(_bare(_name(inner)) or "")
                 column = (_COLUMN_TYPES.get(_bare(_name(call.args[0])) or "")
                           if call is not None and call.args else None)
@@ -234,23 +273,21 @@ def _orm_findings(module: _Module, rel: str, checks) -> list[str]:
                     issues.append(
                         f"model conformance: {cls}.{attr} changed type {was} -> {now} in the "
                         f"class diagram, but {rel} still declares it as {was} on {cls}.")
-            elif rule == "optional" and new["optional"] and call is not None:
-                nullable = any(k.arg == "nullable" and isinstance(k.value, ast.Constant)
-                               and k.value.value is True for k in call.keywords)
-                primary = any(k.arg == "primary_key" for k in call.keywords)
-                if not (optional or nullable or primary):
-                    issues.append(
-                        f"model conformance: {cls}.{attr} is now optional in the class diagram, "
-                        f"but {rel} still declares it NOT NULL on {cls} (use Optional and "
-                        "nullable=True).")
+            elif (rule == "optional" and new["optional"] and call is not None
+                  and not field.is_primary_key and field.is_not_null):
+                issues.append(
+                    f"model conformance: {cls}.{attr} is now optional in the class diagram, "
+                    f"but {rel} still declares it NOT NULL on {cls} (use Optional and "
+                    "nullable=True).")
     return issues
 
 
-def _schema_findings(module: _Module, rel: str, checks) -> list[str]:
+def _schema_findings(module: _Module, rel: str, checks, missing: set) -> list[str]:
     issues = []
     for cls, rule, attr, old, new, renamed in checks:
         schema = f"{cls}Create"
         if schema not in module.fields:
+            missing.add(f"{schema} in {rel}")
             continue
         field = module.fields[schema].get(attr)
         if rule == "removed":
@@ -286,19 +323,24 @@ def _schema_findings(module: _Module, rel: str, checks) -> list[str]:
     return issues
 
 
-def model_conformance_issues(workspace: str, base: dict, new: dict) -> list[str]:
+def model_conformance_issues(workspace: str, base: dict, new: dict) -> list[str] | None:
     """Findings for the attribute changes between two ``model_summary`` dicts.
 
-    Empty when the workspace has neither file (another stack) or nothing changed.
+    Empty when no attribute changed; ``None`` when the workspace has neither
+    file (another stack), so nothing was checked.
     """
     checks = list(_attribute_checks(base, new))
     if not checks:
         return []
-    issues = []
+    issues, missing, found = [], set(), False
     for name, findings in ((_ORM_FILE, _orm_findings), (_SCHEMA_FILE, _schema_findings)):
         for path in _files(workspace, name):
+            found = True
             module = _parse(path, workspace)
             if module is not None:
                 rel = os.path.relpath(path, workspace).replace("\\", "/")
-                issues.extend(findings(module, rel, checks))
-    return issues
+                issues.extend(findings(module, rel, checks, missing))
+    if missing:
+        logger.warning("Model conformance: not checked, class not found: %s",
+                       ", ".join(sorted(missing)))
+    return issues if found else None

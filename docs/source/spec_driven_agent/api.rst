@@ -167,25 +167,39 @@ unknown or expired base run, or a base run without a recorded class model.
      - Meaning
    * - ``verdict``
      - ``small``, ``large`` or ``unrelated``. ``large`` means more than 15% of
-       the base model's class and attribute names are gone. ``unrelated``
-       means most of it is gone and the new model mostly reuses no base names;
-       deleting classes alone is never ``unrelated``.
+       the base model's classes and attributes are gone. ``unrelated`` means
+       more than half of it is gone, most of the new model is new elements,
+       and either most base classes or three quarters of the base model are
+       gone. Deleting classes, even all of them, is ``large``.
    * - ``basis``
-     - ``attributes``, or ``classes`` when the base run predates attribute
-       recording (then ``changes`` is empty).
-   * - ``gone`` / ``overlap``
-     - Share of the base model no longer present, and share of its names
-       still in use (0 to 1).
+     - ``attributes``, or ``classes`` when the base run predates the recorded
+       model (then only class names are compared and ``changes`` is empty).
+   * - ``gone``
+     - Share of the base model's classes and attributes not kept (0 to 1).
    * - ``removed`` / ``added``
      - ``Class`` and ``Class.attribute`` names, for display. Renamed elements
        are not listed here.
    * - ``renamed``
      - ``[{"from": "Room", "to": "Suite"}, {"from": "Room.floorType", "to":
-       "Room.floor"}]``: classes and attributes paired across a name change
-       (by element id, or by the same name ignoring case). Empty when none.
+       "Room.floor"}]``: classes and attributes kept under a new name. Empty
+       when none.
    * - ``changes``
      - One line per change, the list a modify run receives (see
        :ref:`spec-driven-modify-mode`).
+
+The verdict, ``removed``/``added``/``renamed`` and ``changes`` come from one
+matching of old and new elements, so they always agree. Two elements are the
+same element when:
+
+1. both carry an editor id and the ids are equal (two different ids are two
+   different elements, whatever their names);
+2. otherwise, they have the same name, compared exactly first and then
+   ignoring case; attributes are matched only within their matched class;
+3. for classes only, when neither is matched yet: they are the only class on
+   each side with the same non-empty set of attribute names (a class whose
+   name alone changed).
+
+No element is matched twice.
 
 SSE event types
 ---------------

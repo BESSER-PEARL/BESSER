@@ -7,37 +7,42 @@ two models without any LLM call (#659):
 
 * ``model_summary`` is what the recipe stores as ``model.user_model``: the
   model the user sent, before a modify run's model-sync added classes to it.
-* ``describe_model_change`` lists every change (classes, attribute types and
-  optionality, enumeration literals, association ends) for the modify run.
+* ``describe_model_change`` lists the changes for the modify run: classes
+  (added, removed, renamed, abstract, parents), attributes (added, removed,
+  renamed, type, optional/required), enumeration literals and association
+  ends. Methods and OCL constraints are not compared.
 * ``compare_models`` gives a verdict (small / large / unrelated) so the UI can
   ask "update the existing app / start fresh" before a run.
 
-Elements are matched by ``id`` when both summaries carry one (a rename then
-reads as a rename), otherwise by name. Older recipes only have the run's class
-names, model-sync classes included: they give a verdict but no change list.
+Every comparison pairs elements with ``pair_elements``, so the verdict, the
+change list and ``renamed`` always agree. Older recipes only have the run's
+class names, model-sync classes included: they give a verdict but no change
+list.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from collections import Counter
 from dataclasses import dataclass, field
 
-SMALL, LARGE, UNRELATED = "small", "large", "unrelated"
+from besser.spec_driven_agent.execution.workspace_fs import read_plain_text
 
-# Share of the base model (class and attribute names) gone above which a
-# change is large. Measured on the hotel model: add an attribute 0, rename a
-# class 0.04, change ~25% of the attributes 0.11, ~50% 0.32, keep the classes
-# and change everything else 0.54-0.64.
+SMALL, LARGE, UNRELATED = "small", "large", "unrelated"
+# basis: what the base recipe recorded.
+FULL_MODEL, CLASS_NAMES = "attributes", "classes"
+
+# Share of the base model (classes and attributes) gone above which a change
+# is large. Hotel model: add an attribute 0, change ~25% of the attributes
+# 0.11, ~50% 0.32, keep the classes and change everything else 0.54-0.64.
 LARGE_GONE = 0.15
-# Another app: most of the base model is gone, the new model mostly reuses no
-# base names (so deleting classes is not "another app"), and few base classes
-# or names remain.
+# Another app: more than half of the base model is gone, the new model is
+# mostly new elements (so deleting classes is not "another app"), and either
+# most base classes are gone or three quarters of the base model is.
 UNRELATED_GONE = 0.5
 UNRELATED_REUSED = 0.5
 UNRELATED_CLASSES_KEPT = 0.5
-UNRELATED_OVERLAP = 0.25
+UNRELATED_GONE_WITH_CLASSES_KEPT = 0.75
 
 
 def _with_id(element, entry: dict) -> dict:
@@ -48,8 +53,8 @@ def _with_id(element, entry: dict) -> dict:
 
 
 def model_summary(domain_model) -> dict:
-    """Classes (attribute types, optional/required), enumerations and
-    associations of ``domain_model``, as stored in the recipe."""
+    """Classes (abstract, parents, attribute types, optional/required),
+    enumerations and associations of ``domain_model``, as stored in the recipe."""
     from besser.BUML.metamodel.structural.structural import UNLIMITED_MAX_MULTIPLICITY
 
     classes = {}
@@ -61,7 +66,11 @@ def model_summary(domain_model) -> dict:
             if getattr(attr, "is_derived", False):
                 entry["derived"] = True
             attributes[attr.name] = _with_id(attr, entry)
-        classes[cls.name] = _with_id(cls, {"attributes": attributes})
+        classes[cls.name] = _with_id(cls, {
+            "abstract": bool(cls.is_abstract),
+            "parents": sorted(parent.name for parent in cls.parents()),
+            "attributes": attributes,
+        })
     enumerations = {
         enum.name: _with_id(enum, {"literals": sorted(lit.name for lit in enum.literals)})
         for enum in sorted(domain_model.get_enumerations(), key=lambda e: e.name)
@@ -80,42 +89,82 @@ def model_summary(domain_model) -> dict:
 
 
 def is_summary(summary) -> bool:
-    """A ``model_summary`` dict (older recipes hold class-name lists)."""
+    """A ``model_summary`` dict (older recipes hold a class-name list)."""
     return isinstance(summary, dict) and isinstance(summary.get("classes"), dict)
 
 
-def pair_elements(old: dict, new: dict) -> list[tuple[str, str]]:
-    """``(old name, new name)`` of the elements present on both sides: same
-    ``id`` first, then the same name, then the same name ignoring case."""
-    pairs, used_old, used_new = [], set(), set()
+def _id(entry) -> str | None:
+    return entry.get("id") if isinstance(entry, dict) else None
 
-    def take(o, n):
+
+def pair_elements(old: dict, new: dict, signature=None) -> list[tuple[str, str]]:
+    """``(old name, new name)`` of the elements of two ``{name: entry}`` maps
+    that are the same element. Each element is paired at most once:
+
+    1. the same ``id``, when both entries carry one;
+    2. the same name, then the same name ignoring case, unless both entries
+       carry ids (then the ids decide);
+    3. only with ``signature`` (classes: their attribute names): the one
+       unpaired element on each side with the same non-empty signature, i.e.
+       an element whose name alone changed.
+    """
+    pairs: list[tuple[str, str]] = []
+    free_old, free_new = dict(old), dict(new)
+
+    def take(o: str, n: str) -> None:
         pairs.append((o, n))
-        used_old.add(o)
-        used_new.add(n)
+        del free_old[o], free_new[n]
 
     old_by_id = {}
     for name, entry in old.items():
-        if isinstance(entry, dict) and entry.get("id"):
-            old_by_id.setdefault(entry["id"], name)
+        old_by_id.setdefault(_id(entry), name)
     for name, entry in new.items():
-        match = old_by_id.get(entry.get("id")) if isinstance(entry, dict) and entry.get("id") else None
-        if match is not None and match not in used_old:
+        match = old_by_id.get(_id(entry)) if _id(entry) else None
+        if match in free_old:
             take(match, name)
-    for name in new:
-        if name not in used_new and name in old and name not in used_old:
+
+    def name_match_allowed(o: str, n: str) -> bool:
+        return not (_id(old[o]) and _id(new[n]))
+
+    for name in list(free_new):
+        if name in free_old and name_match_allowed(name, name):
             take(name, name)
-    lowered = {o.lower(): o for o in old if o not in used_old}
-    for name in new:
-        match = lowered.get(name.lower())
-        if name not in used_new and match is not None and match not in used_old:
+    for name in list(free_new):
+        match = next((o for o in free_old if o.lower() == name.lower()), None)
+        if match is not None and name_match_allowed(match, name):
             take(match, name)
+
+    if signature is not None:
+        def by_signature(entries: dict) -> dict:
+            groups: dict = {}
+            for name, entry in entries.items():
+                groups.setdefault(signature(entry), []).append(name)
+            return groups
+
+        old_groups, new_groups = by_signature(free_old), by_signature(free_new)
+        for key, new_names in new_groups.items():
+            old_names = old_groups.get(key, [])
+            if key and len(old_names) == 1 and len(new_names) == 1 \
+                    and name_match_allowed(old_names[0], new_names[0]):
+                take(old_names[0], new_names[0])
     return sorted(pairs)
 
 
 def _attributes(entry) -> dict:
     attributes = entry.get("attributes") if isinstance(entry, dict) else None
     return attributes if isinstance(attributes, dict) else {}
+
+
+def _attribute_names(entry) -> frozenset:
+    return frozenset(name.lower() for name in _attributes(entry))
+
+
+def match_classes(old_classes: dict, new_classes: dict) -> list[tuple[str, str, list[tuple[str, str]]]]:
+    """``(old class, new class, attribute pairs)`` for every class in both models."""
+    return [
+        (o, n, pair_elements(_attributes(old_classes[o]), _attributes(new_classes[n])))
+        for o, n in pair_elements(old_classes, new_classes, signature=_attribute_names)
+    ]
 
 
 def _typed(entry: dict) -> str:
@@ -125,9 +174,9 @@ def _typed(entry: dict) -> str:
     return f": {kind}{' (optional)' if entry.get('optional') else ''}"
 
 
-def _attribute_changes(old_cls: str, before: dict, new_cls: str, after: dict) -> list[str]:
+def _attribute_changes(old_cls: str, before: dict, new_cls: str, after: dict,
+                       pairs: list[tuple[str, str]]) -> list[str]:
     lines = []
-    pairs = pair_elements(before, after)
     for name in sorted(set(after) - {n for _, n in pairs}):
         lines.append(f"{new_cls}.{name}{_typed(after[name])} added")
     for name in sorted(set(before) - {o for o, _ in pairs}):
@@ -144,6 +193,21 @@ def _attribute_changes(old_cls: str, before: dict, new_cls: str, after: dict) ->
     return lines
 
 
+def _class_changes(old_cls: str, before: dict, new_cls: str, after: dict,
+                   new_name_of: dict) -> list[str]:
+    lines = []
+    if old_cls != new_cls:
+        lines.append(f"class {old_cls} renamed to {new_cls}")
+    if "abstract" in before and "abstract" in after and before["abstract"] != after["abstract"]:
+        lines.append(f"class {new_cls} is {'now' if after['abstract'] else 'no longer'} abstract")
+    if "parents" in before and "parents" in after:
+        was = {new_name_of.get(p, p) for p in before["parents"]}
+        now = set(after["parents"])
+        lines.extend(f"class {new_cls}: parent {p} added" for p in sorted(now - was))
+        lines.extend(f"class {new_cls}: parent {p} removed" for p in sorted(was - now))
+    return lines
+
+
 def describe_model_change(old: dict, new: dict) -> list[str]:
     """One line per change between two ``model_summary`` dicts.
 
@@ -152,15 +216,16 @@ def describe_model_change(old: dict, new: dict) -> list[str]:
     """
     lines = []
     old_c, new_c = old.get("classes") or {}, new.get("classes") or {}
-    pairs = pair_elements(old_c, new_c)
-    for name in sorted(set(new_c) - {n for _, n in pairs}):
+    matched = match_classes(old_c, new_c)
+    new_name_of = {o: n for o, n, _ in matched}
+    for name in sorted(set(new_c) - {n for _, n, _ in matched}):
         lines.append(f"class {name} added")
-    for name in sorted(set(old_c) - {o for o, _ in pairs}):
+    for name in sorted(set(old_c) - set(new_name_of)):
         lines.append(f"class {name} removed")
-    for o, n in pairs:
-        if o != n:
-            lines.append(f"class {o} renamed to {n}")
-        lines.extend(_attribute_changes(o, _attributes(old_c[o]), n, _attributes(new_c[n])))
+    for o, n, attribute_pairs in matched:
+        lines.extend(_class_changes(o, old_c[o], n, new_c[n], new_name_of))
+        lines.extend(_attribute_changes(
+            o, _attributes(old_c[o]), n, _attributes(new_c[n]), attribute_pairs))
 
     if isinstance(old.get("enumerations"), dict):
         old_e, new_e = old["enumerations"], new.get("enumerations") or {}
@@ -194,128 +259,86 @@ def describe_model_change(old: dict, new: dict) -> list[str]:
 @dataclass(frozen=True)
 class ModelChange:
     verdict: str          # small | large | unrelated
-    basis: str            # "attributes", or "classes" for an older recipe
-    gone: float           # share of the base model no longer present
-    overlap: float        # share of the base model's names still in use
-    removed: tuple[str, ...]  # "Class" / "Class.attribute", for display
+    basis: str            # FULL_MODEL, or CLASS_NAMES for an older recipe
+    gone: float           # share of the base model's classes and attributes not kept
+    removed: tuple[str, ...]  # "Class" / "Class.attribute"; renamed elements excluded
     added: tuple[str, ...]
-    changes: tuple[str, ...] = ()  # describe_model_change; empty for an older recipe
-    # Classes ("Room") and attributes ("Room.floor") paired across a name change.
+    # Classes ("Room") and attributes ("Room.floor") kept under a new name.
     renamed: tuple[tuple[str, str], ...] = ()
+    changes: tuple[str, ...] = ()  # describe_model_change; empty for an older recipe
     # The two summaries, for the post-run conformance check. Not serialised.
     base: dict = field(default_factory=dict, repr=False, compare=False)
     new: dict = field(default_factory=dict, repr=False, compare=False)
 
     def to_dict(self) -> dict:
         return {
-            "verdict": self.verdict, "basis": self.basis,
-            "gone": round(self.gone, 3), "overlap": round(self.overlap, 3),
+            "verdict": self.verdict, "basis": self.basis, "gone": round(self.gone, 3),
             "removed": list(self.removed), "added": list(self.added),
-            "changes": list(self.changes),
             "renamed": [{"from": old, "to": new} for old, new in self.renamed],
+            "changes": list(self.changes),
         }
 
 
-def _names(summary: dict) -> tuple[list[str], dict[str, list[str]] | None]:
-    """Class names and ``{class: [attribute names]}`` (None when unknown)."""
-    classes = summary.get("classes")
-    if isinstance(classes, dict):
-        return list(classes), {c: list(_attributes(e)) for c, e in classes.items()}
-    attributes = summary.get("attributes")
-    return list(classes), (attributes if isinstance(attributes, dict) else None)
+def _elements(classes: dict) -> int:
+    return len(classes) + sum(len(_attributes(entry)) for entry in classes.values())
 
 
-def _aligned_to(base: dict, new: dict) -> tuple[list[str], dict[str, list[str]]]:
-    """``new``'s names, with every element paired to a base element renamed to its base name."""
-    base_c, new_c = base["classes"], new["classes"]
-    renamed = {n: o for o, n in pair_elements(base_c, new_c)}
-    attributes = {}
-    for name, entry in new_c.items():
-        old = renamed.get(name)
-        attrs = _attributes(entry)
-        own = {n: o for o, n in pair_elements(_attributes(base_c[old]), attrs)} if old else {}
-        attributes[old or name] = [own.get(a, a) for a in attrs]
-    return list(attributes), attributes
-
-
-def _renames(base: dict, new: dict) -> tuple[tuple[str, str], ...]:
-    """Class and attribute renames between two ``model_summary`` dicts."""
+def _qualified(classes: dict, names) -> list[str]:
+    """A class and its attributes, as ``Class`` / ``Class.attribute``."""
     out = []
-    base_c, new_c = base["classes"], new["classes"]
-    for o, n in pair_elements(base_c, new_c):
-        if o != n:
-            out.append((o, n))
-        for oa, na in pair_elements(_attributes(base_c[o]), _attributes(new_c[n])):
-            if oa != na:
-                out.append((f"{o}.{oa}", f"{n}.{na}"))
-    return tuple(out)
-
-
-def _qualified(classes: list[str], attributes: dict | None) -> set[str]:
-    out = set(classes)
-    for cls, attrs in (attributes or {}).items():
-        out.update(f"{cls}.{a}" for a in attrs)
+    for name in names:
+        out.append(name)
+        out.extend(f"{name}.{a}" for a in _attributes(classes[name]))
     return out
+
+
+def _verdict(gone: float, reused: float, classes_kept: float) -> str:
+    if gone > UNRELATED_GONE and reused < UNRELATED_REUSED and (
+            classes_kept < UNRELATED_CLASSES_KEPT or gone > UNRELATED_GONE_WITH_CLASSES_KEPT):
+        return UNRELATED
+    return LARGE if gone > LARGE_GONE else SMALL
 
 
 def compare_models(base: dict, new: dict) -> ModelChange | None:
     """Compare a recorded base model with ``new`` (a ``model_summary``).
 
-    ``base`` is a ``model_summary``, or an older recipe's ``{"classes": [names],
-    "attributes": {...}?}``; ``None`` when it has no classes or is malformed.
-    Measured case-insensitively, with elements paired by id first. A class
-    whose name alone changed (same non-empty attributes) counts as kept, and
-    attributes count without their class, so a class rename costs one element.
+    ``base`` is a ``model_summary``, or an older recipe's ``{"classes": [names]}``
+    (then only class names are compared). ``None`` when the base has no classes
+    or is malformed.
     """
-    classes = base.get("classes") if isinstance(base, dict) else None
-    if not isinstance(classes, (list, dict)) or not classes or not is_summary(new):
+    if not is_summary(new) or not isinstance(base, dict):
         return None
-    full = is_summary(base)
-    old_c, old_a = _names(base)
-    with_attributes = old_a is not None
-    new_c, new_a = _aligned_to(base, new) if full else _names(new)
-    added_q = _qualified(*_names(new)) if with_attributes else set(_names(new)[0])
-    if full:
-        # Display names: the new model's own, minus what pairs with the base.
-        back = _aligned_to(new, base)
-        old_q, cur_q = _qualified(old_c, old_a), _qualified(new_c, new_a)
-        removed, added = old_q - cur_q, added_q - _qualified(*back)
+    if is_summary(base) and base["classes"]:
+        basis = FULL_MODEL
+    elif isinstance(base.get("classes"), list) and base["classes"]:
+        basis = CLASS_NAMES
+        base = {"classes": {str(name): {} for name in base["classes"]}}
+        new = {"classes": {name: {} for name in new["classes"]}}
     else:
-        old_q = _qualified(old_c, old_a if with_attributes else None)
-        removed, added = old_q - added_q, added_q - old_q
+        return None
+    old_c, new_c = base["classes"], new["classes"]
+    matched = match_classes(old_c, new_c)
 
-    lo_c = [str(c).lower() for c in old_c]
-    lo_a = {str(c).lower(): [str(a).lower() for a in v] for c, v in (old_a or {}).items()}
-    nw_c = [str(c).lower() for c in new_c]
-    nw_a = ({str(c).lower(): [str(a).lower() for a in v] for c, v in new_a.items()}
-            if with_attributes else {})
-    by_attrs = {frozenset(lo_a[c]): c for c in set(lo_c) - set(nw_c) if lo_a.get(c)}
-    renamed = {c: by_attrs[frozenset(nw_a.get(c, ()))] for c in set(nw_c) - set(lo_c)
-               if frozenset(nw_a.get(c, ())) in by_attrs}
-    nw_c = [renamed.get(c, c) for c in nw_c]
+    removed = _qualified(old_c, sorted(set(old_c) - {o for o, _, _ in matched}))
+    added = _qualified(new_c, sorted(set(new_c) - {n for _, n, _ in matched}))
+    renamed = [(o, n) for o, n, _ in matched if o != n]
+    kept = len(matched)
+    for o, n, attribute_pairs in matched:
+        kept += len(attribute_pairs)
+        before, after = _attributes(old_c[o]), _attributes(new_c[n])
+        removed += [f"{o}.{a}" for a in sorted(set(before) - {oa for oa, _ in attribute_pairs})]
+        added += [f"{n}.{a}" for a in sorted(set(after) - {na for _, na in attribute_pairs})]
+        renamed += [(f"{o}.{oa}", f"{n}.{na}") for oa, na in attribute_pairs if oa != na]
 
-    def elements(cls_names, attrs):
-        return Counter(f"class {c}" for c in cls_names) + Counter(
-            f"attr {a}" for v in attrs.values() for a in v)
-
-    old, cur = elements(lo_c, lo_a), elements(nw_c, nw_a)
-    gone = sum((old - cur).values()) / sum(old.values())
-    classes_kept = len(set(lo_c) & set(nw_c)) / len(set(lo_c))
-    old_names, cur_names = {e.split(" ", 1)[1] for e in old}, {e.split(" ", 1)[1] for e in cur}
-    overlap = len(old_names & cur_names) / len(old_names)
-    reused = len(old_names & cur_names) / len(cur_names) if cur_names else 0.0
-    if (gone > UNRELATED_GONE and reused < UNRELATED_REUSED
-            and (classes_kept < UNRELATED_CLASSES_KEPT or overlap < UNRELATED_OVERLAP)):
-        verdict = UNRELATED
-    elif gone > LARGE_GONE:
-        verdict = LARGE
-    else:
-        verdict = SMALL
+    gone = 1 - kept / _elements(old_c)
+    new_elements = _elements(new_c)
+    reused = kept / new_elements if new_elements else 1.0
+    classes_kept = len(matched) / len(old_c)
+    full = basis == FULL_MODEL
     return ModelChange(
-        verdict, "attributes" if with_attributes else "classes", gone, overlap,
-        tuple(sorted(removed)), tuple(sorted(added)),
+        _verdict(gone, reused, classes_kept), basis, gone,
+        tuple(sorted(removed)), tuple(sorted(added)), tuple(renamed),
         tuple(describe_model_change(base, new)) if full else (),
-        _renames(base, new) if full else (),
         base if full else {}, new,
     )
 
@@ -328,10 +351,12 @@ def compare_with_base(workspace: str, domain_model) -> ModelChange | None:
     """
     if domain_model is None:
         return None
+    text = read_plain_text(os.path.join(workspace, ".besser_recipe.json"), root=workspace)
+    if text is None:
+        return None
     try:
-        with open(os.path.join(workspace, ".besser_recipe.json"), encoding="utf-8") as fh:
-            recorded = json.load(fh).get("model") or {}
+        recorded = json.loads(text).get("model") or {}
         base = recorded.get("user_model") or {"classes": recorded.get("classes")}
         return compare_models(base, model_summary(domain_model))
-    except (OSError, ValueError, AttributeError, TypeError):
+    except (ValueError, AttributeError, TypeError):
         return None

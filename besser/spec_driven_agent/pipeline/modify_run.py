@@ -101,6 +101,11 @@ class ModifyRunMixin:
         # How the user's model relates to the one the seed app was built from,
         # read before the model-sync below adds classes of its own.
         self._model_change = compare_with_base(self.output_dir, self.domain_model)
+        if self._model_change is not None and not self._model_change.base:
+            logger.warning(
+                "The base run's recipe records only class names (it predates "
+                "user_model): verdict %s, no model change list for this run",
+                self._model_change.verdict)
 
         # -- Model-sync: derive + apply class-diagram deltas implied by the
         # instruction BEFORE building the inventory, so a genuinely new
@@ -183,12 +188,17 @@ class ModifyRunMixin:
                 self._trace.write(
                     EVENT_VALIDATION_ISSUE, phase="fix_target_seed", message=issue,
                 )
+        # The model change leads the issues, after the reported failure's
+        # headline in a fix run.
+        leading = [model_note] if model_note else []
+        if leading and fix_seed_issues:
+            leading = fix_seed_issues[:1] + leading
+            fix_seed_issues = fix_seed_issues[1:]
         self._trace.write(EVENT_PHASE_ENTER, phase="phase2_modify")
         self._run_phase2(
             instructions,
             extra_issues=(
-                ([model_note] if model_note else [])
-                + phase1_issues + self._seed_unresolved_issues + fix_seed_issues
+                leading + phase1_issues + self._seed_unresolved_issues + fix_seed_issues
             ),
         )
         self._trace.write(
@@ -267,11 +277,17 @@ class ModifyRunMixin:
         if not self._modify_mode or change is None or not change.changes:
             return []
         try:
-            return model_conformance_issues(self.output_dir, change.base, change.new)
+            issues = model_conformance_issues(self.output_dir, change.base, change.new)
         except Exception as exc:
             logger.warning("Model conformance check failed", exc_info=True)
             return [_check_did_not_run(
                 "the model conformance check", f"it crashed: {type(exc).__name__}")]
+        if issues is None:
+            logger.warning("Model conformance check skipped: no FastAPI backend in the app")
+            return [_check_did_not_run(
+                "the model conformance check",
+                "the app has no FastAPI backend (sql_alchemy.py / pydantic_classes.py)")]
+        return issues
 
     def _render_seed_history(self) -> str:
         """Format the seed recipe's session history for the inventory."""

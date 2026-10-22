@@ -9,13 +9,17 @@ class names only.
 """
 import json
 
+import os
+
+import pytest
+
 from besser.BUML.metamodel.structural import (
-    BinaryAssociation, Class, DomainModel, Enumeration, EnumerationLiteral, Multiplicity,
-    PrimitiveDataType, Property, UNLIMITED_MAX_MULTIPLICITY,
+    BinaryAssociation, Class, DomainModel, Enumeration, EnumerationLiteral, Generalization,
+    Multiplicity, PrimitiveDataType, Property, UNLIMITED_MAX_MULTIPLICITY,
 )
 from besser.spec_driven_agent.planning.model_change import (
     LARGE, SMALL, UNRELATED, compare_models, compare_with_base, describe_model_change,
-    model_summary,
+    model_summary, pair_elements,
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
@@ -177,6 +181,53 @@ def test_an_id_on_one_side_only_falls_back_to_names():
     assert describe_model_change(old, _summary(HOTEL)) == []
 
 
+# The matching rule shared with the frontend and the modeling-agent.
+def _entries(**ids):
+    return {name: ({"id": i} if i else {}) for name, i in ids.items()}
+
+
+def test_matching_rule():
+    # 1. ids decide when both sides carry one: a swap of names is two renames,
+    #    and the same name under a different id is another element.
+    assert pair_elements(_entries(A="1", B="2"), _entries(A="2", B="1")) == [("A", "B"), ("B", "A")]
+    assert pair_elements(_entries(Room="r1"), _entries(Room="r2")) == []
+    # 2. otherwise by name, then by name ignoring case.
+    assert pair_elements(_entries(Room="r1"), _entries(Room=None)) == [("Room", "Room")]
+    assert pair_elements(_entries(Room=None), _entries(room=None)) == [("Room", "room")]
+    # Never pair one element twice (a duplicated id).
+    assert pair_elements(_entries(Room="x"), _entries(Room="x", Suite="x")) == [("Room", "Room")]
+    # 3. classes only: the one unpaired class with the same attribute names.
+    same = {"attributes": {"title": {}, "done": {}}}
+    sig = lambda e: frozenset(e.get("attributes", {}))  # noqa: E731
+    assert pair_elements({"Task": same}, {"Todo": same}, signature=sig) == [("Task", "Todo")]
+    assert pair_elements({"Task": same}, {"Todo": same, "Chore": same}, signature=sig) == []
+
+
+def test_verdict_change_list_and_renamed_agree_on_a_name_only_class_rename():
+    renamed = {c: dict(a) for c, a in HOTEL.items()}
+    renamed["Customer"] = renamed.pop("Person")
+    change = compare_models(_summary(HOTEL), _summary(renamed))
+    assert change.verdict == SMALL and change.gone == 0
+    assert change.changes == ("class Person renamed to Customer",)
+    assert change.renamed == (("Person", "Customer"),)
+    assert change.removed == () and change.added == ()
+
+
+def test_inheritance_and_abstract_changes_are_listed():
+    def model(parent: bool, abstract: bool) -> DomainModel:
+        person = Class(name="Person", attributes={Property(name="name", type=PrimitiveDataType("str"))},
+                       is_abstract=abstract)
+        employee = Class(name="Employee", attributes={Property(name="salary", type=PrimitiveDataType("float"))})
+        generalizations = {Generalization(general=person, specific=employee)} if parent else set()
+        return DomainModel(name="M", types={person, employee}, generalizations=generalizations)
+
+    old, new = model_summary(model(False, False)), model_summary(model(True, True))
+    assert describe_model_change(old, new) == [
+        "class Employee: parent Person added",
+        "class Person is now abstract",
+    ]
+
+
 # ----------------------------------------------------------------------
 # Verdict (thresholds from the large-change experiment, by name)
 # ----------------------------------------------------------------------
@@ -217,6 +268,7 @@ def test_unrelated_model():
 def test_deleting_classes_is_large_not_another_app():
     kept = {c: HOTEL[c] for c in ("Person", "Room")}
     assert compare_models(_summary(HOTEL), _summary(kept)).verdict == LARGE
+    assert compare_models(_summary(HOTEL), _summary({})).verdict == LARGE
 
 
 def test_older_recipes():
@@ -233,6 +285,20 @@ def test_older_recipes():
 def test_unknown_base_is_none(tmp_path):
     assert compare_with_base(str(tmp_path), None) is None
     assert compare_with_base(str(tmp_path), _domain(HOTEL)) is None  # no recipe
+
+
+def test_a_linked_recipe_is_not_read(tmp_path):
+    outside = tmp_path / "other_run"
+    outside.mkdir()
+    (outside / ".besser_recipe.json").write_text(
+        json.dumps({"model": {"user_model": _summary(HOTEL)}}), encoding="utf-8")
+    run = tmp_path / "run"
+    run.mkdir()
+    try:
+        os.symlink(outside / ".besser_recipe.json", run / ".besser_recipe.json")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not available")
+    assert compare_with_base(str(run), _domain(CASE_M)) is None
 
 
 # ----------------------------------------------------------------------
@@ -303,6 +369,18 @@ def test_modify_gets_the_change_list_in_the_inventory_and_as_a_phase2_issue(tmp_
     # Context, not the user's words.
     assert seen["instr"] == "Update the app to the updated class diagram"
     assert seen["run_start"]["model_change"]["changes"][0] == "Booking.bookingNumber type str -> int"
+
+
+def test_in_a_fix_run_the_reported_failure_leads_and_the_model_change_follows(tmp_path, monkeypatch):
+    from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
+
+    monkeypatch.setattr(ModifyRunMixin, "_fix_run_scoped_issues",
+                        lambda self: ["The user reported this failure: X", "finding 1"])
+    orch, seen = _modify(tmp_path, monkeypatch, {"user_model": _summary(HOTEL)},
+                         _domain(CASE_M, handled_by_min=0))
+    assert seen["issues"][0] == "The user reported this failure: X"
+    assert seen["issues"][1].startswith("The class model changed since the last run.")
+    assert seen["issues"][-1] == "finding 1"
 
 
 def test_modify_without_a_model_change_adds_nothing(tmp_path, monkeypatch):

@@ -19,11 +19,13 @@ The counts are asserted at three layers, because they legitimately differ:
   properties with no ``rdfs:domain``, and an invariant that navigates one of
   them can only resolve if the user accepts ``attach_to_thing`` for it.
 
-At both BUML layers some ``dc:hasPart`` / ``dc:isPartOf`` restrictions are
-lost: several sibling auxiliary restriction classes each declare the property's
-end, and a class inheriting two of them would reach two ends of the same name,
-which BUML rejects (``ASSOC_END_CONFLICT_DROPPED``). Keeping them would make
-the model fail to reload in the editor and the generated code.
+At both BUML layers several auxiliary restriction classes declare
+``dc:hasPart`` (and, refined, ``dc:isPartOf``) for one shared subclass, which
+BUML allows only one end of that name. The lowering declares the end once --
+on ``Thing`` when it is their common ancestor, on an auxiliary
+``_hasPart_Domain`` parent otherwise -- and restates each class's narrower
+bound or target as an invariant, so no association's meaning and no invariant
+is lost to it (``test_every_planned_end_keeps_its_meaning``).
 
 This is also the regression that pins the failure that motivated the rewrite:
 the previous implementation silently dropped classes that carried a shape, and
@@ -39,12 +41,12 @@ from pathlib import Path
 import pytest
 from rdflib import Graph
 
-from besser.BUML.metamodel.structural import Class, Enumeration
+from besser.BUML.metamodel.structural import UNLIMITED_MAX_MULTIPLICITY, Class, Enumeration
 from besser.BUML.notations.kg_to_buml import kg_to_class_diagram
 from besser.BUML.notations.kg_to_buml.kg_to_rdf import kg_to_rdf
 from besser.BUML.notations.kg_to_buml.owl2uml import plan_domain_model
 from besser.BUML.notations.kg_to_buml.preflight import analyze_kg_for_class_diagram
-from besser.BUML.notations.kg_to_buml.resolutions import KGResolution
+from besser.BUML.notations.kg_to_buml.resolutions import KGResolution, apply_resolutions
 from besser.BUML.notations.owl_to_kg import owl_file_to_knowledge_graph
 
 #: Names that may follow ``self.`` without being a feature. This audit keeps its
@@ -93,6 +95,28 @@ def result(combined_ttl: str):
     return kg_to_class_diagram(owl_file_to_knowledge_graph(combined_ttl), model_name="Bibo")
 
 
+def _no_domain_resolutions(kg):
+    """Accept every ``PROPERTY_NO_DOMAIN`` recommendation, as the Refine-KG panel does."""
+    report = analyze_kg_for_class_diagram(kg)
+    return [
+        KGResolution(
+            issue_id=issue.id,
+            choice=issue.recommended_action.key,
+            parameters=dict(issue.recommended_action.parameters),
+        )
+        for issue in report.issues
+        if issue.code == "PROPERTY_NO_DOMAIN"
+    ]
+
+
+@pytest.fixture(scope="module")
+def refined_uml_model(combined_ttl: str):
+    """The intermediate model of the refined conversion."""
+    kg = owl_file_to_knowledge_graph(combined_ttl)
+    graph, base = kg_to_rdf(apply_resolutions(kg, _no_domain_resolutions(kg)))
+    return plan_domain_model(graph, base, shapes=graph)
+
+
 @pytest.fixture(scope="module")
 def refined_result(combined_ttl: str):
     """Converted after accepting every ``PROPERTY_NO_DOMAIN`` recommendation.
@@ -103,16 +127,7 @@ def refined_result(combined_ttl: str):
     properties resolves from its own context.
     """
     kg = owl_file_to_knowledge_graph(combined_ttl)
-    report = analyze_kg_for_class_diagram(kg)
-    resolutions = [
-        KGResolution(
-            issue_id=issue.id,
-            choice=issue.recommended_action.key,
-            parameters=dict(issue.recommended_action.parameters),
-        )
-        for issue in report.issues
-        if issue.code == "PROPERTY_NO_DOMAIN"
-    ]
+    resolutions = _no_domain_resolutions(kg)
     assert resolutions, "the fixture is pointless if the detector finds nothing"
     return kg_to_class_diagram(kg, model_name="Bibo", resolutions=resolutions)
 
@@ -180,52 +195,147 @@ def test_invariant_origins_match_the_rule_census(uml_model):
 # ---------------------------------------------------------------------------
 
 
+def _classes(result):
+    return {t.name: t for t in result.domain_model.types if isinstance(t, Class)}
+
+
+def _stated(result):
+    """``(context, body)`` of every constraint in the converted model."""
+    return {
+        (c.context.name, c.expression.split(": ", 1)[1]) for c in result.domain_model.constraints
+    }
+
+
+def _planned(uml_model):
+    return {(i.context, " ".join(i.body.split())) for i in uml_model.ocl_constraints()}
+
+
 def test_domain_model_counts(result):
     domain_model = result.domain_model
-    classes = [t for t in domain_model.types if isinstance(t, Class)]
-    # 80 from the intermediate model, plus the materialised data range the
-    # ``sh:or`` of two XSD types collapses onto.
-    assert len(classes) == 81
-    assert sum(1 for c in classes if c.is_abstract) == 2
-    assert len(domain_model.generalizations) == 81
-    # 62 planned; five sibling ``hasPart`` restriction ends are dropped
-    # (ASSOC_END_CONFLICT_DROPPED) so the model reloads.
-    assert len(domain_model.associations) == 57
-    # 128 emitted, 24 dropped — see test_only_domainless_properties_are_dropped.
-    assert len(domain_model.constraints) == 104
+    classes = _classes(result)
+    # 80 from the intermediate model, the materialised data range the ``sh:or``
+    # of two XSD types collapses onto, and the two the shared ``hasPart`` end
+    # needs (see test_hasPart_restrictions_share_one_end).
+    assert len(classes) == 83
+    assert sorted(name for name, c in classes.items() if c.is_abstract) == [
+        "_Collection_Document_Union", "_List_Seq_Union",
+        "_Thing__Collection_Document_Union_Union", "_hasPart_Domain",
+    ]
+    # 81 planned, the 9 restriction classes under _hasPart_Domain, 2 targets under its union.
+    assert len(domain_model.generalizations) == 92
+    # 62 planned; the 9 restriction ends of hasPart become one.
+    assert len(domain_model.associations) == 54
+    # 128 planned, 20 dropped (test_only_domainless_properties_are_dropped),
+    # 2 restated (test_hasPart_restrictions_share_one_end).
+    assert len(domain_model.constraints) == 110
     assert len([t for t in domain_model.types if isinstance(t, Enumeration)]) == 0
 
 
-def test_refined_domain_model_keeps_every_resolvable_constraint(refined_result):
-    """Accepting the recommendations resolves every domain-less invariant: the
-    same 81 classes, 13 more generalizations (the top-level classes now inherit
-    from ``Thing``), and 119 of the 128 invariants.
+#: The restriction classes BIBO declares ``dc:hasPart`` on that share a subclass
+#: with another of them (``bibo:Issue`` is both an ``_all_hasPart_Article`` and
+#: a ``_min_1_hasPart_Thing``). ``_all_hasPart_Slide`` shares none.
+_HASPART_RESTRICTIONS = [
+    "_all_hasPart_Article", "_all_hasPart_Book", "_all_hasPart_Document",
+    "_all_hasPart_Issue", "_all_hasPart_LegalDocument", "_all_hasPart_Legislation",
+    "_all_hasPart_Webpage", "_all_hasPart__Collection_Document_Union", "_min_1_hasPart_Thing",
+]
 
-    The nine lost are the O07 ``hasPart`` invariants: ``Thing`` now declares
-    ``hasPart`` and every named class inherits it, so none of the auxiliary
-    restriction classes above them can declare a second ``hasPart`` end
-    (``ASSOC_END_CONFLICT_DROPPED``), and their invariants have nothing to
-    navigate. 62 planned associations, 11 dropped that way."""
+
+def test_hasPart_restrictions_share_one_end(result):
+    """Unrefined, the restriction classes have no common ancestor, so the
+    ``hasPart`` end is declared once, on an abstract parent of all nine. Its
+    target is the union of the restrictions' targets (``Thing`` and the
+    Collection/Document union, which every other target specialises), and what
+    each restriction said beyond that end is restated on it:
+    ``_min_1_hasPart_Thing`` keeps "at least one part, each a Thing"; each
+    ``_all_*`` keeps its O07 type invariant, which already says it."""
+    classes = _classes(result)
+    domain = classes["_hasPart_Domain"]
+    assert sorted(c.name for c in domain.specializations()) == _HASPART_RESTRICTIONS
+    (association,) = [a for a in result.domain_model.associations if any(e.type is domain for e in a.ends)]
+    end = next(e for e in association.ends if e.name == "hasPart")
+    assert end.type.name == "_Thing__Collection_Document_Union_Union"
+    assert (end.multiplicity.min, end.multiplicity.max) == (0, UNLIMITED_MAX_MULTIPLICITY)
+
+    stated = _stated(result)
+    assert ("_min_1_hasPart_Thing", "self.hasPart->size() >= 1") in stated
+    assert ("_min_1_hasPart_Thing", "self.hasPart->forAll(o | o.oclIsKindOf(Thing))") in stated
+    assert ("_all_hasPart_Issue", "self.hasPart->forAll(o | o.oclIsKindOf(Issue))") in stated
+    # The property's own declaration, on Thing, is a hierarchy of its own and stays as it is.
+    own = result.property_iri_to_association["http://purl.org/dc/terms/hasPart"]
+    assert result.assoc_source_end[id(own)].type.name == "Thing"
+
+
+def test_refined_domain_model_keeps_every_constraint(refined_result, refined_uml_model):
+    """Accepting the recommendations resolves every domain-less invariant, and
+    all 128 planned invariants reach the model.
+
+    ``Thing`` now declares ``hasPart`` and ``isPartOf`` and is an ancestor of
+    every class, the restriction classes included, so their ends merge into
+    Thing's (``ASSOC_INHERITED_SHADOWED``): 62 planned associations, 51 built.
+    Two invariants restate the cardinality only those ends carried."""
     domain_model = refined_result.domain_model
-    classes = [t for t in domain_model.types if isinstance(t, Class)]
+    classes = _classes(refined_result)
     assert len(classes) == 81
     assert len(domain_model.associations) == 51
-    assert len(domain_model.generalizations) == 94
-    assert len(domain_model.constraints) == 119
-    codes = Counter(w.code for w in refined_result.warnings)
-    assert codes["ASSOC_END_CONFLICT_DROPPED"] == 11
-    assert codes["OCL_DROPPED_UNRESOLVED_FEATURE"] == 9
+    # 81 planned, plus the 13 top-level classes and 11 restriction classes made Thing's.
+    assert len(domain_model.generalizations) == 105
+    assert len(domain_model.constraints) == 130
+
+    stated = _stated(refined_result)
+    assert len(_planned(refined_uml_model)) == 128
+    assert _planned(refined_uml_model) <= stated
+    assert stated - _planned(refined_uml_model) == {
+        ("_min_1_hasPart_Thing", "self.hasPart->size() >= 1"),
+        ("_max_1_isPartOf_Thing", "self.isPartOf->size() <= 1"),
+    }
+
+    thing = classes["Thing"]
+    for name in [*_HASPART_RESTRICTIONS, "_all_hasPart_Slide", "_max_1_isPartOf_Thing"]:
+        assert thing in classes[name].all_parents(), name
+    for iri in ("http://purl.org/dc/terms/hasPart", "http://purl.org/dc/terms/isPartOf"):
+        association = refined_result.property_iri_to_association[iri]
+        assert refined_result.assoc_source_end[id(association)].type is thing
+
+
+@pytest.mark.parametrize("conversion, plan", [
+    ("result", "uml_model"), ("refined_result", "refined_uml_model"),
+])
+def test_every_planned_end_keeps_its_meaning(request, conversion, plan):
+    """Every association the rules planned is still navigable from its source
+    under its own name, and whatever the end now serving it does not already
+    guarantee -- the target, the bounds -- is stated as an invariant on the
+    source. Merging ends must not lose a restriction."""
+    result, uml_model = request.getfixturevalue(conversion), request.getfixturevalue(plan)
+    classes, stated = _classes(result), _stated(result)
+    for planned in uml_model.associations:
+        source, target = classes.get(planned.source), classes.get(planned.target)
+        if source is None or target is None:
+            continue
+        role = planned.role or planned.name
+        (end,) = [e for e in source.all_association_ends() if e.name == role]
+        if end.type is not target and target not in end.type.all_parents():
+            assert (planned.source, f"self.{role}->forAll(o | o.oclIsKindOf({planned.target}))") in stated
+        lower, upper = planned.tgt_mult
+        if lower > end.multiplicity.min:
+            assert (planned.source, f"self.{role}->size() >= {lower}") in stated
+        if upper != "*" and int(upper) < end.multiplicity.max:
+            assert (planned.source, f"self.{role}->size() <= {upper}") in stated
+
+
+@pytest.mark.parametrize("conversion", ["result", "refined_result"])
+def test_the_model_passes_metamodel_validation(request, conversion):
+    """Including the end-name rule: no class reaches two ends of one name."""
+    domain_model = request.getfixturevalue(conversion).domain_model
+    assert domain_model.validate(raise_exception=False)["errors"] == []
 
 
 def test_no_construct_is_dropped(refined_result):
-    """Nothing may be silently lost: apart from the end-name conflicts pinned in
-    ``test_refined_domain_model_keeps_every_resolvable_constraint``, every
-    warning is informational."""
+    """Nothing may be silently lost: every warning is informational."""
     codes = Counter(w.code for w in refined_result.warnings)
     assert codes["ASSOC_DROPPED"] == 0
-    assert codes["ASSOC_INHERITED_SHADOWED"] == 0
-    unresolved = [w for w in refined_result.warnings if w.code == "OCL_DROPPED_UNRESOLVED_FEATURE"]
-    assert all("navigates self.hasPart," in w.message for w in unresolved)
+    assert codes["OCL_DROPPED_UNRESOLVED_FEATURE"] == 0
+    assert codes["OCL_DROPPED_INVALID"] == 0
     assert codes["OCL_DROPPED_UNKNOWN_TYPE"] == 0
     assert codes["OCL_DROPPED_MALFORMED_BODY"] == 0
     assert codes["ORPHANED_CONSTRAINT"] == 0
@@ -234,24 +344,17 @@ def test_no_construct_is_dropped(refined_result):
     assert codes["SHACL_COMPLEX_PATH"] == 0
 
 
-def test_only_domainless_properties_are_dropped(result, combined_ttl: str):
-    """Converting without refining drops 24 invariants: 20 navigate a property
-    the preflight offered to fix, 4 sit on a restriction class whose end was
-    dropped as an end-name conflict.
+def test_only_domainless_properties_are_dropped(result, uml_model, combined_ttl: str):
+    """Converting without refining drops 20 invariants, and every one of them
+    navigates a property the preflight offered to fix.
 
     A domain-less property is attached to ``Thing``, which nothing inherits from
     unless the user says so — so ``self.<property>`` resolves from no context at
     all and the invariant would fail in any evaluator. Dropping it with a warning
     is the honest outcome; the way to keep it is to accept the recommendation."""
-    dropped = [w for w in result.warnings if w.code == "OCL_DROPPED_UNRESOLVED_FEATURE"]
-    assert len(dropped) == 24
-    conflicted = {
-        w.message.split(".", 1)[0]
-        for w in result.warnings if w.code == "ASSOC_END_CONFLICT_DROPPED"
-    }
-    by_conflict = [w for w in dropped if w.message.split("Invariant on ")[1].split(" ")[0] in conflicted]
-    assert len(by_conflict) == 4
-    dropped = [w for w in dropped if w not in by_conflict]
+    dropped = _planned(uml_model) - _stated(result)
+    assert len(dropped) == 20
+    assert Counter(w.code for w in result.warnings)["OCL_DROPPED_UNRESOLVED_FEATURE"] == 20
 
     report = analyze_kg_for_class_diagram(owl_file_to_knowledge_graph(combined_ttl))
     offered = {
@@ -259,9 +362,14 @@ def test_only_domainless_properties_are_dropped(result, combined_ttl: str):
         for issue in report.issues
         if issue.code == "PROPERTY_NO_DOMAIN"
     }
-    for warning in dropped:
-        navigated = warning.message.split("navigates self.")[1].split(",")[0]
-        assert navigated in offered, f"{navigated} is dropped but never offered a fix"
+    classes = _classes(result)
+    for context, body in dropped:
+        reachable = (
+            {a.name for a in classes[context].all_attributes()}
+            | {e.name for e in classes[context].all_association_ends()}
+        )
+        unreachable = set(re.findall(r"self\.([A-Za-z_]\w*)", body)) - reachable - _OCL_OPERATIONS
+        assert unreachable and unreachable <= offered, f"{context}: {body}"
 
 
 @pytest.mark.parametrize("name", KEY_CLASSES)
@@ -493,10 +601,10 @@ def test_every_constraint_is_navigable_from_its_context(request, conversion: str
 
 @pytest.mark.parametrize("with_shapes", [False, True], ids=["schema", "schema+shapes"])
 def test_model_reloads_through_json_and_generated_code(with_shapes, combined_ttl, tmp_path):
-    """Both reload paths re-create associations *before* generalizations, so a
-    class inheriting two same-named ends from unrelated parents (BIBO's
-    sibling ``hasPart`` restriction classes) is rejected there even though the
-    lowering, which builds generalizations first, accepted it."""
+    """Both reload paths re-create associations *before* generalizations, the
+    opposite of the lowering. BUML checks end names the same way in either
+    order, so this pins that the merged ``hasPart`` ends leave nothing for it to
+    reject."""
     import runpy
 
     from besser.BUML.metamodel.structural import DomainModel

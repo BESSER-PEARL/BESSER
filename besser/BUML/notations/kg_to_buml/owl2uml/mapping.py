@@ -113,12 +113,14 @@ class Mapper:
         Runs only when the KG already puts a class under Thing, i.e. the user
         accepted the recommendation. Declining leaves the model as it was.
 
-        One exception: a class that declares a feature name Thing also declares
-        keeps its own. Restriction aux classes exist precisely to narrow such a
-        property (``_all_hasPart_Issue --hasPart--> Issue``, ``_max_1_isPartOf_Thing``),
-        and BUML keeps only one end per name across a hierarchy — so parenting
-        them would drop the narrower end and, with it, the cardinality that only
-        the association carries.
+        One exception: a class that declares an *attribute* Thing also declares
+        keeps its own. A restriction aux class exists precisely to narrow such a
+        property (``_min_1_title_str``), and the lowering keeps an ancestor's
+        attribute over a descendant's (``ATTR_INHERITED_SHADOWED``), so
+        parenting it would drop the narrower declaration. A restriction on an
+        object property (``_all_hasPart_Issue --hasPart--> Issue``) is parented:
+        the lowering merges its end into the one it inherits from Thing and
+        restates the narrower bound or target as OCL.
         """
         thing = self.canon.name(OWL.Thing)
         if thing not in self.model.classes:
@@ -126,22 +128,16 @@ class Mapper:
         if not any(sup == thing for _, sup in self.model.generalizations):
             return
 
-        def features(name: str) -> set[str]:
+        def attributes(name: str) -> set[str]:
             cls = self.model.classes.get(name)
-            names = {a.name for a in cls.attributes} if cls is not None else set()
-            for assoc in self.model.associations:
-                if assoc.source == name and assoc.role:
-                    names.add(assoc.role)
-                if assoc.target == name and assoc.navigable_source and assoc.source_role:
-                    names.add(assoc.source_role)
-            return names
+            return {a.name for a in cls.attributes} if cls is not None else set()
 
-        inherited = features(thing)
+        inherited = attributes(thing)
         has_parent = {sub for sub, _ in self.model.generalizations}
         for name in sorted(self.model.classes):
             if name == thing or name in has_parent:
                 continue
-            if features(name) & inherited:
+            if attributes(name) & inherited:
                 continue
             self.add_generalization(name, thing)
 

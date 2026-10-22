@@ -57,6 +57,16 @@ def one_of_name(individuals: list[str]) -> str:
     return "_" + "_".join(individuals) + "_OneOf"
 
 
+def domain_name(prop: str) -> str:
+    """Name of the abstract class the lowering declares ``prop``'s end on for several classes.
+
+    Not one of the paper's tokens: plain UML lets a class inherit two ends of
+    one name, BUML does not, so ``to_buml._hoist_shared_ends`` declares the end
+    once, on a parent of every class that declared it.
+    """
+    return f"_{prop}_Domain"
+
+
 def not_name(cls: str) -> str:
     """Name of the auxiliary class for the complement of ``cls``."""
     return f"_not_{cls}"

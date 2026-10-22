@@ -82,10 +82,10 @@ def _enum(name, literals):
     return PlannedEnumeration(name=name, literals=list(literals))
 
 
-def _assoc(name, source, target, role, *, source_navigable=False, tgt_mult=(0, "*")):
+def _assoc(name, source, target, role, *, source_navigable=False, tgt_mult=(0, "*"), uri=None):
     return PlannedAssociation(
         name=name, source=source, target=target, role=role, navigable_source=source_navigable,
-        tgt_mult=tgt_mult,
+        tgt_mult=tgt_mult, uri=uri,
     )
 
 
@@ -253,8 +253,8 @@ def test_attributes_do_not_share_the_default_multiplicity_singleton():
 
 
 def test_generalization_cycles_are_broken():
-    """``Class.all_parents()`` recurses without a visited set, so one cycle
-    hangs the first consumer that walks the hierarchy."""
+    """BUML cannot build the generalization that closes a cycle, and
+    ``DomainModel.validate()`` rejects one."""
     model = _model(
         _cls("A"), _cls("B"), _cls("C"),
         _gen("A", "B"), _gen("B", "C"), _gen("C", "A"),
@@ -263,9 +263,7 @@ def test_generalization_cycles_are_broken():
 
     assert len(result.domain_model.generalizations) == 2
     assert "CYCLIC_SUBCLASS" in _codes(warnings)
-    # The hierarchy is now safe to walk.
-    for cls in _classes(result).values():
-        cls.all_parents()
+    assert result.domain_model.validate(raise_exception=False)["errors"] == []
 
 
 def test_cycle_breaking_survives_a_chain_deeper_than_the_recursion_limit():
@@ -377,36 +375,172 @@ def test_a_role_an_ancestor_already_provides_is_dropped(tmp_path: Path):
     assert "ASSOC_INHERITED_SHADOWED" in _codes(result.warnings)
 
 
-def _sibling_restrictions_model():
-    """Two unrelated parents of ``Code`` each declaring a ``hasPart`` end."""
+def _sibling_restrictions_model(*, a_target="Part", b_target="Part", invariants=()):
+    """Two unrelated parents of ``Code`` each declaring a ``hasPart`` end.
+
+    ``RestrictA`` requires at least one part and is the property's own
+    declaration (it carries the IRI); ``RestrictB`` requires at most two.
+    """
+    targets = sorted({a_target, b_target, "Part"})
     return _model(
-        _cls("RestrictA"), _cls("RestrictB"), _cls("Code"), _cls("Part"),
+        _cls("RestrictA", invariants=invariants), _cls("RestrictB"), _cls("Code"),
+        *[_cls(name) for name in targets],
         _gen("Code", "RestrictA"), _gen("Code", "RestrictB"),
-        _assoc("hasPart", "RestrictA", "Part", "hasPart"),
-        _assoc("hasPart", "RestrictB", "Part", "hasPart"),
+        _assoc("hasPart", "RestrictA", a_target, "hasPart", tgt_mult=(1, "*"), uri="http://ex.org/hasPart"),
+        _assoc("hasPart", "RestrictB", b_target, "hasPart", tgt_mult=(0, 2)),
     )
 
 
-def test_an_end_a_descendant_inherits_from_another_parent_is_dropped():
-    """A descendant may reach one end per name across *all* its parents.
+def _invariants_of(result, context: str):
+    return sorted(
+        c.expression.split(": ", 1)[1] for c in result.domain_model.constraints if c.context.name == context
+    )
 
-    The metamodel's setter only compares against the descendants' own ends, so
-    the second ``hasPart`` used to build here (generalizations first) and then
-    fail in every consumer that re-creates generalizations after associations.
-    """
+
+def test_an_end_two_parents_declare_is_hoisted_onto_their_shared_parent():
+    """``Code`` would inherit a ``hasPart`` end from each parent, which BUML
+    rejects. Both are the one property: renaming one would split it, dropping
+    one would lose its restriction. It is declared once, on an abstract parent
+    of both, with the widest bounds; each parent's own bound becomes OCL."""
     result, warnings = _lower(_sibling_restrictions_model())
 
-    has_part = [a for a in result.domain_model.associations if a.name.startswith("hasPart")]
-    assert len(has_part) == 1
-    assert "ASSOC_END_CONFLICT_DROPPED" in _codes(warnings)
-    message = next(w.message for w in warnings if w.code == "ASSOC_END_CONFLICT_DROPPED")
-    assert message.startswith("RestrictB.hasPart would give Code")
-    code = _classes(result)["Code"]
-    assert [e.name for e in code.all_association_ends()].count("hasPart") == 1
+    classes = _classes(result)
+    domain = classes["_hasPart_Domain"]
+    assert domain.is_abstract
+    assert {c.name for c in domain.specializations()} == {"RestrictA", "RestrictB"}
+    (association,) = result.domain_model.associations
+    end = next(e for e in association.ends if e.name == "hasPart")
+    assert end.type.name == "Part"
+    assert (end.multiplicity.min, end.multiplicity.max) == (0, UNLIMITED_MAX_MULTIPLICITY)
+    assert result.assoc_source_end[id(association)].type is domain
+    assert result.property_iri_to_association["http://ex.org/hasPart"] is association
+    assert [e.name for e in classes["Code"].all_association_ends()] == ["hasPart"]
+
+    assert _invariants_of(result, "RestrictA") == ["self.hasPart->size() >= 1"]
+    assert _invariants_of(result, "RestrictB") == ["self.hasPart->size() <= 2"]
+    assert "ASSOC_END_HOISTED" in _codes(warnings)
+    assert result.domain_model.validate(raise_exception=False)["errors"] == []
 
 
-def test_sibling_end_conflict_reloads_in_the_editor_and_as_code(tmp_path: Path):
-    """Both reload paths build associations before generalizations."""
+def test_a_hoisted_end_targets_the_union_of_unrelated_targets():
+    """Each parent's narrower target is restated as the type invariant O07 uses."""
+    result, _ = _lower(_sibling_restrictions_model(b_target="Chapter"))
+
+    (association,) = result.domain_model.associations
+    end = next(e for e in association.ends if e.name == "hasPart")
+    assert end.type.name == "_Chapter_Part_Union"
+    assert {c.name for c in end.type.specializations()} == {"Chapter", "Part"}
+    assert "self.hasPart->forAll(o | o.oclIsKindOf(Part))" in _invariants_of(result, "RestrictA")
+    assert "self.hasPart->forAll(o | o.oclIsKindOf(Chapter))" in _invariants_of(result, "RestrictB")
+
+
+def test_a_hoisted_end_targets_the_target_the_others_specialise():
+    model = _sibling_restrictions_model(b_target="Chapter")
+    model.generalizations.append(_gen("Chapter", "Part"))
+    result, _ = _lower(model)
+
+    (association,) = result.domain_model.associations
+    assert next(e for e in association.ends if e.name == "hasPart").type.name == "Part"
+    assert _invariants_of(result, "RestrictA") == ["self.hasPart->size() >= 1"]
+    assert _invariants_of(result, "RestrictB") == [
+        "self.hasPart->forAll(o | o.oclIsKindOf(Chapter))",
+        "self.hasPart->size() <= 2",
+    ]
+
+
+def test_a_restated_invariant_the_rules_already_emit_is_not_added_twice():
+    """O07 states an ``owl:allValuesFrom`` restriction as exactly the type
+    invariant the hoist would restate; it still resolves, through the inherited end."""
+    body = "self.hasPart->forAll(o | o.oclIsKindOf(Part))"
+    result, warnings = _lower(_sibling_restrictions_model(
+        b_target="Chapter", invariants=[_inv("RestrictA", body, name="O07")],
+    ))
+
+    assert _invariants_of(result, "RestrictA") == [body, "self.hasPart->size() >= 1"]
+    assert "OCL_DROPPED_UNRESOLVED_FEATURE" not in _codes(warnings)
+
+
+def test_a_tighter_end_below_its_ancestors_is_merged_into_the_ancestors():
+    """When one declaring class is an ancestor of the others, its end serves
+    them all; a descendant's narrower target and bound become OCL on it."""
+    model = _model(
+        _cls("Thing"), _cls("Restrict"), _cls("Pet"),
+        _gen("Restrict", "Thing"), _gen("Pet", "Thing"),
+        _assoc("owns", "Thing", "Thing", "owns", uri="http://ex.org/owns"),
+        _assoc("owns", "Restrict", "Pet", "owns", tgt_mult=(1, "*")),
+    )
+    result, warnings = _lower(model)
+
+    (association,) = result.domain_model.associations
+    assert result.assoc_source_end[id(association)].type.name == "Thing"
+    assert result.property_iri_to_association["http://ex.org/owns"] is association
+    assert _invariants_of(result, "Restrict") == [
+        "self.owns->forAll(o | o.oclIsKindOf(Pet))",
+        "self.owns->size() >= 1",
+    ]
+    assert "ASSOC_INHERITED_SHADOWED" in _codes(warnings)
+
+
+def test_a_narrower_reverse_bound_is_restated_from_the_target():
+    """The reverse end's bound is stated the way O22 states inverse functionality."""
+    model = _sibling_restrictions_model()
+    model.associations[1].src_mult = (0, 1)
+    result, _ = _lower(model)
+
+    assert _invariants_of(result, "Part") == [
+        "RestrictB.allInstances()->select(c | c.hasPart->includes(self))->size() <= 1",
+    ]
+
+
+def test_a_reverse_end_never_takes_a_role_an_association_built_later_needs():
+    """``A.likes`` is built first and its reverse end, on ``B``, would default to
+    ``a`` -- the forward role of ``B.a``, built after it. That used to make
+    ``B.a`` look inherited, and it was dropped."""
+    model = _model(
+        _cls("A"), _cls("B"), _cls("C"),
+        _assoc("likes", "A", "B", "likes"),
+        _assoc("a", "B", "C", "a"),
+    )
+    result, warnings = _lower(model)
+
+    ends = {e.name: e.type.name for e in _classes(result)["B"].all_association_ends()}
+    assert ends == {"a": "C", "a_2": "A"}
+    assert len(result.domain_model.associations) == 2
+    assert "ASSOC_DROPPED" not in _codes(warnings)
+
+
+def test_an_object_restriction_class_is_parented_under_thing_and_merged(tmp_path: Path):
+    """Once the KG puts a class under ``Thing`` (the ``attach_to_thing``
+    resolution), a restriction on a domain-less object property inherits
+    Thing's end: the two ends merge and the restriction's bound stays as OCL.
+    A restriction on a data property Thing also declares stays a root."""
+    ttl = """
+    @prefix : <http://ex.org/> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+    :Doc a owl:Class ; rdfs:subClassOf owl:Thing ,
+        [ a owl:Restriction ; owl:onProperty :title ; owl:minCardinality 1 ] .
+    :Book a owl:Class ; rdfs:subClassOf
+        [ a owl:Restriction ; owl:onProperty :hasPart ; owl:minCardinality 1 ] .
+    :hasPart a owl:ObjectProperty .
+    :title a owl:DatatypeProperty ; rdfs:range xsd:string .
+    """
+    result = kg_to_class_diagram(owl_file_to_knowledge_graph(_write_ttl(tmp_path, ttl)))
+
+    classes = _classes(result)
+    assert classes["_min_1_hasPart_Thing"].parents() == {classes["Thing"]}
+    assert classes["_min_1_title_str"].parents() == set()
+    (association,) = result.domain_model.associations
+    assert result.assoc_source_end[id(association)].type is classes["Thing"]
+    assert [e.name for e in classes["Book"].all_association_ends()].count("hasPart") == 1
+    assert _invariants_of(result, "_min_1_hasPart_Thing") == ["self.hasPart->size() >= 1"]
+
+
+def test_hoisted_ends_reload_in_the_editor_and_as_code(tmp_path: Path):
+    """Both reload paths build associations before generalizations, the
+    opposite of the lowering; BUML's end-name check must accept either order."""
     import runpy
 
     from besser.BUML.metamodel.structural import DomainModel
@@ -418,14 +552,18 @@ def test_sibling_end_conflict_reloads_in_the_editor_and_as_code(tmp_path: Path):
         process_class_diagram,
     )
 
-    domain_model = _lower(_sibling_restrictions_model())[0].domain_model
+    domain_model = _lower(_sibling_restrictions_model(b_target="Chapter"))[0].domain_model
     reloaded = process_class_diagram({"title": "Test", "model": class_buml_to_json(domain_model)})
     assert len(reloaded.associations) == len(domain_model.associations)
+    assert len(reloaded.generalizations) == len(domain_model.generalizations)
+    assert len(reloaded.constraints) == len(domain_model.constraints)
 
     path = tmp_path / "model.py"
     domain_model_to_code(domain_model, str(path))
     namespace = runpy.run_path(str(path))
-    assert any(isinstance(value, DomainModel) for value in namespace.values())
+    regenerated = next(v for v in namespace.values() if isinstance(v, DomainModel))
+    assert len(regenerated.associations) == len(domain_model.associations)
+    assert len(regenerated.generalizations) == len(domain_model.generalizations)
 
 
 # ---------------------------------------------------------------------------

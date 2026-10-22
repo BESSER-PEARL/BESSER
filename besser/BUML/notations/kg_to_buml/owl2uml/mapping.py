@@ -61,6 +61,7 @@ class Mapper:
         self._composite_datarange_cache: dict = {}  # (kind, members) -> DataType name (dedup by structure)
         self._enum_defs: dict[URIRef, BNode] = {}  # D20: named class -> the oneOf node it is an enumeration of
         self._datatypes_in_progress: set[str] = set()  # D37: datatype names whose definition is being followed
+        self._dataranges_in_progress: set = set()       # anonymous data ranges whose operands are being resolved
         self.resolver = ExpressionResolver(self)
 
         primary = (list(self.ax.sorted_named_classes) + list(self.ax.sorted_object_props)
@@ -369,24 +370,41 @@ class Mapper:
                 dt = self.canon.name(node)
                 if dt in self._datatypes_in_progress:
                     # Reached again while its own definition is being followed
-                    # (``A ≡ unionOf(B, …)``, ``B ≡ unionOf(A, …)``). The name is
-                    # registered and the outer call finishes the type, so this
-                    # reference just uses the name.
+                    # (``A ≡ unionOf(B, …)``, ``B ≡ unionOf(A, …)``). Its name is
+                    # already fixed (the canonicaliser's) and the outer call
+                    # registers the type under it, so this reference just uses
+                    # the name.
                     self.warn("DATATYPE_CYCLIC",
                               f"Datatype '{dt}' is defined in terms of itself; OWL 2 requires "
                               f"datatype definitions to be acyclic. The definition is followed "
                               f"once and the inner reference kept as a reference to '{dt}'.")
                 elif dt not in self.model.datatypes and dt not in self.model.enumerations:
                     self._datatypes_in_progress.add(dt)
-                    self._define_datatype(node, dt)
-                    self._datatypes_in_progress.discard(dt)
+                    try:
+                        self._define_datatype(node, dt)
+                    finally:
+                        self._datatypes_in_progress.discard(dt)
                 self._name_to_iri.setdefault(dt, node)
                 return dt
             return self.register_primitive(primitive_for(node))
         if isinstance(node, BNode):                  # O01-O05 data-range expression
             if node in self._datarange_cache:        # same anon node -> same DataType (no dup classes)
                 return self._datarange_cache[node]
-            name = self._materialize_data_range(node)
+            if node in self._dataranges_in_progress:
+                # Reached again while its own operands are being resolved
+                # (``_:u owl:unionOf (_:u xsd:int)``). Unlike a named datatype
+                # it has no name yet to refer to, so the inner reference falls
+                # back to the widest primitive, as an absent range does.
+                fallback = self.register_primitive(primitive_for(None))
+                self.warn("DATATYPE_CYCLIC",
+                          f"An anonymous data range contains itself as an operand; OWL 2 requires "
+                          f"data ranges to be acyclic. The inner reference is read as '{fallback}'.")
+                return fallback
+            self._dataranges_in_progress.add(node)
+            try:
+                name = self._materialize_data_range(node)
+            finally:
+                self._dataranges_in_progress.discard(node)
             self._datarange_cache[node] = name
             return name
         return self.register_primitive("String")
@@ -410,8 +428,10 @@ class Mapper:
             if not (str(definition) in group and definition in self.ax.datatypes())
         }
         for definition in sorted(candidates, key=str):
-            if isinstance(definition, BNode) or definition in self.ax.datatypes() \
-                    or str(definition).startswith(str(XSD)):
+            # A custom datatype among them is impossible: the canonicaliser
+            # folds every ``equivalentClass`` IRI into ``dt``'s group, and the
+            # filter above drops those.
+            if isinstance(definition, BNode) or str(definition).startswith(str(XSD)):
                 return definition
         return None
 

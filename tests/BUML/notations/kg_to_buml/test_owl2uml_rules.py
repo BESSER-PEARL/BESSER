@@ -693,6 +693,39 @@ def test_d37_cyclic_datatype_definitions_are_cut_with_a_warning():
     assert [w.code for w in warnings].count("DATATYPE_CYCLIC") == 1
 
 
+def test_an_anonymous_data_range_containing_itself_is_cut_with_a_warning():
+    """``_:u owl:unionOf (_:u xsd:integer)`` used to recurse until RecursionError.
+    The inner reference has no name to point at, so it reads as the widest primitive."""
+    warnings: list = []
+    plan = _plan("""
+    :P a owl:Class .
+    _:u a rdfs:Datatype ; owl:unionOf ( _:u xsd:integer ) .
+    :x a owl:DatatypeProperty ; rdfs:domain :P ; rdfs:range _:u .
+    """, warnings)
+    (attribute,) = plan.classes["P"].attributes
+    union = plan.datatypes[attribute.type]
+    assert "oclIsTypeOf(int)" in union.invariants[0].body
+    assert "oclIsTypeOf(str)" in union.invariants[0].body
+    assert [w.code for w in warnings].count("DATATYPE_CYCLIC") == 1
+
+
+def test_an_anonymous_class_expression_containing_itself_is_cut_with_a_warning():
+    """``_:c owl:unionOf (_:c :A)`` (and a restriction whose filler is itself)
+    used to recurse until RecursionError; the inner reference reads as owl:Thing."""
+    warnings: list = []
+    plan = _plan("""
+    :A a owl:Class .
+    :B a owl:Class ; rdfs:subClassOf _:c .
+    _:c owl:unionOf ( _:c :A ) .
+    :C a owl:Class ; rdfs:subClassOf _:r .
+    _:r a owl:Restriction ; owl:onProperty :p ; owl:someValuesFrom _:r .
+    :p a owl:ObjectProperty .
+    """, warnings)
+    assert [w.code for w in warnings].count("CLASS_EXPRESSION_CYCLIC") == 2
+    assert ("B", "_A_Thing_Union") in plan.generalizations
+    assert ("C", "_some_p_Thing") in plan.generalizations
+
+
 def test_malformed_cardinality_skips_the_restriction_with_a_warning(tmp_path: Path):
     """``int("abc")`` used to abort the whole conversion with a ValueError."""
     result = _convert(tmp_path, """

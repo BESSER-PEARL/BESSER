@@ -53,6 +53,7 @@ class ExpressionResolver:
         self.g = mapper.g
         self.ax = mapper.ax
         self._memo: dict = {}          # signature -> aux class name
+        self._in_progress: set = set()  # anonymous expressions whose operands are being resolved
 
     def _aux(self, sig, base_name: str, abstract: bool = False):
         """Return ``(name, is_new)`` for an aux class identified by ``sig``."""
@@ -75,17 +76,38 @@ class ExpressionResolver:
         if isinstance(node, URIRef):
             name = self.m.ensure_class(node)
             return self._finish(name, subsuming)
+        if node in self._in_progress:
+            # Reached again while its own operands are being resolved
+            # (``_:c owl:unionOf (_:c :A)``). It has no name yet to refer to, so
+            # the inner reference is read as owl:Thing, like any other
+            # expression this cannot read.
+            self.m.warn("CLASS_EXPRESSION_CYCLIC",
+                        "An anonymous class expression contains itself as an operand; OWL 2 "
+                        "requires class expressions to be acyclic. The inner reference is read "
+                        "as owl:Thing.")
+            return self.m.ensure_class(OWL.Thing)
+        self._in_progress.add(node)
+        try:
+            name = self._resolve_expression(node)
+        finally:
+            self._in_progress.discard(node)
+        if name is None:
+            return self.m.ensure_class(OWL.Thing)
+        return self._finish(name, subsuming)
+
+    def _resolve_expression(self, node) -> str | None:
+        """Plan name of the anonymous class expression ``node``, ``None`` when it is none of the known forms."""
         if (node, OWL.unionOf, None) in self.g:
-            return self._finish(self._union(node), subsuming)
+            return self._union(node)
         if (node, OWL.intersectionOf, None) in self.g:
-            return self._finish(self._intersection(node), subsuming)
+            return self._intersection(node)
         if (node, OWL.oneOf, None) in self.g:
-            return self._finish(self._one_of(node), subsuming)
+            return self._one_of(node)
         if (node, OWL.complementOf, None) in self.g:
-            return self._finish(self._complement(node), subsuming)
+            return self._complement(node)
         if (node, RDF.type, OWL.Restriction) in self.g:
-            return self._finish(self._restriction(node), subsuming)
-        return self.m.ensure_class(OWL.Thing)
+            return self._restriction(node)
+        return None
 
     def _finish(self, name: str, subsuming: str | None) -> str:
         # only wire a generalization to a *class* (a oneOf may resolve to an enum)

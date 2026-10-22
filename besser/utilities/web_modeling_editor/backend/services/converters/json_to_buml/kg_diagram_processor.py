@@ -9,7 +9,6 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from besser.BUML.metamodel.kg import (
-    ImportAxiom,
     KGAxiom,
     KGBlank,
     KGClass,
@@ -56,7 +55,9 @@ def process_kg_diagram(json_data: Dict[str, Any]) -> KnowledgeGraph:
     the ``kg_diagram_converter`` module docstring).
 
     Raises:
-        ConversionError: For any malformed node, edge or axiom.
+        ConversionError: For any malformed node, edge or axiom, or a graph
+            that fails :meth:`KnowledgeGraph.validate` (e.g. an axiom naming
+            a node the graph does not have).
     """
     model = json_data.get("model") if isinstance(json_data, dict) else None
     if not model:
@@ -82,8 +83,13 @@ def process_kg_diagram(json_data: Dict[str, Any]) -> KnowledgeGraph:
         kg.add_edge(edge)
 
     for raw_axiom in _entries(model, "axioms"):
-        kg.add_axiom(_build_axiom(raw_axiom, nodes_by_id))
+        kg.add_axiom(_build_axiom(raw_axiom))
 
+    # Model-level checks (axiom references among them) live in the metamodel,
+    # so every caller gets them here, as the agent and NN processors do.
+    errors = kg.validate(raise_exception=False)["errors"]
+    if errors:
+        raise ConversionError("Invalid knowledge graph: " + " ".join(errors))
     return kg
 
 
@@ -105,17 +111,17 @@ def _entries(model: Dict[str, Any], key: str) -> List[Dict[str, Any]]:
     return raw
 
 
-def _build_axiom(raw: Dict[str, Any], nodes_by_id: Dict[str, Any]):
+def _build_axiom(raw: Dict[str, Any]) -> KGAxiom:
     """Rebuild one axiom from its JSON form.
 
     Raises ``ConversionError`` rather than returning ``None`` for anything
     malformed, matching :func:`_build_node` / :func:`_build_edge`. Returning
     ``None`` meant a bad axiom vanished from the model without a word.
 
-    Every field the axiom class declares in ``FIELDS`` must be present (the
-    axiom constructors reject empty ids themselves), and every id must name a
-    node of the graph. ``ImportAxiom`` is the exception: it carries ontology
-    IRIs, not node ids, and its ``source_ontology_iri`` is optional.
+    Every field the axiom class declares in ``FIELDS`` must be present unless
+    it is in ``OPTIONAL_FIELDS``; the axiom constructors reject empty ids
+    themselves. Whether the ids name nodes of the graph is checked by
+    :meth:`KnowledgeGraph.validate` once the whole graph is built.
     """
     kind = raw.get("kind")
     if not kind:
@@ -125,23 +131,14 @@ def _build_axiom(raw: Dict[str, Any], nodes_by_id: Dict[str, Any]):
         known = ", ".join(sorted(_AXIOM_KIND_TO_CLASS))
         raise ConversionError(f"Unknown KG axiom kind '{kind}'. Expected one of: {known}.")
     payload = {k: v for k, v in raw.items() if k != "kind"}
-    optional = {"source_ontology_iri"} if cls is ImportAxiom else set()
-    missing = [name for name in cls.FIELDS if name not in payload and name not in optional]
+    missing = [name for name in cls.FIELDS if name not in payload and name not in cls.OPTIONAL_FIELDS]
     if missing:
         raise ConversionError(f"Malformed '{kind}' axiom: missing field(s) {', '.join(missing)}.")
     try:
-        axiom = cls(**payload)
+        return cls(**payload)
     except (TypeError, ValueError) as exc:
         # TypeError: an unknown or duplicated field; ValueError: an empty id or a field of the wrong type.
         raise ConversionError(f"Malformed '{kind}' axiom: {exc}") from exc
-    for name, ids in axiom.referenced_ids().items():
-        unknown = [node_id for node_id in ids if node_id not in nodes_by_id]
-        if unknown:
-            raise ConversionError(
-                f"'{kind}' axiom field '{name}' references unknown node(s) "
-                f"{', '.join(repr(u) for u in unknown)}."
-            )
-    return axiom
 
 
 def _build_node(raw: Dict[str, Any]):

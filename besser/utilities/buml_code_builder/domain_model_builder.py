@@ -321,7 +321,8 @@ def domain_model_to_code(
                         default_str = f", default_value='{_escape_python_string(str(param.default_value))}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
                         params[param.name] = f"Parameter(name='{_escape_python_string(param.name)}', type={param_type}{default_str}{timestamp_kwarg(param)}{id_kwarg(param, emit_ids)})"
 
-                params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
+                # A list literal: parameter order is the method signature.
+                params_str = "[" + ", ".join(f"{param}" for name, param in params.items()) + "]"
 
                 if method_type:
                     f.write(f"{method_var}: Method = Method(name=\"{_escape_python_string(method.name)}\""
@@ -481,7 +482,8 @@ def domain_model_to_code(
                             default_str = f", default_value='{_escape_python_string(str(param.default_value))}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
                             params[param.name] = f"Parameter(name='{_escape_python_string(param.name)}', type={param_type}{default_str}{timestamp_kwarg(param)}{id_kwarg(param, emit_ids)})"
 
-                    params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
+                    # A list literal: parameter order is the method signature.
+                    params_str = "[" + ", ".join(f"{param}" for name, param in params.items()) + "]"
 
                     if method_type:
                         f.write(f"{method_var}: Method = Method(name=\"{_escape_python_string(method.name)}\""

@@ -232,7 +232,7 @@ def test_export_buml_rejects_unknown_diagram_type(client):
 # ----------------------------------------------------------------------
 
 
-def test_project_export_preserves_knowledge_graph(tmp_path: Path):
+def test_project_export_preserves_knowledge_graph(tmp_path: Path, ttl_path: Path):
     """A KG in a project must survive the BUML source round trip.
 
     Before the KG code builder existed, ``project_to_code`` had no bucket for
@@ -247,7 +247,7 @@ def test_project_export_preserves_knowledge_graph(tmp_path: Path):
         project_to_json,
     )
 
-    kg = owl_file_to_knowledge_graph(str(_write_ttl(tmp_path)))
+    kg = owl_file_to_knowledge_graph(str(ttl_path))
     expected_nodes = len(kg.nodes)
     expected_edges = len(kg.edges)
 
@@ -278,10 +278,40 @@ def test_project_export_preserves_knowledge_graph(tmp_path: Path):
     assert len(result["diagrams"].get("ClassDiagram") or []) == 1
 
 
-def _write_ttl(tmp_path: Path) -> Path:
-    path = tmp_path / "roundtrip.ttl"
-    path.write_text(TTL_FIXTURE, encoding="utf-8")
-    return path
+def test_class_only_project_round_trip_gains_no_knowledge_graph(tmp_path: Path):
+    """``project_to_json`` gives every project an empty KG slot (``nodes: []``).
+
+    The JSON -> B-UML side used to treat that empty list as a real graph, so a
+    project with only a class diagram came back as [DomainModel, KnowledgeGraph]
+    and its next export grew a KNOWLEDGE_GRAPH section.
+    """
+    from besser.BUML.metamodel.kg import KnowledgeGraph
+    from besser.BUML.metamodel.project import Project
+    from besser.BUML.metamodel.structural import Class, DomainModel, Metadata
+    from besser.utilities.buml_code_builder.project_builder import project_to_code
+    from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+    from besser.utilities.web_modeling_editor.backend.services.converters import (
+        json_to_buml_project,
+        project_to_json,
+    )
+
+    domain_model = DomainModel(name="dm")
+    domain_model.add_type(Class(name="Person", attributes=set()))
+    project = Project(name="class_only", models=[domain_model], metadata=Metadata(description=""))
+
+    first = tmp_path / "first.py"
+    project_to_code(project, str(first))
+    project_json = project_to_json(first.read_text(encoding="utf-8"))
+    # The empty slot is still there for the editor; it must just not count.
+    assert project_json["diagrams"]["KnowledgeGraphDiagram"][0]["model"]["nodes"] == []
+
+    reimported = json_to_buml_project(ProjectInput(**project_json))
+    assert not any(isinstance(m, KnowledgeGraph) for m in reimported.models)
+    assert [type(m).__name__ for m in reimported.models] == ["DomainModel"]
+
+    second = tmp_path / "second.py"
+    project_to_code(reimported, str(second))
+    assert "KNOWLEDGE_GRAPH" not in second.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -327,14 +357,14 @@ def test_kg_buml_loader_blocks_dunder_attribute_access():
         kg_buml_to_json(payload)
 
 
-def test_kg_buml_loader_still_loads_generated_code(tmp_path: Path):
+def test_kg_buml_loader_still_loads_generated_code(tmp_path: Path, ttl_path: Path):
     """The allowlist must not cost us the real round-trip it exists to protect."""
     from besser.utilities.buml_code_builder import kg_model_to_code
     from besser.utilities.web_modeling_editor.backend.services.converters import (
         kg_buml_to_json,
     )
 
-    kg = owl_file_to_knowledge_graph(str(_write_ttl(tmp_path)))
+    kg = owl_file_to_knowledge_graph(str(ttl_path))
     out = tmp_path / "kg_model.py"
     kg_model_to_code(model=kg, file_path=str(out), model_var_name="kg_model")
 
@@ -343,12 +373,6 @@ def test_kg_buml_loader_still_loads_generated_code(tmp_path: Path):
     assert model["type"] == "KnowledgeGraphDiagram"
     assert {n["id"] for n in model["nodes"]} == {n.id for n in kg.nodes}
     assert len(model["edges"]) == len(kg.edges)
-
-
-def _write_ttl(tmp_path: Path) -> Path:
-    p = tmp_path / "loader.ttl"
-    p.write_text(TTL_FIXTURE, encoding="utf-8")
-    return p
 
 
 # ---------------------------------------------------------------------------

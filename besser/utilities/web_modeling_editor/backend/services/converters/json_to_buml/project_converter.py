@@ -17,6 +17,7 @@ from . import (
     process_component_diagram,
     process_deployment_diagram,
 )
+from .kg_diagram_processor import process_kg_diagram
 from .method_nn_linker import link_method_neural_networks
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
@@ -153,8 +154,12 @@ def _is_valid_diagram(diag, diagram_type):
         return cols is not None  # Empty list is valid
 
     if diagram_type == "KnowledgeGraphDiagram":
+        # An empty graph is skipped like any other empty diagram. ``empty_model``
+        # gives every project a ``nodes: []`` KG slot, so accepting the empty
+        # list turned each class-only project into [DomainModel, KnowledgeGraph]
+        # on its way back in, and its export gained a KNOWLEDGE_GRAPH section.
         nodes = data.get("nodes") if isinstance(data, dict) else getattr(model, "nodes", None)
-        return nodes is not None  # Empty list is valid
+        return bool(nodes)
 
     # Standard element-based diagrams
     elements = data.get("elements") if isinstance(data, dict) else getattr(model, "elements", None)
@@ -309,8 +314,6 @@ def json_to_buml_project(project):
         model_list.append(quantum_model)
 
     # ── Process ALL KnowledgeGraphDiagrams ────────────────────────────
-    from .kg_diagram_processor import process_kg_diagram
-
     for kg_diag in diagrams.get("KnowledgeGraphDiagram", []):
         # Errors propagate, as they do for every other diagram type above and
         # below. Logging a warning and carrying on produced an export that was

@@ -48,7 +48,7 @@ from besser.BUML.metamodel.kg import (
     KnowledgeGraph,
 )
 from besser.BUML.metamodel.kg.ids import short_digest
-from besser.utilities.buml_code_builder.common import _comment_safe, buml_header, safe_var_name
+from besser.utilities.buml_code_builder.common import _comment_safe, buml_header, safe_var_name, section_banner
 
 
 __all__ = ["kg_model_to_code"]
@@ -98,24 +98,12 @@ def kg_model_to_code(
     """
     with open(file_path, 'w', encoding='utf-8') as f:
         f.write(buml_header())
-        _write_banner(f, title)
+        f.write(section_banner("KNOWLEDGE_GRAPH", title) + "\n")
         _write_imports(f)
 
         node_vars = _write_nodes(f, model)
         edge_vars = _write_edges(f, model, node_vars)
         _write_graph(f, model, node_vars, edge_vars, model_var_name)
-
-
-def _write_banner(f: TextIO, title: Optional[str] = None) -> None:
-    if title:
-        # One line, and no `"`: the importer's regex captures the title as
-        # `"([^"]*)"`, so an embedded quote would truncate it.
-        safe_title = _comment_safe(title).replace('"', "'")
-        header_line = f'# KNOWLEDGE_GRAPH MODEL: "{safe_title}" #'
-    else:
-        header_line = "# KNOWLEDGE_GRAPH MODEL #"
-    border = "#" * len(header_line)
-    f.write(f"{border}\n{header_line}\n{border}\n\n")
 
 
 def _write_imports(f: TextIO) -> None:

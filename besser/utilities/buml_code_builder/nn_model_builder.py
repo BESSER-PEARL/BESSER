@@ -13,7 +13,9 @@ from besser.BUML.metamodel.nn import (
     DropoutLayer, LayerNormLayer, BatchNormLayer,
     Dataset,
 )
-from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, buml_header, safe_var_name
+from besser.utilities.buml_code_builder.common import (
+    _comment_safe, _escape_python_string, buml_header, safe_var_name, section_banner,
+)
 from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
 
 # Attributes the metamodel normalizes on assignment, so the value actually
@@ -205,19 +207,8 @@ def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None, titl
         # silently drops the diagram. Embedding the title (when provided)
         # lets the importer recover it; the NN metamodel only stores a
         # sanitized name, so this is the only carrier for the original title.
-        if title:
-            # _safe_comment strips CR/LF so the title cannot break out of the
-            # comment line. The importer's regex captures `"([^"]*)"` so an
-            # embedded `"` would also truncate the title — convert to `'`.
-            safe_title = _safe_comment(title).replace('"', "'")
-            header_line = f'# NN MODEL: "{safe_title}" #'
-        else:
-            header_line = "# NN MODEL #"
-        border = "#" * len(header_line)
         f.write(buml_header())
-        f.write(f"{border}\n")
-        f.write(f"{header_line}\n")
-        f.write(f"{border}\n")
+        f.write(section_banner("NN", title))
         # Generate imports for only the used types
         f.write("from besser.BUML.metamodel.nn import (\n")
         f.write(f"    {', '.join(sorted(used_types))},\n")

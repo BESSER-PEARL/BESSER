@@ -1607,12 +1607,12 @@ class Class(Type):
         return parents
 
     def all_parents(self) -> set:
-        """set[Class]: Get the set of direct and indirect parents of the class."""
-        all_parents = set()
-        all_parents.update(self.parents())
-        for parent in self.parents():
-            all_parents.update(parent.all_parents())
-        return all_parents
+        """set[Class]: Get the set of direct and indirect parents of the class.
+
+        Never contains the class itself, even on an inheritance cycle (which
+        ``DomainModel.validate()`` reports). See :meth:`_closure`.
+        """
+        return self._closure(Class.parents)
 
     def specializations(self) -> set:
         """set[Class]: Get the set of direct specializations (children) of the class."""
@@ -1623,12 +1623,29 @@ class Class(Type):
         return specializations
 
     def all_specializations(self) -> set:
-        """set[Class]: Get the set of direct and indirect specializations (children) of the class."""
-        all_spec = set()
-        all_spec.update(self.specializations())
-        for specialization in self.specializations():
-            all_spec.update(specialization.all_specializations())
-        return all_spec
+        """set[Class]: Get the set of direct and indirect specializations (children) of the class.
+
+        Never contains the class itself, even on an inheritance cycle. See
+        :meth:`_closure`.
+        """
+        return self._closure(Class.specializations)
+
+    def _closure(self, step) -> set:
+        """set[Class]: Get every class reachable from this one by repeating ``step``, excluding itself.
+
+        Iterative with a visited set: an inheritance chain deeper than Python's
+        recursion limit is walked like any other, a class reached along several
+        paths (a diamond) is expanded once, and a cycle terminates.
+        """
+        found = set()
+        pending = list(step(self))
+        while pending:
+            cls = pending.pop()
+            if cls is self or cls in found:
+                continue
+            found.add(cls)
+            pending.extend(step(cls))
+        return found
 
     def id_attribute(self) -> Property:
         """Property: Get the id attribute of the class."""
@@ -2479,19 +2496,29 @@ class DomainModel(Model):
         for cl in classes:
             for generalization in cl.generalizations:
                 child_map[generalization.general].add(cl)
-        # Helper function for DFS
-        def dfs(cl, visited, sorted_list):
-            visited.add(cl)
-            for child in sorted(child_map[cl], key=lambda c: c.name):
-                if child not in visited:
-                    dfs(child, visited, sorted_list)
-            sorted_list.append(cl)
-        # Perform DFS from each node that hasn't been visited yet
+        def children(cl):
+            return iter(sorted(child_map[cl], key=lambda c: c.name))
+
+        # Reverse post-order of a depth-first walk from each unvisited class.
+        # Iterative, with an explicit stack: a hierarchy can be deeper than
+        # Python's recursion limit.
         visited = set()
         sorted_list = []
         for cl in classes:
-            if cl not in visited:
-                dfs(cl, visited, sorted_list)
+            if cl in visited:
+                continue
+            visited.add(cl)
+            stack = [(cl, children(cl))]
+            while stack:
+                node, pending = stack[-1]
+                for child in pending:
+                    if child not in visited:
+                        visited.add(child)
+                        stack.append((child, children(child)))
+                        break
+                else:                       # every child of `node` is done
+                    stack.pop()
+                    sorted_list.append(node)
         sorted_list.reverse()
         return sorted_list
 
@@ -2693,28 +2720,38 @@ class DomainModel(Model):
                     _check(post, f"Postcondition on {cls.name}::{method.name}")
 
     def _validate_circular_inheritance(self, errors: list[str]):
-        """Detect circular inheritance in the class hierarchy."""
-        def has_cycle(cls: Class, visited: set, rec_stack: set) -> bool:
-            visited.add(cls)
-            rec_stack.add(cls)
+        """Detect circular inheritance in the class hierarchy.
 
-            for parent in cls.parents():
-                if parent not in visited:
-                    if has_cycle(parent, visited, rec_stack):
+        A depth-first walk up the parents of each class not yet visited; a
+        parent already on the current path closes a cycle. Iterative, with an
+        explicit stack, so a chain deeper than Python's recursion limit is
+        checked like any other.
+        """
+        def has_cycle(start: Class) -> bool:
+            visited.add(start)
+            on_path = {start}
+            stack = [(start, iter(start.parents()))]
+            while stack:
+                cls, parents = stack[-1]
+                for parent in parents:
+                    if parent in on_path:
                         return True
-                elif parent in rec_stack:
-                    return True
-
-            rec_stack.remove(cls)
+                    if parent not in visited:
+                        visited.add(parent)
+                        on_path.add(parent)
+                        stack.append((parent, iter(parent.parents())))
+                        break
+                else:                       # every parent of `cls` is done
+                    stack.pop()
+                    on_path.discard(cls)
             return False
 
         visited = set()
-        for cls in self.get_classes():
-            if cls not in visited:
-                if has_cycle(cls, visited, set()):
-                    errors.append(
-                        f"Circular inheritance detected involving class '{cls.name}'."
-                    )
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            if cls not in visited and has_cycle(cls):
+                errors.append(
+                    f"Circular inheritance detected involving class '{cls.name}'."
+                )
 
     def _validate_attribute_shadowing(self, errors: list[str]):
         """Validate that subclass attributes do not shadow inherited attributes."""

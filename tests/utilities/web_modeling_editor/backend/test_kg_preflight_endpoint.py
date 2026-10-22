@@ -196,19 +196,17 @@ def test_stale_kg_signature_returns_400(client):
     assert resp.status_code == 400
 
 
-# -- v1 backward compat -----------------------------------------------------
+# -- the retired v1 payload ------------------------------------------------
 
 
-def test_v1_resolution_payload_still_works(client):
-    """v1 payload {issueId, choice, parameters} routes through the legacy applier."""
+def test_v1_resolution_payload_is_rejected(client):
+    """The unreleased v1 ``{issueId, choice, parameters}`` shape is no longer accepted."""
     nodes = [
         {"id": "Person", "nodeType": "class", "label": "Person", "iri": EX + "Person"},
-        {"id": "Pet", "nodeType": "class", "label": "Pet", "iri": EX + "Pet"},
         {"id": "likes", "nodeType": "property", "label": "likes", "iri": EX + "likes"},
     ]
-    edges = []
     payload = {
-        **_kg_payload(nodes, edges),
+        **_kg_payload(nodes, []),
         "resolutions": [
             {
                 "issueId": "any",
@@ -218,7 +216,8 @@ def test_v1_resolution_payload_still_works(client):
         ],
     }
     resp = client.post("/besser_api/kg-to-class-diagram", json=payload)
-    assert resp.status_code == 200
+    assert resp.status_code == 400
+    assert "decision" in resp.json()["detail"]
 
 
 def test_unknown_resolution_choice_returns_400(client):

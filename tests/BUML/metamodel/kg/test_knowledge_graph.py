@@ -380,7 +380,7 @@ def test_validate_reports_a_constraint_spec_that_got_around_the_setter():
     node = KGNodeConstraint(id="nc", label="N", metadata={"constraintSpecs": [_VALID_SPEC]})
     kg.add_node(node)
     # State the setter never saw, e.g. a graph unpickled from before it validated.
-    node._KGNode__metadata["constraintSpecs"] = [{"kind": "nonsense"}]
+    node._KGAnnotatedElement__metadata["constraintSpecs"] = [{"kind": "nonsense"}]
 
     result = kg.validate(raise_exception=False)
 
@@ -485,3 +485,64 @@ def test_validate_is_quiet_when_every_axiom_id_is_a_node():
                         axioms=[EquivalentClassesAxiom(class_ids=["c1", "c2"])])
 
     assert kg.validate() == {"success": True, "errors": [], "warnings": []}
+
+
+# ---------------------------------------------------------------------------
+# label / iri types, and metadata shared by nodes and edges
+# ---------------------------------------------------------------------------
+
+_MAKERS = {
+    "node": lambda: KGClass(id="c1", label="C"),
+    "edge": lambda: KGEdge(id="e", source=KGClass(id="a"), target=KGClass(id="b")),
+}
+
+
+@pytest.mark.parametrize("kind", _MAKERS)
+@pytest.mark.parametrize("field_name", ["label", "iri"])
+def test_label_and_iri_must_be_strings(kind, field_name):
+    thing = _MAKERS[kind]()
+
+    with pytest.raises(ValueError, match=f"{field_name} must be a str or None"):
+        setattr(thing, field_name, 5)
+    setattr(thing, field_name, None)
+    assert getattr(thing, field_name) == ("" if field_name == "label" else None)
+
+
+def test_a_non_string_label_is_refused_by_the_constructor():
+    with pytest.raises(ValueError, match="label"):
+        KGIndividual(id="i1", label=5)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("kind", _MAKERS)
+def test_nested_metadata_cannot_be_changed_through_the_getter(kind):
+    """The read-only view used to be shallow on plain nodes and edges."""
+    thing = _MAKERS[kind]()
+    thing.metadata = {"members": ["a"], "nested": {"k": 1}}
+
+    thing.metadata["members"].append("b")
+    thing.metadata["nested"]["k"] = 2
+
+    assert dict(thing.metadata) == {"members": ["a"], "nested": {"k": 1}}
+
+
+@pytest.mark.parametrize("kind", _MAKERS)
+def test_the_metadata_passed_in_is_deep_copied(kind):
+    thing = _MAKERS[kind]()
+    mine = {"members": ["a"]}
+    thing.metadata = mine
+
+    mine["members"].append("b")
+
+    assert thing.metadata["members"] == ["a"]
+
+
+@pytest.mark.parametrize("kind", _MAKERS)
+def test_metadata_helpers_work_on_nodes_and_edges_alike(kind):
+    thing = _MAKERS[kind]()
+
+    thing.set_metadata_item("a", 1)
+    thing.update_metadata({"b": 2})
+
+    assert dict(thing.metadata) == {"a": 1, "b": 2}
+    with pytest.raises(ValueError, match=f"{type(thing).__name__}.metadata must be a dict"):
+        thing.metadata = ["not", "a", "mapping"]

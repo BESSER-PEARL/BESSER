@@ -39,7 +39,101 @@ __all__ = [
 ]
 
 
-class KGNode(Element, ABC):
+class _KGAnnotatedElement(Element):
+    """Label, IRI and metadata, shared by :class:`KGNode` and :class:`KGEdge`.
+
+    ``metadata`` is stored deep-copied and handed out as a read-only view whose
+    nested containers are fresh copies: nothing reachable from the getter
+    writes through to the element, so every change goes through the setter
+    (and a subclass's :meth:`_checked_metadata`).
+    """
+
+    @property
+    def label(self) -> str:
+        """str: Get the display label (empty when none was given)."""
+        return self.__label
+
+    @label.setter
+    def label(self, value: Optional[str]) -> None:
+        """str | None: Set the display label; ``None`` becomes the empty string.
+
+        Raises:
+            ValueError: If ``value`` is neither a ``str`` nor ``None``.
+        """
+        if value is None:
+            value = ""
+        if not isinstance(value, str):
+            raise ValueError(
+                f"{type(self).__name__}.label must be a str or None, got {type(value).__name__}."
+            )
+        self.__label = value
+
+    @property
+    def iri(self) -> Optional[str]:
+        """str | None: Get the IRI, or ``None`` when there is none."""
+        return self.__iri
+
+    @iri.setter
+    def iri(self, value: Optional[str]) -> None:
+        """str | None: Set the IRI.
+
+        Raises:
+            ValueError: If ``value`` is neither a ``str`` nor ``None``.
+        """
+        if value is not None and not isinstance(value, str):
+            raise ValueError(
+                f"{type(self).__name__}.iri must be a str or None, got {type(value).__name__}."
+            )
+        self.__iri = value
+
+    @property
+    def metadata(self) -> Mapping[str, Any]:
+        """Mapping: Get a read-only view of the free-form annotations.
+
+        The view cannot be written to, and the lists and dicts inside it are
+        copies, so every change goes through the setter (and so through a
+        subclass's validation -- a constraint node checks its
+        ``constraintSpecs``). Change one entry with :meth:`set_metadata_item`,
+        several with :meth:`update_metadata`, or replace it all by assignment.
+        """
+        return MappingProxyType(copy.deepcopy(self.__metadata))
+
+    @metadata.setter
+    def metadata(self, value: Optional[Mapping[str, Any]]) -> None:
+        """Mapping | None: Replace the metadata with a deep copy of ``value``; ``None`` empties it.
+
+        Raises:
+            ValueError: If ``value`` is neither a mapping nor ``None``, or a
+                subclass rejects it.
+        """
+        if value is None:
+            value = {}
+        if not isinstance(value, Mapping):
+            raise ValueError(f"{type(self).__name__}.metadata must be a dict or None.")
+        self.__metadata = copy.deepcopy(self._checked_metadata(dict(value)))
+
+    def _checked_metadata(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        """Hook for subclasses that constrain the metadata; raise ``ValueError`` to reject."""
+        return value
+
+    def update_metadata(self, values: Mapping[str, Any]) -> None:
+        """Set several metadata entries at once, through the validating setter.
+
+        Raises:
+            ValueError: If the resulting metadata is invalid for this element.
+        """
+        self.metadata = {**self.__metadata, **values}
+
+    def set_metadata_item(self, key: str, value: Any) -> None:
+        """Set one metadata entry, through the validating setter.
+
+        Raises:
+            ValueError: If the resulting metadata is invalid for this element.
+        """
+        self.update_metadata({key: value})
+
+
+class KGNode(_KGAnnotatedElement, ABC):
     """Base class for every node in a Knowledge Graph.
 
     Args:
@@ -81,67 +175,6 @@ class KGNode(Element, ABC):
         if value is None or not isinstance(value, str) or value == "":
             raise ValueError("KGNode.id must be a non-empty string.")
         self.__id = value
-
-    @property
-    def label(self) -> str:
-        """str: Get the display label (empty when none was given)."""
-        return self.__label
-
-    @label.setter
-    def label(self, value: str) -> None:
-        """str: Set the display label; ``None`` becomes the empty string."""
-        self.__label = value if value is not None else ""
-
-    @property
-    def iri(self) -> Optional[str]:
-        """str | None: Get the IRI, or ``None`` for a node that has none."""
-        return self.__iri
-
-    @iri.setter
-    def iri(self, value: Optional[str]) -> None:
-        """str | None: Set the IRI."""
-        self.__iri = value
-
-    @property
-    def metadata(self) -> Mapping[str, Any]:
-        """Mapping: Get a read-only view of the free-form annotations.
-
-        The view cannot be written to, so every change goes through the setter
-        (and so through a subclass's validation -- a constraint node checks its
-        ``constraintSpecs``). Change one entry with :meth:`set_metadata_item`,
-        several with :meth:`update_metadata`, or replace it all by assignment.
-        """
-        return MappingProxyType(self.__metadata)
-
-    @metadata.setter
-    def metadata(self, value: Optional[Mapping[str, Any]]) -> None:
-        """Mapping | None: Replace the metadata with a copy of ``value``; ``None`` empties it.
-
-        Raises:
-            ValueError: If ``value`` is neither a mapping nor ``None``.
-        """
-        if value is None:
-            self.__metadata = {}
-            return
-        if not isinstance(value, Mapping):
-            raise ValueError("KGNode.metadata must be a dict or None.")
-        self.__metadata = dict(value)
-
-    def update_metadata(self, values: Mapping[str, Any]) -> None:
-        """Set several metadata entries at once, through the validating setter.
-
-        Raises:
-            ValueError: If the resulting metadata is invalid for this kind of node.
-        """
-        self.metadata = {**self.metadata, **values}
-
-    def set_metadata_item(self, key: str, value: Any) -> None:
-        """Set one metadata entry, through the validating setter.
-
-        Raises:
-            ValueError: If the resulting metadata is invalid for this kind of node.
-        """
-        self.update_metadata({key: value})
 
     def __hash__(self):
         return hash((type(self).__name__, self.id))
@@ -223,16 +256,14 @@ class KGLiteral(KGNode):
 class _ConstraintNodeMixin:
     """Validates ``metadata['constraintSpecs']`` on KGNodeConstraint / KGPropertyConstraint.
 
-    Reuses :class:`KGNode`'s metadata storage; only the *setter* gains the extra
-    structural check. Specs are kept as plain dicts so they round-trip through
-    the existing JSON converters unchanged.
+    Reuses the shared metadata storage through the :meth:`_checked_metadata`
+    hook, so every way of changing the metadata gains the structural check.
+    Specs are kept as plain dicts so they round-trip through the existing JSON
+    converters unchanged.
     """
 
-    def _validate_constraint_metadata(self, value):
-        if value is None:
-            return {}
-        if not isinstance(value, Mapping):
-            raise ValueError(f"{type(self).__name__}.metadata must be a dict or None.")
+    def _checked_metadata(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        """Reject ``constraintSpecs`` that is not a list of valid specs."""
         specs = value.get("constraintSpecs")
         if specs is not None:
             if not isinstance(specs, list):
@@ -244,10 +275,7 @@ class _ConstraintNodeMixin:
                     raise ValueError(
                         f"{type(self).__name__}.metadata['constraintSpecs'][{idx}] is invalid: {spec!r}"
                     )
-            # Own a private copy: the caller's list (and the spec dicts in it) must
-            # not stay writable through the reference they still hold.
-            return {**value, "constraintSpecs": copy.deepcopy(specs)}
-        return value
+        return super()._checked_metadata(value)
 
     def add_spec(self, spec) -> None:
         """Append a constraint spec to ``metadata['constraintSpecs']``.
@@ -283,33 +311,6 @@ class _ConstraintNodeMixin:
         """list[dict]: Get a copy of the node's constraint specs."""
         return list(self.metadata.get("constraintSpecs", []))
 
-    # Declared once here rather than copied into each subclass, which is where
-    # these three lines used to live twice over. The mixin precedes KGNode in
-    # both MROs, so this property wins while still delegating storage to it.
-    @property
-    def metadata(self) -> Mapping[str, Any]:
-        """Mapping: Get a read-only view (see :attr:`KGNode.metadata`).
-
-        ``constraintSpecs`` is a list of dicts, so a read-only top level alone
-        would still let ``node.metadata["constraintSpecs"].append(bad)`` write
-        through. The view therefore carries a deep copy of the specs: editing it
-        changes nothing, and :meth:`add_spec`, :meth:`remove_spec` and assignment
-        are the ways to change them.
-        """
-        view = dict(KGNode.metadata.fget(self))
-        if "constraintSpecs" in view:
-            view["constraintSpecs"] = copy.deepcopy(view["constraintSpecs"])
-        return MappingProxyType(view)
-
-    @metadata.setter
-    def metadata(self, value: Optional[Mapping[str, Any]]) -> None:
-        """Mapping | None: Replace the metadata after validating ``constraintSpecs``.
-
-        Raises:
-            ValueError: If the metadata is not a dict, or ``constraintSpecs`` is not a list of valid specs.
-        """
-        KGNode.metadata.fset(self, self._validate_constraint_metadata(value))
-
 
 class KGNodeConstraint(_ConstraintNodeMixin, KGNode):
     """A reified constraint that applies to a class.
@@ -336,7 +337,7 @@ class KGPropertyConstraint(_ConstraintNodeMixin, KGNode):
     """
 
 
-class KGEdge(Element):
+class KGEdge(_KGAnnotatedElement):
     """A directed relationship between two KG nodes.
 
     Args:
@@ -414,53 +415,6 @@ class KGEdge(Element):
         if not isinstance(value, KGNode):
             raise ValueError("KGEdge.target must be a KGNode instance.")
         self.__target = value
-
-    @property
-    def label(self) -> str:
-        """str: Get the display label (empty when none was given)."""
-        return self.__label
-
-    @label.setter
-    def label(self, value: str) -> None:
-        """str: Set the display label; ``None`` becomes the empty string."""
-        self.__label = value if value is not None else ""
-
-    @property
-    def iri(self) -> Optional[str]:
-        """str | None: Get the predicate IRI, or ``None`` for an edge that has none."""
-        return self.__iri
-
-    @iri.setter
-    def iri(self, value: Optional[str]) -> None:
-        """str | None: Set the predicate IRI."""
-        self.__iri = value
-
-    @property
-    def metadata(self) -> Mapping[str, Any]:
-        """Mapping: Get a read-only view (see :attr:`KGNode.metadata`)."""
-        return MappingProxyType(self.__metadata)
-
-    @metadata.setter
-    def metadata(self, value: Optional[Mapping[str, Any]]) -> None:
-        """Mapping | None: Replace the metadata with a copy of ``value``; ``None`` empties it.
-
-        Raises:
-            ValueError: If ``value`` is neither a mapping nor ``None``.
-        """
-        if value is None:
-            self.__metadata = {}
-            return
-        if not isinstance(value, Mapping):
-            raise ValueError("KGEdge.metadata must be a dict or None.")
-        self.__metadata = dict(value)
-
-    def update_metadata(self, values: Mapping[str, Any]) -> None:
-        """Set several metadata entries at once."""
-        self.metadata = {**self.metadata, **values}
-
-    def set_metadata_item(self, key: str, value: Any) -> None:
-        """Set one metadata entry."""
-        self.update_metadata({key: value})
 
     def __hash__(self):
         return hash(("KGEdge", self.id))

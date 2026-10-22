@@ -97,6 +97,21 @@ def normalize_predicate(iri_or_label: Optional[str]) -> Optional[str]:
 local_name = _local_name
 
 
+def _unique_name(base: str, used: Set[str]) -> str:
+    """Return ``base``, or the first free ``base_2``, ``base_3`` …, and add it to ``used``.
+
+    The one suffixing scheme of the notation: every name it uniquifies (BUML
+    type, literal, role and constraint names, the canonicaliser's UML names,
+    preflight identifiers) goes through it.
+    """
+    candidate, counter = base, 2
+    while candidate in used:
+        candidate = f"{base}_{counter}"
+        counter += 1
+    used.add(candidate)
+    return candidate
+
+
 def sanitize_python_identifier(
     label: Optional[str],
     fallback_prefix: str,
@@ -119,14 +134,7 @@ def sanitize_python_identifier(
         empty=fallback_prefix,
         escape_keywords=True,
     )
-
-    candidate = base
-    suffix = 2
-    while candidate in used_names:
-        candidate = f"{base}_{suffix}"
-        suffix += 1
-    used_names.add(candidate)
-    return candidate
+    return _unique_name(base, used_names)
 
 
 @dataclass

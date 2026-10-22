@@ -5,11 +5,12 @@ it into a BUML ``DomainModel``. It is a separate structure rather than BUML
 objects built as the rules fire because BUML validates eagerly and the rules
 cannot satisfy it one step at a time:
 
-* a ``Generalization`` registers itself on both classes at construction and
-  ``Class.all_parents()`` has no visited set, so one cycle hangs the process
-  before any model exists to report it;
-* association end names must be unique across a class's whole hierarchy, and
-  merging associations that would collide needs all of them at once;
+* a ``Generalization`` registers itself on both classes at construction, and
+  the one that would close an inheritance cycle cannot be built, so a cycle
+  must be found and broken before any model exists;
+* a class may reach only one association end of each name, own or
+  inherited, and merging the declarations that would collide needs all of
+  them, and the whole hierarchy, at once;
 * the OCL can only be checked against a finished model;
 * names are settled once every type name is known (primitive shadowing, a
   class and a datatype sharing a name, ``_2`` suffixes). BUML classes *can*

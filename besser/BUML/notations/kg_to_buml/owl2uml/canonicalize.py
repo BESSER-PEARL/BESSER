@@ -10,6 +10,8 @@ from __future__ import annotations
 from rdflib import Graph, URIRef
 from rdflib.namespace import OWL
 
+from besser.BUML.notations.kg_to_buml._common import _unique_name
+
 from .naming import local_name, sanitize, namespace_hint
 
 
@@ -107,12 +109,13 @@ class Canonicalizer:
                     self._assign(rep, sanitize(f"{base_name}_{namespace_hint(rep)}"))
 
     def _assign(self, iri: str, name: str) -> None:
-        # guarantee global uniqueness (aux names may also be in play)
-        final = name
-        n = 2
-        while final in self._used_names and self._name_cache.get(iri) != final:
-            final = f"{name}_{n}"
-            n += 1
+        """Name ``iri`` ``name``, suffixed against every name in use (aux names included).
+
+        A name ``iri`` already holds does not count as taken by someone else.
+        """
+        own = self._name_cache.get(iri)
+        taken = self._used_names if own is None else self._used_names - {own}
+        final = _unique_name(name, taken)
         self._name_cache[iri] = final
         self._used_names.add(final)
 
@@ -126,10 +129,4 @@ class Canonicalizer:
 
     def reserve(self, name: str) -> str:
         """Reserve a (possibly aux) name, uniquifying against used names."""
-        final = name
-        n = 2
-        while final in self._used_names:
-            final = f"{name}_{n}"
-            n += 1
-        self._used_names.add(final)
-        return final
+        return _unique_name(name, self._used_names)

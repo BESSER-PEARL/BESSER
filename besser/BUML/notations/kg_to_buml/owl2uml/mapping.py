@@ -19,7 +19,7 @@ from . import naming
 from .axioms import AxiomIndex, primitive_for
 from .canonicalize import Canonicalizer
 from .expressions import ExpressionResolver
-from ._plan import (
+from .plan import (
     ModelPlan, PlannedClass, PlannedAttribute, PlannedDataType, PlannedEnumeration, PlannedAssociation,
     PlannedInvariant,
 )
@@ -61,6 +61,7 @@ class Mapper:
         self._composite_datarange_cache: dict = {}  # (kind, members) -> DataType name (dedup by structure)
         self._enum_defs: dict[URIRef, BNode] = {}  # D20: named class -> the oneOf node it is an enumeration of
         self._datatypes_in_progress: set[str] = set()  # D37: datatype names whose definition is being followed
+        self._dataranges_in_progress: set = set()       # anonymous data ranges whose operands are being resolved
         self.resolver = ExpressionResolver(self)
 
         primary = (list(self.ax.sorted_named_classes) + list(self.ax.sorted_object_props)
@@ -113,12 +114,14 @@ class Mapper:
         Runs only when the KG already puts a class under Thing, i.e. the user
         accepted the recommendation. Declining leaves the model as it was.
 
-        One exception: a class that declares a feature name Thing also declares
-        keeps its own. Restriction aux classes exist precisely to narrow such a
-        property (``_all_hasPart_Issue --hasPart--> Issue``, ``_max_1_isPartOf_Thing``),
-        and BUML keeps only one end per name across a hierarchy — so parenting
-        them would drop the narrower end and, with it, the cardinality that only
-        the association carries.
+        One exception: a class that declares an *attribute* Thing also declares
+        keeps its own. A restriction aux class exists precisely to narrow such a
+        property (``_min_1_title_str``), and the lowering keeps an ancestor's
+        attribute over a descendant's (``ATTR_INHERITED_SHADOWED``), so
+        parenting it would drop the narrower declaration. A restriction on an
+        object property (``_all_hasPart_Issue --hasPart--> Issue``) is parented:
+        the lowering merges its end into the one it inherits from Thing and
+        restates the narrower bound or target as OCL.
         """
         thing = self.canon.name(OWL.Thing)
         if thing not in self.model.classes:
@@ -126,22 +129,16 @@ class Mapper:
         if not any(sup == thing for _, sup in self.model.generalizations):
             return
 
-        def features(name: str) -> set[str]:
+        def attributes(name: str) -> set[str]:
             cls = self.model.classes.get(name)
-            names = {a.name for a in cls.attributes} if cls is not None else set()
-            for assoc in self.model.associations:
-                if assoc.source == name and assoc.role:
-                    names.add(assoc.role)
-                if assoc.target == name and assoc.navigable_source and assoc.source_role:
-                    names.add(assoc.source_role)
-            return names
+            return {a.name for a in cls.attributes} if cls is not None else set()
 
-        inherited = features(thing)
+        inherited = attributes(thing)
         has_parent = {sub for sub, _ in self.model.generalizations}
         for name in sorted(self.model.classes):
             if name == thing or name in has_parent:
                 continue
-            if features(name) & inherited:
+            if attributes(name) & inherited:
                 continue
             self.add_generalization(name, thing)
 
@@ -373,24 +370,41 @@ class Mapper:
                 dt = self.canon.name(node)
                 if dt in self._datatypes_in_progress:
                     # Reached again while its own definition is being followed
-                    # (``A ≡ unionOf(B, …)``, ``B ≡ unionOf(A, …)``). The name is
-                    # registered and the outer call finishes the type, so this
-                    # reference just uses the name.
+                    # (``A ≡ unionOf(B, …)``, ``B ≡ unionOf(A, …)``). Its name is
+                    # already fixed (the canonicaliser's) and the outer call
+                    # registers the type under it, so this reference just uses
+                    # the name.
                     self.warn("DATATYPE_CYCLIC",
                               f"Datatype '{dt}' is defined in terms of itself; OWL 2 requires "
                               f"datatype definitions to be acyclic. The definition is followed "
                               f"once and the inner reference kept as a reference to '{dt}'.")
                 elif dt not in self.model.datatypes and dt not in self.model.enumerations:
                     self._datatypes_in_progress.add(dt)
-                    self._define_datatype(node, dt)
-                    self._datatypes_in_progress.discard(dt)
+                    try:
+                        self._define_datatype(node, dt)
+                    finally:
+                        self._datatypes_in_progress.discard(dt)
                 self._name_to_iri.setdefault(dt, node)
                 return dt
             return self.register_primitive(primitive_for(node))
         if isinstance(node, BNode):                  # O01-O05 data-range expression
             if node in self._datarange_cache:        # same anon node -> same DataType (no dup classes)
                 return self._datarange_cache[node]
-            name = self._materialize_data_range(node)
+            if node in self._dataranges_in_progress:
+                # Reached again while its own operands are being resolved
+                # (``_:u owl:unionOf (_:u xsd:int)``). Unlike a named datatype
+                # it has no name yet to refer to, so the inner reference falls
+                # back to the widest primitive, as an absent range does.
+                fallback = self.register_primitive(primitive_for(None))
+                self.warn("DATATYPE_CYCLIC",
+                          f"An anonymous data range contains itself as an operand; OWL 2 requires "
+                          f"data ranges to be acyclic. The inner reference is read as '{fallback}'.")
+                return fallback
+            self._dataranges_in_progress.add(node)
+            try:
+                name = self._materialize_data_range(node)
+            finally:
+                self._dataranges_in_progress.discard(node)
             self._datarange_cache[node] = name
             return name
         return self.register_primitive("String")
@@ -414,8 +428,10 @@ class Mapper:
             if not (str(definition) in group and definition in self.ax.datatypes())
         }
         for definition in sorted(candidates, key=str):
-            if isinstance(definition, BNode) or definition in self.ax.datatypes() \
-                    or str(definition).startswith(str(XSD)):
+            # A custom datatype among them is impossible: the canonicaliser
+            # folds every ``equivalentClass`` IRI into ``dt``'s group, and the
+            # filter above drops those.
+            if isinstance(definition, BNode) or str(definition).startswith(str(XSD)):
                 return definition
         return None
 

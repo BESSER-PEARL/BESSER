@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from besser.BUML.metamodel.kg import (
     KGBlank,
@@ -32,6 +32,7 @@ from besser.BUML.metamodel.kg.axioms import (
     DisjointClassesAxiom,
     DisjointUnionAxiom,
     EquivalentClassesAxiom,
+    EquivalentPropertiesAxiom,
     HasKeyAxiom,
     InversePropertiesAxiom,
     PropertyChainAxiom,
@@ -45,7 +46,6 @@ from besser.BUML.notations.kg_to_buml._common import (
     RDF_TYPE,
     KGConversionWarning,
     acknowledge_issue,
-    add_warning,
     is_meta_vocab,
     looks_like_datatype_iri as _looks_like_datatype_iri,
     normalize_predicate,
@@ -121,33 +121,20 @@ def apply_resolutions(
     """Apply a list of resolutions to a *deep copy* of ``kg`` and return it.
 
     Resolutions are dispatched by ``choice`` key. Unknown choices raise
-    :class:`ResolutionError`.
-
-    Two cycles can recommend breaking the same edge (two cycles sharing it),
-    and accepting both in one batch then names an edge the first already
-    removed. That second resolution is already satisfied, so it is skipped and
-    noted in ``warnings`` (``RESOLUTION_ALREADY_APPLIED``) rather than failing
-    the batch; an edge the graph never had still raises.
+    :class:`ResolutionError`. A handler that finds its resolution already
+    satisfied (see :func:`_h_break_at_edge`) changes nothing and returns a
+    note, which is added to ``warnings``.
     """
     if not resolutions:
         return kg
     new_kg = copy.deepcopy(kg)
-    original_edge_ids = {edge.id for edge in new_kg.edges}
     for res in resolutions:
         handler = _HANDLERS.get(res.choice)
         if handler is None:
             raise ResolutionError(f"Unknown resolution choice {res.choice!r}.")
-        edge_id = res.parameters.get("edge_id") if res.choice == "break_at_edge" else None
-        if edge_id in original_edge_ids and all(edge.id != edge_id for edge in new_kg.edges):
-            add_warning(
-                warnings if warnings is not None else [],
-                "RESOLUTION_ALREADY_APPLIED",
-                f"Resolution for issue {res.issue_id!r}: edge {edge_id!r} was already removed "
-                f"by an earlier resolution in this batch; skipped.",
-                edge_id=edge_id,
-            )
-            continue
-        handler(new_kg, res)
+        note = handler(new_kg, res)
+        if note is not None and warnings is not None:
+            warnings.append(note)
     return new_kg
 
 
@@ -447,14 +434,28 @@ def _h_drop_restriction(kg: KnowledgeGraph, res: KGResolution) -> None:
     _replace_graph(kg, surviving_nodes, surviving_edges)
 
 
-def _h_break_at_edge(kg: KnowledgeGraph, res: KGResolution) -> None:
+def _h_break_at_edge(kg: KnowledgeGraph, res: KGResolution) -> Optional[KGConversionWarning]:
+    """Remove the edge ``edge_id``; idempotent.
+
+    Two cycles can recommend breaking the same edge (two cycles sharing it),
+    so accepting both names, the second time, an edge the first removed. The
+    goal -- that edge gone -- already holds, so an absent edge changes nothing
+    and is reported (``RESOLUTION_ALREADY_APPLIED``) rather than failing. The
+    same holds whether the decisions arrive as one batch or one at a time.
+    """
     edge_id = res.parameters.get("edge_id")
     if not edge_id:
         raise ResolutionError("'break_at_edge' requires 'edge_id'.")
     surviving_edges = {e for e in kg.edges if e.id != edge_id}
     if len(surviving_edges) == len(kg.edges):
-        raise ResolutionError(f"Edge {edge_id!r} not found in KG.")
+        return KGConversionWarning(
+            code="RESOLUTION_ALREADY_APPLIED",
+            message=f"Resolution for issue {res.issue_id!r}: edge {edge_id!r} is not in the graph "
+                    f"(an earlier resolution removed it); nothing to break.",
+            edge_id=edge_id,
+        )
     _replace_graph(kg, set(kg.nodes), surviving_edges)
+    return None
 
 
 def _h_merge_classes(kg: KnowledgeGraph, res: KGResolution) -> None:
@@ -787,7 +788,6 @@ def _h_drop_class(kg: KnowledgeGraph, res: KGResolution) -> None:
     surviving_nodes = {n for n in kg.nodes if n.id != node_id}
     surviving_edges = {e for e in kg.edges if e.source.id != node_id and e.target.id != node_id}
     _replace_graph(kg, surviving_nodes, surviving_edges)
-    _strip_dangling_axioms(kg)
 
 
 def _h_drop_individual(kg: KnowledgeGraph, res: KGResolution) -> None:
@@ -803,7 +803,6 @@ def _h_drop_individual(kg: KnowledgeGraph, res: KGResolution) -> None:
     surviving_nodes = {n for n in kg.nodes if n.id != node_id}
     surviving_edges = {e for e in kg.edges if e.source.id != node_id and e.target.id != node_id}
     _replace_graph(kg, surviving_nodes, surviving_edges)
-    _strip_dangling_axioms(kg)
 
 
 def _h_promote_individual_to_class(kg: KnowledgeGraph, res: KGResolution) -> None:
@@ -889,7 +888,6 @@ def _h_drop_orphan_nodes(kg: KnowledgeGraph, res: KGResolution) -> None:
         e for e in kg.edges if e.source.id not in drop and e.target.id not in drop
     }
     _replace_graph(kg, surviving_nodes, surviving_edges)
-    _strip_dangling_axioms(kg)
 
 
 def _h_defer_to_llm_classification(kg: KnowledgeGraph, res: KGResolution) -> None:
@@ -997,6 +995,11 @@ def _strip_dangling_axioms(kg: KnowledgeGraph) -> None:
             if len(kept) >= 2:
                 axiom.class_ids = kept
                 surviving.append(axiom)
+        elif isinstance(axiom, EquivalentPropertiesAxiom):
+            kept = [p for p in axiom.property_ids if p in live_ids]
+            if len(kept) >= 2:
+                axiom.property_ids = kept
+                surviving.append(axiom)
         elif isinstance(axiom, DisjointUnionAxiom):
             if axiom.union_class_id in live_ids:
                 kept_parts = [c for c in axiom.part_class_ids if c in live_ids]
@@ -1027,7 +1030,10 @@ def _strip_dangling_axioms(kg: KnowledgeGraph) -> None:
     kg.axioms = surviving
 
 
-_HANDLERS: Dict[str, Any] = {
+#: ``choice`` key -> handler. A handler mutates the KG in place and returns
+#: ``None``, or a ``KGConversionWarning`` when the resolution was already
+#: satisfied and nothing was done.
+_HANDLERS: Dict[str, Callable[[KnowledgeGraph, KGResolution], Optional[KGConversionWarning]]] = {
     # v1 handlers (still used by accept/skip dispatching)
     "assign_domain": _h_assign_domain,
     "attach_to_thing": _h_attach_to_thing,
@@ -1102,8 +1108,15 @@ def _find_property_by_iri(kg: KnowledgeGraph, iri: str) -> Optional[KGProperty]:
 
 
 def _replace_graph(kg: KnowledgeGraph, nodes: Set[KGNode], edges: Set[KGEdge]) -> None:
-    """Replace the KG's nodes and edges in place, preserving validation order."""
+    """Replace the KG's nodes and edges in place, preserving validation order.
+
+    Every handler that removes a node goes through here, so this is also where
+    the axioms that referenced it are shrunk or dropped
+    (:func:`_strip_dangling_axioms`): a dangling axiom reference fails
+    ``KnowledgeGraph.validate()``, and with it every later load of the graph.
+    """
     # Setting nodes first invalidates edge endpoint validation, so clear edges then nodes.
     kg.edges = set()
     kg.nodes = nodes
     kg.edges = edges
+    _strip_dangling_axioms(kg)

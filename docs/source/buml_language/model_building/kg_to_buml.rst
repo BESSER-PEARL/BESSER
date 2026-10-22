@@ -150,7 +150,7 @@ identical model.
     give a class two identically-named ends, clamping an out-of-range
     multiplicity, breaking an inheritance cycle — it records a
     ``KGConversionWarning`` on ``result.warnings`` rather than failing or
-    silently dropping the construct. A SHACL count or length that is not a
+    silently dropping the construct (see `Lowering warnings`_). A SHACL count or length that is not a
     whole number (``sh:minCount "lots"``) is skipped with a
     ``SHACL_COUNT_INVALID`` warning instead of becoming a meaningless
     comparison.
@@ -188,6 +188,20 @@ what a rule asks for, the conversion makes these choices:
   when no individual asserts it directly; otherwise the chain only implies it.
 * **Disjointness** is emitted as pairwise OCL invariants. No
   ``GeneralizationSet`` is built.
+* **One association end per name and class.** B-UML lets a class reach only
+  one association end of each name, its own or inherited. The rules declare a
+  property's end on every class that constrains it — its domain and each
+  restriction class — so a class below two of them would inherit two. Ends are
+  never renamed (every ``self.<property>`` in the generated OCL navigates by
+  that name); they are merged instead. A property one class declares towards
+  several targets gets one end to a union class over the targets
+  (``ASSOC_FANOUT_MERGED``). A property several classes declare for a shared
+  subclass gets one end, on the declaring class that is an ancestor of the
+  others (``ASSOC_INHERITED_SHADOWED``) or else on a new abstract
+  ``_<property>_Domain`` parent of them all (``ASSOC_END_HOISTED``); whatever
+  a class's own end said beyond the merged one — a minimum, a maximum, a
+  narrower target — is restated as an invariant on that class, such as
+  ``self.hasPart->size() >= 1`` for ``owl:minCardinality 1``.
 
 Before converting, the KG can be checked with
 ``analyze_kg_for_class_diagram()``, which reports ambiguities (a property with
@@ -209,10 +223,70 @@ nowhere, because OCL looks a feature up on the context class and its
 issue for each such property that something references — an ABox assertion, an
 ``rdfs:subPropertyOf`` axiom, or a SHACL ``sh:path``. Accepting the recommended
 ``attach_to_thing`` resolution gives the property a domain *and* makes every
-top-level class inherit from ``Thing``, so those invariants resolve. Converting
-without accepting it is still fine; the invariants that cannot be navigated are
-dropped with an ``OCL_DROPPED_UNRESOLVED_FEATURE`` warning rather than shipped
-in a form no evaluator can read.
+top-level class inherit from ``Thing`` — including the auxiliary classes the
+conversion materialises, except one that redeclares an attribute ``Thing``
+carries — so those invariants resolve. A restriction class on such a property
+then inherits ``Thing``'s end, and the two merge as described above.
+
+Converting without accepting it is still fine: the invariants that navigate
+the property from a class that does not inherit from ``Thing`` are dropped
+with an ``OCL_DROPPED_UNRESOLVED_FEATURE`` warning rather than shipped in a
+form no evaluator can read. Nothing else is lost either way. On BIBO, for
+instance, 108 of the 128 invariants survive an unrefined conversion (the other
+20 navigate a domain-less property) and all 128 a refined one; in both, the
+``owl:minCardinality 1`` on ``dc:hasPart`` that ``bibo:Periodical`` and its
+siblings share is kept as an invariant on the restriction class.
+
+Lowering warnings
+~~~~~~~~~~~~~~~~~
+
+The lowering onto B-UML reports these codes on ``result.warnings``. A
+``*_DROPPED_*`` code means the construct is not in the model; every other code
+is informational.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
+
+   * - Code
+     - Meaning
+   * - ``NAME_SHADOWS_PRIMITIVE``
+     - A class is named after a B-UML primitive; it is renamed with a ``_`` suffix.
+   * - ``ENUM_LITERAL_RENAMED``
+     - Enumeration literals that are not valid or unique names are renamed.
+   * - ``CYCLIC_SUBCLASS``
+     - A generalization closing an inheritance cycle is dropped.
+   * - ``AUX_CLASSES_MATERIALISED``, ``DATA_RANGES_MATERIALISED``,
+       ``EXTERNAL_CLASSES_STUBBED``, ``DEPRECATED_CLASSES``
+     - Classifications B-UML has nowhere to store; also on ``result.class_stereotypes``.
+   * - ``TYPE_UNRESOLVED``
+     - A type name resolves to nothing; the feature is typed ``String``.
+   * - ``MULTIPLICITY_CLAMPED``
+     - An upper bound of 0 is clamped to 1 (an invariant keeps the original).
+   * - ``ATTR_INHERITED_SHADOWED``
+     - An attribute an ancestor already declares is not declared again.
+   * - ``ASSOC_FANOUT_MERGED``
+     - One class's associations of one name to several targets are merged
+       onto a union class.
+   * - ``ASSOC_INHERITED_SHADOWED``
+     - An end an ancestor also declares is merged into the ancestor's; any
+       narrower bound or target is restated as an invariant.
+   * - ``ASSOC_END_HOISTED``
+     - An end several classes declare for a shared subclass is declared once,
+       on a new abstract parent; each class's narrower bound or target is
+       restated as an invariant.
+   * - ``NAME_SHADOWS_ATTRIBUTE``
+     - A name is both an attribute and an association end of a class; kept.
+   * - ``ASSOC_DROPPED``
+     - B-UML rejected an association; the message carries its reason.
+   * - ``OCL_DROPPED_UNRESOLVED_FEATURE``
+     - An invariant navigates a feature its context cannot reach.
+   * - ``OCL_DROPPED_UNKNOWN_TYPE``
+     - An invariant names a type the model does not have.
+   * - ``OCL_DROPPED_MALFORMED_BODY``
+     - An invariant contains a bare ``context`` token.
+   * - ``OCL_DROPPED_INVALID``
+     - The OCL parser rejects an invariant against the model.
 
 Round-tripping a knowledge graph
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

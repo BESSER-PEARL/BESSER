@@ -94,7 +94,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/` |
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
 | `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks) |
-| `…/backend/routers/` | One router per concern (generation, conversion, validation, deployment, spec_driven, telemetry, agent_simulator); `error_handler.py` has `@handle_endpoint_errors` |
+| `…/backend/routers/` | One router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator); `error_handler.py` has `@handle_endpoint_errors` |
 | `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` registry (`GeneratorInfo`, incl. download filenames) + `get_filename_for_generator` |
 | `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins, most `BESSER_LLM_*` caps and flags |
 | `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`) |
@@ -121,7 +121,8 @@ Some generators need several diagrams (e.g. `WebAppGenerator` = `ClassDiagram` +
 `Dict[str, List[DiagramInput]]`; `currentDiagramIndices` picks the active diagram per type, and per-diagram
 `references` resolve cross-diagram dependencies by ID (stable across deletion/reordering). Old single-diagram
 payloads are auto-converted by a Pydantic validator. Diagram types: `ClassDiagram`, `ObjectDiagram`,
-`StateMachineDiagram`, `AgentDiagram`, `GUINoCodeDiagram`, `QuantumCircuitDiagram`, `UserDiagram`, `NNDiagram`, `BPMN`.
+`StateMachineDiagram`, `AgentDiagram`, `GUINoCodeDiagram`, `QuantumCircuitDiagram`, `UserDiagram`, `NNDiagram`, `BPMN`,
+`ComponentDiagram`, `DeploymentDiagram`, `KnowledgeGraphDiagram` (a single BPMN payload has type `BPMNDiagram`).
 
 ## Spec-Driven Agent
 

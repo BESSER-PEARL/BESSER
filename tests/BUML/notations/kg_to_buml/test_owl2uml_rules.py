@@ -691,3 +691,20 @@ def test_d37_cyclic_datatype_definitions_are_cut_with_a_warning():
     """, warnings)
     assert {"A", "B"} <= set(plan.datatypes)
     assert [w.code for w in warnings].count("DATATYPE_CYCLIC") == 1
+
+
+def test_malformed_cardinality_skips_the_restriction_with_a_warning(tmp_path: Path):
+    """``int("abc")`` used to abort the whole conversion with a ValueError."""
+    result = _convert(tmp_path, """
+    :Pet a owl:Class . :Person a owl:Class .
+    :owns a owl:ObjectProperty ; rdfs:domain :Person ; rdfs:range :Pet .
+    :Q a owl:Class ; rdfs:subClassOf
+        [ a owl:Restriction ; owl:onProperty :owns ; owl:maxCardinality "abc"^^xsd:nonNegativeInteger ] ,
+        [ a owl:Restriction ; owl:onProperty :owns ; owl:minCardinality "-1"^^xsd:integer ] ,
+        [ a owl:Restriction ; owl:onProperty :owns ; owl:cardinality "2"^^xsd:nonNegativeInteger ] .
+    """)
+    messages = [w.message for w in result.warnings if w.code == "OWL_CARDINALITY_INVALID"]
+    assert len(messages) == 2
+    assert any("'abc'" in m for m in messages) and any("'-1'" in m for m in messages)
+    # The well-formed restriction beside them is still mapped.
+    assert "_exact_2_owns_Pet" in _classes_by_name(result.domain_model)

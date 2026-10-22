@@ -182,8 +182,31 @@ class ExpressionResolver:
             if n is None:
                 n = self.g.value(node, preds[1])
             if n is not None:
-                return self._cardinality(node, prop, p, is_obj, kind, int(n))
+                k = self._cardinality_value(n, kind, p)
+                if k is None:
+                    break
+                return self._cardinality(node, prop, p, is_obj, kind, k)
         return self.m.ensure_class(OWL.Thing)
+
+    def _cardinality_value(self, value, kind: str, p: str) -> int | None:
+        """``value`` as a cardinality, or ``None`` (with a warning) when it is not one.
+
+        OWL types cardinalities as ``xsd:nonNegativeInteger``, but nothing stops a
+        file from saying ``"many"`` or ``-1``. The restriction is then skipped --
+        the class keeps its other axioms -- rather than aborting the conversion.
+        """
+        try:
+            k = int(str(value))
+        except ValueError:
+            k = -1
+        if k < 0:
+            self.m.warn(
+                "OWL_CARDINALITY_INVALID",
+                f"Skipping the {kind} cardinality restriction on {p}: "
+                f"{str(value)!r} is not a non-negative whole number.",
+            )
+            return None
+        return k
 
     def _some(self, p, val, is_obj) -> str:            # D22 / O10
         if is_obj:

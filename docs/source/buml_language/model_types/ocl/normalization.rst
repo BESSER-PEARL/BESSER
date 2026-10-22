@@ -55,6 +55,16 @@ left implicit. Multiplicity collapses from the 2007 paper
 (``size() > 0`` on a mandatory chain, ``forAll`` on a chain of maximum
 1) also run; chapter 3 does not list them.
 
+The six invariants on page 8 of that paper are checked as same-context
+inputs. MaxSalary, ValidAge, AtLeastTwoProjectManagers and ValidNHours
+reach the same-context row of Table 5. NotBossFreelance continues to
+conjunctive form, so ``implies`` is removed. PossibleEmployee keeps the
+comparison operands in the order written on page 8. The other Table 5
+rows use a different context type, which this normalizer does not change.
+On the context-changed MaxSalary, the multiplicity rules stop at
+``self.employer.employee->forAll(...)``; dropping that round trip is
+§3.1.3 rule 3 and is not applied.
+
 The input is not mutated: ``normalize`` clones the AST internally before
 rewriting.
 

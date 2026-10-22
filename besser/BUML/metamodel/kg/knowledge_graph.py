@@ -661,8 +661,7 @@ class KnowledgeGraph(Model):
         self._validate_unique_node_ids(errors)
         self._validate_edge_endpoints(errors)
         self._validate_constraint_specs(errors)
-        self._validate_axiom_types(errors)
-        self._validate_axiom_references(warnings)
+        self._validate_axiom_references(errors)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -696,29 +695,20 @@ class KnowledgeGraph(Model):
                 if not is_valid_spec(spec):
                     errors.append(f"{type(n).__name__} {n.id!r} has an invalid constraint spec at index {idx}: {spec!r}")
 
-    def _validate_axiom_types(self, errors: List[str]) -> None:
-        """The setter checks this; catch state that got around it."""
-        for idx, axiom in enumerate(self.__axioms):
-            if not isinstance(axiom, KGAxiom):
-                errors.append(
-                    f"KnowledgeGraph.axioms[{idx}] is a {type(axiom).__name__}, not a KGAxiom."
-                )
+    def _validate_axiom_references(self, errors: List[str]) -> None:
+        """Report every axiom id that names no node of the graph.
 
-    def _validate_axiom_references(self, warnings: List[str]) -> None:
-        """Flag every axiom id that names no node of the graph.
-
-        A warning, not an error: an imported ontology may legitimately refer to
-        an IRI it does not define (a ``rdfs:subPropertyOf foaf:knows`` without
-        ``foaf:knows`` itself), and that should not block a conversion.
+        An error, like a dangling edge: nothing legitimate produces one. The
+        OWL importer makes a node of every IRI a triple mentions, including an
+        undeclared ``rdfs:subPropertyOf foaf:knows`` target, and the editor
+        prunes the axioms of the nodes it deletes.
         """
         node_ids = {n.id for n in self.__nodes}
         for axiom in self.__axioms:
-            if not isinstance(axiom, KGAxiom):
-                continue
             for field_name, refs in axiom.referenced_ids().items():
                 for ref in refs:
                     if ref not in node_ids:
-                        warnings.append(
+                        errors.append(
                             f"{type(axiom).__name__}.{field_name} references "
                             f"{ref!r}, which is not a node in the graph."
                         )

@@ -1,5 +1,7 @@
 """Tests for the Knowledge Graph metamodel."""
 
+import gc
+
 import pytest
 
 from tests.BUML.metamodel.kg.axiom_samples import AXIOM_SAMPLES
@@ -438,16 +440,6 @@ def test_the_axioms_getter_hands_out_a_copy():
     assert kg.axioms == [EquivalentClassesAxiom(class_ids=["c1"])]
 
 
-def test_validate_reports_an_axiom_that_is_not_a_kg_axiom():
-    kg = KnowledgeGraph(name="graph")
-    kg._KnowledgeGraph__axioms.append("not an axiom")   # state the setter never saw
-
-    result = kg.validate(raise_exception=False)
-
-    assert not result["success"]
-    assert result["errors"] == ["KnowledgeGraph.axioms[0] is a str, not a KGAxiom."]
-
-
 _REQUIRED_ID_FIELDS = [
     (cls, name)
     for cls, kwargs in AXIOM_SAMPLES.items()
@@ -495,16 +487,65 @@ def test_referenced_ids_lists_the_node_ids_by_field(axiom_cls):
 
 
 @pytest.mark.parametrize("axiom_cls", AXIOM_SAMPLES, ids=lambda c: c.__name__)
-def test_validate_flags_every_axiom_id_that_names_no_node(axiom_cls):
+def test_validate_reports_every_axiom_id_that_names_no_node_as_an_error(axiom_cls):
+    """Like a dangling edge: the importer makes a node of every IRI an axiom names."""
     kwargs = AXIOM_SAMPLES[axiom_cls]
     kg = KnowledgeGraph(name="graph", axioms=[axiom_cls(**kwargs)])
 
-    result = kg.validate()
+    result = kg.validate(raise_exception=False)
 
     expected = sum(len(ids) for ids in axiom_cls(**kwargs).referenced_ids().values())
-    assert result["success"] is True, "a dangling axiom reference is a warning, not an error"
-    assert len(result["warnings"]) == expected
-    assert all("is not a node in the graph" in w for w in result["warnings"])
+    assert result["success"] is (expected == 0)
+    assert len(result["errors"]) == expected
+    assert all("is not a node in the graph" in e for e in result["errors"])
+    assert result["warnings"] == []
+    if expected:
+        with pytest.raises(ValueError, match="is not a node in the graph"):
+            kg.validate()
+
+
+@pytest.fixture
+def forget_axiom_subclasses():
+    """Collect the throwaway ``KGAxiom`` subclasses a test defines.
+
+    ``test_every_axiom_class_has_a_sample`` reads ``KGAxiom.__subclasses__()``,
+    which keeps a class until the garbage collector frees it.
+    """
+    yield
+    gc.collect()
+
+
+def test_a_new_axiom_class_has_its_fields_checked_as_node_ids_by_default(forget_axiom_subclasses):
+    """A subclass cannot forget to declare which fields are references."""
+    class TwoClassesAxiom(KGAxiom):
+        FIELDS = ("left_id", "right_id")
+
+        def __init__(self, left_id, right_id):
+            self.left_id, self.right_id = left_id, right_id
+
+    kg = KnowledgeGraph(name="graph", nodes={KGClass(id="c1")}, axioms=[TwoClassesAxiom("c1", "ghost")])
+
+    assert TwoClassesAxiom.NODE_REF_FIELDS == ("left_id", "right_id")
+    assert kg.validate(raise_exception=False)["errors"] == [
+        "TwoClassesAxiom.right_id references 'ghost', which is not a node in the graph."
+    ]
+
+
+def test_an_axiom_class_opts_fields_out_of_the_reference_check_by_name():
+    assert ImportAxiom.NODE_REF_FIELDS == ()
+    assert ImportAxiom.OPTIONAL_FIELDS == ("source_ontology_iri",)
+    assert all(cls.OPTIONAL_FIELDS == () for cls in AXIOM_SAMPLES if cls is not ImportAxiom)
+
+
+def test_an_axiom_class_cannot_declare_its_references_or_name_unknown_fields(forget_axiom_subclasses):
+    with pytest.raises(TypeError, match="NON_NODE_FIELDS instead"):
+        class DeclaresReferences(KGAxiom):  # noqa: F841 -- defining it is the test
+            FIELDS = ("a_id", "iri")
+            NODE_REF_FIELDS = ("a_id",)
+    with pytest.raises(TypeError, match=r"OPTIONAL_FIELDS names unknown field\(s\): \['typo'\]"):
+        class NamesAnUnknownField(KGAxiom):  # noqa: F841
+            FIELDS = ("a_id",)
+            OPTIONAL_FIELDS = ("typo",)
 
 
 def test_validate_is_quiet_when_every_axiom_id_is_a_node():

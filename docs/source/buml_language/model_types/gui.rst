@@ -164,19 +164,34 @@ aggregated:
     )]
 
 - **Form.** A path on the generated backend, starting with ``/`` (it may carry a
-  query string), or an absolute ``http://`` / ``https://`` URL; no spaces. Anything
-  else raises ``ValueError``; an empty string means no endpoint.
+  query string, but not start with ``//``), or an absolute ``http://`` /
+  ``https://`` URL with a host; no spaces, control characters or invisible format
+  characters. Anything else raises ``ValueError``; an empty string means no
+  endpoint. The editor import adds a missing leading ``/`` and drops an invalid
+  value with a warning instead of failing.
 - **Response.** A JSON array of row objects, or an object holding the array
-  under ``data``, ``results``, ``items``, ``records`` or ``list``. Each row
-  carries the binding's ``label_field`` and ``data_field``: as attributes of
-  ``domain_concept``, or, when the endpoint returns other fields, as
-  ``label_field_path`` / ``data_field_path`` (``"period"``, ``"value"``). The
-  ``aggregation`` and ``filter_expression``, if any, still apply to the rows.
+  under ``data``, ``results``, ``items``, ``records`` or ``list`` (else under its
+  first array-valued key). Each row carries the binding's ``label_field`` and
+  ``data_field``: as attributes of ``domain_concept``, or, when the endpoint
+  returns other fields, as ``label_field_path`` / ``data_field_path``
+  (``"period"``, ``"measure.value"``).
+- **Fetched as written.** The generated app sends no query parameters of its own
+  to an endpoint (no ``detailed`` flag, no ``/search/`` route: those belong to the
+  CRUD API). The binding's ``aggregation`` and ``filter_expression`` apply to the
+  rows it returns, on a chart series, a chart's own binding and a metric card.
 - **Where it applies.** Chart series, a chart's own binding and metric cards.
-  Tables, maps and forms ignore it (with a warning at generation), because they
-  also write back through the class's CRUD API.
-- **In the editor.** The ``data-endpoint`` attribute of a metric card and of each
-  chart series (the *Endpoint* field of the metric card and of the series manager).
+  Tables, maps and forms ignore it (with a warning at generation, and the editor
+  import does not read it on a table), because they also write back through the
+  class's CRUD API.
+- **Absolute URLs.** They are fetched by each viewer's browser, not by the
+  generated backend: the other host sees the viewer's IP address and the page as
+  ``Referer``, it must allow the page's origin (CORS), and an ``http://`` URL is
+  blocked as mixed content on a page served over ``https``. No credentials are
+  sent. Prefer a path on the generated backend, which can call the other service
+  itself.
+- **In the editor.** The ``data-endpoint`` attribute of a metric card, of a chart
+  and of each chart series (the *Endpoint* field of the metric card, of the chart
+  and of the series manager).
 
 Map Component
 -------------

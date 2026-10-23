@@ -499,7 +499,18 @@ class NNCodeGenerator(GeneratorInterface):
         """Clean excessive blank lines from generated code.
         Remove all blank lines from forward/call methods and normalize
         spacing throughout the file."""
-        # First pass: clean forward/call methods (subclassing only)
+        code = self._strip_forward_blank_lines(code)
+
+        # Second pass: normalize excessive blank lines globally (both modes)
+        code = re.sub(r'\n\n\n+', '\n\n', code)
+        # Clean up leading/trailing blank lines
+        code = code.strip() + '\n'
+        return code
+
+    @staticmethod
+    def _strip_forward_blank_lines(code: str) -> str:
+        """Remove the blank lines the layer macros leave inside the
+        forward/call method (subclassing only)."""
         lines = code.split('\n')
         cleaned_lines = []
         inside_forward = False
@@ -525,13 +536,20 @@ class NNCodeGenerator(GeneratorInterface):
 
             cleaned_lines.append(line)
 
-        code = '\n'.join(cleaned_lines)
+        return '\n'.join(cleaned_lines)
 
-        # Second pass: normalize excessive blank lines globally (both modes)
-        code = re.sub(r'\n\n\n+', '\n\n', code)
-        # Clean up leading/trailing blank lines
-        code = code.strip() + '\n'
-        return code
+    @staticmethod
+    def _make_env(templates_paths: list[str]) -> Environment:
+        """The Jinja environment of the NN templates: ``templates_paths``
+        searched in order, with the ``strip_counter_suffix`` filter."""
+        env = Environment(loader=FileSystemLoader(templates_paths))
+
+        def strip_counter_suffix_filter(name):
+            """Strip trailing _cN where N is one or more digits
+            (counter added by parser)."""
+            return re.sub(r'_c\d+$', '', name)
+        env.filters['strip_counter_suffix'] = strip_counter_suffix_filter
+        return env
 
 
     def forward_input_var(self) -> str:
@@ -570,14 +588,7 @@ class NNCodeGenerator(GeneratorInterface):
         file_path = self.build_generation_path(file_name=file_name)
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), self.template_dir, "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-
-        # Add custom filter to strip counter suffix
-        def strip_counter_suffix_filter(name):
-            """Strip trailing _cN where N is one or more digits 
-            (counter added by parser)."""
-            return re.sub(r'_c\d+$', '', name)
-        env.filters['strip_counter_suffix'] = strip_counter_suffix_filter
+        env = self._make_env([templates_path])
 
         template = env.get_template(self.template_name)
 

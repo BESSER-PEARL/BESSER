@@ -165,8 +165,42 @@ Generation is deterministic: the same model and configuration give the same file
 Web Modeling Editor
 -------------------
 
-The generator is not in the editor's **Generate** menu yet. The editor's neural-network generation
-passes only the diagram and the generation options of the PyTorch and TensorFlow generators, while
-a forecaster also needs its ``ForecastConfig``. The horizon can be read from the last layer, but
-the window cannot be read from a recurrent or convolutional first layer. Offering it in the editor
-needs a small form for the window, season and transforms, sent as the generation ``config``.
+In an NN diagram, **Generate → Forecaster (PyTorch)** opens a settings form: the window, the
+horizon, the season, the differencing lag, the logarithm, the season features, standardisation and
+the seed, pre-filled with the defaults below. The window has to be given: it cannot be read from a
+recurrent or convolutional first layer. The editor sends the form as the generation ``config`` of the
+``forecaster`` generator and downloads ``forecaster_<model name>.py``.
+
+The backend reads the ``config`` with ``ForecastConfig.from_dict``:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Key
+     - Type
+     - Default
+   * - ``window``
+     - integer, at least 1
+     - 24
+   * - ``horizon``
+     - integer, at least 1 (the size of the last layer)
+     - 12
+   * - ``season``
+     - integer, at least 1
+     - 12
+   * - ``difference``
+     - integer: 0, 1 or the season
+     - 12
+   * - ``log``, ``calendar``, ``standardize``
+     - true or false
+     - true
+   * - ``seed`` (one) or ``seeds`` (a list)
+     - integers
+     - 0
+   * - ``channel_last``
+     - true or false (as in :doc:`pytorch`)
+     - false
+
+An unknown key, a value of the wrong type, or a network that does not fit the settings (its first
+layer must read the window, its last return the horizon) is answered with a 400 that names every
+problem.

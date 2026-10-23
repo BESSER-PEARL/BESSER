@@ -30,6 +30,11 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.github_oau
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.generators.agents.baf_generator import GenerationMode
 from besser.generators.agents.agent_personalization import call_openai_chat
+
+try:
+    from besser.generators.nn.forecaster import ForecastConfig
+except ImportError:  # the forecaster is only registered when its generator imports
+    ForecastConfig = None
 from besser.utilities.provenance import add_generation_provenance_to_zip, get_besser_version
 
 # Backend models
@@ -1224,6 +1229,9 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
     # cycles, unresolved NNReferences, ...) is caught and mapped to 400 by
     # @handle_endpoint_errors — no explicit re-raise needed here.
 
+    if generator_type == "forecaster":
+        return await _generate_forecaster(nn_model, generator_class, config, temp_dir)
+
     generation_type = config.get("generation_type", "subclassing") if config else "subclassing"
     if generator_type == "tensorflow":
         generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type)
@@ -1255,6 +1263,29 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
         media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{download_filename}"'},
     )
+
+
+async def _generate_forecaster(nn_model, generator_class, config: dict, temp_dir: str):
+    """Generate a time-series forecaster from an NN model.
+
+    ``config`` holds the ForecastConfig fields (window, horizon, season, log,
+    difference, calendar, standardize, seed or seeds) plus ``channel_last``.
+    Invalid settings, and a network the forecaster cannot take (its first layer
+    must read the window, its last return the horizon), raise ValueError, which
+    @handle_endpoint_errors maps to a 400 with the generator's message.
+    """
+    settings = dict(config or {})
+    settings.pop("generation_type", None)  # sent with every NN generation; not a forecaster setting
+    channel_last = settings.pop("channel_last", False)
+    if not isinstance(channel_last, bool):
+        raise ValueError(f"Invalid ForecastConfig: channel_last must be true or false, got {channel_last!r}")
+    forecast_config = ForecastConfig.from_dict(settings)
+    generator_instance = generator_class(
+        nn_model, forecast_config, output_dir=temp_dir, channel_last=channel_last,
+    )
+    await asyncio.to_thread(generator_instance.generate)
+    # one file, forecaster_<model name>.py, shipped under that name (keep_generated_filename)
+    return _create_file_response(temp_dir, "forecaster")
 
 
 async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, temp_dir: str):

@@ -94,6 +94,59 @@ class ForecastConfig:
     def calendar_features(self) -> int:
         return 2 if self.calendar else 0
 
+    @classmethod
+    def from_dict(cls, data: dict | None) -> ForecastConfig:
+        """Build a config from a JSON object (the web editor's generation settings).
+
+        Every key is optional and takes the dataclass default, except ``window`` (24) and
+        ``horizon`` (12), which default to two years in, one year out. ``seed`` (one int) is
+        accepted for ``seeds``. Unknown keys and values of the wrong type raise ``ValueError``
+        naming every problem at once.
+        """
+        data = dict(data or {})
+        if "seed" in data and "seeds" not in data:
+            data["seeds"] = [data.pop("seed")]
+        defaults = {"window": 24, "horizon": 12}
+        ints = ("window", "horizon", "season", "difference")
+        bools = ("log", "calendar", "standardize")
+        errors = []
+        unknown = sorted(set(data) - set(ints) - set(bools) - {"seeds", "description"})
+        if unknown:
+            errors.append(f"unknown setting(s): {', '.join(unknown)}")
+        values = {}
+        for key in ints:
+            value = data.get(key, defaults.get(key))
+            if value is None:
+                continue
+            # bool is an int subclass: True must not pass as a window of 1
+            if isinstance(value, bool) or not isinstance(value, int):
+                errors.append(f"{key} must be an integer, got {value!r}")
+            else:
+                values[key] = value
+        for key in bools:
+            if key in data:
+                if not isinstance(data[key], bool):
+                    errors.append(f"{key} must be true or false, got {data[key]!r}")
+                else:
+                    values[key] = data[key]
+        if "seeds" in data:
+            seeds = data["seeds"]
+            if (not isinstance(seeds, (list, tuple))
+                    or any(isinstance(s, bool) or not isinstance(s, int) for s in seeds)):
+                errors.append(f"seeds must be a list of integers, got {seeds!r}")
+            else:
+                values["seeds"] = tuple(seeds)
+        if "description" in data:
+            if not isinstance(data["description"], str):
+                errors.append("description must be text")
+            else:
+                values["description"] = data["description"]
+        if errors:
+            raise ValueError("Invalid ForecastConfig: " + "; ".join(errors))
+        config = cls(**values)
+        config.validate()
+        return config
+
 
 class TimeSeriesForecasterGenerator(PytorchGenerator):
     """Generate ``forecaster_<model name>.py``: the network of a B-UML ``NN`` model, wrapped in a

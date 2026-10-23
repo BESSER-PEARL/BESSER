@@ -53,7 +53,7 @@ from .component_parsers import (
 )
 from .constants import CONTAINER_TAGS, CONTAINER_TYPES, INPUT_COMPONENT_TYPES, TEXT_TAGS
 from .styling import build_style_map, build_stylesheet, resolve_component_styling
-from .utils import css_class_names, sanitize_name, get_element_by_id, clean_method_name
+from .utils import css_class_names, html_attributes, sanitize_name, get_element_by_id, clean_method_name
 
 
 def process_gui_diagram(gui_diagram, class_model, domain_model):
@@ -162,18 +162,11 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
         # Store CSS classes (normalize to list of strings) ONLY if not already set
         if not hasattr(element, 'css_classes') or not element.css_classes:
-            element.css_classes = []
-            if meta.get("classList"):
-                element.css_classes = [
-                    cls if isinstance(cls, str) else cls.get("name", "")
-                    for cls in meta["classList"]
-                ]
+            element.css_classes = list(meta.get("classList") or [])
 
         # Store custom attributes ONLY if not already set
         if not hasattr(element, 'custom_attributes') or not element.custom_attributes:
-            element.custom_attributes = {}
-            if meta.get("attributes"):
-                element.custom_attributes = dict(meta["attributes"]) if isinstance(meta["attributes"], dict) else {}
+            element.custom_attributes = html_attributes(meta.get("attributes"))
 
         # Store component_id ONLY if not already set
         # Check for None explicitly since hasattr returns True even if value is None
@@ -482,7 +475,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             generic.component_type = component.get("type")
             generic.tag_name = component.get("tagName") or meta.get("tagName")
             generic.css_classes = css_class_names(component)
-            generic.custom_attributes = dict(attributes) if isinstance(attributes, dict) else {}
+            generic.custom_attributes = html_attributes(attributes)
             # Preserve layout if available
             if hasattr(generic, "layout") and hasattr(styling, "layout") and styling.layout:
                 generic.layout = styling.layout

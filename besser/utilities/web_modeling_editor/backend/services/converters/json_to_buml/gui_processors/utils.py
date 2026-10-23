@@ -4,15 +4,14 @@ Utility functions for GUI diagram processing.
 
 import logging
 import re
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
-from typing import Any, Dict, List, Optional
 
 
 def sanitize_name(raw_name: Optional[str]) -> str:
     """
     Convert an arbitrary string into a valid BUML element name.
-
     Args:
         raw_name: The raw name to sanitize
 
@@ -32,11 +31,9 @@ def sanitize_name(raw_name: Optional[str]) -> str:
         name = f"_{name}"
     return name
 
-
 def parse_style_string(style_string: str) -> Dict[str, str]:
     """
     Parse an inline CSS string into a dictionary of property/value pairs.
-
     Args:
         style_string: CSS style string (e.g., "color: red; font-size: 14px")
 
@@ -44,15 +41,12 @@ def parse_style_string(style_string: str) -> Dict[str, str]:
         Dictionary of CSS properties
     """
     properties: Dict[str, str] = {}
-
     # Handle non-string inputs (dict, None, etc.)
     if not style_string:
         return properties
-
     # If it's already a dict, return it
     if isinstance(style_string, dict):
         return {k.strip().lower(): str(v).strip() for k, v in style_string.items()}
-
     # If it's not a string, try to convert it
     if not isinstance(style_string, str):
         try:
@@ -60,7 +54,6 @@ def parse_style_string(style_string: str) -> Dict[str, str]:
         except Exception:
             logger.debug("Failed to convert style value to string", exc_info=True)
             return properties
-
     for part in style_string.split(";"):
         if not part.strip():
             continue
@@ -70,15 +63,12 @@ def parse_style_string(style_string: str) -> Dict[str, str]:
         properties[key.strip().lower()] = value.strip()
     return properties
 
-
 def parse_bool(value: Any, default: bool = True) -> bool:
     """
     Parse a boolean value from various input types.
-
     Args:
         value: Value to parse (bool, str, None)
         default: Default value if parsing fails
-
     Returns:
         Boolean value
     """
@@ -90,11 +80,9 @@ def parse_bool(value: Any, default: bool = True) -> bool:
         return value.strip().lower() == 'true'
     return bool(value)
 
-
 def clean_attribute_name(attr_text: str) -> str:
     """
     Cleans attribute names by removing visibility and type annotations.
-
     Args:
         attr_text: Raw attribute text
 
@@ -105,12 +93,10 @@ def clean_attribute_name(attr_text: str) -> str:
     text = re.sub(r'\s*:\s*.*$', '', text)  # remove type annotation
     return text.strip()
 
-
 def clean_method_name(method_text: str) -> str:
     """
     Cleans method names by removing visibility, parameters, and return type annotations.
     Extracts just the method name from signatures like "+ decrease_stock(qty: int)" -> "decrease_stock"
-
     Args:
         method_text: Raw method text with possible visibility, parameters, and type annotations
 
@@ -128,25 +114,20 @@ def clean_method_name(method_text: str) -> str:
     text = re.sub(r'\s*:\s*.*$', '', text)
     return text.strip()
 
-
 def get_element_by_id(class_model, element_id):
     """
     Resolve an element by its ID from the class_model.
-
     Args:
         class_model: The class model (dict or list)
         element_id: The element ID to find
-
     Returns:
         The element dict or None if not found
     """
     if not class_model or not element_id:
         return None
-
     if isinstance(class_model, dict):
         if element_id in class_model:
             return class_model[element_id]
-
         # If this is a full diagram dict, look under 'elements'
         if 'elements' in class_model and isinstance(class_model['elements'], dict):
             if element_id in class_model['elements']:
@@ -160,29 +141,34 @@ def get_element_by_id(class_model, element_id):
 
     return None
 
-
 def css_class_names(component: Dict[str, Any]) -> List[str]:
     """
     CSS class names of a GrapesJS component.
-
     GrapesJS saves them as ``classes``. A component it has not saved again,
     such as one the modeling agent wrote, has them in ``attributes["class"]``,
     which GrapesJS also reads on load.
     """
     classes = component.get("classes")
-    if classes:
+    if classes is not None:
         return [cls if isinstance(cls, str) else cls.get("name", "") for cls in classes]
     attributes = component.get("attributes")
     if isinstance(attributes, dict) and isinstance(attributes.get("class"), str):
         return attributes["class"].split()
     return []
 
+def html_attributes(attributes: Any) -> Dict[str, Any]:
+    """
+    A component's attributes without ``class``, which belongs in ``classes``
+    (GrapesJS moves it there on load), so a class is never kept twice.
+    """
+    if not isinstance(attributes, dict):
+        return {}
+    return {key: value for key, value in attributes.items() if key != "class"}
 
 def extract_text_content(component: Dict[str, Any]) -> str:
     """
     Collect text content from a GrapesJS component (including nested text nodes).
     Converts <br> tags to newlines. Recursively extracts all text content.
-
     Args:
         component: GrapesJS component dict
 
@@ -192,7 +178,6 @@ def extract_text_content(component: Dict[str, Any]) -> str:
 
     if not isinstance(component, dict):
         return ""
-
     comp_type = str(component.get("type", "")).lower()
     if comp_type == "textnode":
         text = component.get("content", "")
@@ -202,13 +187,11 @@ def extract_text_content(component: Dict[str, Any]) -> str:
     # Direct content if present
     if component.get("content"):
         content += str(component.get("content"))
-
     # Recursively extract from all nested children
     children = component.get("components", []) or []
     for child in children:
         if not isinstance(child, dict):
             continue
-
         child_type = str(child.get("type", "")).lower()
         child_tag = str(child.get("tagName", "")).lower()
 

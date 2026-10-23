@@ -7,9 +7,11 @@ from typing import Any, Dict, List, Optional, Set
 
 # Inline SVG elements, by lowercase name, with the casing React needs.
 _SVG_TAGS = {name.lower(): name for name in (
-    "svg", "g", "defs", "use", "path", "rect", "circle", "ellipse", "line",
-    "polyline", "polygon", "text", "tspan", "linearGradient", "radialGradient",
-    "stop", "clipPath",
+    "svg", "g", "defs", "symbol", "use", "image", "path", "rect", "circle", "ellipse",
+    "line", "polyline", "polygon", "text", "tspan", "textPath", "desc",
+    "linearGradient", "radialGradient", "stop", "pattern", "clipPath", "mask", "marker",
+    "filter", "feGaussianBlur", "feOffset", "feDropShadow", "feFlood", "feComposite",
+    "feColorMatrix", "feBlend", "feMerge", "feMergeNode",
 )}
 
 
@@ -1054,7 +1056,8 @@ class PageBuilderMixin:
             props.append(" onClick={" + on_click_expr + "}")
 
         cleaned_attrs = dict(attributes or {})
-        for key in ("id", "class", "className", "style"):
+        # React props, not HTML attributes: dangerouslySetInnerHTML would inject markup from the GUI JSON.
+        for key in ("id", "class", "className", "style", "dangerouslySetInnerHTML", "ref", "key"):
             cleaned_attrs.pop(key, None)
 
         if extra_props:

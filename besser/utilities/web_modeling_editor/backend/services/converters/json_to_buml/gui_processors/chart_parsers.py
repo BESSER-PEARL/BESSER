@@ -18,7 +18,7 @@ from besser.BUML.metamodel.gui.dashboard import (
     Map, MapLayer, MapLayerType,
 )
 from besser.BUML.metamodel.gui.dashboard import Series
-from besser.BUML.metamodel.gui.binding import DataAggregation
+from besser.BUML.metamodel.gui.binding import DataAggregation, is_valid_endpoint
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
 
@@ -33,11 +33,13 @@ def _parse_aggregation(*sources: Dict[str, Any]):
     return None
 
 
-def _parse_endpoint(attrs: Dict[str, Any]) -> Optional[str]:
-    """The ``data-endpoint`` a series or metric card reads its records from, if any.
+def _parse_endpoint(attrs: Dict[str, Any], owner: str = "component") -> Optional[str]:
+    """The ``data-endpoint`` a series, chart or metric card reads its records from, if any.
 
     A path typed without its leading ``/`` (``stats/exports``) gets one, as the
-    generated app's charts would add it.
+    generated app's charts would add it. A value ``DataBinding.endpoint`` would
+    refuse (a space, a control character) is dropped with a warning naming
+    ``owner``, so one bad field does not fail the whole GUI import.
     """
     value = attrs.get('data-endpoint') if isinstance(attrs, dict) else None
     if not isinstance(value, str) or not value.strip():
@@ -45,6 +47,10 @@ def _parse_endpoint(attrs: Dict[str, Any]) -> Optional[str]:
     value = value.strip()
     if not value.startswith('/') and not re.match(r'^https?://', value, re.IGNORECASE):
         value = '/' + value
+    if not is_valid_endpoint(value):
+        logger.warning("Ignoring the invalid data endpoint %r of %s: expected a path starting with '/' "
+                       "or an http(s):// URL, without spaces", value, owner)
+        return None
     return value
 
 
@@ -88,7 +94,8 @@ def _parse_series(view_comp: Dict[str, Any], attrs: Dict[str, Any], class_model,
         if field_aliases:
             binding_attrs = {**s_attrs, **{key: s_attrs.get(alias) or s_attrs.get(key)
                                            for key, alias in field_aliases.items()}}
-        data_binding = _build_data_binding(binding_attrs, class_model, domain_model, attrs)
+        data_binding = _build_data_binding(binding_attrs, class_model, domain_model, attrs,
+                                           owner=f"series {s_raw_name!r}")
         series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding,
                                   styling=_series_styling(s_attrs, color_role)))
     return series_objs
@@ -103,20 +110,29 @@ def _apply_chart_level_binding(chart, attrs: Dict[str, Any], class_model, domain
     """
     if chart.data_binding is not None or not attrs.get('data-source'):
         return
-    data_binding = _build_data_binding(attrs, class_model, domain_model)
+    data_binding = _build_data_binding(attrs, class_model, domain_model,
+                                       owner=f"chart {attrs.get('chart-title')!r}")
     if data_binding is not None:
         chart.data_binding = data_binding
 
 
 def _build_data_binding(binding_attrs: Dict[str, Any], class_model, domain_model,
-                        *aggregation_fallbacks: Dict[str, Any]) -> Optional[DataBinding]:
+                        *aggregation_fallbacks: Dict[str, Any], owner: str = "component",
+                        reads_endpoint: bool = True) -> Optional[DataBinding]:
     """Build the ``DataBinding`` described by a series' (or a chart's own) attributes.
 
     Returns ``None`` when the data source does not resolve to a domain class. The
     aggregation falls back to ``aggregation_fallbacks`` (the chart's attributes for
     a series) when ``binding_attrs`` has none; the endpoint (``data-endpoint``) is
-    the binding's own only.
+    the binding's own only. A component that does not read from an endpoint
+    (``reads_endpoint=False``, e.g. a table, whose rows are also edited through
+    the CRUD routes) gets none, with a warning when one was set.
     """
+    endpoint = _parse_endpoint(binding_attrs, owner)
+    if endpoint and not reads_endpoint:
+        logger.warning("Ignoring the data endpoint %r of %s: only charts and metric cards read from one",
+                       endpoint, owner)
+        endpoint = None
     domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(
         binding_attrs, class_model, domain_model)
     if not domain_class:
@@ -131,7 +147,7 @@ def _build_data_binding(binding_attrs: Dict[str, Any], class_model, domain_model
         data_field_path=data_field_path,
         filter_expression=data_filter,
         aggregation=_parse_aggregation(binding_attrs, *aggregation_fallbacks),
-        endpoint=_parse_endpoint(binding_attrs),
+        endpoint=endpoint,
     )
 
 
@@ -612,7 +628,8 @@ def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:
     """
     attrs = view_comp.get('attributes', {})
 
-    data_binding = _build_data_binding(attrs, class_model, domain_model)
+    data_binding = _build_data_binding(attrs, class_model, domain_model,
+                                       owner=f"table {attrs.get('chart-title')!r}", reads_endpoint=False)
     domain_class = data_binding.domain_concept if data_binding else None
 
     raw_title = attrs.get('chart-title')
@@ -713,7 +730,7 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
     positive_color = attrs.get('positive-color', '#27ae60')
     negative_color = attrs.get('negative-color', '#e74c3c')
 
-    data_binding = _build_data_binding(attrs, class_model, domain_model)
+    data_binding = _build_data_binding(attrs, class_model, domain_model, owner=f"metric card {metric_title!r}")
     if data_binding is not None:
         data_binding.name = sanitize_name(f"{metric_title}_binding")
 

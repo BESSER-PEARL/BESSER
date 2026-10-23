@@ -477,6 +477,9 @@ def _apply_component_specific_attributes(element: ViewComponent, attrs: Dict[str
 def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[str, Any]) -> None:
     binding = getattr(component, "data_binding", None)
     if not binding:
+        # The model is the source of truth for the endpoint: an endpoint stored
+        # in the editor's attributes must not outlive the binding.
+        attrs.pop("data-endpoint", None)
         return
     domain = getattr(binding, "domain_concept", None)
     if domain and getattr(domain, "name", None):
@@ -504,8 +507,12 @@ def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[s
         attrs.setdefault("data-field-path", binding.data_field_path)
     if binding.filter_expression:
         attrs.setdefault("filter", str(binding.filter_expression))
-    if getattr(binding, "endpoint", None):
-        attrs.setdefault("data-endpoint", binding.endpoint)
+    # Assigned, not defaulted: editing or clearing ``endpoint=`` in B-UML must win
+    # over the value stored when the component was last saved in the editor.
+    if binding.endpoint:
+        attrs["data-endpoint"] = binding.endpoint
+    else:
+        attrs.pop("data-endpoint", None)
 
 
 # The series keys the model owns (written from its Series and their bindings);

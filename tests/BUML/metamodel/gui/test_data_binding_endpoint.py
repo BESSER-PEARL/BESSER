@@ -6,7 +6,7 @@ browser. An endpoint is a backend path or an absolute http(s) URL.
 """
 import pytest
 
-from besser.BUML.metamodel.gui.binding import DataBinding
+from besser.BUML.metamodel.gui.binding import DataBinding, is_valid_endpoint
 from besser.BUML.metamodel.structural import Class, FloatType, Property
 
 
@@ -44,6 +44,13 @@ def test_a_blank_endpoint_means_none(blank):
     "ftp://host/sales",
     "/stats/sales by region",
     "javascript:alert(1)",
+    "//evil.example.org/sales",  # scheme-relative: another host
+    "http://",                   # no host
+    "https:///sales",
+    "/stats/sales\x00",          # control characters
+    "/stats/\x07sales",
+    "/stats/sa​les",        # invisible format characters
+    "/stats/sa les",
 ])
 def test_anything_else_is_refused(endpoint):
     with pytest.raises(ValueError, match="Invalid endpoint"):
@@ -51,7 +58,7 @@ def test_anything_else_is_refused(endpoint):
 
 
 def test_a_non_string_is_refused():
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="endpoint must be a string"):
         DataBinding(domain_concept=_sale(), endpoint=42)
 
 
@@ -63,3 +70,17 @@ def test_the_setter_validates_too():
     assert binding.endpoint is None
     with pytest.raises(ValueError):
         binding.endpoint = "stats"
+
+
+def test_is_valid_endpoint_matches_the_setter():
+    assert is_valid_endpoint("/stats/sales")
+    assert is_valid_endpoint("https://api.example.org/v1")
+    assert not is_valid_endpoint("//evil.example.org")
+    assert not is_valid_endpoint("")
+    assert not is_valid_endpoint(None)
+
+
+def test_str_names_the_endpoint_and_the_aggregation():
+    text = str(DataBinding(domain_concept=_sale(), aggregation="sum", endpoint="/stats/sales"))
+    assert "endpoint=/stats/sales" in text
+    assert "aggregation=DataAggregation.SUM" in text

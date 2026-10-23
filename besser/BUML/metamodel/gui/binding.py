@@ -3,9 +3,19 @@ from enum import Enum
 from besser.BUML.metamodel.structural import Class, Property, Constraint
 from besser.BUML.metamodel.structural.structural import Element
 
-# A DataBinding endpoint: a backend path ("/stats/exports?year=2025") or an
-# absolute http(s) URL; no whitespace, so it can go into a URL as is.
-_ENDPOINT_RE = re.compile(r"^(/|https?://)\S*$", re.IGNORECASE)
+# A DataBinding endpoint: a backend path ("/stats/exports?year=2025", not "//host/...")
+# or an absolute http(s) URL with a host. Whitespace, control characters and invisible
+# format characters are refused, so the value goes into a URL as is.
+_ENDPOINT_RE = re.compile(
+    r"^(/(?!/)|https?://[^/\s?#]+)"
+    r"[^\s\x00-\x1f\x7f​-‏ -‮⁠-⁤﻿]*$",
+    re.IGNORECASE,
+)
+
+
+def is_valid_endpoint(endpoint: str) -> bool:
+    """Whether ``endpoint`` is a value ``DataBinding.endpoint`` accepts (not blank)."""
+    return isinstance(endpoint, str) and bool(_ENDPOINT_RE.match(endpoint.strip()))
 
 
 class DataAggregation(Enum):
@@ -73,7 +83,7 @@ class DataBinding(Element):
     def __init__(self, domain_concept: Class, name: str = None, visualization_attrs: set[Property] = None,
                  label_field: Property = None, data_field: Property = None,
                  data_filter: Constraint = None, label_field_path: str = None, data_field_path: str = None,
-                 filter_expression: str = None, aggregation: DataAggregation = None, endpoint: str = None):
+                 filter_expression: str = None, aggregation: DataAggregation = None, endpoint: str | None = None):
         super().__init__()
         self.name = name or f"{domain_concept.name if domain_concept else 'Unknown'}DataBinding"
         self.domain_concept = domain_concept
@@ -187,12 +197,14 @@ class DataBinding(Element):
         if endpoint and not _ENDPOINT_RE.match(endpoint):
             raise ValueError(
                 f"Invalid endpoint {endpoint!r}: expected a path starting with '/' "
-                "(e.g. '/stats/exports?year=2025') or an absolute http(s):// URL, without spaces"
+                "(e.g. '/stats/exports?year=2025') or an absolute http(s):// URL with a host, "
+                "without spaces or control characters"
             )
         self._endpoint = endpoint or None
 
     def __str__(self):
         return (
             f"DataBinding(domain_concept={self.domain_concept}, visualization_attrs={self.visualization_attrs},"
-            f"label_field={self.label_field}, data_field={self.data_field}, data_filter={self.data_filter})"
+            f"label_field={self.label_field}, data_field={self.data_field}, data_filter={self.data_filter}, "
+            f"aggregation={self.aggregation}, endpoint={self.endpoint})"
         )

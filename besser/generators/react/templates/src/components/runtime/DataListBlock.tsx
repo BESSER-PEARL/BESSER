@@ -1,5 +1,6 @@
 import React, { CSSProperties, useEffect, useState } from "react";
 import axios from "axios";
+import { backendUrl } from "./bindingData";
 
 export interface DataSourceConfig {
   name?: string;
@@ -26,8 +27,7 @@ export const DataListBlock: React.FC<DataListBlockProps> = ({ id, dataSources, s
     const endpoint = source.endpoint || (source.domain ? `/${source.domain.toLowerCase()}/` : "");
     if (!endpoint) return;
 
-    const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
-    const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+    const url = backendUrl(endpoint);
     axios
       .get(url)
       .then((res) => {

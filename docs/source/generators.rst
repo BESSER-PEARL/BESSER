@@ -118,6 +118,10 @@ Choosing a Generator
      - Neural Network
      - .py
      - You need a TensorFlow neural network
+   * - **Time-Series Forecaster**
+     - Neural Network
+     - .py
+     - You need a network that forecasts a series: training, prediction and a backtest (Python API only)
    * - **Qiskit**
      - Quantum Circuit
      - .py
@@ -203,6 +207,7 @@ Generate machine learning model code:
 
    generators/pytorch
    generators/tensorflow
+   generators/forecaster
 
 Quantum Computing
 -----------------

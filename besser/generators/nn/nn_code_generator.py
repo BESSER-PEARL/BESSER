@@ -534,6 +534,27 @@ class NNCodeGenerator(GeneratorInterface):
         return code
 
 
+    def forward_input_var(self) -> str:
+        """The name of the argument of ``forward`` (``call`` in TF): the
+        input variable of the first module, ``x`` by default."""
+        forward_input_var = "x"
+        if self.modules_details:
+            first_module_data = next(iter(self.modules_details.values()))
+            if isinstance(first_module_data, dict) and 'in_out_variable' in first_module_data:
+                forward_input_var = first_module_data['in_out_variable']
+            elif isinstance(first_module_data, list) and len(first_module_data) >= 3:
+                # For RNN layers: [syntax, out_var, in_var, layer, ...]
+                # Check if this is an RNN layer by checking if layer object exists at index 3
+                if len(first_module_data) >= 4:
+                    layer_obj = first_module_data[3]
+                    if isinstance(layer_obj, (SimpleRNNLayer, LSTMLayer, GRULayer)):
+                        forward_input_var = first_module_data[2]  # Use in_var
+                    else:
+                        forward_input_var = first_module_data[1]  # Use out_var
+                else:
+                    forward_input_var = first_module_data[1]
+        return forward_input_var
+
     def generate(self, *args):
         """
         Generates NN code based on the provided B-UML model and saves
@@ -560,31 +581,12 @@ class NNCodeGenerator(GeneratorInterface):
 
         template = env.get_template(self.template_name)
 
-        # Extract first module's input_var for forward signature
-        forward_input_var = "x"
-        if self.modules_details:
-            first_module_data = next(iter(self.modules_details.values()))
-            if isinstance(first_module_data, dict) and 'in_out_variable' in first_module_data:
-                forward_input_var = first_module_data['in_out_variable']
-            elif isinstance(first_module_data, list) and len(first_module_data) >= 3:
-                # For RNN layers: [syntax, out_var, in_var, layer, ...]
-                # Check if this is an RNN layer by checking if layer object exists at index 3
-                if len(first_module_data) >= 4:
-                    layer_obj = first_module_data[3]
-                    if isinstance(layer_obj, (SimpleRNNLayer, LSTMLayer, GRULayer)):
-                        forward_input_var = first_module_data[2]  # Use in_var
-                    else:
-                        forward_input_var = first_module_data[1]  # Use out_var
-                else:
-                    forward_input_var = first_module_data[1]
-
-
         generated_code = template.render(
             model=self.model, modules_details=self.modules_details,
             generation_type=self.generation_type,
             strip_layer_counter_suffix=self.strip_layer_counter_suffix,
             has_training_aware_dropout=self.has_training_aware_dropout,
-            forward_input_var=forward_input_var)
+            forward_input_var=self.forward_input_var())
 
         # Post-process: clean excessive blank lines
         generated_code = self._clean_generated_code(generated_code)

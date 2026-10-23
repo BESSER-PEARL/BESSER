@@ -8,22 +8,19 @@ import asyncio
 
 import httpx
 import pytest
-from httpx._transports.asgi import ASGITransport
 
-from besser.BUML.metamodel.nn import NN, Configuration, GRULayer, LinearLayer
+from besser.BUML.metamodel.nn import NN, Configuration, LinearLayer
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.config import SUPPORTED_GENERATORS
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.nn_diagram_converter import (
     nn_model_to_json,
 )
-
-pytestmark = pytest.mark.skipif("forecaster" not in SUPPORTED_GENERATORS,
-                                reason="the forecaster generator is not registered")
+from tests.forecaster_networks import gru, mlp
 
 
 def _post(url: str, payload: dict) -> httpx.Response:
     async def go():
-        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as ac:
             return await ac.post(url, json=payload)
     return asyncio.run(go())
 
@@ -31,29 +28,6 @@ def _post(url: str, payload: dict) -> httpx.Response:
 @pytest.fixture(autouse=True)
 def isolate_backend_test_artifacts(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-
-
-def _configuration() -> Configuration:
-    return Configuration(batch_size=32, epochs=2, learning_rate=0.003, optimizer="adamW",
-                         loss_function="mse", metrics=["mae"])
-
-
-def mlp(window: int = 24, horizon: int = 12) -> NN:
-    """window values plus the sine and cosine of the month in, horizon values out."""
-    model = NN(name="mlp")
-    model.add_layer(LinearLayer(name="hidden", in_features=window + 2, out_features=16, actv_func="relu"))
-    model.add_layer(LinearLayer(name="output", in_features=16, out_features=horizon))
-    model.add_configuration(_configuration())
-    return model
-
-
-def gru(horizon: int = 12) -> NN:
-    model = NN(name="gru")
-    model.add_layer(GRULayer(name="recurrent", input_size=3, hidden_size=8, return_type="last",
-                             batch_first=True, output_var="state"))
-    model.add_layer(LinearLayer(name="output", in_features=8, out_features=horizon, input_var="state"))
-    model.add_configuration(_configuration())
-    return model
 
 
 def classifier() -> NN:
@@ -102,8 +76,15 @@ def test_the_settings_reach_the_generated_module():
     response = _post("/besser_api/generate-output", diagram_input(mlp(window=36, horizon=6), config))
     assert response.status_code == 200, response.text
     code = response.text
-    for line in ("WINDOW = 36", "HORIZON = 6", "SEASON = 4", "LOG = False", "DIFFERENCE = 1", "SEEDS = [7]"):
+    for line in ("WINDOW = 36", "HORIZON = 6", "SEASON = 4", "LOG = False", "DIFFERENCE = 1", "CALENDAR = True",
+                 "STANDARDIZE = True", "SEEDS = [7]"):
         assert line in code
+
+
+def test_the_default_difference_follows_the_season():
+    response = _post("/besser_api/generate-output", diagram_input(mlp(), {"season": 4}))
+    assert response.status_code == 200, response.text
+    assert "SEASON = 4" in response.text and "DIFFERENCE = 4" in response.text
 
 
 def test_a_recurrent_network_through_the_project_endpoint():
@@ -120,7 +101,10 @@ def test_a_recurrent_network_through_the_project_endpoint():
     ({"log": "yes"}, "log must be true or false"),
     ({"seeds": [1, "2"]}, "seeds must be a list of integers"),
     ({"windw": 24}, "unknown setting(s): windw"),
-    ({"channel_last": 1}, "channel_last must be true or false"),
+    ({"channel_last": 1}, "channel_last must be true or false, got int"),
+    ({"seed": 1, "seeds": [2]}, "send either seed or seeds, not both"),
+    ({"seeds": list(range(1000))}, "at most 100 seeds, not 1000"),
+    ({"difference": 5}, "difference must be 0 (levels), 1 (first difference) or the season (12), not 5"),
 ])
 def test_invalid_settings_are_a_400_naming_the_problem(config, message):
     response = _post("/besser_api/generate-output", diagram_input(mlp(), config))
@@ -132,7 +116,9 @@ def test_settings_that_do_not_fit_the_network_are_a_400():
     # the network reads 24 + 2 values and returns 12; a 6-month horizon does not match its last layer
     response = _post("/besser_api/generate-output", diagram_input(mlp(), {"horizon": 6}))
     assert response.status_code == 400
-    assert "cannot be generated as a forecaster" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "NN 'mlp' cannot be generated as a forecaster" in detail
+    assert "the last layer 'output' returns 12 values; the horizon is 6, so out_features must be 6" in detail
 
 
 def test_a_classifier_is_refused_with_a_readable_message():
@@ -140,4 +126,6 @@ def test_a_classifier_is_refused_with_a_readable_message():
     assert response.status_code == 400
     detail = response.json()["detail"]
     assert "NN 'classifier' cannot be generated as a forecaster" in detail
-    assert "softmax" in detail or "crossentropy" in detail
+    assert "a forecaster is trained with the 'mse' loss, not 'crossentropy'" in detail
+    assert "the last layer 'output' returns 3 values; the horizon is 12" in detail
+    assert "must be linear, not 'softmax'" in detail

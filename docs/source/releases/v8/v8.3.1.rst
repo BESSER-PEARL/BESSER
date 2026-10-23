@@ -1,0 +1,65 @@
+Version 8.3.1
+=============
+
+Patch release: **dependency security updates**. BESSER and the web modeling
+editor move off dependency versions with published security advisories. A
+``pip-audit`` of the web editor backend goes from 39 known vulnerabilities in 6
+packages to 1. No metamodel, API or generator output changes.
+
+Dependencies
+------------
+
+* **bocl 1.0.4.** Up to 1.0.3, ``bocl`` hard-pinned packages it never imports,
+  among them ``jinja2==3.1.2``, ``requests==2.31.0``, ``setuptools==68.2.2``,
+  ``pytest==7.4.0`` and ``uvicorn==0.28.0``. Every ``pip install besser``
+  therefore resolved to those versions, whatever BESSER's own ranges allowed.
+  ``bocl`` 1.0.4 declares only ``besser`` and the ANTLR runtime, so these now
+  resolve to current releases. OCL evaluation is unchanged.
+* **FastAPI 0.159 and Starlette 1.9 for the web editor backend.** The backend
+  was held at ``fastapi`` 0.110 and ``starlette`` 0.36, which have published
+  advisories. It now pins the current minors, ``fastapi>=0.159,<0.160`` and
+  ``starlette>=1.9,<1.10``.
+
+Spec-Driven Agent
+-----------------
+
+* **Fix-site hints on current FastAPI.** Newer FastAPI versions keep an
+  included router as one nested entry in ``app.routes`` instead of flattening
+  its routes. The constructibility probes looked only at the top level, so
+  they no longer found the handler behind a failing endpoint, and the "Fix
+  site:" hint disappeared from Phase 3 repair prompts. The probes now walk
+  nested routers, and still work on FastAPI versions that flatten them.
+
+Web modeling editor
+-------------------
+
+* **npm audit fixes.** The editor applies the security fixes that need no
+  major-version bump: ``postcss`` 8.5, ``stylelint`` 16.26, ``webpack-dev-server``
+  5.2.7, ``react-router-dom`` 6.30.6 and the transitive updates from
+  ``npm audit fix``. ``npm audit --omit=dev`` goes from 69 to 60, with critical
+  findings from 3 to 0 and high from 22 to 8. The remaining high findings are
+  in build and dev-server tooling, and need Tailwind 4.
+
+Deploy alongside
+----------------
+
+Deploy the modeling agent with this release:
+
+* It moves from ``besser-agentic-framework`` 4.3.2 to 4.5.3
+  (BESSER-PEARL/modeling-agent#37), which takes the agent image from 230 known
+  advisories to 47.
+* Its vendored WebSocket patch is re-applied on top of 4.5.3. It keeps a
+  session keyed by the editor's ``?user_id=``, so a reconnect returns to the
+  same conversation.
+* Calls made with a user's own Anthropic key no longer send sampling
+  parameters (BESSER-PEARL/modeling-agent#39). The ``anthropic`` SDK removed
+  them in 1.0, so a key on ``claude-haiku-4-5`` or another Claude model before
+  generation 5 failed before any request was sent.
+
+Upgrade notes
+-------------
+
+* Projects that relied on ``bocl`` to hold ``jinja2``, ``requests``,
+  ``setuptools``, ``pytest`` or ``uvicorn`` at old versions now get current
+  releases. Pin them in your own project if you need the old ones.
+* The web editor backend requires ``fastapi`` 0.159 and ``starlette`` 1.9.

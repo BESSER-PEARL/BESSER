@@ -41,6 +41,17 @@ _TOTAL_LABELS = re.compile(r"^(total|world|all countries( of the world)?|all|all
 _ISO2 = re.compile(r"^[A-Z]{2}$")
 # Two-letter codes that are not countries: aggregates and "not specified" pseudo-areas.
 _NOT_COUNTRY = re.compile(r"^(Q[P-Z]|EU|EA|EZ|XX|ZZ)$")
+# Fewer digit codes than this are too few to tell a nomenclature from a coincidence.
+_MIN_NOMENCLATURE_CODES = 50
+# Integer codes filling more than this share of their range are a run (ranks, years), not a nomenclature.
+_DENSE_RUN_SHARE = 0.9
+# More than this share of the digit codes must have a prefix parent for the codes to nest by prefix.
+_PREFIX_PARENT_SHARE = 0.5
+# A dimension whose label reads like a unit is one only up to this many codes (a long list is a breakdown).
+_MAX_UNIT_CODES = 60
+# A dimension is geographic when at least this share of at least _MIN_GEO_CODES codes are ISO alpha-2.
+_GEO_ISO_SHARE = 0.6
+_MIN_GEO_CODES = 10
 # Preferred default for unit-like dimensions without a total: a level rather than a ratio.
 _HEADLINE = [(re.compile(p, re.I), w) for p, w in (
     (r"^(EUR|MIO_EUR|CP_MEUR|CP_MNAC|NR|THS|THS_PER|PER|USD|XDC)$", 8),
@@ -88,16 +99,16 @@ def looks_prefix_hierarchical(codes: Iterable[str]) -> bool:
     """True for numeric codes where most have a strictly shorter code as prefix (a nomenclature)."""
     codes = list(codes)
     digit_codes = [c for c in codes if c.isdigit()]
-    if len(digit_codes) < 50:
+    if len(digit_codes) < _MIN_NOMENCLATURE_CODES:
         return False
     # A run of plain integers (ranks 1..N, years) nests by prefix too, but is not a nomenclature.
     if not any(c.startswith("0") for c in digit_codes):
         ints = {int(c) for c in digit_codes}
-        if len(ints) > 0.9 * (max(ints) - min(ints) + 1):
+        if len(ints) > _DENSE_RUN_SHARE * (max(ints) - min(ints) + 1):
             return False
     parents = infer_prefix_parents(codes)
     with_parent = sum(1 for c in digit_codes if parents.get(c) not in (None, "TOTAL"))
-    return with_parent / len(digit_codes) > 0.5
+    return with_parent / len(digit_codes) > _PREFIX_PARENT_SHARE
 
 
 def _label_of(codelist: Optional[Codelist], code: str) -> str:
@@ -176,10 +187,10 @@ def detect_roles(dsd: DataStructure, prefix_hierarchy: Optional[Iterable[str]] =
         elif len(used) == 1:
             role, reason = UNIT, "a single code in the data (constant)"
         elif _UNIT_IDS.match(dim.id.upper()) or _UNIT_IDS.match(key) or (
-                any(w in label.lower() for w in _UNIT_WORDS) and not hierarchy and len(used) <= 60):
+                any(w in label.lower() for w in _UNIT_WORDS) and not hierarchy and len(used) <= _MAX_UNIT_CODES):
             role, reason = UNIT, "unit or measure concept: never summed"
         elif (_GEO_IDS.search(dim.id.upper()) or any(w in words for w in _GEO_WORDS)
-              or (_iso_share(used) >= 0.6 and len(used) >= 10)):
+              or (_iso_share(used) >= _GEO_ISO_SHARE and len(used) >= _MIN_GEO_CODES)):
             role, reason = GEO, f"area concept, {_iso_share(used):.0%} ISO alpha-2 codes"
         elif hierarchy:
             role, reason = HIERARCHY, f"{hierarchy} hierarchy"

@@ -108,6 +108,7 @@ def run_generator(name: str, model, out: Path) -> str:
         return "imported"
     if name == "sqlalchemy":
         from sqlalchemy import create_engine
+
         from besser.generators.sql_alchemy import SQLAlchemyGenerator
         SQLAlchemyGenerator(model, output_dir=str(out)).generate(dbms="sqlite")
         module = _load_module(out / "sql_alchemy.py", f"sweep_sa_{id(out)}")

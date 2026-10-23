@@ -18,25 +18,55 @@ and an ``sdmx:`` URI of its codelist or dataflow, so the model documents how to 
 """
 
 import keyword
+import logging
 import re
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, Optional
 
 from besser.BUML.metamodel.structural import (
-    BinaryAssociation, Class, DomainModel, Enumeration, EnumerationLiteral, FloatType,
-    IntegerType, Metadata, Multiplicity, Property, StringType,
+    UNLIMITED_MAX_MULTIPLICITY,
+    BinaryAssociation,
+    Class,
+    DomainModel,
+    Enumeration,
+    EnumerationLiteral,
+    FloatType,
+    IntegerType,
+    Metadata,
+    Multiplicity,
+    Property,
+    StringType,
 )
 from besser.utilities.sdmx_to_buml.roles import DimensionRole, detect_roles
-from besser.utilities.sdmx_to_buml.structure import Component, DataStructure
+from besser.utilities.sdmx_to_buml.structure import Codelist, Component, DataStructure
 
-_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+logger = logging.getLogger(__name__)
+
+# Flat codelists with at most this many codes become enumerations; larger ones become classes.
+DEFAULT_ENUM_MAX = 50
+# Longest enumeration literal built from a code's label (labels can be whole sentences).
+_MAX_LITERAL_LENGTH = 60
 # Attribute names the generators reserve for themselves (the primary key of every generated table).
 _RESERVED_ATTRS = {"id"}
+# Letters NFKD does not decompose into an ASCII base letter.
+_TRANSLITERATE = str.maketrans({"ß": "ss", "æ": "ae", "Æ": "AE", "ø": "o", "Ø": "O", "œ": "oe", "Œ": "OE",
+                                "đ": "d", "Đ": "D", "ł": "l", "Ł": "L", "þ": "th", "Þ": "Th"})
+
+
+def _ascii(text: str) -> str:
+    """``Österreich`` -> ``Osterreich``, ``Größe`` -> ``Grosse``: names stay readable without accents."""
+    return unicodedata.normalize("NFKD", text.translate(_TRANSLITERATE)).encode("ascii", "ignore").decode("ascii")
 
 
 def _words(text: str) -> list[str]:
-    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)  # split camelCase
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", _ascii(text))  # split camelCase
     return [w for w in re.split(r"[^A-Za-z0-9]+", text) if w]
+
+
+def _is_name(text: str) -> bool:
+    """A Python identifier that is not a keyword: usable as a B-UML name in every generator."""
+    return text.isidentifier() and text.isascii() and not keyword.iskeyword(text)
 
 
 def pascal(text: str) -> str:
@@ -57,13 +87,13 @@ def snake(text: str) -> str:
 def literal_name(code: str, label: str, taken: set[str]) -> str:
     """A valid, unique enumeration literal for an SDMX code: the code itself, else its label."""
     candidates = []
-    if _IDENT.match(code) and not keyword.iskeyword(code) and not code.startswith("_"):
+    if _is_name(code) and not code.startswith("_"):
         candidates.append(code)
     if label:
-        candidates.append("_".join(w.upper() for w in _words(label))[:60])
-    candidates.append("C_" + re.sub(r"[^A-Za-z0-9_]", "_", code).strip("_"))
+        candidates.append("_".join(w.upper() for w in _words(label))[:_MAX_LITERAL_LENGTH])
+    candidates.append("C_" + re.sub(r"[^A-Za-z0-9_]", "_", _ascii(code)).strip("_"))
     for cand in candidates:
-        if cand and _IDENT.match(cand) and not keyword.iskeyword(cand) and cand not in taken:
+        if cand and _is_name(cand) and cand not in taken:
             return cand
     base, i = candidates[-1], 2
     while f"{base}_{i}" in taken:
@@ -103,8 +133,15 @@ class ImportMapping:
         return asdict(self)
 
     def dimension(self, dim_id: str) -> DimensionMapping:
-        """The mapping of one dimension."""
-        return next(d for d in self.dimensions if d.id == dim_id)
+        """The mapping of one dimension.
+
+        Raises:
+            KeyError: the dataflow has no dimension ``dim_id``.
+        """
+        found = next((d for d in self.dimensions if d.id == dim_id), None)
+        if found is None:
+            raise KeyError(dim_id)
+        return found
 
 
 def _describe(dim: Component, role: DimensionRole, codelist: Optional[str] = None) -> str:
@@ -120,10 +157,150 @@ def _describe(dim: Component, role: DimensionRole, codelist: Optional[str] = Non
     return ", ".join(parts)
 
 
+class _ModelBuilder:
+    """The state of one :func:`structure_to_buml` call: names taken, types, associations, mappings."""
+
+    def __init__(self, dsd: DataStructure, roles: dict[str, DimensionRole], observation_class: str,
+                 class_names: dict[str, str]):
+        self.dsd = dsd
+        self.roles = roles
+        self.class_names = class_names
+        self.obs = Class(name=observation_class)
+        self.used_names: set[str] = {observation_class}
+        self.obs_attr_names: set[str] = set()
+        self.obs_attrs: set[Property] = set()
+        self.types: set = {self.obs}
+        self.associations: set[BinaryAssociation] = set()
+        self.dim_maps: list[DimensionMapping] = []
+        self.shared_classes: dict[str, Class] = {}
+        self.codelist_users: dict[str, int] = {}
+        for d in dsd.dimensions:
+            if d.codelist_ref:
+                self.codelist_users[d.codelist_ref] = self.codelist_users.get(d.codelist_ref, 0) + 1
+
+    def unique(self, name: str) -> str:
+        """A type name not used yet (``Area``, ``Area2``...)."""
+        base, i = name, 2
+        while name in self.used_names:
+            name, i = f"{base}{i}", i + 1
+        self.used_names.add(name)
+        return name
+
+    def attr_name(self, text: str) -> str:
+        """An Observation attribute name not used yet (``flow``, ``flow_2``...)."""
+        base = snake(text)
+        name, i = base, 2
+        while name in self.obs_attr_names:
+            name, i = f"{base}_{i}", i + 1
+        self.obs_attr_names.add(name)
+        return name
+
+    def add_dimension(self, dim: Component, enum_max: int) -> None:
+        """Map one dimension: a string, an enumeration, or a class linked to the observation."""
+        codelist = self.dsd.codelist_for(dim)
+        attr = self.attr_name(dim.id)
+        role = self.roles[dim.id]
+        role_fields = {"role": role.role, "label": role.label, "total_code": role.total_code,
+                       "default_code": role.default_code}
+        if codelist is None or not codelist.codes:
+            self.obs_attrs.add(Property(name=attr, type=StringType))
+            self.dim_maps.append(DimensionMapping(id=dim.id, kind="string", attr=attr, **role_fields))
+        elif role.hierarchy is None and len(codelist.codes) <= enum_max:
+            self._add_enumeration(dim, codelist, attr, role_fields)
+        else:
+            self._add_class(dim, codelist, attr, role, role_fields)
+
+    def _add_enumeration(self, dim: Component, codelist: Codelist, attr: str, role_fields: dict) -> None:
+        taken: set[str] = set()
+        literals: dict[str, str] = {}
+        for code in codelist.codes.values():
+            lit = literal_name(code.id, code.name, taken)
+            taken.add(lit)
+            literals[code.id] = lit
+        enum = Enumeration(name=self.unique(pascal(dim.id)),
+                           literals={EnumerationLiteral(name=lit) for lit in literals.values()})
+        self.types.add(enum)
+        self.obs_attrs.add(Property(name=attr, type=enum))
+        self.dim_maps.append(DimensionMapping(id=dim.id, kind="enum", attr=attr, type_name=enum.name,
+                                              literals=literals, **role_fields))
+
+    def _add_class(self, dim: Component, codelist: Codelist, attr: str, role: DimensionRole,
+                   role_fields: dict) -> None:
+        shared = self.codelist_users.get(codelist.id, 0) > 1
+        dim_cls = self.shared_classes.get(codelist.id)
+        new_class = dim_cls is None
+        if new_class:
+            cls_attrs = {
+                Property(name="code", type=StringType, is_id=True),
+                Property(name="label", type=StringType),
+            }
+            if role.hierarchy:
+                cls_attrs.add(Property(name="level", type=IntegerType))
+            default = re.sub(r"^(CL|CXT)_", "", codelist.id) if shared else dim.id
+            name = self.class_names.get(dim.id) or self.class_names.get(codelist.id) or pascal(default)
+            dim_cls = Class(name=self.unique(name), attributes=cls_attrs, metadata=Metadata(
+                description=_describe(dim, role, codelist.id),
+                uri=f"sdmx:codelist:{codelist.agency}:{codelist.id}({codelist.version})"))
+            self.shared_classes[codelist.id] = dim_cls
+            self.types.add(dim_cls)
+        self.associations.add(BinaryAssociation(
+            name=f"{snake(self.obs.name)}_{attr}",
+            ends={
+                Property(name=attr, type=dim_cls, multiplicity=Multiplicity(1, 1)),
+                Property(name=f"observations_as_{attr}" if shared else "observations", type=self.obs,
+                         multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY)),
+            },
+        ))
+        if role.hierarchy and new_class:
+            self.associations.add(BinaryAssociation(
+                name=f"{snake(dim_cls.name)}_hierarchy",
+                ends={
+                    Property(name="parent", type=dim_cls, multiplicity=Multiplicity(0, 1)),
+                    Property(name="children", type=dim_cls, multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY)),
+                },
+            ))
+        self.dim_maps.append(DimensionMapping(id=dim.id, kind="class", attr=attr, type_name=dim_cls.name,
+                                              hierarchy=role.hierarchy, **role_fields))
+
+    def describe_shared_classes(self) -> None:
+        """A class shared by several dimensions (reporter and partner -> one area class) documents all of them."""
+        for cl_id, cls in self.shared_classes.items():
+            users = [d for d in self.dsd.dimensions if d.codelist_ref == cl_id]
+            if len(users) > 1 and cls.metadata is not None:
+                cls.metadata.description = ("; ".join(_describe(d, self.roles[d.id]) for d in users)
+                                            + f"; codelist={cl_id}")
+
+    def finish_observation(self) -> dict[str, str]:
+        """Add the SDMX attributes and the metadata to the observation; returns attribute id -> name."""
+        dsd = self.dsd
+        attr_map: dict[str, str] = {}
+        for a in dsd.attributes:
+            name = self.attr_name(a.id)
+            attr_map[a.id] = name
+            self.obs_attrs.add(Property(name=name, type=StringType, is_optional=True))
+        self.obs.attributes = self.obs_attrs
+        self.obs.metadata = Metadata(
+            description=(f"One observation of SDMX dataflow {dsd.agency}:{dsd.dataflow_id} ({dsd.dataflow_name}). "
+                         "Dimension roles: " + "; ".join(_describe(d, self.roles[d.id]) for d in dsd.dimensions)),
+            uri=f"sdmx:dataflow:{dsd.agency}:{dsd.dataflow_id}",
+        )
+        return attr_map
+
+
+def _validated(model: DomainModel) -> DomainModel:
+    """Validate the model: warnings are logged, errors raised."""
+    result = model.validate(raise_exception=False)
+    for warning in result.get("warnings", []):
+        logger.warning("%s: %s", model.name, warning)
+    if result.get("errors"):
+        raise ValueError(f"The model built for {model.name} is not valid: " + "; ".join(result["errors"]))
+    return model
+
+
 def structure_to_buml(
     dsd: DataStructure,
     model_name: Optional[str] = None,
-    enum_max: int = 50,
+    enum_max: int = DEFAULT_ENUM_MAX,
     prefix_hierarchy: Optional[Iterable[str]] = None,
     observation_class: str = "Observation",
     class_names: Optional[dict[str, str]] = None,
@@ -142,136 +319,31 @@ def structure_to_buml(
 
     Returns:
         The domain model and the import mapping (how codes and columns map onto it).
+
+    Raises:
+        ValueError: the model fails validation (its warnings are logged).
     """
-    class_names = class_names or {}
-    roles = detect_roles(dsd, prefix_hierarchy)
-    codelist_users: dict[str, int] = {}
-    for d in dsd.dimensions:
-        if d.codelist_ref:
-            codelist_users[d.codelist_ref] = codelist_users.get(d.codelist_ref, 0) + 1
-    shared_classes: dict[str, Class] = {}
-    used_names: set[str] = {observation_class}
-    obs_attrs: set[Property] = set()
-    types: set = set()
-    associations: set[BinaryAssociation] = set()
-    dim_maps: list[DimensionMapping] = []
-    obs_attr_names: set[str] = set()
-
-    def unique(name: str) -> str:
-        base, i = name, 2
-        while name in used_names:
-            name, i = f"{base}{i}", i + 1
-        used_names.add(name)
-        return name
-
-    def attr_name(text: str) -> str:
-        base = snake(text)
-        name, i = base, 2
-        while name in obs_attr_names:
-            name, i = f"{base}_{i}", i + 1
-        obs_attr_names.add(name)
-        return name
-
+    builder = _ModelBuilder(dsd, detect_roles(dsd, prefix_hierarchy), observation_class, class_names or {})
     time_attr = None
     if dsd.time_dimension is not None:
-        time_attr = attr_name("time_period")
-        obs_attrs.add(Property(name=time_attr, type=StringType))
-    value_attr = attr_name("obs_value")
-    obs_attrs.add(Property(name=value_attr, type=FloatType, is_optional=True))
-
-    obs = Class(name=observation_class)
+        time_attr = builder.attr_name("time_period")
+        builder.obs_attrs.add(Property(name=time_attr, type=StringType))
+    value_attr = builder.attr_name("obs_value")
+    builder.obs_attrs.add(Property(name=value_attr, type=FloatType, is_optional=True))
     for dim in dsd.dimensions:
-        codelist = dsd.codelist_for(dim)
-        attr = attr_name(dim.id)
-        role = roles[dim.id]
-        role_fields = dict(role=role.role, label=role.label, total_code=role.total_code,
-                           default_code=role.default_code)
-        if codelist is None or not codelist.codes:
-            obs_attrs.add(Property(name=attr, type=StringType))
-            dim_maps.append(DimensionMapping(id=dim.id, kind="string", attr=attr, **role_fields))
-            continue
+        builder.add_dimension(dim, enum_max)
+    builder.describe_shared_classes()
+    attr_map = builder.finish_observation()
 
-        if role.hierarchy is None and len(codelist.codes) <= enum_max:
-            taken: set[str] = set()
-            literals: dict[str, str] = {}
-            for code in codelist.codes.values():
-                lit = literal_name(code.id, code.name, taken)
-                taken.add(lit)
-                literals[code.id] = lit
-            enum = Enumeration(name=unique(pascal(dim.id)),
-                               literals={EnumerationLiteral(name=lit) for lit in literals.values()})
-            types.add(enum)
-            obs_attrs.add(Property(name=attr, type=enum))
-            dim_maps.append(DimensionMapping(id=dim.id, kind="enum", attr=attr, type_name=enum.name,
-                                             literals=literals, **role_fields))
-            continue
-
-        shared = codelist_users.get(codelist.id, 0) > 1
-        dim_cls = shared_classes.get(codelist.id)
-        new_class = dim_cls is None
-        if new_class:
-            cls_attrs = {
-                Property(name="code", type=StringType, is_id=True),
-                Property(name="label", type=StringType),
-            }
-            if role.hierarchy:
-                cls_attrs.add(Property(name="level", type=IntegerType))
-            default = re.sub(r"^(CL|CXT)_", "", codelist.id) if shared else dim.id
-            name = class_names.get(dim.id) or class_names.get(codelist.id) or pascal(default)
-            dim_cls = Class(name=unique(name), attributes=cls_attrs, metadata=Metadata(
-                description=_describe(dim, role, codelist.id),
-                uri=f"sdmx:codelist:{codelist.agency}:{codelist.id}({codelist.version})"))
-            shared_classes[codelist.id] = dim_cls
-            types.add(dim_cls)
-        associations.add(BinaryAssociation(
-            name=f"{snake(observation_class)}_{attr}",
-            ends={
-                Property(name=attr, type=dim_cls, multiplicity=Multiplicity(1, 1)),
-                Property(name=f"observations_as_{attr}" if shared else "observations", type=obs,
-                         multiplicity=Multiplicity(0, "*")),
-            },
-        ))
-        if role.hierarchy and new_class:
-            associations.add(BinaryAssociation(
-                name=f"{snake(dim_cls.name)}_hierarchy",
-                ends={
-                    Property(name="parent", type=dim_cls, multiplicity=Multiplicity(0, 1)),
-                    Property(name="children", type=dim_cls, multiplicity=Multiplicity(0, "*")),
-                },
-            ))
-        dim_maps.append(DimensionMapping(id=dim.id, kind="class", attr=attr, type_name=dim_cls.name,
-                                         hierarchy=role.hierarchy, **role_fields))
-
-    # A class shared by several dimensions (reporter and partner -> one area class) documents all of them.
-    for cl_id, cls in shared_classes.items():
-        users = [d for d in dsd.dimensions if d.codelist_ref == cl_id]
-        if len(users) > 1 and cls.metadata is not None:
-            cls.metadata.description = "; ".join(_describe(d, roles[d.id]) for d in users) + f"; codelist={cl_id}"
-
-    attr_map: dict[str, str] = {}
-    for a in dsd.attributes:
-        name = attr_name(a.id)
-        attr_map[a.id] = name
-        obs_attrs.add(Property(name=name, type=StringType, is_optional=True))
-
-    obs.attributes = obs_attrs
-    obs.metadata = Metadata(
-        description=(f"One observation of SDMX dataflow {dsd.agency}:{dsd.dataflow_id} ({dsd.dataflow_name}). "
-                     "Dimension roles: " + "; ".join(_describe(d, roles[d.id]) for d in dsd.dimensions)),
-        uri=f"sdmx:dataflow:{dsd.agency}:{dsd.dataflow_id}",
-    )
-    types.add(obs)
-
-    model = DomainModel(name=model_name or pascal(dsd.dataflow_id), types=types, associations=associations)
-    model.validate(raise_exception=True)
-
+    model = _validated(DomainModel(name=model_name or pascal(dsd.dataflow_id), types=builder.types,
+                                   associations=builder.associations))
     mapping = ImportMapping(
         dataflow=dsd.dataflow_id,
         agency=dsd.agency,
         observation_class=observation_class,
         time_attr=time_attr,
         value_attr=value_attr,
-        dimensions=dim_maps,
+        dimensions=builder.dim_maps,
         attributes=attr_map,
         title=dsd.dataflow_name,
     )

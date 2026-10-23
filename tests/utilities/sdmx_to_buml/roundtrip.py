@@ -2,14 +2,20 @@
 
 from besser.BUML.metamodel.structural import Class, DomainModel, Enumeration
 from besser.utilities.web_modeling_editor.backend.services.converters import (
-    class_buml_to_json, process_class_diagram,
+    class_buml_to_json,
+    process_class_diagram,
 )
 
 
 def signature(model: DomainModel) -> dict:
-    """What the round trip must keep: classes, attributes, enumerations, associations."""
+    """What the round trip must keep: classes (with their metadata URI), attributes, enumerations, associations.
+
+    The class descriptions are compared by ``test_class_descriptions_survive_the_editor``: the editor
+    converters currently append a copy of each description on every round trip.
+    """
     classes = {
-        t.name: sorted((a.name, a.type.name, bool(a.is_id), bool(a.is_optional)) for a in t.attributes)
+        t.name: (sorted((a.name, a.type.name, bool(a.is_id), bool(a.is_optional)) for a in t.attributes),
+                 t.metadata.uri if t.metadata else None)
         for t in model.types if isinstance(t, Class)
     }
     enums = {t.name: sorted(lit.name for lit in t.literals) for t in model.types if isinstance(t, Enumeration)}

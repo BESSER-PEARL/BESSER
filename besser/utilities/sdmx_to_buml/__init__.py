@@ -14,33 +14,39 @@ provider's SDMX 2.1 REST API, or from an SDMX-ML file, and turns it into a valid
     model = sdmx_to_buml("ecb", "ECB,EXR,1.0")               # agency, id, version
     model = sdmx_to_buml("https://example.org/sdmx/rest", "DF_POP")  # any SDMX 2.1 API
 
-See :mod:`.builder` for the mapping rules and :mod:`.roles` for the dimension roles the model's
-metadata records.
+See :mod:`.builder` for the mapping rules, :mod:`.roles` for the dimension roles the model's
+metadata records and :mod:`.client` for the limits every import runs under.
 """
 
 from typing import Iterable, Optional
 
 from besser.BUML.metamodel.structural import DomainModel
-from besser.utilities.sdmx_to_buml.builder import (
-    DimensionMapping, ImportMapping, literal_name, pascal, snake, structure_to_buml,
-)
+from besser.utilities.sdmx_to_buml.builder import DEFAULT_ENUM_MAX, structure_to_buml
 from besser.utilities.sdmx_to_buml.client import (
-    PROVIDERS, DataflowRef, SDMXClient, SDMXFetchError, SDMXProvider, SDMXTooLargeError,
-    check_public_url, parse_dataflow, resolve_provider,
+    DEFAULT_MAX_BYTES,
+    DEFAULT_TIMEOUT,
+    PROVIDERS,
+    DataflowRef,
+    SDMXClient,
+    SDMXFetchError,
+    SDMXImportLimitError,
+    SDMXProvider,
+    SDMXTimeoutError,
+    SDMXTooLargeError,
 )
-from besser.utilities.sdmx_to_buml.roles import DimensionRole, detect_roles, find_total, infer_prefix_parents
-from besser.utilities.sdmx_to_buml.structure import (
-    Code, Codelist, Component, DataStructure, parse_codelists, parse_constraint, parse_hierarchy, parse_structure,
-)
+from besser.utilities.sdmx_to_buml.structure import parse_structure
 
 __all__ = [
-    "sdmx_to_buml", "sdmx_xml_to_buml", "structure_to_buml",
-    "PROVIDERS", "DataflowRef", "SDMXClient", "SDMXFetchError", "SDMXProvider", "SDMXTooLargeError",
-    "check_public_url", "parse_dataflow", "resolve_provider",
-    "DimensionMapping", "ImportMapping", "DimensionRole", "detect_roles", "find_total", "infer_prefix_parents",
-    "literal_name", "pascal", "snake",
-    "Code", "Codelist", "Component", "DataStructure",
-    "parse_codelists", "parse_constraint", "parse_hierarchy", "parse_structure",
+    "PROVIDERS",
+    "SDMXClient",
+    "SDMXFetchError",
+    "SDMXImportLimitError",
+    "SDMXTimeoutError",
+    "SDMXTooLargeError",
+    "parse_structure",
+    "sdmx_to_buml",
+    "sdmx_xml_to_buml",
+    "structure_to_buml",
 ]
 
 
@@ -48,12 +54,12 @@ def sdmx_to_buml(
     provider: "SDMXProvider | str",
     dataflow: "DataflowRef | str",
     model_name: Optional[str] = None,
-    enum_max: int = 50,
+    enum_max: int = DEFAULT_ENUM_MAX,
     prefix_hierarchy: Optional[Iterable[str]] = None,
     class_names: Optional[dict[str, str]] = None,
     lang: str = "en",
-    timeout: float = 120,
-    max_bytes: Optional[int] = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    max_bytes: int = DEFAULT_MAX_BYTES,
     safe: bool = False,
 ) -> DomainModel:
     """Read a dataflow's structure from an SDMX 2.1 REST API and build its B-UML domain model.
@@ -67,19 +73,19 @@ def sdmx_to_buml(
         prefix_hierarchy: dimension ids whose codes nest by prefix; ``None`` auto-detects them.
         class_names: names for the generated classes, keyed by dimension or codelist id.
         lang: language of the names read from the structure.
-        timeout: seconds allowed for each request.
-        max_bytes: largest structure message accepted (default 100 MB).
-        safe: only https, public hosts and bounded answers (for servers fetching for others).
+        timeout: seconds allowed for the whole import.
+        max_bytes: largest structure message accepted (default 32 MB).
+        safe: only https, public hosts, pinned connections (for servers fetching for others).
 
     Returns:
         DomainModel: the validated structural model.
 
     Raises:
-        SDMXFetchError: the provider failed or the dataflow does not exist.
+        SDMXFetchError: the provider failed, the dataflow does not exist, or the import ran out of
+            time (:class:`SDMXTimeoutError`) or size (:class:`SDMXTooLargeError`).
         ValueError: an invalid provider or dataflow reference, or an unusable structure message.
     """
-    client = SDMXClient(provider, timeout=timeout, safe=safe,
-                        **({"max_bytes": max_bytes} if max_bytes else {}))
+    client = SDMXClient(provider, timeout=timeout, max_bytes=max_bytes, safe=safe)
     dsd = client.fetch_structure(dataflow, lang=lang)
     model, _ = structure_to_buml(dsd, model_name=model_name, enum_max=enum_max,
                                  prefix_hierarchy=prefix_hierarchy, class_names=class_names)
@@ -90,14 +96,21 @@ def sdmx_xml_to_buml(
     xml: "bytes | str",
     dataflow_id: Optional[str] = None,
     model_name: Optional[str] = None,
-    enum_max: int = 50,
+    enum_max: int = DEFAULT_ENUM_MAX,
+    prefix_hierarchy: Optional[Iterable[str]] = None,
+    class_names: Optional[dict[str, str]] = None,
     lang: str = "en",
 ) -> DomainModel:
     """Build the B-UML domain model of an SDMX-ML 2.1 structure message (a downloaded file).
 
     The message must hold the data structure definition and its codelists, as an SDMX API returns
-    for ``dataflow/{agency}/{id}/latest?references=descendants``.
+    for ``dataflow/{agency}/{id}/latest?references=descendants``. The other arguments are those of
+    :func:`sdmx_to_buml`.
+
+    Raises:
+        ValueError: the message is not SDMX-ML, holds no data structure, or holds dataflows but not
+            ``dataflow_id``.
     """
     model, _ = structure_to_buml(parse_structure(xml, dataflow_id, lang), model_name=model_name,
-                                 enum_max=enum_max)
+                                 enum_max=enum_max, prefix_hierarchy=prefix_hierarchy, class_names=class_names)
     return model

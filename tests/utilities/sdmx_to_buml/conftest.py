@@ -1,6 +1,7 @@
 """Fixtures for the SDMX-to-B-UML tests: a synthetic structure message and recorded real ones."""
 
 import gzip
+import socket
 from pathlib import Path
 
 import pytest
@@ -116,3 +117,23 @@ RECORDED = {
     "abs_CPI.xml.gz": "CPI",
     "imf_CPI.xml.gz": "CPI",  # codelists come from the concepts' core representations
 }
+
+
+PUBLIC_ADDRESS = "93.184.216.34"
+
+
+def resolve_to(monkeypatch, addresses):
+    """Make every DNS lookup answer ``addresses`` (one address, or host -> address)."""
+    def fake(host, *args, **kwargs):
+        address = addresses.get(host) if isinstance(addresses, dict) else addresses
+        if address is None:
+            raise socket.gaierror(f"unknown host {host}")
+        family = socket.AF_INET6 if ":" in address else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, 6, "", (address, 443))]
+    monkeypatch.setattr(socket, "getaddrinfo", fake)
+
+
+@pytest.fixture
+def public_dns(monkeypatch):
+    """Every host resolves to a public address: no test reaches a real DNS server."""
+    resolve_to(monkeypatch, PUBLIC_ADDRESS)

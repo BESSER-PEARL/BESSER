@@ -1,18 +1,36 @@
 """Tests for besser.utilities.sdmx_to_buml (offline: the network is never used)."""
 
 import socket
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+import requests
 
 from besser.BUML.metamodel.structural import Class, Enumeration
 from besser.utilities.sdmx_to_buml import (
-    SDMXClient, SDMXFetchError, SDMXTooLargeError, check_public_url, detect_roles, infer_prefix_parents,
-    literal_name, parse_dataflow, parse_hierarchy, parse_structure, pascal, resolve_provider, sdmx_xml_to_buml,
-    snake, structure_to_buml,
+    SDMXClient,
+    SDMXFetchError,
+    SDMXImportLimitError,
+    SDMXTimeoutError,
+    SDMXTooLargeError,
+    parse_structure,
+    sdmx_xml_to_buml,
+    structure_to_buml,
 )
-from tests.utilities.sdmx_to_buml.conftest import RECORDED, build_structure_xml, recorded
-from tests.utilities.sdmx_to_buml.roundtrip import round_trip_differences
-
+from besser.utilities.sdmx_to_buml.builder import literal_name, pascal, snake
+from besser.utilities.sdmx_to_buml.client import check_public_url, parse_dataflow, resolve_provider
+from besser.utilities.sdmx_to_buml.roles import detect_roles, infer_prefix_parents
+from besser.utilities.sdmx_to_buml.structure import parse_hierarchy
+from tests.utilities.sdmx_to_buml.conftest import (
+    PUBLIC_ADDRESS,
+    RECORDED,
+    build_structure_xml,
+    recorded,
+    resolve_to,
+)
+from tests.utilities.sdmx_to_buml.roundtrip import round_trip, round_trip_differences
 
 # --------------------------------------------------------------------------- parsing
 
@@ -161,6 +179,16 @@ def test_round_trip_of_the_synthetic_model(structure_xml):
     assert round_trip_differences(model) == []
 
 
+@pytest.mark.xfail(strict=True, reason="class_buml_to_json writes a class description as its description and as a "
+                                       "linked comment, and process_class_diagram appends the comment to it: a "
+                                       "converter bug outside this importer, to fix separately")
+def test_class_descriptions_survive_the_editor(structure_xml):
+    model, _ = structure_to_buml(parse_structure(structure_xml, "DF_TEST"))
+    before = {t.name: t.metadata.description for t in model.types if isinstance(t, Class)}
+    after = {t.name: t.metadata.description for t in round_trip(model).types if isinstance(t, Class)}
+    assert after == before
+
+
 # --------------------------------------------------------------------------- references and URLs
 
 def test_parse_dataflow_forms():
@@ -186,86 +214,233 @@ def test_resolve_provider():
         resolve_provider("nowhere")
 
 
-def _resolve_to(monkeypatch, address):
-    monkeypatch.setattr(socket, "getaddrinfo",
-                        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))])
-
-
-@pytest.mark.parametrize("url, message", [
-    ("http://stats.example.org/rest", "https"),
-    ("https://user:pw@stats.example.org/rest", "Credentials"),
-    ("https://stats.example.org:8443/rest", "port"),
-])
-def test_check_public_url_refuses_unsafe_urls(url, message):
-    with pytest.raises(ValueError, match=message):
-        check_public_url(url)
-
-
-@pytest.mark.parametrize("address", ["127.0.0.1", "10.1.2.3", "192.168.0.1", "169.254.169.254", "::1", "fd00::1"])
+@pytest.mark.parametrize("address", ["127.0.0.1", "10.1.2.3", "192.168.0.1", "169.254.169.254", "::1", "fd00::1",
+                                     "::ffff:127.0.0.1", "64:ff9b::7f00:1", "100.64.0.1"])
 def test_check_public_url_refuses_private_hosts(monkeypatch, address):
-    _resolve_to(monkeypatch, address)
-    with pytest.raises(ValueError, match="non-public"):
+    resolve_to(monkeypatch, address)
+    with pytest.raises(ValueError, match="not a public address"):
         check_public_url("https://stats.example.org/rest")
 
 
-def test_check_public_url_accepts_public_hosts(monkeypatch):
-    _resolve_to(monkeypatch, "93.184.216.34")
-    check_public_url("https://stats.example.org/rest")
+def test_unresolvable_and_private_hosts_get_the_same_message(monkeypatch):
+    """The error never tells which internal names exist."""
+    resolve_to(monkeypatch, {"private.example.org": "10.0.0.5"})
+    messages = set()
+    for host in ("private.example.org", "missing.example.org"):
+        with pytest.raises(ValueError) as info:
+            check_public_url(f"https://{host}/rest")
+        messages.add(str(info.value))
+    assert len(messages) == 1
+
+
+def test_check_public_url_accepts_public_hosts_and_returns_the_address(public_dns):
+    assert check_public_url("https://stats.example.org/rest") == PUBLIC_ADDRESS
+
+
+@pytest.mark.parametrize("url", [
+    "https://127.0.0.1\\.x.evil.example/rest",   # urlsplit and urllib3 read different hosts
+    "https://127.0.0.1\\@evil.example/rest",
+    "https://evil.example\t@127.0.0.1/rest",
+    "https://evil.example/re st",
+    "https://evil.example/rest\x00",
+])
+def test_check_public_url_refuses_urls_two_parsers_could_read_differently(public_dns, url):
+    with pytest.raises(ValueError, match="backslash, whitespace or a control character"):
+        check_public_url(url)
 
 
 # --------------------------------------------------------------------------- the client, with a fake network
 
-class FakeResponse:
-    def __init__(self, status=200, body=b"", headers=None, url="https://stats.example.org/rest/x"):
-        self.status_code, self.body, self.headers, self.url = status, body, headers or {}, url
-        self.is_redirect = status in (301, 302, 303, 307, 308)
+class FakeRaw:
+    """A response body read the way the client reads it: a socket read (``read1``) at a time."""
 
-    def iter_content(self, chunk_size=65536):
-        for i in range(0, len(self.body), chunk_size):
-            yield self.body[i:i + chunk_size]
+    def __init__(self, body: bytes, chunk: int = 4096):
+        self.body, self.pos, self.chunk, self.connection = body, 0, chunk, None
+
+    def read1(self, amt=65536, decode_content=True):
+        out = self.body[self.pos:self.pos + min(amt, self.chunk)]
+        self.pos += len(out)
+        return out
+
+
+class FakeResponse:
+    def __init__(self, status=200, body=b"", headers=None):
+        self.status_code, self.headers, self.raw = status, headers or {}, FakeRaw(body)
+        self.is_redirect = status in (301, 302, 303, 307, 308)
 
     def close(self):
         pass
 
 
+class FakeNetwork(list):
+    """What the client sent, and how; ``answer`` sets the response for every request."""
+
+    def __init__(self):
+        super().__init__()
+        self.respond = lambda url: FakeResponse(body=b"<ok/>")
+
+    def answer(self, respond):
+        self.respond = respond
+
+
 @pytest.fixture
-def public_dns(monkeypatch):
-    _resolve_to(monkeypatch, "93.184.216.34")
+def fake_network(monkeypatch, public_dns):
+    network = FakeNetwork()
+
+    def get(session, url, params=None, headers=None, verify=None, **kwargs):
+        adapter = session.adapters.get("https://")
+        network.append({"url": url, "headers": dict(headers or {}), "verify": verify,
+                        "trust_env": session.trust_env, "pinned_host": getattr(adapter, "_host", None)})
+        return network.respond(url)
+
+    monkeypatch.setattr(requests.Session, "get", get)
+    return network
 
 
-def test_safe_client_refuses_a_redirect_to_a_private_host(monkeypatch, public_dns):
+def test_safe_client_connects_to_the_checked_address(fake_network, monkeypatch):
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/etc/ssl/bundle.pem")
     client = SDMXClient("https://stats.example.org/rest", safe=True, retries=1)
-    monkeypatch.setattr(client.session, "get", lambda *a, **k: FakeResponse(302, headers={
-        "Location": "https://internal.example.org/secret"}))
-    hosts = {"stats.example.org": "93.184.216.34", "internal.example.org": "10.0.0.5"}
-    monkeypatch.setattr(socket, "getaddrinfo", lambda host, *a, **k: [
-        (socket.AF_INET, socket.SOCK_STREAM, 6, "", (hosts[host], 443))])
-    with pytest.raises(ValueError, match="non-public"):
+    assert client.get("dataflow", "all", "X", "latest") == b"<ok/>"
+    request = fake_network[-1]
+    assert request["url"] == f"https://{PUBLIC_ADDRESS}/rest/dataflow/all/X/latest"
+    assert request["headers"]["Host"] == "stats.example.org"
+    assert request["pinned_host"] == "stats.example.org"  # SNI and the certificate check use the name
+    assert request["trust_env"] is False and request["verify"] == "/etc/ssl/bundle.pem"
+
+
+def test_a_dns_answer_that_changes_after_the_check_is_not_followed(fake_network, monkeypatch):
+    """DNS rebinding: the client connects to the address it checked and never resolves the name again."""
+    answers = iter([PUBLIC_ADDRESS, "127.0.0.1"])
+    lookups = []
+
+    def rebinding(host, *args, **kwargs):
+        lookups.append(host)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (next(answers), 443))]
+
+    client = SDMXClient("https://stats.example.org/rest", safe=True, retries=1)
+    monkeypatch.setattr(socket, "getaddrinfo", rebinding)
+    client.get("dataflow", "all", "X", "latest")
+    assert lookups == ["stats.example.org"]
+    assert fake_network[-1]["url"].startswith(f"https://{PUBLIC_ADDRESS}/")
+
+
+def test_safe_client_refuses_a_redirect_to_a_private_host(fake_network, monkeypatch):
+    resolve_to(monkeypatch, {"stats.example.org": PUBLIC_ADDRESS, "internal.example.org": "10.0.0.5"})
+    client = SDMXClient("https://stats.example.org/rest", safe=True, retries=1)
+    fake_network.answer(lambda url: FakeResponse(302, headers={"Location": "https://internal.example.org/secret"}))
+    with pytest.raises(ValueError, match="not a public address"):
         client.get("dataflow", "all", "X", "latest")
+    assert len(fake_network) == 1  # the private host was never contacted
 
 
-def test_client_stops_reading_past_max_bytes(monkeypatch, public_dns):
+def test_safe_client_refuses_a_redirect_to_a_backslash_host(fake_network):
+    client = SDMXClient("https://stats.example.org/rest", safe=True, retries=1)
+    fake_network.answer(lambda url: FakeResponse(302, headers={"Location": "https://127.0.0.1\\.evil.example/x"}))
+    with pytest.raises(ValueError, match="backslash"):
+        client.get("dataflow", "all", "X", "latest")
+    assert len(fake_network) == 1
+
+
+def test_client_stops_reading_past_max_bytes(fake_network):
     client = SDMXClient("https://stats.example.org/rest", safe=True, max_bytes=1000, retries=1)
-    monkeypatch.setattr(client.session, "get", lambda *a, **k: FakeResponse(body=b"x" * 5000))
+    fake_network.answer(lambda url: FakeResponse(body=b"x" * 5000))
     with pytest.raises(SDMXTooLargeError):
         client.get("dataflow", "all", "X", "latest")
-    monkeypatch.setattr(client.session, "get", lambda *a, **k: FakeResponse(headers={"Content-Length": "999999"}))
+    fake_network.answer(lambda url: FakeResponse(headers={"Content-Length": "999999"}))
     with pytest.raises(SDMXTooLargeError):
         client.get("dataflow", "all", "X", "latest")
 
 
-def test_client_reports_http_errors_with_their_status(monkeypatch, public_dns):
+def test_an_import_has_one_byte_and_request_budget(fake_network):
+    client = SDMXClient("https://stats.example.org/rest", safe=True, max_bytes=1000, max_total_bytes=1500,
+                        max_requests=3, retries=1)
+    fake_network.answer(lambda url: FakeResponse(body=b"x" * 800))
+    client._budget = client._new_budget()
+    client.get("codelist", "A", "CL_1", "1.0")
+    with pytest.raises(SDMXImportLimitError, match="in all"):
+        client.get("codelist", "A", "CL_2", "1.0")
+    fake_network.answer(lambda url: FakeResponse(body=b"x"))
+    client._budget = client._new_budget()
+    for _ in range(3):
+        client.get("codelist", "A", "CL_1", "1.0")
+    with pytest.raises(SDMXImportLimitError, match="requests"):
+        client.get("codelist", "A", "CL_1", "1.0")
+
+
+def test_an_import_limit_stops_the_import_instead_of_skipping_a_codelist(monkeypatch, structure_xml):
+    def fake_get(self, *path, params=None, max_bytes=None):
+        if path[0] == "dataflow":
+            return structure_xml.replace(b'<s:Codelist id="CL_AREA"', b'<s:Codelist id="CL_GONE"')
+        raise SDMXTimeoutError("took too long")
+
+    monkeypatch.setattr(SDMXClient, "get", fake_get)
+    with pytest.raises(SDMXTimeoutError):
+        SDMXClient("https://stats.example.org/rest").fetch_structure("TEST,DF_TEST")
+
+
+def test_client_reports_http_errors_with_their_status(fake_network):
     client = SDMXClient("https://stats.example.org/rest", safe=True, retries=1)
-    monkeypatch.setattr(client.session, "get", lambda *a, **k: FakeResponse(404))
+    fake_network.answer(lambda url: FakeResponse(404))
     with pytest.raises(SDMXFetchError) as info:
         client.fetch_structure("NOPE")
     assert info.value.status == 404 and "not found" in str(info.value)
 
 
-def test_url_parts_are_quoted():
+def test_url_parts_are_quoted_and_checked():
     client = SDMXClient("https://stats.example.org/rest")
     assert client.url("dataflow", "LU1", "DSD_X@DF_Y", "1.0") == \
         "https://stats.example.org/rest/dataflow/LU1/DSD_X@DF_Y/1.0"
+    for bad in ("..", "a/b", "x?y", ".hidden"):
+        with pytest.raises(ValueError, match="path part"):
+            client.url("codelist", bad, "CL", "1.0")
+
+
+def test_a_provider_reference_with_dot_dot_is_skipped(monkeypatch, structure_xml, caplog):
+    """Path parts that come from the provider's own message are checked like the user's."""
+    hostile = structure_xml.replace(b'<s:Codelist id="CL_AREA"', b'<s:Codelist id="CL_GONE"').replace(
+        b'<Ref id="CL_AREA" agencyID="TEST"', b'<Ref id="CL_AREA" agencyID=".."')
+    sent = []
+
+    def fake_get_once(self, url, *args):
+        sent.append(url)
+        return hostile
+
+    monkeypatch.setattr(SDMXClient, "_get_once", fake_get_once)
+    dsd = SDMXClient("https://stats.example.org/rest").fetch_structure("TEST,DF_TEST", with_constraint=False)
+    assert "CL_AREA" in dsd.missing_codelists
+    assert not any("/../" in url for url in sent)
+    assert "unavailable" in caplog.text
+
+
+def test_a_trickling_server_cannot_outlast_the_deadline():
+    """A server sending one byte every 0.2 s is cut at the deadline, not after the whole body."""
+    class Trickle(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", "100000")
+            self.end_headers()
+            try:
+                for _ in range(100000):
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                    time.sleep(0.2)
+            except OSError:
+                pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Trickle)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        # safe=False only to reach a local plain-HTTP server; the body is read by the same code in both modes.
+        client = SDMXClient(f"http://127.0.0.1:{server.server_address[1]}", timeout=1.0, retries=1)
+        started = time.monotonic()
+        with pytest.raises(SDMXTimeoutError):
+            client.get("x")
+        assert time.monotonic() - started < 3
+    finally:
+        server.shutdown()
 
 
 def test_fetch_structure_falls_back_and_completes_codelists(monkeypatch, structure_xml):
@@ -320,3 +495,116 @@ def test_fetch_structure_retries_without_the_version(monkeypatch, structure_xml)
     dsd = SDMXClient("https://stats.example.org/rest").fetch_structure("TEST,DF_TEST")
     assert dsd.dataflow_id == "DF_TEST"
     assert paths[:2] == [("dataflow", "TEST", "DF_TEST", "latest"), ("dataflow", "TEST", "DF_TEST")]
+
+
+# --------------------------------------------------------------------------- review follow-ups
+
+_PAD = b'<?xml version="1.0"?><!--' + b"x" * 70000 + b"-->"
+
+
+@pytest.mark.parametrize("xml", [
+    _PAD + b'<!DOCTYPE r [<!ENTITY x "INJECTED">]><r>&x;</r>',                       # after the first 64 KB
+    _PAD + b'<!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]><r>&x;</r>',
+    '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE r [<!ENTITY x "X">]><r>&x;</r>'.encode("utf-16"),
+], ids=["internal-entity-after-64KB", "external-entity-after-64KB", "utf-16"])
+def test_a_doctype_anywhere_and_in_any_encoding_is_refused(xml):
+    with pytest.raises(ValueError, match="DOCTYPE"):
+        parse_structure(xml)
+
+
+def test_an_explicit_dataflow_missing_from_the_message_is_an_error(structure_xml):
+    with pytest.raises(ValueError, match="'DOES_NOT_EXIST' is not in the structure message"):
+        parse_structure(structure_xml, "DOES_NOT_EXIST")
+    assert parse_structure(structure_xml, "df_test").dataflow_id == "DF_TEST"  # ids match case-insensitively
+
+
+def test_names_keep_their_letters_without_accents():
+    assert pascal("Österreich") == "Osterreich" and snake("Größe") == "grosse"
+    assert literal_name("AT", "Österreich", set()) == "AT"
+    assert literal_name("_Z", "Größe über Ländern", set()) == "GROSSE_UBER_LANDERN"
+
+
+def test_import_mapping_dimension_raises_key_error(structure_xml):
+    _, mapping = structure_to_buml(parse_structure(structure_xml, "DF_TEST"))
+    with pytest.raises(KeyError):
+        mapping.dimension("NOPE")
+
+
+def test_validation_warnings_are_logged(caplog):
+    """The model is validated without raising on warnings; the warnings reach the log."""
+    model, _ = structure_to_buml(parse_structure(recorded("ecb_EXR.xml.gz"), "EXR"))
+    warnings = model.validate(raise_exception=False)["warnings"]
+    assert warnings and all(w in caplog.text for w in warnings)
+
+
+def test_fetch_structure_reads_the_hierarchy_the_annotations_name(monkeypatch):
+    """.Stat Suite: the dataflow's HIER_CONTEXT annotation names a hierarchical codelist the client fetches."""
+    asked = []
+
+    def fake_get(self, *path, params=None, max_bytes=None):
+        asked.append(path)
+        if path[0] == "dataflow":
+            return recorded("lustat_DSD_INT_TRAD_DF_E4103.xml.gz")
+        if path[0] == "hierarchicalcodelist":
+            return recorded("lustat_HCL_E4103.xml.gz")
+        raise SDMXFetchError("HTTP 404", 404)
+
+    monkeypatch.setattr(SDMXClient, "get", fake_get)
+    dsd = SDMXClient("lustat").fetch_structure("DSD_INT_TRAD@DF_E4103")
+    assert ("hierarchicalcodelist", "LU1", "HCL_E4103", "1.0") in asked
+    assert dsd.hierarchies["C_PART"]
+    _, mapping = structure_to_buml(dsd)
+    assert mapping.dimension("C_PART").hierarchy == "hcl"
+
+
+def test_fetch_structure_reads_the_content_constraint_when_the_message_has_none(monkeypatch, structure_xml):
+    text = structure_xml.decode("utf-8")
+    start, end = text.index("<s:Constraints>"), text.index("</s:Constraints>") + len("</s:Constraints>")
+    without = (text[:start] + text[end:]).encode()
+    head = text[:text.index("<m:Structures>") + len("<m:Structures>")]
+    constraint = (head + text[start:end] + "</m:Structures></m:Structure>").encode()
+
+    def fake_get(self, *path, params=None, max_bytes=None):
+        if path[0] == "dataflow":
+            return without
+        if path[0] == "contentconstraint":
+            assert path[1:] == ("TEST", "DF_TEST")
+            return constraint
+        raise SDMXFetchError("HTTP 404", 404)
+
+    monkeypatch.setattr(SDMXClient, "get", fake_get)
+    dsd = SDMXClient("https://stats.example.org/rest").fetch_structure("TEST,DF_TEST")
+    assert dsd.constraints == {"FREQ": ["A", "M"], "UNIT_MEASURE": ["EUR"]}
+
+
+@pytest.mark.parametrize("name", ["ecb_EXR.xml.gz", "lustat_DSD_INT_TRAD_DF_E4103.xml.gz"])
+def test_generators_take_an_imported_model(name, tmp_path):
+    """Offline check that the model generates: Python classes import, SQLAlchemy tables create in SQLite."""
+    import importlib.util
+    import sys
+
+    from sqlalchemy import create_engine
+
+    from besser.generators.python_classes import PythonGenerator
+    from besser.generators.sql_alchemy import SQLAlchemyGenerator
+
+    model, _ = structure_to_buml(parse_structure(recorded(name), RECORDED[name]))
+    for generator, folder in ((PythonGenerator, "python"), (SQLAlchemyGenerator, "sqlalchemy")):
+        out = tmp_path / folder
+        out.mkdir()
+        gen = generator(model, output_dir=str(out))
+        gen.generate(dbms="sqlite") if generator is SQLAlchemyGenerator else gen.generate()
+        source = next(out.glob("*.py"))
+        module_name = f"sdmx_generated_{folder}_{name.split('.')[0]}"
+        spec = importlib.util.spec_from_file_location(module_name, source)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+            if generator is SQLAlchemyGenerator:
+                module.Base.metadata.create_all(create_engine("sqlite://"))
+                assert "observation" in {t.lower() for t in module.Base.metadata.tables}
+            else:
+                assert hasattr(module, "Observation")
+        finally:
+            sys.modules.pop(module_name, None)

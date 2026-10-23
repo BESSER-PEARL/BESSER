@@ -8,15 +8,16 @@ Tags are matched by local name so the parser does not depend on the namespace
 prefixes a given SDMX provider uses.
 """
 
+import logging
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Optional
+from xml.parsers import expat
+
+logger = logging.getLogger(__name__)
 
 XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
-
-# SDMX messages never declare a DOCTYPE; refusing one rules out entity-expansion payloads.
-_DOCTYPE = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.IGNORECASE)
 
 
 @dataclass
@@ -116,11 +117,35 @@ class DataStructure:
         return out
 
 
+class _DeclarationRefused(Exception):
+    """A DOCTYPE or entity declaration was met while pre-scanning a message."""
+
+
+def _refuse_declaration(*_args) -> None:
+    raise _DeclarationRefused
+
+
+def _refuse_declarations(xml: bytes | str) -> None:
+    """Scan the whole message with expat and refuse any DOCTYPE or ENTITY declaration.
+
+    SDMX messages never declare one, so refusing them rules out entity expansion (internal
+    entities, billion laughs) and external entities. Expat reads the encoding itself, so a
+    UTF-16 body or a declaration placed after megabytes of comments is caught as well.
+    """
+    parser = expat.ParserCreate()
+    parser.StartDoctypeDeclHandler = _refuse_declaration
+    parser.EntityDeclHandler = _refuse_declaration
+    try:
+        parser.Parse(xml, True)
+    except _DeclarationRefused:
+        raise ValueError("SDMX structure messages must not declare a DOCTYPE or entities") from None
+    except expat.ExpatError as exc:
+        raise ValueError(f"Not a valid SDMX-ML message: {exc}") from exc
+
+
 def _fromstring(xml: bytes | str) -> ET.Element:
     """Parse XML, refusing a DOCTYPE or ENTITY declaration (never used by SDMX)."""
-    head = xml[:65536] if isinstance(xml, bytes) else xml[:65536].encode("utf-8", "ignore")
-    if _DOCTYPE.search(head):
-        raise ValueError("SDMX structure messages must not declare a DOCTYPE or entities")
+    _refuse_declarations(xml)
     try:
         return ET.fromstring(xml)
     except ET.ParseError as exc:
@@ -254,7 +279,11 @@ def parse_hierarchy(xml: bytes | str, hierarchy_id: Optional[str] = None) -> dic
     root = _fromstring(xml)
     hierarchies = _descendants(root, "Hierarchy")
     if hierarchy_id:
-        hierarchies = [h for h in hierarchies if h.get("id") == hierarchy_id] or hierarchies
+        named = [h for h in hierarchies if h.get("id") == hierarchy_id]
+        if not named and hierarchies:
+            logger.warning("Hierarchy %r not in the hierarchical codelist; using %r instead",
+                           hierarchy_id, hierarchies[0].get("id"))
+        hierarchies = named or hierarchies
     parents: dict[str, Optional[str]] = {}
 
     def code_of(hc: ET.Element) -> str:
@@ -302,6 +331,7 @@ def _component(el: ET.Element, kind: str, concepts: dict[str, _Concept]) -> Comp
     try:
         position = int(el.get("position", "0") or 0)
     except ValueError:
+        logger.warning("Component %r has a non-numeric position %r; ordering it first", cid, el.get("position"))
         position = 0
     return Component(
         id=cid,
@@ -314,13 +344,32 @@ def _component(el: ET.Element, kind: str, concepts: dict[str, _Concept]) -> Comp
     )
 
 
+def _select_flow(flows: list[ET.Element], dataflow_id: Optional[str]) -> Optional[ET.Element]:
+    """The dataflow ``dataflow_id`` (case-insensitive), else the only or first one when no id is asked.
+
+    Raises:
+        ValueError: ``dataflow_id`` is given, the message holds dataflows, and none of them is it.
+    """
+    if not flows:
+        return None
+    if not dataflow_id:
+        return flows[0]
+    flow = next((f for f in flows if f.get("id", "").upper() == dataflow_id.upper()), None)
+    if flow is None:
+        found = ", ".join(sorted({f.get("id", "") for f in flows})[:5])
+        raise ValueError(f"Dataflow {dataflow_id!r} is not in the structure message (it holds {found})")
+    return flow
+
+
 def dataflow_structure_ref(xml: bytes | str, dataflow_id: Optional[str] = None,
                            lang: str = "en") -> Optional[tuple[StructureRef, str, str]]:
-    """For a message that holds the dataflow only: (its data structure reference, flow id, flow name)."""
+    """For a message that holds the dataflow only: (its data structure reference, flow id, flow name).
+
+    Raises:
+        ValueError: ``dataflow_id`` is given and the message holds other dataflows only.
+    """
     root = _fromstring(xml)
-    flows = [f for f in _descendants(root, "Dataflow") if f.get("id")]
-    flow = next((f for f in flows if dataflow_id and f.get("id", "").upper() == dataflow_id.upper()),
-                flows[0] if flows else None)
+    flow = _select_flow([f for f in _descendants(root, "Dataflow") if f.get("id")], dataflow_id)
     if flow is None:
         return None
     ref = _ref(_child(flow, "Structure"))
@@ -334,7 +383,8 @@ def parse_structure(xml: bytes | str, dataflow_id: Optional[str] = None, lang: s
     and concepts (request it with ``references=children`` or ``references=descendants``).
 
     Raises:
-        ValueError: when the message is not XML or holds no data structure definition.
+        ValueError: when the message is not XML, holds no data structure definition, or holds
+            dataflows but not ``dataflow_id``.
     """
     root = _fromstring(xml)
     concepts = _parse_concepts(root, lang)
@@ -344,16 +394,16 @@ def parse_structure(xml: bytes | str, dataflow_id: Optional[str] = None, lang: s
     if not dsds:
         raise ValueError("No DataStructure definition found in the structure message")
 
-    flows = [f for f in _descendants(root, "Dataflow") if f.get("id")]
-    flow = None
-    if dataflow_id:
-        flow = next((f for f in flows if f.get("id", "").upper() == dataflow_id.upper()), None)
-    flow = flow if flow is not None else (flows[0] if flows else None)
+    flow = _select_flow([f for f in _descendants(root, "Dataflow") if f.get("id")], dataflow_id)
 
     dsd = dsds[0]
     if flow is not None:
         target = _ref_id(_child(flow, "Structure"))
-        dsd = next((d for d in dsds if d.get("id") == target), dsd)
+        dsd = next((d for d in dsds if d.get("id") == target), None)
+        if dsd is None:
+            logger.warning("Dataflow %r refers to structure %r, which the message does not hold; using %r",
+                           flow.get("id"), target, dsds[0].get("id"))
+            dsd = dsds[0]
 
     comps = _child(dsd, "DataStructureComponents")
     dims: list[Component] = []

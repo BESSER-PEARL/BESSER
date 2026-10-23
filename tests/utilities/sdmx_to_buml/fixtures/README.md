@@ -7,6 +7,12 @@ codelist larger than 50 codes stays larger than the enumeration limit), the HIER
 annotations and the content constraints. Non-English names, descriptions and other annotations
 are dropped.
 
+To record one again, save the provider's answer to the request below, then trim it:
+
+```console
+python tests/utilities/sdmx_to_buml/fixtures/minimize.py answer.xml EXR tests/utilities/sdmx_to_buml/fixtures/ecb_EXR.xml.gz
+```
+
 | File | Provider | Request |
 |---|---|---|
 | `ecb_EXR.xml.gz` | ECB | `dataflow/ECB/EXR/latest?references=descendants` |
@@ -18,5 +24,15 @@ are dropped.
 | `abs_CPI.xml.gz` | ABS | `dataflow/ABS/CPI/latest?references=all` |
 | `imf_CPI.xml.gz` | IMF | `dataflow/IMF.STA/CPI/latest?references=descendants` (codelists from the concepts' core representations) |
 
-The data are published by these institutions under their own reuse terms; only structural
-metadata (codes and their names) is kept here.
+Only structural metadata is kept (codes, their names and the structure that links them), no
+statistical data. It is reused under each provider's terms, with this attribution:
+
+| Provider | Terms | Attribution |
+|---|---|---|
+| ECB | [ECB statistics reuse policy](https://www.ecb.europa.eu/stats/ecb_statistics/governance_and_quality_framework/html/usage_policy.en.html) | Source: European Central Bank, ECB Data Portal |
+| Eurostat | [Eurostat copyright notice](https://ec.europa.eu/eurostat/help/copyright-notice) (free reuse with attribution, Commission Decision 2011/833/EU) | Source: Eurostat |
+| STATEC LUSTAT | [STATEC legal notice](https://statistiques.public.lu/en/support/notice.html) (CC0 1.0, with STATEC's usage guidelines) | Source: STATEC, LUSTAT |
+| ILO | [ILO rights and permissions](https://www.ilo.org/rights-and-permissions) (datasets and their metadata under CC BY 4.0) | Source: International Labour Organization, ILOSTAT |
+| BIS | [BIS terms and conditions](https://www.bis.org/terms_conditions.htm) | Source: Bank for International Settlements |
+| ABS | [ABS copyright](https://www.abs.gov.au/website-privacy-copyright-and-disclaimer) (CC BY 4.0) | Source: Australian Bureau of Statistics |
+| IMF | [IMF copyright and usage](https://www.imf.org/en/About/copyright-and-terms) (a small excerpt kept for testing, with attribution) | Source: International Monetary Fund, © IMF |

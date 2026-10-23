@@ -62,36 +62,46 @@ model.
 
     from besser.utilities.sdmx_to_buml import SDMXClient, structure_to_buml
 
-    dsd = SDMXClient("eurostat").fetch_structure("une_rt_m")
+    dsd = SDMXClient("eurostat", timeout=120).fetch_structure("une_rt_m")
     model, mapping = structure_to_buml(dsd, enum_max=30, class_names={"geo": "Country"})
 
 From the web editor
 -------------------
 
 In the project hub, **From Data** offers two sources: files (CSV, XLSX) and **Statistics API
-(SDMX)**. Pick a provider or enter the https URL of an SDMX 2.1 API, enter the dataflow, and the
-class diagram is created in a new project. The backend fetches on the user's behalf with
-``safe=True``: only https on port 443, only hosts that resolve to public addresses (checked again
-on every redirect), at most 64 MB and 60 s per request. ``BESSER_SDMX_TIMEOUT``,
-``BESSER_SDMX_MAX_MB`` and ``BESSER_SDMX_ALLOW_CUSTOM_URL=0`` (presets only) change these limits
-(see :doc:`../../web_editor_backend`).
+(SDMX)**. Pick a provider (or, where the server allows it, enter the https URL of an SDMX 2.1 API),
+enter the dataflow, and the class diagram is created in a new project. The backend fetches on the
+user's behalf with ``safe=True``:
+
+* only https on port 443, with no credentials, backslash, whitespace or control character in the
+  URL;
+* only hosts that resolve to public addresses, checked again on every redirect, and each connection
+  goes to the address that was checked (so a DNS answer that changes in between cannot redirect it);
+* one deadline and one size budget for the whole import (60 s, 32 MB per message, 64 MB in all), and
+  at most two imports at once;
+* custom URLs are off unless ``BESSER_SDMX_ALLOW_CUSTOM_URL`` is on.
+
+The ``BESSER_SDMX_*`` variables change these limits (see :doc:`../../web_editor_backend`).
 
 .. note::
 
     Behind a proxy that inspects TLS, point ``REQUESTS_CA_BUNDLE`` to a bundle that holds both the
-    public roots and the proxy's certificate authority.
+    public roots and the proxy's certificate authority. Safe mode does not use the environment's
+    HTTP proxies.
 
 Tested providers
 ----------------
 
-The live sweep in ``tests/utilities/sdmx_to_buml/live_sweep.py`` imports 32 dataflows from 14
-providers (Eurostat, Eurostat Comext, STATEC LUSTAT, the ECB, the OECD, the IMF, the BIS, the ILO,
+The live sweep in ``tests/utilities/sdmx_to_buml/live_sweep.py`` imported 32 dataflows from 14
+providers in October 2026 (Eurostat, Eurostat Comext, STATEC LUSTAT, the ECB, the OECD, the IMF, the BIS, the ILO,
 UNICEF, the ABS, INSEE, Istat, UN Data and the Bundesbank) and runs the class-diagram generators
 on each model (Python, Pydantic, SQLAlchemy, SQL, JSON schema, Java, RDF, Django, REST API and
-backend):
+backend). Providers change their APIs, so run it again before relying on a provider; it needs the
+network and writes its report and the generated code to the folder given with ``--out``, outside
+the repository:
 
 .. code-block:: console
 
-    python -m tests.utilities.sdmx_to_buml.live_sweep --out sweep_report
+    python -m tests.utilities.sdmx_to_buml.live_sweep --out /tmp/sdmx_sweep
 
 More details in the :doc:`API documentation <../../api/BUML/notations/sdmx2buml/sdmx>`.

@@ -504,6 +504,74 @@ def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[s
         attrs.setdefault("data-field-path", binding.data_field_path)
     if binding.filter_expression:
         attrs.setdefault("filter", str(binding.filter_expression))
+    if getattr(binding, "endpoint", None):
+        attrs.setdefault("data-endpoint", binding.endpoint)
+def _series_color(series: Any) -> Optional[str]:
+    color = getattr(getattr(series, "styling", None), "color", None)
+    if not color:
+        return None
+    return (getattr(color, "primary_color", None) or getattr(color, "line_color", None)
+            or getattr(color, "bar_color", None) or getattr(color, "background_color", None))
+def _series_entry(series: Any) -> Dict[str, Any]:
+    """One series as the editor's series manager stores it (read back by chart_parsers)."""
+    entry: Dict[str, Any] = {"name": getattr(series, "label", None) or series.name}
+    color = _series_color(series)
+    if color:
+        entry["color"] = color
+    binding = getattr(series, "data_binding", None)
+    if binding:
+        entry["data-source"] = _element_ref(binding.domain_concept)
+        # As for a chart's own binding: a path names no class-diagram element.
+        label = _element_ref(binding.label_field)
+        data = _element_ref(binding.data_field)
+        if label:
+            entry["label-field"] = label
+        elif binding.label_field_path:
+            entry["label-field-path"] = binding.label_field_path
+        if data:
+            entry["data-field"] = data
+        elif binding.data_field_path:
+            entry["data-field-path"] = binding.data_field_path
+        if binding.filter_expression:
+            entry["filter"] = str(binding.filter_expression)
+        if binding.aggregation is not None:
+            entry["aggregation"] = binding.aggregation.value
+        if binding.endpoint:
+            entry["data-endpoint"] = binding.endpoint
+    return _clean_dict(entry)
+def _apply_chart_series_attributes(chart: Any, attrs: Dict[str, Any]) -> None:
+    """Write the chart's series as the editor's ``series`` attribute.
+
+    A chart drawn in the editor keeps its own ``series`` (sample data, colours);
+    only each series' ``data-endpoint`` is brought in line with the model. A chart
+    built in B-UML gets its series written from the model, so they survive a
+    round trip.
+    """
+    series_list = list(getattr(chart, "series", None) or [])
+    if not series_list:
+        return
+    raw = attrs.get("series")
+    existing = raw
+    if isinstance(raw, str):
+        try:
+            existing = json.loads(raw)
+        except ValueError:
+            existing = None
+    if isinstance(existing, list) and existing:
+        by_name = {getattr(s, "label", None) or s.name: s for s in series_list}
+        by_name.update({s.name: s for s in series_list})
+        for index, item in enumerate(existing):
+            if not isinstance(item, dict):
+                continue
+            series = by_name.get(item.get("name")) or (series_list[index] if index < len(series_list) else None)
+            endpoint = getattr(getattr(series, "data_binding", None), "endpoint", None)
+            if endpoint:
+                item["data-endpoint"] = endpoint
+            else:
+                item.pop("data-endpoint", None)
+        attrs["series"] = json.dumps(existing) if isinstance(raw, str) else existing
+        return
+    attrs["series"] = json.dumps([_series_entry(s) for s in series_list])
 def _apply_button_attributes(button: Button, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("button-label", button.label or button.name or "Button")
     action_type = attrs.get("action-type")
@@ -563,6 +631,7 @@ def _apply_data_list_attributes(data_list: DataList, attrs: Dict[str, Any]) -> N
         attrs.setdefault("data-field", value_field)
 def _apply_line_chart_attributes(chart: LineChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     if chart.primary_color:
         attrs.setdefault("chart-color", chart.primary_color)
@@ -574,6 +643,7 @@ def _apply_line_chart_attributes(chart: LineChart, attrs: Dict[str, Any]) -> Non
     attrs.setdefault("animate", chart.animate)
 def _apply_bar_chart_attributes(chart: BarChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     if chart.primary_color:
         attrs.setdefault("chart-color", chart.primary_color)
@@ -584,6 +654,7 @@ def _apply_bar_chart_attributes(chart: BarChart, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("stacked", chart.stacked)
 def _apply_pie_chart_attributes(chart: PieChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     attrs.setdefault("show-legend", chart.show_legend)
     attrs.setdefault("show-labels", chart.show_labels)
@@ -592,6 +663,7 @@ def _apply_pie_chart_attributes(chart: PieChart, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("padding-angle", chart.padding_angle)
 def _apply_radar_chart_attributes(chart: RadarChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     attrs.setdefault("chart-color", chart.primary_color or "#8884d8")
     attrs.setdefault("show-grid", chart.show_grid)
@@ -599,6 +671,7 @@ def _apply_radar_chart_attributes(chart: RadarChart, attrs: Dict[str, Any]) -> N
     attrs.setdefault("show-radius-axis", chart.show_radius_axis)
 def _apply_radial_bar_chart_attributes(chart: RadialBarChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     attrs.setdefault("start-angle", chart.start_angle)
     attrs.setdefault("end-angle", chart.end_angle)

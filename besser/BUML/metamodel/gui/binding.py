@@ -1,6 +1,11 @@
+import re
 from enum import Enum
 from besser.BUML.metamodel.structural import Class, Property, Constraint
 from besser.BUML.metamodel.structural.structural import Element
+
+# A DataBinding endpoint: a backend path ("/stats/exports?year=2025") or an
+# absolute http(s) URL; no whitespace, so it can go into a URL as is.
+_ENDPOINT_RE = re.compile(r"^(/|https?://)\S*$", re.IGNORECASE)
 
 
 class DataAggregation(Enum):
@@ -44,6 +49,13 @@ class DataBinding(Element):
         aggregation (DataAggregation | str, optional): How the bound records are
             reduced to one value per label: a metric card's value, or a chart's
             value per ``label_field`` group. Defaults to None (no aggregation).
+        endpoint (str, optional): Where a chart or metric card reads its records
+            from instead of the domain concept's CRUD list (``/<class>/``): a path
+            on the generated backend (``/stats/exports?year=2025``) or an absolute
+            ``http(s)://`` URL. The response must be a JSON array of row objects,
+            or an object holding one under ``data``, ``results``, ``items``,
+            ``records`` or ``list``; each row carries ``label_field`` and
+            ``data_field``. Defaults to None (the CRUD list).
 
     Attributes:
         name (str): Name of the data binding.
@@ -56,11 +68,12 @@ class DataBinding(Element):
         data_field_path (str): Dot notation path for nested data field.
         filter_expression (str): Raw filter expression string.
         aggregation (DataAggregation | None): How the bound records are aggregated.
+        endpoint (str | None): Where the records are read from, if not the CRUD list.
     """
     def __init__(self, domain_concept: Class, name: str = None, visualization_attrs: set[Property] = None,
                  label_field: Property = None, data_field: Property = None,
                  data_filter: Constraint = None, label_field_path: str = None, data_field_path: str = None,
-                 filter_expression: str = None, aggregation: DataAggregation = None):
+                 filter_expression: str = None, aggregation: DataAggregation = None, endpoint: str = None):
         super().__init__()
         self.name = name or f"{domain_concept.name if domain_concept else 'Unknown'}DataBinding"
         self.domain_concept = domain_concept
@@ -72,6 +85,7 @@ class DataBinding(Element):
         self.data_field_path = data_field_path    # For nested fields like "measure.value"
         self.filter_expression = filter_expression  # Raw filter string from UI
         self.aggregation = aggregation
+        self.endpoint = endpoint
 
     @property
     def name(self) -> str:
@@ -155,6 +169,27 @@ class DataBinding(Element):
         if aggregation is not None and parsed is None:
             raise ValueError(f"Unknown aggregation: {aggregation!r}")
         self._aggregation = parsed
+
+    @property
+    def endpoint(self) -> str | None:
+        """str | None: Where the records are read from, if not the CRUD list."""
+        return self._endpoint
+
+    @endpoint.setter
+    def endpoint(self, endpoint: str | None) -> None:
+        """Set the endpoint: a path starting with ``/`` or an ``http(s)://`` URL.
+
+        An empty or blank string means no endpoint (the CRUD list).
+        """
+        if endpoint is not None and not isinstance(endpoint, str):
+            raise TypeError("endpoint must be a string or None")
+        endpoint = endpoint.strip() if endpoint else None
+        if endpoint and not _ENDPOINT_RE.match(endpoint):
+            raise ValueError(
+                f"Invalid endpoint {endpoint!r}: expected a path starting with '/' "
+                "(e.g. '/stats/exports?year=2025') or an absolute http(s):// URL, without spaces"
+            )
+        self._endpoint = endpoint or None
 
     def __str__(self):
         return (

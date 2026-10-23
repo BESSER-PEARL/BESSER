@@ -143,6 +143,41 @@ records by its ``label_field`` and aggregates each group. In the editor JSON it
 is the ``aggregation`` attribute of the metric card, of a chart series, or of
 the chart (for all its series).
 
+By default a chart or metric card reads the CRUD list of its class
+(``GET /<class>/``), so it downloads every record and aggregates in the browser.
+A ``DataBinding`` may instead name an ``endpoint`` to read from, for example an
+analytics route of the generated backend that returns the figures already
+aggregated:
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.gui.binding import DataBinding
+    from besser.BUML.metamodel.gui.dashboard import BarChart, Series
+
+    chart = BarChart(name="revenue_by_region", title="Revenue by region")
+    chart.series = [Series(
+        name="revenue", label="Revenue", styling=None,
+        data_binding=DataBinding(
+            domain_concept=sale, label_field=region, data_field=amount,
+            endpoint="/stats/revenue?year=2025&by=region",
+        ),
+    )]
+
+- **Form.** A path on the generated backend, starting with ``/`` (it may carry a
+  query string), or an absolute ``http://`` / ``https://`` URL; no spaces. Anything
+  else raises ``ValueError``; an empty string means no endpoint.
+- **Response.** A JSON array of row objects, or an object holding the array
+  under ``data``, ``results``, ``items``, ``records`` or ``list``. Each row
+  carries the binding's ``label_field`` and ``data_field``: as attributes of
+  ``domain_concept``, or, when the endpoint returns other fields, as
+  ``label_field_path`` / ``data_field_path`` (``"period"``, ``"value"``). The
+  ``aggregation`` and ``filter_expression``, if any, still apply to the rows.
+- **Where it applies.** Chart series, a chart's own binding and metric cards.
+  Tables, maps and forms ignore it (with a warning at generation), because they
+  also write back through the class's CRUD API.
+- **In the editor.** The ``data-endpoint`` attribute of a metric card and of each
+  chart series (the *Endpoint* field of the metric card and of the series manager).
+
 Map Component
 -------------
 

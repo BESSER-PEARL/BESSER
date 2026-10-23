@@ -371,6 +371,11 @@ Customization
 - **Database**: Switch from SQLite to PostgreSQL by editing the connection string
 - **Frontend**: Customize components, styles, and logic in the React code
 - **Backend**: Add new endpoints, business logic, or authentication
+- **Dashboards on large tables**: Add an endpoint that returns the figures already
+  aggregated (``/stats/revenue?year=2025``) and set it as the ``endpoint`` of the
+  chart's or metric card's ``DataBinding`` in the GUI model (the *Endpoint* field in
+  the editor): the chart then reads it instead of downloading every record of the
+  class. See ``DataBinding`` in :doc:`../buml_language/model_types/gui`.
 - **Constraints**: Add OCL constraints to enforce business rules
 
 .. note::

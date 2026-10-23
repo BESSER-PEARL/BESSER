@@ -4,6 +4,7 @@ Chart component parsers for GUI diagrams.
 
 import logging
 import json
+import re
 
 logger = logging.getLogger(__name__)
 from typing import Dict, Any, List, Optional
@@ -32,6 +33,21 @@ def _parse_aggregation(*sources: Dict[str, Any]):
     return None
 
 
+def _parse_endpoint(attrs: Dict[str, Any]) -> Optional[str]:
+    """The ``data-endpoint`` a series or metric card reads its records from, if any.
+
+    A path typed without its leading ``/`` (``stats/exports``) gets one, as the
+    generated app's charts would add it.
+    """
+    value = attrs.get('data-endpoint') if isinstance(attrs, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    value = value.strip()
+    if not value.startswith('/') and not re.match(r'^https?://', value, re.IGNORECASE):
+        value = '/' + value
+    return value
+
+
 def _apply_chart_level_binding(chart, attrs: Dict[str, Any], class_model, domain_model) -> None:
     """Rebuild a chart's own ``data_binding`` (as opposed to its series' bindings).
 
@@ -52,7 +68,8 @@ def _build_data_binding(binding_attrs: Dict[str, Any], class_model, domain_model
 
     Returns ``None`` when the data source does not resolve to a domain class. The
     aggregation falls back to ``aggregation_fallbacks`` (the chart's attributes for
-    a series) when ``binding_attrs`` has none.
+    a series) when ``binding_attrs`` has none; the endpoint (``data-endpoint``) is
+    the binding's own only.
     """
     domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(
         binding_attrs, class_model, domain_model)
@@ -68,6 +85,7 @@ def _build_data_binding(binding_attrs: Dict[str, Any], class_model, domain_model
         data_field_path=data_field_path,
         filter_expression=data_filter,
         aggregation=_parse_aggregation(binding_attrs, *aggregation_fallbacks),
+        endpoint=_parse_endpoint(binding_attrs),
     )
 
 

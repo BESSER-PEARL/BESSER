@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -47,6 +48,13 @@ from besser.generators.structural_utils import (
     is_server_owned_attribute,
 )
 from besser.utilities import sort_by_timestamp
+
+logger = logging.getLogger(__name__)
+
+# Components that only read their records, so they may read them from a
+# DataBinding.endpoint; tables, maps and forms also write back through the
+# class's CRUD API and keep it.
+_ENDPOINT_READERS = (LineChart, BarChart, PieChart, RadarChart, RadialBarChart, MetricCard)
 
 
 class GuiSerializationMixin:
@@ -747,7 +755,7 @@ class GuiSerializationMixin:
                             "name": layer.name,
                             "type": lt.value,
                             "dataBinding": self._serialize_data_binding(
-                                getattr(layer, "data_binding", None)
+                                getattr(layer, "data_binding", None), owner=layer
                             ),
                             "latitudeField": getattr(
                                 getattr(layer, "latitude_field", None), "name", None
@@ -784,7 +792,11 @@ class GuiSerializationMixin:
             if "attributes" in node and isinstance(node["attributes"], dict) and "series" in node["attributes"]:
                 node["attributes"] = {k: v for k, v in node["attributes"].items() if k != "series"}
 
-        binding_data = self._serialize_data_binding(getattr(element, "data_binding", None))
+        binding_data = self._serialize_data_binding(
+            getattr(element, "data_binding", None),
+            use_endpoint=isinstance(element, _ENDPOINT_READERS),
+            owner=element,
+        )
         if binding_data:
             node["data_binding"] = binding_data
 
@@ -937,7 +949,12 @@ class GuiSerializationMixin:
 
         return self._clean_dict(data)
 
-    def _serialize_data_binding(self, binding) -> Optional[Dict[str, Any]]:
+    def _serialize_data_binding(self, binding, use_endpoint: bool = False, owner=None) -> Optional[Dict[str, Any]]:
+        """The binding as the runtime blocks read it.
+
+        ``endpoint`` is the binding's own ``endpoint`` when ``use_endpoint`` (a chart
+        or metric card), else the domain concept's CRUD list (``/<class>/``).
+        """
         if not binding:
             return None
 
@@ -949,8 +966,18 @@ class GuiSerializationMixin:
         data_field_path = getattr(binding, "data_field_path", None)
 
         endpoint = None
-        if domain and getattr(domain, "name", None):
-            endpoint = f"/{domain.name.lower()}/"
+        custom_endpoint = getattr(binding, "endpoint", None)
+        if custom_endpoint and use_endpoint:
+            endpoint = custom_endpoint
+        else:
+            if custom_endpoint:
+                logger.warning(
+                    "DataBinding.endpoint %r ignored on %s %r: only charts and metric cards read from an "
+                    "endpoint; it keeps the CRUD list of its class.",
+                    custom_endpoint, type(owner).__name__, getattr(owner, "name", None),
+                )
+            if domain and getattr(domain, "name", None):
+                endpoint = f"/{domain.name.lower()}/"
 
         # Use path for nested fields, otherwise use field attribute name
         label_field_value = label_field_path if label_field_path else (getattr(label_field, "name", None) if label_field else None)
@@ -1030,6 +1057,8 @@ class GuiSerializationMixin:
                 if domain:
                     series_data["dataSource"] = domain.name.lower()
                     series_data["endpoint"] = f"/{domain.name.lower()}/"
+                if getattr(binding, "endpoint", None):
+                    series_data["endpoint"] = binding.endpoint
 
                 # Use label_field_path for nested fields, otherwise use label_field attribute
                 label_field_path = getattr(binding, "label_field_path", None)

@@ -93,10 +93,17 @@ Visualization components including:
   label field and shows one value per group (``count``, ``sum``, ``avg``,
   ``min``, ``max``, ``median``, ``first``, ``last``); a bound series without a
   value field counts the records per label
+- Endpoint: a series whose binding has an ``endpoint`` fetches it instead of
+  the class's CRUD list (``/<class>/``); a relative path is resolved against
+  ``VITE_API_URL``
 
 Metric cards (``MetricCardBlock``) show their binding's ``aggregation`` over all
 records; without one, the sum of the bound field, or the number of records when
-no field is bound.
+no field is bound. A card whose binding has an ``endpoint`` fetches it instead
+of the CRUD list. The response contract (an array of rows, or an object holding
+one under ``data``, ``results``, ``items``, ``records`` or ``list``) is described
+with ``DataBinding`` in :doc:`../buml_language/model_types/gui`. Tables, maps and
+forms always use the CRUD list.
 
 MapBlock
 ^^^^^^^^

@@ -14,6 +14,7 @@ TEXT_TAGS = {
     "strike", "u", "s", "del", "ins", "mark",
     "code", "kbd", "samp", "var", "sub", "sup",
     "abbr", "cite", "q", "dfn", "time", "b", "i",
+    "text", "tspan",  # SVG
 }
 
 # HTML tags that represent containers

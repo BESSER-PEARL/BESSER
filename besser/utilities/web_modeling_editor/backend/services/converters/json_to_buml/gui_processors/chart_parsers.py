@@ -19,7 +19,7 @@ from besser.BUML.metamodel.gui.dashboard import (
 from besser.BUML.metamodel.gui.dashboard import Series
 from besser.BUML.metamodel.gui.binding import DataAggregation
 from .styling import ensure_styling_parts
-from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
+from .utils import clean_attribute_name, css_class_names, get_element_by_id, html_attributes, parse_bool, sanitize_name
 
 def _parse_aggregation(*sources: Dict[str, Any]):
     """The ``aggregation`` (sum, avg, count, min, max, ...) of the first source
@@ -164,8 +164,8 @@ def _attach_chart_metadata(chart, component: Dict[str, Any]) -> None:
 
     chart.component_type = component.get("type")
     chart.tag_name = component.get("tagName")
-    chart.css_classes = [cls if isinstance(cls, str) else cls.get("name", "") for cls in (component.get("classes") or [])]
-    chart.custom_attributes = dict(attributes) if isinstance(attributes, dict) else {}
+    chart.css_classes = css_class_names(component)
+    chart.custom_attributes = html_attributes(attributes)
 
 
 def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> LineChart:

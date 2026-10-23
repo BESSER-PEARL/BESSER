@@ -15,3 +15,4 @@ B-UML Language
    BUML/notations/plantUML/api_plantuml
    BUML/notations/image2buml/image
    BUML/notations/kg2buml/kg
+   BUML/notations/sdmx2buml/sdmx

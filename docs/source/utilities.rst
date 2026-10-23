@@ -26,11 +26,13 @@ These utilities help build BUML models from external sources:
 
 * :doc:`Image to BUML <buml_language/model_building/image_to_buml>`
 * :doc:`Knowledge Graph to BUML <buml_language/model_building/kg_to_buml>`
+* :doc:`SDMX dataflow to BUML <buml_language/model_building/sdmx_to_buml>` (official statistics APIs)
 
 For the low-level API documentation, see:
 
 * :doc:`Image-to-BUML API <api/BUML/notations/image2buml/image>`
 * :doc:`KG-to-BUML API <api/BUML/notations/kg2buml/kg>`
+* :doc:`SDMX-to-BUML API <api/BUML/notations/sdmx2buml/sdmx>`
 
 Web Modeling Editor Backend Helpers
 -----------------------------------

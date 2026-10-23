@@ -121,7 +121,7 @@ Choosing a Generator
    * - **Time-Series Forecaster**
      - Neural Network
      - .py
-     - You need a network that forecasts a series: training, prediction and a backtest (Python API only)
+     - You need a network that forecasts a series: training, prediction and a backtest
    * - **Qiskit**
      - Quantum Circuit
      - .py

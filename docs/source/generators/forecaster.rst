@@ -50,7 +50,10 @@ Then, with ``torch`` and ``numpy`` installed:
     forecasts = fc.backtest(values, origins=range(len(values) - 36, len(values) - 12))
     fc.mase(values, forecasts)                     # {horizon: MASE}, 1.0 = the seasonal naive
 
-or from the command line, on a CSV with a column of values (and optionally a ``YYYY-MM`` column):
+or from the command line, on a CSV with a column of values and optionally a period column:
+``YYYY-MM`` gives the position in the season of a monthly series (``season=12``), ``YYYY-Qn`` that
+of a quarterly one (``season=4``); otherwise the series is taken to start at position 0, and the
+command says so.
 
 .. code-block:: console
 
@@ -59,13 +62,13 @@ or from the command line, on a CSV with a column of values (and optionally a ``Y
 Parameters
 ----------
 
-``TimeSeriesForecasterGenerator(model, config, output_dir=None, regenerate="", channel_last=False)``
+``TimeSeriesForecasterGenerator(model, config=None, output_dir=None, regenerate="", channel_last=False)``
 
 - **model**: the B-UML ``NN``. It needs a ``Configuration`` (epochs, batch size, optimizer,
   learning rate, weight decay) with the ``mse`` loss. ``train_data`` and ``test_data`` are not used.
-- **config**: the pipeline, a ``ForecastConfig`` (below).
+- **config**: the pipeline, a ``ForecastConfig`` (below); the defaults when omitted.
 - **output_dir**: where ``forecaster_<model name>.py`` is written (default ``<cwd>/output``).
-- **regenerate**: the command that regenerates the module, quoted in its docstring.
+- **regenerate**: the command that regenerates the module, quoted (escaped) in its docstring.
 - **channel_last**: as for the PyTorch generator. A first ``Conv1D`` marked ``permute_in`` then
   reads the window as (batch, window, channels), like a recurrent layer.
 
@@ -79,20 +82,23 @@ Parameters
      - Default
      - Meaning
    * - ``window``
-     - (required)
+     - ``24``
      - past values the network reads
    * - ``horizon``
-     - (required)
+     - ``12``
      - future values it returns: the size of its last layer (one network for every horizon)
    * - ``season``
      - ``12``
      - the period of the series (12 monthly, 4 quarterly, 7 daily)
    * - ``log``
      - ``True``
-     - forecast the logarithm when every value is positive (otherwise the levels)
+     - forecast the logarithm when every value of the training series is positive (otherwise the
+       levels, with a warning). The trained forecaster remembers the decision: one trained on the
+       logarithm refuses to forecast a series with a value that is not positive
    * - ``difference``
-     - ``12``
-     - ``0`` levels, ``1`` first difference, ``season`` seasonal difference
+     - ``None`` (the season)
+     - ``0`` levels, ``1`` first difference, or the ``season`` (seasonal difference); any other lag
+       is refused
    * - ``calendar``
      - ``True``
      - add the sine and cosine of the position in the season as inputs
@@ -101,10 +107,10 @@ Parameters
      - centre and scale the differenced series on the training data
    * - ``seeds``
      - ``(0,)``
-     - one network per seed; their forecasts are averaged
+     - one network per seed (at most 100); their forecasts are averaged
    * - ``description``
      - ``""``
-     - free text copied into the module's docstring
+     - free text copied into the module's docstring (escaped: it cannot become code)
 
 Which networks it takes
 -----------------------
@@ -149,9 +155,11 @@ The generated module
 - **deterministic training**: a seed per network and a seeded shuffle, without touching the global
   random state. The same model, configuration and series give the same forecast;
 - ``fit``, ``Forecaster.predict`` (any number of steps: beyond ``horizon`` the forecasts feed the
-  next window), ``save`` and ``load`` (weights only, no timestamps);
+  next window), ``save`` and ``load`` (weights only, no timestamps; ``load`` refuses a file saved by
+  another model);
 - ``backtest`` (rolling origin: each forecast is trained only on the values up to its origin),
-  ``seasonal_naive`` and ``mase``;
+  ``seasonal_naive`` and ``mase`` (an origin where the seasonal naive has no in-sample error leaves
+  the MASE undefined: it is left out, with a warning);
 - a command line (``main``).
 
 Generation is deterministic: the same model and configuration give the same file, byte for byte.
@@ -159,17 +167,24 @@ Generation is deterministic: the same model and configuration give the same file
 .. note::
 
    A small network trained on a single series of a few hundred values often does no better than
-   the seasonal naive forecast: compare it with ``backtest`` and ``mase`` before relying on it.
-   Training on several related series at once (``fit([...])``) usually helps.
+   the seasonal naive forecast: compare it with ``backtest`` and ``mase`` before relying on it. In
+   one measurement (October 2026: Luxembourg's monthly exports of goods, January 1999 to June 2026,
+   60 epochs, one seed, 12 rolling origins), the eight networks tried (two MLPs, two GRUs, an
+   LSTM, a simple RNN and two convolutional networks) all beat the seasonal naive forecast one
+   month ahead, with a MASE of 0.36 to 0.52, but none did on average over the 12 months: 0.81 to
+   1.16, against 0.72 for the seasonal naive. ``fit([...])`` trains one model on several related series; that was not
+   measured.
 
 Web Modeling Editor
 -------------------
 
-In an NN diagram, **Generate → Forecaster (PyTorch)** opens a settings form: the window, the
-horizon, the season, the differencing lag, the logarithm, the season features, standardisation and
-the seed, pre-filled with the defaults below. The window has to be given: it cannot be read from a
-recurrent or convolutional first layer. The editor sends the form as the generation ``config`` of the
-``forecaster`` generator and downloads ``forecaster_<model name>.py``.
+In an NN diagram, **Generate → PyTorch → Time-Series Forecaster** opens a settings form: the
+window, the horizon, the season, the seed, the differencing (levels, first difference or seasonal),
+the logarithm, the season features, standardisation and ``channel_last``, pre-filled with the
+defaults below. The window has to be given: it cannot be read from a recurrent or convolutional
+first layer. When generation fails (for example a horizon that does not match the last layer), the
+form stays open with the backend's message. The editor sends the form as the generation ``config``
+of the ``forecaster`` generator and downloads ``forecaster_<model name>.py``.
 
 The backend reads the ``config`` with ``ForecastConfig.from_dict``:
 
@@ -189,14 +204,17 @@ The backend reads the ``config`` with ``ForecastConfig.from_dict``:
      - integer, at least 1
      - 12
    * - ``difference``
-     - integer: 0, 1 or the season
-     - 12
+     - integer: 0, 1 or the season; or null
+     - null (the season)
    * - ``log``, ``calendar``, ``standardize``
      - true or false
      - true
-   * - ``seed`` (one) or ``seeds`` (a list)
+   * - ``seed`` (one) or ``seeds`` (a list of at most 100; not both)
      - integers
      - 0
+   * - ``description``
+     - text, escaped into the module's docstring
+     - empty
    * - ``channel_last``
      - true or false (as in :doc:`pytorch`)
      - false

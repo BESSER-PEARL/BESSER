@@ -44,6 +44,8 @@ from besser.utilities.buml_code_builder.deployment_model_builder import deployme
 from besser.utilities.web_modeling_editor.backend.models import (
     DiagramInput,
     ProjectInput,
+    SdmxImportRequest,
+    SdmxProvidersResponse,
 )
 
 # Backend services - Converters
@@ -81,7 +83,13 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 )
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
+    sdmx_providers,
+    sdmx_to_domain_model,
 )
+from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.sdmx_reverse import (
+    custom_urls_allowed,
+)
+from besser.utilities.sdmx_to_buml import SDMXFetchError, SDMXTooLargeError
 from besser.utilities.web_modeling_editor.backend.services.svg_postprocess import (
     fit_svg_viewbox_to_content,
 )
@@ -821,6 +829,45 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
             "exportedAt": datetime.now(timezone.utc).isoformat(),
             "version": API_VERSION
         }
+
+@router.get("/sdmx-providers", response_model=SdmxProvidersResponse)
+async def get_sdmx_providers():
+    """The preset SDMX providers the "From data" import offers, and whether custom URLs are accepted."""
+    return {"providers": sdmx_providers(), "customUrlAllowed": custom_urls_allowed()}
+
+
+@router.post("/sdmx-to-domain-model", response_model=DiagramExportResponse)
+@handle_endpoint_errors("sdmx_to_domain_model_endpoint")
+async def sdmx_to_domain_model_endpoint(request: SdmxImportRequest):
+    """
+    Reads the structure of an SDMX dataflow (a preset provider or an https SDMX 2.1 API) and returns
+    its B-UML domain model as JSON, in the same shape as ``/csv-to-domain-model``.
+    """
+    try:
+        domain_model = await asyncio.to_thread(
+            sdmx_to_domain_model,
+            request.dataflow,
+            provider=request.provider,
+            base_url=request.baseUrl,
+            agency=request.agency,
+            version=request.version,
+            model_name=request.modelName,
+        )
+    except SDMXTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except SDMXFetchError as exc:
+        raise HTTPException(status_code=404 if exc.status == 404 else 502, detail=str(exc)) from exc
+
+    diagram_type = "ClassDiagram"
+    diagram_json = class_buml_to_json(domain_model)
+    return {
+        "title": domain_model.name,
+        "model": {**diagram_json, "type": diagram_type},
+        "diagramType": diagram_type,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "version": API_VERSION,
+    }
+
 
 @router.post("/get-json-model-from-image", response_model=DiagramExportResponse)
 @handle_endpoint_errors("get_json_model_from_image")

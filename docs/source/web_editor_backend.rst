@@ -431,6 +431,13 @@ Conversion
 - ``POST /get-json-model-from-image`` -- Image to ClassDiagram JSON (requires OpenAI API key)
 - ``POST /get-json-model-from-kg`` -- Knowledge graph (TTL/RDF/JSON) to ClassDiagram JSON
 - ``POST /csv-to-domain-model`` -- CSV **or XLSX** files to domain model JSON (both extensions are accepted; XLSX needs ``openpyxl``)
+- ``POST /sdmx-to-domain-model`` -- The structure of an SDMX dataflow to domain model JSON, same response as ``/csv-to-domain-model``.
+  Body: ``{"provider": "ecb", "dataflow": "EXR"}`` or ``{"baseUrl": "https://...", "dataflow": "AGENCY,ID,VERSION"}``
+  (``agency``, ``version`` and ``modelName`` are optional). Fetched in safe mode: https on port 443 to public hosts only,
+  ``BESSER_SDMX_TIMEOUT`` seconds (60) and ``BESSER_SDMX_MAX_MB`` (64) per request; ``BESSER_SDMX_ALLOW_CUSTOM_URL=0``
+  accepts the preset providers only. 400 for invalid input, 404 for an unknown dataflow, 413 when too large, 502 when the provider fails.
+  See :doc:`buml_language/model_building/sdmx_to_buml`.
+- ``GET /sdmx-providers`` -- The preset SDMX providers (``key``, ``name``, ``baseUrl``, ``agency``) and ``customUrlAllowed``
 - ``POST /transform-agent-model-json`` -- Agent model transformation with personalization
 - ``POST /get-svg`` -- B-UML class-diagram file to an auto-laid-out SVG. Rendering is delegated to the WME Node server (``WME_NODE_SERVER_URL``, default ``http://localhost:8080``), which runs ELK auto-layout headlessly.
 

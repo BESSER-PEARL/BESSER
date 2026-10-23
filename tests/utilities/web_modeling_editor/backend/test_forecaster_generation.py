@@ -5,6 +5,7 @@ The diagrams are built as B-UML models and converted with the editor's own NN co
 payload is exactly what the editor sends. Generation needs neither torch nor numpy.
 """
 import asyncio
+import urllib.parse
 
 import httpx
 import pytest
@@ -85,6 +86,16 @@ def test_the_default_difference_follows_the_season():
     response = _post("/besser_api/generate-output", diagram_input(mlp(), {"season": 4}))
     assert response.status_code == 200, response.text
     assert "SEASON = 4" in response.text and "DIFFERENCE = 4" in response.text
+
+
+def test_a_model_name_outside_latin_1_downloads():
+    model = mlp()
+    model.name = "数据"
+    response = _post("/besser_api/generate-output", diagram_input(model))
+    assert response.status_code == 200, response.text
+    disposition = response.headers["content-disposition"]
+    assert "filename*=UTF-8''" + urllib.parse.quote("forecaster_数据.py") in disposition
+    assert 'filename="forecaster.py"' in disposition
 
 
 def test_a_recurrent_network_through_the_project_endpoint():

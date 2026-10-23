@@ -16,6 +16,7 @@ import tempfile
 import importlib.util
 import asyncio
 import json
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -1510,5 +1511,17 @@ def _create_file_response(temp_dir: str, generator_type: str):
     return Response(
         content=file_content,
         media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{proper_filename}"'},
+        headers={"Content-Disposition": _attachment(proper_filename)},
     )
+
+
+def _attachment(file_name: str) -> str:
+    """The Content-Disposition of a download. HTTP headers are latin-1: a name
+    outside ASCII (a model called ``数据``) is sent as RFC 6266's UTF-8
+    ``filename*``, with an ASCII ``filename`` for older clients."""
+    if file_name.isascii():
+        return f'attachment; filename="{file_name}"'
+    stem, ext = os.path.splitext(file_name)
+    fallback = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "download"
+    return (f'attachment; filename="{fallback}{ext}"; '
+            f"filename*=UTF-8''{urllib.parse.quote(file_name)}")

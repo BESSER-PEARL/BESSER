@@ -49,8 +49,8 @@ def test_a_blank_endpoint_means_none(blank):
     "https:///sales",
     "/stats/sales\x00",          # control characters
     "/stats/\x07sales",
-    "/stats/sa​les",        # invisible format characters
-    "/stats/sa les",
+    "/stats/sa\u200bles",        # invisible format characters
+    "/stats/sa\u2028les",
 ])
 def test_anything_else_is_refused(endpoint):
     with pytest.raises(ValueError, match="Invalid endpoint"):

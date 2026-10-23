@@ -8,7 +8,7 @@ from besser.BUML.metamodel.structural.structural import Element
 # format characters are refused, so the value goes into a URL as is.
 _ENDPOINT_RE = re.compile(
     r"^(/(?!/)|https?://[^/\s?#]+)"
-    r"[^\s\x00-\x1f\x7f​-‏ -‮⁠-⁤﻿]*$",
+    r"[^\s\x00-\x1f\x7f\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]*$",
     re.IGNORECASE,
 )
 

@@ -3,6 +3,7 @@
 Generation and validation need neither torch nor numpy; the tests that run the generated code skip
 when torch is not installed. Synthetic series only.
 """
+import ast
 import importlib.util
 from pathlib import Path
 
@@ -10,7 +11,6 @@ import pytest
 
 from besser.BUML.metamodel.nn import (
     NN,
-    Configuration,
     Conv1D,
     DropoutLayer,
     EmbeddingLayer,
@@ -26,33 +26,12 @@ from besser.generators.nn.forecaster import (
     ForecastConfig,
     TimeSeriesForecasterGenerator,
 )
+from tests.forecaster_networks import HORIZON, WINDOW, configuration, gru, mlp
 
-WINDOW, HORIZON = 24, 12
 CONFIG = ForecastConfig(window=WINDOW, horizon=HORIZON, seeds=(0,))
 
 
-def configuration(epochs: int = 2, loss: str = "mse") -> Configuration:
-    return Configuration(batch_size=32, epochs=epochs, learning_rate=0.003, optimizer="adamW",
-                         loss_function=loss, metrics=["mae"], weight_decay=0.01)
-
-
 # --------------------------------------------------------------------------- networks
-def mlp() -> NN:
-    model = NN(name="mlp")
-    model.add_layer(LinearLayer(name="hidden", in_features=WINDOW + 2, out_features=32, actv_func="relu"))
-    model.add_layer(DropoutLayer(name="dropout", rate=0.1))
-    model.add_layer(LinearLayer(name="output", in_features=32, out_features=HORIZON))
-    model.add_configuration(configuration())
-    return model
-
-
-def gru() -> NN:
-    model = NN(name="gru")
-    model.add_layer(GRULayer(name="recurrent", input_size=3, hidden_size=16, return_type="last",
-                             batch_first=True, output_var="state"))
-    model.add_layer(LinearLayer(name="output", in_features=16, out_features=HORIZON, input_var="state"))
-    model.add_configuration(configuration())
-    return model
 
 
 def stacked_lstm() -> NN:
@@ -108,12 +87,38 @@ def cnn_rnn() -> NN:
     return model
 
 
+def channel_last_cnn() -> NN:
+    """A first Conv1D marked permute_in: with channel_last it reads (batch, window, channels), the
+    layout of an RNN."""
+    model = NN(name="channel_last_cnn")
+    model.add_layer(Conv1D(name="c1", actv_func="relu", in_channels=3, out_channels=8, kernel_dim=[3],
+                           permute_in=True))
+    model.add_layer(FlattenLayer(name="flat"))
+    model.add_layer(LinearLayer(name="out", in_features=8 * 22, out_features=HORIZON))
+    model.add_configuration(configuration())
+    return model
+
+
+def dropout_op_net() -> NN:
+    """A TensorOp dropout: the stock templates write it with torch.nn.functional (F)."""
+    model = NN(name="dropout_op")
+    model.add_layer(LinearLayer(name="hidden", in_features=WINDOW + 2, out_features=16, actv_func="relu"))
+    model.add_tensor_op(TensorOp(name="drop", tns_type="dropout", dropout_rate=0.1))
+    model.add_layer(LinearLayer(name="output", in_features=16, out_features=HORIZON))
+    model.add_configuration(configuration())
+    return model
+
+
 NETWORKS = {"mlp": (mlp, "flat"), "gru": (gru, "sequence"), "stacked_lstm": (stacked_lstm, "sequence"),
-            "simple_rnn": (simple_rnn, "sequence"), "cnn1d": (cnn1d, "channels"), "cnn_rnn": (cnn_rnn, "channels")}
+            "simple_rnn": (simple_rnn, "sequence"), "cnn1d": (cnn1d, "channels"), "cnn_rnn": (cnn_rnn, "channels"),
+            "channel_last_cnn": (channel_last_cnn, "sequence"), "dropout_op": (dropout_op_net, "flat")}
+CHANNEL_LAST = {"channel_last_cnn"}
 
 
 def generate(build, out: Path, config: ForecastConfig = CONFIG) -> Path:
-    return Path(TimeSeriesForecasterGenerator(build(), config, output_dir=str(out)).generate())
+    model = build()
+    return Path(TimeSeriesForecasterGenerator(model, config, output_dir=str(out),
+                                              channel_last=model.name in CHANNEL_LAST).generate())
 
 
 # --------------------------------------------------------------------------- generation
@@ -145,9 +150,47 @@ def test_the_pipeline_settings_are_written_into_the_module(tmp_path):
                             standardize=False, seeds=(3, 5), description="Quarterly series.")
     code = generate(mlp, tmp_path, config).read_text(encoding="utf-8")
     for line in ("WINDOW = 24", "HORIZON = 12", "SEASON = 4", "LOG = False", "DIFFERENCE = 1",
-                 "STANDARDIZE = False", "SEEDS = [3, 5]"):
+                 "CALENDAR = True", "STANDARDIZE = False", "SEEDS = [3, 5]"):
         assert line in code
     assert "Quarterly series." in code
+
+
+def test_the_default_difference_is_the_season(tmp_path):
+    config = ForecastConfig(window=WINDOW, horizon=HORIZON, season=4)
+    code = generate(mlp, tmp_path, config).read_text(encoding="utf-8")
+    assert "SEASON = 4" in code and "DIFFERENCE = 4" in code
+    assert ForecastConfig().lag == 12 and ForecastConfig(season=7).lag == 7
+
+
+def test_without_a_config_the_defaults_are_used(tmp_path):
+    path = TimeSeriesForecasterGenerator(mlp(), output_dir=str(tmp_path)).generate()
+    code = Path(path).read_text(encoding="utf-8")
+    for line in ("WINDOW = 24", "HORIZON = 12", "SEASON = 12", "DIFFERENCE = 12", "SEEDS = [0]"):
+        assert line in code
+
+
+@pytest.mark.parametrize("text", [
+    '"""\nimport os; os.system("echo PWNED")\n"""',
+    'a\\" \r import os \x00 \u2028 import sys \\',
+    'ends with a quote"',
+])
+def test_free_text_cannot_escape_the_docstring(text, tmp_path):
+    """The description and the regenerate command are text in the module's docstring, never code."""
+    config = ForecastConfig(window=WINDOW, horizon=HORIZON, description=text)
+    path = TimeSeriesForecasterGenerator(mlp(), config, output_dir=str(tmp_path), regenerate=text).generate()
+    tree = ast.parse(Path(path).read_text(encoding="utf-8"))
+    assert text in ast.get_docstring(tree, clean=False)
+    imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+    assert "os" not in imported and "sys" in imported      # sys: the module's own import, not the text's
+    assert sum(isinstance(node, ast.Import) and node.names[0].name == "sys" for node in tree.body) == 1
+    assert not any(isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) for node in tree.body)
+
+
+def test_the_stock_imports_cover_functional_tensor_ops(tmp_path):
+    code = generate(dropout_op_net, tmp_path).read_text(encoding="utf-8")
+    assert "F.dropout(" in code
+    assert "import torch.nn.functional as F" in code
+    assert code.count("\nimport torch\n") == 1
 
 
 def test_generation_is_deterministic(tmp_path):
@@ -231,6 +274,16 @@ def test_a_network_made_of_sub_networks_is_refused(tmp_path):
         TimeSeriesForecasterGenerator(model, CONFIG, output_dir=str(tmp_path))
 
 
+def test_a_last_module_that_is_not_linear_is_refused(tmp_path):
+    model = NN(name="ends_recurrent")
+    model.add_layer(LinearLayer(name="a", in_features=WINDOW + 2, out_features=8))
+    model.add_layer(GRULayer(name="b", input_size=8, hidden_size=HORIZON, return_type="last", batch_first=True))
+    model.add_configuration(configuration())
+    with pytest.raises(ValueError, match="the last module 'b' must be a LinearLayer returning the 12 forecasts, "
+                                         "not GRULayer"):
+        TimeSeriesForecasterGenerator(model, CONFIG, output_dir=str(tmp_path))
+
+
 def test_an_empty_network_is_refused(tmp_path):
     model = NN(name="empty")
     model.add_configuration(configuration())
@@ -242,12 +295,31 @@ def test_an_empty_network_is_refused(tmp_path):
     ({"window": 0}, "window must be at least 1"),
     ({"horizon": 0}, "horizon must be at least 1"),
     ({"season": 0}, "season must be at least 1"),
-    ({"difference": -1}, "difference must be"),
+    ({"difference": -1}, r"difference must be 0 \(levels\), 1 \(first difference\) or the season \(12\), not -1"),
+    ({"difference": 5}, r"or the season \(12\), not 5"),
+    ({"season": 4, "difference": 12}, r"or the season \(4\), not 12"),
     ({"seeds": ()}, "seeds must name at least one seed"),
+    ({"seeds": tuple(range(101))}, "at most 100 seeds, not 101"),
 ])
 def test_forecast_config_is_checked(kwargs, message):
     with pytest.raises(ValueError, match=message):
         ForecastConfig(**{"window": WINDOW, "horizon": HORIZON, **kwargs}).validate()
+
+
+@pytest.mark.parametrize("data, message", [
+    ({"seed": 1, "seeds": [2]}, "send either seed or seeds, not both"),
+    ({"window": "1" * 400}, r"window must be an integer, got '1{40}"),
+    ({"difference": True}, "difference must be an integer, got True"),
+])
+def test_from_dict_names_the_problem_briefly(data, message):
+    with pytest.raises(ValueError, match=message) as info:
+        ForecastConfig.from_dict(data)
+    assert len(str(info.value)) < 200
+
+
+def test_from_dict_takes_null_as_the_season():
+    assert ForecastConfig.from_dict({"season": 4, "difference": None}).lag == 4
+    assert ForecastConfig.from_dict({}).difference is None
 
 
 # --------------------------------------------------------------------------- the generated code
@@ -338,11 +410,95 @@ def test_too_short_a_series_is_refused(tmp_path):
 
 @needs_torch
 def test_a_series_with_zeros_is_forecast_in_levels(tmp_path):
-    """The logarithm is skipped when a value is not positive."""
+    """The logarithm is skipped when a value is not positive, with a warning, and the forecaster
+    remembers it: a series without the zero is then forecast in levels too (not on the log scale)."""
     fc = load(generate(mlp, tmp_path))
     values = synthetic()
     values[5] = 0.0
-    assert np.isfinite(fc.fit(values, epochs=1).predict(values)).all()
+    with pytest.warns(UserWarning, match="forecast in levels"):
+        forecaster = fc.fit(values, epochs=1)
+    assert forecaster.log is False
+    clean = synthetic()
+    out = forecaster.predict(clean)
+    assert np.isfinite(out).all()
+    # in levels the forecast stays on the series' scale; read as logs it was exp(1e9)-sized or tiny
+    assert 0.01 * clean.max() < np.abs(out).max() < 100 * clean.max()
+
+
+@needs_torch
+def test_a_model_trained_on_the_logarithm_refuses_a_value_that_is_not_positive(tmp_path):
+    fc = load(generate(mlp, tmp_path))
+    forecaster = fc.fit(synthetic(), epochs=1)
+    assert forecaster.log is True
+    values = synthetic()
+    values[-3] = 0.0
+    with pytest.raises(ValueError, match="trained on the logarithm"):
+        forecaster.predict(values)
+
+
+@needs_torch
+def test_pooled_series_share_one_log_decision(tmp_path):
+    fc = load(generate(gru, tmp_path))
+    positive, with_zero = synthetic(80, 1), synthetic(80, 2)
+    with_zero[10] = 0.0
+    with pytest.warns(UserWarning, match="forecast in levels"):
+        forecaster = fc.fit([positive, with_zero], epochs=1)
+    assert forecaster.log is False
+
+
+@needs_torch
+def test_difference_and_undifference_are_inverse(tmp_path):
+    fc = load(generate(mlp, tmp_path))          # DIFFERENCE = 12
+    z = np.arange(30, dtype=float) ** 1.5
+    d = fc.difference(z)
+    assert np.isnan(d[:12]).all()
+    assert np.allclose(d[12:], z[12:] - z[:-12])
+    assert np.allclose(fc.undifference(z[:20], d[20:30]), z[20:30])
+
+
+@needs_torch
+def test_the_calendar_features_give_the_position_of_the_first_period_forecast(tmp_path):
+    flat = load(generate(mlp, tmp_path / "flat"))
+    lags = np.zeros((2, WINDOW))
+    x = flat.network_inputs(lags, np.array([0, 11]), start=3)
+    # origin 0 of a series starting in April: the first value forecast is May (position 4)
+    assert np.allclose(x[0, -2:], [np.sin(2 * np.pi * 4 / 12), np.cos(2 * np.pi * 4 / 12)])
+    assert np.allclose(x[1, -2:], [np.sin(2 * np.pi * 3 / 12), np.cos(2 * np.pi * 3 / 12)])
+    seq = load(generate(gru, tmp_path / "seq"))
+    x = seq.network_inputs(np.zeros((1, WINDOW)), np.array([WINDOW - 1]), start=0)
+    assert x.shape == (1, WINDOW, 3)
+    # step k of the window is the k-th period of the series: its own position, not the next one
+    assert np.allclose(x[0, :, 1], np.sin(2 * np.pi * (np.arange(WINDOW) % 12) / 12))
+
+
+@needs_torch
+def test_training_rows_mask_the_targets_that_are_not_observed(tmp_path):
+    config = ForecastConfig(window=WINDOW, horizon=HORIZON, calendar=False)
+    fc = load(generate(lambda: linear_net(WINDOW, HORIZON), tmp_path, config))
+    d = np.arange(40, dtype=float)
+    d[:3] = np.nan                                   # undefined differences at the start
+    inputs, targets = fc.training_rows(d, start=0)
+    # windows must be complete: the first origin is 3 + WINDOW - 1; the last one is n - 2
+    assert inputs.shape == (40 - 1 - (3 + WINDOW - 1), WINDOW)
+    assert np.array_equal(inputs[0], d[3:3 + WINDOW])
+    # the last origin sees one observed target; the rest are NaN (left out of the loss)
+    assert targets[-1, 0] == d[-1] and np.isnan(targets[-1, 1:]).all()
+    assert not np.isnan(targets[0]).any()
+
+
+@needs_torch
+def test_a_constant_season_leaves_mase_undefined_with_a_warning(tmp_path):
+    fc = load(generate(mlp, tmp_path))
+    values = np.tile(np.arange(1.0, 13.0), 8)        # repeats its season exactly
+    with pytest.warns(UserWarning, match="no in-sample error"):
+        assert fc.mase(values, {60: fc.seasonal_naive(values, 60)}) == {}
+
+
+@needs_torch
+def test_a_quarterly_csv_gives_the_season_position(tmp_path):
+    fc = load(generate(mlp, tmp_path, ForecastConfig(window=WINDOW, horizon=HORIZON, season=4)))
+    assert fc.season_start("2020-Q3") == 2 and fc.season_start("2020Q1") == 0
+    assert fc.season_start("2020-03") is None        # a month says nothing about a season of 4
 
 
 @needs_torch
@@ -351,3 +507,6 @@ def test_the_saved_file_names_the_model(tmp_path):
     fc.save(fc.fit(synthetic(), epochs=1), str(tmp_path / "m.pt"))
     assert torch.load(str(tmp_path / "m.pt"), weights_only=True)["model"] == "mlp"
     assert load(generate(mlp, tmp_path / "again")).MODEL_NAME == "mlp"
+    other = load(generate(gru, tmp_path / "gru"))
+    with pytest.raises(ValueError, match="holds the 'mlp' forecaster, not 'gru'"):
+        other.load(str(tmp_path / "m.pt"))

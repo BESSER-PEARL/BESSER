@@ -433,9 +433,10 @@ Conversion
 - ``POST /csv-to-domain-model`` -- CSV **or XLSX** files to domain model JSON (both extensions are accepted; XLSX needs ``openpyxl``)
 - ``POST /sdmx-to-domain-model`` -- The structure of an SDMX dataflow to domain model JSON, same response as ``/csv-to-domain-model``.
   Body: ``{"provider": "ecb", "dataflow": "EXR"}`` or ``{"baseUrl": "https://...", "dataflow": "AGENCY,ID,VERSION"}``
-  (``agency``, ``version`` and ``modelName`` are optional). Fetched in safe mode: https on port 443 to public hosts only,
-  ``BESSER_SDMX_TIMEOUT`` seconds (60) and ``BESSER_SDMX_MAX_MB`` (64) per request; ``BESSER_SDMX_ALLOW_CUSTOM_URL=0``
-  accepts the preset providers only. 400 for invalid input, 404 for an unknown dataflow, 413 when too large, 502 when the provider fails.
+  (``agency``, ``version`` and ``modelName`` are optional; ``baseUrl`` only when ``BESSER_SDMX_ALLOW_CUSTOM_URL`` is on).
+  Fetched in safe mode: https on port 443 to public addresses only, each connection pinned to the address that was
+  checked, within the ``BESSER_SDMX_*`` limits below. 400 for invalid input, 404 for an unknown dataflow, 413 when
+  too large, 502 when the provider fails, 503 when too many imports are running, 504 when the import takes too long.
   See :doc:`buml_language/model_building/sdmx_to_buml`.
 - ``GET /sdmx-providers`` -- The preset SDMX providers (``key``, ``name``, ``baseUrl``, ``agency``) and ``customUrlAllowed``
 - ``POST /transform-agent-model-json`` -- Agent model transformation with personalization
@@ -631,6 +632,27 @@ agent: :doc:`spec_driven_agent/configuration`.
   persistent volume so sign-ins survive a restart
 - ``GITHUB_REDIRECT_URI`` -- OAuth redirect URL (default: ``http://localhost:9000/besser_api/github/auth/callback``)
 - ``DEPLOYMENT_URL`` -- Frontend URL for OAuth redirects (default: ``http://localhost:8080``)
+
+**SDMX import** (``POST /sdmx-to-domain-model``, read once at startup):
+
+- ``BESSER_SDMX_ALLOW_CUSTOM_URL`` (off) -- Accept an SDMX API that is not one of
+  the preset providers. Off by default, like ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL``:
+  even with its public-address checks, a hosted server should not fetch any URL
+  for anyone. Local and on-premises installs can turn it on.
+- ``BESSER_SDMX_TIMEOUT`` (``60``) -- Seconds for one whole import: every request,
+  redirect and retry, enforced while the answer is read.
+- ``BESSER_SDMX_MAX_MB`` (``32``) -- Largest single structure message. The largest
+  seen, Eurostat Comext's ``DS-045409``, is 23.6 MB; parsing takes about 15 times a
+  message's size in memory.
+- ``BESSER_SDMX_MAX_TOTAL_MB`` (``64``) -- All the messages of one import together.
+- ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` (``2``) -- Imports running at once; more
+  are answered with 503, so imports cannot fill the thread pool the conversion and
+  generation endpoints share.
+
+The import does not use the environment's HTTP proxies (a proxy would resolve the
+host itself, which the pinning prevents); it does use the CA bundle of
+``REQUESTS_CA_BUNDLE`` or ``CURL_CA_BUNDLE``, for servers behind a TLS-inspecting
+gateway.
 
 **Agent simulation** (read once at startup, except the token):
 

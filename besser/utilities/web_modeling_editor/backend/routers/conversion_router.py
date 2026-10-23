@@ -83,13 +83,10 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 )
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
+    custom_urls_allowed,
     sdmx_providers,
     sdmx_to_domain_model,
 )
-from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.sdmx_reverse import (
-    custom_urls_allowed,
-)
-from besser.utilities.sdmx_to_buml import SDMXFetchError, SDMXTooLargeError
 from besser.utilities.web_modeling_editor.backend.services.svg_postprocess import (
     fit_svg_viewbox_to_content,
 )
@@ -831,8 +828,9 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
         }
 
 @router.get("/sdmx-providers", response_model=SdmxProvidersResponse)
+@handle_endpoint_errors("get_sdmx_providers")
 async def get_sdmx_providers():
-    """The preset SDMX providers the "From data" import offers, and whether custom URLs are accepted."""
+    """The preset SDMX providers the "From Data" import offers, and whether custom URLs are accepted."""
     return {"providers": sdmx_providers(), "customUrlAllowed": custom_urls_allowed()}
 
 
@@ -843,20 +841,15 @@ async def sdmx_to_domain_model_endpoint(request: SdmxImportRequest):
     Reads the structure of an SDMX dataflow (a preset provider or an https SDMX 2.1 API) and returns
     its B-UML domain model as JSON, in the same shape as ``/csv-to-domain-model``.
     """
-    try:
-        domain_model = await asyncio.to_thread(
-            sdmx_to_domain_model,
-            request.dataflow,
-            provider=request.provider,
-            base_url=request.baseUrl,
-            agency=request.agency,
-            version=request.version,
-            model_name=request.modelName,
-        )
-    except SDMXTooLargeError as exc:
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
-    except SDMXFetchError as exc:
-        raise HTTPException(status_code=404 if exc.status == 404 else 502, detail=str(exc)) from exc
+    domain_model = await asyncio.to_thread(
+        sdmx_to_domain_model,
+        request.dataflow,
+        provider=request.provider,
+        base_url=request.baseUrl,
+        agency=request.agency,
+        version=request.version,
+        model_name=request.modelName,
+    )
 
     diagram_type = "ClassDiagram"
     diagram_json = class_buml_to_json(domain_model)

@@ -506,72 +506,93 @@ def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[s
         attrs.setdefault("filter", str(binding.filter_expression))
     if getattr(binding, "endpoint", None):
         attrs.setdefault("data-endpoint", binding.endpoint)
+
+
+# The series keys the model owns (written from its Series and their bindings);
+# any other key of a stored series (``data``: the editor's sample values,
+# ``_expanded``, ...) is editor-only and kept.
+_SERIES_MODEL_KEYS = frozenset({
+    "name", "data-source", "label-field", "data-field", "label-field-path", "data-field-path",
+    "filter", "aggregation", "data-endpoint", "features", "values",
+})
+
+
 def _series_color(series: Any) -> Optional[str]:
     color = getattr(getattr(series, "styling", None), "color", None)
     if not color:
         return None
     return (getattr(color, "primary_color", None) or getattr(color, "line_color", None)
             or getattr(color, "bar_color", None) or getattr(color, "background_color", None))
+
+
 def _series_entry(series: Any) -> Dict[str, Any]:
     """One series as the editor's series manager stores it (read back by chart_parsers)."""
-    entry: Dict[str, Any] = {"name": getattr(series, "label", None) or series.name}
+    entry: Dict[str, Any] = {"name": series.label or series.name}
     color = _series_color(series)
     if color:
         entry["color"] = color
-    binding = getattr(series, "data_binding", None)
-    if binding:
-        entry["data-source"] = _element_ref(binding.domain_concept)
-        # As for a chart's own binding: a path names no class-diagram element.
-        label = _element_ref(binding.label_field)
-        data = _element_ref(binding.data_field)
-        if label:
-            entry["label-field"] = label
-        elif binding.label_field_path:
-            entry["label-field-path"] = binding.label_field_path
-        if data:
-            entry["data-field"] = data
-        elif binding.data_field_path:
-            entry["data-field-path"] = binding.data_field_path
-        if binding.filter_expression:
-            entry["filter"] = str(binding.filter_expression)
-        if binding.aggregation is not None:
-            entry["aggregation"] = binding.aggregation.value
-        if binding.endpoint:
-            entry["data-endpoint"] = binding.endpoint
+    _apply_chart_data_binding_attributes(series, entry)
     return _clean_dict(entry)
+
+
+def _stored_series(raw: Any) -> List[Dict[str, Any]]:
+    """The ``series`` stored in a chart's editor attributes (a JSON string or a list)."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            logger.warning("Ignoring a chart's stored series: not valid JSON")
+            return []
+    return [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+
+
+def _merge_series_entry(series: Any, entry: Dict[str, Any], stored: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """``entry`` (from the model) over ``stored`` (from the editor), in the stored key order.
+
+    The model's keys win; a model key the entry lacks was removed in B-UML and is
+    dropped, unless the series has no binding at all (its data source did not
+    resolve), in which case the stored binding is kept as the editor had it.
+    """
+    if not stored:
+        return entry
+    merged = dict(stored)
+    if series.data_binding is not None:
+        for key in _SERIES_MODEL_KEYS - entry.keys():
+            merged.pop(key, None)
+    merged.update(entry)
+    return merged
+
+
 def _apply_chart_series_attributes(chart: Any, attrs: Dict[str, Any]) -> None:
     """Write the chart's series as the editor's ``series`` attribute.
 
-    A chart drawn in the editor keeps its own ``series`` (sample data, colours);
-    only each series' ``data-endpoint`` is brought in line with the model. A chart
-    built in B-UML gets its series written from the model, so they survive a
-    round trip.
+    The model is the source of truth for the series list, as for a map's layers
+    (``_apply_map_attributes``): a series added in B-UML is exported, one deleted
+    there does not come back. Editor-only keys of a stored series (its sample
+    ``data``) are kept on the series it matches: the one at the same position when
+    the counts are equal, else the first unused one with the same name.
     """
-    series_list = list(getattr(chart, "series", None) or [])
-    if not series_list:
-        return
+    series_list = list(chart.series or [])
     raw = attrs.get("series")
-    existing = raw
-    if isinstance(raw, str):
-        try:
-            existing = json.loads(raw)
-        except ValueError:
-            existing = None
-    if isinstance(existing, list) and existing:
-        by_name = {getattr(s, "label", None) or s.name: s for s in series_list}
-        by_name.update({s.name: s for s in series_list})
-        for index, item in enumerate(existing):
-            if not isinstance(item, dict):
-                continue
-            series = by_name.get(item.get("name")) or (series_list[index] if index < len(series_list) else None)
-            endpoint = getattr(getattr(series, "data_binding", None), "endpoint", None)
-            if endpoint:
-                item["data-endpoint"] = endpoint
-            else:
-                item.pop("data-endpoint", None)
-        attrs["series"] = json.dumps(existing) if isinstance(raw, str) else existing
+    stored = _stored_series(raw)
+    if not series_list and not stored:
         return
-    attrs["series"] = json.dumps([_series_entry(s) for s in series_list])
+    if len(stored) == len(series_list):
+        matches = stored
+    else:
+        unused = list(stored)
+        matches = []
+        for series in series_list:
+            name = series.label or series.name
+            match = next((item for item in unused if item.get("name") in (name, series.name)), None)
+            if match is not None:
+                unused.remove(match)
+            matches.append(match)
+    entries = [_merge_series_entry(series, _series_entry(series), match)
+               for series, match in zip(series_list, matches)]
+    attrs["series"] = entries if isinstance(raw, list) else json.dumps(entries)
+
+
 def _apply_button_attributes(button: Button, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("button-label", button.label or button.name or "Button")
     action_type = attrs.get("action-type")

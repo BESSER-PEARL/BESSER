@@ -48,6 +48,52 @@ def _parse_endpoint(attrs: Dict[str, Any]) -> Optional[str]:
     return value
 
 
+def _series_styling(s_attrs: Dict[str, Any], color_role: Optional[str]) -> Optional[Styling]:
+    """A series' styling: its ``color`` (as ``primary_color``, ``background_color``
+    and the chart's own ``color_role``, e.g. ``line_color``), else its CSS ``styling``."""
+    series_color = s_attrs.get('color')
+    if isinstance(series_color, str) and series_color.strip():
+        roles = {'primary_color': series_color, 'background_color': series_color}
+        if color_role:
+            roles[color_role] = series_color
+        return Styling(color=Color(**roles))
+    if 'styling' in s_attrs:
+        from .styling import styling_from_css
+        return styling_from_css(s_attrs['styling'])
+    return None
+
+
+def _parse_series(view_comp: Dict[str, Any], attrs: Dict[str, Any], class_model, domain_model,
+                  color_role: Optional[str] = None, field_aliases: Optional[Dict[str, str]] = None) -> List[Series]:
+    """The chart's ``series`` attribute (a JSON list) as ``Series`` objects.
+
+    ``field_aliases`` maps a binding key to the series key a chart type uses for it
+    (radial bar charts name their fields ``features`` / ``values``).
+    """
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except ValueError:
+            logger.warning("Could not parse the series JSON of chart %r", attrs.get('chart-title'))
+            series_json = []
+    if not isinstance(series_json, list):
+        return []
+    series_objs = []
+    for s in series_json:
+        s_attrs = s if isinstance(s, dict) else {}
+        s_raw_name = s_attrs.get('name', 'Series')
+        s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+        binding_attrs = s_attrs
+        if field_aliases:
+            binding_attrs = {**s_attrs, **{key: s_attrs.get(alias) or s_attrs.get(key)
+                                           for key, alias in field_aliases.items()}}
+        data_binding = _build_data_binding(binding_attrs, class_model, domain_model, attrs)
+        series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding,
+                                  styling=_series_styling(s_attrs, color_role)))
+    return series_objs
+
+
 def _apply_chart_level_binding(chart, attrs: Dict[str, Any], class_model, domain_model) -> None:
     """Rebuild a chart's own ``data_binding`` (as opposed to its series' bindings).
 
@@ -213,34 +259,7 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
-
-            # Extract color from series attributes and create styling
-            styling = None
-            series_color = s_attrs.get('color')
-            if series_color and isinstance(series_color, str) and series_color.strip():
-                # Create styling with color - use line_color for line charts
-                color_obj = Color(line_color=series_color, background_color=series_color, primary_color=series_color)
-                styling = Styling(color=color_obj)
-            elif 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='line_color')
 
     line_chart = LineChart(
         name=chart_title,
@@ -289,34 +308,7 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
-
-            # Extract color from series attributes and create styling
-            styling = None
-            series_color = s_attrs.get('color')
-            if series_color and isinstance(series_color, str) and series_color.strip():
-                # Create styling with color - use bar_color for bar charts
-                color_obj = Color(bar_color=series_color, background_color=series_color, primary_color=series_color)
-                styling = Styling(color=color_obj)
-            elif 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='bar_color')
 
     bar_chart = BarChart(
         name=chart_title,
@@ -366,26 +358,7 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
-            styling = None
-            if 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model)
 
     show_legend = parse_bool(attrs.get('show-legend'), True)
     show_labels = parse_bool(attrs.get('show-labels'), True)
@@ -454,26 +427,7 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
-            styling = None
-            if 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='line_color')
 
     radar_chart = RadarChart(
         name=chart_title,
@@ -521,32 +475,9 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            # Radial bar series name their fields ``features`` / ``values``.
-            binding_attrs = {
-                **s_attrs,
-                'label-field': s_attrs.get('features') or s_attrs.get('label-field'),
-                'data-field': s_attrs.get('values') or s_attrs.get('data-field'),
-            }
-            data_binding = _build_data_binding(binding_attrs, class_model, domain_model, attrs)
-            styling = None
-            if 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    # Radial bar series name their fields ``features`` / ``values``.
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='bar_color',
+                                field_aliases={'label-field': 'features', 'data-field': 'values'})
 
     radial_bar_chart = RadialBarChart(
         name=chart_title,

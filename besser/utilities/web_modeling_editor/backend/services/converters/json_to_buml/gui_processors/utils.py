@@ -6,7 +6,7 @@ import logging
 import re
 
 logger = logging.getLogger(__name__)
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 def sanitize_name(raw_name: Optional[str]) -> str:
@@ -159,6 +159,23 @@ def get_element_by_id(class_model, element_id):
                 return el
 
     return None
+
+
+def css_class_names(component: Dict[str, Any]) -> List[str]:
+    """
+    CSS class names of a GrapesJS component.
+
+    GrapesJS saves them as ``classes``. A component it has not saved again,
+    such as one the modeling agent wrote, has them in ``attributes["class"]``,
+    which GrapesJS also reads on load.
+    """
+    classes = component.get("classes")
+    if classes:
+        return [cls if isinstance(cls, str) else cls.get("name", "") for cls in classes]
+    attributes = component.get("attributes")
+    if isinstance(attributes, dict) and isinstance(attributes.get("class"), str):
+        return attributes["class"].split()
+    return []
 
 
 def extract_text_content(component: Dict[str, Any]) -> str:

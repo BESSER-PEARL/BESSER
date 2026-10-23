@@ -5,6 +5,13 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Set
 
+# Inline SVG elements, by lowercase name, with the casing React needs.
+_SVG_TAGS = {name.lower(): name for name in (
+    "svg", "g", "defs", "use", "path", "rect", "circle", "ellipse", "line",
+    "polyline", "polygon", "text", "tspan", "linearGradient", "radialGradient",
+    "stop", "clipPath",
+)}
+
 
 class _PageRenderContext:
     def __init__(self) -> None:
@@ -208,6 +215,8 @@ class PageBuilderMixin:
         component_id = node.get("id") or ""
         class_list = node.get("class_list") or []
         attributes = dict(node.get("attributes") or {})
+        if (node.get("tag") or "").lower() in _SVG_TAGS:
+            attributes = self._react_svg_attributes(attributes)
         children = node.get("children") or []
 
         style = self._compute_style(
@@ -1200,13 +1209,24 @@ class PageBuilderMixin:
             "span",
         }
         tag_value = (tag or "").lower()
-        return tag_value if tag_value in valid_tags else "div"
+        if tag_value in valid_tags:
+            return tag_value
+        return _SVG_TAGS.get(tag_value, "div")
 
     @staticmethod
     def _select_text_tag(tag: Optional[str]) -> str:
-        valid_tags = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "strong", "em", "li"}
+        valid_tags = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "strong", "em", "li", "text", "tspan"}
         tag_value = (tag or "").lower()
         return tag_value if tag_value in valid_tags else "p"
+
+    @staticmethod
+    def _react_svg_attributes(attributes: Dict[str, Any]) -> Dict[str, Any]:
+        """SVG attribute names as React expects them: ``stroke-width`` -> ``strokeWidth``."""
+        return {
+            key if key.startswith(("aria-", "data-"))
+            else re.sub(r"[-:](\w)", lambda m: m.group(1).upper(), key): value
+            for key, value in attributes.items()
+        }
 
     # ------------------------------------------------------------------ #
     # Utility helpers for pages

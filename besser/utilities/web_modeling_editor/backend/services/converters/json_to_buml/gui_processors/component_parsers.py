@@ -49,7 +49,7 @@ from .component_helpers import (
 from besser.generators.structural_utils import is_server_owned_attribute
 
 from .constants import ALERT_SEVERITY_MAP, INPUT_TYPE_MAP, BUTTON_ACTION_BY_HTML_TYPE
-from .utils import extract_text_content, clean_attribute_name, get_element_by_id
+from .utils import css_class_names, extract_text_content, clean_attribute_name, get_element_by_id
 
 
 def _attach_component_metadata(element, component: Dict[str, Any], meta: Dict[str, Any] = None) -> None:
@@ -88,7 +88,7 @@ def _attach_component_metadata(element, component: Dict[str, Any], meta: Dict[st
 
     element.component_type = component.get("type")
     element.tag_name = component.get("tagName") or (meta.get("tagName") if meta else None)
-    element.css_classes = [cls if isinstance(cls, str) else cls.get("name", "") for cls in (component.get("classes") or [])]
+    element.css_classes = css_class_names(component)
     element.custom_attributes = dict(attributes) if isinstance(attributes, dict) else {}
 
 

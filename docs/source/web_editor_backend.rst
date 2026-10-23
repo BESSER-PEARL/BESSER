@@ -162,6 +162,15 @@ Both accept an optional ``config`` payload with:
 The response filename embeds the generation type, e.g.
 ``pytorch_nn_subclassing.py`` or ``tf_nn_sequential.py``.
 
+A third NN generator, ``forecaster``, wraps the network in a time-series
+pipeline (see :doc:`generators/forecaster`). Its ``config`` holds the
+forecaster settings (``window``, ``horizon``, ``season``, ``difference``,
+``log``, ``calendar``, ``standardize``, ``seed`` or ``seeds``, ``description``)
+plus ``channel_last``; the response is ``forecaster_<model name>.py`` (a name
+outside ASCII is sent as ``filename*=UTF-8''...``). Invalid settings, and a
+network whose first layer does not read the window or whose last layer does not
+return the horizon, are a 400 naming every problem.
+
 **JSON ↔ BUML.** The ``/export-buml`` endpoint converts an NN diagram JSON
 into a BUML Python file (``nn_model.py``) that reproduces the model when
 executed. The converse path through ``/get-json-model`` auto-detects NN BUML

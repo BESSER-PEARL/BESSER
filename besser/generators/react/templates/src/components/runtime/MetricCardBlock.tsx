@@ -2,6 +2,7 @@ import React, { CSSProperties, useEffect, useState } from "react";
 import axios from "axios";
 import { MetricCardComponent } from "../charts/MetricCardComponent";
 import { aggregate, normalizeAggregation } from "./aggregate";
+import { applyFilter, backendUrl, extractRows, parseFilterExpression } from "./bindingData";
 
 export interface MetricCardBlockProps {
   id: string;
@@ -32,32 +33,27 @@ export const MetricCardBlock: React.FC<MetricCardBlockProps> = ({
     const endpoint = dataBinding?.endpoint;
     if (!endpoint) return;
     setLoading(true);
-    const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
-    const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+    // The filter applies to the rows the endpoint returns, as on a chart.
+    const parsedFilter = parseFilterExpression(dataBinding?.filter_expression || dataBinding?.filter);
 
     axios
-      .get(url)
+      .get(backendUrl(endpoint))
       .then((res) => {
-        let data: any[] = [];
-        if (Array.isArray(res.data)) {
-          data = res.data;
-        } else if (res.data && typeof res.data === "object") {
-          const commonArrayKeys = ["data", "results", "items", "records", "list"];
-          let foundKey = commonArrayKeys.find((key) => Array.isArray((res.data as any)[key]));
-          if (!foundKey) {
-            foundKey = Object.keys(res.data).find((key) => Array.isArray((res.data as any)[key]));
-          }
-          if (foundKey) {
-            data = (res.data as any)[foundKey];
-          }
-        }
+        const data = applyFilter(extractRows(res.data), parsedFilter);
         setValue(metricValue(data, dataBinding?.data_field, dataBinding?.aggregation));
       })
       .catch(() => {
         setValue(metric?.value ?? 0);
       })
       .finally(() => setLoading(false));
-  }, [dataBinding?.endpoint, dataBinding?.data_field, dataBinding?.aggregation, metric?.value]);
+  }, [
+    dataBinding?.endpoint,
+    dataBinding?.filter,
+    dataBinding?.filter_expression,
+    dataBinding?.data_field,
+    dataBinding?.aggregation,
+    metric?.value,
+  ]);
 
   return (
     <MetricCardComponent

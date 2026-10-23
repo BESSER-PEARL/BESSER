@@ -1405,6 +1405,9 @@ def _write_data_binding(f, binding_var, binding):
         binding_params.append(f'filter_expression="{_escape_string(filter_expr)}"')
     if aggregation is not None:
         binding_params.append(f'aggregation="{aggregation.value}"')
+    endpoint = binding.endpoint
+    if endpoint:
+        binding_params.append(f'endpoint="{_escape_string(endpoint)}"')
     f.write(f"{binding_var} = None\n")
     f.write("try:\n")
     f.write(f"    {binding_var} = build_data_binding(domain_model, {', '.join(binding_params)})\n")

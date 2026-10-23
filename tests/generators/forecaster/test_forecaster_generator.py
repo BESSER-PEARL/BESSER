@@ -300,6 +300,8 @@ def test_an_empty_network_is_refused(tmp_path):
     ({"season": 4, "difference": 12}, r"or the season \(4\), not 12"),
     ({"seeds": ()}, "seeds must name at least one seed"),
     ({"seeds": tuple(range(101))}, "at most 100 seeds, not 101"),
+    ({"window": 10 ** 4000}, r"window must be at most 2147483647$"),
+    ({"season": 10 ** 18}, r"season must be at most 2147483647$"),
 ])
 def test_forecast_config_is_checked(kwargs, message):
     with pytest.raises(ValueError, match=message):

@@ -195,13 +195,13 @@ The backend reads the ``config`` with ``ForecastConfig.from_dict``:
      - Type
      - Default
    * - ``window``
-     - integer, at least 1
+     - integer, 1 to 2147483647
      - 24
    * - ``horizon``
-     - integer, at least 1 (the size of the last layer)
+     - integer, 1 to 2147483647 (the size of the last layer)
      - 12
    * - ``season``
-     - integer, at least 1
+     - integer, 1 to 2147483647
      - 12
    * - ``difference``
      - integer: 0, 1 or the season; or null

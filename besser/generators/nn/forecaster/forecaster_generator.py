@@ -51,6 +51,9 @@ DEFAULT_HORIZON = 12
 DEFAULT_SEASON = 12
 # An ensemble beyond this many seeds only multiplies the training time.
 MAX_SEEDS = 100
+# Window, horizon and season become layer sizes and array lengths: no network has a dimension
+# beyond a 32-bit index.
+MAX_SIZE = 2 ** 31 - 1
 # How much of a rejected value an error message repeats.
 MAX_SHOWN = 60
 
@@ -113,13 +116,13 @@ class ForecastConfig:
     def validate(self) -> None:
         """Raise ``ValueError`` naming every setting out of range."""
         errors = []
-        if self.window < 1:
-            errors.append("window must be at least 1")
-        if self.horizon < 1:
-            errors.append("horizon must be at least 1")
-        if self.season < 1:
-            errors.append("season must be at least 1")
-        if self.lag not in (0, 1, self.season):
+        for name in ("window", "horizon", "season"):
+            value = getattr(self, name)
+            if value < 1:
+                errors.append(f"{name} must be at least 1")
+            elif value > MAX_SIZE:
+                errors.append(f"{name} must be at most {MAX_SIZE}")
+        if self.season >= 1 and self.lag not in (0, 1, self.season):
             errors.append(f"difference must be 0 (levels), 1 (first difference) or the season "
                           f"({self.season}), not {self.lag}")
         if not self.seeds:

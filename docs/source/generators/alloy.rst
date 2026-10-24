@@ -108,10 +108,14 @@ Unsupported Models
 The generator raises ``AlloyTranslationError`` (a ``ValueError``) rather than approximating a
 model it cannot translate faithfully:
 
-- association classes, and attributes of type ``datetime``, ``time``, ``timedelta`` or ``any``;
+- association classes, classes with several parents (multiple inheritance), associations with more
+  than two ends, and attributes of type ``float``, ``datetime``, ``time``, ``timedelta`` or ``any``;
 - OCL that is invalid, or has no faithful Alloy translation yet, such as real numbers and real
   division, arithmetic on collections, ``size()`` or ``=`` on Bags, string operations other than
   ``=`` and ``<>``, date operations other than ``=`` and ``<>``, and enumeration literals.
+
+The :doc:`../examples/semantic_check_example` shows the error, and a complete walkthrough from the
+model to its object diagrams.
 
 In the web editor, the Alloy specification of a class diagram can be downloaded from
 **Generate > Formal Methods > Alloy Specification**, as a ZIP with ``model.als`` and the library

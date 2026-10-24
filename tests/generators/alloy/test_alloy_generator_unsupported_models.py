@@ -1,8 +1,9 @@
 import pytest
 
 from besser.BUML.metamodel.structural import (
-    DomainModel, Class, Property, BinaryAssociation, AssociationClass, Multiplicity, Constraint,
-    IntegerType, TimeType, DateTimeType,
+    DomainModel, Class, Property, Association, BinaryAssociation, AssociationClass, Generalization, Multiplicity,
+    Constraint,
+    IntegerType, FloatType, TimeType, DateTimeType,
 )
 from besser.generators.alloy import AlloyGenerator, AlloyTranslationError
 
@@ -20,10 +21,10 @@ def enrollment_model() -> DomainModel:
     return DomainModel("Enrollment_model", types={student, course, enrollment}, associations={enrolls})
 
 
-@pytest.fixture(params=[TimeType, DateTimeType])
+@pytest.fixture(params=[TimeType, DateTimeType, FloatType])
 def meeting_model(request) -> DomainModel:
-    """``Meeting(start: time)`` and ``Meeting(start: datetime)``: time and datetime attributes have no Alloy
-    translation."""
+    """``Meeting(start: time)``, ``Meeting(start: datetime)`` and ``Meeting(start: float)``: time, datetime and
+    float attributes have no Alloy translation."""
     meeting = Class("Meeting", attributes={Property("start", request.param)})
     return DomainModel("Meeting_model", types={meeting})
 
@@ -39,6 +40,27 @@ def counter_model() -> DomainModel:
 def test_association_classes_are_unsupported(enrollment_model, tmp_path):
     generator = AlloyGenerator(enrollment_model, output_dir=str(tmp_path))
     with pytest.raises(AlloyTranslationError, match="Association classes are not supported"):
+        generator.generate()
+
+
+def test_multiple_inheritance_is_unsupported(tmp_path):
+    land, water, frog = Class("Land"), Class("Water"), Class("Frog")
+    model = DomainModel("Amphibians", types={land, water, frog}, generalizations={
+        Generalization(general=land, specific=frog), Generalization(general=water, specific=frog),
+    })
+    generator = AlloyGenerator(model, output_dir=str(tmp_path))
+    with pytest.raises(AlloyTranslationError, match=r"Class 'Frog' has several parents \(Land, Water\)"):
+        generator.generate()
+
+
+def test_associations_with_more_than_two_ends_are_unsupported(tmp_path):
+    student, course, room = Class("Student"), Class("Course"), Class("Room")
+    takes = Association("takes", ends={
+        Property("student", student), Property("course", course), Property("room", room),
+    })
+    model = DomainModel("School", types={student, course, room}, associations={takes})
+    generator = AlloyGenerator(model, output_dir=str(tmp_path))
+    with pytest.raises(AlloyTranslationError, match="Association 'takes' has more than two ends"):
         generator.generate()
 
 

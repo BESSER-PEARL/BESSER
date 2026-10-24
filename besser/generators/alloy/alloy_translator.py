@@ -42,8 +42,9 @@ class BumlToAlloy:
     filling the scope.
 
     Raises:
-        AlloyTranslationError: when the model has association classes or attributes of an
-            unsupported type, or when an OCL invariant cannot be translated.
+        AlloyTranslationError: when the model has association classes, classes with several
+            parents, associations with more than two ends or attributes of an unsupported type,
+            or when an OCL invariant cannot be translated.
     """
 
     def __init__(self, model: DomainModel, scope: int, seed: int = 0):
@@ -51,6 +52,19 @@ class BumlToAlloy:
             raise AlloyTranslationError(
                 "Association classes are not supported in the current version of the Alloy translation"
             )
+        for cls in sorted(model.get_classes(), key=lambda cls: cls.name):
+            parents = sorted(parent.name for parent in cls.parents())
+            if len(parents) > 1:
+                raise AlloyTranslationError(
+                    f"Class '{cls.name}' has several parents ({', '.join(parents)}): multiple inheritance is not "
+                    "supported in the current version of the Alloy translation"
+                )
+        for association in sorted(model.associations, key=lambda association: association.name):
+            if len(association.ends) != 2:
+                raise AlloyTranslationError(
+                    f"Association '{association.name}' has more than two ends, which is not supported in the "
+                    "current version of the Alloy translation"
+                )
         self.model = model
         self.scope = scope
         self._random = random.Random(seed)
@@ -77,6 +91,8 @@ class BumlToAlloy:
             self._add_enumeration(spec, enumeration)
         for cls in self.classes:
             self._add_class(spec, cls)
+        for cls in self.classes:
+            self._add_id_facts(spec, cls)
         for association in self.associations:
             self._add_multiplicity_facts(spec, association)
             self._add_inverse_fact(spec, association)
@@ -98,21 +114,24 @@ class BumlToAlloy:
 
     def _add_class(self, spec: AlloySpecification, cls: Class) -> None:
         """Declares the signature of *cls*, with its attributes and navigable association ends as fields."""
-        parents = sorted(parent.name for parent in cls.parents())
-        spec.add_signature(
-            cls.name,
-            is_abstract=cls.is_abstract,
-            extends=parents[0] if len(parents) == 1 else None,
-            subset_of=parents if len(parents) > 1 else (),
-        )
+        parents = [parent.name for parent in cls.parents()]  # at most one: see __init__
+        spec.add_signature(cls.name, is_abstract=cls.is_abstract, extends=parents[0] if parents else None)
         for attr in sorted(cls.attributes, key=lambda attr: attr.name):
-            spec.add_field(cls.name, attr.name, self._type(attr.type))
+            # An optional attribute may have no value
+            spec.add_field(cls.name, attr.name, self._type(attr.type), "lone" if attr.is_optional else "")
         # A navigable end is a field of the class at the opposite end.
         for association in self.associations:
             first, second = self._ends(association)
             for end, opposite in ((first, second), (second, first)):
                 if end.is_navigable and opposite.type is cls:
                     spec.add_field(cls.name, end.name, end.type.name, self._field_multiplicity(end.multiplicity))
+
+    def _add_id_facts(self, spec: AlloySpecification, cls: Class) -> None:
+        """Adds a fact per id attribute of *cls*: no two objects of *cls* have the same value."""
+        for attr in sorted(cls.attributes, key=lambda attr: attr.name):
+            if attr.is_id:
+                field = spec.field_name(cls.name, attr.name)
+                spec.add_fact(f"all disj a, b: {spec.signature_name(cls.name)} | a.{field} != b.{field}")
 
     def _add_multiplicity_facts(self, spec: AlloySpecification, association: BinaryAssociation) -> None:
         """Adds facts bounding the number of objects reachable through each end of *association*.
@@ -255,12 +274,11 @@ class BumlToAlloy:
 _FIRST_DATE = date(2000, 1, 1)
 _LAST_DATE = date(2038, 1, 1)
 
-# Alloy types of B-UML primitive types; the others (``datetime``, ``time``, ``timedelta`` and ``any``) are not
-# supported.
+# Alloy types of B-UML primitive types; the others (``float``, ``datetime``, ``time``, ``timedelta`` and ``any``)
+# are not supported.
 _PRIMITIVE_TYPES = {
     "int": "Int",
     "integer": "Int",
-    "float": "Int",
     "bool": "Bool",
     "str": "Str",
     "string": "Str",

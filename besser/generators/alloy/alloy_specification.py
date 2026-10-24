@@ -130,10 +130,9 @@ class AlloySpecification:
         is_abstract: bool = False,
         multiplicity: str = "",
         extends: str | None = None,
-        subset_of: Iterable[str] = (),
     ) -> None:
-        """Declares the signature *label*, a subsignature of *extends* or a subset of the *subset_of* ones."""
-        self._declare(Signature(self, [label], is_abstract, multiplicity, extends, subset_of))
+        """Declares the signature *label*, a subsignature of *extends* if given."""
+        self._declare(Signature(self, [label], is_abstract, multiplicity, extends))
 
     def add_enumeration(self, label: str, values: Iterable[str]) -> None:
         """Declares the abstract signature *label*, extended by a singleton signature per value."""
@@ -212,7 +211,7 @@ class AlloySpecification:
         return self._signatures_by_label[label]
 
     def subsignatures(self, label: str) -> list[str]:
-        """Labels of the signatures extending *label* or subsets of it, directly or indirectly."""
+        """Labels of the signatures extending *label*, directly or indirectly."""
         children = [child for signature in self._signatures if signature.is_below(label) for child in signature.labels]
         return children + [grandchild for child in children for grandchild in self.subsignatures(child)]
 
@@ -285,14 +284,12 @@ class Signature:
         is_abstract: bool = False,
         multiplicity: str = "",
         extends: str | None = None,
-        subset_of: Iterable[str] = (),
     ):
         self.specification = specification
         self.labels = list(labels)
         self.is_abstract = is_abstract
         self.multiplicity = multiplicity
         self.extends = extends
-        self.subset_of = list(subset_of)
         self._fields: dict[str, Field] = {}
 
     def add_field(self, label: str, type: str, multiplicity: str) -> None:
@@ -309,11 +306,11 @@ class Signature:
         return None
 
     def parents(self) -> list[str]:
-        """Labels of the signatures this one extends or is a subset of."""
-        return ([self.extends] if self.extends else []) + self.subset_of
+        """Labels of the signatures this one extends."""
+        return [self.extends] if self.extends else []
 
     def is_below(self, label: str) -> bool:
-        """Whether this signature extends *label* or is a subset of it."""
+        """Whether this signature extends *label*."""
         return label in self.parents()
 
     @property
@@ -331,8 +328,6 @@ class Signature:
         parts += ["sig", ", ".join(names(label) for label in self.labels)]
         if self.extends:
             parts += ["extends", names(self.extends)]
-        if self.subset_of:
-            parts += ["in", " + ".join(names(label) for label in self.subset_of)]
         return " ".join(parts)
 
     @property

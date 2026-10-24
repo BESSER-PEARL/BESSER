@@ -158,12 +158,11 @@ class AlloyInstanceToObjectModel:
         if isinstance(attr.type, Enumeration):
             return value if value in attr.type.literals else None
         type_name = attr.type.name
-        if type_name in ("int", "integer", "float"):
+        if type_name in ("int", "integer"):
             try:
-                number = int(atom)
+                return int(atom)
             except ValueError:
                 return None
-            return float(number) if type_name == "float" else number
         if type_name == "bool":
             return value if isinstance(value, bool) else None
         if type_name in ("str", "string"):

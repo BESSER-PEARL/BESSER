@@ -7,7 +7,7 @@
 from besser.BUML.metamodel.structural import (
     Class, Property, BinaryAssociation, Generalization, DomainModel,
     Enumeration, EnumerationLiteral, Multiplicity,
-    StringType, FloatType, DateType, Constraint,
+    StringType, IntegerType, DateType, Constraint,
 )
 
 # Enumerations
@@ -43,7 +43,8 @@ Patient = Class(name="Patient")
 Person = Class(name="Person", is_abstract=True)
 
 # Doctor class attributes and methods
-Doctor_consultationFee: Property = Property(name="consultationFee", type=FloatType)
+# float attributes are not supported by the Alloy translation
+Doctor_consultationFee: Property = Property(name="consultationFee", type=IntegerType)
 Doctor_medicalLicense: Property = Property(name="medicalLicense", type=StringType)
 Doctor_specialty: Property = Property(name="specialty", type=StringType)
 Doctor.attributes = {Doctor_consultationFee, Doctor_medicalLicense, Doctor_specialty}

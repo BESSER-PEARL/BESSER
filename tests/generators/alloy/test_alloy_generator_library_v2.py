@@ -56,7 +56,7 @@ def test_signature_fields(spec):
     assert "Book_title: Str" in spec.fields["Book"]
     assert "Book_pages: Int" in spec.fields["Book"]
     assert "Book_stock: Int" in spec.fields["Book"]
-    assert "Book_price: Int" in spec.fields["Book"]  # FloatType -> Int
+    assert "Book_price: Int" in spec.fields["Book"]
     assert "Book_release: Date" in spec.fields["Book"]
     assert "Book_genre: Genre" in spec.fields["Book"]
     assert "Book_library: set Library" in spec.fields["Book"]

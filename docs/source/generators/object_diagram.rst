@@ -46,6 +46,11 @@ Afterwards, you must set the following environment variables:
 Consistency Checks
 ------------------
 
+The :doc:`../examples/semantic_check_example` walks through a complete check: the model and its
+invariants, the generated specification, the check and the object diagrams from Python, the same
+flow in the web editor, and the messages when no instance is found or the model cannot be
+translated.
+
 For example, in our :doc:`../examples/library_example` we can define an OCL invariant
 on ``Book`` to enforce that the number of pages on any book is greater than 10:
 
@@ -135,13 +140,15 @@ The generator supports the following B-UML data types:
 
 - ``int``: bounded integers in two's complement. With scope ``5``, integers are in
   ``[-16, 15]``; larger scopes, and larger integer literals in the invariants, widen the range.
-- ``float``: represented as ``int`` values.
 - ``bool``: ``true`` and ``false``.
 - ``str``: uninterpreted strings, compared with ``=`` and ``<>`` only. Generated objects get the
   string literals of the invariants or placeholders such as ``str0``.
 - ``date``: uninterpreted dates, compared with ``=`` and ``<>`` only. The scope is filled with
   random dates.
 - enumerations, whose values are their literals.
+
+Optional attributes may have no value, and no two objects of a class share the value of an id
+attribute.
 
 The :doc:`Alloy generator <./alloy>` lists the models and OCL constructs that cannot be translated.
 

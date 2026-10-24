@@ -8,7 +8,6 @@ from besser.BUML.metamodel.structural import (
     DomainModel,
     Enumeration,
     EnumerationLiteral,
-    FloatType,
     IntegerType,
     Method,
     MethodImplementationType,
@@ -62,7 +61,7 @@ def library_with_ocl_v2():
         Property(name="title", type=StringType),
         Property(name="pages", type=IntegerType),
         Property(name="stock", type=IntegerType),
-        Property(name="price", type=FloatType),
+        Property(name="price", type=IntegerType),  # float attributes are not supported by the Alloy translation
         Property(name="release", type=DateType),
         Property(name="genre", type=Genre),
     }

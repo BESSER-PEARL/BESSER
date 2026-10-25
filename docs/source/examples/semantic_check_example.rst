@@ -1,20 +1,19 @@
 Semantic check example
 ======================
 
-This example checks, with the `Alloy Analyzer <https://alloytools.org/>`_, that the OCL invariants of a
-small model can all hold together, and generates an object diagram that satisfies them: first from
-Python, then in the web editor. It also shows what happens when no instance exists, and when the model
-uses a construct the Alloy translation does not support.
+In this example, we verify the satisfiability of a small model and its OCL invariants with the
+`Alloy Analyzer <https://alloytools.org/>`_, and generate an object diagram that satisfies them. We
+do it first from Python, and then in the web editor.
 
-The whole script is in ``docs/source/code_eg/alloy/library_semantic_check.py``. Running it needs Java
-and the Alloy Analyzer (see :doc:`../generators/object_diagram`).
+The whole script is in ``docs/source/code_eg/alloy/library_semantic_check.py``. Running it needs
+Java and the Alloy Analyzer (see :doc:`../generators/object_diagram`).
 
 The model
 ---------
 
-Libraries have books, and books are written by one or more authors. Three OCL invariants state that
-books have more than 10 pages, that every library has at least two books, and that every author has
-written a book:
+Libraries have books, written by one or more authors. Three OCL invariants state that books have
+more than 10 pages, that every library has at least two books, and that every author has written a
+book:
 
 .. literalinclude:: ../code_eg/alloy/library_semantic_check.py
    :language: python
@@ -31,20 +30,12 @@ The :doc:`Alloy generator <../generators/alloy>` translates the model and its in
    :start-after: # 2. The Alloy specification, written to output/model.als
    :end-before: # 3. The semantic check
 
-It writes ``output/model.als`` and ``output/strings.als``, the module declaring strings. In
-``model.als``, each class is a signature, with a field per attribute and navigable association end;
-the multiplicities that the fields cannot express, the bidirectional associations and the OCL
-invariants are facts (abridged):
+The ``output/model.als`` file will look as follows (abridged):
 
 .. code-block:: alloy
 
     module model
     open strings
-
-    sig Author {
-      Author_name: Str,
-      Author_writes: set Book
-    }
 
     sig Book {
       Book_pages: Int,
@@ -53,21 +44,7 @@ invariants are facts (abridged):
       Book_authors: set Author
     }
 
-    sig Library {
-      Library_name: Str,
-      Library_books: set Book
-    }
-
-    one sig Str_str0 extends Str {
-    }
-
     ...
-
-    fact { Library_books = ~Book_library }
-
-    fact { all a: Book | #(a.Book_authors) >= 1 }
-
-    fact { Book_authors = ~Author_writes }
 
     fact { all self:this/Book|(self.Book_pages > 10) }
 
@@ -83,14 +60,12 @@ invariants are facts (abridged):
 
     run instance_model for 5 Author, 5 Book, 5 Library, 5 Str, 5 Int
 
-The ``run`` command searches for an instance with at least one object per class within the bounds:
-5 objects per class, 5 strings and the integers that 5 bits hold.
+The ``run`` command searches for an instance with up to 5 objects per class.
 
 The semantic check
 ------------------
 
-``check_consistency`` runs the Alloy Analyzer on the specification of a scope, and
-``get_scopes`` describes the bounds it searched:
+``check_consistency`` runs the Alloy Analyzer, and ``get_scopes`` describes the bounds it searched:
 
 .. literalinclude:: ../code_eg/alloy/library_semantic_check.py
    :language: python
@@ -106,7 +81,7 @@ The semantic check
 The object diagram
 ------------------
 
-``generate_object_models`` returns, besides the result, the instances found as B-UML object models:
+``generate_object_models`` also returns the instances found, as B-UML object models:
 
 .. literalinclude:: ../code_eg/alloy/library_semantic_check.py
    :language: python
@@ -124,14 +99,13 @@ The object diagram
     Book_0 (books) -- Library_0 (library)
     Book_1 (books) -- Library_0 (library)
 
-The library has two books, of 14 pages each, both written by the same author. Strings are
-uninterpreted: the generated objects get the string literals of the invariants or placeholders such as
-``str0``.
+The library has two books of 14 pages, both written by the same author. Strings are uninterpreted,
+so they get placeholder values such as ``str0``.
 
 When no instance is found
 -------------------------
 
-A fourth invariant, that books have fewer than 5 pages, contradicts the first one:
+Let's add a fourth invariant, that books have fewer than 5 pages, which contradicts the first one:
 
 .. literalinclude:: ../code_eg/alloy/library_semantic_check.py
    :language: python
@@ -142,16 +116,15 @@ A fourth invariant, that books have fewer than 5 pages, contradicts the first on
 
     UNSAT within 5 objects per class, integers in [-16, 15] and 5 strings
 
-``UNSAT`` means that **no instance exists within the bounds**. Here no instance exists at all, but in
-general a larger instance might still exist: the search is bounded.
+``UNSAT`` means that no instance exists within the bounds. Note that the analysis is bounded: in
+general, a larger instance might still exist.
 
-When the model uses an unsupported construct
---------------------------------------------
+When the model cannot be translated
+-----------------------------------
 
-The Alloy translation does not support every construct of B-UML and OCL; the
-:doc:`Alloy generator <../generators/alloy>` lists them. Rather than checking a different model, it
-raises an ``AlloyTranslationError`` that says which construct is not supported. Strings, for instance,
-have no length:
+Some B-UML and OCL constructs cannot be translated to Alloy (see the
+:doc:`Alloy generator <../generators/alloy>`). In that case, an ``AlloyTranslationError`` says which
+one. For instance, strings have no length:
 
 .. literalinclude:: ../code_eg/alloy/library_semantic_check.py
    :language: python
@@ -164,47 +137,44 @@ have no length:
 In the web editor
 -----------------
 
-Draw the class diagram of the model, with its three OCL constraints, in the web editor. With the class
-diagram open, **Quality Check > Semantic check** runs the check:
+Draw the class diagram of the model, with its three OCL constraints. Then use
+**Quality Check > Semantic check**:
 
 .. image:: ../img/alloy_semantic_check_menu.png
   :width: 700
   :alt: The Semantic check entry of the Quality Check menu
   :align: center
 
-The editor searches the scopes 5, 7 and 9 in turn, and shows its progress until it finds an instance:
+The editor searches with 5, 7 and 9 objects per class, in turn, until it finds an instance:
 
 .. image:: ../img/alloy_instance_found.png
   :width: 500
   :alt: The message of an instance found
   :align: center
 
-To generate the object diagram, open an object diagram that references the class diagram and click
-**Semantic generation**, next to the referenced class diagram:
+To generate the object diagram, open an object diagram that references the class diagram, and click
+**Semantic generation**:
 
 .. image:: ../img/alloy_semantic_generation_button.png
   :width: 700
   :alt: The Semantic generation button of the object diagram
   :align: center
 
-The editor replaces the object diagram with the instance found, after asking when the diagram is not
-empty:
+The editor replaces the object diagram with the instance found:
 
 .. image:: ../img/alloy_generated_object_diagram.png
   :width: 700
   :alt: The generated object diagram
   :align: center
 
-With the contradictory fourth invariant, both actions report, after searching the three scopes,
-"No instance within 9 objects per class, integers in [-256, 255] and 9 strings.":
+With the contradictory fourth invariant, both actions report that there is no instance:
 
 .. image:: ../img/alloy_no_instance.png
   :width: 500
   :alt: The message of no instance found
   :align: center
 
-With the unsupported invariant, they report "The model cannot be translated to Alloy.", with the
-reason in a list of errors:
+With the unsupported invariant, they report that the model cannot be translated, and why:
 
 .. image:: ../img/alloy_unsupported.png
   :width: 500

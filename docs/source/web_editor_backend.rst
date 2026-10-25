@@ -564,20 +564,16 @@ Validation
   For a ``KnowledgeGraphDiagram`` this runs the same preflight and OWL/SHACL
   consistency checks as the editor's Refine KG dialog, reporting findings only.
 - ``POST /check-ocl`` -- **Deprecated.** Kept for backwards compatibility; delegates to ``/validate-diagram``.
-- ``POST /semantic-consistency-check`` -- Semantic consistency of a class diagram and its OCL constraints: searches
-  for an instance with the Alloy Analyzer (see :doc:`generators/object_diagram`)
-- ``POST /generate-object-diagram`` -- As ``/semantic-consistency-check``; the instance found is returned as an object
-  diagram
+- ``POST /semantic-consistency-check`` -- Checks the satisfiability of a class diagram and its OCL constraints with
+  the Alloy Analyzer (see :doc:`generators/object_diagram`)
+- ``POST /generate-object-diagram`` -- Same search, but returns the instance found as an object diagram
 
-Both take a ``DiagramInput`` with a class diagram and answer with a ``text/event-stream``. The search tries 5, 7
-and 9 objects per class, in turn, each analysis timing out after 30 seconds, and sends a ``data:`` JSON event per
-step: a ``SemanticCheckEvent`` (``models/responses.py``) with ``done``, ``message``, ``isValid``, ``errors`` and
-``warnings``, like the response of ``/validate-diagram``, plus ``object_model`` for an instance found by
-``/generate-object-diagram``. The last event has ``done: true``; its ``isValid`` is true only when an instance was
-found. When no instance is found, ``message`` says why; a timeout, or bounds too large for the
-Alloy Analyzer, end the search. While the Alloy Analyzer runs, SSE comment lines
-(``: semantic-check-heartbeat``) are sent every 15 seconds, so that clients and proxies see the stream is alive.
-Both need Java and the Alloy Analyzer (``JAVA_HOME``, ``BESSER_ALLOY_JAR``); the backend Docker image bundles them.
+Both take a ``DiagramInput`` with a class diagram, and search with 5, 7 and 9 objects per class, in turn, for at most
+30 seconds each. They answer with a ``text/event-stream`` of ``SemanticCheckEvent`` (``models/responses.py``), one per
+step. Like the response of ``/validate-diagram``, each event has ``message``, ``isValid``, ``errors`` and
+``warnings``, plus ``done`` and, for an instance found by ``/generate-object-diagram``, ``object_model``. The last
+event has ``done: true``. Every 15 seconds, a ``: semantic-check-heartbeat`` comment keeps the connection alive
+through proxies. Both endpoints need Java and the Alloy Analyzer, which the backend Docker image bundles.
 
 Deployment
 ^^^^^^^^^^

@@ -23,12 +23,15 @@ import sys
 import tempfile
 import time
 import uuid
+import urllib.error
+import urllib.request
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 
 from besser.generators.agents.baf_generator import GenerationMode
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
@@ -83,6 +86,81 @@ class StudyDeployRequest(BaseModel):
     agent_config: Optional[Dict[str, Any]] = None
     agent_config_yaml: Optional[str] = None
     personalization_mapping: Optional[List[Any]] = None
+    web_app_project: ProjectInput
+    web_app_versions: List[Dict[str, Any]]
+
+
+async def _deploy_study_website(request: StudyDeployRequest) -> str:
+    """Generate the normal React export and ask the existing frontend to build it."""
+    internal_url = os.environ.get("STUDY_FRONTEND_INTERNAL_URL", "").rstrip("/")
+    public_url = os.environ.get("STUDY_FRONTEND_PUBLIC_URL", "").rstrip("/")
+    token = os.environ.get("STUDY_DEPLOY_TOKEN", "")
+    if not internal_url or not public_url or not token:
+        raise HTTPException(status_code=503, detail="Study website deployment requires STUDY_FRONTEND_INTERNAL_URL, STUDY_FRONTEND_PUBLIC_URL and STUDY_DEPLOY_TOKEN")
+    if len(token) < 32:
+        raise HTTPException(status_code=503, detail="STUDY_DEPLOY_TOKEN must contain at least 32 characters")
+    internal_origin = urlparse(internal_url)
+    public_origin = urlparse(public_url)
+    if (internal_origin.scheme not in {"http", "https"}
+            or not internal_origin.hostname or internal_origin.path
+            or public_origin.scheme not in {"http", "https"}
+            or not public_origin.hostname or public_origin.path):
+        raise HTTPException(status_code=503, detail="Study frontend URLs must be HTTP(S) origins without a path")
+    editor_host = urlparse(os.environ.get("DEPLOYMENT_URL", "")).hostname
+    if editor_host and public_origin.hostname == editor_host:
+        raise HTTPException(status_code=503, detail="The study website must use a hostname distinct from the editor")
+
+    from besser.utilities.web_modeling_editor.backend.routers.generation_router import _handle_web_app_project_generation
+
+    versions = request.web_app_versions
+    if not versions or len(versions) > 8 or any(
+            not isinstance(v, dict)
+            or not isinstance(v.get("slug"), str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", v["slug"])
+            or not isinstance(v.get("guiModel"), dict)
+            for v in versions
+    ):
+        raise HTTPException(status_code=400, detail="Invalid study website versions")
+    slugs = [v["slug"] for v in versions]
+    if len(slugs) != len(set(slugs)) or "base" not in slugs:
+        raise HTTPException(status_code=400, detail="Study website versions must include one Base version and unique names")
+
+    generated = await _handle_web_app_project_generation(
+        request.web_app_project,
+        get_generator_info("web_app"),
+        {"webAppVersions": versions},
+    )
+    archive = b"".join([chunk async for chunk in generated.body_iterator])
+    if len(archive) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Generated study website is too large")
+
+    def send_archive() -> Dict[str, Any]:
+        post = urllib.request.Request(
+            f"{internal_url}/api/study-site",
+            data=archive,
+            headers={"Content-Type": "application/zip", "X-Study-Deploy-Token": token},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(post, timeout=600) as response:
+                return _json.load(response)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read(2048).decode("utf-8", errors="replace")
+            raise RuntimeError(f"Study website build failed: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Study frontend is unreachable: {exc.reason}") from exc
+
+    try:
+        published = await asyncio.to_thread(send_archive)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    published_versions = published.get("versions")
+    if (published.get("success") is not True
+            or not isinstance(published_versions, list)
+            or any(not isinstance(v, str) for v in published_versions)
+            or set(published_versions) != set(slugs)):
+        raise HTTPException(status_code=502, detail="Study frontend returned an invalid website deployment result")
+    return f"{public_url}/study-site/"
 
 
 # ── process management helpers ─────────────────────────────────────────────
@@ -343,6 +421,8 @@ async def deploy_study_agent(request: StudyDeployRequest):
             len(request.personalization_mapping),
         )
 
+    website_url = await _deploy_study_website(request)
+
     # Kill the previous instance first so its log file handles are released
     # before _generate_study_agent_files clears the directory.
     await asyncio.to_thread(_kill_study_agent)
@@ -371,6 +451,8 @@ async def deploy_study_agent(request: StudyDeployRequest):
     return {
         "success": True,
         "url": agent_url,
+        "websiteUrl": website_url,
+        "websiteVersions": [v["slug"] for v in request.web_app_versions],
         "message": f"Agent '{agent_name}' deployed successfully",
     }
 

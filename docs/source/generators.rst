@@ -152,8 +152,8 @@ Choosing a Generator
    * - **Object Diagram**
      - Structural + OCL
      - Object diagrams / B-UML project
-     - You want to check that the OCL invariants can all hold together, or need object
-       diagrams that satisfy them (searched for with the Alloy Analyzer)
+     - You want to check the satisfiability of the OCL invariants, or need object diagrams that
+       satisfy them
 
 None of the above a fit? If you need a customised codebase — extra features
 (auth, JWT, Docker, tests) or a stack with no built-in generator (Rails, Rust,

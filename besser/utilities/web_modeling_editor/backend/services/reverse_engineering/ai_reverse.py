@@ -69,7 +69,9 @@ AI_READ_TIMEOUT_SECONDS = 90.0
 
 _README_NAMES = ("readme.md", "readme.rst", "readme.txt", "readme")
 _DATA_DIRS = {"types", "models", "model", "entities", "entity", "domain", "schemas", "schema",
-              "interfaces", "dto", "dtos"}
+              "interfaces", "dto", "dtos", "beans", "modele", "modeles"}
+# Languages whose plain classes in a model folder are the data (an MVC "Model/" of POJOs).
+_CLASS_SOURCE_SUFFIXES = (".java", ".kt", ".cs", ".scala", ".swift", ".dart", ".ts", ".js", ".py", ".rb", ".php")
 _SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".crt", ".jks", ".keystore")
 _SECRET_WORDS = ("key", "secret", "credential", "password", "token")
 
@@ -130,6 +132,9 @@ _DATA_FILE_RULES = (
     _DataFileRule("C# entity", 2, lambda p: p.endswith(".cs"), re.compile(r"\bDbSet<|\[Key\]|\{\s*get;\s*set;\s*\}")),
     _DataFileRule("TypeScript types", 2, _is_ts_types_file, re.compile(r"\b(interface|type)\s+[A-Z]\w*")),
     _DataFileRule("Go structs", 2, lambda p: p.endswith(".go"), re.compile(r'struct\s*\{[^}]*`[^`]*(json|gorm|db):"')),
+    _DataFileRule("Classes in a model folder", 2,
+                  lambda p: p.endswith(_CLASS_SOURCE_SUFFIXES) and _in_data_dir(p),
+                  re.compile(r"\b(class|struct|record|interface)\s+[A-Z]\w*")),
     _DataFileRule("Python classes", 3, lambda p: _name(p) in {"models.py", "model.py", "entities.py", "schemas.py"},
                   re.compile(r"^class\s+\w+", re.M)),
 )

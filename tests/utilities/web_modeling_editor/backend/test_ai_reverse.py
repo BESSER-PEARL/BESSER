@@ -102,6 +102,24 @@ def test_digest_reads_schema_and_types_and_skips_dependencies_and_secrets(tmp_pa
     assert "src/app.ts" in digest.text  # listed in the tree, not quoted
 
 
+def test_digest_reads_plain_classes_in_an_mvc_model_folder(tmp_path):
+    """github.com/ArmenSl/MVC-Java-App: plain Java classes in Model/, no @Entity.
+
+    The live reading quoted only README.txt, so the classes were guessed from prose.
+    """
+    root = _repo(tmp_path, {
+        "Model/Enfant.java": "public class Enfant extends Personne {\n    private int age;\n}\n",
+        "Model/Reservation.java": "public class Reservation {\n    private java.util.Date jour;\n}\n",
+        "Controller/controleReservation.java": "public class controleReservation {\n}\n",
+        "Vue/pageReservation.java": "public class pageReservation extends javax.swing.JFrame {\n}\n",
+        "README.txt": "Projet Java cantine\n",
+    })
+    files = build_repo_digest(root).files
+    assert "Model/Enfant.java" in files and "Model/Reservation.java" in files
+    assert "Controller/controleReservation.java" not in files
+    assert "Vue/pageReservation.java" not in files
+
+
 def test_digest_redacts_tokens_inside_quoted_files(tmp_path):
     root = _repo(tmp_path, {"db/schema.sql": f"-- token {SECRET}\nCREATE TABLE item (id int);\n"})
 

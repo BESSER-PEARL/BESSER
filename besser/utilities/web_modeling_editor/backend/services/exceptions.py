@@ -21,6 +21,19 @@ class GovernanceDslValidationError(ValidationError):
     pass
 
 
+class UpstreamError(BesserError):
+    """Raised when an external service the backend calls on the user's behalf fails.
+
+    ``status_code`` is the HTTP status the endpoint answers with: 404 (the resource does not
+    exist there), 413 (its answer is too large), 502 (it failed), 503 (this server is busy) or
+    504 (it took too long).
+    """
+
+    def __init__(self, message: str, status_code: int = 502):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class GenerationError(BesserError):
     """Raised when code generation fails."""
     pass

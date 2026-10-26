@@ -4,6 +4,7 @@ Chart component parsers for GUI diagrams.
 
 import logging
 import json
+import re
 
 logger = logging.getLogger(__name__)
 from typing import Dict, Any, List, Optional
@@ -17,9 +18,9 @@ from besser.BUML.metamodel.gui.dashboard import (
     Map, MapLayer, MapLayerType,
 )
 from besser.BUML.metamodel.gui.dashboard import Series
-from besser.BUML.metamodel.gui.binding import DataAggregation
+from besser.BUML.metamodel.gui.binding import DataAggregation, is_valid_endpoint
 from .styling import ensure_styling_parts
-from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
+from .utils import clean_attribute_name, css_class_names, get_element_by_id, html_attributes, parse_bool, sanitize_name
 
 def _parse_aggregation(*sources: Dict[str, Any]):
     """The ``aggregation`` (sum, avg, count, min, max, ...) of the first source
@@ -32,6 +33,74 @@ def _parse_aggregation(*sources: Dict[str, Any]):
     return None
 
 
+def _parse_endpoint(attrs: Dict[str, Any], owner: str = "component") -> Optional[str]:
+    """The ``data-endpoint`` a series, chart or metric card reads its records from, if any.
+
+    A path typed without its leading ``/`` (``stats/exports``) gets one, as the
+    generated app's charts would add it. A value ``DataBinding.endpoint`` would
+    refuse (a space, a control character) is dropped with a warning naming
+    ``owner``, so one bad field does not fail the whole GUI import.
+    """
+    value = attrs.get('data-endpoint') if isinstance(attrs, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    value = value.strip()
+    if not value.startswith('/') and not re.match(r'^https?://', value, re.IGNORECASE):
+        value = '/' + value
+    if not is_valid_endpoint(value):
+        logger.warning("Ignoring the invalid data endpoint %r of %s: expected a path starting with '/' "
+                       "or an http(s):// URL, without spaces", value, owner)
+        return None
+    return value
+
+
+def _series_styling(s_attrs: Dict[str, Any], color_role: Optional[str]) -> Optional[Styling]:
+    """A series' styling: its ``color`` (as ``primary_color``, ``background_color``
+    and the chart's own ``color_role``, e.g. ``line_color``), else its CSS ``styling``."""
+    series_color = s_attrs.get('color')
+    if isinstance(series_color, str) and series_color.strip():
+        roles = {'primary_color': series_color, 'background_color': series_color}
+        if color_role:
+            roles[color_role] = series_color
+        return Styling(color=Color(**roles))
+    if 'styling' in s_attrs:
+        from .styling import styling_from_css
+        return styling_from_css(s_attrs['styling'])
+    return None
+
+
+def _parse_series(view_comp: Dict[str, Any], attrs: Dict[str, Any], class_model, domain_model,
+                  color_role: Optional[str] = None, field_aliases: Optional[Dict[str, str]] = None) -> List[Series]:
+    """The chart's ``series`` attribute (a JSON list) as ``Series`` objects.
+
+    ``field_aliases`` maps a binding key to the series key a chart type uses for it
+    (radial bar charts name their fields ``features`` / ``values``).
+    """
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except ValueError:
+            logger.warning("Could not parse the series JSON of chart %r", attrs.get('chart-title'))
+            series_json = []
+    if not isinstance(series_json, list):
+        return []
+    series_objs = []
+    for s in series_json:
+        s_attrs = s if isinstance(s, dict) else {}
+        s_raw_name = s_attrs.get('name', 'Series')
+        s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+        binding_attrs = s_attrs
+        if field_aliases:
+            binding_attrs = {**s_attrs, **{key: s_attrs.get(alias) or s_attrs.get(key)
+                                           for key, alias in field_aliases.items()}}
+        data_binding = _build_data_binding(binding_attrs, class_model, domain_model, attrs,
+                                           owner=f"series {s_raw_name!r}")
+        series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding,
+                                  styling=_series_styling(s_attrs, color_role)))
+    return series_objs
+
+
 def _apply_chart_level_binding(chart, attrs: Dict[str, Any], class_model, domain_model) -> None:
     """Rebuild a chart's own ``data_binding`` (as opposed to its series' bindings).
 
@@ -41,19 +110,29 @@ def _apply_chart_level_binding(chart, attrs: Dict[str, Any], class_model, domain
     """
     if chart.data_binding is not None or not attrs.get('data-source'):
         return
-    data_binding = _build_data_binding(attrs, class_model, domain_model)
+    data_binding = _build_data_binding(attrs, class_model, domain_model,
+                                       owner=f"chart {attrs.get('chart-title')!r}")
     if data_binding is not None:
         chart.data_binding = data_binding
 
 
 def _build_data_binding(binding_attrs: Dict[str, Any], class_model, domain_model,
-                        *aggregation_fallbacks: Dict[str, Any]) -> Optional[DataBinding]:
+                        *aggregation_fallbacks: Dict[str, Any], owner: str = "component",
+                        reads_endpoint: bool = True) -> Optional[DataBinding]:
     """Build the ``DataBinding`` described by a series' (or a chart's own) attributes.
 
     Returns ``None`` when the data source does not resolve to a domain class. The
     aggregation falls back to ``aggregation_fallbacks`` (the chart's attributes for
-    a series) when ``binding_attrs`` has none.
+    a series) when ``binding_attrs`` has none; the endpoint (``data-endpoint``) is
+    the binding's own only. A component that does not read from an endpoint
+    (``reads_endpoint=False``, e.g. a table, whose rows are also edited through
+    the CRUD routes) gets none, with a warning when one was set.
     """
+    endpoint = _parse_endpoint(binding_attrs, owner)
+    if endpoint and not reads_endpoint:
+        logger.warning("Ignoring the data endpoint %r of %s: only charts and metric cards read from one",
+                       endpoint, owner)
+        endpoint = None
     domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(
         binding_attrs, class_model, domain_model)
     if not domain_class:
@@ -68,6 +147,7 @@ def _build_data_binding(binding_attrs: Dict[str, Any], class_model, domain_model
         data_field_path=data_field_path,
         filter_expression=data_filter,
         aggregation=_parse_aggregation(binding_attrs, *aggregation_fallbacks),
+        endpoint=endpoint,
     )
 
 
@@ -164,8 +244,8 @@ def _attach_chart_metadata(chart, component: Dict[str, Any]) -> None:
 
     chart.component_type = component.get("type")
     chart.tag_name = component.get("tagName")
-    chart.css_classes = [cls if isinstance(cls, str) else cls.get("name", "") for cls in (component.get("classes") or [])]
-    chart.custom_attributes = dict(attributes) if isinstance(attributes, dict) else {}
+    chart.css_classes = css_class_names(component)
+    chart.custom_attributes = html_attributes(attributes)
 
 
 def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> LineChart:
@@ -195,34 +275,7 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
-
-            # Extract color from series attributes and create styling
-            styling = None
-            series_color = s_attrs.get('color')
-            if series_color and isinstance(series_color, str) and series_color.strip():
-                # Create styling with color - use line_color for line charts
-                color_obj = Color(line_color=series_color, background_color=series_color, primary_color=series_color)
-                styling = Styling(color=color_obj)
-            elif 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='line_color')
 
     line_chart = LineChart(
         name=chart_title,
@@ -271,34 +324,7 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
-
-            # Extract color from series attributes and create styling
-            styling = None
-            series_color = s_attrs.get('color')
-            if series_color and isinstance(series_color, str) and series_color.strip():
-                # Create styling with color - use bar_color for bar charts
-                color_obj = Color(bar_color=series_color, background_color=series_color, primary_color=series_color)
-                styling = Styling(color=color_obj)
-            elif 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='bar_color')
 
     bar_chart = BarChart(
         name=chart_title,
@@ -348,26 +374,7 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
-            styling = None
-            if 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model)
 
     show_legend = parse_bool(attrs.get('show-legend'), True)
     show_labels = parse_bool(attrs.get('show-labels'), True)
@@ -436,26 +443,7 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            data_binding = _build_data_binding(s_attrs, class_model, domain_model, attrs)
-            styling = None
-            if 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='line_color')
 
     radar_chart = RadarChart(
         name=chart_title,
@@ -503,32 +491,9 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            # Radial bar series name their fields ``features`` / ``values``.
-            binding_attrs = {
-                **s_attrs,
-                'label-field': s_attrs.get('features') or s_attrs.get('label-field'),
-                'data-field': s_attrs.get('values') or s_attrs.get('data-field'),
-            }
-            data_binding = _build_data_binding(binding_attrs, class_model, domain_model, attrs)
-            styling = None
-            if 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    # Radial bar series name their fields ``features`` / ``values``.
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='bar_color',
+                                field_aliases={'label-field': 'features', 'data-field': 'values'})
 
     radial_bar_chart = RadialBarChart(
         name=chart_title,
@@ -663,7 +628,8 @@ def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:
     """
     attrs = view_comp.get('attributes', {})
 
-    data_binding = _build_data_binding(attrs, class_model, domain_model)
+    data_binding = _build_data_binding(attrs, class_model, domain_model,
+                                       owner=f"table {attrs.get('chart-title')!r}", reads_endpoint=False)
     domain_class = data_binding.domain_concept if data_binding else None
 
     raw_title = attrs.get('chart-title')
@@ -764,7 +730,7 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
     positive_color = attrs.get('positive-color', '#27ae60')
     negative_color = attrs.get('negative-color', '#e74c3c')
 
-    data_binding = _build_data_binding(attrs, class_model, domain_model)
+    data_binding = _build_data_binding(attrs, class_model, domain_model, owner=f"metric card {metric_title!r}")
     if data_binding is not None:
         data_binding.name = sanitize_name(f"{metric_title}_binding")
 

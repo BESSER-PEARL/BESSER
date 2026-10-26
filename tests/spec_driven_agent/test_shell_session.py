@@ -238,7 +238,8 @@ def test_an_idle_session_is_torn_down_and_the_next_command_is_told(
         _run(session, "export KEPT=yes")
         supervisor = session._proc.proc
         assert _wait_for(lambda: session._proc is None, 8), "the reaper never fired"
-        assert supervisor.poll() is not None
+        # The reaper detaches the process first and closes it after, outside the lock.
+        assert _wait_for(lambda: supervisor.poll() is not None, 5)
 
         result = _run(session, "echo $KEPT")
         assert result.stdout == "yes\n", "the harness keeps env across a restart"

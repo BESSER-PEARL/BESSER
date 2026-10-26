@@ -9,68 +9,36 @@ ids. Nested field paths and filters were not exported at all, and the metric car
 and table parsers ignored the exported ``filter``. The exported ``label-field`` /
 ``data-field`` name attributes too, and only element ids were resolved.
 """
+import json
+
 import pytest
 
 from besser.BUML.metamodel.gui.binding import DataBinding
 from besser.BUML.metamodel.gui.dashboard import (
-    BarChart, LineChart, MetricCard, PieChart, RadarChart, RadialBarChart, Table,
+    BarChart, LineChart, MetricCard, PieChart, RadarChart, RadialBarChart, Series, Table,
 )
+from besser.BUML.metamodel.gui.style import Color, Styling
 from besser.BUML.metamodel.structural import Class, FloatType, Property, StringType
-from besser.utilities.web_modeling_editor.backend.services.converters import (
-    process_class_diagram,
-    process_gui_diagram,
-)
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.gui_diagram_converter import (
     _apply_bar_chart_attributes,
     _apply_component_specific_attributes,
     _apply_metric_card_attributes,
     _apply_table_attributes,
+    _serialize_gui_model,
+)
+from tests.utilities.web_modeling_editor.backend.services.converters.utils_gui_binding_tests import (
+    class_diagram,
+    elements_by_id,
+    import_gui,
 )
 
 TASK_ATTRIBUTES = [("title", "str"), ("status", "str"), ("hours", "float")]
 
 
-def _class_diagram():
-    """Apollon class diagram with one ``Task`` class (id ``cls-Task``, attribute
-    ids ``attr-Task-<name>``)."""
-    elements = {}
-    attribute_ids = []
-    for attr_name, attr_type in TASK_ATTRIBUTES:
-        attr_id = f"attr-Task-{attr_name}"
-        attribute_ids.append(attr_id)
-        elements[attr_id] = {
-            "id": attr_id, "name": attr_name, "type": "ClassAttribute", "owner": "cls-Task",
-            "bounds": {"x": 0, "y": 0, "width": 200, "height": 30}, "visibility": "public",
-            "attributeType": attr_type, "isOptional": False, "isDerived": False, "isId": False,
-        }
-    elements["cls-Task"] = {
-        "id": "cls-Task", "name": "Task", "type": "Class", "owner": None,
-        "bounds": {"x": 0, "y": 0, "width": 220, "height": 200},
-        "attributes": attribute_ids, "methods": [],
-    }
-    return {"version": "3.0.0", "type": "ClassDiagram", "size": {"width": 2000, "height": 1000},
-            "interactive": {"elements": {}, "relationships": {}}, "elements": elements,
-            "relationships": {}, "assessments": {}}
-
-
 def _import(component_type, attrs):
     """Re-import one exported component; returns the parsed element by its id."""
-    class_json = _class_diagram()
-    domain = process_class_diagram({"title": "Domain", "model": class_json})
-    project_gui = {"pages": [{
-        "id": "page-dashboard", "name": "Dashboard",
-        "frames": [{"component": {"type": "wrapper", "components": [
-            {"type": component_type, "attributes": attrs},
-        ]}}],
-    }], "styles": []}
-    gui_model = process_gui_diagram(project_gui, class_json, domain)
-    return next(
-        element
-        for module in gui_model.modules
-        for screen in module.screens
-        for element in screen.view_elements
-        if element.component_id == attrs["id"]
-    )
+    gui_model = import_gui([{"type": component_type, "attributes": attrs}], class_diagram("Task", TASK_ATTRIBUTES))
+    return elements_by_id(gui_model)[attrs["id"]]
 
 
 def _task():
@@ -183,3 +151,107 @@ def test_a_table_filter_round_trips():
     binding = _import("table", attrs).data_binding
     assert binding.domain_concept.name == "Task"
     assert binding.filter_expression == "hours > 0"
+
+
+CHARTS = [
+    (BarChart, "bar-chart"),
+    (LineChart, "line-chart"),
+    (PieChart, "pie-chart"),
+    (RadarChart, "radar-chart"),
+    (RadialBarChart, "radial-bar-chart"),
+]
+
+
+def _series(task, status, hours, name, color=None):
+    styling = Styling(color=Color(primary_color=color)) if color else None
+    return Series(name=name, label=name, styling=styling,
+                  data_binding=DataBinding(domain_concept=task, label_field=status, data_field=hours))
+
+
+def _export(gui_model, component_id):
+    """The exported attributes of one component of ``gui_model``."""
+    found = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if (node.get("attributes") or {}).get("id") == component_id:
+                found.append(node["attributes"])
+            for child in node.get("components") or []:
+                walk(child)
+
+    for page in _serialize_gui_model(gui_model)["pages"]:
+        for frame in page.get("frames", []):
+            walk(frame.get("component"))
+    return found[0]
+
+
+@pytest.mark.parametrize("component_class, component_type", CHARTS)
+def test_a_b_uml_chart_exports_its_series(component_class, component_type):
+    """``buml_to_json`` wrote no ``series`` for a chart built in B-UML, so its series
+    were lost on re-import; the series colour came back on line and bar charts only."""
+    task, status, hours = _task()
+    chart = component_class(name="by_status")
+    chart.series = [_series(task, status, hours, "Open", "#0b5394"), _series(task, status, hours, "Done")]
+    attrs = {"id": "chart"}
+    _apply_component_specific_attributes(chart, attrs)
+    assert json.loads(attrs["series"]) == [
+        {"name": "Open", "color": "#0b5394", "data-source": "Task", "label-field": "status", "data-field": "hours"},
+        {"name": "Done", "data-source": "Task", "label-field": "status", "data-field": "hours"},
+    ]
+
+    again = _import(component_type, attrs)
+    assert [s.label for s in again.series] == ["Open", "Done"]
+    assert again.series[0].data_binding.label_field.name == "status"
+    assert again.series[0].styling.color.primary_color == "#0b5394"
+
+
+def _editor_chart(series):
+    return {"id": "chart", "chart-title": "Hours", "series": json.dumps(series)}
+
+
+EDITOR_SERIES = {"data-source": "cls-Task", "label-field": "attr-Task-status", "data-field": "attr-Task-hours"}
+
+
+def test_editing_the_series_in_b_uml_wins_over_the_stored_ones():
+    """The model is the source of truth for the series, as for a map's layers."""
+    stored = [{"name": "Open", **EDITOR_SERIES, "data": [{"name": "a", "value": 1}]},
+              {"name": "Done", **EDITOR_SERIES, "filter": "status=done"}]
+    chart = _import("bar-chart", _editor_chart(stored))
+    task, status, hours = _task()
+    del chart.series[1]
+    chart.series[0].data_binding.filter_expression = "hours > 2"
+    chart.series.append(_series(task, status, hours, "Added"))
+    gui_model = import_gui([], class_diagram("Task", TASK_ATTRIBUTES))
+    next(iter(next(iter(gui_model.modules)).screens)).view_elements.add(chart)
+
+    exported = json.loads(_export(gui_model, "chart")["series"])
+    assert [s["name"] for s in exported] == ["Open", "Added"]
+    assert exported[0]["filter"] == "hours > 2"
+    assert exported[0]["data"] == [{"name": "a", "value": 1}]  # editor-only keys are kept
+    assert "data" not in exported[1]
+
+
+def test_series_deleted_in_b_uml_do_not_come_back():
+    chart = _import("line-chart", _editor_chart([{"name": "Open", **EDITOR_SERIES}]))
+    chart.series = []
+    attrs = {"id": "chart", "series": json.dumps([{"name": "Open", **EDITOR_SERIES}])}
+    _apply_component_specific_attributes(chart, attrs)
+    assert json.loads(attrs["series"]) == []
+
+
+def test_series_with_the_same_name_keep_their_own_binding():
+    stored = [{"name": "Hours", **EDITOR_SERIES, "filter": "status=open"},
+              {"name": "Hours", **EDITOR_SERIES, "filter": "status=done"}]
+    chart = _import("bar-chart", _editor_chart(stored))
+    attrs = dict(chart.custom_attributes)
+    _apply_component_specific_attributes(chart, attrs)
+    assert [s["filter"] for s in json.loads(attrs["series"])] == ["status=open", "status=done"]
+
+
+def test_a_chart_without_series_writes_none():
+    task, status, hours = _task()
+    chart = BarChart(name="plain")
+    chart.data_binding = DataBinding(domain_concept=task, label_field=status, data_field=hours)
+    attrs = {"id": "plain"}
+    _apply_component_specific_attributes(chart, attrs)
+    assert "series" not in attrs

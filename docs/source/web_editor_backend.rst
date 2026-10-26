@@ -162,6 +162,15 @@ Both accept an optional ``config`` payload with:
 The response filename embeds the generation type, e.g.
 ``pytorch_nn_subclassing.py`` or ``tf_nn_sequential.py``.
 
+A third NN generator, ``forecaster``, wraps the network in a time-series
+pipeline (see :doc:`generators/forecaster`). Its ``config`` holds the
+forecaster settings (``window``, ``horizon``, ``season``, ``difference``,
+``log``, ``calendar``, ``standardize``, ``seed`` or ``seeds``, ``description``)
+plus ``channel_last``; the response is ``forecaster_<model name>.py`` (a name
+outside ASCII is sent as ``filename*=UTF-8''...``). Invalid settings, and a
+network whose first layer does not read the window or whose last layer does not
+return the horizon, are a 400 naming every problem.
+
 **JSON ↔ BUML.** The ``/export-buml`` endpoint converts an NN diagram JSON
 into a BUML Python file (``nn_model.py``) that reproduces the model when
 executed. The converse path through ``/get-json-model`` auto-detects NN BUML
@@ -431,6 +440,14 @@ Conversion
 - ``POST /get-json-model-from-image`` -- Image to ClassDiagram JSON (requires OpenAI API key)
 - ``POST /get-json-model-from-kg`` -- Knowledge graph (TTL/RDF/JSON) to ClassDiagram JSON
 - ``POST /csv-to-domain-model`` -- CSV **or XLSX** files to domain model JSON (both extensions are accepted; XLSX needs ``openpyxl``)
+- ``POST /sdmx-to-domain-model`` -- The structure of an SDMX dataflow to domain model JSON, same response as ``/csv-to-domain-model``.
+  Body: ``{"provider": "ecb", "dataflow": "EXR"}`` or ``{"baseUrl": "https://...", "dataflow": "AGENCY,ID,VERSION"}``
+  (``agency``, ``version`` and ``modelName`` are optional; ``baseUrl`` only when ``BESSER_SDMX_ALLOW_CUSTOM_URL`` is on).
+  Fetched in safe mode: https on port 443 to public addresses only, each connection pinned to the address that was
+  checked, within the ``BESSER_SDMX_*`` limits below. 400 for invalid input, 404 for an unknown dataflow, 413 when
+  too large, 502 when the provider fails, 503 when too many imports are running, 504 when the import takes too long.
+  See :doc:`buml_language/model_building/sdmx_to_buml`.
+- ``GET /sdmx-providers`` -- The preset SDMX providers (``key``, ``name``, ``baseUrl``, ``agency``) and ``customUrlAllowed``
 - ``POST /transform-agent-model-json`` -- Agent model transformation with personalization
 - ``POST /get-svg`` -- B-UML class-diagram file to an auto-laid-out SVG. Rendering is delegated to the WME Node server (``WME_NODE_SERVER_URL``, default ``http://localhost:8080``), which runs ELK auto-layout headlessly.
 
@@ -624,6 +641,27 @@ agent: :doc:`spec_driven_agent/configuration`.
   persistent volume so sign-ins survive a restart
 - ``GITHUB_REDIRECT_URI`` -- OAuth redirect URL (default: ``http://localhost:9000/besser_api/github/auth/callback``)
 - ``DEPLOYMENT_URL`` -- Frontend URL for OAuth redirects (default: ``http://localhost:8080``)
+
+**SDMX import** (``POST /sdmx-to-domain-model``, read once at startup):
+
+- ``BESSER_SDMX_ALLOW_CUSTOM_URL`` (off) -- Accept an SDMX API that is not one of
+  the preset providers. Off by default, like ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL``:
+  even with its public-address checks, a hosted server should not fetch any URL
+  for anyone. Local and on-premises installs can turn it on.
+- ``BESSER_SDMX_TIMEOUT`` (``60``) -- Seconds for one whole import: every request,
+  redirect and retry, enforced while the answer is read.
+- ``BESSER_SDMX_MAX_MB`` (``32``) -- Largest single structure message. The largest
+  seen, Eurostat Comext's ``DS-045409``, is 23.6 MB; parsing takes about 15 times a
+  message's size in memory.
+- ``BESSER_SDMX_MAX_TOTAL_MB`` (``64``) -- All the messages of one import together.
+- ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` (``2``) -- Imports running at once; more
+  are answered with 503, so imports cannot fill the thread pool the conversion and
+  generation endpoints share.
+
+The import does not use the environment's HTTP proxies (a proxy would resolve the
+host itself, which the pinning prevents); it does use the CA bundle of
+``REQUESTS_CA_BUNDLE`` or ``CURL_CA_BUNDLE``, for servers behind a TLS-inspecting
+gateway.
 
 **Agent simulation** (read once at startup, except the token):
 

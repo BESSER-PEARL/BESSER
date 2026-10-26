@@ -35,6 +35,10 @@ The filename embeds the generation type, so a ``PytorchGenerator`` invoked with
 ``generation_type="subclassing"`` produces ``pytorch_nn_subclassing.py``, and
 ``generation_type="sequential"`` produces ``pytorch_nn_sequential.py``.
 
+To forecast a time series with the network (windows over the series, seeded training,
+prediction and a backtest), use the :doc:`Time-Series Forecaster Generator <forecaster>`, which
+writes the network with the same templates.
+
 Web Modeling Editor Support
 ---------------------------
 

@@ -1,6 +1,21 @@
+import re
 from enum import Enum
 from besser.BUML.metamodel.structural import Class, Property, Constraint
 from besser.BUML.metamodel.structural.structural import Element
+
+# A DataBinding endpoint: a backend path ("/stats/exports?year=2025", not "//host/...")
+# or an absolute http(s) URL with a host. Whitespace, control characters and invisible
+# format characters are refused, so the value goes into a URL as is.
+_ENDPOINT_RE = re.compile(
+    r"^(/(?!/)|https?://[^/\s?#]+)"
+    r"[^\s\x00-\x1f\x7f\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]*$",
+    re.IGNORECASE,
+)
+
+
+def is_valid_endpoint(endpoint: str) -> bool:
+    """Whether ``endpoint`` is a value ``DataBinding.endpoint`` accepts (not blank)."""
+    return isinstance(endpoint, str) and bool(_ENDPOINT_RE.match(endpoint.strip()))
 
 
 class DataAggregation(Enum):
@@ -44,6 +59,13 @@ class DataBinding(Element):
         aggregation (DataAggregation | str, optional): How the bound records are
             reduced to one value per label: a metric card's value, or a chart's
             value per ``label_field`` group. Defaults to None (no aggregation).
+        endpoint (str, optional): Where a chart or metric card reads its records
+            from instead of the domain concept's CRUD list (``/<class>/``): a path
+            on the generated backend (``/stats/exports?year=2025``) or an absolute
+            ``http(s)://`` URL. The response must be a JSON array of row objects,
+            or an object holding one under ``data``, ``results``, ``items``,
+            ``records`` or ``list``; each row carries ``label_field`` and
+            ``data_field``. Defaults to None (the CRUD list).
 
     Attributes:
         name (str): Name of the data binding.
@@ -56,11 +78,12 @@ class DataBinding(Element):
         data_field_path (str): Dot notation path for nested data field.
         filter_expression (str): Raw filter expression string.
         aggregation (DataAggregation | None): How the bound records are aggregated.
+        endpoint (str | None): Where the records are read from, if not the CRUD list.
     """
     def __init__(self, domain_concept: Class, name: str = None, visualization_attrs: set[Property] = None,
                  label_field: Property = None, data_field: Property = None,
                  data_filter: Constraint = None, label_field_path: str = None, data_field_path: str = None,
-                 filter_expression: str = None, aggregation: DataAggregation = None):
+                 filter_expression: str = None, aggregation: DataAggregation = None, endpoint: str | None = None):
         super().__init__()
         self.name = name or f"{domain_concept.name if domain_concept else 'Unknown'}DataBinding"
         self.domain_concept = domain_concept
@@ -72,6 +95,7 @@ class DataBinding(Element):
         self.data_field_path = data_field_path    # For nested fields like "measure.value"
         self.filter_expression = filter_expression  # Raw filter string from UI
         self.aggregation = aggregation
+        self.endpoint = endpoint
 
     @property
     def name(self) -> str:
@@ -156,8 +180,31 @@ class DataBinding(Element):
             raise ValueError(f"Unknown aggregation: {aggregation!r}")
         self._aggregation = parsed
 
+    @property
+    def endpoint(self) -> str | None:
+        """str | None: Where the records are read from, if not the CRUD list."""
+        return self._endpoint
+
+    @endpoint.setter
+    def endpoint(self, endpoint: str | None) -> None:
+        """Set the endpoint: a path starting with ``/`` or an ``http(s)://`` URL.
+
+        An empty or blank string means no endpoint (the CRUD list).
+        """
+        if endpoint is not None and not isinstance(endpoint, str):
+            raise TypeError("endpoint must be a string or None")
+        endpoint = endpoint.strip() if endpoint else None
+        if endpoint and not _ENDPOINT_RE.match(endpoint):
+            raise ValueError(
+                f"Invalid endpoint {endpoint!r}: expected a path starting with '/' "
+                "(e.g. '/stats/exports?year=2025') or an absolute http(s):// URL with a host, "
+                "without spaces or control characters"
+            )
+        self._endpoint = endpoint or None
+
     def __str__(self):
         return (
             f"DataBinding(domain_concept={self.domain_concept}, visualization_attrs={self.visualization_attrs},"
-            f"label_field={self.label_field}, data_field={self.data_field}, data_filter={self.data_filter})"
+            f"label_field={self.label_field}, data_field={self.data_field}, data_filter={self.data_filter}, "
+            f"aggregation={self.aggregation}, endpoint={self.endpoint})"
         )

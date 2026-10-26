@@ -352,3 +352,215 @@ def test_no_domain_model_skips_without_error(tmp_path):
     orch._derive_and_apply_model_deltas("add auth")  # must not raise
     assert orch._updated_project_export is None
     assert client.chat_calls == 0
+
+
+# ----------------------------------------------------------------------
+# (e) the re-serialised class diagram keeps the editor's element ids
+# ----------------------------------------------------------------------
+
+
+def test_model_sync_keeps_existing_element_ids(tmp_path):
+    """Adding a class must not re-id the rest of the diagram (issue #659).
+
+    The GUI diagram binds a form to the Book class by its element id; that
+    reference must still resolve in the pushed (updated) class diagram.
+    """
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
+        process_class_diagram,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_processors.utils import (
+        get_element_by_id,
+    )
+
+    bounds = {"x": 0, "y": 0, "width": 160, "height": 100}
+    class_model = {
+        "type": "ClassDiagram",
+        "elements": {
+            "cls-book": {"id": "cls-book", "name": "Book", "type": "Class", "owner": None,
+                         "bounds": bounds, "attributes": ["attr-title"], "methods": []},
+            "attr-title": {"id": "attr-title", "name": "title", "type": "ClassAttribute",
+                           "owner": "cls-book", "bounds": bounds,
+                           "visibility": "public", "attributeType": "str"},
+        },
+        "relationships": {},
+    }
+    export = _source_export()
+    export["diagrams"]["ClassDiagram"][0]["model"] = class_model
+    export["diagrams"]["GUINoCodeDiagram"] = [{"id": "gui1", "title": "UI", "model": {
+        "pages": [{"frames": [{"component": {"components": [
+            {"type": "gui-form", "attributes": {"data-source": "cls-book"}}]}}]}]}}]
+
+    orch = LLMOrchestrator(
+        llm_client=_DeltaClient([{"name": "User", "attributes": [{"name": "email", "type": "str"}]}]),
+        domain_model=process_class_diagram({"title": "Library", "model": class_model}),
+        output_dir=str(tmp_path),
+        enable_tracing=False,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+        source_project_export=export,
+    )
+    orch._derive_and_apply_model_deltas("add users")
+
+    updated = orch._updated_project_export["diagrams"]["ClassDiagram"][0]["model"]
+    assert updated["elements"]["cls-book"]["name"] == "Book"
+    assert updated["elements"]["attr-title"]["owner"] == "cls-book"
+    gui_ref = orch._updated_project_export["diagrams"]["GUINoCodeDiagram"][0]["model"][
+        "pages"][0]["frames"][0]["component"]["components"][0]["attributes"]["data-source"]
+    assert get_element_by_id(updated, gui_ref)["name"] == "Book"
+    user_ids = [k for k, e in updated["elements"].items() if e.get("name") == "User"]
+    assert len(user_ids) == 1 and user_ids[0] not in ("cls-book", "attr-title")
+
+
+# ----------------------------------------------------------------------
+# (f) the model-sync call fits the planning model's output ceiling (#677)
+# ----------------------------------------------------------------------
+
+# Live (2026-10-22): gpt-4o-mini answers a 32768-token request with 400
+# "max_tokens is too large: 32768. This model supports at most 16384
+# completion tokens"; the same call at 16384 returns the tool call.
+_GPT_4O_MINI_MAX_OUTPUT = 16384
+
+
+def _tool_call_response(new_classes):
+    import json
+    from unittest.mock import MagicMock
+
+    call = MagicMock()
+    call.id = "call_1"
+    call.function.name = "derive_model_deltas"
+    call.function.arguments = json.dumps({"new_classes": new_classes})
+    choice = MagicMock()
+    choice.message.content = None
+    choice.message.tool_calls = [call]
+    choice.finish_reason = "tool_calls"
+    response = MagicMock()
+    response.usage = None
+    response.choices = [choice]
+    return response
+
+
+def _openai_client_like_the_api(monkeypatch, new_classes):
+    """An OpenAI client whose endpoint rejects gpt-4o-mini calls above its
+    output ceiling, as the live API does. Returns (client, sent requests)."""
+    from unittest.mock import MagicMock
+
+    from besser.spec_driven_agent.providers.llm_client import OpenAIProvider
+
+    monkeypatch.setenv("BESSER_LLM_PLANNING_MODEL", "gpt-4o-mini")
+    client = OpenAIProvider(api_key="k", model="gpt-4o")
+    assert client.planning_model == "gpt-4o-mini"
+    sent: list[dict] = []
+
+    def create(**kwargs):
+        sent.append(kwargs)
+        budget = kwargs.get("max_tokens") or kwargs.get("max_completion_tokens")
+        if kwargs["model"] == "gpt-4o-mini" and budget > _GPT_4O_MINI_MAX_OUTPUT:
+            raise Exception(
+                f"Error code: 400 - max_tokens is too large: {budget}. This model "
+                f"supports at most {_GPT_4O_MINI_MAX_OUTPUT} completion tokens")
+        return _tool_call_response(new_classes)
+
+    client._client = MagicMock()
+    client._client.chat.completions.create.side_effect = create
+    return client, sent
+
+
+def _neutralise_modify_phases(monkeypatch, orch):
+    monkeypatch.setattr(
+        "besser.spec_driven_agent.pipeline.orchestrator.build_inventory",
+        lambda *a, **k: "",
+    )
+    monkeypatch.setattr(orch, "_seed_generator_files_from_recipe", lambda: None)
+    monkeypatch.setattr(orch, "_validate_phase1_output", lambda: [])
+    monkeypatch.setattr(orch, "_run_phase2", lambda instr, extra_issues=None: None)
+    monkeypatch.setattr(orch, "_create_snapshot", lambda: None)
+    monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
+    monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
+
+
+def test_modify_model_sync_runs_on_an_openai_key(tmp_path, monkeypatch):
+    """modify() raises the client to MODIFY_MAX_TOKENS for the agent loop;
+    the model-sync call on gpt-4o-mini must still ask for at most 16384."""
+    client, sent = _openai_client_like_the_api(
+        monkeypatch, [{"name": "User", "attributes": [{"name": "email", "type": "str"}]}])
+    orch = _make_orchestrator(tmp_path, client, source_export=_source_export())
+    _neutralise_modify_phases(monkeypatch, orch)
+    monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+
+    orch.modify("add user accounts")
+
+    assert client.max_tokens == 32768  # the agent loop keeps the raised ceiling
+    sync_calls = [k for k in sent if k["model"] == "gpt-4o-mini"]
+    assert [k["max_tokens"] for k in sync_calls] == [_GPT_4O_MINI_MAX_OUTPUT]
+    assert "User" in _class_names(orch.domain_model)
+    assert orch._updated_project_export is not None
+
+
+def test_model_sync_failure_is_a_warning_in_the_trace_and_recipe(
+        tmp_path, monkeypatch, caplog):
+    """A failed model-sync call must not be silent: WARNING log, and the
+    reason in the run_start trace event and the saved recipe."""
+    import json
+    import logging
+
+    from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
+
+    client, _ = _openai_client_like_the_api(monkeypatch, [])
+    client._client.chat.completions.create.side_effect = Exception(
+        "Error code: 400 - invalid_request_error")
+    orch = LLMOrchestrator(
+        llm_client=client,
+        domain_model=_make_domain(),
+        output_dir=str(tmp_path),
+        enable_tracing=True,
+        enable_checkpointing=False,
+        enable_toolchain_validation=False,
+        source_project_export=_source_export(),
+    )
+    _neutralise_modify_phases(monkeypatch, orch)
+
+    with caplog.at_level(logging.DEBUG):
+        orch.modify("add user accounts")
+
+    warnings = [r for r in caplog.records
+                if r.levelno == logging.WARNING and "model-sync" in r.getMessage()]
+    assert warnings, "a failed model-sync call must log at WARNING"
+    assert _class_names(orch.domain_model) == ["Book"]  # the run went on
+
+    with open(tmp_path / TRACE_FILENAME, encoding="utf-8") as f:
+        events = [json.loads(line) for line in f if line.strip()]
+    run_start = next(e for e in events if e["event"] == "run_start")
+    assert "invalid_request_error" in run_start["payload"]["model_sync_error"]
+
+    with open(tmp_path / ".besser_recipe.json", encoding="utf-8") as f:
+        recipe = json.load(f)
+    assert "invalid_request_error" in recipe["model_sync_error"]
+
+
+def test_model_sync_falls_back_to_the_primary_when_the_key_cannot_reach_the_planning_model(
+        tmp_path, monkeypatch, caplog):
+    """A BYOK key without access to the planning model (404 model_not_found)
+    must not cost the model-sync: retry on the primary, warn once."""
+    import logging
+
+    client, sent = _openai_client_like_the_api(monkeypatch, [{"name": "User", "attributes": []}])
+    answer = client._client.chat.completions.create.side_effect
+
+    def create(**kwargs):
+        if kwargs["model"] == "gpt-4o-mini":
+            sent.append(kwargs)
+            raise Exception("Error code: 404 - The model `gpt-4o-mini` does not "
+                            "exist or you do not have access to it. model_not_found")
+        return answer(**kwargs)
+
+    client._client.chat.completions.create.side_effect = create
+    orch = _make_orchestrator(tmp_path, client, source_export=_source_export())
+
+    with caplog.at_level(logging.WARNING):
+        orch._derive_and_apply_model_deltas("add user accounts")
+
+    assert [k["model"] for k in sent] == ["gpt-4o-mini", "gpt-4o"]
+    assert "User" in _class_names(orch.domain_model)
+    assert orch._model_sync_error is None
+    assert any("retrying on the primary" in r.getMessage() for r in caplog.records
+               if r.levelno == logging.WARNING)

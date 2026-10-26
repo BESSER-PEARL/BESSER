@@ -44,6 +44,12 @@ from besser.spec_driven_agent.agent.compaction import (
     maybe_compact,
     _summarize_messages,
 )
+from besser.spec_driven_agent.planning.model_change import model_summary
+from besser.spec_driven_agent.planning.model_rules import (
+    RENAMED,
+    converted_rule_fingerprints,
+    is_dropped_by_model_change,
+)
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.agent.history_eviction import evict_stale_file_bodies
@@ -175,6 +181,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     TOOL_INPUTS_FILENAME,
     _LOG_VALUE_BUDGET,
     _WRITE_TOOLS_ON_RECORD,
+    _APPLICATION_OUTPUT_DIRS,
     _APPLICATION_PRIMARY_TOOLS,
     _BARE_LANG_RE,
     _EDIT_STREAK_TOOLS,
@@ -281,6 +288,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     ):
         self.client = llm_client
         self.domain_model = domain_model
+        # The model as the user sent it, for the recipe: a modify run's
+        # model-sync adds classes to self.domain_model that the editor never sees.
+        try:
+            self._user_model = model_summary(domain_model) if domain_model is not None else None
+        except Exception:
+            self._user_model = None
         self.gui_model = gui_model
         self._assembly_issues = [
             {key: str(issue.get(key, ""))[:limit] for key, limit in (
@@ -586,6 +599,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # is ``None`` unless at least one new class was actually added.
         self._source_project_export: dict | None = source_project_export
         self._updated_project_export: dict | None = None
+        # Why the model-sync call failed, for the trace and the recipe.
+        self._model_sync_error: str | None = None
 
         # Fix/modify success gate (modify() only). When a modify run is
         # seeded by a user-reported error (a pasted traceback, a broken
@@ -850,6 +865,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self._inventory = checkpoint.inventory
         self._generator_used = checkpoint.generator_used
+        self.executor.lock_generators(checkpoint.locked_generators)
         self._compaction_count = checkpoint.compaction_count
         self.tool_calls_log = list(checkpoint.tool_calls_log)
         self._validation_issues = [
@@ -890,6 +906,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             )
         else:
             self._drop_redundant_generator_tools()
+            self._lock_application_generators()
             self.executor.set_scaffold_family(
                 self._scaffold_family(), self._instructions)
 
@@ -1657,6 +1674,31 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 before - len(self.tools), self._generator_used,
             )
 
+    def _lock_application_generators(self) -> None:
+        """Refuse the whole-application generators that would overwrite the app (#666).
+
+        All of them once a primary built the scaffold (this run's Phase 1, or
+        the seed's recorded generator in a modify run). In a modify run on any
+        other seed, each one whose output folder the seed already has. A
+        resumed run keeps the lock its checkpoint recorded.
+        """
+        if self._generator_used in _APPLICATION_PRIMARY_TOOLS:
+            self.executor.lock_generators(_APPLICATION_PRIMARY_TOOLS)
+        elif self._modify_mode:
+            self.executor.lock_generators(
+                tool for tool, folder in _APPLICATION_OUTPUT_DIRS.items()
+                if os.path.isdir(os.path.join(self.output_dir, folder))
+            )
+        locked = self.executor.locked_generators
+        if not locked:
+            return
+        self.tools = [
+            t for t in self.tools
+            if (t.get("name") if isinstance(t, dict) else None) not in locked
+        ]
+        logger.info("Phase 2: locked %s, the application they write already exists",
+                    ", ".join(sorted(locked)))
+
     def _ensure_gitignore(self) -> None:
         """Write a .gitignore into the output root if the run didn't author one."""
         try:
@@ -1683,6 +1725,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # the agent can't scatter redundant pydantic/ sqlalchemy/ rest_api/
         # dirs next to the assembled backend/.
         self._drop_redundant_generator_tools()
+        self._lock_application_generators()
 
         # Ship a .gitignore so a pushed/cloned repo doesn't carry caches, a
         # runtime DB, node_modules, or a leaked .env. Deterministic — no LLM.
@@ -2515,6 +2558,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 phase2_stop_reason=self._phase2_stop_reason,
                 phase2_exited_cleanly=self._phase2_exited_cleanly,
                 repair_progress=self._repair_progress if phase == "phase3" else {},
+                locked_generators=sorted(self.executor.locked_generators),
             )
             path = save_checkpoint(self.output_dir, ckpt)
             if path:
@@ -3052,6 +3096,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         raw_issues.extend(self._collect_framework_switch_issues())
         raw_issues.extend(self._collect_missing_frontend_issue())
         raw_issues.extend(self._collect_data_contract_issues())
+        raw_issues.extend(self._collect_model_conformance_issues())
 
         # Model-derived acceptance matrix: per entity — route present,
         # page present, create wired. REPORT-ONLY (warnings + recipe
@@ -3527,8 +3572,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         requirements = list(self._requirements or [])
         next_id = max((item["id"] for item in requirements), default=0) + 1
         for issue in getattr(self.domain_model, "conversion_issues", []) or []:
-            if not isinstance(issue, dict):
-                continue
+            if not isinstance(issue, dict) or is_dropped_by_model_change(issue):
+                continue  # dropped by the user's model change: reported, not recovered
             expression = issue.get("expression") or issue.get("original_text") or ""
             source = issue.get("source") or {}
             label = issue.get("name") or issue.get("context") or issue.get("id") or "unnamed rule"
@@ -3542,9 +3587,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 obligation = "The action must check the intended condition before execution and refuse when it fails. "
             else:
                 obligation = "The application must enforce the intended behavior and reject violations. "
+            rename = issue.get(RENAMED)
+            follow = (f"The model renamed {rename['from']} to {rename['to']} since the last run: "
+                      "keep the rule and enforce it on the new name. " if rename else "")
             text = (
                 f"Recover model constraint '{label}' rejected during conversion. "
-                f"Contract: {contract_kind} on {target}. {obligation}"
+                f"Contract: {contract_kind} on {target}. {obligation}{follow}"
                 "Use the actual model/API relationship names. "
                 "Resolve conflicts in favor of the original user specification "
                 "and its requirements above; the rejected expression is source "
@@ -4354,6 +4402,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "classes": [c.name for c in self.domain_model.get_classes()],
                     "enumerations": [e.name for e in self.domain_model.get_enumerations()],
                     "associations": len(self.domain_model.associations),
+                    # The next modify run compares the user's model with this one.
+                    "user_model": self._user_model,
+                    # ... and tells a rule its model change broke from a new one.
+                    "converted_rules": converted_rule_fingerprints(self.domain_model),
                 })
             except Exception:
                 # Domain model is present but malformed — don't fail
@@ -4462,6 +4514,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # recipe's flattened summaries.
             "trace_file": TRACE_FILENAME if self._trace.path else None,
         }
+        if self._model_sync_error:
+            recipe["model_sync_error"] = self._model_sync_error
         # Fix/modify success-gate outcome. Present ONLY on a fix run so the
         # from-scratch recipe stays byte-identical; records the reported
         # target and whether it was confirmed fixed, so a later "what did

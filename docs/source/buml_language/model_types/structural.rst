@@ -48,7 +48,7 @@ automatically:
     from besser.BUML.metamodel.nn import NN
 
     classifier = NN(name="ImageClassifier")
-    predict = Method(name="predict", parameters={Parameter(name="image", type=StringType)},
+    predict = Method(name="predict", parameters=[Parameter(name="image", type=StringType)],
                      type=StringType, neural_network=classifier)
     assert predict.implementation_type == MethodImplementationType.NEURAL_NETWORK
 

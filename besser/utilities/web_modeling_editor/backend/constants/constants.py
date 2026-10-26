@@ -75,6 +75,10 @@ def _env_path(name: str) -> str | None:
     return os.path.abspath(os.path.expanduser(value))
 
 
+# Write element ids (id="...") into exported B-UML files. Off until every
+# install in use reads them: releases before Element.id reject such a file.
+BUML_EMIT_IDS = _env_bool("BESSER_BUML_EMIT_IDS", False)
+
 # Per-run spend / runtime caps. The HARD_CAP values are the absolute
 # ceiling a request's fields are clamped to; DEFAULT values are what
 # clients get when they don't send an explicit number.
@@ -195,6 +199,25 @@ LLM_ENABLE_REQUIREMENTS_LEDGER = _env_bool("BESSER_LLM_ENABLE_REQUIREMENTS_LEDGE
 # in the dropdown.
 LLM_ALLOW_CUSTOM_BASE_URL = _env_bool("BESSER_LLM_ALLOW_CUSTOM_BASE_URL", False)
 
+# ---------------------------------------------------------------------
+# SDMX import ("From Data" > "Statistics API (SDMX)")
+# ---------------------------------------------------------------------
+# The backend fetches a dataflow's structure on the user's behalf, so every import is bounded.
+# Seconds for one whole import (every request, redirect and retry).
+SDMX_TIMEOUT_SECONDS = _env_float("BESSER_SDMX_TIMEOUT", 60.0)
+# Largest single structure message, in MB. Eurostat Comext's DS-045409 (the CN8 nomenclature) is
+# 23.6 MB, the largest seen; a message takes about 15 times its size in memory while it is parsed.
+SDMX_MAX_MB = _env_float("BESSER_SDMX_MAX_MB", 32.0)
+# All the messages of one import together, in MB (the dataflow, codelists, constraint, hierarchies).
+SDMX_MAX_TOTAL_MB = _env_float("BESSER_SDMX_MAX_TOTAL_MB", 64.0)
+# Imports running at once; more are refused (HTTP 503) so they cannot fill the shared thread pool
+# that conversion and generation endpoints use, nor hold more than a few parsed messages in memory.
+SDMX_MAX_CONCURRENT_IMPORTS = _env_int("BESSER_SDMX_MAX_CONCURRENT_IMPORTS", 2)
+# Whether an import may name an SDMX API that is not one of the presets. OFF by default, like
+# LLM_ALLOW_CUSTOM_BASE_URL: even with the public-address checks, a hosted server should not fetch
+# arbitrary URLs for anyone. Local and on-premises installs can turn it on.
+SDMX_ALLOW_CUSTOM_URL = _env_bool("BESSER_SDMX_ALLOW_CUSTOM_URL", False)
+
 # Grace period added on top of the request's max_runtime_seconds before
 # the runner-level watchdog force-cancels a run (covers Phase 3 +
 # packaging time after the Phase 2 loop hits its own runtime check).
@@ -232,6 +255,10 @@ DEFAULT_CORS_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:8080",
+    # Browsers treat 127.0.0.1 as a different origin from localhost.
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8080",
 ]
 
 VALID_PRIMITIVE_TYPES = {

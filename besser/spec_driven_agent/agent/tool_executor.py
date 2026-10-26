@@ -72,7 +72,7 @@ from besser.spec_driven_agent.agent.edit_apply import (
     stray_gutter_line,
     _strip_line_numbers,
 )
-from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
+from besser.spec_driven_agent.pipeline.constants import _APPLICATION_OUTPUT_DIRS, WORKSPACE_SKIP_DIRS
 from besser.spec_driven_agent.state.agent_trace import record_generated_files
 from besser.spec_driven_agent.validation import frontend_source
 
@@ -607,6 +607,8 @@ class ToolExecutor:
         # until the model has demonstrably tried targeted edits — the
         # rewrite habit is where modify-run regressions come from.
         self._modify_guard = False
+        # Whole-application generators refused once the scaffold exists (#666).
+        self._locked_generators: frozenset[str] = frozenset()
 
     def close(self) -> None:
         """End the run's shell session; every process it holds is killed."""
@@ -621,6 +623,15 @@ class ToolExecutor:
     def enable_modify_guard(self) -> None:
         """Turn on the edit-first guardrail (modify runs only)."""
         self._modify_guard = True
+
+    def lock_generators(self, names) -> None:
+        """Refuse these generators from now on (added to any already locked):
+        re-running one would regenerate the app over every edit made since."""
+        self._locked_generators |= frozenset(names)
+
+    @property
+    def locked_generators(self) -> frozenset[str]:
+        return self._locked_generators
 
     def set_scaffold_family(self, family: str | None, instructions: str = "") -> None:
         """Record which framework the Phase-1 scaffold committed to.
@@ -1395,6 +1406,19 @@ class ToolExecutor:
                 ),
             })
 
+        # Same reasoning as the shell gate: the toolset no longer offers these,
+        # but a model can still name one.
+        if tool_name in self._locked_generators:
+            logger.warning("Refused %s: the application scaffold already exists", tool_name)
+            return ToolExecutionResult("error", {
+                "error": (
+                    f"{tool_name} is not available: the application is already "
+                    "generated, and running it again would overwrite every edit "
+                    "made since. Change the existing files with modify_file / "
+                    "write_file instead. To change the stack, start a fresh run."
+                ),
+            })
+
         handler = self._handlers.get(tool_name)
         if not handler:
             payload = {"error": f"Unknown tool: {tool_name}"}
@@ -1680,7 +1704,7 @@ class ToolExecutor:
         if err:
             return err
         from besser.generators.backend import BackendGenerator
-        out = self._gen_dir("backend")
+        out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_fastapi_backend"])
         BackendGenerator(
             model=self.domain_model, output_dir=out,
             http_methods=args.get("http_methods", ["GET", "POST", "PUT", "DELETE"]),
@@ -1696,7 +1720,7 @@ class ToolExecutor:
         if err:
             return err
         from besser.generators.django import DjangoGenerator
-        out = self._gen_dir("django")
+        out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_django"])
         DjangoGenerator(
             model=self.domain_model,
             project_name=args.get("project_name", "myproject"),
@@ -1879,7 +1903,7 @@ class ToolExecutor:
         if err:
             return err
         from besser.generators.rest_api import RESTAPIGenerator
-        out = self._gen_dir("rest_api")
+        out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_rest_api"])
         RESTAPIGenerator(
             model=self.domain_model, output_dir=out,
             http_methods=args.get("http_methods", ["GET", "POST", "PUT", "DELETE"]),
@@ -1904,7 +1928,7 @@ class ToolExecutor:
         if not self.gui_model:
             return {"error": "No GUI model available. The Flutter generator requires a GUI model."}
         from besser.generators.flutter import FlutterGenerator
-        out = self._gen_dir("flutter")
+        out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_flutter"])
         FlutterGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 
@@ -1915,7 +1939,7 @@ class ToolExecutor:
         if not self.gui_model:
             return {"error": "No GUI model available. The WebApp generator requires a GUI model."}
         from besser.generators.web_app import WebAppGenerator
-        out = self._gen_dir("web_app")
+        out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_web_app"])
         WebAppGenerator(
             model=self.domain_model, gui_model=self.gui_model, output_dir=out,
             agent_model=self.agent_model, agent_config=self.agent_config,

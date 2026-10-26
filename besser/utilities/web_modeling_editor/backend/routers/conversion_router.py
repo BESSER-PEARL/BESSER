@@ -44,6 +44,8 @@ from besser.utilities.buml_code_builder.deployment_model_builder import deployme
 from besser.utilities.web_modeling_editor.backend.models import (
     DiagramInput,
     ProjectInput,
+    SdmxImportRequest,
+    SdmxProvidersResponse,
 )
 
 # Backend services - Converters
@@ -71,6 +73,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     component_buml_to_json,
     deployment_buml_to_json,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import adopt_element_ids
 
 # Backend services - Other services
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
@@ -81,6 +84,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 )
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
+    custom_urls_allowed,
+    sdmx_providers,
+    sdmx_to_domain_model,
 )
 from besser.utilities.web_modeling_editor.backend.services.svg_postprocess import (
     fit_svg_viewbox_to_content,
@@ -103,6 +109,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     BPMN_DIAGRAM_TYPE,
     BPMN_PROJECT_DIAGRAM_KEY,
     DEPLOYMENT_DIAGRAM_TYPE,
+    BUML_EMIT_IDS,
 )
 
 # Centralized error handling
@@ -307,7 +314,7 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
 
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         output_file_path = os.path.join(temp_dir, "project.py")
-        project_to_code(project=buml_project, file_path=output_file_path)
+        project_to_code(project=buml_project, file_path=output_file_path, emit_ids=BUML_EMIT_IDS)
         file_content = await _read_file(output_file_path, "r", encoding="utf-8")
         return Response(
             content=file_content,
@@ -339,7 +346,7 @@ async def export_buml(input_data: DiagramInput):
         elif elements_data.get("type") == "ClassDiagram":
             buml_model = process_class_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "domain_model.py")
-            domain_model_to_code(model=buml_model, file_path=output_file_path)
+            domain_model_to_code(model=buml_model, file_path=output_file_path, emit_ids=BUML_EMIT_IDS)
             file_content = await _read_file(output_file_path, "rb")
             return Response(
                 content=file_content,
@@ -361,7 +368,9 @@ async def export_buml(input_data: DiagramInput):
 
             # Generate a single file with both domain model and object model
             output_file_path = os.path.join(temp_dir, "complete_model.py")
-            domain_model_to_code(model=buml_model, file_path=output_file_path, objectmodel=object_model)
+            domain_model_to_code(
+                model=buml_model, file_path=output_file_path, objectmodel=object_model, emit_ids=BUML_EMIT_IDS,
+            )
             file_content = await _read_file(output_file_path, "rb")
             return Response(
                 content=file_content,
@@ -834,6 +843,41 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
             "version": API_VERSION
         }
 
+@router.get("/sdmx-providers", response_model=SdmxProvidersResponse)
+@handle_endpoint_errors("get_sdmx_providers")
+async def get_sdmx_providers():
+    """The preset SDMX providers the "From Data" import offers, and whether custom URLs are accepted."""
+    return {"providers": sdmx_providers(), "customUrlAllowed": custom_urls_allowed()}
+
+
+@router.post("/sdmx-to-domain-model", response_model=DiagramExportResponse)
+@handle_endpoint_errors("sdmx_to_domain_model_endpoint")
+async def sdmx_to_domain_model_endpoint(request: SdmxImportRequest):
+    """
+    Reads the structure of an SDMX dataflow (a preset provider or an https SDMX 2.1 API) and returns
+    its B-UML domain model as JSON, in the same shape as ``/csv-to-domain-model``.
+    """
+    domain_model = await asyncio.to_thread(
+        sdmx_to_domain_model,
+        request.dataflow,
+        provider=request.provider,
+        base_url=request.baseUrl,
+        agency=request.agency,
+        version=request.version,
+        model_name=request.modelName,
+    )
+
+    diagram_type = "ClassDiagram"
+    diagram_json = class_buml_to_json(domain_model)
+    return {
+        "title": domain_model.name,
+        "model": {**diagram_json, "type": diagram_type},
+        "diagramType": diagram_type,
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "version": API_VERSION,
+    }
+
+
 @router.post("/get-json-model-from-image", response_model=DiagramExportResponse)
 @handle_endpoint_errors("get_json_model_from_image")
 async def get_json_model_from_image(
@@ -885,6 +929,9 @@ async def get_json_model_from_image(
             openai_token=api_key,
             existing_model=existing_domain_model,
         )
+        if existing_domain_model is not None:
+            # The merge rebuilds the model; keep the ids of the elements that were there.
+            adopt_element_ids(domain_model, existing_domain_model)
         diagram_json = class_buml_to_json(domain_model)
 
         diagram_title = diagram_json.get("title", "Imported Class Diagram")

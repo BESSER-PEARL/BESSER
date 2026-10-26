@@ -66,6 +66,14 @@ association classes, generalizations and OCL constraints. A class named
 ``datetime`` is emitted as ``datetime_`` so that it does not shadow the
 imported module.
 
+An element's ``id`` (``Element.id``, such as the editor element id) can be
+written the same way, as an ``id="..."`` constructor argument, by passing
+``emit_ids=True`` to ``domain_model_to_code`` or ``project_to_code``. It is off
+by default, because BESSER 8.2.1 and older cannot load such a file (the editor
+backend turns it on with ``BESSER_BUML_EMIT_IDS=1``, see
+:doc:`../web_editor_backend`). The loader always accepts ``id=``. Elements
+without an id never get one, so the file is then the same as before.
+
 Agent / GUI / State Machine / Quantum / Project generation
 -----------------------------------------------------------
 

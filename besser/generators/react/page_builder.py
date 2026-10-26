@@ -5,6 +5,15 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Set
 
+# Inline SVG elements, by lowercase name, with the casing React needs.
+_SVG_TAGS = {name.lower(): name for name in (
+    "svg", "g", "defs", "symbol", "use", "image", "path", "rect", "circle", "ellipse",
+    "line", "polyline", "polygon", "text", "tspan", "textPath", "desc",
+    "linearGradient", "radialGradient", "stop", "pattern", "clipPath", "mask", "marker",
+    "filter", "feGaussianBlur", "feOffset", "feDropShadow", "feFlood", "feComposite",
+    "feColorMatrix", "feBlend", "feMerge", "feMergeNode",
+)}
+
 
 class _PageRenderContext:
     def __init__(self) -> None:
@@ -208,6 +217,8 @@ class PageBuilderMixin:
         component_id = node.get("id") or ""
         class_list = node.get("class_list") or []
         attributes = dict(node.get("attributes") or {})
+        if (node.get("tag") or "").lower() in _SVG_TAGS:
+            attributes = self._react_svg_attributes(attributes)
         children = node.get("children") or []
 
         style = self._compute_style(
@@ -1045,7 +1056,8 @@ class PageBuilderMixin:
             props.append(" onClick={" + on_click_expr + "}")
 
         cleaned_attrs = dict(attributes or {})
-        for key in ("id", "class", "className", "style"):
+        # React props, not HTML attributes: dangerouslySetInnerHTML would inject markup from the GUI JSON.
+        for key in ("id", "class", "className", "style", "dangerouslySetInnerHTML", "ref", "key"):
             cleaned_attrs.pop(key, None)
 
         if extra_props:
@@ -1200,13 +1212,24 @@ class PageBuilderMixin:
             "span",
         }
         tag_value = (tag or "").lower()
-        return tag_value if tag_value in valid_tags else "div"
+        if tag_value in valid_tags:
+            return tag_value
+        return _SVG_TAGS.get(tag_value, "div")
 
     @staticmethod
     def _select_text_tag(tag: Optional[str]) -> str:
-        valid_tags = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "strong", "em", "li"}
+        valid_tags = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "strong", "em", "li", "text", "tspan"}
         tag_value = (tag or "").lower()
         return tag_value if tag_value in valid_tags else "p"
+
+    @staticmethod
+    def _react_svg_attributes(attributes: Dict[str, Any]) -> Dict[str, Any]:
+        """SVG attribute names as React expects them: ``stroke-width`` -> ``strokeWidth``."""
+        return {
+            key if key.startswith(("aria-", "data-"))
+            else re.sub(r"[-:](\w)", lambda m: m.group(1).upper(), key): value
+            for key, value in attributes.items()
+        }
 
     # ------------------------------------------------------------------ #
     # Utility helpers for pages

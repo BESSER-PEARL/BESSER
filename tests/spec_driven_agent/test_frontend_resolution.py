@@ -218,3 +218,65 @@ def test_the_deterministic_repair_runs_before_the_detector(tmp_path):
         "the deterministic repair did not run inside the validation pass"
     )
     assert not [b for b in blockers if "React is not defined" in b], blockers
+
+
+# Written by the model in run p5-expense-tracker rep0 (one of 8 of 24 eval runs
+# with "latest" versions). npm 10.8.2, the version in the worker and grader
+# images, then failed: "Cannot read properties of null (reading 'edgesOut')".
+_LATEST_MANIFEST = {
+    "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"},
+    "dependencies": {"react": "latest", "react-dom": "latest",
+                     "react-router-dom": "latest", "vite": "latest"},
+    "devDependencies": {"@vitejs/plugin-react": "^4.3.4"},
+}
+
+
+def test_a_dependency_without_a_version_range_is_a_blocker_naming_it(tmp_path):
+    workspace = _frontend(tmp_path, manifest=_LATEST_MANIFEST, files={})
+
+    issues = collect_frontend_resolution_issues(workspace)
+
+    assert len(issues) == 4, issues
+    assert all(i.startswith("frontend contract: frontend/package.json dependencies ")
+               for i in issues)
+    assert {"'react'", "'react-dom'", "'react-router-dom'", "'vite'"} == {
+        i.split()[4] for i in issues}
+
+
+@pytest.mark.parametrize("version", ["latest", "*", "x", "X", "", " latest "])
+def test_every_unpinned_spelling_is_flagged(tmp_path, version):
+    workspace = _frontend(tmp_path, manifest={"devDependencies": {"vite": version}}, files={})
+
+    [issue] = collect_frontend_resolution_issues(workspace)
+
+    assert issue.startswith("frontend contract: frontend/package.json devDependencies 'vite'")
+
+
+@pytest.mark.parametrize("version", ["^5.4.8", "~5.4.0", "5.x", ">=5 <6", "5.4.8",
+                                     "npm:vite@^5.4.8", "file:../vite"])
+def test_a_real_range_stays_quiet(tmp_path, version):
+    workspace = _frontend(
+        tmp_path,
+        # "*" is a normal peer range, so peerDependencies are never flagged.
+        manifest={"devDependencies": {"vite": version}, "peerDependencies": {"react": "*"}},
+        files={})
+
+    assert collect_frontend_resolution_issues(workspace) == []
+
+
+def test_phase_3_reports_a_latest_version_as_a_blocker(tmp_path):
+    from besser.BUML.metamodel.structural import Class, DomainModel
+
+    workspace = _frontend(tmp_path, manifest=_LATEST_MANIFEST, files={})
+    orch = LLMOrchestrator(
+        llm_client=_Client(),
+        domain_model=DomainModel(name="Shop", types={Class(name="Order")}),
+        output_dir=workspace,
+        enable_tracing=False, enable_checkpointing=False,
+        enable_toolchain_validation=False,
+    )
+
+    blockers = [i.message for i in orch._collect_validation_issues()
+                if i.severity == "blocker"]
+
+    assert [b for b in blockers if "package.json dependencies 'vite'" in b], blockers

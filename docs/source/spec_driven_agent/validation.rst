@@ -47,6 +47,13 @@ and no Docker. Missing runtime prerequisites do not count as verified execution:
   an unimplemented method.
 - Framework coherence — generated code importing a rival framework into the
   chosen scaffold (Flask into a FastAPI project).
+- Model conformance (modify runs whose class diagram changed, FastAPI backend
+  only) — ``sql_alchemy.py`` or a ``<Class>Create`` schema that still defines
+  a removed attribute, lacks an added one, declares a changed type as the old
+  one, or contradicts a changed optional/required flag, and a renamed class
+  still defined only under its old name. Blocker; only the changed attributes
+  are checked (a renamed class under its new name), and an app without these
+  files reports the check as not run. See :ref:`spec-driven-modify-mode`.
 - Generated model-action contracts — actual handler paths and functions, with
   deterministic checks for missing handlers and known unimplemented bodies.
   Absence of a known stub is structural evidence, not proof of business behavior.
@@ -66,7 +73,9 @@ satisfy it. The JSX rule matters even where build verification is enabled:
 no build check can see it. A Vite project counts as using the automatic runtime
 only when its ``vite.config`` imports ``@vitejs/plugin-react`` and calls it
 inside ``plugins: [...]``. Declaring the package in ``package.json``, or naming
-it in a comment, does not enable it.
+it in a comment, does not enable it. A ``package.json`` dependency whose version
+is ``"latest"``, ``"*"``, ``"x"`` or empty is a blocker naming the file and the
+package: the install would depend on whatever npm publishes that day.
 
 Create forms are checked statically against the backend's ``*Create`` Pydantic
 schemas, because the runtime probes drive HTTP and never render a page. Each
@@ -273,6 +282,28 @@ under ``model_conversion_issues`` for review even after code recovery succeeds.
 The original natural-language request takes precedence when a rejected model
 expression conflicts with it. Relationship names must be resolved from the
 actual model and code, not guessed or automatically renamed.
+
+A modify run treats rules broken by the user's own model change differently.
+The converter records the element a rejected rule names but the model lacks
+(``missing_element``, e.g. ``Person.phone``),
+and every run's recipe records a fingerprint of each rule that converted
+(``model.converted_rules``) next to the user's model (``model.user_model``). A
+rejected rule is marked ``dropped_by_model_change`` only when the same rule
+text converted in the previous run and the element it misses is in the previous
+model but was removed from the new one (an attribute, association end or
+class). Such a rule raises no recovery task or requirement, the agent sees it
+listed as dropped (name and missing element only) with an instruction not to
+re-implement it, and the verification report lists it as not enforced because
+it was dropped by the model change. It stays dropped in later modify runs while
+the element is still missing.
+
+When the element was renamed instead (the class or attribute keeps its
+identity under a new name), the rule is recovered as usual and its requirement
+says to keep the rule and enforce it on the new name (``renamed_in_model``).
+A new or edited rule, a misspelled name, an element that never existed, a rule
+that already failed in the previous run, a recipe without the recorded model
+or rule fingerprints, any other conversion failure, and every rule in a fresh
+run are recovered as described above.
 
 Validation is attempted within the run's runtime budget. If that budget is
 already exhausted, the run records an unverified-completion blocker instead

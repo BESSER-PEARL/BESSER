@@ -569,6 +569,8 @@ python <agent_name>.py
 [BESSER](https://github.com/BESSER-PEARL/BESSER) is an open-source low-code platform that generates applications from visual models.
 
 [Documentation](https://besser.readthedocs.io/) · [Web Editor](https://editor.besser-pearl.org) · [Examples](https://github.com/BESSER-PEARL/BESSER-examples)
+
+If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESSER) helps others find it.
 """
             return readme
 
@@ -640,6 +642,8 @@ docker-compose up
 [BESSER](https://github.com/BESSER-PEARL/BESSER) is an open-source low-code platform that generates full-stack applications from visual models.
 
 [Documentation](https://besser.readthedocs.io/) · [Web Editor](https://editor.besser-pearl.org) · [Examples](https://github.com/BESSER-PEARL/BESSER-examples)
+
+If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESSER) helps others find it.
 """
 
         return readme

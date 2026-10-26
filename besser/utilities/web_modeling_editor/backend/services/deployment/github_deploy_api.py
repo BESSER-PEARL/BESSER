@@ -30,6 +30,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
+from besser.utilities.web_modeling_editor.backend.constants.constants import BUML_EMIT_IDS
 from besser.utilities.buml_code_builder import (
     domain_model_to_code,
     gui_model_to_code,
@@ -512,7 +513,9 @@ async def deploy_webapp_to_github(
             buml_dir = os.path.join(temp_dir, "buml")
             os.makedirs(buml_dir, exist_ok=True)
             try:
-                domain_model_to_code(model=buml_model, file_path=os.path.join(buml_dir, "domain_model.py"))
+                domain_model_to_code(
+                    model=buml_model, file_path=os.path.join(buml_dir, "domain_model.py"), emit_ids=BUML_EMIT_IDS,
+                )
                 gui_model_to_code(model=gui_model, file_path=os.path.join(buml_dir, "gui_model.py"), domain_model=buml_model)
                 for ag in agent_models:
                     slug = agent_slug(ag.name)
@@ -986,7 +989,7 @@ async def _export_buml_files_to_repo(
         if class_diagram_data and class_diagram_data.get("model") and not _is_legacy(class_diagram_data):
             buml_model = process_class_diagram(class_diagram_data)
             with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
-                domain_model_to_code(model=buml_model, file_path=f.name)
+                domain_model_to_code(model=buml_model, file_path=f.name, emit_ids=BUML_EMIT_IDS)
             with open(f.name, "r", encoding="utf-8") as fh:
                 exports.append((f"{buml_dir}/domain_model.py", fh.read()))
             os.unlink(f.name)

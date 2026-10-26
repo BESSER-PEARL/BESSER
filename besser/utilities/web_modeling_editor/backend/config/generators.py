@@ -39,6 +39,11 @@ try:
 except ImportError:
     TFGenerator = None
 
+try:
+    from besser.generators.nn.forecaster import TimeSeriesForecasterGenerator
+except ImportError:
+    TimeSeriesForecasterGenerator = None
+
 
 class GeneratorInfo(NamedTuple):
     """Information about a generator."""
@@ -293,6 +298,18 @@ if TFGenerator is not None:
     SUPPORTED_GENERATORS["tensorflow"] = GeneratorInfo(
         generator_class=TFGenerator,
         download_filename="tf_nn.py",
+        output_type="file",
+        file_extension=".py",
+        category="neural_network",
+        requires_class_diagram=False,
+        required_diagram_type="NNDiagram",
+    )
+
+# The forecaster writes ``forecaster_<model name>.py``: the download keeps that name.
+if TimeSeriesForecasterGenerator is not None:
+    SUPPORTED_GENERATORS["forecaster"] = GeneratorInfo(
+        generator_class=TimeSeriesForecasterGenerator,
+        keep_generated_filename=True,
         output_type="file",
         file_extension=".py",
         category="neural_network",

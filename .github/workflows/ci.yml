@@ -24,10 +24,15 @@ jobs:
       # path production actually takes.
       - name: Install bubblewrap (shell sandbox)
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      # The nn extra (torch, numpy) lets the tests that run generated PyTorch
+      # code (the forecaster, the backend's NN methods) run instead of skip.
+      # Torch comes first from the CPU-only index: the default wheel pulls in
+      # CUDA, several GB that CI never uses.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[nn]"
           pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
           pip install pytest
       - name: Run tests

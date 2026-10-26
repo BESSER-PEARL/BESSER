@@ -301,6 +301,11 @@ def test_build_sha_is_shown_only_when_the_image_was_stamped(monkeypatch):
     assert "BESSER build: `abc1234`" in generation_provenance_markdown("java")
 
 
+def test_provenance_links_back_to_the_besser_repository():
+    from besser.utilities.provenance import BESSER_URL, generation_provenance_markdown
+    assert f"[star on GitHub]({BESSER_URL})" in generation_provenance_markdown("java")
+
+
 def test_provenance_file_is_not_counted_as_an_llm_authored_file(tmp_path):
     from besser.utilities.web_modeling_editor.backend.services.spec_driven.telemetry import compute_file_split
     (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")

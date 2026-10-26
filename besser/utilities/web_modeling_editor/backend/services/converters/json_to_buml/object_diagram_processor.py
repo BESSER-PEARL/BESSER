@@ -137,6 +137,13 @@ def _is_shared_domain_model(domain_model) -> bool:
     return domain_model is user_reference_domain_model
 
 
+def _find_by_id(elements, element_id):
+    """The element whose ``id`` (its class-diagram element id) is *element_id*, else None."""
+    if not element_id:
+        return None
+    return next((e for e in elements if getattr(e, "id", None) == element_id), None)
+
+
 def _append_description(element, text):
     """Append *text* to the metadata description of *element*."""
     if not element.metadata:
@@ -199,13 +206,15 @@ def process_object_diagram(json_data, domain_model):
         object_name = data.get("name", "") or ""
         class_id = data.get("classId")
 
-        class_obj = None
+        # By element id first (survives a rename), then by the class name in
+        # the reference data or on the object.
+        class_obj = _find_by_id(domain_model.get_classes(), class_id)
         class_name = None
-        if class_id and reference_data:
+        if not class_obj and class_id and reference_data:
             class_name = _reference_class_name(class_id, reference_data)
-        if not class_name:
+        if not class_obj and not class_name:
             class_name = data.get("className")
-        if class_name:
+        if not class_obj and class_name:
             class_obj = domain_model.get_class_by_name(class_name)
         if not class_obj:
             class_obj = domain_model.get_class_by_name(object_name)
@@ -277,12 +286,12 @@ def process_object_diagram(json_data, domain_model):
             # value is "no constraint", not a value to type-convert, so it
             # must not raise on int/float parsing.
             if attr_name and value not in (None, ""):
-                property_obj = None
+                # The class's (or an ancestor's) attribute: by attributeId
+                # first, then by name.
                 all_attrs = get_all_attributes(class_obj, domain_model)
-                for prop in all_attrs:
-                    if prop.name == attr_name:
-                        property_obj = prop
-                        break
+                property_obj = _find_by_id(all_attrs, attr.get("attributeId"))
+                if property_obj is None:
+                    property_obj = next((prop for prop in all_attrs if prop.name == attr_name), None)
 
                 if property_obj:
                     converted_value = value
@@ -331,7 +340,7 @@ def process_object_diagram(json_data, domain_model):
                                 converted_value = bool(value)
                         elif type_name in ['datetime', 'DateTimeType', 'date', 'DateType', 'time', 'TimeType', 'timedelta', 'TimeDeltaType']:
                             converted_value = parse_datetime_value(value, type_name)
-                    attributes_dict[attr_name] = converted_value
+                    attributes_dict[property_obj.name] = converted_value
 
         if attributes_dict:
             builder = builder.attributes(**attributes_dict)

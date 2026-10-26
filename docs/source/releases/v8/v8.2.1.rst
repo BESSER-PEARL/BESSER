@@ -27,6 +27,13 @@ B-OCL
 * ``->notEmpty()``. A common collection operation that B-OCL rejected as a
   syntax error, so users had to write ``->size() > 0``. It is now part of the
   grammar, the pretty printer and normalization.
+* **Collection operations in the interpreter.** BESSER now requires
+  ``bocl`` 1.0.3, which evaluates ``isEmpty()``, ``notEmpty()`` and
+  ``collect(...)->sum()`` instead of reporting them as "not evaluated", and
+  makes ``forAll`` over an empty collection true. It also fixes ``forAll``
+  sometimes failing to return a Boolean, depending on iteration order, which
+  left constraints such as ``self.authors->forAll(a | a.age >= 18)``
+  unevaluated at random.
 * **"Not evaluated" instead of "invalid syntax".** When valid OCL reaches
   something the evaluator cannot handle yet, ``/validate-diagram`` reports
   "not evaluated" with the reason, instead of telling the user their syntax is
@@ -76,13 +83,13 @@ release: BPMN data objects (modeling-agent #31, needed for the data-object
 fix above) and progress messages that name the diagram being built instead of
 always mentioning classes (modeling-agent #32).
 
-The B-OCL interpreter has a fix for ``isEmpty``, ``notEmpty``, ``sum`` and
-``forAll`` over empty collections (B-OCL-Interpreter #14). It is not yet
-published, so BESSER still pins ``bocl==1.0.1``. With that version these
-constructs are reported as "not evaluated".
-
 Upgrade notes
 -------------
+
+* ``bocl`` 1.0.3 no longer pins ``pydantic==2.6.3`` and ``fastapi==0.110.0``
+  exactly, so a fresh install now resolves the current ``pydantic`` 2.x.
+* BESSER now installs on Python 3.13, which the old ``pydantic`` pin
+  prevented, and the test suite passes there. CI still tests 3.11 and 3.12.
 
 * ``notEmpty`` is now a B-OCL keyword, like ``isEmpty`` and the other
   collection operations. An attribute literally named ``notEmpty`` can no

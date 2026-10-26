@@ -193,12 +193,14 @@ def _process_enumerations(
                 )
             seen_literal_names.add(literal_name)
             literals.append(EnumerationLiteral(
-                name=literal_name, timestamp=parse_iso_timestamp(literal.get("timestamp"))
+                name=literal_name, timestamp=parse_iso_timestamp(literal.get("timestamp")),
+                id=literal.get("id"),
             ))
 
         enum = Enumeration(
             name=element_name, literals=set(literals),
             timestamp=parse_iso_timestamp(data.get("timestamp")),
+            id=node_id,
         )
         # Preserve insertion order from the JSON for round-trip fidelity.
         enum._ordered_literals = list(literals)
@@ -252,6 +254,7 @@ def _process_classes(
             cls = Class(
                 name=class_name, is_abstract=is_abstract, metadata=metadata,
                 timestamp=parse_iso_timestamp(data.get("timestamp")),
+                id=node_id,
             )
             domain_model.add_type(cls)
         except ValueError as e:
@@ -314,6 +317,7 @@ def _process_classes(
                 is_external_id=is_external_id, is_derived=is_derived,
                 default_value=default_value,
                 timestamp=parse_iso_timestamp(attr.get("timestamp")),
+                id=attr.get("id"),
             )
             cls.add_attribute(property_)
 
@@ -438,6 +442,7 @@ def _process_classes(
                 code=method_code,
                 implementation_type=implementation_type,
                 timestamp=parse_iso_timestamp(method.get("timestamp")),
+                id=method.get("id"),
             )
 
             # Diagram references are resolved later by project-level
@@ -669,6 +674,7 @@ def _process_relationships(
                 name=association_name,
                 ends={source_property, target_property},
                 timestamp=parse_iso_timestamp(edge_data.get("timestamp")),
+                id=rel_id,
             )
             domain_model.associations.add(association)
             association_by_id[rel_id] = association
@@ -696,6 +702,7 @@ def _process_relationships(
             generalization = Generalization(
                 general=target_class, specific=source_class,
                 timestamp=parse_iso_timestamp(edge_data.get("timestamp")),
+                id=rel_id,
             )
             domain_model.generalizations.add(generalization)
             gen_layout: dict[str, Any] = {}
@@ -745,6 +752,7 @@ def _process_association_classes(
             attributes=attributes,
             association=association,
             timestamp=class_obj.timestamp if class_obj.has_explicit_timestamp else None,
+            id=class_obj.id,
         )
         if methods:
             association_class.methods = methods
@@ -1030,6 +1038,7 @@ def _process_constraints(
             conversion_issues.append({
                 **provenance(row, owner_class, issue),
                 "code": issue["code"], "reason": issue["reason"],
+                **({"missing_element": issue["missing_element"]} if issue.get("missing_element") else {}),
             })
 
         for kind, constraint, class_name, method_name in routing:

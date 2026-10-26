@@ -50,7 +50,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers.multiplicity_parser import (
     format_multiplicity_label,
 )
-from besser.utilities.utils import explicit_timestamp_iso
+from besser.utilities.utils import explicit_timestamp_iso, sort_by_timestamp
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import is_valid_element_id
 
 
 def _set_timestamp(target: dict, element, key: str = "timestamp") -> dict:
@@ -64,6 +65,34 @@ def _set_timestamp(target: dict, element, key: str = "timestamp") -> dict:
     if iso is not None:
         target[key] = iso
     return target
+
+
+def _make_id_taker():
+    """Return ``take(element)``: the element's own ``id`` while valid and unused, else a fresh uuid.
+
+    Reusing the id keeps it stable across round trips; the uniqueness check
+    keeps two elements that share an id (a copied element, a merged model)
+    from overwriting each other in the JSON maps.
+    """
+    used = set()
+
+    def take(element) -> str:
+        element_id = getattr(element, "id", None)
+        if element_id is not None:
+            if not is_valid_element_id(element_id):
+                reason = "invalid"
+            elif element_id in used:
+                reason = "duplicate"
+            else:
+                used.add(element_id)
+                return element_id
+            logger.warning("Replacing %s element id %.60r of %s %r with a new one.",
+                           reason, element_id, type(element).__name__, getattr(element, "name", ""))
+        element_id = str(uuid.uuid4())
+        used.add(element_id)
+        return element_id
+
+    return take
 
 
 def fresh_primitive_types() -> dict:
@@ -208,11 +237,11 @@ def _json_safe_default(value):
     return getattr(value, "name", None) or str(value)
 
 
-def _attr_row(attr: Property) -> dict:
+def _attr_row(attr: Property, take_id) -> dict:
     """Build a v4 ``ClassifierMember`` row for an attribute."""
     attr_type = attr.type.name if hasattr(attr.type, "name") else str(attr.type)
     row = {
-        "id": str(uuid.uuid4()),
+        "id": take_id(attr),
         "name": attr.name,
         "attributeType": attr_type,
         "visibility": attr.visibility,
@@ -226,7 +255,7 @@ def _attr_row(attr: Property) -> dict:
     return _set_timestamp(row, attr)
 
 
-def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> dict:
+def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict, take_id) -> dict:
     """Build a v4 ``ClassifierMember`` row for a method.
 
     Emits the canonical inspector-authored shape (``ClassNodeElement`` in
@@ -253,7 +282,7 @@ def _method_row(method: Method, type_obj: Class, method_diagram_refs: dict) -> d
         structured_parameters.append(param_row)
 
     row: dict = {
-        "id": str(uuid.uuid4()),
+        "id": take_id(method),
         "name": method.name,
         "visibility": method.visibility,
         "attributeType": return_type or "any",
@@ -358,13 +387,18 @@ def class_buml_to_json(domain_model):
     # Editor node ids of the classes (from the JSON or a project .py import),
     # so cross-diagram references to them stay valid.
     known_ids = {cls.name: wid for wid, cls in (getattr(domain_model, "_wme_class_index", None) or {}).items()}
+    # Element ids: the element's own id while valid and unused, else a fresh uuid.
+    take_id = _make_id_taker()
 
     # Emit class / abstract / interface / enumeration nodes.
     for type_obj in sorted(
         (t for t in domain_model.types if isinstance(t, (Class, Enumeration))),
         key=lambda t: t.name,
     ):
-        node_id = known_ids.get(type_obj.name) or str(uuid.uuid4())
+        node_id = (
+            take_id(type_obj) if getattr(type_obj, "id", None)
+            else known_ids.get(type_obj.name) or take_id(type_obj)
+        )
         class_id_map[type_obj] = node_id
 
         saved_bounds = layout_positions.get(type_obj.name)
@@ -379,9 +413,9 @@ def class_buml_to_json(domain_model):
             # capitalized emit is backward-safe.
             stereotype = "Abstract" if type_obj.is_abstract else None
             for attr in sorted(type_obj.attributes, key=lambda a: a.name):
-                attribute_rows.append(_attr_row(attr))
+                attribute_rows.append(_attr_row(attr, take_id))
             for method in sorted(type_obj.methods, key=lambda m: m.name):
-                method_rows.append(_method_row(method, type_obj, method_diagram_refs))
+                method_rows.append(_method_row(method, type_obj, method_diagram_refs, take_id))
         else:
             stereotype = "Enumeration"
             ordered_literals = getattr(type_obj, '_ordered_literals', None)
@@ -391,7 +425,7 @@ def class_buml_to_json(domain_model):
                 literals_iter = sorted(type_obj.literals, key=lambda lit: lit.name)
             for literal in literals_iter:
                 attribute_rows.append(_set_timestamp({
-                    "id": str(uuid.uuid4()),
+                    "id": take_id(literal),
                     "name": literal.name,
                     "attributeType": "str",
                     "visibility": "public",
@@ -540,7 +574,7 @@ def class_buml_to_json(domain_model):
             _set_timestamp(edge_data, target_prop, "targetTimestamp")
 
             edge = make_edge(
-                edge_id=str(uuid.uuid4()),
+                edge_id=take_id(association),
                 source=class_id_map[source_class],
                 target=class_id_map[target_class],
                 type_=rel_type,
@@ -566,7 +600,7 @@ def class_buml_to_json(domain_model):
         gen_key = f"gen_{generalization.specific.name}_{generalization.general.name}"
         saved_gen = layout_positions.get(gen_key) or {}
         edge = make_edge(
-            edge_id=str(uuid.uuid4()),
+            edge_id=take_id(generalization),
             source=class_id_map[generalization.specific],
             target=class_id_map[generalization.general],
             type_="ClassInheritance",

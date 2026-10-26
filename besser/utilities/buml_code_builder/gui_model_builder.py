@@ -7,6 +7,7 @@ It creates executable Python code that can recreate the GUI model programmatical
 
 import os
 from besser.BUML.metamodel.gui import GUIModel
+from besser.utilities.utils import sort_by_timestamp
 from besser.utilities.buml_code_builder.common import (
     _comment_safe, _escape_python_string, attribute_var_name, buml_header, identifier_part, method_var_name,
     safe_class_name, safe_var_name,
@@ -736,7 +737,8 @@ def _write_menu(f, var_name, menu, created_vars):
     # Write menu items first
     item_vars = []
     if hasattr(menu, 'menuItems') and menu.menuItems:
-        for item_idx, item in enumerate(menu.menuItems):
+        # menuItems is a set of identity-hashed items: creation order is the editor's order.
+        for item_idx, item in enumerate(sort_by_timestamp(menu.menuItems)):
             item_var = f"{var_name}_item_{item_idx}"
             created_vars.add(item_var)
             params = [f'label="{_escape_string(getattr(item, "label", ""))}"']
@@ -1403,6 +1405,9 @@ def _write_data_binding(f, binding_var, binding):
         binding_params.append(f'filter_expression="{_escape_string(filter_expr)}"')
     if aggregation is not None:
         binding_params.append(f'aggregation="{aggregation.value}"')
+    endpoint = binding.endpoint
+    if endpoint:
+        binding_params.append(f'endpoint="{_escape_string(endpoint)}"')
     f.write(f"{binding_var} = None\n")
     f.write("try:\n")
     f.write(f"    {binding_var} = build_data_binding(domain_model, {', '.join(binding_params)})\n")

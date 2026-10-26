@@ -288,3 +288,44 @@ def test_test_mode_creates_workspace_dirs_and_rejects_escaping_paths(tmp_path):
     agent.new_workspace(name="evil", path="../../outside")
     with pytest.raises(ValueError, match="Workspace 'evil'"):
         _generate(agent, tmp_path / "bad", test_mode=True)
+
+
+# ---------------------------------------------------------------------------
+# CustomCodeAction body shared across states: 'session: Session' annotation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("annotation", ["Session", "'Session'", '"Session"'])
+def test_shared_custom_code_body_resolves_regardless_of_session_quoting(tmp_path, annotation):
+    """A Body shared by two states must still resolve on the second state.
+
+    The template only emits the ``def`` once (keyed by body name) and aliases
+    the body's own name to the user's function name so later states referring
+    to the same body can still find a callable. That alias used to depend on
+    a regex that only recognized an unquoted ``session: Session`` annotation,
+    so a quoted one (or no annotation at all) silently dropped the alias and
+    left the second state's ``set_body(...)`` call pointing at an undefined name.
+    """
+    from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
+
+    agent = Agent("shared_body_agent")
+    agent.platforms.append(WebSocketPlatform())
+    first = agent.new_state(name="first", initial=True)
+    second = agent.new_state(name="second")
+    shared_body = Body("shared_body", actions=[CustomCodeAction(source=f"""
+def my_custom_body(session: {annotation}):
+    session.reply('hi')
+""")])
+    first.set_body(shared_body)
+    second.set_body(shared_body)
+    first.go_to(second)
+
+    code = _generate(agent, tmp_path)
+
+    assert "def my_custom_body(" in code
+    set_body_targets = [line.split(".set_body(", 1)[1].rstrip(")\n")
+                         for line in code.splitlines() if ".set_body(" in line]
+    assert len(set_body_targets) == 2
+    for target in set_body_targets:
+        assert target == "my_custom_body" or f"{target} = my_custom_body" in code, (
+            f"'{target}' passed to set_body() is never defined in the generated code"
+        )

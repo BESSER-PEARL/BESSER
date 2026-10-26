@@ -189,7 +189,8 @@ def test_untranslatable_diagram(untranslatable_diagram):
 
 @pytest.mark.parametrize("path", ["/besser_api/semantic-consistency-check", "/besser_api/generate-object-diagram"])
 def test_endpoint_streams_events(path, state_machine_diagram):
-    response = TestClient(app).post(path, json=state_machine_diagram.model_dump(mode="json"))
+    client = TestClient(app)
+    response = client.post(path, json=state_machine_diagram.model_dump(mode="json"))
     event = json.loads(response.text.removeprefix("data: "))
     assert response.status_code == 200
     assert "text/event-stream" in response.headers["content-type"]

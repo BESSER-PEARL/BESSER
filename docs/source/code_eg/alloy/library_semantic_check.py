@@ -34,21 +34,18 @@ model = DomainModel(
 )
 
 # 2. The Alloy specification, written to output/model.als
-AlloyGenerator(model, output_dir="output").generate(scope=5)
+generator = AlloyGenerator(model, output_dir="output")
+generator.generate(scope=5)
 
 # 3. The semantic check
 solver = AlloySolver(model)
 result = solver.check_consistency(scope=5)
 print(f"{result.name} within {solver.get_scopes()}")
 
-# 4. An object diagram satisfying the invariants (name_ is the object's name, name its attribute)
-result, object_models = solver.generate_object_models(scope=3)
-for obj in sorted(object_models[0].objects, key=lambda obj: obj.name_):
-    values = ", ".join(sorted(f"{slot.attribute.name}={slot.value.value!r}" for slot in obj.slots))
-    print(f"{obj.name_}: {obj.classifier.name}({values})")
-for link in sorted(object_models[0].links, key=lambda link: link.name):
-    ends = sorted(link.connections, key=lambda end: end.association_end.name)
-    print(" -- ".join(f"{end.object.name_} ({end.association_end.name})" for end in ends))
+# 4. An object diagram satisfying the invariants, written to output/alloy_project.py
+solver = AlloySolver(model, output_dir="output")
+result = solver.generate_project_file(scope=5)
+print(result.name)
 
 # 5. No instance: books cannot have more than 10 and fewer than 5 pages
 short = Constraint("short", book, "context Book inv short: self.pages < 5", "OCL")
@@ -60,7 +57,8 @@ print(f"{result.name} within {solver.get_scopes()}")
 # 6. An unsupported construct: strings have no length in the Alloy translation
 titled = Constraint("titled", book, "context Book inv titled: self.title.size() > 0", "OCL")
 model.constraints = {enough_pages, two_books, has_written, titled}
+solver = AlloySolver(model)
 try:
-    AlloySolver(model).check_consistency(scope=5)
+    solver.check_consistency(scope=5)
 except AlloyTranslationError as error:
     print(error)

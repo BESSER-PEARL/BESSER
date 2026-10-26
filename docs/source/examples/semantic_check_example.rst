@@ -81,26 +81,20 @@ The semantic check
 The object diagram
 ------------------
 
-``generate_object_models`` also returns the instances found, as B-UML object models:
+``generate_project_file`` writes the model and an object diagram satisfying its invariants to
+``output/alloy_project.py``:
 
 .. literalinclude:: ../code_eg/alloy/library_semantic_check.py
    :language: python
-   :start-after: # 4. An object diagram satisfying the invariants (name_ is the object's name, name its attribute)
+   :start-after: # 4. An object diagram satisfying the invariants, written to output/alloy_project.py
    :end-before: # 5. No instance
 
 .. code-block:: text
 
-    Author_0: Author(name='str1')
-    Book_0: Book(pages=14, title='str0')
-    Book_1: Book(pages=14, title='str0')
-    Library_0: Library(name='str1')
-    Author_0 (authors) -- Book_0 (writes)
-    Author_0 (authors) -- Book_1 (writes)
-    Book_0 (books) -- Library_0 (library)
-    Book_1 (books) -- Library_0 (library)
+    SAT
 
-The library has two books of 14 pages, both written by the same author. Strings are uninterpreted,
-so they get placeholder values such as ``str0``.
+To see the object diagram, import ``output/alloy_project.py`` into the web editor with **Import Project**.
+Strings are uninterpreted, so the generated objects get placeholder values such as ``str0``.
 
 When no instance is found
 -------------------------

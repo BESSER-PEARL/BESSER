@@ -76,6 +76,11 @@ Endpoints
        BESSER model (``has_model: false``) is read for SQLAlchemy, Django,
        Pydantic or dataclass models: ``analysis`` says what was found and
        ``proposed_diagram`` is the resulting class diagram, or ``null``.
+       When no such models are found and the server offers the keyless
+       model, that model reads a bounded digest of the code (schemas, types,
+       entities, README; secrets left out) and proposes the diagram instead,
+       with ``analysis.ai: true``; a failed or timed-out reading returns no
+       proposal and a ``message``.
        Requires an ``X-GitHub-Session`` header.
 
 Request body

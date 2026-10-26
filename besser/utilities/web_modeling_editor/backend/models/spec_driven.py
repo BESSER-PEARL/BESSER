@@ -391,9 +391,11 @@ class ImportGitHubRunResponse(BaseModel):
     # The commit that was imported: the first push's ``base_commit_sha``.
     commit_sha: str = ""
     # Repos without a BESSER model: what their code holds ({stack,
-    # model_source, source_files, entities}) and a class diagram read from
+    # model_source, source_files, entities, ai}) and a class diagram read from
     # their data classes, in the shape the editor imports, for the user to
-    # accept. None when the repo has a model, or no readable data classes.
+    # accept. ``ai`` is true when no data classes were readable and an LLM
+    # proposed the diagram from the code instead. proposed_diagram is None
+    # when the repo has a model, or neither reading produced one.
     analysis: Optional[dict] = None
     proposed_diagram: Optional[dict] = None
     # Human-readable hint when there is no model (or it was unreadable).

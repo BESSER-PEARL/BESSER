@@ -22,6 +22,7 @@ events, and never stored on disk.
 # annotations against a decorated endpoint's ``__globals__``, which
 # ``handle_endpoint_errors``' wrapper points at the decorator module.
 import asyncio
+import dataclasses
 import hmac
 import json
 import logging
@@ -88,7 +89,12 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
     try_acquire_run_slot,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
-from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import analyze_repository
+from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
+    AI_READ_TIMEOUT_SECONDS,
+    ai_reading_available,
+    analyze_repository,
+    propose_model_with_ai,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
 )
@@ -1237,6 +1243,35 @@ async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) ->
     return run_id, extract_dir
 
 
+async def _read_repo_with_ai(extract_dir, code_analysis, owner, repo):
+    """``(model, analysis, message)`` from the AI fallback reader; the message explains a missing model."""
+    if not ai_reading_available():
+        logger.warning("import-github-run: no readable data classes in %s/%s and no keyless model "
+                       "for an AI reading", owner, repo)
+        return None, code_analysis, (
+            "This repo has no BESSER model and no data classes BESSER can read, and "
+            "AI reading is not available on this server; you can still work on its code.")
+    # A copy: a timed-out reading keeps running in its thread and must not mark this response.
+    ai_analysis = dataclasses.replace(code_analysis)
+    try:
+        model = await asyncio.wait_for(
+            asyncio.to_thread(propose_model_with_ai, extract_dir, ai_analysis),
+            timeout=AI_READ_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("import-github-run: AI reading of %s/%s timed out after %ss",
+                       owner, repo, AI_READ_TIMEOUT_SECONDS)
+        model = None
+    except Exception:
+        logger.warning("import-github-run: AI reading of %s/%s failed", owner, repo, exc_info=True)
+        model = None
+    if model is None:
+        return None, code_analysis, (
+            "This repo has no data classes BESSER can read directly, and the AI model "
+            "could not read a model from its code; you can still work on its code.")
+    return model, ai_analysis, None
+
+
 # ---------------------------------------------------------------------
 # POST /besser_api/spec-driven/import-github-run
 # ---------------------------------------------------------------------
@@ -1341,6 +1376,10 @@ async def import_github_run(
         if not has_model:
             # Not a BESSER repo: read its code for a model the user can accept.
             code_analysis, domain_model = await asyncio.to_thread(analyze_repository, extract_dir)
+            ai_message = None
+            if domain_model is None:
+                domain_model, code_analysis, ai_message = await _read_repo_with_ai(
+                    extract_dir, code_analysis, owner, repo)
             analysis = code_analysis.to_dict()
             if domain_model is not None:
                 proposed_diagram = {
@@ -1349,11 +1388,14 @@ async def import_github_run(
                     "diagramType": "ClassDiagram",
                 }
                 message = (
+                    "This repo has no data classes BESSER can read directly, so an AI "
+                    "model read its code and proposes one. Check it before accepting."
+                ) if code_analysis.ai else (
                     f"This repo has no BESSER model. BESSER read its "
                     f"{code_analysis.model_source} and proposes one."
                 )
             elif message is None:
-                message = (
+                message = ai_message or (
                     "This repo has no BESSER model and no data classes BESSER "
                     "can read; you can still work on its code."
                 )

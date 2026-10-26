@@ -77,11 +77,12 @@ class CodeAnalysis:
     model_source: Optional[str] = None  # "SQLAlchemy models", "Django models", ...
     source_files: list[str] = field(default_factory=list)
     entities: list[str] = field(default_factory=list)
+    ai: bool = False  # True when an LLM proposed the model (ai_reverse), not this exact reader
 
     def to_dict(self) -> dict:
         return {
             "stack": self.stack, "model_source": self.model_source,
-            "source_files": self.source_files, "entities": self.entities,
+            "source_files": self.source_files, "entities": self.entities, "ai": self.ai,
         }
 
 

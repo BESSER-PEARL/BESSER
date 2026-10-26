@@ -26,7 +26,8 @@ class AlloyGenerator(GeneratorInterface):
             scope: the scope of each class signature in the specification's ``run`` command.
             seed: the seed of the random dates filling the scope of ``Date``.
         """
-        self.specification_model = BumlToAlloy(self.model, scope, seed).translate()
+        translator = BumlToAlloy(self.model, scope, seed)
+        self.specification_model = translator.translate()
         self.file_path = self.specification_model.write(self.build_generation_dir())
 
     def get_specification_path(self) -> str:

@@ -14,7 +14,9 @@ def spec() -> AlloyTestSpec:
         Property("title", StringType),
     })
     model = DomainModel("Books", types={book})
-    return AlloyTestSpec(BumlToAlloy(model, scope=5, seed=0).translate().render())
+    translator = BumlToAlloy(model, scope=5, seed=0)
+    specification = translator.translate()
+    return AlloyTestSpec(specification.render())
 
 
 def test_optional_attributes_may_have_no_value(spec):

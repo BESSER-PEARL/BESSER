@@ -114,5 +114,6 @@ def translate(model: DomainModel, classname: str, constraint: str, scope: int) -
             language="OCL",
         )
     }
-    spec = BumlToAlloy(model, scope=scope, seed=0).translate()
+    translator = BumlToAlloy(model, scope=scope, seed=0)
+    spec = translator.translate()
     return AlloyTestSpec(spec.render())

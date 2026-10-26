@@ -147,13 +147,13 @@ Choosing a Generator
    * - **Alloy**
      - Structural + OCL
      - .als files (ZIP in the editor)
-     - You need an `Alloy <https://alloytools.org/>`_ specification of a model and its OCL
-       invariants, to analyze with the Alloy Analyzer
+     - You need an `Alloy <https://alloytools.org/>`_ specification of a class diagram
+       and its OCL constraints, to analyze it in the Alloy Analyzer
    * - **Object Diagram**
      - Structural + OCL
      - Object diagrams / B-UML project
-     - You want to check the satisfiability of the OCL invariants, or need object diagrams that
-       satisfy them
+     - You need to check the satisfiability of a class diagram with OCL constraints, or
+       to generate object diagrams for it
 
 None of the above a fit? If you need a customised codebase — extra features
 (auth, JWT, Docker, tests) or a stack with no built-in generator (Rails, Rust,

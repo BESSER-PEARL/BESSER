@@ -16,17 +16,22 @@ and use the ``generate`` method as follows:
     from besser.generators.alloy import AlloyGenerator
 
     generator = AlloyGenerator(model=library_model)
-    generator.generate(scope=5)
+    generator.generate(scope=3)
 
-The ``model.als`` file will be generated in the ``<<current_directory>>/output`` folder, together
-with the Alloy modules it uses (e.g. ``strings.als``). Each class becomes a signature, with a field
-per attribute and association end:
+The ``model.als`` file will be generated in the ``<<current_directory>>/output`` folder, and it will look as
+follows:
 
 .. code-block:: alloy
 
     module model
     open date
     open strings
+
+    sig Author {
+      Author_email: Str,
+      Author_name: Str,
+      Author_publishes: set Book
+    }
 
     sig Book {
       Book_pages: Int,
@@ -36,7 +41,37 @@ per attribute and association end:
       Book_locatedIn: one Library
     }
 
-    ...
+    sig Library {
+      Library_address: Str,
+      Library_name: Str,
+      Library_has: set Book
+    }
+
+    one sig Str_str0 extends Str {
+    }
+
+    one sig Str_str1 extends Str {
+    }
+
+    one sig Str_str2 extends Str {
+    }
+
+    one sig Date_2017_04_12 extends Date {
+    }
+
+    one sig Date_2033_12_31 extends Date {
+    }
+
+    one sig Date_2037_11_17 extends Date {
+    }
+
+    fact { all a: Book | #(a.Book_writtenBy) >= 1 }
+
+    fact { Author_publishes = ~Book_writtenBy }
+
+    fact { Library_has = ~Book_locatedIn }
+
+    fact { dateLt[Date_2017_04_12, Date_2033_12_31] and dateLt[Date_2033_12_31, Date_2037_11_17] }
 
     pred instance_model {
       some Author
@@ -44,7 +79,13 @@ per attribute and association end:
       some Library
     }
 
-    run instance_model for 5 Author, 5 Book, 5 Library, 5 Str, 5 Date, 5 Int
+    run instance_model for 3 Author, 3 Book, 3 Library, 3 Str, 3 Date, 3 Int
+
+Each class becomes a signature, with a field per attribute and association end. The ``Str`` and ``Date``
+constants are the strings and dates that instances can use. The facts state the multiplicity constraints, that the
+two ends of bidirectional associations are inverses of each other, and the order of the dates. The ``run``
+command searches for an instance with up to 3 objects per class, 3 strings, 3 dates, and integers with
+bitwidth 3 (i.e., integers in [-4, 3]).
 
 Configuration Parameters
 ------------------------
@@ -88,17 +129,22 @@ The specification then includes the following fact:
 
     fact { all self:this/Book|(self.Book_pages > 10) }
 
-The ``closure`` iterator is also supported, e.g. ``self.parents->closure(parents)->excludes(self)``.
+Unsupported Features
+--------------------
 
-Unsupported Models
-------------------
+The Alloy generator is a new feature of BESSER and is still under development. When a model cannot be translated
+faithfully, the generator raises an ``AlloyTranslationError`` instead of approximating it. This avoids invalid
+satisfiability results and the generation of invalid instances. We plan to add support for new features
+periodically.
 
-The generator raises an ``AlloyTranslationError`` when a model cannot be translated faithfully:
+Supported attribute types are ``bool``, enumerations, integers with a relatively small bitwidth, and ``date`` and
+``str``, which are uninterpreted: they can only be compared with ``=`` and ``<>``.
 
-- Models with association classes, multiple inheritance, n-ary associations, or attributes of type
-  ``float``, ``datetime``, ``time``, ``timedelta`` or ``any``.
-- OCL with real numbers, arithmetic on collections, ``size()`` or ``=`` on Bags, enumeration
-  literals, or string and date operations other than ``=`` and ``<>``.
+The following features are not supported yet:
+
+- Models with association classes, multiple inheritance or n-ary associations.
+- Attributes of type ``float``, ``datetime``, ``time``, ``timedelta`` or ``any``.
+- Some OCL constructs. The error message says which one.
 
 In the web editor, the Alloy specification of a class diagram can be downloaded from
 **Generate > Formal Methods > Alloy Specification**.

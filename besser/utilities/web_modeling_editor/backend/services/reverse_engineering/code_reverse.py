@@ -11,8 +11,11 @@ because API schemas usually restate the ORM models):
 - Django models (``models.Model`` subclasses),
 - Pydantic models and dataclasses.
 
-Foreign keys and relationships become associations. Stacks other than Python
-are reported but contribute no model.
+Foreign keys, ``relationship(...)`` and secondary tables become associations,
+named after the code's own relationships; ``enum.Enum`` classes become
+enumerations. Import aliases (``Integer as Integer_``) are resolved first, since
+BESSER's own generators write them. Stacks other than Python are reported but
+contribute no model.
 """
 
 import ast
@@ -29,6 +32,8 @@ from besser.BUML.metamodel.structural import (
     DateTimeType,
     DateType,
     DomainModel,
+    Enumeration,
+    EnumerationLiteral,
     FloatType,
     IntegerType,
     Multiplicity,
@@ -61,6 +66,7 @@ _TYPE_BY_NAME = {
 }
 
 _ORM_FIELD_CALLS = {"Column", "mapped_column"}
+_ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "enum.Enum", "enum.IntEnum", "enum.StrEnum"}
 _DJANGO_RELATIONS = {"ForeignKey": (0, 1), "OneToOneField": (0, 1), "ManyToManyField": (0, UNLIMITED_MAX_MULTIPLICITY)}
 
 
@@ -97,10 +103,29 @@ class _Entity:
     source: str
 
 
+@dataclass
+class _Relation:
+    """``owner.name = relationship(target, ...)``: names one end of an association."""
+    owner: str
+    name: str
+    target: str
+    foreign_keys: frozenset = frozenset()  # "Owner.column"
+    secondary: Optional[str] = None
+
+
+@dataclass
+class _Module:
+    """What one Python file declares besides its data classes."""
+    enums: dict = field(default_factory=dict)  # name -> literal names
+    relations: list = field(default_factory=list)
+    secondaries: dict = field(default_factory=dict)  # variable -> referenced tables
+
+
 def analyze_repository(root: str) -> tuple[CodeAnalysis, Optional[DomainModel]]:
     """The stack of the repo at ``root`` and a domain model of its data classes (None when there are none)."""
     analysis = CodeAnalysis(stack=_detect_stack(root))
     candidates: dict[str, list[_Entity]] = {"sqlalchemy": [], "django": [], "schema": []}
+    module = _Module()
     for path in _python_files(root):
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
@@ -108,9 +133,11 @@ def analyze_repository(root: str) -> tuple[CodeAnalysis, Optional[DomainModel]]:
         except (SyntaxError, ValueError):
             continue
         rel = os.path.relpath(path, root).replace(os.sep, "/")
+        tree = _Unalias(_import_aliases(tree)).visit(tree)
+        _read_module(tree, module)
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
-                kind, entity = _read_class(node, rel)
+                kind, entity = _read_class(node, rel, module)
                 if entity is not None:
                     candidates[kind].append(entity)
 
@@ -120,7 +147,7 @@ def analyze_repository(root: str) -> tuple[CodeAnalysis, Optional[DomainModel]]:
         if entities:
             analysis.model_source = label
             analysis.source_files = sorted({e.source for e in entities})
-            model = _build_model(entities)
+            model = _build_model(entities, module)
             analysis.entities = sorted(c.name for c in model.get_classes())
             return analysis, model
     return analysis, None
@@ -237,7 +264,67 @@ def _const_str(node) -> Optional[str]:
     return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
 
 
-def _read_class(node: ast.ClassDef, source: str) -> tuple[str, Optional[_Entity]]:
+def _import_aliases(tree: ast.Module) -> dict[str, str]:
+    """``from sqlalchemy import Integer as Integer_`` -> {"Integer_": "Integer"}."""
+    aliases = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.asname and alias.asname != alias.name:
+                    aliases[alias.asname] = alias.name.split(".")[-1]
+    return aliases
+
+
+class _Unalias(ast.NodeTransformer):
+    """Rewrites aliased names to the names they were imported as."""
+
+    def __init__(self, aliases: dict[str, str]):
+        self.aliases = aliases
+
+    def visit_Name(self, node: ast.Name) -> ast.Name:
+        if node.id in self.aliases:
+            node.id = self.aliases[node.id]
+        return node
+
+
+def _read_module(tree: ast.Module, module: _Module) -> None:
+    """Enums, relationships declared outside their class, and secondary (many-to-many) tables."""
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and _base_names(node) & _ENUM_BASES:
+            literals = [t.id for s in node.body if isinstance(s, ast.Assign)
+                        for t in s.targets if isinstance(t, ast.Name) and not t.id.startswith("_")]
+            if literals:
+                module.enums[node.name] = literals
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute) \
+                and isinstance(node.target.value, ast.Name):
+            relation = _relation(node.target.value.id, node.target.attr, node.value)
+            if relation is not None:
+                module.relations.append(relation)
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) \
+                and _call_name(node.value) == "Table":
+            tables = [(_const_str(c.args[0]) or "").split(".")[0] for col in node.value.args
+                      if _call_name(col) == "Column" for c in col.args if _call_name(c) == "ForeignKey" and c.args]
+            if len(tables) == 2 and all(tables):
+                module.secondaries[node.targets[0].id] = tables
+
+
+def _relation(owner: str, name: str, value) -> Optional[_Relation]:
+    if not _is_relationship(value) or not value.args:
+        return None
+    target = _const_str(value.args[0]) or (value.args[0].id if isinstance(value.args[0], ast.Name) else None)
+    if not target:
+        return None
+    keys = _kw(value, "foreign_keys")
+    columns = frozenset(
+        f"{k.value.id}.{k.attr}" for k in (keys.elts if isinstance(keys, (ast.List, ast.Tuple)) else [keys])
+        if isinstance(k, ast.Attribute) and isinstance(k.value, ast.Name)
+    )
+    secondary = _kw(value, "secondary")
+    return _Relation(owner, name, target.split(".")[-1], columns,
+                     secondary.id if isinstance(secondary, ast.Name) else _const_str(secondary))
+
+
+def _read_class(node: ast.ClassDef, source: str, module: _Module) -> tuple[str, Optional[_Entity]]:
     bases = _base_names(node)
     decorators = {d.id if isinstance(d, ast.Name) else _call_name(d) for d in node.decorator_list}
     table = None
@@ -252,6 +339,10 @@ def _read_class(node: ast.ClassDef, source: str) -> tuple[str, Optional[_Entity]
                 table = _const_str(value)
             elif _call_name(value) in _ORM_FIELD_CALLS:
                 orm_fields.append(_orm_field(name, value, None))
+            elif _is_relationship(value):
+                relation = _relation(node.name, name, value)
+                if relation is not None:
+                    module.relations.append(relation)
             elif isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute) and bases & {"models.Model", "Model"}:
                 django = _django_field(name, value)
                 if django is not None:
@@ -263,7 +354,9 @@ def _read_class(node: ast.ClassDef, source: str) -> tuple[str, Optional[_Entity]
             if statement.value is not None and _call_name(statement.value) in _ORM_FIELD_CALLS:
                 orm_fields.append(_orm_field(name, statement.value, statement.annotation))
             elif _is_relationship(statement.value):
-                continue
+                relation = _relation(node.name, name, statement.value)
+                if relation is not None:
+                    module.relations.append(relation)
             else:
                 annotated.append(_annotated_field(name, statement.annotation))
 
@@ -288,14 +381,17 @@ def _orm_field(name: str, call: ast.Call, annotation) -> _Field:
             target = ref.split(".")[0] or None
         elif isinstance(arg, ast.Name):
             type_name = arg.id
+        elif _call_name(arg) == "Enum" and arg.args and isinstance(arg.args[0], ast.Name):
+            type_name = arg.args[0].id  # Enum(Priority)
         elif isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name):
             type_name = arg.func.id
     is_id = _is_true(_kw(call, "primary_key"))
     nullable = _kw(call, "nullable")
     if annotation is not None:
-        # Typed mapping: the annotation decides (Mapped[Optional[int]] is nullable).
+        # Typed mapping: the annotation decides (Mapped[Optional[int]] is nullable)
+        # unless the column names a precise type (Integer, Date, Enum(...)).
         inner, optional = _unwrap_annotation(annotation)
-        if type_name == "str" and inner:
+        if inner and type_name.lower() not in _TYPE_BY_NAME and not target:
             type_name = inner
     else:
         # A bare Column is nullable unless it is the primary key.
@@ -360,49 +456,79 @@ def _dedupe(entities: list[_Entity]) -> list[_Entity]:
 # --------------------------------------------------------------------------
 
 
-def _build_model(entities: list[_Entity]) -> DomainModel:
+def _build_model(entities: list[_Entity], module: _Module) -> DomainModel:
     classes = {e.name: Class(name=e.name) for e in entities}
+    enums = {name: Enumeration(name=name, literals={EnumerationLiteral(name=lit) for lit in literals})
+             for name, literals in module.enums.items() if name not in classes}
     by_table = {e.table: e.name for e in entities if e.table}
     by_lower = {name.lower(): name for name in classes}
-    associations = []
+    # Names already taken on each class: an end may not repeat an attribute or another end.
+    used: dict[str, set[str]] = {name: set() for name in classes}
+    links: list[tuple[_Entity, _Field, str]] = []
 
     def resolve(target: Optional[str]) -> Optional[str]:
         if not target:
             return None
         return by_table.get(target) or by_lower.get(target.lower()) or by_lower.get(target.lower().rstrip("s"))
 
+    def role(owner: str, target: str, column: Optional[str] = None, secondary: Optional[str] = None):
+        """The code's own name for ``owner``'s side of a link to ``target``, when it is unambiguous."""
+        options = [r for r in module.relations if r.owner == owner and resolve(r.target) == target]
+        if secondary is not None:
+            options = [r for r in options if r.secondary == secondary]
+        elif column is not None:
+            exact = [r for r in options if column in r.foreign_keys]
+            options = exact or [r for r in options if not r.foreign_keys and not r.secondary]
+        return options[0].name if len(options) == 1 else None
+
+    def unique(owner: str, name: str) -> str:
+        candidate, n = name, 2
+        while candidate in used[owner]:
+            candidate, n = f"{name}{n}", n + 1
+        used[owner].add(candidate)
+        return candidate
+
     for entity in entities:
         owner = classes[entity.name]
         for f in entity.fields:
             target = resolve(f.target) or (resolve(f.type_name) if f.type_name in classes else None)
             if target and target in classes:
-                associations.append(_association(owner, classes[target], f))
+                links.append((entity, f, target))
                 continue
-            primitive = _TYPE_BY_NAME.get(f.type_name.lower(), StringType)
+            kind = enums.get(f.type_name) or _TYPE_BY_NAME.get(f.type_name.lower(), StringType)
+            used[entity.name].add(f.name)
             owner.add_attribute(Property(
-                name=f.name, type=primitive, owner=owner, is_id=f.is_id,
+                name=f.name, type=kind, owner=owner, is_id=f.is_id,
                 multiplicity=Multiplicity(0 if f.optional else 1, 1),
             ))
 
-    model = DomainModel(name="ImportedModel", types=set(classes.values()))
+    associations = []
+    for entity, f, target in links:
+        source, column = entity.name, f"{entity.name}.{f.name}"
+        forward = role(source, target, column) or f.name.removesuffix("_id") or target.lower()
+        back = role(target, source, column) or (f"{source.lower()}_set" if f.many else f"{source.lower()}s")
+        associations.append(BinaryAssociation(name=f"{source}_{f.name}", ends={
+            Property(name=unique(source, forward), type=classes[target],
+                     multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY) if f.many
+                     else Multiplicity(0 if f.optional else 1, 1)),
+            Property(name=unique(target, back), type=classes[source],
+                     multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY)),
+        }))
+    for table_var, (left, right) in module.secondaries.items():
+        a, b = resolve(left), resolve(right)
+        if not (a and b and a != b):
+            continue
+        to_b = role(a, b, secondary=table_var) or f"{b.lower()}s"
+        to_a = role(b, a, secondary=table_var) or f"{a.lower()}s"
+        associations.append(BinaryAssociation(name=f"{a}_{b}", ends={
+            Property(name=unique(a, to_b), type=classes[b], multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY)),
+            Property(name=unique(b, to_a), type=classes[a], multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY)),
+        }))
+
+    model = DomainModel(name="ImportedModel", types=set(classes.values()) | set(enums.values()))
     names = set()
     for association in associations:
         if association.name not in names:
             names.add(association.name)
             model.add_association(association)
     return model
-
-
-def _association(source: Class, target: Class, f: _Field) -> BinaryAssociation:
-    """``source.f`` refers to ``target``: many sources per target unless the field holds many targets."""
-    to_target = Property(
-        name=f.name.removesuffix("_id") or target.name.lower(),
-        type=target,
-        multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY) if f.many else Multiplicity(0 if f.optional else 1, 1),
-    )
-    back = Property(
-        name=f"{source.name.lower()}_set" if f.many else f"{source.name.lower()}s",
-        type=source,
-        multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY),
-    )
-    return BinaryAssociation(name=f"{source.name}_{f.name}", ends={to_target, back})

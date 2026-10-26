@@ -176,3 +176,35 @@ def test_a_finished_run_says_what_it_changed():
         "changedFileCount": 3,
         "modelChanges": ["class Room attribute capacity: int added"],
     }
+
+
+GENERATED = os.path.join(os.path.dirname(__file__), "fixtures", "besser_generated_sql_alchemy.py.txt")
+
+
+def test_a_besser_generated_backend_reads_back_with_its_types_enums_and_relationships(tmp_path):
+    """BESSER's own generator writes aliased names (Mapped_, Integer_, ForeignKey_, dt_datetime).
+
+    Read live from github.com/ArmenSl/taskflow-besser: every attribute came back
+    as str and no foreign key became an association.
+    """
+    with open(GENERATED, encoding="utf-8") as fh:
+        root = _repo(tmp_path, {"backend/sql_alchemy.py": fh.read()})
+    _analysis, model = analyze_repository(root)
+
+    item = _attrs(model, "TodoItem")
+    assert item["id"] == ("int", True, 1)
+    assert item["isArchived"][0] == "bool"
+    assert item["dueDate"][:3:2] == ("date", 0)
+    assert item["completedAt"][0] == "datetime"
+    assert item["status"][0] == "TodoStatus" and item["priority"][0] == "Priority"
+    assert "todolist_id" not in item
+    assert {e.name for e in model.get_enumerations()} == {"TodoStatus", "Priority"}
+    assert {lit.name for lit in next(e for e in model.get_enumerations() if e.name == "Priority").literals} == {
+        "LOW", "MEDIUM", "HIGH", "URGENT"}
+
+    ends = _ends(model)
+    # Role names are the code's own relationship names.
+    assert ["items->TodoItem[0..9999]", "todolist->TodoList[1..1]"] in ends
+    assert ["user->User[0..1]", "userComment->Comment[0..9999]"] in ends
+    # The ``tags`` secondary table is a many-to-many association.
+    assert ["tags->Tag[0..9999]", "todoitem->TodoItem[0..9999]"] in ends

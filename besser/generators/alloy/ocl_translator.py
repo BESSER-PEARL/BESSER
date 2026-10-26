@@ -97,6 +97,7 @@ class OclToAlloy:
     _SOURCE_OPERATIONS = {
         "Size": "_size",
         "IsEmpty": "_is_empty",
+        "NotEmpty": "_not_empty",
         "INCLUDES": "_includes",
         "EXCLUDES": "_excludes",
         "UNION": "_union",
@@ -263,6 +264,13 @@ class OclToAlloy:
                 f"'{pretty_print(node)}' is not supported: comparing a collection that may contain "
                 "duplicates (a Bag) needs asSet() first in the current version of the Alloy translation"
             )
+        enumerations = {enumeration.name for enumeration in self._model.get_enumerations()}
+        if {left.type, right.type} & enumerations and "Str" in (left.type, right.type):
+            # Enumeration literals are not in the B-OCL grammar: a string is not one, and would never be equal
+            raise UnsupportedOclError(
+                f"'{pretty_print(node)}' is not supported: enumerations cannot be compared with strings in the "
+                "current version of the Alloy translation"
+            )
         if left.type == right.type == "Date":
             if operator not in _DATE_COMPARISONS:
                 raise UnsupportedOclError(
@@ -321,6 +329,9 @@ class OclToAlloy:
     def _is_empty(self, node: OperationCallExpression) -> "Term":
         return Term(f"(no {self._translate(node.source).text})")
 
+    def _not_empty(self, node: OperationCallExpression) -> "Term":
+        return Term(f"(some {self._translate(node.source).text})")
+
     def _includes(self, node: OperationCallExpression) -> "Term":
         collection, element = self._translate(node.source), self._translate(node.arguments[0])
         return Term(f"({element.text} in {collection.text})")
@@ -351,17 +362,27 @@ class OclToAlloy:
         return self._all_instances(node.source.name)
 
     def _is_kind_of(self, node: OperationCallExpression) -> "Term":
-        source, kind = self._single_source(node), node.arguments[0].name
+        source, kind = self._single_source(node), self._type_argument(node)
         return Term(f"({source.text} in {self._spec.signature_name(kind)})")
 
     def _is_type_of(self, node: OperationCallExpression) -> "Term":
-        source, kind = self._single_source(node), node.arguments[0].name
+        source, kind = self._single_source(node), self._type_argument(node)
         subtypes = " + ".join(self._spec.signature_name(sub) for sub in self._spec.subsignatures(kind))
         exact = f"{self._spec.signature_name(kind)} - ({subtypes})" if subtypes else self._spec.signature_name(kind)
         return Term(f"({source.text} in {exact})")
 
     def _as_type(self, node: OperationCallExpression) -> "Term":
-        return Term(self._single_source(node).text, node.arguments[0].name)
+        return Term(self._single_source(node).text, self._type_argument(node))
+
+    def _type_argument(self, node: OperationCallExpression) -> str:
+        """The type of the type operation *node*, which must be a class of the model (``Real`` has no signature)."""
+        kind = node.arguments[0].name
+        if self._model.get_class_by_name(kind) is None:
+            raise UnsupportedOclError(
+                f"Type operations with '{kind}' ('{pretty_print(node)}') are not supported in the current version of "
+                "the Alloy translation: the type must be a class"
+            )
+        return kind
 
     def _single_source(self, node: OperationCallExpression) -> "Term":
         """The source of the type operation *node*, which must not be a collection."""

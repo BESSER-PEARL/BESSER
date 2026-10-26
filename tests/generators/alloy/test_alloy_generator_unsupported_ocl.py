@@ -28,6 +28,13 @@ def test_real_division_is_unsupported(library_with_ocl_v2):  # noqa: F811
         translate(library_with_ocl_v2, "Book", "self.pages / 2 > 1", scope=5)
 
 
+# abs has no Alloy translation
+
+def test_abs_is_unsupported(library_with_ocl_v2):  # noqa: F811
+    with pytest.raises(UnsupportedOclError, match=r"self\.pages\.abs\(\)"):
+        translate(library_with_ocl_v2, "Book", "self.pages.abs() > 10", scope=5)
+
+
 # arithmetic and orderings on collections or non-integers
 
 def test_arithmetic_on_collections_is_unsupported(library_with_ocl_v2):  # noqa: F811

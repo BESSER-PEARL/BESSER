@@ -58,13 +58,22 @@ Endpoints
    * - ``/spec-driven/push-to-github``
      - POST
      - Push a finished run's code — plus the re-importable model under
-       ``buml/`` — to a GitHub repository. Requires an ``X-GitHub-Session``
-       header.
+       ``buml/`` — to a GitHub repository. ``deploy_config.base_commit_sha``
+       is the commit the run's code came from: commits made on the branch
+       since are merged in, never reverted. ``deploy_config.push_mode`` is
+       ``"commit"`` (default) or ``"pull_request"``. The response's
+       ``status`` is ``"pushed"``, ``"merged"`` (with ``base_run_id``, a run
+       holding the merged repo for the next modify run), ``"conflict"``
+       (left on ``conflict_branch``) or ``"pull_request"``
+       (``pull_request_url``); ``commit_sha`` is the next push's base.
+       Requires an ``X-GitHub-Session`` header.
    * - ``/spec-driven/import-github-run``
      - POST
      - Import a BESSER-created repo back as a run, so it can be used as the
-       seed of a subsequent modify run. Requires an ``X-GitHub-Session``
-       header.
+       seed of a subsequent modify run. The repo is pinned at its branch head
+       (``commit_sha`` in the response) and written to the shared run
+       workspace, where the Spec-Driven worker finds it. Requires an
+       ``X-GitHub-Session`` header.
 
 Request body
 ------------

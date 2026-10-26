@@ -42,11 +42,9 @@ from besser.spec_driven_agent.planning.model_change import compare_with_base
 from besser.spec_driven_agent.state.agent_trace import ATTRIBUTION_FILENAME
 from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    BUML_EMIT_IDS,
     LLM_CANCEL_ABANDONED_RUNS,
     LLM_DISCONNECTED_GRACE_SECONDS,
 )
-from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     ImportGitHubRunRequest,
     ImportGitHubRunResponse,
@@ -80,13 +78,16 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace
 # Underscored names below are shared on purpose; tests patch them by name.
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     _EXCLUDED_OUTPUT_DIRS,
+    GITHUB_SOURCE_FILENAME,
     _locate_run_temp_dir,
+    create_run_workspace,
     release_active_run,
     release_run_slot,
     request_cancellation,
     reserve_active_run,
     try_acquire_run_slot,
 )
+from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service,
 )
@@ -97,12 +98,6 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.github_dep
     _extract_github_error_message,
     _sanitize_repo_name,
 )
-from besser.utilities.buml_code_builder import (
-    agent_model_to_code,
-    domain_model_to_code,
-    gui_model_to_code,
-)
-from besser.generators.web_app.web_app_generator import agent_slug
 from besser.spec_driven_agent.providers.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
 from besser.spec_driven_agent.providers.llm_client import (
     free_alt_models,
@@ -871,71 +866,6 @@ def _scrub_secret_env_files(workdir: str) -> list[str]:
     return list(scrub_secret_files(workdir).removed_files)
 
 
-def _write_smart_model_to_buml(workdir: str, project_export: Optional[dict]) -> None:
-    """Inject the model source into ``workdir/buml/`` (best-effort).
-
-    Reuses the same ``buml_code_builder`` helpers ``/deploy-webapp`` uses
-    and the spec-driven generation project→BUML assembly, so this works for
-    class / GUI / agent projects. Also writes ``buml/diagrams.json`` from
-    the re-importable V2 project-export envelope. Never raises — a failed
-    export logs a warning and the code push still succeeds.
-    """
-    buml_dir = os.path.join(workdir, "buml")
-    os.makedirs(buml_dir, exist_ok=True)
-
-    has_export = isinstance(project_export, dict) and bool(project_export)
-
-    # ---- B-UML model .py files (domain / gui / agent) ----
-    if has_export:
-        try:
-            assembled = assemble_models_from_project(
-                ProjectInput.model_validate(project_export)
-            )
-            if assembled.domain_model is not None:
-                domain_model_to_code(
-                    model=assembled.domain_model,
-                    file_path=os.path.join(buml_dir, "domain_model.py"),
-                    emit_ids=BUML_EMIT_IDS,
-                )
-            if assembled.gui_model is not None:
-                gui_model_to_code(
-                    model=assembled.gui_model,
-                    file_path=os.path.join(buml_dir, "gui_model.py"),
-                    domain_model=assembled.domain_model,
-                )
-            if assembled.agent_model is not None:
-                slug = agent_slug(assembled.agent_model.name)
-                agent_model_to_code(
-                    assembled.agent_model,
-                    os.path.join(buml_dir, f"agent_model_{slug}.py"),
-                )
-        except Exception:
-            logger.warning(
-                "spec-driven push-to-github: failed to export B-UML model files; "
-                "continuing without them",
-                exc_info=True,
-            )
-
-    # ---- Re-importable diagrams.json ----
-    if has_export:
-        try:
-            with open(
-                os.path.join(buml_dir, "diagrams.json"), "w", encoding="utf-8"
-            ) as f:
-                json.dump(project_export, f, indent=2, default=str)
-        except Exception:
-            logger.warning(
-                "spec-driven push-to-github: failed to write buml/diagrams.json; "
-                "continuing without it",
-                exc_info=True,
-            )
-    else:
-        logger.warning(
-            "spec-driven push-to-github: request carried no 'projectExport'; the "
-            "pushed repo will not include a re-importable buml/diagrams.json"
-        )
-
-
 def _pick_default_branch(branches: list[str]) -> str:
     """Best-effort repo default when only a branch list is available.
 
@@ -1070,7 +1000,7 @@ async def push_spec_driven_to_github(
                 getattr(entry, "updated_project_export", None)
                 or req.projectExport
             )
-            _write_smart_model_to_buml(workdir, effective_export)
+            repo_model.write_model_files(workdir, effective_export)
 
             # ---- 5. Resolve the repo + target branch ----
             is_first_push = not deploy_config.use_existing
@@ -1106,21 +1036,53 @@ async def push_spec_driven_to_github(
                 )
 
             # ---- 6. Push the whole tree (replace — full app per run) ----
+            # The tree replaces the one at ``base_commit_sha``; commits made
+            # on the branch since are merged in, never reverted.
+            commit_message = repo_model.with_origin(
+                deploy_config.commit_message or "Spec-driven app + model — BESSER",
+                repo_model.ORIGIN_AGENT,
+            )
+            pull_request_url = None
+            if deploy_config.push_mode == "pull_request" and not is_first_push:
+                push_branch = f"besser/update-{uuid.uuid4().hex[:8]}"
+                base_sha = (
+                    deploy_config.base_commit_sha
+                    or await github.get_branch_head(owner, repo_name, target_branch)
+                )
+            else:
+                push_branch = target_branch
+                base_sha = deploy_config.base_commit_sha
             push_results = await github.push_directory_to_repo(
                 owner=owner,
                 repo_name=repo_name,
                 directory_path=workdir,
-                commit_message=(
-                    deploy_config.commit_message
-                    or "Spec-driven app + model — BESSER"
-                ),
-                branch=target_branch,
+                commit_message=commit_message,
+                branch=push_branch,
                 preserve_existing_files=False,
+                base_commit_sha=base_sha,
             )
             if not push_results.get("commit_sha"):
                 raise HTTPException(
                     status_code=500,
                     detail="Failed to create GitHub commit for pushed files.",
+                )
+            status = push_results.get("status") or "pushed"
+            if push_branch != target_branch:
+                pull_request = await github.create_pull_request(
+                    owner, repo_name, head=push_branch, base=target_branch,
+                    title=deploy_config.commit_message or "Update from the BESSER Spec-Driven Agent",
+                    body=_PULL_REQUEST_BODY,
+                )
+                pull_request_url = pull_request["html_url"]
+                status = "pull_request"
+            await github.add_topic(owner, repo_name, repo_model.BESSER_TOPIC)
+
+            # After a merge the run's files no longer match the branch: hand
+            # back the merged repo as the next modify run's base.
+            base_run_id = None
+            if status == "merged":
+                base_run_id, _ = await _import_repo_as_run(
+                    github, owner, repo_name, push_results["commit_sha"]
                 )
 
             return PushSmartToGitHubResponse(
@@ -1130,6 +1092,12 @@ async def push_spec_driven_to_github(
                 repo_name=repo_name,
                 is_first_push=is_first_push,
                 files_uploaded=push_results.get("total_files", 0),
+                branch=target_branch,
+                commit_sha=push_results["commit_sha"],
+                status=status,
+                conflict_branch=push_results.get("conflict_branch"),
+                pull_request_url=pull_request_url,
+                base_run_id=base_run_id,
             )
 
     except HTTPException:
@@ -1161,6 +1129,41 @@ async def push_spec_driven_to_github(
         )
 
 
+_PULL_REQUEST_BODY = (
+    "Changes made by the BESSER Spec-Driven Agent. The model is in "
+    f"`{repo_model.MODEL_FILE}`."
+)
+
+
+async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) -> tuple[str, str]:
+    """Register ``owner/repo`` at ``commit_sha`` as a run a modify run can seed from.
+
+    The repo is extracted into the shared run workspace, where the Spec-Driven
+    worker (a separate container) finds it by run id. Returns the run id and
+    its directory.
+    """
+    run_id = uuid.uuid4().hex
+    extract_dir = create_run_workspace(run_id)
+    try:
+        await github.download_repo_tarball(owner, repo, commit_sha, dest_dir=extract_dir)
+        # The registry persists a manifest pointing at one file of the run;
+        # this one also records where the run came from.
+        source_path = os.path.join(extract_dir, GITHUB_SOURCE_FILENAME)
+        with open(source_path, "w", encoding="utf-8") as fh:
+            json.dump({"owner": owner, "repo": repo, "commitSha": commit_sha}, fh)
+    except BaseException:
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        raise
+    await SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
+        file_path=source_path,
+        file_name=GITHUB_SOURCE_FILENAME,
+        is_zip=False,
+        temp_dir=extract_dir,
+        created_at=time.time(),
+    ))
+    return run_id, extract_dir
+
+
 # ---------------------------------------------------------------------
 # POST /besser_api/spec-driven/import-github-run
 # ---------------------------------------------------------------------
@@ -1182,14 +1185,16 @@ async def import_github_run(
       1. Gate on the ``X-GitHub-Session`` header (same helper the other
          GitHub endpoints use — the real token never reaches the client).
       2. Resolve the target branch (repo default when none is requested).
-      3. Download + extract the repo tarball into a fresh temp dir.
+      3. Pin the branch head, then download + extract the repo at that
+         commit into the shared run workspace.
       4. Register that code tree as a run in ``SMART_RUN_REGISTRY`` under a
-         fresh ``run_id``, with ``temp_dir`` pointing at the extracted root.
-         A later ``/spec-driven/generate`` with ``mode="modify"`` and
-         ``base_run_id=run_id`` seeds its workspace from exactly this tree.
+         fresh ``run_id``. A later ``/spec-driven/generate`` with
+         ``mode="modify"`` and ``base_run_id=run_id`` seeds its workspace from
+         exactly this tree, in whichever container runs it.
       5. Read ``buml/diagrams.json`` (the re-importable model) if present.
 
-    Returns ``{ run_id, project, has_model, owner, repo, branch, message }``.
+    Returns ``{ run_id, project, has_model, owner, repo, branch, commit_sha,
+    message }``.
     ``project`` is the parsed ``diagrams.json`` (or ``null`` when the repo
     has no BESSER model — the frontend must then tell the user to open the
     repo in the editor first before it can be smart-modified).
@@ -1232,28 +1237,18 @@ async def import_github_run(
             req.branch, branches, _pick_default_branch(branches)
         )
 
-        # ---- 3. Download + extract the repo tarball ----
-        extract_dir = await github.download_repo_tarball(owner, repo, branch)
-
-        # ---- 4. Register the extracted code tree as a run ----
-        # ``file_path`` / ``is_zip`` are minimal placeholders — the modify
-        # seed reads only ``temp_dir`` (via ``_seed_workspace_from_base``),
-        # and ``/download-smart`` is never called on an imported run.
-        run_id = uuid.uuid4().hex
-        entry = SmartRunEntry(
-            file_path=extract_dir,
-            file_name="github_import",
-            is_zip=False,
-            temp_dir=extract_dir,
-            created_at=time.time(),
-        )
-        await SMART_RUN_REGISTRY.put(run_id, entry)
+        # ---- 3-4. Pin the branch head and register it as a run ----
+        # The commit is pinned so the next push knows what it was based on.
+        commit_sha = await github.get_branch_head(owner, repo, branch)
+        if not commit_sha:
+            raise HTTPException(status_code=404, detail="repo_missing")
+        run_id, extract_dir = await _import_repo_as_run(github, owner, repo, commit_sha)
 
         # ---- 5. Read the re-importable model (buml/diagrams.json) ----
         project: Optional[dict] = None
         has_model = False
         message: Optional[str] = None
-        diagrams_path = os.path.join(extract_dir, "buml", "diagrams.json")
+        diagrams_path = os.path.join(extract_dir, *repo_model.MODEL_FILE.split("/"))
         if os.path.isfile(diagrams_path):
             try:
                 with open(diagrams_path, "r", encoding="utf-8") as fh:
@@ -1281,6 +1276,7 @@ async def import_github_run(
             owner=owner,
             repo=repo,
             branch=branch,
+            commit_sha=commit_sha,
             message=message,
         )
 

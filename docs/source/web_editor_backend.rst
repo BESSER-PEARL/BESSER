@@ -488,8 +488,27 @@ GitHub Integration
 - ``POST /github/auth/logout`` -- End session
 - ``GET /github/star/status``, ``PUT /github/star``, ``DELETE /github/star`` -- Read / set / clear the signed-in user's star on the BESSER repository
 - ``POST /github/deploy-webapp`` -- Deploy generated app to GitHub repository
-- ``GET /github/repos``, ``GET /github/branches``, ``GET /github/commits``, ``GET /github/contents``, ``GET /github/file/exists`` -- Repository browsing for the editor's save/load flow
+- ``GET /github/repos``, ``GET /github/branches``, ``GET /github/commits``, ``GET /github/contents``, ``GET /github/file/exists`` -- Repository browsing for the editor's save/load flow (``/repos`` includes each repository's topics; ``/commits`` marks each commit's ``origin``)
 - ``POST /github/project/save``, ``GET /github/project/load``, ``GET /github/project/load-commit``, ``POST /github/project/create-repo`` -- Store and retrieve a BESSER project in a repository (including loading it back from a specific commit)
+- ``GET /github/repo-summary`` -- What a repository holds: the model's name, diagrams per type, classes, and the last commit
+- ``GET /github/sync-status`` -- Commits on a branch since ``base_sha``, the commit the editor last synced
+- ``GET /github/model-history`` -- Recent commits that changed the model, each with its class-diagram changes
+- ``POST /github/pull-request`` -- Open a pull request, e.g. for a push GitHub could not merge
+
+Every repository BESSER writes has one layout, defined in
+``services/deployment/repo_model.py``: the model in ``buml/diagrams.json`` (a V2
+project export; the legacy ``besser-project.json`` is still read), the B-UML
+sources in ``buml/*.py``, the owning project in ``.besser/project.json``, and the
+``besser`` topic on the repository. Commits BESSER makes end with a
+``BESSER-Origin: spec-driven-agent`` or ``BESSER-Origin: editor`` trailer.
+
+Writes never revert newer commits. ``/github/project/save`` and
+``/spec-driven/push-to-github`` take the commit the editor last synced
+(``base_commit_sha``). When the branch has moved past it, the new commit is made
+on top of that base and merged into the branch with GitHub's merge API, so both
+sides' changes are kept. A merge GitHub cannot resolve is left on a
+``besser/sync-<sha>`` branch and reported as ``status: "conflict"``, and nothing
+is overwritten.
 - ``POST /github/gist/create`` -- Share a model as a GitHub gist
 
 Agent Simulation

@@ -130,6 +130,9 @@ _DEFAULT_MODELS = DEFAULT_MODELS
 
 _REGISTRY_SWEEP_INTERVAL_SECONDS = 60
 _DOWNLOAD_MANIFEST_NAME = ".besser_download.json"
+# Written into a run imported from GitHub: where it came from. Its ``.besser_``
+# prefix keeps it out of every push and download.
+GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
 _MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
 
 # Upper bound on queued SSE events so a runaway worker can't exhaust
@@ -863,6 +866,16 @@ def _run_workspace_root() -> str:
     root = LLM_RUN_WORKSPACE_ROOT or tempfile.gettempdir()
     os.makedirs(root, exist_ok=True)
     return root
+
+
+def create_run_workspace(run_id: str) -> str:
+    """A fresh directory for ``run_id`` in the shared run workspace.
+
+    The name is the one ``SmartRunRegistry.get`` rescans for, so a run the
+    backend registers (a repo imported from GitHub) is found by the
+    Spec-Driven worker when it seeds a modify run from it, and vice versa.
+    """
+    return tempfile.mkdtemp(prefix=f"{LLM_TEMP_DIR_PREFIX}{run_id}_", dir=_run_workspace_root())
 
 
 def _locate_run_temp_dir(run_id: str) -> str | None:

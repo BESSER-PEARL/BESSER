@@ -19,6 +19,7 @@ from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SMART_RUN_REGISTRY,
 )
@@ -32,10 +33,16 @@ IMPORT_URL = "/besser_api/spec-driven/import-github-run"
 
 
 @pytest.fixture(autouse=True)
-def reset_registry():
+def reset_registry(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path))
     asyncio.run(_clear_registry())
     yield
     asyncio.run(_clear_registry())
+
+
+def _head_of(branch: str) -> str:
+    """A fake 40-hex commit sha per branch."""
+    return (branch.encode().hex() * 40)[:40]
 
 
 # ---------------------------------------------------------------------
@@ -82,9 +89,12 @@ class _FakeGitHubService:
             )
         return self._branches
 
-    async def download_repo_tarball(self, owner, repo, ref):
+    async def get_branch_head(self, owner, repo_name, branch):
+        return _head_of(branch)
+
+    async def download_repo_tarball(self, owner, repo, ref, dest_dir=None):
         self.tarball_ref = ref
-        d = tempfile.mkdtemp(prefix="besser_gh_import_test_")
+        d = dest_dir or tempfile.mkdtemp(prefix="besser_gh_import_test_")
         # A code file — the modify seed reads this via temp_dir.
         os.makedirs(os.path.join(d, "backend"), exist_ok=True)
         with open(os.path.join(d, "backend", "main.py"), "w", encoding="utf-8") as fh:
@@ -169,8 +179,9 @@ class TestImportGitHubRun:
         r = _post(body, headers={"X-GitHub-Session": "sess"})
         assert r.status_code == 200
         assert r.json()["branch"] == "dev"
-        # The resolved branch is the ref actually downloaded.
-        assert fake.tarball_ref == "dev"
+        # The resolved branch's head commit is what is downloaded and returned.
+        assert fake.tarball_ref == _head_of("dev")
+        assert r.json()["commit_sha"] == _head_of("dev")
 
     def test_missing_github_session_returns_401(self, monkeypatch):
         fake = _FakeGitHubService()
@@ -194,7 +205,7 @@ class TestImportGitHubRun:
         # the user must see why, not a generic 500.
         fake = _FakeGitHubService()
 
-        async def _too_large(owner, repo, ref):
+        async def _too_large(owner, repo, ref, dest_dir=None):
             raise ValueError(
                 "Repository archive exceeds the 100 MB size cap; refusing to download."
             )

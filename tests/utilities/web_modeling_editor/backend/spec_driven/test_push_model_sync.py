@@ -64,6 +64,16 @@ class _CapturingGitHubService:
     async def get_branches(self, owner, repo_name, per_page=100):
         return ["main"]
 
+    async def get_branch_head(self, owner, repo_name, branch):
+        return "a" * 40
+
+    async def add_topic(self, owner, repo_name, topic):
+        self.topics = getattr(self, "topics", []) + [topic]
+
+    async def create_pull_request(self, owner, repo_name, head, base, title, body):
+        self.pull_request = dict(head=head, base=base, title=title)
+        return {"number": 7, "html_url": f"https://github.com/{owner}/{repo_name}/pull/7"}
+
     async def push_directory_to_repo(
         self,
         owner,
@@ -72,12 +82,13 @@ class _CapturingGitHubService:
         commit_message="",
         branch="main",
         preserve_existing_files=False,
+        base_commit_sha=None,
     ):
         path = os.path.join(directory_path, "buml", "diagrams.json")
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as fh:
                 self.pushed_diagrams_json = json.load(fh)
-        return {"commit_sha": "deadbeef", "total_files": 1, "uploaded_files": []}
+        return {"commit_sha": "d" * 40, "total_files": 1, "uploaded_files": [], "status": "pushed"}
 
 
 def _install(monkeypatch, fake):

@@ -90,6 +90,16 @@ class _FakeGitHubService:
             )
         return self._branches
 
+    async def get_branch_head(self, owner, repo_name, branch):
+        return "a" * 40
+
+    async def add_topic(self, owner, repo_name, topic):
+        self.topics = getattr(self, "topics", []) + [topic]
+
+    async def create_pull_request(self, owner, repo_name, head, base, title, body):
+        self.pull_request = dict(head=head, base=base, title=title)
+        return {"number": 7, "html_url": f"https://github.com/{owner}/{repo_name}/pull/7"}
+
     async def push_directory_to_repo(
         self,
         owner,
@@ -98,6 +108,7 @@ class _FakeGitHubService:
         commit_message="",
         branch="main",
         preserve_existing_files=False,
+        base_commit_sha=None,
     ):
         files = []
         for root, _dirs, names in os.walk(directory_path):
@@ -114,11 +125,14 @@ class _FakeGitHubService:
             commit_message=commit_message,
             branch=branch,
             preserve_existing_files=preserve_existing_files,
+            base_commit_sha=base_commit_sha,
         )
         return {
-            "commit_sha": "deadbeef",
+            "commit_sha": "d" * 40,
             "total_files": len(files),
             "uploaded_files": files,
+            "status": "pushed",
+            "conflict_branch": None,
         }
 
 

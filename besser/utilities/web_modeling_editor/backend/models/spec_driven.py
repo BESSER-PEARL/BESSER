@@ -284,6 +284,13 @@ class SmartPushDeployConfig(BaseModel):
     # rather than blindly taking the first branch.
     branch: Optional[str] = Field(default=None, max_length=250)
     commit_message: Optional[str] = Field(default=None, max_length=500)
+    # The commit the run's code was derived from (the import, or the last
+    # push). When the branch has moved past it, the push is merged with the
+    # newer commits instead of replacing them.
+    base_commit_sha: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    # "commit" lands on ``branch``; "pull_request" lands on a new branch and
+    # opens a pull request into ``branch``.
+    push_mode: Literal["commit", "pull_request"] = "commit"
 
 
 class PushSmartToGitHubRequest(BaseModel):
@@ -324,6 +331,19 @@ class PushSmartToGitHubResponse(BaseModel):
     # when it appended a commit to an existing one.
     is_first_push: bool
     files_uploaded: int
+    branch: str = ""
+    # Head of ``branch`` after the push: the next push's ``base_commit_sha``.
+    commit_sha: str = ""
+    # "pushed" (fast-forward), "merged" (merged with commits made since
+    # ``base_commit_sha``), "conflict" (left on ``conflict_branch``) or
+    # "pull_request" (opened ``pull_request_url``).
+    status: str = "pushed"
+    conflict_branch: Optional[str] = None
+    pull_request_url: Optional[str] = None
+    # Set when the push merged in other commits: a run holding the merged
+    # repo, to use as the next modify run's ``base_run_id`` so the agent
+    # edits the merged code rather than its own pre-merge copy.
+    base_run_id: Optional[str] = None
 
 
 class ImportGitHubRunRequest(BaseModel):
@@ -365,6 +385,8 @@ class ImportGitHubRunResponse(BaseModel):
     owner: str
     repo: str
     branch: str
+    # The commit that was imported: the first push's ``base_commit_sha``.
+    commit_sha: str = ""
     # Human-readable hint when there is no model (or it was unreadable).
     message: Optional[str] = None
 

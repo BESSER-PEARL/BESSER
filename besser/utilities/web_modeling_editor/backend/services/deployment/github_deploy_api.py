@@ -18,6 +18,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
 from pydantic import BaseModel, Field
 
+from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service
 )
@@ -928,85 +929,6 @@ def _add_chatbot_deployment_configs(
         f.write(render_config)
 
 
-async def _export_buml_files_to_repo(
-    github, owner: str, repo: str, branch: str,
-    json_file_path: str, project_data: dict, commit_message: str,
-):
-    """Export raw B-UML Python files alongside the project JSON in the repo.
-
-    Non-blocking: logs warnings on failure but never raises.
-    """
-    import tempfile
-
-    # Determine the buml directory next to the JSON file
-    base_dir = json_file_path.rsplit("/", 1)[0] + "/" if "/" in json_file_path else ""
-    buml_dir = f"{base_dir}buml"
-
-    diagrams = project_data.get("diagrams", {})
-
-    # Helper to get active diagram for a type
-    current_indices = project_data.get("currentDiagramIndices", {})
-
-    def _get_active(diagram_type: str):
-        value = diagrams.get(diagram_type)
-        if isinstance(value, list):
-            idx = current_indices.get(diagram_type, 0)
-            return value[idx] if 0 <= idx < len(value) else (value[0] if value else None)
-        return value
-
-    exports: list[tuple[str, str]] = []  # (repo_path, content)
-
-    try:
-        class_diagram_data = _get_active("ClassDiagram")
-        if class_diagram_data and class_diagram_data.get("model"):
-            buml_model = process_class_diagram(class_diagram_data)
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
-                domain_model_to_code(model=buml_model, file_path=f.name, emit_ids=BUML_EMIT_IDS)
-            with open(f.name, "r", encoding="utf-8") as fh:
-                exports.append((f"{buml_dir}/domain_model.py", fh.read()))
-            os.unlink(f.name)
-    except Exception:
-        logger.warning("Failed to export domain model B-UML", exc_info=True)
-
-    try:
-        # Walk every AgentDiagram (not just the active one) so a multi-agent project
-        # exports one buml/agent_model_<slug>.py per agent.
-        agent_diagrams_raw = diagrams.get("AgentDiagram")
-        if isinstance(agent_diagrams_raw, list):
-            agent_diagrams = [a for a in agent_diagrams_raw if a]
-        elif agent_diagrams_raw:
-            agent_diagrams = [agent_diagrams_raw]
-        else:
-            agent_diagrams = []
-
-        for agent_data in agent_diagrams:
-            if not (agent_data and agent_data.get("model", {}).get("elements")):
-                continue
-            agent_model = process_agent_diagram(agent_data)
-            slug = agent_slug(agent_model.name)
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
-                agent_model_to_code(agent_model, f.name)
-            with open(f.name, "r", encoding="utf-8") as fh:
-                exports.append((f"{buml_dir}/agent_model_{slug}.py", fh.read()))
-            os.unlink(f.name)
-    except Exception:
-        logger.warning("Failed to export agent model B-UML", exc_info=True)
-
-    # Push each B-UML file to the repo
-    for repo_path, content in exports:
-        try:
-            await github.create_or_update_file(
-                owner=owner,
-                repo_name=repo,
-                file_path=repo_path,
-                content=content,
-                commit_message=f"{commit_message} [B-UML export]",
-                branch=branch,
-            )
-        except Exception:
-            logger.warning("Failed to push %s to GitHub", repo_path, exc_info=True)
-
-
 # Render caps service hostnames at this many characters; longer names are
 # silently truncated at dash boundaries, dropping the trailing suffix and
 # breaking the URLs we bake into ``.env.production``.
@@ -1358,6 +1280,7 @@ class GitHubRepoResponse(BaseModel):
     private: bool
     updated_at: str
     default_branch: str
+    topics: List[str] = []
 
 
 class GitHubReposListResponse(BaseModel):
@@ -1372,6 +1295,8 @@ class GitHubCommitResponse(BaseModel):
     author: str
     date: str
     html_url: str
+    # The BESSER-Origin trailer ("spec-driven-agent", "editor"); None for a person's commit.
+    origin: Optional[str] = None
 
 
 class GitHubCommitsListResponse(BaseModel):
@@ -1384,9 +1309,16 @@ class SaveProjectRequest(BaseModel):
     owner: str
     repo: str
     branch: str = "main"
-    file_path: str = "besser-project.json"
+    # A legacy project file the repo may still hold; it is removed in the
+    # same commit, since ``buml/diagrams.json`` is now the model file.
+    file_path: str = repo_model.LEGACY_PROJECT_FILE
     commit_message: str
     project_data: dict
+    # The V2 export envelope written as ``buml/diagrams.json``. Falls back to
+    # ``project_data`` for a client that does not send it.
+    project_export: Optional[dict] = None
+    # The commit the editor last synced; newer commits are merged, not reverted.
+    base_commit_sha: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{40}$")
 
 
 class SaveProjectResponse(BaseModel):
@@ -1394,6 +1326,9 @@ class SaveProjectResponse(BaseModel):
     success: bool
     commit_sha: str
     message: str
+    # "pushed", "merged" or "conflict" (see GitHubService.commit_tree).
+    status: str = "pushed"
+    conflict_branch: Optional[str] = None
 
 
 class LoadProjectResponse(BaseModel):
@@ -1418,7 +1353,7 @@ class CreateRepoForProjectRequest(BaseModel):
     description: str = ""
     is_private: bool = False
     project_data: dict
-    file_path: str = "besser-project.json"
+    project_export: Optional[dict] = None
 
 
 class CreateRepoForProjectResponse(BaseModel):
@@ -1428,6 +1363,7 @@ class CreateRepoForProjectResponse(BaseModel):
     owner: str
     commit_sha: str
     message: str
+    branch: str = "main"
 
 
 @router.get("/repos", response_model=GitHubReposListResponse)
@@ -1599,11 +1535,55 @@ async def get_repository_commits(
         commits = await github.get_commits(owner, repo, path)
 
         return GitHubCommitsListResponse(
-            commits=[GitHubCommitResponse(**c) for c in commits]
+            commits=[_commit_response(c) for c in commits]
         )
     except Exception:
         logger.exception("Unexpected error fetching GitHub commits")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching commits.")
+
+
+def _github_for(github_session: Optional[str]):
+    """The GitHubService for a request's session header; 401 when there is none."""
+    if not github_session:
+        raise HTTPException(status_code=401, detail="GitHub authentication required")
+    access_token = get_user_token(github_session)
+    if not access_token:
+        raise HTTPException(status_code=401, detail="GitHub session expired")
+    return create_github_service(access_token)
+
+
+def _commit_response(commit: dict) -> "GitHubCommitResponse":
+    return GitHubCommitResponse(
+        sha=commit.get("sha", ""),
+        message=commit.get("message", ""),
+        author=commit.get("author", ""),
+        date=commit.get("date", ""),
+        html_url=commit.get("html_url", ""),
+        origin=repo_model.commit_origin(commit.get("message", "")),
+    )
+
+
+async def _read_model(github, owner: str, repo: str, ref: str) -> Optional[dict]:
+    """The repo's model at ``ref``: ``buml/diagrams.json``, else the legacy project file."""
+    for path in (repo_model.MODEL_FILE, repo_model.LEGACY_PROJECT_FILE):
+        file_data = await github.get_file_content(owner, repo, path, ref=ref)
+        if file_data and file_data.get("content"):
+            return json.loads(file_data["content"])
+    return None
+
+
+async def _model_tree_entries(github, owner: str, repo: str, files: dict[str, bytes]) -> list[dict]:
+    """Git tree entries for ``files`` (repo path -> content), one blob each."""
+    entries = []
+    for path, content in files.items():
+        blob_sha = await github.create_blob(owner, repo, content)
+        entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob_sha})
+    return entries
+
+
+def _github_http_error(exc: httpx.HTTPStatusError) -> HTTPException:
+    status = exc.response.status_code if exc.response is not None else 502
+    return HTTPException(status_code=status if 400 <= status < 500 else 502, detail=_extract_github_error_message(exc))
 
 
 @router.post("/project/save", response_model=SaveProjectResponse)
@@ -1614,42 +1594,43 @@ async def save_project_to_github(
     """
     Save a BESSER project to a GitHub repository.
 
-    Creates or updates the project JSON file in the specified repository.
+    Writes the model files (``buml/diagrams.json``, the B-UML sources and
+    ``.besser/project.json``) in one commit, keeping every other file. A
+    legacy project file at ``file_path`` is removed in the same commit. When
+    the branch moved past ``base_commit_sha`` the commit is merged with the
+    newer commits.
     """
-    if not github_session:
-        raise HTTPException(status_code=401, detail="GitHub authentication required")
-
-    access_token = get_user_token(github_session)
-    if not access_token:
-        raise HTTPException(status_code=401, detail="GitHub session expired")
-
+    github = _github_for(github_session)
     try:
-        github = create_github_service(access_token)
+        files = repo_model.model_files(request.project_export or request.project_data)
+        entries = await _model_tree_entries(github, request.owner, request.repo, files)
+        legacy = request.file_path
+        if legacy and legacy not in files and await github.file_exists(
+            request.owner, request.repo, legacy, request.branch
+        ):
+            entries.append({"path": legacy, "mode": "100644", "type": "blob", "sha": None})
 
-        # Convert project data to JSON string
-        project_json = json.dumps(request.project_data, indent=2)
-
-        # Save to GitHub
-        result = await github.create_or_update_file(
-            owner=request.owner,
-            repo_name=request.repo,
-            file_path=request.file_path,
-            content=project_json,
-            commit_message=request.commit_message,
-            branch=request.branch
+        outcome = await github.commit_tree(
+            request.owner, request.repo, request.branch, entries,
+            repo_model.with_origin(request.commit_message, repo_model.ORIGIN_EDITOR),
+            layer_on_parent=True,
+            base_commit_sha=request.base_commit_sha,
         )
-
-        # Also export raw B-UML models alongside the JSON
-        await _export_buml_files_to_repo(
-            github, request.owner, request.repo, request.branch,
-            request.file_path, request.project_data, request.commit_message,
-        )
-
+        await github.add_topic(request.owner, request.repo, repo_model.BESSER_TOPIC)
+        conflict = outcome["status"] == "conflict"
         return SaveProjectResponse(
-            success=True,
-            commit_sha=result.get("commit_sha", ""),
-            message="Project saved successfully"
+            success=not conflict,
+            commit_sha=outcome["commit_sha"],
+            message=(
+                f"The repository changed since your last sync; your save is on {outcome['conflict_branch']}"
+                if conflict else "Project saved successfully"
+            ),
+            status=outcome["status"],
+            conflict_branch=outcome["conflict_branch"],
         )
+    except httpx.HTTPStatusError as exc:
+        logger.warning("GitHub API error saving project", exc_info=True)
+        raise _github_http_error(exc) from exc
     except Exception:
         logger.exception("Unexpected error saving project to GitHub")
         raise HTTPException(status_code=500, detail="An internal error occurred while saving the project.")
@@ -1660,39 +1641,22 @@ async def load_project_from_github(
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     branch: str = Query("main", description="Branch name"),
-    file_path: str = Query("besser-project.json", description="Project file path"),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
     """
     Load a BESSER project from a GitHub repository.
+
+    ``project`` is the model file as stored: a V2 export envelope
+    (``buml/diagrams.json``) or, for an older repo, a bare project. ``sha`` is
+    the branch head it was read at.
     """
-    if not github_session:
-        raise HTTPException(status_code=401, detail="GitHub authentication required")
-
-    access_token = get_user_token(github_session)
-    if not access_token:
-        raise HTTPException(status_code=401, detail="GitHub session expired")
-
+    github = _github_for(github_session)
     try:
-        github = create_github_service(access_token)
-
-        # Get file content
-        file_data = await github.get_file_content(owner, repo, file_path, branch)
-
-        if not file_data:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Project file not found: {file_path}"
-            )
-
-        # Parse JSON content
-        project = json.loads(file_data.get("content", "{}"))
-
-        return LoadProjectResponse(
-            success=True,
-            project=project,
-            sha=file_data.get("sha", "")
-        )
+        head = await github.get_branch_head(owner, repo, branch)
+        project = await _read_model(github, owner, repo, head) if head else None
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"No BESSER model in {owner}/{repo}@{branch}")
+        return LoadProjectResponse(success=True, project=project, sha=head)
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid project file format")
     except HTTPException:
@@ -1707,7 +1671,6 @@ async def load_project_from_commit(
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     commit_sha: str = Query(..., description="Commit SHA to load from"),
-    file_path: str = Query("besser-project.json", description="Project file path"),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
     """
@@ -1715,38 +1678,20 @@ async def load_project_from_commit(
 
     This allows restoring previous versions of the project.
     """
-    if not github_session:
-        raise HTTPException(status_code=401, detail="GitHub authentication required")
-
-    access_token = get_user_token(github_session)
-    if not access_token:
-        raise HTTPException(status_code=401, detail="GitHub session expired")
-
+    github = _github_for(github_session)
     try:
-        github = create_github_service(access_token)
+        project = await _read_model(github, owner, repo, commit_sha)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"No BESSER model at commit {commit_sha[:7]}")
 
-        # Get file content at specific commit
-        file_data = await github.get_file_content(owner, repo, file_path, ref=commit_sha)
-
-        if not file_data:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Project file not found at commit {commit_sha[:7]}"
-            )
-
-        # Parse JSON content
-        project = json.loads(file_data.get("content", "{}"))
-
-        # Get commit info for display
-        commits = await github.get_commits(owner, repo, file_path, per_page=100)
-        commit_info = next((c for c in commits if c["sha"] == commit_sha), None)
-
+        commits = await github.get_commits(owner, repo, per_page=1, ref=commit_sha)
+        commit_info = commits[0] if commits else {}
         return LoadProjectFromCommitResponse(
             success=True,
             project=project,
             commit_sha=commit_sha,
-            commit_message=commit_info.get("message", "") if commit_info else "",
-            commit_date=commit_info.get("date", "") if commit_info else ""
+            commit_message=commit_info.get("message", ""),
+            commit_date=commit_info.get("date", "")
         )
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid project file format")
@@ -1757,6 +1702,23 @@ async def load_project_from_commit(
         raise HTTPException(status_code=500, detail="An internal error occurred while loading the project from commit.")
 
 
+_README_TEMPLATE = """# {project_name}
+
+A [BESSER](https://github.com/BESSER-PEARL/BESSER) project.
+
+## Files
+
+- `{model_file}`: the model. Open the repository from the GitHub panel of the
+  [BESSER Web Editor](https://editor.besser-pearl.org/) to edit it.
+- `{model_dir}/*.py`: the same model as B-UML Python source.
+
+## Learn more
+
+- [BESSER on GitHub](https://github.com/BESSER-PEARL/BESSER)
+- [Documentation](https://besser.readthedocs.io/)
+"""
+
+
 @router.post("/project/create-repo", response_model=CreateRepoForProjectResponse)
 async def create_repository_for_project(
     request: CreateRepoForProjectRequest,
@@ -1765,94 +1727,213 @@ async def create_repository_for_project(
     """
     Create a new GitHub repository and save the project to it.
 
-    This is a convenience endpoint that:
-    1. Creates a new repository in the user's account
-    2. Saves the project JSON as the initial commit
-    3. Creates a README.md explaining the project
+    The first commit holds the model files and a README.
     """
-    if not github_session:
-        raise HTTPException(status_code=401, detail="GitHub authentication required")
-
-    access_token = get_user_token(github_session)
-    if not access_token:
-        raise HTTPException(status_code=401, detail="GitHub session expired")
-
+    github = _github_for(github_session)
     try:
-        github = create_github_service(access_token)
-
-        # Get user info
         user_info = await github.get_authenticated_user()
         username = user_info.get("login")
-
-        # Sanitize repo name
         repo_name = _sanitize_repo_name(request.repo_name)
 
-        # Create repository
         repo_info = await github.create_repository(
             repo_name=repo_name,
             description=request.description or "BESSER project repository",
-            is_private=request.is_private
+            is_private=request.is_private,
+            auto_init=True,
         )
-
-        # Save project to repo
-        project_json = json.dumps(request.project_data, indent=2)
-        file_path = request.file_path if hasattr(request, 'file_path') and request.file_path else "besser-project.json"
-        save_result = await github.create_or_update_file(
-            owner=username,
-            repo_name=repo_name,
-            file_path=file_path,
-            content=project_json,
-            commit_message=f"Initial commit: {request.project_data.get('name', 'BESSER Project')}",
-            branch="main"
-        )
-
-        # Create README
+        branch = repo_info.get("default_branch", "main")
         project_name = request.project_data.get("name", "BESSER Project")
-        readme_content = f"""# {project_name}
-
-BESSER project repository.
-
-## About
-
-This repository contains a [BESSER](https://github.com/BESSER-PEARL/BESSER) project.
-
-## Files
-
-- `{file_path}` - The project definition file
-
-## Opening the Project
-
-1. Go to [BESSER Web Editor](https://editor.besser-pearl.org/)
-2. Connect your GitHub account
-3. Link this repository to load the project
-
-## Learn More
-
-- [BESSER GitHub](https://github.com/BESSER-PEARL/BESSER)
-- [Documentation](https://besser.readthedocs.io/)
-
----
-*Generated by BESSER Web Modeling Editor*
-"""
-        await github.create_or_update_file(
-            owner=username,
-            repo_name=repo_name,
-            file_path="README.md",
-            content=readme_content,
-            commit_message="Add README",
-            branch="main"
+        files = repo_model.model_files(request.project_export or request.project_data)
+        files["README.md"] = _README_TEMPLATE.format(
+            project_name=project_name, model_file=repo_model.MODEL_FILE, model_dir=repo_model.MODEL_DIR,
+        ).encode("utf-8")
+        entries = await _model_tree_entries(github, username, repo_name, files)
+        outcome = await github.commit_tree(
+            username, repo_name, branch, entries,
+            repo_model.with_origin(f"Add the {project_name} model", repo_model.ORIGIN_EDITOR),
+            layer_on_parent=False,
         )
+        await github.add_topic(username, repo_name, repo_model.BESSER_TOPIC)
 
         return CreateRepoForProjectResponse(
             success=True,
             repo_url=repo_info.get("html_url", ""),
             owner=username,
-            commit_sha=save_result.get("commit_sha", ""),
-            message=f"Repository '{repo_name}' created with project"
+            commit_sha=outcome["commit_sha"],
+            message=f"Repository '{repo_name}' created with project",
+            branch=branch,
         )
     except Exception:
         logger.exception("Unexpected error creating GitHub repository for project")
         raise HTTPException(status_code=500, detail="An internal error occurred while creating the repository.")
+
+
+# ============================================================================
+# Linked repository: summary, sync status, model history, pull requests
+# ============================================================================
+
+class RepoSummaryResponse(BaseModel):
+    """What the repo browser shows on a repo card."""
+    has_model: bool
+    branch: str
+    head_sha: str
+    project_name: str = ""
+    project_id: Optional[str] = None
+    diagram_counts: dict[str, int] = {}
+    class_count: int = 0
+    class_names: List[str] = []
+    last_commit: Optional[GitHubCommitResponse] = None
+
+
+@router.get("/repo-summary", response_model=RepoSummaryResponse)
+async def get_repo_summary(
+    owner: str = Query(...),
+    repo: str = Query(...),
+    branch: Optional[str] = Query(None, description="Branch; the repo default when omitted"),
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
+):
+    """The model a repo holds (name, diagrams, classes) and its last commit."""
+    github = _github_for(github_session)
+    try:
+        if not branch:
+            branches = await github.get_branches(owner, repo)
+            branch = "main" if "main" in branches else (branches[0] if branches else "main")
+        head = await github.get_branch_head(owner, repo, branch)
+        if not head:
+            return RepoSummaryResponse(has_model=False, branch=branch, head_sha="")
+        commits = await github.get_commits(owner, repo, per_page=1, ref=head)
+        last_commit = _commit_response(commits[0]) if commits else None
+        try:
+            model = await _read_model(github, owner, repo, head)
+        except json.JSONDecodeError:
+            logger.warning("Unreadable model file in %s/%s@%s", owner, repo, head[:7])
+            model = None
+        if model is None:
+            return RepoSummaryResponse(has_model=False, branch=branch, head_sha=head, last_commit=last_commit)
+        return RepoSummaryResponse(
+            has_model=True, branch=branch, head_sha=head, last_commit=last_commit,
+            **repo_model.summarize(model),
+        )
+    except httpx.HTTPStatusError as exc:
+        raise _github_http_error(exc) from exc
+    except Exception:
+        logger.exception("Unexpected error summarizing a GitHub repository")
+        raise HTTPException(status_code=500, detail="An internal error occurred while reading the repository.")
+
+
+class SyncStatusResponse(BaseModel):
+    """How a linked repo's branch relates to the commit the editor last synced."""
+    head_sha: str
+    # Commits on the branch since ``base_sha``, newest first.
+    commits_since: List[GitHubCommitResponse]
+    in_sync: bool
+
+
+@router.get("/sync-status", response_model=SyncStatusResponse)
+async def get_sync_status(
+    owner: str = Query(...),
+    repo: str = Query(...),
+    branch: str = Query("main"),
+    base_sha: Optional[str] = Query(None, pattern=r"^[0-9a-f]{40}$"),
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
+):
+    """Commits made on ``branch`` since ``base_sha`` (the editor's last sync)."""
+    github = _github_for(github_session)
+    try:
+        head = await github.get_branch_head(owner, repo, branch)
+        if not head:
+            raise HTTPException(status_code=404, detail="branch_missing")
+        if not base_sha or base_sha == head:
+            return SyncStatusResponse(head_sha=head, commits_since=[], in_sync=bool(base_sha))
+        comparison = await github.compare_commits(owner, repo, base_sha, head)
+        commits = [_commit_response(c) for c in reversed(comparison["commits"])]
+        return SyncStatusResponse(head_sha=head, commits_since=commits, in_sync=not commits)
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as exc:
+        raise _github_http_error(exc) from exc
+    except Exception:
+        logger.exception("Unexpected error reading GitHub sync status")
+        raise HTTPException(status_code=500, detail="An internal error occurred while reading the sync status.")
+
+
+class ModelHistoryEntry(GitHubCommitResponse):
+    """A commit that changed the model, with what it changed."""
+    changes: List[str]
+
+
+class ModelHistoryResponse(BaseModel):
+    commits: List[ModelHistoryEntry]
+
+
+# Each entry costs one file read; the history panel shows recent changes only.
+_MODEL_HISTORY_LIMIT = 15
+
+
+@router.get("/model-history", response_model=ModelHistoryResponse)
+async def get_model_history(
+    owner: str = Query(...),
+    repo: str = Query(...),
+    branch: str = Query("main"),
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
+):
+    """Recent commits that changed ``buml/diagrams.json``, each with its class-diagram changes."""
+    github = _github_for(github_session)
+    try:
+        commits = await github.get_commits(
+            owner, repo, repo_model.MODEL_FILE, per_page=_MODEL_HISTORY_LIMIT + 1, ref=branch
+        )
+        versions = []
+        for commit in commits:
+            file_data = await github.get_file_content(owner, repo, repo_model.MODEL_FILE, ref=commit["sha"])
+            try:
+                content = file_data.get("content") if file_data else None
+                versions.append(json.loads(content) if content else None)
+            except json.JSONDecodeError:
+                versions.append(None)
+
+        entries = []
+        for index, commit in enumerate(commits[:_MODEL_HISTORY_LIMIT]):
+            current = versions[index]
+            older = versions[index + 1] if index + 1 < len(versions) else None
+            changes = repo_model.describe_change(older, current) if current is not None else []
+            entries.append(ModelHistoryEntry(**_commit_response(commit).model_dump(), changes=changes))
+        return ModelHistoryResponse(commits=entries)
+    except httpx.HTTPStatusError as exc:
+        raise _github_http_error(exc) from exc
+    except Exception:
+        logger.exception("Unexpected error reading the model history")
+        raise HTTPException(status_code=500, detail="An internal error occurred while reading the model history.")
+
+
+class CreatePullRequestRequest(BaseModel):
+    owner: str
+    repo: str
+    head: str
+    base: str = "main"
+    title: str = Field(..., min_length=1, max_length=256)
+    body: str = ""
+
+
+class CreatePullRequestResponse(BaseModel):
+    number: int
+    html_url: str
+
+
+@router.post("/pull-request", response_model=CreatePullRequestResponse)
+async def create_pull_request(
+    request: CreatePullRequestRequest,
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
+):
+    """Open a pull request, e.g. for a push GitHub could not merge on its own."""
+    github = _github_for(github_session)
+    try:
+        result = await github.create_pull_request(
+            request.owner, request.repo, request.head, request.base, request.title, request.body
+        )
+        return CreatePullRequestResponse(**result)
+    except httpx.HTTPStatusError as exc:
+        raise _github_http_error(exc) from exc
 
 
 # ============================================================================

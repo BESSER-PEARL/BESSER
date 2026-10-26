@@ -568,13 +568,6 @@ Validation
   the Alloy Analyzer (see :doc:`generators/object_diagram`)
 - ``POST /generate-object-diagram`` -- Same search, but returns the instance found as an object diagram
 
-Both take a ``DiagramInput`` with a class diagram, and search with 5, 7 and 9 objects per class, in turn, for at most
-30 seconds each. They answer with a ``text/event-stream`` of ``SemanticCheckEvent`` (``models/responses.py``), one per
-step. Like the response of ``/validate-diagram``, each event has ``message``, ``isValid``, ``errors`` and
-``warnings``, plus ``done`` and, for an instance found by ``/generate-object-diagram``, ``object_model``. The last
-event has ``done: true``. Every 15 seconds, a ``: semantic-check-heartbeat`` comment keeps the connection alive
-through proxies. Both endpoints need Java and the Alloy Analyzer, which the backend Docker image bundles.
-
 Deployment
 ^^^^^^^^^^
 

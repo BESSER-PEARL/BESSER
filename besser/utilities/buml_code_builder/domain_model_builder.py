@@ -14,6 +14,7 @@ from besser.BUML.metamodel.structural.structural import (
     AssociationClass,
     Enumeration,
     MethodImplementationType,
+    UNLIMITED_MAX_MULTIPLICITY,
 )
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.utilities import sort_by_timestamp as sort
@@ -56,6 +57,33 @@ def _id_line(element, emit_ids) -> str:
     """``,\n    id=...`` for a multi-line constructor call, or ``""``."""
     kwarg = id_kwarg(element, emit_ids)
     return f",\n    {kwarg[2:]}" if kwarg else ""
+
+
+def _attribute_kwargs(attr) -> str:
+    """The keyword arguments of an attribute's ``Property(...)`` after ``type=``."""
+    kwargs = ""
+    if attr.visibility != "public":
+        kwargs += f', visibility="{attr.visibility}"'
+    multiplicity = attr.multiplicity
+    if (multiplicity.min, multiplicity.max) != (1, 1):
+        max_value = '"*"' if multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else multiplicity.max
+        kwargs += f", multiplicity=Multiplicity({multiplicity.min}, {max_value})"
+    if attr.is_optional:
+        kwargs += ", is_optional=True"
+    if attr.is_id:
+        kwargs += ", is_id=True"
+    if attr.is_external_id:
+        kwargs += ", is_external_id=True"
+    if attr.is_read_only:
+        kwargs += ", is_read_only=True"
+    if attr.is_derived:
+        kwargs += ", is_derived=True"
+    if attr.default_value is not None:
+        if isinstance(attr.default_value, str):
+            kwargs += f', default_value="{_escape_python_string(attr.default_value)}"'
+        else:
+            kwargs += f', default_value={attr.default_value}'
+    return kwargs
 
 
 # Every name the generated script binds or reads besides its own element
@@ -282,21 +310,8 @@ def domain_model_to_code(
             # Write attributes
             for attr in sort(cls.attributes):
                 attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
-                visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
-                is_optional_str = ", is_optional=True" if attr.is_optional else ""
-                is_id_str = ", is_id=True" if attr.is_id else ""
-                is_external_id_str = ", is_external_id=True" if attr.is_external_id else ""
-                is_derived_str = ", is_derived=True" if attr.is_derived else ""
-                if attr.default_value is not None:
-                    if isinstance(attr.default_value, str):
-                        default_value_str = f', default_value="{_escape_python_string(attr.default_value)}"'
-                    else:
-                        default_value_str = f', default_value={attr.default_value}'
-                else:
-                    default_value_str = ""
                 f.write(f"{attribute_var_name(cls.name, attr.name)}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
-                       f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}{is_derived_str}"
-                       f"{default_value_str}{timestamp_kwarg(attr)}{id_kwarg(attr, emit_ids)})\n")
+                       f"type={attr_type}{_attribute_kwargs(attr)}{timestamp_kwarg(attr)}{id_kwarg(attr, emit_ids)})\n")
 
             # Write methods
             for method in sort(cls.methods):
@@ -443,21 +458,8 @@ def domain_model_to_code(
                 # Now write the attributes for the association class
                 for attr in sort(ac.attributes):
                     attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
-                    visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
-                    is_optional_str = ", is_optional=True" if attr.is_optional else ""
-                    is_id_str = ", is_id=True" if attr.is_id else ""
-                    is_external_id_str = ", is_external_id=True" if attr.is_external_id else ""
-                    is_derived_str = ", is_derived=True" if attr.is_derived else ""
-                    if attr.default_value is not None:
-                        if isinstance(attr.default_value, str):
-                            default_value_str = f', default_value="{_escape_python_string(attr.default_value)}"'
-                        else:
-                            default_value_str = f', default_value={attr.default_value}'
-                    else:
-                        default_value_str = ""
                     f.write(f"{attribute_var_name(ac.name, attr.name)}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
-                           f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}{is_derived_str}"
-                           f"{default_value_str}{timestamp_kwarg(attr)}{id_kwarg(attr, emit_ids)})\n")
+                           f"type={attr_type}{_attribute_kwargs(attr)}{timestamp_kwarg(attr)}{id_kwarg(attr, emit_ids)})\n")
 
                 # Write methods for the association class
                 for method in sort(ac.methods):

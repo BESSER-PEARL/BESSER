@@ -288,6 +288,31 @@ def _conversion_label(issue: dict) -> str:
     return issue.get("name") or issue.get("context") or issue.get("id") or "unnamed rule"
 
 
+# Agent tools that change a file; shell commands are not tracked.
+_FILE_CHANGE_TOOLS = frozenset({"write_file", "modify_file", "replace_file_lines", "delete_file"})
+# The card lists this many paths; the count covers the rest.
+_MAX_CHANGED_FILES = 50
+
+
+def run_changes(recipe: dict) -> dict:
+    """The ``DoneEvent`` fields that say what a run changed, read from its recipe."""
+    history = recipe.get("history") or []
+    mode = (history[-1] if history and isinstance(history[-1], dict) else {}).get("mode")
+    changed = sorted({
+        (call.get("input") or {}).get("path")
+        for call in recipe.get("tool_calls") or []
+        if isinstance(call, dict) and call.get("tool") in _FILE_CHANGE_TOOLS
+        and isinstance((call.get("input") or {}).get("path"), str)
+    })
+    model_change = recipe.get("model_change") or {}
+    return {
+        "mode": "modify" if mode == "modify" else "create",
+        "changedFiles": changed[:_MAX_CHANGED_FILES],
+        "changedFileCount": len(changed),
+        "modelChanges": [c for c in model_change.get("changes") or [] if isinstance(c, str)],
+    }
+
+
 def build_verification_report(recipe: dict) -> VerificationReport:
     """Split the recipe's own evidence into the three states a count hides.
 
@@ -2444,6 +2469,7 @@ class SmartGenerationRunner:
             tokensUsed=int(getattr(self, "_final_tokens", 0) or 0),
             verification=verification,
             aiShare=ai_share,
+            **run_changes(recipe),
         )
         return event, entry
 

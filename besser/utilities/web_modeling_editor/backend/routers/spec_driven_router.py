@@ -88,6 +88,10 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
     try_acquire_run_slot,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
+from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import analyze_repository
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+    class_buml_to_json,
+)
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service,
 )
@@ -1333,10 +1337,26 @@ async def import_github_run(
                     "This repo's BESSER model (buml/diagrams.json) could not "
                     "be parsed."
                 )
-        else:
-            message = (
-                "This repo has no BESSER model — open it in the editor first."
-            )
+        analysis = proposed_diagram = None
+        if not has_model:
+            # Not a BESSER repo: read its code for a model the user can accept.
+            code_analysis, domain_model = await asyncio.to_thread(analyze_repository, extract_dir)
+            analysis = code_analysis.to_dict()
+            if domain_model is not None:
+                proposed_diagram = {
+                    "title": f"{repo} model",
+                    "model": {**class_buml_to_json(domain_model), "type": "ClassDiagram"},
+                    "diagramType": "ClassDiagram",
+                }
+                message = (
+                    f"This repo has no BESSER model. BESSER read its "
+                    f"{code_analysis.model_source} and proposes one."
+                )
+            elif message is None:
+                message = (
+                    "This repo has no BESSER model and no data classes BESSER "
+                    "can read; you can still work on its code."
+                )
 
         return ImportGitHubRunResponse(
             run_id=run_id,
@@ -1347,6 +1367,8 @@ async def import_github_run(
             branch=branch,
             commit_sha=commit_sha,
             message=message,
+            analysis=analysis,
+            proposed_diagram=proposed_diagram,
         )
 
     except HTTPException:

@@ -22,6 +22,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
 )
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 from besser.utilities.utils import parse_iso_timestamp
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import sanitize_name
 
 
 def parse_method_signature_from_code(
@@ -1106,9 +1107,7 @@ def _process_constraints(
 
 def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     """Process Class Diagram specific elements."""
-    title = json_data.get('title', '')
-    if ' ' in title:
-        title = title.replace(' ', '_')
+    title = sanitize_name(json_data.get('title', ''))
 
     domain_model = DomainModel(
         title, timestamp=parse_iso_timestamp((json_data.get('model') or {}).get('timestamp'))

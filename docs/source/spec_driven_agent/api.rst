@@ -69,11 +69,14 @@ Endpoints
        Requires an ``X-GitHub-Session`` header.
    * - ``/spec-driven/import-github-run``
      - POST
-     - Import a BESSER-created repo back as a run, so it can be used as the
-       seed of a subsequent modify run. The repo is pinned at its branch head
+     - Import a GitHub repo as a run, so it can be used as the seed of a
+       subsequent modify run. The repo is pinned at its branch head
        (``commit_sha`` in the response) and written to the shared run
-       workspace, where the Spec-Driven worker finds it. Requires an
-       ``X-GitHub-Session`` header.
+       workspace, where the Spec-Driven worker finds it. A repo without a
+       BESSER model (``has_model: false``) is read for SQLAlchemy, Django,
+       Pydantic or dataclass models: ``analysis`` says what was found and
+       ``proposed_diagram`` is the resulting class diagram, or ``null``.
+       Requires an ``X-GitHub-Session`` header.
 
 Request body
 ------------
@@ -251,7 +254,10 @@ SSE event types
        blocker-severity findings), ``incomplete`` / ``incompleteReason``,
        a three-way authorship split of the output tree, and ``aiShare``, the
        AI-written share of the lines from the run's Agent Trace record (see
-       :ref:`spec-driven-agent-trace`).
+       :ref:`spec-driven-agent-trace`). ``mode`` is ``create`` or ``modify``;
+       ``changedFiles`` (capped) and ``changedFileCount`` are the files the
+       agent wrote, edited or deleted, and ``modelChanges`` how the model
+       differs from the one the base app was built from (modify runs).
    * - ``error``
      - ``INVALID_KEY`` / ``UPSTREAM_LLM`` / ``INTERNAL`` / ``BAD_REQUEST`` /
        ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` / ``INCOMPLETE``

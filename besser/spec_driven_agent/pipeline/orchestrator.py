@@ -4516,6 +4516,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         }
         if self._model_sync_error:
             recipe["model_sync_error"] = self._model_sync_error
+        # Modify runs only: how the model differs from the one the base app was
+        # built from, so the run card can say what changed in the model.
+        model_change = getattr(self, "_model_change", None) if self._modify_mode else None
+        if model_change is not None:
+            recipe["model_change"] = model_change.to_dict()
         # Fix/modify success-gate outcome. Present ONLY on a fix run so the
         # from-scratch recipe stays byte-identical; records the reported
         # target and whether it was confirmed fixed, so a later "what did

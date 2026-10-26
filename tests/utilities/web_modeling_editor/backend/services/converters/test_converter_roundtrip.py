@@ -1118,18 +1118,21 @@ class TestAssociationNavigabilityRoundtrip:
         """An exported .py carries no saved layout, so the drawn source/target was re-chosen by
         end name: renaming a class could flip which side an association is drawn from (#679)."""
         payload = _with_writes_relationship(minimal_class_diagram_json, "ClassBidirectional", True, True)
-        payload["model"]["elements"]["cls-author"]["name"] = class_name
-        payload["model"]["relationships"]["rel-writes"]["source"]["role"] = role
+        edge = next(e for e in payload["model"]["edges"] if e["id"] == "e-writes")
+        author = next(n for n in payload["model"]["nodes"] if n["id"] == edge["source"])
+        author["data"]["name"] = class_name
+        edge["data"]["sourceRole"] = role
         script = tmp_path / "model.py"
         domain_model_to_code(process_class_diagram(payload), str(script))
         result = class_buml_to_json(parse_buml_content(script.read_text()))
 
-        rel = next(r for r in result["relationships"].values() if r.get("type") == "ClassBidirectional")
-        source = result["elements"][rel["source"]["element"]]["name"]
-        target = result["elements"][rel["target"]["element"]]["name"]
-        assert (source, rel["source"]["role"], rel["source"]["multiplicity"]) == (
+        names = {n["id"]: _data(n)["name"] for n in _nodes(result)}
+        rel = next(e for e in _edges(result) if e.get("type") == "ClassBidirectional")
+        rel_data = _data(rel)
+        assert (names[rel["source"]], rel_data["sourceRole"], rel_data["sourceMultiplicity"]) == (
             class_name, role or class_name.lower(), "1..*")
-        assert (target, rel["target"]["role"], rel["target"]["multiplicity"]) == ("Book", "book", "0..*")
+        assert (names[rel["target"]], rel_data["targetRole"], rel_data["targetMultiplicity"]) == (
+            "Book", "book", "0..*")
 
     def test_no_navigable_end_is_corrected_with_warning(self, minimal_class_diagram_json):
         payload = _with_writes_relationship(minimal_class_diagram_json, "ClassBidirectional", False, False)

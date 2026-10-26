@@ -524,7 +524,9 @@ def class_buml_to_json(domain_model):
     for association in sorted(domain_model.associations, key=lambda a: a.name):
         try:
             name = association.name or ""
-            ends = sorted(association.ends, key=lambda e: e.name)
+            # Declaration order is the drawn orientation: the JSON -> BUML processor creates
+            # the source end first and an exported script recreates the ends in that order.
+            ends = sort_by_timestamp(association.ends)
             if len(ends) != 2:
                 continue
             source_prop, target_prop = ends

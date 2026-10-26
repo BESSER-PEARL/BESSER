@@ -139,7 +139,7 @@ def test_a_push_after_someone_else_committed_is_merged_not_reverted():
     side = f"{SYNC_BRANCH_PREFIX}{OURS[:7]}"
     assert github.merges == [("main", side)]
     assert ("main", OURS) not in github.refs
-    assert outcome == {"commit_sha": MERGED, "status": "merged", "conflict_branch": None}
+    assert outcome == {"commit_sha": MERGED, "status": "merged", "conflict_branch": None, "own_commit_sha": OURS}
     assert github.deleted == [side]
 
 
@@ -159,7 +159,7 @@ def test_a_merge_github_cannot_resolve_is_kept_on_its_branch():
     outcome = _commit(github, BASE)
 
     side = f"{SYNC_BRANCH_PREFIX}{OURS[:7]}"
-    assert outcome == {"commit_sha": OURS, "status": "conflict", "conflict_branch": side}
+    assert outcome == {"commit_sha": OURS, "status": "conflict", "conflict_branch": side, "own_commit_sha": OURS}
     assert github.deleted == []
     assert ("main", OURS) not in github.refs
 
@@ -220,8 +220,9 @@ def test_a_repo_imported_by_the_backend_is_found_by_the_worker(monkeypatch, shar
 
 
 class _PushGitHub(_ImportGitHub):
-    def __init__(self, status="pushed"):
+    def __init__(self, status="pushed", render_yaml=None):
         self.status = status
+        self.render_yaml = render_yaml
         self.push = None
         self.topics = []
         self.pull_request = None
@@ -238,10 +239,14 @@ class _PushGitHub(_ImportGitHub):
         self.push = dict(branch=branch, base_commit_sha=base_commit_sha, files=files,
                          message=commit_message)
         sha = MERGED if self.status == "merged" else OURS
-        return {"commit_sha": sha, "total_files": len(files), "status": self.status, "conflict_branch": None}
+        return {"commit_sha": sha, "total_files": len(files), "status": self.status, "conflict_branch": None,
+                "own_commit_sha": OURS}
 
     async def add_topic(self, owner, repo_name, topic):
         self.topics.append(topic)
+
+    async def get_file_content(self, owner, repo_name, file_path, branch="main", ref=None):
+        return {"content": self.render_yaml} if file_path == "render.yaml" and self.render_yaml else None
 
     async def create_pull_request(self, owner, repo_name, head, base, title, body):
         self.pull_request = dict(head=head, base=base)
@@ -287,6 +292,46 @@ def test_the_push_builds_on_the_commit_the_editor_last_synced(monkeypatch, tmp_p
     assert r.json()["commit_sha"] == OURS
     assert r.json()["status"] == "pushed"
     assert r.json()["base_run_id"] is None
+
+
+def _record_seed(run_dir, owner, repo, sha):
+    """What import-github-run writes into a run, and seeding copies into every modify run after it."""
+    with open(os.path.join(run_dir, runner_module.GITHUB_SOURCE_FILENAME), "w", encoding="utf-8") as fh:
+        json.dump({"owner": owner, "repo": repo, "commitSha": sha}, fh)
+
+
+def test_a_run_pushes_on_the_commit_it_started_from_not_the_links_latest(monkeypatch, tmp_path):
+    # The run was seeded from commit BASE. Afterwards the user pulled HEAD, which
+    # moved the link's base to HEAD. Pushing that run with base HEAD would treat
+    # the pulled commits as replaced by the run's older tree and revert them.
+    run_id = _seed_run(tmp_path)
+    _record_seed(str(tmp_path / "run"), "me", "app", BASE)
+    fake = _PushGitHub()
+
+    r = _push(monkeypatch, fake, run_id, base_commit_sha=HEAD)
+
+    assert r.status_code == 200, r.text
+    assert fake.push["base_commit_sha"] == BASE
+
+
+def test_a_seed_from_another_repo_does_not_set_the_base(monkeypatch, tmp_path):
+    run_id = _seed_run(tmp_path)
+    _record_seed(str(tmp_path / "run"), "me", "other-repo", BASE)
+    fake = _PushGitHub()
+
+    _push(monkeypatch, fake, run_id, base_commit_sha=HEAD)
+
+    assert fake.push["base_commit_sha"] == HEAD
+
+
+def test_a_pushed_run_records_its_commit_for_the_runs_seeded_from_it(monkeypatch, tmp_path):
+    run_id = _seed_run(tmp_path)
+    _record_seed(str(tmp_path / "run"), "me", "app", BASE)
+
+    _push(monkeypatch, _PushGitHub(), run_id, base_commit_sha=BASE)
+
+    with open(tmp_path / "run" / runner_module.GITHUB_SOURCE_FILENAME, encoding="utf-8") as fh:
+        assert json.load(fh) == {"owner": "me", "repo": "app", "commitSha": OURS}
 
 
 def test_a_merged_push_hands_back_the_merged_repo_as_the_next_base(monkeypatch, tmp_path):

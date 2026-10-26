@@ -494,6 +494,7 @@ GitHub Integration
 - ``GET /github/sync-status`` -- Commits on a branch since ``base_sha``, the commit the editor last synced
 - ``GET /github/model-history`` -- Recent commits that changed the model, each with its class-diagram changes
 - ``POST /github/pull-request`` -- Open a pull request, e.g. for a push GitHub could not merge
+- ``GET /github/app/capabilities``, ``POST /github/app/go-live`` -- "Go live": commit Render deploy files into the project's own repository, for its real folder layout (see below). Off unless ``BESSER_DEPLOY_FROM_REPO=true``.
 
 Every repository BESSER writes has one layout, defined in
 ``services/deployment/repo_model.py``: the model in ``buml/diagrams.json`` (a V2
@@ -509,6 +510,30 @@ on top of that base and merged into the branch with GitHub's merge API, so both
 sides' changes are kept. A merge GitHub cannot resolve is left on a
 ``besser/sync-<sha>`` branch and reported as ``status: "conflict"``, and nothing
 is overwritten.
+
+The base of an agent push is the commit the run itself started from, recorded
+in the run's workspace (``.besser_github_source.json``, written by the import
+and updated by each push, and copied into every modify run seeded from that
+run). The ``base_commit_sha`` the editor sends is used only for runs with no
+recorded start, so pulling while a run is open cannot make its push revert the
+pulled commits.
+
+**Go live** (``POST /github/app/go-live``, behind ``BESSER_DEPLOY_FROM_REPO``)
+deploys the code that is in the project's repository, which is the code the
+Spec-Driven Agent wrote. ``services/deployment/render_blueprint.py`` reads the
+repository's layout: a FastAPI backend (``main_api.py`` beside
+``requirements.txt``) and an optional Vite frontend, at the root or nested (the
+agent puts web apps under ``web_app/``), with the frontend's real build
+folder. It writes ``render.yaml`` and the frontend's ``.env.production``, and
+commits only those files. A layout it cannot deploy (Django, Flutter, several
+backends, built-in agents) is refused with ``422`` and the reason; an existing
+``render.yaml`` BESSER did not write is never overwritten (``409``). The
+``render.yaml`` starts with a marker line; for a repository whose
+``render.yaml`` carries it, every agent push regenerates both files for the
+pushed tree and keeps the service names, so the URLs stay the same. Render's
+build filter skips rebuilds for saves that only touch ``buml/`` or
+``.besser/``. The classic ``/github/deploy-webapp`` is unchanged and shares the
+same service writer.
 - ``POST /github/gist/create`` -- Share a model as a GitHub gist
 
 Agent Simulation

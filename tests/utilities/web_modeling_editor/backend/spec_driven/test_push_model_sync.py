@@ -67,6 +67,9 @@ class _CapturingGitHubService:
     async def get_branch_head(self, owner, repo_name, branch):
         return "a" * 40
 
+    async def get_file_content(self, owner, repo_name, file_path, branch="main", ref=None):
+        return None
+
     async def add_topic(self, owner, repo_name, topic):
         self.topics = getattr(self, "topics", []) + [topic]
 
@@ -88,7 +91,8 @@ class _CapturingGitHubService:
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as fh:
                 self.pushed_diagrams_json = json.load(fh)
-        return {"commit_sha": "d" * 40, "total_files": 1, "uploaded_files": [], "status": "pushed"}
+        return {"commit_sha": "d" * 40, "total_files": 1, "uploaded_files": [], "status": "pushed",
+                "own_commit_sha": "d" * 40}
 
 
 def _install(monkeypatch, fake):

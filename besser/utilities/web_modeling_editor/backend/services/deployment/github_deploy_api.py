@@ -5,7 +5,6 @@ This endpoint generates a web app and pushes it to a GitHub repository
 in the user's account, enabling one-click deployment to platforms like Render.
 """
 
-import hashlib
 import json
 import logging
 import os
@@ -18,7 +17,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
 from pydantic import BaseModel, Field
 
-from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
+from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service
 )
@@ -32,6 +31,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 )
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
 from besser.utilities.web_modeling_editor.backend.constants.constants import BUML_EMIT_IDS
+from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
 from besser.utilities.buml_code_builder import (
     domain_model_to_code,
     gui_model_to_code,
@@ -59,7 +59,7 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 logger = logging.getLogger(__name__)
 
 # Module-level constants for repeated literals used in render.yaml emission.
-PYTHON_VERSION = "3.12.3"
+PYTHON_VERSION = render_blueprint.PYTHON_VERSION
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 STREAMLIT_DB_HOST_ENV = "STREAMLIT_DB_HOST"
 CHATBOT_DEPLOY_TARGETS = frozenset({
@@ -929,11 +929,6 @@ def _add_chatbot_deployment_configs(
         f.write(render_config)
 
 
-# Render caps service hostnames at this many characters; longer names are
-# silently truncated at dash boundaries, dropping the trailing suffix and
-# breaking the URLs we bake into ``.env.production``.
-_RENDER_HOSTNAME_MAX = 40
-
 # Matches the ``name: <app>-backend-<suffix>`` line emitted by
 # ``_add_deployment_configs`` so redeploys can recover the prior suffix and
 # avoid minting a fresh set of Render services on every push. Also matches the
@@ -949,23 +944,7 @@ _RENDER_CHATBOT_NAME_RE = re.compile(
 )
 
 
-def _fit_service_name(readable: str, stable_key: str, max_length: int = _RENDER_HOSTNAME_MAX) -> str:
-    """Return a Render-safe service name derived from ``readable``.
-
-    Render caps service hostnames at 40 chars and truncates longer ones at
-    dash boundaries — which silently eats the random suffix we rely on for
-    uniqueness, so two agents in the same project end up at the same URL.
-
-    When ``readable`` is over budget we fall back to ``besser-<12 hex chars>``
-    where the hex is ``sha1(stable_key)``. ``stable_key`` must not include the
-    per-deploy random suffix: it's a function of ``(app_name, role, slug)`` so
-    the hashed name stays identical across redeploys of the same repo, which
-    is what lets Render update the existing service in place.
-    """
-    if len(readable) <= max_length:
-        return readable
-    digest = hashlib.sha1(stable_key.encode("utf-8")).hexdigest()[:12]
-    return f"besser-{digest}"
+_fit_service_name = render_blueprint.fit_service_name
 
 
 async def _read_existing_service_suffix(github, owner: str, repo_name: str) -> Optional[str]:
@@ -1086,48 +1065,9 @@ def _add_deployment_configs(
     # same conversion here — otherwise the ``VITE_API_URL`` / ``VITE_AGENT_URLS``
     # values baked into ``.env.production`` point at hostnames that don't resolve.
     app_host = app_name.replace("_", "-")
-    backend_service_name = _fit_service_name(
-        f"{app_host}-backend-{service_suffix}",
-        stable_key=f"{app_name}:backend",
-    )
-    frontend_service_name = _fit_service_name(
-        f"{app_host}-frontend-{service_suffix}",
-        stable_key=f"{app_name}:frontend",
-    )
-
-    render_config = f"""services:
-  # Backend API (Free tier - 750 hours/month, spins down after 15 min idle)
-  - type: web
-    name: {backend_service_name}
-    runtime: python
-    plan: free
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: cd backend && uvicorn main_api:app --host 0.0.0.0 --port $PORT
-    envVars:
-      - key: PYTHON_VERSION
-        value: {PYTHON_VERSION}
-
-  # Frontend (Free static site)
-  - type: web
-    name: {frontend_service_name}
-    runtime: static
-    buildCommand: cd frontend && npm install && npm run build
-    staticPublishPath: frontend/build
-    envVars:
-      - key: VITE_API_URL
-        value: https://{backend_service_name}.onrender.com
-    headers:
-      - path: /assets/*.js
-        name: Content-Type
-        value: application/javascript
-      - path: /assets/*.css
-        name: Content-Type
-        value: text/css
-    routes:
-      - type: rewrite
-        source: /*
-        destination: /index.html
-"""
+    names = render_blueprint.ServiceNames.for_app(app_name, service_suffix)
+    backend_service_name = names.backend
+    render_config = render_blueprint.web_services(names)
 
     # Build one Render service block per agent. Each agent lives under ``agents/<slug>/``
     # in the generated repo, so the startCommand cd's into that directory.
@@ -1934,6 +1874,123 @@ async def create_pull_request(
         return CreatePullRequestResponse(**result)
     except httpx.HTTPStatusError as exc:
         raise _github_http_error(exc) from exc
+
+
+# ============================================================================
+# Go live: deploy the project's own repository
+# ============================================================================
+
+class AppCapabilitiesResponse(BaseModel):
+    """Server features the editor switches on; read once per page load."""
+    go_live: bool
+
+
+@router.get("/app/capabilities", response_model=AppCapabilitiesResponse)
+async def get_app_capabilities():
+    return AppCapabilitiesResponse(go_live=backend_constants.DEPLOY_FROM_REPO)
+
+
+class GoLiveRequest(BaseModel):
+    owner: str
+    repo: str
+    branch: str = "main"
+
+
+class GoLiveResponse(BaseModel):
+    """The repo is ready for Render: ``render_deploy_url`` connects it once."""
+    commit_sha: str
+    # False when the repo already held these exact deploy files.
+    changed: bool
+    render_deploy_url: str
+    backend_url: str
+    frontend_url: Optional[str] = None
+    backend_dir: str
+    frontend_dir: Optional[str] = None
+    warnings: List[str] = []
+
+
+@router.post("/app/go-live", response_model=GoLiveResponse)
+async def go_live(
+    request: GoLiveRequest,
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
+):
+    """Commit Render deploy files for the app in ``owner/repo`` into that repo.
+
+    The files are written for the repo's real layout (see
+    ``render_blueprint.detect_layout``), so what goes live is exactly the code
+    in the repo. Once the repo is connected to Render, every code save
+    redeploys; saves that only change the model do not. Answers 422 with the
+    reason when the repo holds no app BESSER can deploy.
+    """
+    if not backend_constants.DEPLOY_FROM_REPO:
+        raise HTTPException(status_code=404, detail="go_live_disabled")
+    github = _github_for(github_session)
+    try:
+        head = await github.get_branch_head(request.owner, request.repo, request.branch)
+        if not head:
+            raise HTTPException(status_code=404, detail="branch_missing")
+        with tempfile.TemporaryDirectory(prefix="besser_go_live_") as checkout:
+            await github.download_repo_tarball(request.owner, request.repo, head, dest_dir=checkout)
+            current = _read_text(os.path.join(checkout, "render.yaml"))
+            if current is not None and not render_blueprint.is_managed(current):
+                raise HTTPException(
+                    status_code=409,
+                    detail="This repository already has its own render.yaml, and BESSER does not overwrite it.",
+                )
+            try:
+                layout = render_blueprint.detect_layout(checkout)
+            except render_blueprint.LayoutRefused as refused:
+                raise HTTPException(status_code=422, detail=str(refused)) from refused
+            files, names = render_blueprint.deploy_files(
+                layout, request.repo, render_blueprint.existing_suffix(current)
+            )
+            unchanged = all(
+                _read_text(os.path.join(checkout, *path.split("/"))) == content
+                for path, content in files.items()
+            )
+
+        commit_sha = head
+        if not unchanged:
+            entries = await _model_tree_entries(
+                github, request.owner, request.repo,
+                {path: content.encode("utf-8") for path, content in files.items()},
+            )
+            outcome = await github.commit_tree(
+                request.owner, request.repo, request.branch, entries,
+                repo_model.with_origin("Prepare the app to go live on Render", repo_model.ORIGIN_EDITOR),
+                layer_on_parent=True,
+                base_commit_sha=head,
+            )
+            commit_sha = outcome["commit_sha"]
+
+        return GoLiveResponse(
+            commit_sha=commit_sha,
+            changed=not unchanged,
+            render_deploy_url=f"{render_blueprint.RENDER_DEPLOY_URL}?repo=https://github.com/{request.owner}/{request.repo}",
+            backend_url=f"https://{names.backend}.onrender.com",
+            frontend_url=f"https://{names.frontend}.onrender.com" if layout.frontend_dir else None,
+            backend_dir=layout.backend_dir,
+            frontend_dir=layout.frontend_dir,
+            warnings=list(layout.warnings),
+        )
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as exc:
+        raise _github_http_error(exc) from exc
+    except ValueError as exc:
+        # download_repo_tarball's size / member-count refusals.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        logger.exception("Unexpected error preparing a repository to go live")
+        raise HTTPException(status_code=500, detail="An internal error occurred while preparing the app to go live.")
+
+
+def _read_text(path: str) -> Optional[str]:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return None
 
 
 # ============================================================================

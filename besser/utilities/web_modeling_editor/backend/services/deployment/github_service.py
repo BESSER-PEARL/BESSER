@@ -16,6 +16,8 @@ from pathlib import Path
 
 import httpx
 
+from besser.utilities.web_modeling_editor.backend.services.deployment.render_blueprint import RENDER_DEPLOY_URL
+
 logger = logging.getLogger(__name__)
 
 # Side branch a push lands on when the target branch moved since the push's
@@ -473,8 +475,10 @@ class GitHubService:
         Returns:
             ``commit_sha`` (the branch head after the push, or the side-branch
             commit on a conflict), ``status`` (``"pushed"`` fast-forward,
-            ``"merged"`` merged with newer commits, ``"conflict"`` not merged)
-            and ``conflict_branch`` (the side branch on a conflict, else None).
+            ``"merged"`` merged with newer commits, ``"conflict"`` not merged),
+            ``conflict_branch`` (the side branch on a conflict, else None) and
+            ``own_commit_sha`` (the commit holding exactly ``tree_entries``,
+            which differs from ``commit_sha`` after a merge).
         """
         head_sha = await self._get_ref_sha(owner, repo_name, branch)
         parent_sha = base_commit_sha or head_sha
@@ -494,7 +498,8 @@ class GitHubService:
 
         if not head_sha or head_sha == parent_sha:
             await self._update_or_create_ref(owner, repo_name, branch, commit_sha, head_sha)
-            return {"commit_sha": commit_sha, "status": "pushed", "conflict_branch": None}
+            return {"commit_sha": commit_sha, "status": "pushed", "conflict_branch": None,
+                    "own_commit_sha": commit_sha}
 
         side_branch = f"{SYNC_BRANCH_PREFIX}{commit_sha[:7]}"
         await self._update_or_create_ref(owner, repo_name, side_branch, commit_sha, None)
@@ -507,10 +512,12 @@ class GitHubService:
                 "GitHub could not merge %s into %s/%s@%s; left it on %s for a pull request",
                 commit_sha[:7], owner, repo_name, branch, side_branch,
             )
-            return {"commit_sha": commit_sha, "status": "conflict", "conflict_branch": side_branch}
+            return {"commit_sha": commit_sha, "status": "conflict", "conflict_branch": side_branch,
+                    "own_commit_sha": commit_sha}
 
         await self.delete_branch(owner, repo_name, side_branch)
-        return {"commit_sha": merge_sha, "status": "merged", "conflict_branch": None}
+        return {"commit_sha": merge_sha, "status": "merged", "conflict_branch": None,
+                "own_commit_sha": commit_sha}
 
     async def _get_commit_tree_sha(self, owner: str, repo_name: str, commit_sha: str) -> Optional[str]:
         """Return the tree SHA of ``commit_sha``."""
@@ -946,7 +953,7 @@ If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESS
 
         return {
             "github": repo_url,
-            "render": f"https://render.com/deploy?repo={repo_url}"
+            "render": f"{RENDER_DEPLOY_URL}?repo={repo_url}"
         }
 
     async def get_user_repositories(

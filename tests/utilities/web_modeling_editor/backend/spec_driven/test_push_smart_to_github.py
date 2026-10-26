@@ -93,6 +93,9 @@ class _FakeGitHubService:
     async def get_branch_head(self, owner, repo_name, branch):
         return "a" * 40
 
+    async def get_file_content(self, owner, repo_name, file_path, branch="main", ref=None):
+        return None
+
     async def add_topic(self, owner, repo_name, topic):
         self.topics = getattr(self, "topics", []) + [topic]
 
@@ -133,6 +136,7 @@ class _FakeGitHubService:
             "uploaded_files": files,
             "status": "pushed",
             "conflict_branch": None,
+            "own_commit_sha": "d" * 40,
         }
 
 

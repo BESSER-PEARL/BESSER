@@ -344,6 +344,9 @@ class PushSmartToGitHubResponse(BaseModel):
     # repo, to use as the next modify run's ``base_run_id`` so the agent
     # edits the merged code rather than its own pre-merge copy.
     base_run_id: Optional[str] = None
+    # Problems the user should know about, e.g. a layout change that keeps
+    # the app from deploying as before.
+    warnings: list[str] = []
 
 
 class ImportGitHubRunRequest(BaseModel):

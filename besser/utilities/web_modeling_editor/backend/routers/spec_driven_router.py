@@ -87,7 +87,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
     reserve_active_run,
     try_acquire_run_slot,
 )
-from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
+from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service,
 )
@@ -1035,9 +1035,19 @@ async def push_spec_driven_to_github(
                     deploy_config.branch, None, repo_default
                 )
 
+            # ---- 5b. Keep the app's deploy files current ----
+            deploy_warnings = (
+                [] if is_first_push
+                else await _refresh_deploy_files(github, owner, repo_name, target_branch, workdir)
+            )
+
             # ---- 6. Push the whole tree (replace — full app per run) ----
-            # The tree replaces the one at ``base_commit_sha``; commits made
-            # on the branch since are merged in, never reverted.
+            # The tree replaces the one at the commit the run started from;
+            # commits made on the branch since are merged in, never reverted.
+            # The run records that commit itself: the editor's link may have
+            # moved on (a pull after the run started), and pushing over the
+            # link's newer base would revert what was pulled.
+            seed_sha = _run_seed_commit(entry.temp_dir, owner, repo_name)
             commit_message = repo_model.with_origin(
                 deploy_config.commit_message or "Spec-driven app + model — BESSER",
                 repo_model.ORIGIN_AGENT,
@@ -1046,12 +1056,13 @@ async def push_spec_driven_to_github(
             if deploy_config.push_mode == "pull_request" and not is_first_push:
                 push_branch = f"besser/update-{uuid.uuid4().hex[:8]}"
                 base_sha = (
-                    deploy_config.base_commit_sha
+                    seed_sha
+                    or deploy_config.base_commit_sha
                     or await github.get_branch_head(owner, repo_name, target_branch)
                 )
             else:
                 push_branch = target_branch
-                base_sha = deploy_config.base_commit_sha
+                base_sha = seed_sha or deploy_config.base_commit_sha
             push_results = await github.push_directory_to_repo(
                 owner=owner,
                 repo_name=repo_name,
@@ -1076,6 +1087,9 @@ async def push_spec_driven_to_github(
                 pull_request_url = pull_request["html_url"]
                 status = "pull_request"
             await github.add_topic(owner, repo_name, repo_model.BESSER_TOPIC)
+            if status in ("pushed", "merged"):
+                # Runs seeded from this one start from the commit holding its tree.
+                _record_run_seed(entry.temp_dir, owner, repo_name, push_results["own_commit_sha"])
 
             # After a merge the run's files no longer match the branch: hand
             # back the merged repo as the next modify run's base.
@@ -1098,6 +1112,7 @@ async def push_spec_driven_to_github(
                 conflict_branch=push_results.get("conflict_branch"),
                 pull_request_url=pull_request_url,
                 base_run_id=base_run_id,
+                warnings=deploy_warnings,
             )
 
     except HTTPException:
@@ -1133,6 +1148,60 @@ _PULL_REQUEST_BODY = (
     "Changes made by the BESSER Spec-Driven Agent. The model is in "
     f"`{repo_model.MODEL_FILE}`."
 )
+
+
+async def _refresh_deploy_files(github, owner: str, repo: str, branch: str, workdir: str) -> list[str]:
+    """Rewrite the Render files "Go live" put in the repo, for the pushed tree's layout.
+
+    A push replaces the repo's tree, so without this it would delete them; with
+    it, the next deploy also follows a layout change the agent made. A
+    render.yaml BESSER did not write is left alone (it is in the pushed tree or
+    not, as the run left it). Returns warnings for the user.
+    """
+    current = await github.get_file_content(owner, repo, "render.yaml", ref=branch)
+    text = current.get("content") if current else None
+    if not render_blueprint.is_managed(text):
+        return []
+    try:
+        layout = render_blueprint.detect_layout(workdir)
+        files, _ = render_blueprint.deploy_files(layout, repo, render_blueprint.existing_suffix(text))
+        warnings = list(layout.warnings)
+    except render_blueprint.LayoutRefused as refused:
+        logger.warning("Pushed app in %s/%s no longer deploys as before: %s", owner, repo, refused)
+        files = {"render.yaml": text}
+        warnings = [f"This app can no longer be deployed as before ({refused}). The previous deploy settings were kept."]
+    for path, content in files.items():
+        target = os.path.join(workdir, *path.split("/"))
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(content)
+    return warnings
+
+
+def _run_seed_commit(run_dir: str, owner: str, repo: str) -> Optional[str]:
+    """The commit of ``owner/repo`` the run's files were derived from, or None.
+
+    Import writes it (``GITHUB_SOURCE_FILENAME``), a push updates it, and
+    seeding copies it into every modify run that starts from that run.
+    """
+    try:
+        with open(os.path.join(run_dir, GITHUB_SOURCE_FILENAME), "r", encoding="utf-8") as fh:
+            source = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if source.get("owner") != owner or source.get("repo") != repo:
+        return None
+    sha = source.get("commitSha")
+    return sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) else None
+
+
+def _record_run_seed(run_dir: str, owner: str, repo: str, commit_sha: str) -> None:
+    """Record ``commit_sha`` as the commit the run's files now match (best effort)."""
+    try:
+        with open(os.path.join(run_dir, GITHUB_SOURCE_FILENAME), "w", encoding="utf-8") as fh:
+            json.dump({"owner": owner, "repo": repo, "commitSha": commit_sha}, fh)
+    except OSError:
+        logger.warning("Could not record the pushed commit in run %s", run_dir, exc_info=True)
 
 
 async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) -> tuple[str, str]:

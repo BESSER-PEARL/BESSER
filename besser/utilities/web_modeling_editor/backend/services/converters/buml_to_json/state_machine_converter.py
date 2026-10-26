@@ -21,6 +21,48 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 )
 
 
+
+def _call_arg_name(call: ast.Call):
+    """Name passed as the first argument: ``f(x)`` -> ``x``, ``f(g())`` -> ``g``."""
+    if not call.args:
+        return None
+    arg = call.args[0]
+    if isinstance(arg, ast.Name):
+        return arg.id
+    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name):
+        return arg.func.id
+    return None
+
+
+def _parse_transition_chain(go_to: ast.Call):
+    """``(source, event, guards, target)`` variable names of a transition
+    statement as the B-UML builder writes it -- ``s.when_event(e).go_to(t)``,
+    ``s.when_event(e).with_condition(c)...go_to(t)`` or
+    ``s.when_condition(c)...go_to(t)`` -- else ``None``."""
+    target = go_to.args[0].id if go_to.args and isinstance(go_to.args[0], ast.Name) else None
+    guards = []
+    link = go_to.func.value
+    while (
+        isinstance(link, ast.Call)
+        and isinstance(link.func, ast.Attribute)
+        and link.func.attr == "with_condition"
+    ):
+        guards.insert(0, _call_arg_name(link))
+        link = link.func.value
+    if not (
+        isinstance(link, ast.Call)
+        and isinstance(link.func, ast.Attribute)
+        and link.func.attr in ("when_event", "when_condition")
+        and isinstance(link.func.value, ast.Name)
+    ):
+        return None
+    event = None
+    if link.func.attr == "when_event":
+        event = _call_arg_name(link)
+    else:
+        guards.insert(0, _call_arg_name(link))
+    return link.func.value.id, event, [g for g in guards if g], target
+
 def state_machine_object_to_json(sm: StateMachine) -> dict:
     """Convert a StateMachine metamodel instance to the v4 wire shape."""
     nodes: list = []
@@ -397,30 +439,22 @@ def state_machine_to_json(content: str):
                                     "name": body_func,
                                 })
 
-                    elif (
-                        node.value.func.attr == "go_to"
-                        and isinstance(node.value.func.value, ast.Call)
-                        and isinstance(node.value.func.value.func, ast.Attribute)
-                        and node.value.func.value.func.attr == "when_event"
-                    ):
-                        source_state = node.value.func.value.func.value.id
-                        event_name = None
-                        target_state = node.value.args[0].id if node.value.args and isinstance(node.value.args[0], ast.Name) else None
-                        if node.value.func.value.args:
-                            event_arg = node.value.func.value.args[0]
-                            if isinstance(event_arg, ast.Name):
-                                event_name = event_arg.id
-                            elif isinstance(event_arg, ast.Call) and isinstance(event_arg.func, ast.Name):
-                                event_name = event_arg.func.id
-
-                        if source_state in states and target_state in states:
-                            edges.append(make_edge(
-                                edge_id=str(uuid.uuid4()),
-                                source=states[source_state]["id"],
-                                target=states[target_state]["id"],
-                                type_="StateTransition",
-                                data={"name": event_name, "points": []},
-                            ))
+                    elif node.value.func.attr == "go_to":
+                        transition = _parse_transition_chain(node.value)
+                        if transition:
+                            source_state, event_name, guards, target_state = transition
+                            if source_state in states and target_state in states:
+                                data = {"name": event_name, "points": []}
+                                if guards:
+                                    # The editor keeps one guard per transition.
+                                    data["guard"] = guards[0]
+                                edges.append(make_edge(
+                                    edge_id=str(uuid.uuid4()),
+                                    source=states[source_state]["id"],
+                                    target=states[target_state]["id"],
+                                    type_="StateTransition",
+                                    data=data,
+                                ))
 
                     elif node.value.func.attr == "set_fallback_body":
                         state_var = node.value.func.value.id

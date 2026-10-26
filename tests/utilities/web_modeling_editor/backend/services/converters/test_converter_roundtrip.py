@@ -1285,6 +1285,47 @@ class TestStateMachineRoundtrip:
         assert _data(guarded[0]).get("guard") == "x > 10"
         assert _data(guarded[0]).get("name") == "trigger_event"
 
+    def test_guarded_transitions_survive_the_python_round_trip(self):
+        """Importing the exported B-UML ``.py`` kept only plain
+        ``when_event(..).go_to(..)`` transitions: guarded ones vanished."""
+        from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
+        from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.state_machine_converter import (
+            state_machine_to_json,
+        )
+
+        def state(node_id, name):
+            return {"id": node_id, "type": "State", "position": {"x": 0, "y": 0},
+                    "width": 160, "height": 40, "data": {"name": name, "bodies": [], "fallbackBodies": []}}
+
+        def transition(edge_id, source, target, data):
+            return {"id": edge_id, "source": source, "target": target, "type": "StateTransition",
+                    "data": {"points": [], **data}}
+
+        json_data = {"title": "Guards", "model": {
+            "version": "4.0.0", "type": "StateMachineDiagram",
+            "nodes": [
+                {"id": "i", "type": "StateInitialNode", "position": {"x": 0, "y": 0}, "data": {"name": ""}},
+                state("a", "Idle"), state("b", "Busy"), state("c", "Done"),
+                {"id": "g", "type": "StateCodeBlock", "position": {"x": 0, "y": 0},
+                 "data": {"name": "", "code": "def is_ready(session):\n    return True", "language": "python"}},
+            ],
+            "edges": [
+                transition("t0", "i", "a", {"name": ""}),
+                transition("t1", "a", "b", {"name": "start", "guard": "is_ready"}),
+                transition("t2", "b", "c", {"name": "", "guard": "is_ready"}),
+            ],
+        }}
+        code = state_machine_to_code(process_state_machine(json_data))
+        result = state_machine_to_json(code)
+
+        names = {n["id"]: _data(n).get("name") for n in result["nodes"]}
+        guarded = sorted(
+            (names[e["source"]], names[e["target"]], _data(e).get("name") or "", _data(e).get("guard"))
+            for e in _edges_by_type(result, "StateTransition")
+            if _data(e).get("guard")
+        )
+        assert guarded == [("Busy", "Done", "", "is_ready"), ("Idle", "Busy", "start", "is_ready")]
+
     def test_comment_round_trip(self, state_machine_json):
         """``comment`` nodes tethered by ``CommentLink`` edges land on the
         state metadata and re-emit with the same node / edge types."""

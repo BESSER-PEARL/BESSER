@@ -202,7 +202,23 @@ def _agent_buml_to_flat_json(content: str) -> Dict[str, Any]:
                 continue
 
             action_type = action.get("type")
-            if action_type == "text":
+            if action_type == "code":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": action.get("code") or "",
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "actionType": "CustomCodeAction",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "text":
                 message = action.get("message") or ""
                 body_id = str(uuid.uuid4())
                 elements[body_id] = {
@@ -1082,7 +1098,22 @@ def _agent_buml_to_flat_json(content: str) -> Dict[str, Any]:
                     action_var = node.value.args[0].id  # e.g., 'CustomCodeAction_initial'
                     if action_var in custom_code_actions:
                         function_name = custom_code_actions[action_var]  # e.g., 'action_name'
-                        actions[body_var] = function_name  # Store the resolved function name
+                        actions.setdefault(body_var, []).append({
+                            "type": "code",
+                            "function": function_name,
+                            "code": functions.get(function_name, {}).get("source", ""),
+                        })
+
+        # A body that is a single code action keeps its function name, the
+        # form the state-body pass analyzes; code mixed with other replies
+        # stays a row in the list.
+        for body_var, body_actions in actions.items():
+            if (
+                isinstance(body_actions, list)
+                and len(body_actions) == 1
+                and body_actions[0].get("type") == "code"
+            ):
+                actions[body_var] = body_actions[0]["function"]
 
         # Create initial node
         initial_node_id = str(uuid.uuid4())

@@ -1,8 +1,8 @@
 """Propose a domain model for a repo the deterministic reader could not read, using an LLM.
 
 ``code_reverse.analyze_repository`` stays first: it is exact and free. When it
-finds no data classes (a TypeScript, Java, Go, Ruby, ... repo, or SQL only),
-this module sends a bounded digest of the repository to the server's keyless
+finds no data classes (a TypeScript, Java, Go, Ruby, ... repo, or SQL only), or
+only Pydantic models and dataclasses (mostly API shapes), this module sends a bounded digest of the repository to the server's keyless
 model and asks for the same JSON system spec ``kg_to_buml`` uses, then converts
 it with ``convert_spec_json_to_buml`` and ``process_class_diagram``.
 
@@ -32,6 +32,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.code_reverse import (
     _MAX_FILE_BYTES,
     _SKIPPED_DIRS,
+    SCHEMA_MODEL_SOURCE,
     CodeAnalysis,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_text
@@ -48,8 +49,8 @@ _MAX_WALKED_FILES = 5000
 _MAX_TREE_ENTRIES = 300
 # The README head usually names the domain; the rest is install notes.
 _MAX_README_CHARS = 4000
-# A few schema files describe the data; more mostly repeats it.
-_MAX_DATA_FILES = 8
+# A dozen files cover a schema split one table per file (Laravel, Alembic); the char caps bound the size.
+_MAX_DATA_FILES = 12
 # One large file must not crowd out the others.
 _MAX_CHARS_PER_FILE = 6000
 # Keeps the prompt well inside a small open model's context window.
@@ -119,6 +120,8 @@ _DATA_FILE_RULES = (
     _DataFileRule("Prisma schema", 0, lambda p: p.endswith(".prisma")),
     _DataFileRule("SQL tables", 0, lambda p: p.endswith(".sql"), re.compile(r"create\s+table", re.I)),
     _DataFileRule("Rails schema", 0, lambda p: p.endswith("db/schema.rb"), re.compile(r"create_table")),
+    _DataFileRule("Laravel migration", 0, lambda p: p.endswith(".php"), re.compile(r"Schema::create\s*\(")),
+    _DataFileRule("Alembic migration", 0, lambda p: p.endswith(".py"), re.compile(r"\bop\.create_table\s*\(")),
     _DataFileRule("GraphQL schema", 1, lambda p: p.endswith((".graphql", ".gql")),
                   re.compile(r"^\s*type\s+\w+", re.M)),
     _DataFileRule("OpenAPI spec", 1, lambda p: _name(p).startswith(("openapi", "swagger"))
@@ -127,7 +130,10 @@ _DATA_FILE_RULES = (
                   re.compile(r"@Entity\b|\bdata\s+class\s")),
     _DataFileRule("Active Record model", 1, lambda p: p.endswith(".rb") and "/models/" in f"/{p}",
                   re.compile(r"<\s*(ApplicationRecord|ActiveRecord::Base)")),
-    _DataFileRule("Eloquent model", 1, lambda p: p.endswith(".php"), re.compile(r"extends\s+Model\b")),
+    _DataFileRule("Eloquent model", 1, lambda p: p.endswith(".php"),
+                  re.compile(r"extends\s+(Model|Authenticatable)\b")),
+    _DataFileRule("TypeORM or MikroORM entity", 1, lambda p: p.endswith((".ts", ".js")),
+                  re.compile(r"@Entity\s*\(")),
     _DataFileRule("Mongoose schema", 1, lambda p: p.endswith((".js", ".mjs", ".cjs", ".ts")),
                   re.compile(r"new\s+(mongoose\.)?Schema\s*\(|mongoose\.model\s*\(")),
     _DataFileRule("JSON Schema", 2, lambda p: p.endswith(".schema.json")),
@@ -157,6 +163,12 @@ Rules:
 - Relationships: type is "Association", "Composition", "Aggregation" or "Inheritance"; multiplicities
   are "1", "0..1", "*", "0..*" or "1..*"; name is the role the source uses to reach the target.
   For "Inheritance", source is the subclass and target its parent.
+- List each relationship once, even when both classes declare it (a foreign key and the list on the
+  other side, or two Prisma list fields). sourceMultiplicity is how many sources one target has,
+  targetMultiplicity how many targets one source has: an article with one author and many tags is
+  {{"source": "Article", "target": "User", "sourceMultiplicity": "*", "targetMultiplicity": "1"}} and
+  {{"source": "Article", "target": "Tag", "sourceMultiplicity": "*", "targetMultiplicity": "*"}}.
+  A many-to-many is one relationship with "*" on both ends, not two one-to-many ones.
 - At most {max_classes} classes. Names are identifiers without spaces.
 - No methods.
 
@@ -185,6 +197,15 @@ class RepoDigest:
     """The text sent to the model and the repository files it quotes."""
     text: str
     files: list[str] = field(default_factory=list)
+
+
+def should_read_with_ai(analysis: CodeAnalysis, model: Optional[DomainModel]) -> bool:
+    """True when the exact reading found no model, or only Pydantic models and dataclasses.
+
+    Those are mostly API request/response shapes, so the AI reads the whole repo first
+    and the exact reading is kept only if the AI gives no model.
+    """
+    return model is None or analysis.model_source == SCHEMA_MODEL_SOURCE
 
 
 def ai_reading_available(provider: str = FREE_TIER_PROVIDER) -> bool:

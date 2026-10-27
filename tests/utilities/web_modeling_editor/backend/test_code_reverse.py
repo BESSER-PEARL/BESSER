@@ -208,3 +208,138 @@ def test_a_besser_generated_backend_reads_back_with_its_types_enums_and_relation
     assert ["user->User[0..1]", "userComment->Comment[0..9999]"] in ends
     # The ``tags`` secondary table is a many-to-many association.
     assert ["tags->Tag[0..9999]", "todoitem->TodoItem[0..9999]"] in ends
+
+
+def test_django_models_extending_the_repos_own_abstract_base_are_read(tmp_path):
+    """github.com/gothinkster/django-realworld-example-app: every model extends ``TimestampedModel``.
+
+    Read live, the proposal was that abstract base alone, with no Article, Comment or User.
+    """
+    root = _repo(tmp_path, {
+        "manage.py": "",
+        "conduit/apps/core/models.py": '''
+            from django.db import models
+
+            class TimestampedModel(models.Model):
+                created_at = models.DateTimeField(auto_now_add=True)
+
+                class Meta:
+                    abstract = True
+            ''',
+        "conduit/apps/articles/models.py": '''
+            from django.db import models
+            from conduit.apps.core.models import TimestampedModel
+
+            class Article(TimestampedModel):
+                title = models.CharField(max_length=255)
+                author = models.ForeignKey('profiles.Profile', on_delete=models.CASCADE, related_name='articles')
+                tags = models.ManyToManyField('articles.Tag', related_name='articles')
+
+            class Tag(TimestampedModel):
+                tag = models.CharField(max_length=255)
+            ''',
+        "conduit/apps/profiles/models.py": '''
+            from django.db import models
+            from conduit.apps.core.models import TimestampedModel
+
+            class Profile(TimestampedModel):
+                user = models.OneToOneField('authentication.User', on_delete=models.CASCADE)
+                bio = models.TextField(blank=True)
+                follows = models.ManyToManyField('self', related_name='followed_by', symmetrical=False)
+            ''',
+        "conduit/apps/authentication/models.py": '''
+            from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
+            from django.db import models
+            from conduit.apps.core.models import TimestampedModel
+
+            class User(AbstractBaseUser, PermissionsMixin, TimestampedModel):
+                email = models.EmailField(unique=True)
+            ''',
+    })
+
+    analysis, model = analyze_repository(root)
+
+    assert analysis.entities == ["Article", "Profile", "Tag", "User"]
+    assert _attrs(model, "Article") == {"title": ("str", False, 1), "created_at": ("datetime", False, 1)}
+    # AbstractBaseUser declares the password the RealWorld spec asks for.
+    assert _attrs(model, "User")["password"][0] == "str"
+    ends = _ends(model)
+    assert ["articles->Article[0..9999]", "author->Profile[1..1]"] in ends
+    assert ["articles->Article[0..9999]", "tags->Tag[0..9999]"] in ends
+    assert ["followed_by->Profile[0..9999]", "follows->Profile[0..9999]"] in ends
+    assert ["profile->Profile[0..1]", "user->User[1..1]"] in ends
+
+
+def test_flask_sqlalchemy_types_mixins_column_helpers_and_self_many_to_many(tmp_path):
+    """github.com/gothinkster/flask-realworld-example-app (the cookiecutter-flask layout).
+
+    Read live, every type came back as str (``db.String(80)``), ``reference_col`` foreign
+    keys were lost with five of six relations, and the ``SurrogatePK`` mixin became a class.
+    """
+    root = _repo(tmp_path, {
+        "conduit/database.py": '''
+            from .extensions import db
+
+            Column = db.Column
+            Model = db.Model
+
+            class SurrogatePK(object):
+                id = db.Column(db.Integer, primary_key=True)
+
+            def reference_col(tablename, nullable=False, pk_name='id', **kwargs):
+                return db.Column(db.ForeignKey('{0}.{1}'.format(tablename, pk_name)), nullable=nullable, **kwargs)
+            ''',
+        "conduit/user/models.py": '''
+            from conduit.database import Column, Model, SurrogatePK, db
+
+            class User(SurrogatePK, Model):
+                __tablename__ = 'users'
+                username = Column(db.String(80), unique=True, nullable=False)
+                created_at = Column(db.DateTime, nullable=False)
+            ''',
+        "conduit/profile/models.py": '''
+            from conduit.database import Model, SurrogatePK, db, reference_col, relationship
+
+            followers_assoc = db.Table("followers_assoc",
+                                       db.Column("follower", db.Integer, db.ForeignKey("userprofile.user_id")),
+                                       db.Column("followed_by", db.Integer, db.ForeignKey("userprofile.user_id")))
+
+            class UserProfile(Model, SurrogatePK):
+                __tablename__ = 'userprofile'
+                user_id = reference_col('users', nullable=False)
+                user = relationship('User', backref=db.backref('profile', uselist=False))
+                follows = relationship('UserProfile', secondary=followers_assoc, backref='followed_by')
+            ''',
+        "conduit/articles/models.py": '''
+            from conduit.database import Column, Model, SurrogatePK, db, reference_col, relationship
+
+            class Comment(Model, SurrogatePK):
+                __tablename__ = 'comment'
+                body = Column(db.Text)
+                author_id = reference_col('userprofile', nullable=False)
+                author = relationship('UserProfile', backref=db.backref('comments'))
+            ''',
+    })
+
+    analysis, model = analyze_repository(root)
+
+    assert analysis.entities == ["Comment", "User", "UserProfile"]
+    assert _attrs(model, "User") == {
+        "id": ("int", True, 1), "username": ("str", False, 1), "created_at": ("datetime", False, 1)}
+    ends = _ends(model)
+    assert ["profile->UserProfile[0..9999]", "user->User[1..1]"] in ends
+    assert ["author->UserProfile[1..1]", "comments->Comment[0..9999]"] in ends
+    assert ["followed_by->UserProfile[0..9999]", "follows->UserProfile[0..9999]"] in ends
+
+
+def test_pydantic_models_extending_the_repos_own_base_model_are_read(tmp_path):
+    """github.com/nsidnev/fastapi-realworld-example-app: domain models extend ``RWModel(BaseModel)``."""
+    root = _repo(tmp_path, {
+        "app/models/domain/rwmodel.py": "from pydantic import BaseModel\nclass RWModel(BaseModel):\n    pass\n",
+        "app/models/domain/users.py": "from app.models.domain.rwmodel import RWModel\n"
+                                      "class User(RWModel):\n    username: str\n",
+    })
+
+    analysis, _model = analyze_repository(root)
+
+    assert analysis.entities == ["User"]

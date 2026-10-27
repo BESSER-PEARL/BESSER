@@ -14,15 +14,17 @@ because API schemas usually restate the ORM models):
 Foreign keys, ``relationship(...)`` and secondary tables become associations,
 named after the code's own relationships; ``enum.Enum`` classes become
 enumerations. Import aliases (``Integer as Integer_``) are resolved first, since
-BESSER's own generators write them. Stacks other than Python are reported but
-contribute no model.
+BESSER's own generators write them. A class counts as a model when its bases
+lead to a model base anywhere in the repo, and the fields of abstract bases and
+mixins move into the classes that extend them. Stacks other than Python are
+reported but contribute no model.
 """
 
 import ast
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from besser.BUML.metamodel.structural import (
@@ -67,7 +69,18 @@ _TYPE_BY_NAME = {
 
 _ORM_FIELD_CALLS = {"Column", "mapped_column"}
 _ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "enum.Enum", "enum.IntEnum", "enum.StrEnum"}
-_DJANGO_RELATIONS = {"ForeignKey": (0, 1), "OneToOneField": (0, 1), "ManyToManyField": (0, UNLIMITED_MAX_MULTIPLICITY)}
+_DJANGO_RELATIONS = {"ForeignKey", "OneToOneField", "ManyToManyField"}
+_DJANGO_BASES = {"models.Model", "Model", "AbstractBaseUser", "AbstractUser"}
+_SCHEMA_BASES = {"BaseModel", "SQLModel"}
+# Fields Django's auth base classes declare for their subclasses.
+_DJANGO_AUTH_FIELDS = {
+    "AbstractBaseUser": (("password", "CharField"), ("last_login", "DateTimeField")),
+    "AbstractUser": (("username", "CharField"), ("first_name", "CharField"), ("last_name", "CharField"),
+                     ("email", "EmailField"), ("password", "CharField"), ("last_login", "DateTimeField"),
+                     ("date_joined", "DateTimeField")),
+}
+
+SCHEMA_MODEL_SOURCE = "Pydantic models and dataclasses"
 
 
 @dataclass
@@ -94,6 +107,8 @@ class _Field:
     optional: bool = False
     target: Optional[str] = None  # class or table this field refers to
     many: bool = False
+    one: bool = False  # one-to-one: at most one object on the other end
+    back: Optional[str] = None  # the code's name for the other end (Django ``related_name``)
 
 
 @dataclass
@@ -102,6 +117,8 @@ class _Entity:
     table: Optional[str]
     fields: list[_Field]
     source: str
+    bases: tuple = ()
+    abstract: bool = False  # Django ``Meta.abstract``, a SQLAlchemy mixin or ``__abstract__``
 
 
 @dataclass
@@ -112,14 +129,17 @@ class _Relation:
     target: str
     foreign_keys: frozenset = frozenset()  # "Owner.column"
     secondary: Optional[str] = None
+    backref: Optional[str] = None  # names the other end
 
 
 @dataclass
 class _Module:
-    """What one Python file declares besides its data classes."""
+    """What the repo's Python files declare besides their data classes."""
     enums: dict = field(default_factory=dict)  # name -> literal names
     relations: list = field(default_factory=list)
     secondaries: dict = field(default_factory=dict)  # variable -> referenced tables
+    bases: dict = field(default_factory=dict)  # class name -> base names
+    fk_helpers: set = field(default_factory=set)  # functions returning a foreign-key Column
 
 
 def analyze_repository(root: str) -> tuple[CodeAnalysis, Optional[DomainModel]]:
@@ -127,15 +147,18 @@ def analyze_repository(root: str) -> tuple[CodeAnalysis, Optional[DomainModel]]:
     analysis = CodeAnalysis(stack=_detect_stack(root))
     candidates: dict[str, list[_Entity]] = {"sqlalchemy": [], "django": [], "schema": []}
     module = _Module()
+    # Two passes: base classes and column helpers are often declared in another file.
+    trees = []
     for path in _python_files(root):
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 tree = ast.parse(fh.read(), filename=path)
         except (SyntaxError, ValueError):
             continue
-        rel = os.path.relpath(path, root).replace(os.sep, "/")
         tree = _Unalias(_import_aliases(tree)).visit(tree)
         _read_module(tree, module)
+        trees.append((os.path.relpath(path, root).replace(os.sep, "/"), tree))
+    for rel, tree in trees:
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 kind, entity = _read_class(node, rel, module)
@@ -143,8 +166,8 @@ def analyze_repository(root: str) -> tuple[CodeAnalysis, Optional[DomainModel]]:
                     candidates[kind].append(entity)
 
     for kind, label in (("sqlalchemy", "SQLAlchemy models"), ("django", "Django models"),
-                        ("schema", "Pydantic models and dataclasses")):
-        entities = _dedupe(candidates[kind])
+                        ("schema", SCHEMA_MODEL_SOURCE)):
+        entities = _with_inherited_fields(_dedupe(candidates[kind]))
         if entities:
             analysis.model_source = label
             analysis.source_files = sorted({e.source for e in entities})
@@ -240,6 +263,34 @@ def _base_names(node: ast.ClassDef) -> set[str]:
     return names
 
 
+def _simple_base_names(node: ast.ClassDef) -> tuple:
+    """``(TimestampedModel, Model)`` for ``class X(TimestampedModel, models.Model)``, in order."""
+    return tuple(b.id if isinstance(b, ast.Name) else b.attr for b in node.bases
+                 if isinstance(b, (ast.Name, ast.Attribute)))
+
+
+def _derives_from(bases: set[str], roots: set[str], module: _Module) -> bool:
+    """True when one of ``bases``, or a class they extend anywhere in the repo, is in ``roots``."""
+    seen, todo = set(), list(bases)
+    while todo:
+        base = todo.pop()
+        if base in roots:
+            return True
+        if base not in seen:
+            seen.add(base)
+            todo.extend(module.bases.get(base, ()))
+    return False
+
+
+def _type_name(node) -> Optional[str]:
+    """``Integer`` / ``db.Integer`` -> "Integer"."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
 def _call_name(node) -> Optional[str]:
     if isinstance(node, ast.Call):
         func = node.func
@@ -289,9 +340,18 @@ class _Unalias(ast.NodeTransformer):
 
 
 def _read_module(tree: ast.Module, module: _Module) -> None:
-    """Enums, relationships declared outside their class, and secondary (many-to-many) tables."""
+    """Class bases, enums, relationships declared outside their class, secondary (many-to-many)
+    tables, and helpers such as ``reference_col('users')`` that return a foreign-key column."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            module.bases[node.name] = _simple_base_names(node)
     for node in tree.body:
-        if isinstance(node, ast.ClassDef) and _base_names(node) & _ENUM_BASES:
+        if isinstance(node, ast.FunctionDef) and any(
+                isinstance(s, ast.Return) and _call_name(s.value) in _ORM_FIELD_CALLS
+                and any(_call_name(c) == "ForeignKey" for c in ast.walk(s.value))
+                for s in ast.walk(node)):
+            module.fk_helpers.add(node.name)
+        elif isinstance(node, ast.ClassDef) and _base_names(node) & _ENUM_BASES:
             literals = [t.id for s in node.body if isinstance(s, ast.Assign)
                         for t in s.targets if isinstance(t, ast.Name) and not t.id.startswith("_")]
             if literals:
@@ -321,12 +381,30 @@ def _relation(owner: str, name: str, value) -> Optional[_Relation]:
         if isinstance(k, ast.Attribute) and isinstance(k.value, ast.Name)
     )
     secondary = _kw(value, "secondary")
+    backref = _kw(value, "backref")
+    if _call_name(backref) == "backref" and backref.args:
+        backref = backref.args[0]  # backref('profile', uselist=False)
     return _Relation(owner, name, target.split(".")[-1], columns,
-                     secondary.id if isinstance(secondary, ast.Name) else _const_str(secondary))
+                     secondary.id if isinstance(secondary, ast.Name) else _const_str(secondary),
+                     _const_str(backref))
+
+
+def _is_abstract(node: ast.ClassDef) -> bool:
+    """Django ``class Meta: abstract = True`` or SQLAlchemy ``__abstract__ = True``."""
+    for statement in node.body:
+        if isinstance(statement, ast.ClassDef) and statement.name == "Meta":
+            if any(isinstance(s, ast.Assign) and any(getattr(t, "id", None) == "abstract" for t in s.targets)
+                   and _is_true(s.value) for s in statement.body):
+                return True
+        elif isinstance(statement, ast.Assign) and any(getattr(t, "id", None) == "__abstract__"
+                                                       for t in statement.targets):
+            return _is_true(statement.value)
+    return False
 
 
 def _read_class(node: ast.ClassDef, source: str, module: _Module) -> tuple[str, Optional[_Entity]]:
     bases = _base_names(node)
+    is_django = _derives_from(bases, _DJANGO_BASES, module)
     decorators = {d.id if isinstance(d, ast.Name) else _call_name(d) for d in node.decorator_list}
     table = None
     orm_fields: list[_Field] = []
@@ -340,12 +418,16 @@ def _read_class(node: ast.ClassDef, source: str, module: _Module) -> tuple[str, 
                 table = _const_str(value)
             elif _call_name(value) in _ORM_FIELD_CALLS:
                 orm_fields.append(_orm_field(name, value, None))
+            elif _call_name(value) in module.fk_helpers and value.args and _const_str(value.args[0]):
+                nullable = _kw(value, "nullable")
+                orm_fields.append(_Field(name=name, type_name="int", target=_const_str(value.args[0]).split(".")[0],
+                                         optional=isinstance(nullable, ast.Constant) and nullable.value is True))
             elif _is_relationship(value):
                 relation = _relation(node.name, name, value)
                 if relation is not None:
                     module.relations.append(relation)
-            elif isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute) and bases & {"models.Model", "Model"}:
-                django = _django_field(name, value)
+            elif isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute) and is_django:
+                django = _django_field(name, value, node.name)
                 if django is not None:
                     django_fields.append(django)
         elif isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
@@ -361,12 +443,18 @@ def _read_class(node: ast.ClassDef, source: str, module: _Module) -> tuple[str, 
             else:
                 annotated.append(_annotated_field(name, statement.annotation))
 
+    own_bases = _simple_base_names(node)
     if orm_fields:
-        return "sqlalchemy", _Entity(node.name, table, orm_fields, source)
-    if django_fields and bases & {"models.Model", "Model"}:
-        return "django", _Entity(node.name, None, django_fields, source)
-    if annotated and (bases & {"BaseModel", "SQLModel"} or "dataclass" in decorators):
-        return "schema", _Entity(node.name, None, annotated, source)
+        # A class with columns but no table that others extend is a mixin (``SurrogatePK``).
+        return "sqlalchemy", _Entity(node.name, table, orm_fields, source, own_bases,
+                                     _is_abstract(node) or table is None)
+    if is_django:
+        for base in own_bases:
+            django_fields += [_Field(name=n, type_name=t) for n, t in _DJANGO_AUTH_FIELDS.get(base, ())]
+    if django_fields and is_django:
+        return "django", _Entity(node.name, None, django_fields, source, own_bases, _is_abstract(node))
+    if annotated and (_derives_from(bases, _SCHEMA_BASES, module) or "dataclass" in decorators):
+        return "schema", _Entity(node.name, None, annotated, source, own_bases)
     return "schema", None
 
 
@@ -380,12 +468,12 @@ def _orm_field(name: str, call: ast.Call, annotation) -> _Field:
         if _call_name(arg) == "ForeignKey" and arg.args:
             ref = _const_str(arg.args[0]) or ""
             target = ref.split(".")[0] or None
-        elif isinstance(arg, ast.Name):
-            type_name = arg.id
+        elif _type_name(arg):
+            type_name = _type_name(arg)  # Integer, db.Integer
         elif _call_name(arg) == "Enum" and arg.args and isinstance(arg.args[0], ast.Name):
             type_name = arg.args[0].id  # Enum(Priority)
-        elif isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name):
-            type_name = arg.func.id
+        elif isinstance(arg, ast.Call) and _type_name(arg.func):
+            type_name = _type_name(arg.func)  # String(80), db.String(80)
     is_id = _is_true(_kw(call, "primary_key"))
     nullable = _kw(call, "nullable")
     if annotation is not None:
@@ -402,7 +490,7 @@ def _orm_field(name: str, call: ast.Call, annotation) -> _Field:
     return _Field(name=name, type_name=type_name, is_id=is_id, optional=optional and not is_id, target=target)
 
 
-def _django_field(name: str, call: ast.Call) -> Optional[_Field]:
+def _django_field(name: str, call: ast.Call, owner: str) -> Optional[_Field]:
     kind = call.func.attr if isinstance(call.func, ast.Attribute) else None
     if not kind or not kind.endswith("Field") and kind not in _DJANGO_RELATIONS:
         return None
@@ -410,8 +498,9 @@ def _django_field(name: str, call: ast.Call) -> Optional[_Field]:
     if kind in _DJANGO_RELATIONS:
         ref = call.args[0] if call.args else _kw(call, "to")
         target = ref.id if isinstance(ref, ast.Name) else (_const_str(ref) or "").split(".")[-1] or None
-        return _Field(name=name, type_name=kind, optional=optional, target=target,
-                      many=kind == "ManyToManyField")
+        return _Field(name=name, type_name=kind, optional=optional, target=owner if target == "self" else target,
+                      many=kind == "ManyToManyField", one=kind == "OneToOneField",
+                      back=_const_str(_kw(call, "related_name")))
     return _Field(name=name, type_name=kind, is_id=_is_true(_kw(call, "primary_key")), optional=optional)
 
 
@@ -452,6 +541,25 @@ def _dedupe(entities: list[_Entity]) -> list[_Entity]:
     return list(seen.values())
 
 
+def _with_inherited_fields(entities: list[_Entity]) -> list[_Entity]:
+    """Abstract bases and mixins that other entities extend are dropped; their fields move into the subclasses."""
+    by_name = {e.name: e for e in entities}
+    parents = {b for e in entities for b in e.bases if b in by_name and by_name[b].abstract}
+
+    def fields(entity: _Entity, seen: frozenset) -> list[_Field]:
+        own = list(entity.fields)
+        names = {f.name for f in own}
+        for base in entity.bases:
+            if base in parents and base not in seen:
+                for inherited in fields(by_name[base], seen | {base}):
+                    if inherited.name not in names:
+                        own.append(inherited)
+                        names.add(inherited.name)
+        return own
+
+    return [replace(e, fields=fields(e, frozenset({e.name}))) for e in entities if e.name not in parents]
+
+
 # --------------------------------------------------------------------------
 # Building the B-UML model
 # --------------------------------------------------------------------------
@@ -472,15 +580,21 @@ def _build_model(entities: list[_Entity], module: _Module) -> DomainModel:
             return None
         return by_table.get(target) or by_lower.get(target.lower()) or by_lower.get(target.lower().rstrip("s"))
 
-    def role(owner: str, target: str, column: Optional[str] = None, secondary: Optional[str] = None):
-        """The code's own name for ``owner``'s side of a link to ``target``, when it is unambiguous."""
+    def relation(owner: str, target: str, column: Optional[str] = None,
+                 secondary: Optional[str] = None) -> Optional[_Relation]:
+        """The ``relationship(...)`` on ``owner`` that reaches ``target`` over this link, when it is unambiguous."""
         options = [r for r in module.relations if r.owner == owner and resolve(r.target) == target]
         if secondary is not None:
             options = [r for r in options if r.secondary == secondary]
         elif column is not None:
             exact = [r for r in options if column in r.foreign_keys]
             options = exact or [r for r in options if not r.foreign_keys and not r.secondary]
-        return options[0].name if len(options) == 1 else None
+        return options[0] if len(options) == 1 else None
+
+    def names(there: Optional[_Relation], back_here: Optional[_Relation]) -> tuple[Optional[str], Optional[str]]:
+        """Both ends' names from the relationships declared on either side (``backref`` names the far one)."""
+        return ((there.name if there else None) or (back_here.backref if back_here else None),
+                (back_here.name if back_here else None) or (there.backref if there else None))
 
     def unique(owner: str, name: str) -> str:
         candidate, n = name, 2
@@ -506,21 +620,26 @@ def _build_model(entities: list[_Entity], module: _Module) -> DomainModel:
     associations = []
     for entity, f, target in links:
         source, column = entity.name, f"{entity.name}.{f.name}"
-        forward = role(source, target, column) or f.name.removesuffix("_id") or target.lower()
-        back = role(target, source, column) or (f"{source.lower()}_set" if f.many else f"{source.lower()}s")
+        there = relation(source, target, column)
+        forward, back = names(there, relation(target, source, column) if target != source else None)
+        forward = forward or f.name.removesuffix("_id") or target.lower()
+        back = back or f.back or (source.lower() if f.one else f"{source.lower()}_set" if f.many
+                                  else f"{source.lower()}s")
         associations.append(BinaryAssociation(name=f"{source}_{f.name}", ends={
             Property(name=unique(source, forward), type=classes[target],
                      multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY) if f.many
                      else Multiplicity(0 if f.optional else 1, 1)),
             Property(name=unique(target, back), type=classes[source],
-                     multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY)),
+                     multiplicity=Multiplicity(0, 1 if f.one else UNLIMITED_MAX_MULTIPLICITY)),
         }))
     for table_var, (left, right) in module.secondaries.items():
         a, b = resolve(left), resolve(right)
-        if not (a and b and a != b):
+        if not (a and b):
             continue
-        to_b = role(a, b, secondary=table_var) or f"{b.lower()}s"
-        to_a = role(b, a, secondary=table_var) or f"{a.lower()}s"
+        # A table joining a class to itself is a self many-to-many (followers).
+        to_b, to_a = names(relation(a, b, secondary=table_var),
+                           relation(b, a, secondary=table_var) if a != b else None)
+        to_b, to_a = to_b or f"{b.lower()}s", to_a or f"{a.lower()}s"
         associations.append(BinaryAssociation(name=f"{a}_{b}", ends={
             Property(name=unique(a, to_b), type=classes[b], multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY)),
             Property(name=unique(b, to_a), type=classes[a], multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY)),

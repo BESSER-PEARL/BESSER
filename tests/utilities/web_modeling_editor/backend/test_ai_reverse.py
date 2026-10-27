@@ -120,6 +120,47 @@ def test_digest_reads_plain_classes_in_an_mvc_model_folder(tmp_path):
     assert "Vue/pageReservation.java" not in files
 
 
+def test_digest_reads_typeorm_entities_before_request_dtos(tmp_path):
+    """github.com/lujakob/nestjs-realworld-example-app: the live digest quoted only ``dto/`` files."""
+    entity = '''
+        import { Entity, Column } from 'typeorm';
+        @Entity('article')
+        export class ArticleEntity {
+          @Column()
+          slug: string;
+        }
+        '''
+    files = {f"src/article/dto/dto{n}.dto.ts": "export class CreateArticleDto {}" for n in range(8)}
+    files["src/article/article.entity.ts"] = entity
+    files["src/user/user.entity.ts"] = entity.replace("Article", "User")
+
+    digest = build_repo_digest(_repo(tmp_path, files))
+
+    assert digest.files[:2] == ["src/article/article.entity.ts", "src/user/user.entity.ts"]
+
+
+def test_digest_reads_laravel_migrations_and_the_authenticatable_user(tmp_path):
+    """github.com/gothinkster/laravel-realworld-example-app: the live digest quoted three models and no table."""
+    files = {f"database/migrations/2017_0{n}_create_t{n}_table.php":
+             f"<?php Schema::create('t{n}', function (Blueprint $table) {{ $table->string('name'); }});"
+             for n in range(6)}
+    files["app/User.php"] = "<?php class User extends Authenticatable implements JWTSubject { }"
+    files["app/Article.php"] = "<?php class Article extends Model { }"
+
+    digest = build_repo_digest(_repo(tmp_path, files))
+
+    assert "app/User.php" in digest.files
+    assert all(f"database/migrations/2017_0{n}_create_t{n}_table.php" in digest.files for n in range(6))
+
+
+def test_digest_reads_alembic_migrations(tmp_path):
+    """github.com/nsidnev/fastapi-realworld-example-app keeps its only table definitions in Alembic."""
+    root = _repo(tmp_path, {"app/db/migrations/versions/fdf8_main_tables.py": API_SCHEMAS[
+        "app/db/migrations/versions/fdf8_main_tables.py"]})
+
+    assert build_repo_digest(root).files == ["app/db/migrations/versions/fdf8_main_tables.py"]
+
+
 def test_digest_redacts_tokens_inside_quoted_files(tmp_path):
     root = _repo(tmp_path, {"db/schema.sql": f"-- token {SECRET}\nCREATE TABLE item (id int);\n"})
 
@@ -129,7 +170,7 @@ def test_digest_redacts_tokens_inside_quoted_files(tmp_path):
 
 
 def test_digest_quotes_at_most_the_file_cap(tmp_path):
-    files = {f"db/{n:02}.sql": "CREATE TABLE t (id int);\n" for n in range(12)}
+    files = {f"db/{n:02}.sql": "CREATE TABLE t (id int);\n" for n in range(ai_reverse._MAX_DATA_FILES + 4)}
 
     digest = build_repo_digest(_repo(tmp_path, files))
 
@@ -219,9 +260,9 @@ class _ImportGitHub:
         return _repo(dest_dir, self.files)
 
 
-def _import(monkeypatch, tmp_path, **body):
+def _import(monkeypatch, tmp_path, files=None, **body):
     monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path))
-    fake = _ImportGitHub({"prisma/schema.prisma": PRISMA, "src/types/order.ts": TS_TYPES})
+    fake = _ImportGitHub(files or {"prisma/schema.prisma": PRISMA, "src/types/order.ts": TS_TYPES})
     monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: fake)
     monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
 
@@ -344,3 +385,67 @@ def test_no_demo_secret_on_the_server_never_opens_the_demo_model(monkeypatch, tm
 
     assert r.status_code == 200, r.text
     assert tiers == ["free"]
+
+
+API_SCHEMAS = {
+    "app/models/schemas/users.py": '''
+        from pydantic import BaseModel
+
+        class UserInLogin(BaseModel):
+            email: str
+            password: str
+        ''',
+    "app/db/migrations/versions/fdf8_main_tables.py": '''
+        from alembic import op
+
+        def upgrade():
+            op.create_table('users')
+        ''',
+}
+
+
+def test_a_repo_with_only_pydantic_models_is_read_by_the_ai_first(monkeypatch, tmp_path):
+    """Pydantic models and dataclasses are mostly API shapes: on the FastAPI RealWorld repo the exact
+    reader proposed 8 request/response classes and no Article, and the AI never ran."""
+    _free_tier(monkeypatch)
+    calls = []
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: calls.append(prompt) or json.dumps(SPEC))
+
+    r = _import(monkeypatch, tmp_path, files=API_SCHEMAS)
+
+    assert r.status_code == 200, r.text
+    assert len(calls) == 1 and "op.create_table" in calls[0]
+    assert r.json()["analysis"]["ai"] is True and r.json()["analysis"]["entities"] == ["Customer", "Order"]
+
+
+def test_a_failed_ai_reading_falls_back_to_the_pydantic_models(monkeypatch, tmp_path):
+    _free_tier(monkeypatch)
+
+    def boom(prompt, *_):
+        raise RuntimeError("upstream down")
+    monkeypatch.setattr(ai_reverse, "_ask_model", boom)
+
+    r = _import(monkeypatch, tmp_path, files=API_SCHEMAS)
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["analysis"]["ai"] is False and body["analysis"]["entities"] == ["UserInLogin"]
+    assert body["proposed_diagram"] is not None and "Pydantic models" in body["message"]
+
+
+def test_orm_models_are_read_exactly_without_asking_the_ai(monkeypatch, tmp_path):
+    _free_tier(monkeypatch)
+    calls = []
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: calls.append(prompt) or json.dumps(SPEC))
+    models = '''
+        from sqlalchemy import Column, Integer
+
+        class Room(Base):
+            __tablename__ = 'rooms'
+            id = Column(Integer, primary_key=True)
+        '''
+
+    r = _import(monkeypatch, tmp_path, files={"app/models.py": models})
+
+    assert r.status_code == 200, r.text
+    assert calls == [] and r.json()["analysis"]["entities"] == ["Room"]

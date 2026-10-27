@@ -94,6 +94,7 @@ from besser.utilities.web_modeling_editor.backend.services.reverse_engineering i
     ai_reading_available,
     analyze_repository,
     propose_model_with_ai,
+    should_read_with_ai,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
@@ -1384,15 +1385,20 @@ async def import_github_run(
             # Not a BESSER repo: read its code for a model the user can accept.
             code_analysis, domain_model = await asyncio.to_thread(analyze_repository, extract_dir)
             ai_message = None
-            if domain_model is None:
+            if should_read_with_ai(code_analysis, domain_model):
                 # A demo tab reads with the demo (sponsored) model; a wrong secret just means
                 # the keyless one: it opens nothing up, so it is not worth failing the import.
                 demo = req.demo_token is not None and _is_demo_token(req.resolved_demo_token())
                 if req.demo_token is not None and not demo:
                     logger.warning("import-github-run: invalid demo token, reading with the keyless model")
-                domain_model, code_analysis, ai_message = await _read_repo_with_ai(
+                ai_model, ai_analysis, ai_message = await _read_repo_with_ai(
                     extract_dir, code_analysis, owner, repo,
                     SPONSORED_PROVIDER if demo else FREE_TIER_PROVIDER)
+                if ai_model is not None:
+                    domain_model, code_analysis = ai_model, ai_analysis
+                elif domain_model is not None:
+                    logger.warning("import-github-run: proposing the %s of %s/%s, as the AI reading gave no model",
+                                   code_analysis.model_source, owner, repo)
             analysis = code_analysis.to_dict()
             if domain_model is not None:
                 proposed_diagram = {

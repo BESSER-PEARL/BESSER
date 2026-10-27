@@ -76,10 +76,12 @@ Endpoints
        BESSER model (``has_model: false``) is read for SQLAlchemy, Django,
        Pydantic or dataclass models: ``analysis`` says what was found and
        ``proposed_diagram`` is the resulting class diagram, or ``null``.
-       When no such models are found and the server offers the keyless
-       model, that model reads a bounded digest of the code (schemas, types,
+       When no such models are found, or only Pydantic and dataclass models
+       (mostly API shapes), and the server offers the keyless model, that
+       model reads a bounded digest of the code (schemas, migrations, types,
        entities, README; secrets left out) and proposes the diagram instead,
-       with ``analysis.ai: true``; a failed or timed-out reading returns no
+       with ``analysis.ai: true``; a failed or timed-out reading falls back to
+       the Pydantic or dataclass models when there are any, else returns no
        proposal and a ``message``. A body carrying the valid demo secret
        (``demo_token``, from a ``?demo=`` link) is read by the sponsored
        model instead; a wrong secret falls back to the keyless one.

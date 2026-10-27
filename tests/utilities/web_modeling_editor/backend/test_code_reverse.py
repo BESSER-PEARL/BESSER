@@ -343,3 +343,97 @@ def test_pydantic_models_extending_the_repos_own_base_model_are_read(tmp_path):
     analysis, _model = analyze_repository(root)
 
     assert analysis.entities == ["User"]
+
+
+def test_sqlalchemy_joined_inheritance_is_a_generalization(tmp_path):
+    """BESSER's SQLAlchemy generator writes ``Author(Person)`` with a key joining the two tables and a
+    ``type_spec`` discriminator; the round-trip benchmark read no generalization and an
+    ``Author -> Person`` association instead. A self link's two ends came back as ``authors``."""
+    root = _repo(tmp_path, {"backend/sql_alchemy.py": '''
+        from sqlalchemy import ForeignKey, String
+        from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+        class Base(DeclarativeBase):
+            pass
+
+        class Person(Base):
+            __tablename__ = "person"
+            id: Mapped[int] = mapped_column(primary_key=True)
+            name: Mapped[str] = mapped_column(String(100))
+            type_spec: Mapped[str] = mapped_column(String(50))
+            __mapper_args__ = {"polymorphic_identity": "person", "polymorphic_on": "type_spec"}
+
+        class Author(Person):
+            __tablename__ = "author"
+            id: Mapped[int] = mapped_column(ForeignKey("person.id"), primary_key=True)
+            email: Mapped[str] = mapped_column(String(100))
+            mentor_id: Mapped[int] = mapped_column(ForeignKey("author.id"), nullable=True)
+            __mapper_args__ = {"polymorphic_identity": "author"}
+
+        Author.mentees: Mapped[list["Author"]] = relationship(
+            "Author", back_populates="mentor", foreign_keys=[Author.mentor_id])
+        Author.mentor: Mapped["Author"] = relationship(
+            "Author", back_populates="mentees", uselist=False, foreign_keys=[Author.mentor_id],
+            remote_side=[Author.id])
+        '''})
+
+    _analysis, model = analyze_repository(root)
+
+    assert {(g.specific.name, g.general.name) for g in model.generalizations} == {("Author", "Person")}
+    assert _attrs(model, "Person") == {"id": ("int", True, 1), "name": ("str", False, 1)}
+    assert _attrs(model, "Author") == {"email": ("str", False, 1)}
+    assert _ends(model) == [["mentees->Author[0..9999]", "mentor->Author[0..1]"]]
+
+
+def test_django_multi_table_inheritance_and_text_choices(tmp_path):
+    """BESSER's Django generator writes ``class Genre(models.TextChoices)`` and
+    ``CharField(choices=Genre.choices)``: the enum and the generalization were both lost."""
+    root = _repo(tmp_path, {"library/models.py": '''
+        from django.db import models
+
+        class Genre(models.TextChoices):
+            FICTION = 'FICTION', 'FICTION'
+            SCIENCE = 'SCIENCE', 'SCIENCE'
+
+        class Person(models.Model):
+            name = models.CharField(max_length=255)
+
+        class Author(Person):
+            email = models.CharField(max_length=255)
+
+        class Book(models.Model):
+            class Format(models.IntegerChoices):
+                PAPER = 1
+                EBOOK = 2
+
+            genre = models.CharField(max_length=255, choices=Genre.choices)
+            format = models.IntegerField(choices=Format.choices)
+        '''})
+
+    _analysis, model = analyze_repository(root)
+
+    assert {(g.specific.name, g.general.name) for g in model.generalizations} == {("Author", "Person")}
+    assert {e.name: {lit.name for lit in e.literals} for e in model.get_enumerations()} == {
+        "Genre": {"FICTION", "SCIENCE"}, "Format": {"PAPER", "EBOOK"}}
+    assert _attrs(model, "Book") == {"genre": ("Genre", False, 1), "format": ("Format", False, 1)}
+
+
+def test_a_subclass_does_not_repeat_the_fields_it_inherits(tmp_path):
+    """Pydantic subclasses restate parent fields (``UserInDB(User)``); B-UML inherits them."""
+    root = _repo(tmp_path, {"app/models.py": '''
+        from typing import Optional
+        from pydantic import BaseModel
+
+        class User(BaseModel):
+            username: str
+            email: str
+
+        class UserInDB(User):
+            email: Optional[str]
+            hashed_password: str
+        '''})
+
+    _analysis, model = analyze_repository(root)
+
+    assert {(g.specific.name, g.general.name) for g in model.generalizations} == {("UserInDB", "User")}
+    assert set(_attrs(model, "UserInDB")) == {"hashed_password"}

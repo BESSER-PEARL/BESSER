@@ -139,6 +139,32 @@ def test_digest_reads_typeorm_entities_before_request_dtos(tmp_path):
     assert digest.files[:2] == ["src/article/article.entity.ts", "src/user/user.entity.ts"]
 
 
+def test_digest_labels_request_dtos_as_api_shapes(tmp_path):
+    """github.com/lujakob/nestjs-realworld-example-app: the AI drew five ``*Dto`` classes beside the entities."""
+    files = {
+        "src/user/user.entity.ts": "@Entity('user')\nexport class UserEntity {\n  username: string;\n}\n",
+        "src/user/dto/create-user.dto.ts": "export class CreateUserDto {\n  readonly username: string;\n}\n",
+        "src/user/dto/index.ts": "export { CreateUserDto } from './create-user.dto';\n",
+    }
+
+    digest = build_repo_digest(_repo(tmp_path, files))
+
+    assert digest.files[:2] == ["src/user/user.entity.ts", "src/user/dto/create-user.dto.ts"]
+    assert "## File: src/user/dto/create-user.dto.ts (API request/response shapes)" in digest.text
+    assert "src/user/dto/index.ts" not in digest.files
+
+
+def test_prompt_keeps_hidden_credentials_drops_api_shapes_and_reads_id_named_links():
+    """Live misses on the RealWorld benchmark: aspnetcore's ``[JsonIgnore] byte[] Hash`` was dropped,
+    nestjs's ``FollowsEntity { followerId; followingId }`` became no link, and nestjs/fastapi request
+    DTOs and JWT payloads were drawn as classes."""
+    prompt = ai_reverse._USER_PROMPT.format(max_classes=30, digest="")
+
+    assert "credentials (password hashes, salts)" in prompt and "byte[]" in prompt
+    assert "followerId and followingId both refer to the user" in prompt
+    assert "authentication token contents (JWT claims)" in prompt
+
+
 def test_digest_reads_laravel_migrations_and_the_authenticatable_user(tmp_path):
     """github.com/gothinkster/laravel-realworld-example-app: the live digest quoted three models and no table."""
     files = {f"database/migrations/2017_0{n}_create_t{n}_table.php":

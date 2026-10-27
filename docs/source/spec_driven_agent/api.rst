@@ -74,8 +74,9 @@ Endpoints
        (``commit_sha`` in the response) and written to the shared run
        workspace, where the Spec-Driven worker finds it. A repo without a
        BESSER model (``has_model: false``) is read for SQLAlchemy, Django,
-       Pydantic or dataclass models: ``analysis`` says what was found and
-       ``proposed_diagram`` is the resulting class diagram, or ``null``.
+       Pydantic or dataclass models, with their enumerations (including
+       Django ``TextChoices``) and inheritance: ``analysis`` says what was
+       found and ``proposed_diagram`` is the resulting class diagram, or ``null``.
        When no such models are found, or only Pydantic and dataclass models
        (mostly API shapes), and the server offers the keyless model, that
        model reads a bounded digest of the code (schemas, migrations, types,

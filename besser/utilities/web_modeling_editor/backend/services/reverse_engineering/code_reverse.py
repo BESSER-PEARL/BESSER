@@ -37,6 +37,7 @@ from besser.BUML.metamodel.structural import (
     Enumeration,
     EnumerationLiteral,
     FloatType,
+    Generalization,
     IntegerType,
     Multiplicity,
     Property,
@@ -68,7 +69,8 @@ _TYPE_BY_NAME = {
 }
 
 _ORM_FIELD_CALLS = {"Column", "mapped_column"}
-_ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "enum.Enum", "enum.IntEnum", "enum.StrEnum"}
+_ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "enum.Enum", "enum.IntEnum", "enum.StrEnum",
+               "TextChoices", "IntegerChoices", "models.TextChoices", "models.IntegerChoices"}
 _DJANGO_RELATIONS = {"ForeignKey", "OneToOneField", "ManyToManyField"}
 _DJANGO_BASES = {"models.Model", "Model", "AbstractBaseUser", "AbstractUser"}
 _SCHEMA_BASES = {"BaseModel", "SQLModel"}
@@ -340,22 +342,23 @@ class _Unalias(ast.NodeTransformer):
 
 
 def _read_module(tree: ast.Module, module: _Module) -> None:
-    """Class bases, enums, relationships declared outside their class, secondary (many-to-many)
-    tables, and helpers such as ``reference_col('users')`` that return a foreign-key column."""
+    """Class bases, enums (also Django choices nested in a model), relationships declared outside
+    their class, secondary (many-to-many) tables, and helpers such as ``reference_col('users')``
+    that return a foreign-key column."""
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             module.bases[node.name] = _simple_base_names(node)
+            if _base_names(node) & _ENUM_BASES:
+                literals = [t.id for s in node.body if isinstance(s, ast.Assign)
+                            for t in s.targets if isinstance(t, ast.Name) and not t.id.startswith("_")]
+                if literals:
+                    module.enums[node.name] = literals
     for node in tree.body:
         if isinstance(node, ast.FunctionDef) and any(
                 isinstance(s, ast.Return) and _call_name(s.value) in _ORM_FIELD_CALLS
                 and any(_call_name(c) == "ForeignKey" for c in ast.walk(s.value))
                 for s in ast.walk(node)):
             module.fk_helpers.add(node.name)
-        elif isinstance(node, ast.ClassDef) and _base_names(node) & _ENUM_BASES:
-            literals = [t.id for s in node.body if isinstance(s, ast.Assign)
-                        for t in s.targets if isinstance(t, ast.Name) and not t.id.startswith("_")]
-            if literals:
-                module.enums[node.name] = literals
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Attribute) \
                 and isinstance(node.target.value, ast.Name):
             relation = _relation(node.target.value.id, node.target.attr, node.value)
@@ -410,12 +413,16 @@ def _read_class(node: ast.ClassDef, source: str, module: _Module) -> tuple[str, 
     orm_fields: list[_Field] = []
     annotated: list[_Field] = []
     django_fields: list[_Field] = []
+    discriminator = None  # the column SQLAlchemy stores the subclass in, not domain data
 
     for statement in node.body:
         if isinstance(statement, ast.Assign) and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name):
             name, value = statement.targets[0].id, statement.value
             if name == "__tablename__":
                 table = _const_str(value)
+            elif name == "__mapper_args__" and isinstance(value, ast.Dict):
+                on = next((v for k, v in zip(value.keys, value.values) if _const_str(k) == "polymorphic_on"), None)
+                discriminator = _const_str(on) or (on.id if isinstance(on, ast.Name) else None)
             elif _call_name(value) in _ORM_FIELD_CALLS:
                 orm_fields.append(_orm_field(name, value, None))
             elif _call_name(value) in module.fk_helpers and value.args and _const_str(value.args[0]):
@@ -444,6 +451,7 @@ def _read_class(node: ast.ClassDef, source: str, module: _Module) -> tuple[str, 
                 annotated.append(_annotated_field(name, statement.annotation))
 
     own_bases = _simple_base_names(node)
+    orm_fields = [f for f in orm_fields if f.name != discriminator]
     if orm_fields:
         # A class with columns but no table that others extend is a mixin (``SurrogatePK``).
         return "sqlalchemy", _Entity(node.name, table, orm_fields, source, own_bases,
@@ -501,6 +509,9 @@ def _django_field(name: str, call: ast.Call, owner: str) -> Optional[_Field]:
         return _Field(name=name, type_name=kind, optional=optional, target=owner if target == "self" else target,
                       many=kind == "ManyToManyField", one=kind == "OneToOneField",
                       back=_const_str(_kw(call, "related_name")))
+    choices = _kw(call, "choices")
+    if isinstance(choices, ast.Attribute) and choices.attr == "choices" and isinstance(choices.value, ast.Name):
+        kind = choices.value.id  # choices=Genre.choices: the field holds a Genre
     return _Field(name=name, type_name=kind, is_id=_is_true(_kw(call, "primary_key")), optional=optional)
 
 
@@ -571,8 +582,28 @@ def _build_model(entities: list[_Entity], module: _Module) -> DomainModel:
              for name, literals in module.enums.items() if name not in classes}
     by_table = {e.table: e.name for e in entities if e.table}
     by_lower = {name.lower(): name for name in classes}
+    parents = {e.name: [b for b in e.bases if b in classes and b != e.name] for e in entities}
+    generalizations = {Generalization(general=classes[p], specific=classes[child])
+                       for child, ps in parents.items() for p in ps}
+
+    def ancestors(name: str) -> set[str]:
+        found, todo = set(), list(parents[name])
+        while todo:
+            parent = todo.pop()
+            if parent not in found:
+                found.add(parent)
+                todo.extend(parents[parent])
+        return found
+
+    # One namespace per inheritance family: an end may not repeat a name anywhere in the hierarchy.
+    family = {name: name for name in classes}
+    for child, ps in parents.items():
+        for parent in ps:
+            family[_root(family, child)] = _root(family, parent)
+    names_by_family: dict[str, set[str]] = {}
     # Names already taken on each class: an end may not repeat an attribute or another end.
-    used: dict[str, set[str]] = {name: set() for name in classes}
+    used = {name: names_by_family.setdefault(_root(family, name), set()) for name in classes}
+    declared = {e.name: {f.name for f in e.fields} for e in entities}
     links: list[tuple[_Entity, _Field, str]] = []
 
     def resolve(target: Optional[str]) -> Optional[str]:
@@ -605,8 +636,11 @@ def _build_model(entities: list[_Entity], module: _Module) -> DomainModel:
 
     for entity in entities:
         owner = classes[entity.name]
+        inherited = set().union(*(declared[a] for a in ancestors(entity.name)))
         for f in entity.fields:
             target = resolve(f.target) or (resolve(f.type_name) if f.type_name in classes else None)
+            if f.name in inherited or (f.is_id and target in parents[entity.name]):
+                continue  # declared by a parent, or the key joining a subclass table to its parent's
             if target and target in classes:
                 links.append((entity, f, target))
                 continue
@@ -620,8 +654,15 @@ def _build_model(entities: list[_Entity], module: _Module) -> DomainModel:
     associations = []
     for entity, f, target in links:
         source, column = entity.name, f"{entity.name}.{f.name}"
-        there = relation(source, target, column)
-        forward, back = names(there, relation(target, source, column) if target != source else None)
+        if target == source:
+            # A self link declares both ends on one class over the same key: ``mentor`` and ``mentees``.
+            ends = [r for r in module.relations
+                    if r.owner == source and resolve(r.target) == source and column in r.foreign_keys]
+            there = next((r for r in ends if r.name == f.name.removesuffix("_id")), None)
+            others = [r for r in ends if r is not there]
+            forward, back = names(there, others[0] if there and len(others) == 1 else None)
+        else:
+            forward, back = names(relation(source, target, column), relation(target, source, column))
         forward = forward or f.name.removesuffix("_id") or target.lower()
         back = back or f.back or (source.lower() if f.one else f"{source.lower()}_set" if f.many
                                   else f"{source.lower()}s")
@@ -645,10 +686,17 @@ def _build_model(entities: list[_Entity], module: _Module) -> DomainModel:
             Property(name=unique(b, to_a), type=classes[a], multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY)),
         }))
 
-    model = DomainModel(name="ImportedModel", types=set(classes.values()) | set(enums.values()))
+    model = DomainModel(name="ImportedModel", types=set(classes.values()) | set(enums.values()),
+                        generalizations=generalizations)
     names = set()
     for association in associations:
         if association.name not in names:
             names.add(association.name)
             model.add_association(association)
     return model
+
+
+def _root(family: dict[str, str], name: str) -> str:
+    while family[name] != name:
+        name = family[name]
+    return name

@@ -73,6 +73,7 @@ AI_READ_TIMEOUT_SECONDS = 90.0
 _README_NAMES = ("readme.md", "readme.rst", "readme.txt", "readme")
 _DATA_DIRS = {"types", "models", "model", "entities", "entity", "domain", "schemas", "schema",
               "interfaces", "dto", "dtos", "beans", "modele", "modeles"}
+_API_SHAPE_DIRS = {"dto", "dtos"}
 # Languages whose plain classes in a model folder are the data (an MVC "Model/" of POJOs).
 _CLASS_SOURCE_SUFFIXES = (".java", ".kt", ".cs", ".scala", ".swift", ".dart", ".ts", ".js", ".py", ".rb", ".php")
 _SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".crt", ".jks", ".keystore")
@@ -108,6 +109,11 @@ def _in_data_dir(path: str) -> bool:
     return bool(set(path.split("/")[:-1]) & _DATA_DIRS)
 
 
+def _is_api_shape_file(path: str) -> bool:
+    """Request/response classes (``dto/create-user.dto.ts``), which restate the stored entities."""
+    return bool(set(path.split("/")[:-1]) & _API_SHAPE_DIRS) or ".dto." in _name(path)
+
+
 def _is_ts_types_file(path: str) -> bool:
     name = _name(path)
     return path.endswith((".ts", ".tsx")) and (
@@ -136,6 +142,10 @@ _DATA_FILE_RULES = (
                   re.compile(r"@Entity\s*\(")),
     _DataFileRule("Mongoose schema", 1, lambda p: p.endswith((".js", ".mjs", ".cjs", ".ts")),
                   re.compile(r"new\s+(mongoose\.)?Schema\s*\(|mongoose\.model\s*\(")),
+    # Read after the entities, and labelled so the model does not draw them as classes of their own.
+    _DataFileRule("API request/response shapes", 3,
+                  lambda p: p.endswith(_CLASS_SOURCE_SUFFIXES) and _is_api_shape_file(p),
+                  re.compile(r"\b(class|struct|record|interface)\s+[A-Z]\w*")),
     _DataFileRule("JSON Schema", 2, lambda p: p.endswith(".schema.json")),
     _DataFileRule("C# entity", 2, lambda p: p.endswith(".cs"), re.compile(r"\bDbSet<|\[Key\]|\{\s*get;\s*set;\s*\}")),
     _DataFileRule("TypeScript types", 2, _is_ts_types_file, re.compile(r"\b(interface|type)\s+[A-Z]\w*")),
@@ -158,8 +168,19 @@ files most likely to describe its data. Propose the domain model the code stores
 Rules:
 - Classes are the stored or exchanged entities (tables, models, entities, records). Skip framework,
   controller, service, component and configuration classes.
+- When the repository stores entities, leave out the shapes that only carry them in and out of the
+  API: request and response objects (DTOs, *Request, *Response, *Input, *Envelope, *InCreate,
+  *InResponse), view models and authentication token contents (JWT claims). Use them only for
+  fields the entity lacks. Draw them as classes only when the repository has no stored entities.
+- Keep every field the entity stores, also fields hidden from the API (JsonIgnore, select: false,
+  $hidden) and credentials (password hashes, salts). Binary fields (byte[], bytes, Buffer, blob)
+  are str.
 - Attribute types: one of str, int, float, bool, date, datetime, time, or the name of an enumeration
   you declare. A reference to another class is a relationship, not an attribute.
+- A field holding another entity's id is a relationship to that entity, even without a declared
+  foreign key: authorId or author_id refers to the author's class. When the name is a role, read
+  the entity from its meaning: followerId and followingId both refer to the user, so a class
+  holding just those two ids is a many-to-many between users.
 - Relationships: type is "Association", "Composition", "Aggregation" or "Inheritance"; multiplicities
   are "1", "0..1", "*", "0..*" or "1..*"; name is the role the source uses to reach the target.
   For "Inheritance", source is the subclass and target its parent.

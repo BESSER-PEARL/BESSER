@@ -110,6 +110,8 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.github_dep
 )
 from besser.spec_driven_agent.providers.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
 from besser.spec_driven_agent.providers.llm_client import (
+    FREE_TIER_PROVIDER,
+    SPONSORED_PROVIDER,
     free_alt_models,
     free_fallback_model,
     free_pilot_model,
@@ -272,16 +274,18 @@ def _require_demo_token(request: SmartGenerateRequest) -> None:
     """
     if request.provider != "sponsored":
         return
-    expected = os.environ.get("BESSER_DEMO_TOKEN", "").strip()
-    supplied = request.resolved_demo_token().strip()
-    if not expected or not hmac.compare_digest(
-        supplied.encode("utf-8"), expected.encode("utf-8"),
-    ):
+    if not _is_demo_token(request.resolved_demo_token()):
         logger.warning("Rejected a sponsored-tier run without a valid demo token")
         raise HTTPException(
             status_code=403,
             detail="The sponsored tier is not available on this server.",
         )
+
+
+def _is_demo_token(supplied: str) -> bool:
+    """True when ``supplied`` is the demo secret; always False while ``BESSER_DEMO_TOKEN`` is unset."""
+    expected = os.environ.get("BESSER_DEMO_TOKEN", "").strip()
+    return bool(expected) and hmac.compare_digest(supplied.strip().encode("utf-8"), expected.encode("utf-8"))
 
 
 def _run_stream_response(run_id: str, after_sequence: int = 0) -> StreamingResponse:
@@ -1243,11 +1247,14 @@ async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) ->
     return run_id, extract_dir
 
 
-async def _read_repo_with_ai(extract_dir, code_analysis, owner, repo):
-    """``(model, analysis, message)`` from the AI fallback reader; the message explains a missing model."""
-    if not ai_reading_available():
-        logger.warning("import-github-run: no readable data classes in %s/%s and no keyless model "
-                       "for an AI reading", owner, repo)
+async def _read_repo_with_ai(extract_dir, code_analysis, owner, repo, provider=FREE_TIER_PROVIDER):
+    """``(model, analysis, message)`` from the AI fallback reader; the message explains a missing model.
+
+    ``provider`` is the server-paid tier: ``sponsored`` for a demo tab, else ``free``.
+    """
+    if not ai_reading_available(provider):
+        logger.warning("import-github-run: no readable data classes in %s/%s and no %s model "
+                       "for an AI reading", owner, repo, provider)
         return None, code_analysis, (
             "This repo has no BESSER model and no data classes BESSER can read, and "
             "AI reading is not available on this server; you can still work on its code.")
@@ -1255,7 +1262,7 @@ async def _read_repo_with_ai(extract_dir, code_analysis, owner, repo):
     ai_analysis = dataclasses.replace(code_analysis)
     try:
         model = await asyncio.wait_for(
-            asyncio.to_thread(propose_model_with_ai, extract_dir, ai_analysis),
+            asyncio.to_thread(propose_model_with_ai, extract_dir, ai_analysis, provider),
             timeout=AI_READ_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -1378,8 +1385,14 @@ async def import_github_run(
             code_analysis, domain_model = await asyncio.to_thread(analyze_repository, extract_dir)
             ai_message = None
             if domain_model is None:
+                # A demo tab reads with the demo (sponsored) model; a wrong secret just means
+                # the keyless one: it opens nothing up, so it is not worth failing the import.
+                demo = req.demo_token is not None and _is_demo_token(req.resolved_demo_token())
+                if req.demo_token is not None and not demo:
+                    logger.warning("import-github-run: invalid demo token, reading with the keyless model")
                 domain_model, code_analysis, ai_message = await _read_repo_with_ai(
-                    extract_dir, code_analysis, owner, repo)
+                    extract_dir, code_analysis, owner, repo,
+                    SPONSORED_PROVIDER if demo else FREE_TIER_PROVIDER)
             analysis = code_analysis.to_dict()
             if domain_model is not None:
                 proposed_diagram = {

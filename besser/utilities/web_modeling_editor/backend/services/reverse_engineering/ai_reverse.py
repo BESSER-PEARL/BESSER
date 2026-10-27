@@ -19,8 +19,10 @@ from typing import Callable, Optional
 from besser.BUML.metamodel.structural import DomainModel
 from besser.spec_driven_agent.providers.llm_client import (
     FREE_TIER_PROVIDER,
+    SPONSORED_PROVIDER,
     create_llm_client,
     free_tier_available,
+    sponsored_tier_available,
 )
 from besser.utilities.kg_to_buml import clean_json_response, convert_spec_json_to_buml, parse_json_safely
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
@@ -185,13 +187,17 @@ class RepoDigest:
     files: list[str] = field(default_factory=list)
 
 
-def ai_reading_available() -> bool:
-    """True when the server offers the keyless model the AI reading runs on."""
-    return free_tier_available()
+def ai_reading_available(provider: str = FREE_TIER_PROVIDER) -> bool:
+    """True when the server offers ``provider``: the keyless model, or the sponsored one for demo tabs."""
+    return sponsored_tier_available() if provider == SPONSORED_PROVIDER else free_tier_available()
 
 
-def propose_model_with_ai(root: str, analysis: CodeAnalysis) -> Optional[DomainModel]:
+def propose_model_with_ai(root: str, analysis: CodeAnalysis,
+                          provider: str = FREE_TIER_PROVIDER) -> Optional[DomainModel]:
     """A model proposed by the LLM from the repo at ``root``, or None when it could not read one.
+
+    ``provider`` is the server-paid tier to read with: ``free`` (keyless) or
+    ``sponsored`` (the demo tier, only for a request that carried the demo secret).
 
     On success ``analysis`` is marked as an AI reading (``ai``, ``model_source``,
     ``source_files``, ``entities``). Failures are logged and return None.
@@ -201,7 +207,7 @@ def propose_model_with_ai(root: str, analysis: CodeAnalysis) -> Optional[DomainM
         logger.warning("AI code reading skipped for %s: no README or data-describing files", root)
         return None
     try:
-        reply = _ask_model(_USER_PROMPT.format(max_classes=_MAX_CLASSES, digest=digest.text))
+        reply = _ask_model(_USER_PROMPT.format(max_classes=_MAX_CLASSES, digest=digest.text), provider)
     except Exception:
         logger.warning("AI code reading failed: the model call raised", exc_info=True)
         return None
@@ -315,9 +321,9 @@ def _read(root: str, path: str, limit: int) -> str:
 # --------------------------------------------------------------------------
 
 
-def _ask_model(prompt: str) -> str:
-    """One completion from the keyless model; the reply text."""
-    client = create_llm_client(provider=FREE_TIER_PROVIDER, max_tokens=_MAX_OUTPUT_TOKENS,
+def _ask_model(prompt: str, provider: str = FREE_TIER_PROVIDER) -> str:
+    """One completion from a server-paid tier; the reply text."""
+    client = create_llm_client(provider=provider, max_tokens=_MAX_OUTPUT_TOKENS,
                                timeout=_REQUEST_TIMEOUT_SECONDS)
     response = client.chat(system=_SYSTEM_PROMPT, messages=[{"role": "user", "content": prompt}], tools=[])
     texts = []

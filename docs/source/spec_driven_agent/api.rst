@@ -80,7 +80,9 @@ Endpoints
        model, that model reads a bounded digest of the code (schemas, types,
        entities, README; secrets left out) and proposes the diagram instead,
        with ``analysis.ai: true``; a failed or timed-out reading returns no
-       proposal and a ``message``.
+       proposal and a ``message``. A body carrying the valid demo secret
+       (``demo_token``, from a ``?demo=`` link) is read by the sponsored
+       model instead; a wrong secret falls back to the keyless one.
        Requires an ``X-GitHub-Session`` header.
 
 Request body

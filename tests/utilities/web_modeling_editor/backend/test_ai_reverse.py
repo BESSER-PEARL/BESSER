@@ -151,7 +151,7 @@ def test_reply_becomes_a_validated_model(monkeypatch, tmp_path):
         "classes": SPEC["classes"] + [{"className": "bad name!"}, {"className": "1st"}, {"className": "Order"}],
         "relationships": SPEC["relationships"] + [{"type": "Association", "source": "Order", "target": "Ghost"}],
     }) + "\n```"
-    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt: reply)
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: reply)
     analysis = CodeAnalysis()
 
     model = propose_model_with_ai(_shop_repo(tmp_path), analysis)
@@ -173,7 +173,7 @@ def test_inheritance_source_is_the_subclass_and_a_two_way_pair_is_dropped(monkey
         "relationships": [{"type": "Inheritance", "source": "Admin", "target": "User"},
                           {"type": "Inheritance", "source": "User", "target": "Admin"}],
     }
-    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt: json.dumps(spec))
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: json.dumps(spec))
 
     model = propose_model_with_ai(_shop_repo(tmp_path), CodeAnalysis())
 
@@ -182,7 +182,7 @@ def test_inheritance_source_is_the_subclass_and_a_two_way_pair_is_dropped(monkey
 
 def test_class_count_is_capped(monkeypatch, tmp_path):
     spec = {"classes": [{"className": f"C{n}", "attributes": []} for n in range(50)]}
-    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt: json.dumps(spec))
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: json.dumps(spec))
 
     model = propose_model_with_ai(_shop_repo(tmp_path), CodeAnalysis())
 
@@ -190,7 +190,7 @@ def test_class_count_is_capped(monkeypatch, tmp_path):
 
 
 def test_unparseable_reply_gives_no_model(monkeypatch, tmp_path):
-    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt: "I cannot help with that.")
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: "I cannot help with that.")
     analysis = CodeAnalysis()
 
     assert propose_model_with_ai(_shop_repo(tmp_path), analysis) is None
@@ -219,7 +219,7 @@ class _ImportGitHub:
         return _repo(dest_dir, self.files)
 
 
-def _import(monkeypatch, tmp_path):
+def _import(monkeypatch, tmp_path, **body):
     monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path))
     fake = _ImportGitHub({"prisma/schema.prisma": PRISMA, "src/types/order.ts": TS_TYPES})
     monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: fake)
@@ -228,13 +228,14 @@ def _import(monkeypatch, tmp_path):
     async def post():
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
             return await client.post("/besser_api/spec-driven/import-github-run",
-                                     json={"owner": "me", "repo": "shop"}, headers={"X-GitHub-Session": "s"})
+                                     json={"owner": "me", "repo": "shop", **body},
+                                     headers={"X-GitHub-Session": "s"})
     return asyncio.run(post())
 
 
 def test_import_proposes_an_ai_model_when_the_code_has_no_readable_data_classes(monkeypatch, tmp_path):
     _free_tier(monkeypatch)
-    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt: json.dumps(SPEC))
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: json.dumps(SPEC))
 
     r = _import(monkeypatch, tmp_path)
 
@@ -255,7 +256,7 @@ def test_import_proposes_an_ai_model_when_the_code_has_no_readable_data_classes(
 def test_import_succeeds_without_a_proposal_when_the_ai_fails(monkeypatch, tmp_path):
     _free_tier(monkeypatch)
 
-    def boom(prompt):
+    def boom(prompt, *_):
         raise RuntimeError("upstream down")
     monkeypatch.setattr(ai_reverse, "_ask_model", boom)
 
@@ -272,7 +273,7 @@ def test_a_slow_ai_reading_times_out_and_the_import_still_succeeds(monkeypatch, 
     _free_tier(monkeypatch)
     monkeypatch.setattr(spec_driven_router, "AI_READ_TIMEOUT_SECONDS", 0.05)
 
-    def slow(prompt):
+    def slow(prompt, *_):
         time.sleep(0.5)
         return json.dumps(SPEC)
     monkeypatch.setattr(ai_reverse, "_ask_model", slow)
@@ -287,10 +288,59 @@ def test_import_skips_the_ai_when_the_server_has_no_keyless_model(monkeypatch, t
     monkeypatch.delenv("BESSER_FREE_LLM_BASE_URL", raising=False)
     monkeypatch.delenv("BESSER_FREE_LLM_MODEL", raising=False)
     calls = []
-    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt: calls.append(prompt) or "{}")
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: calls.append(prompt) or "{}")
 
     r = _import(monkeypatch, tmp_path)
 
     assert r.status_code == 200, r.text
     assert r.json()["proposed_diagram"] is None and calls == []
     assert "AI reading is not available" in r.json()["message"]
+
+
+DEMO = "demo-secret-1234"
+
+
+def _demo_tier(monkeypatch):
+    monkeypatch.setenv("BESSER_DEMO_TOKEN", DEMO)
+    monkeypatch.setenv("BESSER_SPONSORED_LLM_BASE_URL", "http://sponsored.test/v1")
+    monkeypatch.setenv("BESSER_SPONSORED_LLM_TOKEN", "sponsored-token")
+    monkeypatch.setenv("BESSER_SPONSORED_LLM_MODEL", "sponsored-model")
+
+
+def test_a_demo_tab_reads_the_repo_with_the_demo_model(monkeypatch, tmp_path):
+    """On experimental the keyless model was out of credits; demo links have a paid one."""
+    _free_tier(monkeypatch)
+    _demo_tier(monkeypatch)
+    tiers = []
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, provider: tiers.append(provider) or json.dumps(SPEC))
+
+    r = _import(monkeypatch, tmp_path, demo_token=DEMO)
+
+    assert r.status_code == 200, r.text
+    assert tiers == ["sponsored"]
+    assert r.json()["analysis"]["ai"] is True
+
+
+def test_a_wrong_demo_token_reads_with_the_keyless_model(monkeypatch, tmp_path):
+    _free_tier(monkeypatch)
+    _demo_tier(monkeypatch)
+    tiers = []
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, provider: tiers.append(provider) or json.dumps(SPEC))
+
+    r = _import(monkeypatch, tmp_path, demo_token="not-the-secret")
+
+    assert r.status_code == 200, r.text
+    assert tiers == ["free"]
+
+
+def test_no_demo_secret_on_the_server_never_opens_the_demo_model(monkeypatch, tmp_path):
+    _free_tier(monkeypatch)
+    _demo_tier(monkeypatch)
+    monkeypatch.delenv("BESSER_DEMO_TOKEN")
+    tiers = []
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, provider: tiers.append(provider) or json.dumps(SPEC))
+
+    r = _import(monkeypatch, tmp_path, demo_token=DEMO)
+
+    assert r.status_code == 200, r.text
+    assert tiers == ["free"]

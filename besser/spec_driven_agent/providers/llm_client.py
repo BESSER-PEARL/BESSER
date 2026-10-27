@@ -2261,6 +2261,15 @@ def sponsored_tier_model() -> str:
     return os.environ.get("BESSER_SPONSORED_LLM_MODEL", "").strip()
 
 
+def sponsored_tier_available() -> bool:
+    """True when the server is configured with the sponsored (demo) tier."""
+    return bool(
+        os.environ.get("BESSER_SPONSORED_LLM_BASE_URL", "").strip()
+        and os.environ.get("BESSER_SPONSORED_LLM_TOKEN", "").strip()
+        and sponsored_tier_model()
+    )
+
+
 def _resolve_sponsored_tier_config() -> tuple[str, str, str]:
     """Return ``(base_url, token, default_model)`` for the sponsored tier."""
     base_url = os.environ.get("BESSER_SPONSORED_LLM_BASE_URL", "").strip()

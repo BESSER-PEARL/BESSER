@@ -367,11 +367,20 @@ class ImportGitHubRunRequest(BaseModel):
     branch
         Optional branch/ref to import. When omitted the repo default is
         resolved.
+    demo_token
+        The demo-link secret (``?demo=<token>``). When valid, a repo without
+        readable data classes is read by the sponsored (demo) model instead
+        of the keyless one.
     """
 
     owner: str = Field(..., min_length=1, max_length=100)
     repo: str = Field(..., min_length=1, max_length=100)
     branch: Optional[str] = Field(default=None, max_length=250)
+    demo_token: Optional[SecretStr] = Field(default=None, max_length=200)
+
+    def resolved_demo_token(self) -> str:
+        """The plaintext demo token, or ``""`` when the request carries none."""
+        return "" if self.demo_token is None else self.demo_token.get_secret_value()
 
 
 class ImportGitHubRunResponse(BaseModel):

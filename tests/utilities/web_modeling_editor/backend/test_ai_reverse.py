@@ -215,7 +215,8 @@ def test_digest_truncates_large_files_and_stays_within_the_total_cap(tmp_path):
 def test_reply_becomes_a_validated_model(monkeypatch, tmp_path):
     reply = "Here is the model:\n```json\n" + json.dumps({
         **SPEC,
-        "classes": SPEC["classes"] + [{"className": "bad name!"}, {"className": "1st"}, {"className": "Order"}],
+        "classes": SPEC["classes"] + [{"className": "bad name!", "attributes": [{"name": "x", "type": "str"}]},
+                                     {"className": "1st"}, {"className": "Order"}],
         "relationships": SPEC["relationships"] + [{"type": "Association", "source": "Order", "target": "Ghost"}],
     }) + "\n```"
     monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: reply)
@@ -245,6 +246,18 @@ def test_inheritance_source_is_the_subclass_and_a_two_way_pair_is_dropped(monkey
     model = propose_model_with_ai(_shop_repo(tmp_path), CodeAnalysis())
 
     assert [(g.specific.name, g.general.name) for g in model.generalizations] == [("Admin", "User")]
+
+
+def test_empty_unrelated_classes_are_dropped():
+    """github.com/gothinkster/aspnetcore-realworld-example-app, 2nd benchmark run: the model drew each
+    many-to-many directly and also kept its join tables as empty boxes with no link."""
+    spec = ai_reverse._normalise_spec({"classes": [
+        {"className": "Article", "attributes": [{"name": "title", "type": "str"}]},
+        {"className": "Tag", "attributes": []},
+        {"className": "ArticleTag", "attributes": []},
+    ], "relationships": [{"source": "Article", "target": "Tag", "sourceMultiplicity": "*", "targetMultiplicity": "*"}]})
+
+    assert [c["className"] for c in spec["classes"]] == ["Article", "Tag"]
 
 
 def test_class_count_is_capped(monkeypatch, tmp_path):

@@ -456,9 +456,17 @@ def _normalise_spec(spec: dict) -> dict:
             "name": _identifier(rel.get("name")) or target[0].lower() + target[1:],
         })
 
+    # In a reading with relationships, an empty class outside all of them says nothing: typically a
+    # join table whose many-to-many the model also drew directly.
+    related = {end for rel in relationships for end in (rel["source"], rel["target"])}
+    kept = [c for c in out_classes if c["attributes"] or c["className"] in related or not relationships]
+    if len(kept) < len(out_classes):
+        logger.warning("AI code reading dropped %d empty, unrelated classes: %s", len(out_classes) - len(kept),
+                       ", ".join(c["className"] for c in out_classes if c not in kept))
+
     return {
         "systemName": _identifier(spec.get("systemName")) or "ImportedModel",
-        "classes": out_classes,
+        "classes": kept,
         "enumerations": [{"name": name, "literals": literals} for name, literals in enums.items()],
         "relationships": relationships,
     }

@@ -23,7 +23,9 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 )
 
 # Diagram types whose model is not the UML nodes/edges shape.
-NON_UML_DIAGRAM_TYPES = frozenset({"GUINoCodeDiagram", "QuantumCircuitDiagram", "KnowledgeGraphDiagram"})
+NON_UML_DIAGRAM_TYPES = frozenset(
+    {"GUINoCodeDiagram", "QuantumCircuitDiagram", "KnowledgeGraphDiagram"}
+)
 
 LEGACY_V3_HINT = (
     "open it in the current BESSER web editor (which upgrades it to the v4 "
@@ -37,9 +39,9 @@ def is_legacy_v3_model(model: Any, diagram_type: Optional[str] = None) -> bool:
     A model is legacy when it declares a UML ``type`` and a ``version``
     starting with ``"3."``, or when it carries the v3 ``elements`` /
     ``relationships`` maps and no v4 ``nodes``. GUI, quantum and Knowledge
-    Graph diagrams (by ``diagram_type`` or ``model['type']``) are never legacy; the version rule
-    also needs a ``type`` because GrapesJS GUI models carry their own,
-    unrelated ``version`` and no ``type``.
+    Graph diagrams (by ``diagram_type`` or ``model['type']``) are never
+    legacy; the version rule also needs a ``type`` because GrapesJS GUI models
+    carry their own, unrelated ``version`` and no ``type``.
     """
     if not isinstance(model, Mapping):
         return False

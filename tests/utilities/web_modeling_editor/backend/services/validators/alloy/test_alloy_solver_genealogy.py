@@ -1,18 +1,16 @@
-import os
-
 import pytest
 
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, BinaryAssociation, Multiplicity, Constraint,
 )
-from besser.utilities.web_modeling_editor.backend.services.validators.alloy import AlloyResult, AlloySolver
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy import AlloyResult
 from tests.generators.alloy.BUML_genealogy_model import domain_model as genealogy_fixture
-
-# The tests run the Alloy Analyzer, located through these environment variables
-pytestmark = pytest.mark.skipif(
-    not (os.getenv("JAVA_HOME") and os.getenv("BESSER_ALLOY_JAR")),
-    reason="JAVA_HOME and BESSER_ALLOY_JAR must be set to run the Alloy Analyzer",
+from tests.utilities.web_modeling_editor.backend.services.validators.alloy.utils_alloy_solver import (
+    check_consistency, needs_alloy,
 )
+
+# The tests run the Alloy Analyzer
+pytestmark = needs_alloy
 
 
 @pytest.fixture
@@ -29,12 +27,12 @@ def genealogy_model() -> DomainModel:
     return DomainModel("Genealogy", types={person}, associations={is_child_of}, constraints={acyclic})
 
 
-def test_acyclic_genealogy_is_consistent(genealogy_model, tmp_path):
-    solver = AlloySolver(genealogy_model, output_dir=str(tmp_path))
-    assert solver.check_consistency(scope=3) == AlloyResult.SAT
+def test_acyclic_genealogy_is_consistent(genealogy_model):
+    result, _ = check_consistency(genealogy_model, scope=3)
+    assert result == AlloyResult.SAT
 
 
-def test_everyone_with_a_parent_has_no_acyclic_instance(genealogy_model, tmp_path):
+def test_everyone_with_a_parent_has_no_acyclic_instance(genealogy_model):
     """In a finite genealogy where everyone has a parent, someone is their own ancestor."""
     person = genealogy_model.get_class_by_name("Person")
     genealogy_model.constraints = {
@@ -44,11 +42,11 @@ def test_everyone_with_a_parent_has_no_acyclic_instance(genealogy_model, tmp_pat
             "acyclic", person, "context Person inv acyclic: self.parents->closure(parents)->excludes(self)", "OCL"
         ),
     }
-    solver = AlloySolver(genealogy_model, output_dir=str(tmp_path))
-    assert solver.check_consistency(scope=3) == AlloyResult.UNSAT
+    result, _ = check_consistency(genealogy_model, scope=3)
+    assert result == AlloyResult.UNSAT
 
 
-def test_genealogy_fixture_is_consistent(tmp_path):
+def test_genealogy_fixture_is_consistent():
     """The genealogy of the Alloy generator tests, with Adam, Eve and their descendants, has an instance."""
-    solver = AlloySolver(genealogy_fixture, output_dir=str(tmp_path))
-    assert solver.check_consistency(scope=5) == AlloyResult.SAT
+    result, _ = check_consistency(genealogy_fixture, scope=5)
+    assert result == AlloyResult.SAT

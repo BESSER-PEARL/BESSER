@@ -1,17 +1,15 @@
-import os
-
 import pytest
 
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, BinaryAssociation, Multiplicity, StringType, IntegerType, DateType,
 )
-from besser.utilities.web_modeling_editor.backend.services.validators.alloy import AlloyResult, AlloySolver
-
-# The tests run the Alloy Analyzer, located through these environment variables
-pytestmark = pytest.mark.skipif(
-    not (os.getenv("JAVA_HOME") and os.getenv("BESSER_ALLOY_JAR")),
-    reason="JAVA_HOME and BESSER_ALLOY_JAR must be set to run the Alloy Analyzer",
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy import AlloyResult
+from tests.utilities.web_modeling_editor.backend.services.validators.alloy.utils_alloy_solver import (
+    check_consistency, generate_object_models, needs_alloy,
 )
+
+# The tests run the Alloy Analyzer
+pytestmark = needs_alloy
 
 
 @pytest.fixture
@@ -35,13 +33,12 @@ def library_model() -> DomainModel:
     return DomainModel("Library_model", types={library, book, author}, associations={lib_book, book_author})
 
 
-def test_check_consistency(library_model, tmp_path):
-    solver = AlloySolver(library_model, output_dir=str(tmp_path))
-    assert solver.check_consistency(scope=3) == AlloyResult.SAT
+def test_check_consistency(library_model):
+    result, _ = check_consistency(library_model, scope=3)
+    assert result == AlloyResult.SAT
 
 
-def test_generate_four_object_models(library_model, tmp_path):
-    solver = AlloySolver(library_model, output_dir=str(tmp_path))
-    result, object_models = solver.generate_object_models(scope=3, num_models=4)
+def test_generate_four_object_models(library_model):
+    result, object_models = generate_object_models(library_model, scope=3, num_models=4)
     assert result == AlloyResult.SAT
     assert len(object_models) == 4

@@ -483,7 +483,7 @@ GitHub Integration
 ^^^^^^^^^^^^^^^^^^
 
 - ``GET /github/auth/login`` -- Initiate GitHub OAuth flow
-- ``GET /github/auth/callback`` -- OAuth callback handler
+- ``GET /github/auth/callback`` -- OAuth callback handler; returns to the editor with the session in the URL fragment (``#github_session=...``), which is never sent to a server
 - ``GET /github/auth/status`` -- Check authentication status
 - ``POST /github/auth/logout`` -- End the session (JSON body ``{"session_id": ...}``) and revoke its GitHub token
 - ``GET /github/star/status``, ``PUT /github/star``, ``DELETE /github/star`` -- Read / set / clear the signed-in user's star on the BESSER repository
@@ -495,6 +495,9 @@ GitHub Integration
 - ``GET /github/model-history`` -- Recent commits that changed the model, each with its class-diagram changes
 - ``POST /github/pull-request`` -- Open a pull request, e.g. for a push GitHub could not merge
 - ``GET /github/app/capabilities``, ``POST /github/app/go-live`` -- "Go live": commit Render deploy files into the project's own repository, for its real folder layout (see below). Off unless ``BESSER_DEPLOY_FROM_REPO=true``.
+
+Every GitHub endpoint except the OAuth flow and logout reads the session from
+the ``X-GitHub-Session`` header, never from the URL.
 
 Every repository BESSER writes has one layout, defined in
 ``services/deployment/repo_model.py``: the model in ``buml/diagrams.json`` (a V2

@@ -11,7 +11,7 @@ import os
 import secrets
 from typing import Optional
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 
 logger = logging.getLogger(__name__)
 from fastapi.responses import RedirectResponse
@@ -160,9 +160,9 @@ async def github_callback(code: str, state: str):
             "avatar_url": user_data.get("avatar_url"),
         })
 
-        # Redirect to frontend with session ID
+        # The session id rides in the fragment, which browsers never send to a server or proxy log.
         return RedirectResponse(
-            url=f"{DEPLOYMENT_URL}?github_session={session_id}&username={username}",
+            url=f"{DEPLOYMENT_URL}#github_session={session_id}&username={username}",
             status_code=302
         )
 
@@ -174,7 +174,9 @@ async def github_callback(code: str, state: str):
 
 
 @router.get("/auth/status")
-async def get_auth_status(session_id: str) -> GitHubOAuthResponse:
+async def get_auth_status(
+    session_id: Optional[str] = Header(None, alias="X-GitHub-Session"),
+) -> GitHubOAuthResponse:
     """
     Check GitHub authentication status.
 
@@ -184,7 +186,7 @@ async def get_auth_status(session_id: str) -> GitHubOAuthResponse:
     Returns:
         Authentication status
     """
-    session_data = _user_tokens.get(session_id)
+    session_data = _user_tokens.get(session_id) if session_id else None
 
     if not session_data:
         return GitHubOAuthResponse(
@@ -259,7 +261,7 @@ BESSER_REPO_NAME = "BESSER"
 
 
 @router.get("/star/status")
-async def get_star_status(session_id: str):
+async def get_star_status(session_id: str = Header(..., alias="X-GitHub-Session")):
     """Check if the authenticated user has starred the BESSER repository."""
     token = get_user_token(session_id)
     if not token:
@@ -281,7 +283,7 @@ async def get_star_status(session_id: str):
 
 
 @router.put("/star")
-async def star_besser_repo(session_id: str):
+async def star_besser_repo(session_id: str = Header(..., alias="X-GitHub-Session")):
     """Star the BESSER repository on behalf of the authenticated user."""
     token = get_user_token(session_id)
     if not token:
@@ -305,7 +307,7 @@ async def star_besser_repo(session_id: str):
 
 
 @router.delete("/star")
-async def unstar_besser_repo(session_id: str):
+async def unstar_besser_repo(session_id: str = Header(..., alias="X-GitHub-Session")):
     """Unstar the BESSER repository on behalf of the authenticated user."""
     token = get_user_token(session_id)
     if not token:

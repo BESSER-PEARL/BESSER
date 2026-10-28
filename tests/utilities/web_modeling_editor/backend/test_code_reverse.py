@@ -437,3 +437,36 @@ def test_a_subclass_does_not_repeat_the_fields_it_inherits(tmp_path):
 
     assert {(g.specific.name, g.general.name) for g in model.generalizations} == {("UserInDB", "User")}
     assert set(_attrs(model, "UserInDB")) == {"hashed_password"}
+
+
+def test_pydantic_links_declared_on_both_sides_and_key_lists_are_one_association_each(tmp_path):
+    """BESSER's Pydantic generator writes each end on its class, and a many-to-many as a list of ids."""
+    root = _repo(tmp_path, {"app/models.py": '''
+        from typing import List, Optional
+        from pydantic import BaseModel
+
+        class Library(BaseModel):
+            name: str
+            books: Optional[List["Book"]] = None  # 1:N Relationship (optional)
+
+        class Book(BaseModel):
+            title: str
+            authors: List[int]  # N:M Relationship
+            library: "Library"  # N:1 Relationship
+
+        class Author(BaseModel):
+            email: str
+            mentees: Optional[List["Author"]] = None
+            mentor: Optional["Author"] = None
+            books: Optional[List[int]] = None
+        '''})
+
+    _analysis, model = analyze_repository(root)
+
+    assert _ends(model) == [
+        ["authors->Author[0..9999]", "books->Book[0..9999]"],
+        ["books->Book[0..9999]", "library->Library[1..1]"],
+        ["mentees->Author[0..9999]", "mentor->Author[0..1]"],
+    ]
+    assert set(_attrs(model, "Book")) == {"title"}
+    assert set(_attrs(model, "Author")) == {"email"}

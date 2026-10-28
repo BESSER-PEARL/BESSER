@@ -74,6 +74,8 @@ _ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "enum.Enum", "enum.IntEnum", "enum.
 _DJANGO_RELATIONS = {"ForeignKey", "OneToOneField", "ManyToManyField"}
 _DJANGO_BASES = {"models.Model", "Model", "AbstractBaseUser", "AbstractUser"}
 _SCHEMA_BASES = {"BaseModel", "SQLModel"}
+# A schema field holding a list of these is a list of keys (``authors: List[int]``), named after the class.
+_KEY_TYPES = {"int", "UUID"}
 # Fields Django's auth base classes declare for their subclasses.
 _DJANGO_AUTH_FIELDS = {
     "AbstractBaseUser": (("password", "CharField"), ("last_login", "DateTimeField")),
@@ -539,7 +541,10 @@ def _unwrap_annotation(annotation) -> tuple[Optional[str], bool]:
 
 
 def _annotated_field(name: str, annotation) -> _Field:
-    many = isinstance(annotation, ast.Subscript) and getattr(annotation.value, "id", "") in {"List", "list", "Set", "set"}
+    node, many = annotation, False
+    while isinstance(node, ast.Subscript) and not many:  # List[X] inside Optional[...]
+        many = getattr(node.value, "id", "") in {"List", "list", "Set", "set"}
+        node = node.slice.elts[0] if isinstance(node.slice, ast.Tuple) and node.slice.elts else node.slice
     type_name, optional = _unwrap_annotation(annotation)
     return _Field(name=name, type_name=type_name or "str", optional=optional, many=many)
 
@@ -639,6 +644,8 @@ def _build_model(entities: list[_Entity], module: _Module) -> DomainModel:
         inherited = set().union(*(declared[a] for a in ancestors(entity.name)))
         for f in entity.fields:
             target = resolve(f.target) or (resolve(f.type_name) if f.type_name in classes else None)
+            if not target and f.many and f.type_name in _KEY_TYPES:
+                target = resolve(f.name.removesuffix("_ids"))
             if f.name in inherited or (f.is_id and target in parents[entity.name]):
                 continue  # declared by a parent, or the key joining a subclass table to its parent's
             if target and target in classes:
@@ -651,9 +658,27 @@ def _build_model(entities: list[_Entity], module: _Module) -> DomainModel:
                 multiplicity=Multiplicity(0 if f.optional else 1, 1),
             ))
 
+    def multiplicity(f: _Field) -> Multiplicity:
+        return Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY) if f.many else Multiplicity(0 if f.optional else 1, 1)
+
+    # Schema classes state both sides of a link (``Library.books`` and ``Book.library``): pair the two
+    # fields when each is the only one pointing back at the other's class.
+    typed = [i for i, (_, f, _) in enumerate(links) if not f.target]
+    facing = {i: [j for j in typed if j != i and links[j][0].name == links[i][2] and links[j][2] == links[i][0].name]
+              for i in typed}
+    partner = {i: js[0] for i, js in facing.items() if len(js) == 1 and facing[js[0]] == [i]}
+
     associations = []
-    for entity, f, target in links:
+    for i, (entity, f, target) in enumerate(links):
         source, column = entity.name, f"{entity.name}.{f.name}"
+        if i in partner:
+            if partner[i] > i:
+                other = links[partner[i]][1]
+                associations.append(BinaryAssociation(name=f"{source}_{f.name}", ends={
+                    Property(name=unique(source, f.name), type=classes[target], multiplicity=multiplicity(f)),
+                    Property(name=unique(target, other.name), type=classes[source], multiplicity=multiplicity(other)),
+                }))
+            continue
         if target == source:
             # A self link declares both ends on one class over the same key: ``mentor`` and ``mentees``.
             ends = [r for r in module.relations
@@ -667,9 +692,7 @@ def _build_model(entities: list[_Entity], module: _Module) -> DomainModel:
         back = back or f.back or (source.lower() if f.one else f"{source.lower()}_set" if f.many
                                   else f"{source.lower()}s")
         associations.append(BinaryAssociation(name=f"{source}_{f.name}", ends={
-            Property(name=unique(source, forward), type=classes[target],
-                     multiplicity=Multiplicity(0, UNLIMITED_MAX_MULTIPLICITY) if f.many
-                     else Multiplicity(0 if f.optional else 1, 1)),
+            Property(name=unique(source, forward), type=classes[target], multiplicity=multiplicity(f)),
             Property(name=unique(target, back), type=classes[source],
                      multiplicity=Multiplicity(0, 1 if f.one else UNLIMITED_MAX_MULTIPLICITY)),
         }))

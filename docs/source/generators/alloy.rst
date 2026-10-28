@@ -158,3 +158,5 @@ The following features are not supported yet:
 - OCL iterators without iterator variables (except ``closure``), and ``select``, ``reject`` or ``collect`` with
   several.
 - ``size()``, ``=`` and ``<>`` on OCL Bags: use ``asSet()`` first.
+- ``includes``, ``excludes`` and ``collect`` of arithmetic on optional values.
+- Negations of comparisons on optional values: a missing value makes them true.

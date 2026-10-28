@@ -1,25 +1,17 @@
-import os
 import pytest
-from tests.generators.alloy.BUML_football_model import football_model
-from besser.BUML.metamodel.structural import AnyType, Class, DomainModel, Property, TimeDeltaType, TimeType
-from besser.generators.alloy.alloy_generator import AlloyGenerator
-from besser.generators.alloy.alloy_translator import BumlToAlloy
-from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec
+from tests.generators.alloy.BUML_football_model import football_model  # noqa: F401
+from tests.generators.alloy.utils_alloy_translation import translate
 
 
 @pytest.fixture
-def spec(football_model, tmpdir):
-    tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGenerator(model=football_model, output_dir=str(tmpdir))
-    generator.generate()
-    als_file = generator.get_specification_path()
-    assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"
+def spec(football_model):  # noqa: F811
+    return translate(football_model, scope=5)
+
+
+def test_library_modules(spec):
     # String attributes require the strings library
-    assert sorted(os.listdir(str(tmpdir))) == ["model.als", "strings.als"]
-    with open(als_file, "r", encoding="utf-8") as f:
-        content = f.read()
-    assert "open strings" in content
-    return AlloyTestSpec(content)
+    assert "strings" in spec.opens
+    assert len(spec.opens) == 1
 
 
 def test_signatures(spec):

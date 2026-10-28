@@ -2,10 +2,10 @@ import pytest
 
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Association, BinaryAssociation, AssociationClass, Generalization, Multiplicity,
-    Constraint,
     IntegerType, FloatType, TimeType, DateTimeType,
 )
-from besser.generators.alloy import AlloyGenerator, AlloyTranslationError
+from besser.generators.alloy import AlloyTranslationError
+from tests.generators.alloy.utils_alloy_translation import set_constraint, translate
 
 
 @pytest.fixture
@@ -31,47 +31,43 @@ def meeting_model(request) -> DomainModel:
 
 @pytest.fixture
 def counter_model() -> DomainModel:
-    """``Counter(value: int)`` with an OCL invariant using real division, which has no Alloy translation."""
+    """``Counter(value: int)``."""
     counter = Class("Counter", attributes={Property("value", IntegerType)})
-    half = Constraint("half", counter, "context Counter inv half: self.value / 2 > 1", "OCL")
-    return DomainModel("Counter_model", types={counter}, constraints={half})
+    return DomainModel("Counter_model", types={counter})
 
 
-def test_association_classes_are_unsupported(enrollment_model, tmp_path):
-    generator = AlloyGenerator(enrollment_model, output_dir=str(tmp_path))
+def test_association_classes_are_unsupported(enrollment_model):
     with pytest.raises(AlloyTranslationError, match="Association classes are not supported"):
-        generator.generate()
+        translate(enrollment_model, scope=5)
 
 
-def test_multiple_inheritance_is_unsupported(tmp_path):
+def test_multiple_inheritance_is_unsupported():
     land, water, frog = Class("Land"), Class("Water"), Class("Frog")
     model = DomainModel("Amphibians", types={land, water, frog}, generalizations={
         Generalization(general=land, specific=frog), Generalization(general=water, specific=frog),
     })
-    generator = AlloyGenerator(model, output_dir=str(tmp_path))
     with pytest.raises(AlloyTranslationError, match=r"Class 'Frog' has several parents \(Land, Water\)"):
-        generator.generate()
+        translate(model, scope=5)
 
 
-def test_associations_with_more_than_two_ends_are_unsupported(tmp_path):
+def test_associations_with_more_than_two_ends_are_unsupported():
     student, course, room = Class("Student"), Class("Course"), Class("Room")
     takes = Association("takes", ends={
         Property("student", student), Property("course", course), Property("room", room),
     })
     model = DomainModel("School", types={student, course, room}, associations={takes})
-    generator = AlloyGenerator(model, output_dir=str(tmp_path))
     with pytest.raises(AlloyTranslationError, match="Association 'takes' has more than two ends"):
-        generator.generate()
+        translate(model, scope=5)
 
 
-def test_attribute_types_without_translation_are_unsupported(meeting_model, tmp_path):
+def test_attribute_types_without_translation_are_unsupported(meeting_model):
     (start,) = meeting_model.get_class_by_name("Meeting").attributes
-    generator = AlloyGenerator(meeting_model, output_dir=str(tmp_path))
     with pytest.raises(AlloyTranslationError, match=f"Attributes of type '{start.type.name}' are not supported"):
-        generator.generate()
+        translate(meeting_model, scope=5)
 
 
-def test_unsupported_ocl_is_a_translation_error(counter_model, tmp_path):
-    generator = AlloyGenerator(counter_model, output_dir=str(tmp_path))
+def test_unsupported_ocl_is_a_translation_error(counter_model):
+    # Real division has no Alloy translation
+    set_constraint(counter_model, "Counter", "self.value / 2 > 1")
     with pytest.raises(AlloyTranslationError, match="Real division"):
-        generator.generate()
+        translate(counter_model, scope=5)

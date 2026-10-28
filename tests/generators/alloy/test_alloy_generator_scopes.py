@@ -1,23 +1,15 @@
-import os
 import pytest
 from besser.BUML.metamodel.structural import (
     BinaryAssociation, BooleanType, Class, DomainModel, Multiplicity, Property,
 )
-from tests.generators.alloy.BUML_football_model import football_model
-from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2
-from besser.generators.alloy.alloy_generator import AlloyGenerator
-from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec
+from tests.generators.alloy.BUML_football_model import football_model  # noqa: F401
+from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2  # noqa: F401
+from tests.generators.alloy.utils_alloy_translation import translate
+
 
 @pytest.fixture
-def football_spec_s3(football_model, tmpdir):
-    tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGenerator(model=football_model, output_dir=str(tmpdir))
-    generator.generate(scope=3)
-    als_file = generator.get_specification_path()
-    assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"
-    with open(als_file, "r", encoding="utf-8") as f:
-        content = f.read()
-    return AlloyTestSpec(content)
+def football_spec_s3(football_model):  # noqa: F811
+    return translate(football_model, scope=3)
 
 
 def test_run_command_football_s3(football_spec_s3):
@@ -35,15 +27,8 @@ def test_run_command_football_s3(football_spec_s3):
 
 
 @pytest.fixture
-def football_spec_s7(football_model, tmpdir):
-    tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGenerator(model=football_model, output_dir=str(tmpdir))
-    generator.generate(scope=7)
-    als_file = generator.get_specification_path()
-    assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"
-    with open(als_file, "r", encoding="utf-8") as f:
-        content = f.read()
-    return AlloyTestSpec(content)
+def football_spec_s7(football_model):  # noqa: F811
+    return translate(football_model, scope=7)
 
 
 def test_run_command_football_s7(football_spec_s7):
@@ -61,15 +46,8 @@ def test_run_command_football_s7(football_spec_s7):
 
 
 @pytest.fixture
-def library_spec_s1(library_with_ocl_v2, tmpdir):
-    tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGenerator(model=library_with_ocl_v2, output_dir=str(tmpdir))
-    generator.generate(scope=1)
-    als_file = generator.get_specification_path()
-    assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"
-    with open(als_file, "r", encoding="utf-8") as f:
-        content = f.read()
-    return AlloyTestSpec(content)
+def library_spec_s1(library_with_ocl_v2):  # noqa: F811
+    return translate(library_with_ocl_v2, scope=1)
 
 
 def test_run_command_library_s1(library_spec_s1):
@@ -90,36 +68,17 @@ def switch_model() -> DomainModel:
     return DomainModel("Switch_model", types={switch})
 
 
-def test_scopes_football_s3(football_model, tmpdir):
-    generator = AlloyGenerator(model=football_model, output_dir=str(tmpdir))
-    generator.generate(scope=3)
-    scopes = generator.get_scopes()
-    assert scopes.objects == 3
-    assert scopes.bitwidth == 4  # the bound 4 of favoriteTeams needs 3 bits, plus the sign bit
-    assert scopes.integers == (-8, 7)
-    assert scopes.strings == 3
-    assert scopes.dates is None
+@pytest.fixture
+def switch_spec_s3(switch_model):
+    return translate(switch_model, scope=3)
 
 
-def test_scopes_library_s1(library_with_ocl_v2, tmpdir):
-    generator = AlloyGenerator(model=library_with_ocl_v2, output_dir=str(tmpdir))
-    generator.generate(scope=1)
-    scopes = generator.get_scopes()
-    assert scopes.objects == 1
-    assert scopes.bitwidth == 5  # the literal 10 needs 4 bits, plus the sign bit
-    assert scopes.integers == (-16, 15)
-    assert scopes.strings == 2  # the literals 'borges' and 'cortazar'
-    assert scopes.dates == 1
-
-
-def test_scopes_without_values(switch_model, tmpdir):
-    generator = AlloyGenerator(model=switch_model, output_dir=str(tmpdir))
-    generator.generate(scope=3)
-    scopes = generator.get_scopes()
-    assert scopes.bitwidth == 3  # the scope
-    assert scopes.integers == (-4, 3)
-    assert scopes.strings is None
-    assert scopes.dates is None
+def test_run_command_switch_s3(switch_spec_s3):
+    assert switch_spec_s3.run_pred == "instance_model"
+    assert "3 Switch" in switch_spec_s3.run_scopes
+    assert "3 Int" in switch_spec_s3.run_scopes  # the scope
+    # No strings or dates: no Str or Date scope
+    assert len(switch_spec_s3.run_scopes) == 2
 
 
 @pytest.fixture
@@ -134,10 +93,14 @@ def squad_model() -> DomainModel:
     return DomainModel("Football", types={team, player}, associations={squad})
 
 
-def test_scopes_squad_s5(squad_model, tmpdir):
-    generator = AlloyGenerator(model=squad_model, output_dir=str(tmpdir))
-    generator.generate(scope=5)
-    scopes = generator.get_scopes()
-    assert scopes.objects == 5
-    assert scopes.bitwidth == 5  # the bound 11 needs 4 bits, plus the sign bit
-    assert scopes.integers == (-16, 15)
+@pytest.fixture
+def squad_spec_s5(squad_model):
+    return translate(squad_model, scope=5)
+
+
+def test_run_command_squad_s5(squad_spec_s5):
+    assert squad_spec_s5.run_pred == "instance_model"
+    assert "5 Team" in squad_spec_s5.run_scopes
+    assert "5 Player" in squad_spec_s5.run_scopes
+    assert "5 Int" in squad_spec_s5.run_scopes  # the bound 11 needs 4 bits, plus the sign bit
+    assert len(squad_spec_s5.run_scopes) == 3

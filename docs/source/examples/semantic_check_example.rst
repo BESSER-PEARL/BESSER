@@ -7,7 +7,7 @@ in the web editor.
 
 The whole script is in ``docs/source/code_eg/alloy/library_semantic_check.py``. Running it needs
 Java and the `Alloy Analyzer <https://alloytools.org/>`_ installed in your system (see
-:doc:`../generators/object_diagram`).
+:doc:`../utilities/object_diagram_generator`).
 
 The model
 ---------

@@ -149,11 +149,6 @@ Choosing a Generator
      - .als files (ZIP in the editor)
      - You need an `Alloy <https://alloytools.org/>`_ specification of a class diagram
        and its OCL constraints, to analyze it in the Alloy Analyzer
-   * - **Object Diagram**
-     - Structural + OCL
-     - Object diagrams / B-UML project
-     - You need to check the satisfiability of a class diagram with OCL constraints, or
-       to generate object diagrams for it
 
 None of the above a fit? If you need a customised codebase — extra features
 (auth, JWT, Docker, tests) or a stack with no built-in generator (Rails, Rust,
@@ -191,7 +186,6 @@ Generate code for various frameworks and programming languages:
    generators/flutter
    generators/react
    generators/alloy
-   generators/object_diagram
 
 Data & API
 ----------

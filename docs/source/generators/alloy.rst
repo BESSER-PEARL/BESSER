@@ -3,7 +3,7 @@ Alloy Specifications Generator
 
 This code generator produces an `Alloy specification <https://alloytools.org/>`_ from a B-UML
 :doc:`../buml_language/model_types/structural` and its OCL invariants. The
-:doc:`object diagram generator <./object_diagram>` analyzes this specification to check the
+:doc:`object diagram generator <../utilities/object_diagram_generator>` analyzes this specification to check the
 satisfiability of the model and to generate object diagrams. For a complete walkthrough, see the
 :doc:`../examples/semantic_check_example`.
 
@@ -129,6 +129,12 @@ The specification then includes the following fact:
 
     fact { all self:this/Book|(self.Book_pages > 10) }
 
+Web Editor
+----------
+
+In the web editor, the Alloy specification of a class diagram can be downloaded from
+**Generate > Formal Methods > Alloy Specification**.
+
 Unsupported Features
 --------------------
 
@@ -142,9 +148,13 @@ Supported attribute types are ``bool``, enumerations, integers with a relatively
 
 The following features are not supported yet:
 
-- Models with association classes, multiple inheritance or n-ary associations.
-- Attributes of type ``float``, ``datetime``, ``time``, ``timedelta`` or ``any``.
-- Some OCL constructs. The error message says which one.
-
-In the web editor, the Alloy specification of a class diagram can be downloaded from
-**Generate > Formal Methods > Alloy Specification**.
+- Association classes.
+- Multiple inheritance.
+- Associations with more than two ends.
+- Attributes of type ``float``, ``datetime``, ``time``, ``timedelta`` or ``any``, and reals in OCL.
+- OCL operations on strings and dates other than ``=`` and ``<>``.
+- Enumeration literals in OCL (``Enum::Literal``).
+- OCL type operations (``oclIsKindOf``, ``oclIsTypeOf``, ``oclAsType``) on collections.
+- OCL iterators without iterator variables (except ``closure``), and ``select``, ``reject`` or ``collect`` with
+  several.
+- ``size()``, ``=`` and ``<>`` on OCL Bags: use ``asSet()`` first.

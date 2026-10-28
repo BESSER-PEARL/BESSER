@@ -565,7 +565,7 @@ Validation
   consistency checks as the editor's Refine KG dialog, reporting findings only.
 - ``POST /check-ocl`` -- **Deprecated.** Kept for backwards compatibility; delegates to ``/validate-diagram``.
 - ``POST /semantic-consistency-check`` -- Checks the satisfiability of a class diagram and its OCL constraints with
-  the Alloy Analyzer (see :doc:`generators/object_diagram`)
+  the Alloy Analyzer (see :doc:`utilities/object_diagram_generator`)
 - ``POST /generate-object-diagram`` -- Same search, but returns the instance found as an object diagram
 
 Deployment
@@ -735,7 +735,7 @@ Environment Variables
 
 - ``JAVA_HOME`` and ``BESSER_ALLOY_JAR`` -- The Java installation and the Alloy Analyzer jar that
   ``/semantic-consistency-check`` and ``/generate-object-diagram`` run (see
-  :doc:`generators/object_diagram`). The backend Docker image sets both.
+  :doc:`utilities/object_diagram_generator`). The backend Docker image sets both.
 
 **Spec-Driven Agent (all optional):**
 

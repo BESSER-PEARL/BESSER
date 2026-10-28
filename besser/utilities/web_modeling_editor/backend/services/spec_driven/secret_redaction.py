@@ -152,6 +152,53 @@ def redact_data(value: Any, secrets: Iterable[str] = ()) -> tuple[Any, int]:
     return value, 0
 
 
+# A field or YAML key that holds a credential: ``openai_api_key``, ``personal_token``,
+# ``password``. Anchored at the end so ``max_tokens`` is not one.
+_CREDENTIAL_KEY_RE = re.compile(
+    r"(?i)(?:^|[_-])(?:api[_-]?key|token|secret|password|passwd|private[_-]?key|access[_-]?key)$"
+)
+_YAML_ASSIGNMENT_RE = re.compile(r"(?m)^(\s*([A-Za-z0-9_-]+)\s*:[ \t]*)(\S[^\r\n]*)$")
+
+
+def _redact_yaml_credentials(text: str) -> tuple[str, int]:
+    findings = 0
+
+    def _replacement(match: re.Match[str]) -> str:
+        nonlocal findings
+        if not _CREDENTIAL_KEY_RE.search(match.group(2)) or _is_placeholder(match.group(3)):
+            return match.group(0)
+        findings += 1
+        return f"{match.group(1)}'{REDACTED_SECRET}'"
+
+    return _YAML_ASSIGNMENT_RE.sub(_replacement, text), findings
+
+
+def redact_credentials(value: Any, yaml_fields: Iterable[str] = ()) -> tuple[Any, int]:
+    """Redact credentials in JSON-like data: credential-named fields, provider tokens in any
+    string, and ``key: value`` credential lines in the string fields named in ``yaml_fields``."""
+    yaml_fields = frozenset(yaml_fields)
+    if isinstance(value, list):
+        results = [redact_credentials(item, yaml_fields) for item in value]
+        return [item for item, _ in results], sum(count for _, count in results)
+    if isinstance(value, str):
+        return redact_text(value, env_style=False)
+    if not isinstance(value, dict):
+        return value, 0
+    output: dict = {}
+    findings = 0
+    for key, item in value.items():
+        if isinstance(item, str) and _CREDENTIAL_KEY_RE.search(str(key)) and not _is_placeholder(item):
+            output[key] = REDACTED_SECRET
+            findings += 1
+            continue
+        if isinstance(item, str) and key in yaml_fields:
+            item, yaml_findings = _redact_yaml_credentials(item)
+            findings += yaml_findings
+        output[key], item_findings = redact_credentials(item, yaml_fields)
+        findings += item_findings
+    return output, findings
+
+
 def looks_like_secret_env(content: str) -> bool:
     """Whether a non-template ``.env`` body carries a populated credential."""
     _redacted, findings = redact_text(content)

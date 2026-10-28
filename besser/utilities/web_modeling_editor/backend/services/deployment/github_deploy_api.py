@@ -90,7 +90,7 @@ class DeployToGitHubRequest(BaseModel):
         description="Repository description"
     )
     is_private: bool = Field(
-        default=False,
+        default=True,
         description="Make repository private"
     )
 
@@ -162,7 +162,7 @@ async def deploy_webapp_to_github(
             else "Web application generated"
         )
         description = deploy_config.get("description") or default_description
-        is_private = deploy_config.get("is_private", False)
+        is_private = deploy_config.get("is_private", True)
         use_existing = deploy_config.get("use_existing", False)
         custom_commit_message = deploy_config.get("commit_message", "")
 
@@ -261,10 +261,8 @@ async def deploy_webapp_to_github(
 
                 if use_existing:
                     try:
-                        branches = await github.get_branches(username, repo_name)
+                        default_branch = await github.get_default_branch(username, repo_name)
                         reused_repo = True
-                        if branches:
-                            default_branch = branches[0]
                     except httpx.HTTPStatusError as e:
                         if e.response is not None and e.response.status_code == 404:
                             use_existing = False
@@ -459,11 +457,9 @@ async def deploy_webapp_to_github(
 
             if use_existing:
                 try:
-                    branches = await github.get_branches(username, repo_name)
+                    default_branch = await github.get_default_branch(username, repo_name)
                     # Repo exists and is accessible — reuse it
                     reused_repo = True
-                    if branches:
-                        default_branch = branches[0]
                 except httpx.HTTPStatusError as e:
                     if e.response is not None and e.response.status_code == 404:
                         # Repo was deleted — fall back to creating a new one
@@ -1291,7 +1287,7 @@ class CreateRepoForProjectRequest(BaseModel):
     """Request to create a new repo and save project."""
     repo_name: str
     description: str = ""
-    is_private: bool = False
+    is_private: bool = True
     project_data: dict
     project_export: Optional[dict] = None
 
@@ -1736,8 +1732,7 @@ async def get_repo_summary(
     github = _github_for(github_session)
     try:
         if not branch:
-            branches = await github.get_branches(owner, repo)
-            branch = "main" if "main" in branches else (branches[0] if branches else "main")
+            branch = await github.get_default_branch(owner, repo)
         head = await github.get_branch_head(owner, repo, branch)
         if not head:
             return RepoSummaryResponse(has_model=False, branch=branch, head_sha="")

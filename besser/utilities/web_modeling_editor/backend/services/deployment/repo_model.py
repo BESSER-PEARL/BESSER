@@ -32,6 +32,7 @@ from besser.utilities.web_modeling_editor.backend.models.project import ProjectI
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,8 @@ BESSER_TOPIC = "besser"
 ORIGIN_TRAILER = "BESSER-Origin"
 ORIGIN_AGENT = "spec-driven-agent"
 ORIGIN_EDITOR = "editor"
+# The agent diagram's config.yaml text (frontend ``ProjectDiagram``, shared/types/project.ts).
+AGENT_CONFIG_YAML_FIELDS = ("configYaml", "agentConfigCustomYaml")
 
 
 def with_origin(message: str, origin: str) -> str:
@@ -88,6 +91,11 @@ def model_files(project_export: Optional[dict]) -> dict[str, bytes]:
     if not isinstance(project_export, dict) or not project_export:
         logger.warning("No project export given; the repo gets no BESSER model files")
         return {}
+
+    # Agent diagrams carry the agent's runtime config (LLM keys, bot tokens, DB passwords).
+    project_export, findings = redact_credentials(project_export, yaml_fields=AGENT_CONFIG_YAML_FIELDS)
+    if findings:
+        logger.warning("Redacted %d credential(s) from the model before writing it to the repo", findings)
 
     files: dict[str, bytes] = {
         MODEL_FILE: json.dumps(project_export, indent=2, default=str).encode("utf-8"),

@@ -71,9 +71,10 @@ class _FakeGitHubService:
     that the registered run's ``temp_dir`` points at exactly that tree.
     """
 
-    def __init__(self, *, with_model=True, branches=None, get_branches_404=False):
+    def __init__(self, *, with_model=True, branches=None, get_branches_404=False, default_branch="main"):
         self._with_model = with_model
         self._branches = ["main"] if branches is None else branches
+        self._default_branch = default_branch
         self._get_branches_404 = get_branches_404
         self.extract_dir = None
         self.tarball_ref = None
@@ -88,6 +89,10 @@ class _FakeGitHubService:
                 "Not Found", request=request, response=response
             )
         return self._branches
+
+    async def get_default_branch(self, owner, repo_name):
+        await self.get_branches(owner, repo_name)  # same 404 when the repo is missing
+        return self._default_branch
 
     async def get_branch_head(self, owner, repo_name, branch):
         return _head_of(branch)

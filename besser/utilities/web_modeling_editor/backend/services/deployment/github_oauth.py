@@ -202,17 +202,38 @@ async def get_auth_status(session_id: str) -> GitHubOAuthResponse:
     )
 
 
-@router.post("/auth/logout")
-async def github_logout(session_id: str):
-    """
-    Logout and revoke GitHub session.
+class LogoutRequest(BaseModel):
+    """Body of ``POST /auth/logout``, as the editor sends it."""
+    session_id: str
 
-    Args:
-        session_id: Session ID to revoke
-    """
-    _user_tokens.delete(session_id)
+
+@router.post("/auth/logout")
+async def github_logout(body: LogoutRequest):
+    """End the BESSER session and revoke its GitHub token."""
+    session_data = _user_tokens.get(body.session_id)
+    _user_tokens.delete(body.session_id)
+    if session_data:
+        await _revoke_github_token(session_data["access_token"])
 
     return {"success": True, "message": "Logged out successfully"}
+
+
+async def _revoke_github_token(access_token: str) -> None:
+    """Revoke the OAuth token at GitHub, so a copy of it stops working too."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.request(
+                "DELETE",
+                f"https://api.github.com/applications/{GITHUB_CLIENT_ID}/token",
+                auth=(GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET),
+                headers={"Accept": "application/vnd.github+json"},
+                json={"access_token": access_token},
+                timeout=10,
+            )
+        if response.status_code not in (204, 404):
+            logger.warning("GitHub token revocation returned HTTP %s", response.status_code)
+    except httpx.HTTPError:
+        logger.warning("Could not revoke the GitHub token at logout", exc_info=True)
 
 
 def get_user_token(session_id: str) -> Optional[str]:

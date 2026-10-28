@@ -182,6 +182,9 @@ class _ImportGitHub:
     async def get_branches(self, owner, repo_name, per_page=100):
         return ["main"]
 
+    async def get_default_branch(self, owner, repo_name):
+        return "main"
+
     async def get_branch_head(self, owner, repo_name, branch):
         return HEAD
 
@@ -439,3 +442,57 @@ def test_the_origin_trailer_round_trips():
     message = repo_model.with_origin("Add the model", repo_model.ORIGIN_AGENT)
     assert repo_model.commit_origin(message) == repo_model.ORIGIN_AGENT
     assert repo_model.commit_origin("Fix a typo") is None
+
+
+def test_agent_credentials_never_reach_the_repo_model_file():
+    """The agent config (LLM keys, bot tokens, DB passwords) was written verbatim into buml/diagrams.json."""
+    key = "sk-proj-" + "a1B2c3D4" * 4
+    envelope = _envelope()
+    envelope["project"]["diagrams"]["AgentDiagram"] = [{
+        "id": "ag1", "title": "Helper", "model": {},
+        "config": {"llm": {"provider": "openai", "api_key": key, "max_tokens": "1024"}},
+        "agentConfigForm": {
+            "nlp": {"openai_api_key": key, "mistral_api_key": "YOUR-API-KEY", "language": "en"},
+            "platforms": {"telegram": {"enabled": True, "token": "123456:bot-token-value"}},
+            "db": {"sqlDatabases": [{"name": "shop", "username": "admin", "password": "hunter2-db"}]},
+        },
+        "configYaml": f"nlp:\n  openai:\n    api_key: {key}\n  language: en\n"
+                      "platforms:\n  telegram:\n    token: '123456:bot-token-value'\n",
+        "agentConfigCustomYaml": "custom:\n  webhook_secret: s3cr3t-value\n  retries: 3\n",
+    }]
+
+    files = repo_model.model_files(envelope)
+    text = files[repo_model.MODEL_FILE].decode("utf-8")
+    saved = json.loads(text)["project"]["diagrams"]["AgentDiagram"][0]
+
+    for secret in (key, "bot-token-value", "hunter2-db", "s3cr3t-value"):
+        assert secret not in text
+    assert saved["agentConfigForm"]["nlp"]["mistral_api_key"] == "YOUR-API-KEY"  # placeholders stay
+    assert saved["agentConfigForm"]["nlp"]["language"] == "en"
+    assert saved["config"]["llm"]["max_tokens"] == "1024"
+    assert "language: en" in saved["configYaml"] and "retries: 3" in saved["agentConfigCustomYaml"]
+    assert saved["agentConfigForm"]["db"]["sqlDatabases"][0]["username"] == "admin"
+    # The class diagram is untouched.
+    assert json.loads(text)["project"]["diagrams"]["ClassDiagram"] == envelope["project"]["diagrams"]["ClassDiagram"]
+
+
+def test_a_new_project_repo_is_private_unless_the_user_asks_for_public(monkeypatch):
+    """Repos defaulted to public, and a model can describe private work."""
+    class _CreatingGitHub(_SidebarGitHub):
+        created = []
+
+        async def get_authenticated_user(self):
+            return {"login": "me"}
+
+        async def create_repository(self, repo_name, description, is_private, auto_init):
+            self.created.append(is_private)
+            return {"default_branch": "main", "html_url": f"https://github.com/me/{repo_name}"}
+
+    fake = _CreatingGitHub(legacy_exists=False)
+    _sidebar(monkeypatch, fake)
+    body = {"repo_name": "library", "project_data": _project(), "project_export": _envelope()}
+
+    for extra in ({}, {"is_private": False}):
+        r = _call("POST", "/besser_api/github/project/create-repo", headers=SESSION, json={**body, **extra})
+        assert r.status_code == 200, r.text
+    assert fake.created == [True, False]

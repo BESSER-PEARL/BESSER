@@ -485,7 +485,7 @@ GitHub Integration
 - ``GET /github/auth/login`` -- Initiate GitHub OAuth flow
 - ``GET /github/auth/callback`` -- OAuth callback handler
 - ``GET /github/auth/status`` -- Check authentication status
-- ``POST /github/auth/logout`` -- End session
+- ``POST /github/auth/logout`` -- End the session (JSON body ``{"session_id": ...}``) and revoke its GitHub token
 - ``GET /github/star/status``, ``PUT /github/star``, ``DELETE /github/star`` -- Read / set / clear the signed-in user's star on the BESSER repository
 - ``POST /github/deploy-webapp`` -- Deploy generated app to GitHub repository
 - ``GET /github/repos``, ``GET /github/branches``, ``GET /github/commits``, ``GET /github/contents``, ``GET /github/file/exists`` -- Repository browsing for the editor's save/load flow (``/repos`` includes each repository's topics; ``/commits`` marks each commit's ``origin``)
@@ -502,6 +502,15 @@ project export; the legacy ``besser-project.json`` is still read), the B-UML
 sources in ``buml/*.py``, the owning project in ``.besser/project.json``, and the
 ``besser`` topic on the repository. Commits BESSER makes end with a
 ``BESSER-Origin: spec-driven-agent`` or ``BESSER-Origin: editor`` trailer.
+
+Repositories BESSER creates are private unless the request sets
+``is_private: false``. Before ``buml/diagrams.json`` is written, the agent
+diagrams' credentials (API keys, bot and webhook tokens, database passwords in
+``config``, ``agentConfigForm``, ``configYaml`` and ``agentConfigCustomYaml``)
+and any provider token elsewhere in the model are replaced with
+``[REDACTED]``; placeholders such as ``YOUR-API-KEY`` are kept. When no branch
+is given, writes and reads use the default branch GitHub reports for the
+repository.
 
 Writes never revert newer commits. ``/github/project/save`` and
 ``/spec-driven/push-to-github`` take the commit the editor last synced

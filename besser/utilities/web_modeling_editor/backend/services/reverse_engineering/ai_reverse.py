@@ -78,6 +78,10 @@ _API_SHAPE_DIRS = {"dto", "dtos"}
 _CLASS_SOURCE_SUFFIXES = (".java", ".kt", ".cs", ".scala", ".swift", ".dart", ".ts", ".js", ".py", ".rb", ".php")
 _SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".crt", ".jks", ".keystore")
 _SECRET_WORDS = ("key", "secret", "credential", "password", "token")
+_SECRET_NAMES = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".npmrc", ".netrc", ".pgpass", ".pypirc", ".htpasswd"}
+# Source files are kept whatever their name (ApiKey.java, Token.ts): they declare data, and
+# the digest is redacted anyway. A secret word only marks config and data files.
+_SOURCE_SUFFIXES = _CLASS_SOURCE_SUFFIXES + (".tsx", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".vue", ".svelte")
 
 _TYPE_ALIASES = {
     "str": "str", "string": "str", "text": "str", "varchar": "str", "char": "str", "uuid": "str",
@@ -303,8 +307,9 @@ def build_repo_digest(root: str) -> RepoDigest:
 
 def _is_secret_file(name: str) -> bool:
     lowered = name.lower()
-    return (lowered.startswith(".env") or lowered.endswith(_SECRET_SUFFIXES)
-            or any(word in lowered for word in _SECRET_WORDS))
+    if lowered.startswith(".env") or lowered.endswith(_SECRET_SUFFIXES) or lowered in _SECRET_NAMES:
+        return True
+    return not lowered.endswith(_SOURCE_SUFFIXES) and any(word in lowered for word in _SECRET_WORDS)
 
 
 def _repo_files(root: str) -> list[str]:

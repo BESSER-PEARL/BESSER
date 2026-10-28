@@ -102,6 +102,26 @@ def test_digest_reads_schema_and_types_and_skips_dependencies_and_secrets(tmp_pa
     assert "src/app.ts" in digest.text  # listed in the tree, not quoted
 
 
+def test_source_files_named_after_keys_or_tokens_are_read_but_secret_files_are_not(tmp_path):
+    """A substring match on "key"/"token" dropped entity classes like ``ApiKey.java`` and ``Keyword.java``."""
+    root = _repo(tmp_path, {
+        "src/main/java/app/model/ApiKey.java": "@Entity\npublic class ApiKey {\n    private String label;\n}\n",
+        "src/main/java/app/model/Keyword.java": "@Entity\npublic class Keyword {\n    private String text;\n}\n",
+        "src/types/token.ts": "export interface Token {\n  value: string;\n}\n",
+        "config/secrets.yml": f"production:\n  api_key: {SECRET}\n",
+        "credentials.json": f'{{"token": "{SECRET}"}}',
+        "config/master.key": "0123456789abcdef\n",
+        "id_rsa": "-----BEGIN OPENSSH PRIVATE KEY-----\n",
+    })
+    digest = build_repo_digest(root)
+
+    assert {"src/main/java/app/model/ApiKey.java", "src/main/java/app/model/Keyword.java",
+            "src/types/token.ts"} <= set(digest.files)
+    for skipped in ("secrets.yml", "credentials.json", "master.key", "id_rsa"):
+        assert skipped not in digest.text
+    assert SECRET not in digest.text
+
+
 def test_digest_reads_plain_classes_in_an_mvc_model_folder(tmp_path):
     """github.com/ArmenSl/MVC-Java-App: plain Java classes in Model/, no @Entity.
 
@@ -291,6 +311,9 @@ class _ImportGitHub:
 
     async def get_branches(self, owner, repo_name, per_page=100):
         return ["main"]
+
+    async def get_default_branch(self, owner, repo_name):
+        return "main"
 
     async def get_branch_head(self, owner, repo_name, branch):
         return "c" * 40

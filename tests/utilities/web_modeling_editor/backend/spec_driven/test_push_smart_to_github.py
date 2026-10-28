@@ -57,8 +57,9 @@ class _FakeGitHubService:
     during the call, which is exactly what the endpoint does in practice.
     """
 
-    def __init__(self, *, branches=None, get_branches_404=False):
+    def __init__(self, *, branches=None, get_branches_404=False, default_branch="main"):
         self._branches = ["main"] if branches is None else branches
+        self._default_branch = default_branch
         self._get_branches_404 = get_branches_404
         self.created = False
         self.created_kwargs = None
@@ -89,6 +90,10 @@ class _FakeGitHubService:
                 "Not Found", request=request, response=response
             )
         return self._branches
+
+    async def get_default_branch(self, owner, repo_name):
+        await self.get_branches(owner, repo_name)  # same 404 when the repo is missing
+        return self._default_branch
 
     async def get_branch_head(self, owner, repo_name, branch):
         return "a" * 40
@@ -326,6 +331,22 @@ class TestPushSmartToGitHub:
         assert fake.push["branch"] == "dev"
         # Each spec-driven run is a full app → replace the tree.
         assert fake.push["preserve_existing_files"] is False
+
+    def test_without_a_requested_branch_the_push_lands_on_the_repos_real_default(self, monkeypatch):
+        """The default was guessed from the branch list, so a leftover sync branch sorted first could win."""
+        run_id = "f" * 32
+        _seed_run(run_id)
+        fake = _FakeGitHubService(branches=["besser/sync-1", "develop"], default_branch="develop")
+        _install(monkeypatch, fake)
+
+        body = {
+            "run_id": run_id,
+            "projectExport": _project_export(),
+            "deploy_config": {"repo_name": "my-generated-app", "use_existing": True},
+        }
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        assert fake.push["branch"] == "develop"
 
     def test_use_existing_missing_repo_returns_404_repo_missing(self, monkeypatch):
         run_id = "e" * 32

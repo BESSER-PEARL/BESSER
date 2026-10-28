@@ -244,6 +244,9 @@ class _PushGitHub:
     async def get_branches(self, owner, repo_name, per_page=100):
         return ["main"]
 
+    async def get_default_branch(self, owner, repo_name):
+        return "main"
+
     async def get_file_content(self, owner, repo_name, file_path, branch="main", ref=None):
         return {"content": self.render_yaml} if file_path == "render.yaml" and self.render_yaml else None
 

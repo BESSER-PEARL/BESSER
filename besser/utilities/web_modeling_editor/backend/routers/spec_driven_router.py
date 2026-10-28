@@ -881,20 +881,6 @@ def _scrub_secret_env_files(workdir: str) -> list[str]:
     return list(scrub_secret_files(workdir).removed_files)
 
 
-def _pick_default_branch(branches: list[str]) -> str:
-    """Best-effort repo default when only a branch list is available.
-
-    Prefers the conventional default names over an arbitrary first entry
-    so we never blindly take ``branches[0]``.
-    """
-    if not branches:
-        return "main"
-    for preferred in ("main", "master"):
-        if preferred in branches:
-            return preferred
-    return branches[0]
-
-
 def _resolve_target_branch(
     requested: Optional[str],
     available: Optional[list[str]],
@@ -1030,7 +1016,7 @@ async def push_spec_driven_to_github(
                             status_code=404, detail="repo_missing"
                         ) from exc
                     raise
-                repo_default = _pick_default_branch(branches)
+                repo_default = await github.get_default_branch(owner, repo_name)
                 target_branch = _resolve_target_branch(
                     deploy_config.branch, branches, repo_default
                 )
@@ -1350,7 +1336,7 @@ async def import_github_run(
                 raise HTTPException(status_code=404, detail="repo_missing") from exc
             raise
         branch = _resolve_target_branch(
-            req.branch, branches, _pick_default_branch(branches)
+            req.branch, branches, await github.get_default_branch(owner, repo)
         )
 
         # ---- 3-4. Pin the branch head and register it as a run ----

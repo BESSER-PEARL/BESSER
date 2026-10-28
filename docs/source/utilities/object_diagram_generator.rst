@@ -4,7 +4,7 @@ Object Diagram Generator
 The object diagram generator uses the `Alloy Analyzer <https://alloytools.org/>`_ to check the
 satisfiability of a B-UML :doc:`../buml_language/model_types/structural` and its OCL invariants, and
 to generate object diagrams that satisfy them. It translates the B-UML model into an Alloy specification
-with the :doc:`Alloy generator <./alloy>`, and analyzes that specification.
+with the :doc:`Alloy generator <../generators/alloy>`, and analyzes that specification.
 
 Note that the analysis is bounded: finding no instance means that **no instance exists within the
 bounds**. It does not prove that the model is inconsistent, since a larger instance might exist. As SAT
@@ -132,7 +132,7 @@ Supported Data Types
 - Enumerations.
 
 The object diagram generator is a new feature of BESSER and is still under development, so some models
-and OCL constructs are not supported yet. The :doc:`Alloy generator <./alloy>` lists what cannot be
+and OCL constructs are not supported yet. The :doc:`Alloy generator <../generators/alloy>` lists what cannot be
 analyzed, and the solver reports errors when constructs are not supported.
 
 Web Editor

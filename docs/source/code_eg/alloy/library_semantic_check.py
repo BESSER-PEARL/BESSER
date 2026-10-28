@@ -1,6 +1,6 @@
 """Semantic check of a library model with the Alloy Analyzer (see ``examples/semantic_check_example.rst``).
 
-Needs ``JAVA_HOME`` and ``BESSER_ALLOY_JAR`` (see ``generators/object_diagram.rst``).
+Needs ``JAVA_HOME`` and ``BESSER_ALLOY_JAR`` (see ``utilities/object_diagram_generator.rst``).
 """
 
 from besser.BUML.metamodel.structural import (

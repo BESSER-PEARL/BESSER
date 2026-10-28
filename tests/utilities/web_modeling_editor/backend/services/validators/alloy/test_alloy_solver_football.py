@@ -2,7 +2,6 @@ import os
 
 import pytest
 
-from besser.BUML.metamodel.object import ObjectModel
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, BinaryAssociation, Multiplicity, Constraint, StringType, IntegerType,
 )
@@ -61,6 +60,36 @@ def squad_model() -> DomainModel:
     return DomainModel("Football", types={team, player}, associations={squad})
 
 
+@pytest.fixture
+def ageless_player_model() -> DomainModel:
+    """``Player(age: int, optional)``, whose age must be null and less than 100: inconsistent in OCL,
+    since comparing null with ``<`` is invalid."""
+    player = Class("Player", attributes={Property("age", IntegerType, is_optional=True)})
+    no_age = Constraint("no_age", player, "context Player inv no_age: self.age = null", "OCL")
+    age_limit = Constraint("age_limit", player, "context Player inv age_limit: self.age < 100", "OCL")
+    return DomainModel("Football", types={player}, constraints={no_age, age_limit})
+
+
+@pytest.fixture
+def ageless_player_arithmetic_model() -> DomainModel:
+    """``Player(age: int, optional)``, whose age must be null and its successor positive: inconsistent in OCL,
+    since null plus one is invalid."""
+    player = Class("Player", attributes={Property("age", IntegerType, is_optional=True)})
+    no_age = Constraint("no_age", player, "context Player inv no_age: self.age = null", "OCL")
+    next_age = Constraint("next_age", player, "context Player inv next_age: self.age + 1 > 0", "OCL")
+    return DomainModel("Football", types={player}, constraints={no_age, next_age})
+
+
+@pytest.fixture
+def ageless_player_inequality_model() -> DomainModel:
+    """``Player(age: int, optional)``, whose age must be null and different from 0: consistent in OCL,
+    since null <> 0 is true."""
+    player = Class("Player", attributes={Property("age", IntegerType, is_optional=True)})
+    no_age = Constraint("no_age", player, "context Player inv no_age: self.age = null", "OCL")
+    nonzero_age = Constraint("nonzero_age", player, "context Player inv nonzero_age: self.age <> 0", "OCL")
+    return DomainModel("Football", types={player}, constraints={no_age, nonzero_age})
+
+
 def test_check_consistency_consistent(consistent_model, tmp_path):
     solver = AlloySolver(consistent_model, output_dir=str(tmp_path))
     assert solver.check_consistency(scope=1) == AlloyResult.SAT
@@ -117,6 +146,21 @@ def test_generate_object_models_inconsistent(inconsistent_model, tmp_path):
 def test_check_consistency_squad_of_eleven(squad_model, tmp_path):
     solver = AlloySolver(squad_model, output_dir=str(tmp_path))
     assert solver.check_consistency(scope=5) == AlloyResult.SAT
+
+
+def test_check_consistency_ageless_player(ageless_player_model, tmp_path):
+    solver = AlloySolver(ageless_player_model, output_dir=str(tmp_path))
+    assert solver.check_consistency(scope=1) == AlloyResult.UNSAT
+
+
+def test_check_consistency_ageless_player_arithmetic(ageless_player_arithmetic_model, tmp_path):
+    solver = AlloySolver(ageless_player_arithmetic_model, output_dir=str(tmp_path))
+    assert solver.check_consistency(scope=1) == AlloyResult.UNSAT
+
+
+def test_check_consistency_ageless_player_inequality(ageless_player_inequality_model, tmp_path):
+    solver = AlloySolver(ageless_player_inequality_model, output_dir=str(tmp_path))
+    assert solver.check_consistency(scope=1) == AlloyResult.SAT
 
 
 def test_scopes_before_any_analysis(consistent_model, tmp_path):

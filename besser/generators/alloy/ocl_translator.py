@@ -235,8 +235,7 @@ class OclToAlloy:
         if operation == "not":
             return Term(f"(not {operand.operand()})")
         if operation == "-":
-            self._require_integers(node, operand)
-            return Term(f"minus[0, {operand.text}]", "Int")
+            return Term(f"minus[0, {operand.text}]", "Int", guards=self._integer_guards(node, operand))
         raise UnsupportedOclError(
             f"OCL operation '{pretty_print(node)}' is not supported in the current version of the Alloy translation"
         )
@@ -249,8 +248,8 @@ class OclToAlloy:
 
     def _arithmetic(self, node: OperationCallExpression, function: str, left, right) -> "Term":
         left, right = self._translate(left), self._translate(right)
-        self._require_integers(node, left, right)
-        return Term(f"{function}[{left.text}, {right.text}]", "Int")
+        guards = self._integer_guards(node, left, right)
+        return Term(f"{function}[{left.text}, {right.text}]", "Int", guards=guards)
 
     def _comparison(self, node: OperationCallExpression, operator: str, left, right) -> "Term":
         left, right = self._comparison_operands(left, right)
@@ -281,9 +280,11 @@ class OclToAlloy:
                 )
             return Term(f"({_STRING_COMPARISONS[operator]}[{left.text},{right.text}])")
         if operator in _ORDERINGS:
-            self._require_integers(node, left, right)
+            guards = self._integer_guards(node, left, right)
+        else:  # = and <> compare sets: an empty value is not 0
+            guards = _unique(left.guards + right.guards)
         alloy_operator = "!=" if operator == "<>" else operator
-        return Term(f"({left.text} {alloy_operator} {right.text})")
+        return self._guarded(f"({left.text} {alloy_operator} {right.text})", guards)
 
     def _comparison_operands(self, left, right) -> tuple["Term", "Term"]:
         """Translates the operands of a comparison: a string literal compared with a date is a date literal."""
@@ -301,8 +302,15 @@ class OclToAlloy:
         if then.is_formula() or otherwise.is_formula():
             return Term(f"({condition} => {then.operand()} else {otherwise.operand()})")
         is_bag = then.is_bag or otherwise.is_bag
+        may_be_empty = then.may_be_empty or otherwise.may_be_empty
+        # The guards of a branch hold when the condition selects it
+        guards = []
+        if then.guards:
+            guards.append(f"({condition} => ({' and '.join(then.guards)}))")
+        if otherwise.guards:
+            guards.append(f"((not {condition}) => ({' and '.join(otherwise.guards)}))")
         return Term(f"({condition} => {then.text} else {otherwise.text})", then.type, then.is_set,
-                    is_bag=is_bag)
+                    is_bag=is_bag, may_be_empty=may_be_empty, guards=tuple(guards))
 
     # ------------------------------------------------------------------
     # Operations with a source: collections and types
@@ -331,10 +339,12 @@ class OclToAlloy:
 
     def _includes(self, node: OperationCallExpression) -> "Term":
         collection, element = self._translate(node.source), self._translate(node.arguments[0])
+        self._require_unguarded(node, element)
         return Term(f"({element.text} in {collection.text})")
 
     def _excludes(self, node: OperationCallExpression) -> "Term":
         collection, element = self._translate(node.source), self._translate(node.arguments[0])
+        self._require_unguarded(node, element)
         return Term(f"({element.text} not in {collection.text})")
 
     def _union(self, node: OperationCallExpression) -> "Term":
@@ -437,9 +447,12 @@ class OclToAlloy:
         if source.is_formula() or not self._spec.has_field(source.type, label):
             raise OclTranslationError(f"'{source.type}' has no navigable property '{label}'")
         field = self._spec.field_name(source.type, label)
-        is_set = source.is_set or self._spec.field_multiplicity(source.type, label) == "set"
+        multiplicity = self._spec.field_multiplicity(source.type, label)
+        is_set = source.is_set or multiplicity == "set"
+        may_be_empty = not is_set and (source.may_be_empty or multiplicity == "lone")
         # Navigating from a collection collects the values of the property: a Bag
-        return Term(f"{source.text}.{field}", self._spec.field_type(source.type, label), is_set, is_bag=source.is_set)
+        return Term(f"{source.text}.{field}", self._spec.field_type(source.type, label), is_set, is_bag=source.is_set,
+                    may_be_empty=may_be_empty)
 
     def _all_instances(self, label: str) -> "Term":
         return Term(self._spec.signature_name(label), label, is_set=True)
@@ -448,9 +461,9 @@ class OclToAlloy:
         """``x = null`` holds when *x* is empty, ``x <> null`` when it is not."""
         value = right if left.is_null() else left
         if operator == "=":
-            return Term(f"( no({value.text}))")
+            return self._guarded(f"( no({value.text}))", value.guards)
         if operator == "<>":
-            return Term(f"(some {value.text})")
+            return self._guarded(f"(some {value.text})", value.guards)
         raise OclTranslationError(f"null cannot be compared with '{operator}'")
 
     def _quantification(self, quantifier: str, collection: "Term", variables: dict[str, str], body) -> "Term":
@@ -489,6 +502,11 @@ class OclToAlloy:
         if value.is_formula():
             raise UnsupportedOclError(
                 "'collect' of boolean expressions is not supported in the current version of the Alloy translation"
+            )
+        if value.guards:
+            raise UnsupportedOclError(
+                "'collect' of arithmetic on values that may be null is not supported in the current version of the "
+                "Alloy translation"
             )
         relation = self._navigation_relation(variable, value)
         if relation is not None:
@@ -544,12 +562,36 @@ class OclToAlloy:
         return None
 
     @staticmethod
-    def _require_integers(node: OperationCallExpression, *operands: "Term") -> None:
-        """Raises unless the *operands* of *node* are single integers."""
+    def _integer_guards(node: OperationCallExpression, *operands: "Term") -> tuple[str, ...]:
+        """The guards of *node*, an arithmetic operation or ordering: the guards of its *operands*, and that
+        each operand that may be empty has a value.  In Alloy an empty integer reads as 0, while in OCL null
+        makes the operation invalid.  Raises unless the operands are single integers."""
         if any(operand.type != "Int" or operand.is_set for operand in operands):
             raise UnsupportedOclError(
                 f"'{pretty_print(node)}' is not supported: its operands must be single integers in the current "
                 "version of the Alloy translation"
+            )
+        guards = []
+        for operand in operands:
+            guards.extend(operand.guards)
+            if operand.may_be_empty:
+                guards.append(f"(some {operand.text})")
+        return _unique(guards)
+
+    @staticmethod
+    def _guarded(formula: str, guards: tuple[str, ...]) -> "Term":
+        """The formula *formula*, holding only when its *guards* hold."""
+        if not guards:
+            return Term(formula)
+        return Term(f"({' and '.join(guards)} and {formula})")
+
+    @staticmethod
+    def _require_unguarded(node: OperationCallExpression, operand: "Term") -> None:
+        """Raises if *operand* of *node* has guards, which *node* would drop."""
+        if operand.guards:
+            raise UnsupportedOclError(
+                f"'{pretty_print(node)}' is not supported: arithmetic on values that may be null is supported only "
+                "in comparisons in the current version of the Alloy translation"
             )
 
     def _in_scope(self, variables: dict[str, str], expression) -> "Term":
@@ -566,16 +608,20 @@ class Term:
 
     A term without type is a formula.  An open-ended term (a quantified formula) extends as far
     right as possible, so it is parenthesized when it is an operand.  A bag term is a collection
-    that may contain duplicates in OCL (a Bag), which its Alloy set does not keep.
+    that may contain duplicates in OCL (a Bag), which its Alloy set does not keep.  A term that may
+    be empty is a single value navigated through a ``lone`` field (null in OCL).  The guards of a
+    term are the formulas stating that the values its arithmetic uses are not empty.
     """
 
     def __init__(self, text: str, type: str | None = None, is_set: bool = False, open_ended: bool = False,
-                 is_bag: bool = False):
+                 is_bag: bool = False, may_be_empty: bool = False, guards: tuple[str, ...] = ()):
         self.text = text
         self.type = type
         self.is_set = is_set
         self.open_ended = open_ended
         self.is_bag = is_bag
+        self.may_be_empty = may_be_empty
+        self.guards = guards
 
     def is_formula(self) -> bool:
         return self.type is None
@@ -594,6 +640,11 @@ class Term:
     def operand(self) -> str:
         """The formula stating this term, ready to be an operand of a connective."""
         return f"({self.formula()})" if self.open_ended else self.formula()
+
+
+def _unique(guards) -> tuple[str, ...]:
+    """The *guards* without duplicates, in order."""
+    return tuple(dict.fromkeys(guards))
 
 
 def date_label(value: date) -> str:

@@ -1,25 +1,19 @@
-import os
 import pytest
-from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2
-from besser.generators.alloy.alloy_generator import AlloyGenerator
-from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec
+from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2  # noqa: F401
+from tests.generators.alloy.utils_alloy_translation import translate
 
 
 @pytest.fixture
-def spec(library_with_ocl_v2, tmpdir):
-    tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGenerator(model=library_with_ocl_v2, output_dir=str(tmpdir))
-    generator.generate()
-    als_file = generator.get_specification_path()
-    assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"
+def spec(library_with_ocl_v2):  # noqa: F811
+    return translate(library_with_ocl_v2, scope=5)
+
+
+def test_library_modules(spec):
     # Date and String attributes require the date and strings libraries; `false` requires booleans
-    assert sorted(os.listdir(str(tmpdir))) == ["boolean.als", "date.als", "model.als", "strings.als"]
-    with open(als_file, "r", encoding="utf-8") as f:
-        content = f.read()
-    assert "open boolean" in content
-    assert "open date" in content
-    assert "open strings" in content
-    return AlloyTestSpec(content)
+    assert "boolean" in spec.opens
+    assert "date" in spec.opens
+    assert "strings" in spec.opens
+    assert len(spec.opens) == 3
 
 
 def test_signatures(spec):

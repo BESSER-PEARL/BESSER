@@ -1,22 +1,16 @@
-import os
 import pytest
 from tests.generators.alloy.BUML_genealogy_model import domain_model
-from besser.generators.alloy.alloy_generator import AlloyGenerator
-from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec
+from tests.generators.alloy.utils_alloy_translation import translate
 
 
 @pytest.fixture
-def spec(tmpdir):
-    tmpdir = tmpdir.mkdir("output")
-    generator = AlloyGenerator(model=domain_model, output_dir=str(tmpdir))
-    generator.generate()
-    als_file = generator.get_specification_path()
-    assert os.path.isfile(als_file), f"Alloy specification not generated at {als_file}"
-    # No Int, String, Date or Boolean types: no library module is generated
-    assert sorted(os.listdir(str(tmpdir))) == ["model.als"]
-    with open(als_file, "r", encoding="utf-8") as f:
-        content = f.read()
-    return AlloyTestSpec(content)
+def spec():
+    return translate(domain_model, scope=5)
+
+
+def test_library_modules(spec):
+    # No Int, String, Date or Boolean types: no library module is opened
+    assert len(spec.opens) == 0
 
 
 def test_signatures(spec):

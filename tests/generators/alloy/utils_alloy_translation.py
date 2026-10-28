@@ -1,12 +1,13 @@
 import re
+import tempfile
 from typing import Dict, List, Optional, Set
 
 from besser.BUML.metamodel.structural.structural import Constraint, DomainModel
-from besser.generators.alloy.alloy_translator import BumlToAlloy
+from besser.generators.alloy.alloy_generator import AlloyGenerator
 
 
 # ---------------------------------------------------------------------------
-# Minimal parser for the signatures, facts and run command of a generated .als file
+# Minimal parser for the opened modules, signatures, facts and run command of a generated .als file
 # ---------------------------------------------------------------------------
 
 _SIG_RE = re.compile(
@@ -19,6 +20,8 @@ _SIG_RE = re.compile(
 
 # Not anchored to the line start: OCL facts may follow an auxiliary ``fun`` on the same line.
 _FACT_RE = re.compile(r"\bfact\b\s*\w*\s*\{")
+
+_OPEN_RE = re.compile(r"^[ \t]*open\s+(?P<module>[\w/]+)", re.MULTILINE)
 
 _RUN_RE = re.compile(r"^[ \t]*run\s+(?P<pred>\w+)\s+for\s+(?P<scopes>.+)$", re.MULTILINE)
 
@@ -45,8 +48,9 @@ def _brace_body(text: str, open_idx: int) -> str:
 
 
 class AlloyTestSpec:
-    """Signatures, facts and run command of an Alloy specification.
+    """Opened modules, signatures, facts and run command of an Alloy specification.
 
+    - ``opens``:   names of the opened modules, e.g. ``{"strings"}``
     - ``sigs``:    normalized declarations, e.g. ``"one sig ENUM_Position_FORWARD extends Position"``
     - ``fields``:  signature name -> normalized field declarations, e.g. ``{"Team_country: one Country"}``
     - ``parents``: signature name -> the signature it extends (``None`` if it extends none)
@@ -56,6 +60,7 @@ class AlloyTestSpec:
     """
 
     def __init__(self, text: str):
+        self.opens: Set[str] = {m.group("module") for m in _OPEN_RE.finditer(text)}
         self.sigs: Set[str] = set()
         self.fields: Dict[str, Set[str]] = {}
         self.parents: Dict[str, Optional[str]] = {}
@@ -105,7 +110,8 @@ class AlloyTestSpec:
 # Translation helpers
 # ---------------------------------------------------------------------------
 
-def translate(model: DomainModel, classname: str, constraint: str, scope: int) -> AlloyTestSpec:
+def set_constraint(model: DomainModel, classname: str, constraint: str) -> None:
+    """Replaces the constraints of *model* with the invariant *constraint* of *classname*."""
     model.constraints = {
         Constraint(
             name="named",
@@ -114,6 +120,12 @@ def translate(model: DomainModel, classname: str, constraint: str, scope: int) -
             language="OCL",
         )
     }
-    translator = BumlToAlloy(model, scope=scope, seed=0)
-    spec = translator.translate()
-    return AlloyTestSpec(spec.render())
+
+
+def translate(model: DomainModel, scope: int) -> AlloyTestSpec:
+    """Writes the Alloy specification of *model* with AlloyGenerator and parses it."""
+    with tempfile.TemporaryDirectory(prefix="besser_") as output_dir:
+        generator = AlloyGenerator(model=model, output_dir=output_dir)
+        generator.generate(scope=scope)
+        with open(generator.get_specification_path(), "r", encoding="utf-8") as f:
+            return AlloyTestSpec(f.read())

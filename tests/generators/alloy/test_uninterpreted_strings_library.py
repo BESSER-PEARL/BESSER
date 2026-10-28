@@ -1,7 +1,7 @@
 import pytest
 from besser.generators.alloy.ocl_translator import UnsupportedOclError
-from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2
-from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec, translate
+from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2  # noqa: F401
+from tests.generators.alloy.utils_alloy_translation import set_constraint, translate
 
 
 @pytest.mark.parametrize("value, characters", [
@@ -9,13 +9,15 @@ from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec, transl
     ("a b", "' '"),
     ("x-y-z", "'-'"),
 ])
-def test_strings_with_invalid_identifier_characters_are_unsupported(library_with_ocl_v2, value, characters):
+def test_strings_with_invalid_identifier_characters_are_unsupported(library_with_ocl_v2, value, characters):  # noqa: F811
+    set_constraint(library_with_ocl_v2, "Author", f"self.name = '{value}'")
     with pytest.raises(UnsupportedOclError, match=f"the characters {characters} cannot be translated"):
-        translate(library_with_ocl_v2, "Author", f"self.name = '{value}'", scope=5)
+        translate(library_with_ocl_v2, scope=5)
 
 
-def test_string_constants_one_literal(library_with_ocl_v2):
-    spec = translate(library_with_ocl_v2, "Author", "self.name = 'borges'", scope=3)
+def test_string_constants_one_literal(library_with_ocl_v2):  # noqa: F811
+    set_constraint(library_with_ocl_v2, "Author", "self.name = 'borges'")
+    spec = translate(library_with_ocl_v2, scope=3)
     str_sigs = {sig for sig in spec.sigs if sig.startswith("one sig Str_")}
     assert len(str_sigs) == 3
     assert "one sig Str_borges extends Str" in spec.sigs
@@ -24,8 +26,9 @@ def test_string_constants_one_literal(library_with_ocl_v2):
     assert "3 Str" in spec.run_scopes
 
 
-def test_other_strings_skip_taken_names(library_with_ocl_v2):
-    spec = translate(library_with_ocl_v2, "Author", "self.name = 'str0'", scope=3)
+def test_other_strings_skip_taken_names(library_with_ocl_v2):  # noqa: F811
+    set_constraint(library_with_ocl_v2, "Author", "self.name = 'str0'")
+    spec = translate(library_with_ocl_v2, scope=3)
     str_sigs = {sig for sig in spec.sigs if sig.startswith("one sig Str_")}
     assert len(str_sigs) == 3
     assert "one sig Str_str0 extends Str" in str_sigs
@@ -34,8 +37,9 @@ def test_other_strings_skip_taken_names(library_with_ocl_v2):
     assert "3 Str" in spec.run_scopes
 
 
-def test_str_scope_holds_all_literals(library_with_ocl_v2):
-    spec = translate(library_with_ocl_v2, "Author", "self.name = 'a' or self.name = 'b' or self.name = 'c'", scope=2)
+def test_str_scope_holds_all_literals(library_with_ocl_v2):  # noqa: F811
+    set_constraint(library_with_ocl_v2, "Author", "self.name = 'a' or self.name = 'b' or self.name = 'c'")
+    spec = translate(library_with_ocl_v2, scope=2)
     str_sigs = {sig for sig in spec.sigs if sig.startswith("one sig Str_")}
     assert len(str_sigs) == 3
     assert "one sig Str_a extends Str" in spec.sigs

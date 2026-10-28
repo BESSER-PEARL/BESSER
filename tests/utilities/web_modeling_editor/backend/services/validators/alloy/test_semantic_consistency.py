@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,12 +11,7 @@ from besser.utilities.web_modeling_editor.backend.services.validators.alloy.sema
     check_semantic_consistency,
     generate_object_diagram,
 )
-
-# Marks the tests that run the Alloy Analyzer, located through these environment variables
-needs_alloy = pytest.mark.skipif(
-    not (os.getenv("JAVA_HOME") and os.getenv("BESSER_ALLOY_JAR")),
-    reason="JAVA_HOME and BESSER_ALLOY_JAR must be set to run the Alloy Analyzer",
-)
+from tests.utilities.web_modeling_editor.backend.services.validators.alloy.utils_alloy_solver import needs_alloy
 
 
 def _book_diagram(invariant: str) -> DiagramInput:

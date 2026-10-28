@@ -1,18 +1,15 @@
-import os
-
 import pytest
 
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, BinaryAssociation, Multiplicity, Constraint, StringType, IntegerType,
 )
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy import AlloyResult, AlloySolver
-from tests.utilities.web_modeling_editor.backend.services.validators.alloy.utils_alloy_solver import describe
-
-# The tests run the Alloy Analyzer, located through these environment variables
-pytestmark = pytest.mark.skipif(
-    not (os.getenv("JAVA_HOME") and os.getenv("BESSER_ALLOY_JAR")),
-    reason="JAVA_HOME and BESSER_ALLOY_JAR must be set to run the Alloy Analyzer",
+from tests.utilities.web_modeling_editor.backend.services.validators.alloy.utils_alloy_solver import (
+    check_consistency, describe, generate_object_models, needs_alloy,
 )
+
+# The tests run the Alloy Analyzer
+pytestmark = needs_alloy
 
 
 def _team_player_model(player_age: str) -> DomainModel:
@@ -90,39 +87,36 @@ def ageless_player_inequality_model() -> DomainModel:
     return DomainModel("Football", types={player}, constraints={no_age, nonzero_age})
 
 
-def test_check_consistency_consistent(consistent_model, tmp_path):
-    solver = AlloySolver(consistent_model, output_dir=str(tmp_path))
-    assert solver.check_consistency(scope=1) == AlloyResult.SAT
-
-
-def test_check_consistency_inconsistent(inconsistent_model, tmp_path):
-    solver = AlloySolver(inconsistent_model, output_dir=str(tmp_path))
-    assert solver.check_consistency(scope=1) == AlloyResult.UNSAT
-
-
-def test_check_consistency_scopes_too_large(too_large_model, tmp_path):
-    solver = AlloySolver(too_large_model, output_dir=str(tmp_path))
-    assert solver.check_consistency(scope=1) == AlloyResult.SCOPES_TOO_LARGE
-
-
-def test_generate_object_models_scopes_too_large(too_large_model, tmp_path):
-    solver = AlloySolver(too_large_model, output_dir=str(tmp_path))
-    result, object_models = solver.generate_object_models(scope=1)
-    assert result == AlloyResult.SCOPES_TOO_LARGE
-    assert object_models == []
-
-
-def test_generate_object_models_consistent(consistent_model, tmp_path):
-    solver = AlloySolver(consistent_model, output_dir=str(tmp_path))
-    result, object_models = solver.generate_object_models(scope=1)
+def test_check_consistency_consistent(consistent_model):
+    result, scopes = check_consistency(consistent_model, scope=1)
     assert result == AlloyResult.SAT
-    assert len(object_models) == 1
-
-    scopes = solver.get_scopes()
     assert scopes.objects == 1
     assert scopes.integers == (-4, 3)  # the literal 2 needs 2 bits, plus the sign bit
     assert scopes.strings == 1  # the literal 'Barcelona'
     assert scopes.dates is None
+
+
+def test_check_consistency_inconsistent(inconsistent_model):
+    result, _ = check_consistency(inconsistent_model, scope=1)
+    assert result == AlloyResult.UNSAT
+
+
+def test_check_consistency_scopes_too_large(too_large_model):
+    result, scopes = check_consistency(too_large_model, scope=1)
+    assert result == AlloyResult.SCOPES_TOO_LARGE
+    assert scopes.bitwidth == 17  # the literal 40000 needs 16 bits, plus the sign bit
+
+
+def test_generate_object_models_scopes_too_large(too_large_model):
+    result, object_models = generate_object_models(too_large_model, scope=1)
+    assert result == AlloyResult.SCOPES_TOO_LARGE
+    assert object_models == []
+
+
+def test_generate_object_models_consistent(consistent_model):
+    result, object_models = generate_object_models(consistent_model, scope=1)
+    assert result == AlloyResult.SAT
+    assert len(object_models) == 1
 
     object_model = object_models[0]
     description = describe(object_model)
@@ -136,31 +130,31 @@ def test_generate_object_models_consistent(consistent_model, tmp_path):
     assert len(description) == 6
 
 
-def test_generate_object_models_inconsistent(inconsistent_model, tmp_path):
-    solver = AlloySolver(inconsistent_model, output_dir=str(tmp_path))
-    result, object_models = solver.generate_object_models(scope=1)
+def test_generate_object_models_inconsistent(inconsistent_model):
+    result, object_models = generate_object_models(inconsistent_model, scope=1)
     assert result == AlloyResult.UNSAT
     assert object_models == []
 
 
-def test_check_consistency_squad_of_eleven(squad_model, tmp_path):
-    solver = AlloySolver(squad_model, output_dir=str(tmp_path))
-    assert solver.check_consistency(scope=5) == AlloyResult.SAT
+def test_check_consistency_squad_of_eleven(squad_model):
+    result, scopes = check_consistency(squad_model, scope=5)
+    assert result == AlloyResult.SAT
+    assert scopes.integers == (-16, 15)  # the bound 11 needs 4 bits, plus the sign bit
 
 
-def test_check_consistency_ageless_player(ageless_player_model, tmp_path):
-    solver = AlloySolver(ageless_player_model, output_dir=str(tmp_path))
-    assert solver.check_consistency(scope=1) == AlloyResult.UNSAT
+def test_check_consistency_ageless_player(ageless_player_model):
+    result, _ = check_consistency(ageless_player_model, scope=1)
+    assert result == AlloyResult.UNSAT
 
 
-def test_check_consistency_ageless_player_arithmetic(ageless_player_arithmetic_model, tmp_path):
-    solver = AlloySolver(ageless_player_arithmetic_model, output_dir=str(tmp_path))
-    assert solver.check_consistency(scope=1) == AlloyResult.UNSAT
+def test_check_consistency_ageless_player_arithmetic(ageless_player_arithmetic_model):
+    result, _ = check_consistency(ageless_player_arithmetic_model, scope=1)
+    assert result == AlloyResult.UNSAT
 
 
-def test_check_consistency_ageless_player_inequality(ageless_player_inequality_model, tmp_path):
-    solver = AlloySolver(ageless_player_inequality_model, output_dir=str(tmp_path))
-    assert solver.check_consistency(scope=1) == AlloyResult.SAT
+def test_check_consistency_ageless_player_inequality(ageless_player_inequality_model):
+    result, _ = check_consistency(ageless_player_inequality_model, scope=1)
+    assert result == AlloyResult.SAT
 
 
 def test_scopes_before_any_analysis(consistent_model, tmp_path):

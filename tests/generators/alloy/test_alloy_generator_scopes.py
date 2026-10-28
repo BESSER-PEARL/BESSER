@@ -1,6 +1,8 @@
 import os
 import pytest
-from besser.BUML.metamodel.structural import BooleanType, Class, DomainModel, Property
+from besser.BUML.metamodel.structural import (
+    BinaryAssociation, BooleanType, Class, DomainModel, Multiplicity, Property,
+)
 from tests.generators.alloy.BUML_football_model import football_model
 from tests.generators.alloy.BUML_library_with_ocl_v2 import library_with_ocl_v2
 from besser.generators.alloy.alloy_generator import AlloyGenerator
@@ -27,7 +29,7 @@ def test_run_command_football_s3(football_spec_s3):
     assert "3 Championship" in football_spec_s3.run_scopes
     assert "3 Match" in football_spec_s3.run_scopes
     assert "3 Fan" in football_spec_s3.run_scopes
-    assert "3 Int" in football_spec_s3.run_scopes
+    assert "4 Int" in football_spec_s3.run_scopes  # the bound 4 of favoriteTeams needs 3 bits, plus the sign bit
     assert "3 Str" in football_spec_s3.run_scopes
     assert len(football_spec_s3.run_scopes) == 9
 
@@ -93,8 +95,8 @@ def test_scopes_football_s3(football_model, tmpdir):
     generator.generate(scope=3)
     scopes = generator.get_scopes()
     assert scopes.objects == 3
-    assert scopes.bitwidth == 3
-    assert scopes.integers == (-4, 3)
+    assert scopes.bitwidth == 4  # the bound 4 of favoriteTeams needs 3 bits, plus the sign bit
+    assert scopes.integers == (-8, 7)
     assert scopes.strings == 3
     assert scopes.dates is None
 
@@ -114,7 +116,28 @@ def test_scopes_without_values(switch_model, tmpdir):
     generator = AlloyGenerator(model=switch_model, output_dir=str(tmpdir))
     generator.generate(scope=3)
     scopes = generator.get_scopes()
-    assert scopes.bitwidth is None
-    assert scopes.integers is None
+    assert scopes.bitwidth == 3  # the scope
+    assert scopes.integers == (-4, 3)
     assert scopes.strings is None
     assert scopes.dates is None
+
+
+@pytest.fixture
+def squad_model() -> DomainModel:
+    """``Team`` 1 -- 0..11 ``Player``: a model without integers, but with the multiplicity bound 11."""
+    team = Class("Team")
+    player = Class("Player")
+    squad = BinaryAssociation("squad", ends={
+        Property("team", team, multiplicity=Multiplicity(1, 1)),
+        Property("players", player, multiplicity=Multiplicity(0, 11)),
+    })
+    return DomainModel("Football", types={team, player}, associations={squad})
+
+
+def test_scopes_squad_s5(squad_model, tmpdir):
+    generator = AlloyGenerator(model=squad_model, output_dir=str(tmpdir))
+    generator.generate(scope=5)
+    scopes = generator.get_scopes()
+    assert scopes.objects == 5
+    assert scopes.bitwidth == 5  # the bound 11 needs 4 bits, plus the sign bit
+    assert scopes.integers == (-16, 15)

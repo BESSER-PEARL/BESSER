@@ -116,7 +116,7 @@ Its methods take:
 
 - ``scope``: (Optional, default ``5``) The bounds of the search: up to ``scope`` objects of each class,
   ``scope`` strings and dates, and integers with bitwidth ``scope`` (e.g. [-16, 15] for 5). The bounds grow
-  to fit the literals of the OCL invariants (see above).
+  to fit the literals of the OCL invariants (see above) and the multiplicity bounds of the associations.
 - ``timeout``: (Optional, default ``30``) The seconds the Alloy Analyzer may run before the result is
   ``TIMEOUT``.
 - ``seed``: (Optional, default ``0``) The seed of the random dates in the specification.

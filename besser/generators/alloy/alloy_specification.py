@@ -40,38 +40,34 @@ _ALLOY_KEYWORDS = frozenset({
     "triggered", "univ", "until", "var",
 })
 
-_INVALID_IDENTIFIER_CHARACTERS = re.compile(r"[^A-Za-z0-9_]")
+# Characters that cannot be part of an Alloy identifier.
+INVALID_IDENTIFIER_CHARACTERS = re.compile(r"[^A-Za-z0-9_]")
 
 
 @dataclass(frozen=True)
 class AlloyBounds:
     """What the ``run`` command of a specification searches: *objects* atoms per bounded signature, and
-    the values: *bitwidth* bits for ``Int``, *strings* ``Str`` and *dates* ``Date`` atoms, each ``None``
-    when the specification has no such values."""
+    the values: *bitwidth* bits for ``Int``, and *strings* ``Str`` and *dates* ``Date`` atoms, each ``None``
+    when the specification has no such values.  The integers are always bounded, since the multiplicity
+    facts and OCL ``size()`` count objects."""
 
     objects: int
-    bitwidth: int | None = None
+    bitwidth: int
     strings: int | None = None
     dates: int | None = None
 
     @property
-    def integers(self) -> tuple[int, int] | None:
-        """The range of the integers, ``None`` when there are none."""
-        if self.bitwidth is None:
-            return None
+    def integers(self) -> tuple[int, int]:
+        """The range of the integers."""
         return -2 ** (self.bitwidth - 1), 2 ** (self.bitwidth - 1) - 1
 
     def __str__(self) -> str:
         """The bounds in words, e.g. ``5 objects per class, integers in [-16, 15], 5 strings and 5 dates``."""
-        parts = [f"{_count(self.objects, 'object')} per class"]
-        if self.integers is not None:
-            parts.append(f"integers in [{self.integers[0]}, {self.integers[1]}]")
+        parts = [f"{_count(self.objects, 'object')} per class", f"integers in [{self.integers[0]}, {self.integers[1]}]"]
         if self.strings is not None:
             parts.append(_count(self.strings, "string"))
         if self.dates is not None:
             parts.append(_count(self.dates, "date"))
-        if len(parts) == 1:
-            return parts[0]
         return f"{', '.join(parts[:-1])} and {parts[-1]}"
 
 
@@ -87,7 +83,7 @@ def _identifier(name: str) -> str:
     cannot be reserved words: invalid characters are dropped, and names that do not start
     with a letter or that are reserved words are prefixed with ``id_``.
     """
-    identifier = _INVALID_IDENTIFIER_CHARACTERS.sub("", name)
+    identifier = INVALID_IDENTIFIER_CHARACTERS.sub("", name)
     if not identifier:
         raise ValueError(f"Cannot create a valid Alloy identifier from '{name}'")
     if not identifier[0].isalpha() or identifier in _ALLOY_KEYWORDS:
@@ -418,9 +414,10 @@ class RunCommand:
         self.predicate = predicate
         self.bounds = bounds
         self._scopes = {label: bounds.objects for label in signatures}
-        for label, bound in (("Str", bounds.strings), ("Date", bounds.dates), ("Int", bounds.bitwidth)):
+        for label, bound in (("Str", bounds.strings), ("Date", bounds.dates)):
             if bound is not None:
                 self._scopes[label] = bound
+        self._scopes["Int"] = bounds.bitwidth
 
     @property
     def labels(self) -> list[str]:

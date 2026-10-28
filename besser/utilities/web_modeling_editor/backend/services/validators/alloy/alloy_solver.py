@@ -1,4 +1,3 @@
-import logging
 import os
 import tempfile
 from besser.BUML.metamodel.object import ObjectModel
@@ -14,8 +13,6 @@ from besser.utilities.web_modeling_editor.backend.services.validators.alloy.allo
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy.alloy_instance_to_object_model import (
     AlloyInstanceToObjectModel,
 )
-
-logger = logging.getLogger(__name__)
 
 # Seconds the Alloy Analyzer may run before an analysis times out.
 _DEFAULT_TIMEOUT_SECONDS = 30
@@ -85,7 +82,7 @@ class AlloySolver:
             AlloyTranslationError: when the model, or one of its OCL invariants, cannot be translated.
         """
         self.generate_specification(scope, seed)
-        (result, instance_xml_files) = self.executor.generate_instances(
+        result, _ = self.executor.generate_instances(
             self.specification_path, self.alloy_output_dir, timeout=timeout
         )
         return result

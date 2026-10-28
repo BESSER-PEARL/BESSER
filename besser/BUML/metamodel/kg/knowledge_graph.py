@@ -211,8 +211,7 @@ class KGNode(_KGAnnotatedElement, ABC):
         iri: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__()
-        self.id = id
+        super().__init__(id=id)
         self.label = label
         self.iri = iri
         self.metadata = metadata
@@ -220,7 +219,7 @@ class KGNode(_KGAnnotatedElement, ABC):
     @property
     def id(self) -> str:
         """str: Get the id, which is unique within a knowledge graph."""
-        return self.__id
+        return Element.id.fget(self)
 
     @id.setter
     def id(self, value: str) -> None:
@@ -231,7 +230,7 @@ class KGNode(_KGAnnotatedElement, ABC):
         """
         if value is None or not isinstance(value, str) or value == "":
             raise ValueError("KGNode.id must be a non-empty string.")
-        self.__id = value
+        Element.id.fset(self, value)
 
     def __hash__(self):
         return hash((type(self).__name__, self.id))
@@ -411,8 +410,7 @@ class KGEdge(_KGAnnotatedElement):
         iri: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__()
-        self.id = id
+        super().__init__(id=id)
         self.source = source
         self.target = target
         self.label = label
@@ -422,7 +420,7 @@ class KGEdge(_KGAnnotatedElement):
     @property
     def id(self) -> str:
         """str: Get the id, unique among a graph's edges."""
-        return self.__id
+        return Element.id.fget(self)
 
     @id.setter
     def id(self, value: str) -> None:
@@ -433,7 +431,7 @@ class KGEdge(_KGAnnotatedElement):
         """
         if value is None or not isinstance(value, str) or value == "":
             raise ValueError("KGEdge.id must be a non-empty string.")
-        self.__id = value
+        Element.id.fset(self, value)
 
     @property
     def source(self) -> KGNode:

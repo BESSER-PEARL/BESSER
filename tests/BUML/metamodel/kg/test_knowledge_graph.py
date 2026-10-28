@@ -5,6 +5,7 @@ import gc
 import pytest
 
 from tests.BUML.metamodel.kg.axiom_samples import AXIOM_SAMPLES
+from besser.BUML.metamodel.structural import Element
 from besser.BUML.metamodel.kg import (
     DisjointClassesAxiom,
     EquivalentClassesAxiom,
@@ -53,6 +54,17 @@ def test_literal_requires_value():
 def test_node_id_must_be_non_empty():
     with pytest.raises(ValueError):
         KGClass(id="", label="X")
+
+
+def test_node_and_edge_ids_are_the_element_id():
+    """A KG id is the persistent ``Element.id``, with the KG's stricter rule on top."""
+    a, b = KGClass(id="a"), KGClass(id="b")
+    edge = KGEdge(id="e", source=a, target=b)
+    assert Element.id.fget(a) == "a" and Element.id.fget(edge) == "e"
+    a.id = "a2"
+    assert Element.id.fget(a) == "a2"
+    with pytest.raises(ValueError):
+        KGEdge(id=None, source=a, target=b)
 
 
 def test_graph_name_rejects_spaces():

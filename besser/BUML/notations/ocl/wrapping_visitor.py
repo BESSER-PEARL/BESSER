@@ -136,9 +136,11 @@ class WrappingVisitor(BOCLVisitorImpl):
             prop = self._resolve_property_in_iterators(name)
         if prop is None:
             ctx_name = self.context_class.name if self.context_class else "?"
-            raise BOCLSyntaxError([
-                f"Property '{name}' not found in context '{ctx_name}'"
-            ])
+            owner = target_type if isinstance(target_type, Class) else self.context_class
+            raise BOCLSyntaxError(
+                [f"Property '{name}' not found in context '{ctx_name}'"],
+                missing_element=f"{owner.name}.{name}" if owner is not None else name,
+            )
         pce = PropertyCallExpression(prop.name, prop)
         pce.source = receiver
         return pce

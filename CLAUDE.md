@@ -184,6 +184,25 @@ store is SQLite at `BESSER_LLM_RUN_STORE_PATH` or the system temp directory.
 
 ## Conventions
 
+### Engineering standard
+Every change is production code: what is merged ships to https://editor.besser-pearl.org as is.
+- **Reuse before writing.** Use the existing BESSER helper (`constants/constants.py`,
+  `buml_code_builder/common.py`, the converters, the `tests/conftest.py` fixtures) or a maintained library before
+  writing a parser, diff, merge, retry or validator yourself. A new dependency is pinned, MIT-compatible, and in
+  the requirements file the code runs from.
+- **Simplest design that solves the problem.** No options, flags or layers nobody asked for. A flag needs a
+  rollout reason. When a new path replaces an old one, remove the old one.
+- **Put logic in the layer that owns it**: metamodel rules in the metamodel, conversion in
+  `services/converters/`, request/response models in `models/`, Spec-Driven planning and checks in `planning/`
+  and `validation/`. Define a shared data shape once and name the other side of the contract (e.g. the
+  frontend type in `shared/api/`).
+- **One name per concept** across backend, frontend, modeling-agent, docs and UI copy.
+- **No silent behaviour.** A fallback or skip that changes the outcome logs at warning level and is reported to
+  the user or the agent.
+- **Readable**: one job per function, names that say what a thing is, thresholds as named constants with a
+  one-line reason, short factual comments.
+- **Prove it.** A fix comes with a test that fails before it; verify a defect before reporting or fixing it.
+
 ### Code style
 - PEP 8, 4-space indentation, 120-char line target (pylint `max-line-length` in `pyproject.toml`; CI's ruff
   ignores `E501`, so long lines won't fail the build — keep them short anyway)

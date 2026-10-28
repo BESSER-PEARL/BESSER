@@ -362,7 +362,7 @@ def object_buml_to_json(
         associations = [
             (rel_id, rel.get("source", {}), rel.get("target", {}))
             for rel_id, rel in reference_diagram_json["relationships"].items()
-            if rel["type"] in ["ClassBidirectional", "ClassUnidirectional"]
+            if rel["type"] in ["ClassBidirectional", "ClassUnidirectional", "ClassComposition", "ClassAggregation"]
         ]
 
         def find_association(class_id: str, role: str):

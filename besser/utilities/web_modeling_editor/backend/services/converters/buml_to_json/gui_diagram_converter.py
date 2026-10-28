@@ -477,16 +477,19 @@ def _apply_component_specific_attributes(element: ViewComponent, attrs: Dict[str
 def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[str, Any]) -> None:
     binding = getattr(component, "data_binding", None)
     if not binding:
+        # The model is the source of truth for the endpoint: an endpoint stored
+        # in the editor's attributes must not outlive the binding.
+        attrs.pop("data-endpoint", None)
         return
     domain = getattr(binding, "domain_concept", None)
     if domain and getattr(domain, "name", None):
-        attrs.setdefault("data-source", domain.name)
+        attrs.setdefault("data-source", _element_ref(domain))
     label_name = (
-        getattr(getattr(binding, "label_field", None), "name", None)
+        _element_ref(getattr(binding, "label_field", None))
         or getattr(binding, "label_field_name", None)
     )
     data_name = (
-        getattr(getattr(binding, "data_field", None), "name", None)
+        _element_ref(getattr(binding, "data_field", None))
         or getattr(binding, "data_field_name", None)
     )
     if label_name:
@@ -504,6 +507,99 @@ def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[s
         attrs.setdefault("data-field-path", binding.data_field_path)
     if binding.filter_expression:
         attrs.setdefault("filter", str(binding.filter_expression))
+    # Assigned, not defaulted: editing or clearing ``endpoint=`` in B-UML must win
+    # over the value stored when the component was last saved in the editor.
+    if binding.endpoint:
+        attrs["data-endpoint"] = binding.endpoint
+    else:
+        attrs.pop("data-endpoint", None)
+
+
+# The series keys the model owns (written from its Series and their bindings);
+# any other key of a stored series (``data``: the editor's sample values,
+# ``_expanded``, ...) is editor-only and kept.
+_SERIES_MODEL_KEYS = frozenset({
+    "name", "data-source", "label-field", "data-field", "label-field-path", "data-field-path",
+    "filter", "aggregation", "data-endpoint", "features", "values",
+})
+
+
+def _series_color(series: Any) -> Optional[str]:
+    color = getattr(getattr(series, "styling", None), "color", None)
+    if not color:
+        return None
+    return (getattr(color, "primary_color", None) or getattr(color, "line_color", None)
+            or getattr(color, "bar_color", None) or getattr(color, "background_color", None))
+
+
+def _series_entry(series: Any) -> Dict[str, Any]:
+    """One series as the editor's series manager stores it (read back by chart_parsers)."""
+    entry: Dict[str, Any] = {"name": series.label or series.name}
+    color = _series_color(series)
+    if color:
+        entry["color"] = color
+    _apply_chart_data_binding_attributes(series, entry)
+    return _clean_dict(entry)
+
+
+def _stored_series(raw: Any) -> List[Dict[str, Any]]:
+    """The ``series`` stored in a chart's editor attributes (a JSON string or a list)."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            logger.warning("Ignoring a chart's stored series: not valid JSON")
+            return []
+    return [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+
+
+def _merge_series_entry(series: Any, entry: Dict[str, Any], stored: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """``entry`` (from the model) over ``stored`` (from the editor), in the stored key order.
+
+    The model's keys win; a model key the entry lacks was removed in B-UML and is
+    dropped, unless the series has no binding at all (its data source did not
+    resolve), in which case the stored binding is kept as the editor had it.
+    """
+    if not stored:
+        return entry
+    merged = dict(stored)
+    if series.data_binding is not None:
+        for key in _SERIES_MODEL_KEYS - entry.keys():
+            merged.pop(key, None)
+    merged.update(entry)
+    return merged
+
+
+def _apply_chart_series_attributes(chart: Any, attrs: Dict[str, Any]) -> None:
+    """Write the chart's series as the editor's ``series`` attribute.
+
+    The model is the source of truth for the series list, as for a map's layers
+    (``_apply_map_attributes``): a series added in B-UML is exported, one deleted
+    there does not come back. Editor-only keys of a stored series (its sample
+    ``data``) are kept on the series it matches: the one at the same position when
+    the counts are equal, else the first unused one with the same name.
+    """
+    series_list = list(chart.series or [])
+    raw = attrs.get("series")
+    stored = _stored_series(raw)
+    if not series_list and not stored:
+        return
+    if len(stored) == len(series_list):
+        matches = stored
+    else:
+        unused = list(stored)
+        matches = []
+        for series in series_list:
+            name = series.label or series.name
+            match = next((item for item in unused if item.get("name") in (name, series.name)), None)
+            if match is not None:
+                unused.remove(match)
+            matches.append(match)
+    entries = [_merge_series_entry(series, _series_entry(series), match)
+               for series, match in zip(series_list, matches)]
+    attrs["series"] = entries if isinstance(raw, list) else json.dumps(entries)
+
+
 def _apply_button_attributes(button: Button, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("button-label", button.label or button.name or "Button")
     action_type = attrs.get("action-type")
@@ -563,6 +659,7 @@ def _apply_data_list_attributes(data_list: DataList, attrs: Dict[str, Any]) -> N
         attrs.setdefault("data-field", value_field)
 def _apply_line_chart_attributes(chart: LineChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     if chart.primary_color:
         attrs.setdefault("chart-color", chart.primary_color)
@@ -574,6 +671,7 @@ def _apply_line_chart_attributes(chart: LineChart, attrs: Dict[str, Any]) -> Non
     attrs.setdefault("animate", chart.animate)
 def _apply_bar_chart_attributes(chart: BarChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     if chart.primary_color:
         attrs.setdefault("chart-color", chart.primary_color)
@@ -584,6 +682,7 @@ def _apply_bar_chart_attributes(chart: BarChart, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("stacked", chart.stacked)
 def _apply_pie_chart_attributes(chart: PieChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     attrs.setdefault("show-legend", chart.show_legend)
     attrs.setdefault("show-labels", chart.show_labels)
@@ -592,6 +691,7 @@ def _apply_pie_chart_attributes(chart: PieChart, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("padding-angle", chart.padding_angle)
 def _apply_radar_chart_attributes(chart: RadarChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     attrs.setdefault("chart-color", chart.primary_color or "#8884d8")
     attrs.setdefault("show-grid", chart.show_grid)
@@ -599,6 +699,7 @@ def _apply_radar_chart_attributes(chart: RadarChart, attrs: Dict[str, Any]) -> N
     attrs.setdefault("show-radius-axis", chart.show_radius_axis)
 def _apply_radial_bar_chart_attributes(chart: RadialBarChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     attrs.setdefault("start-angle", chart.start_angle)
     attrs.setdefault("end-angle", chart.end_angle)
@@ -624,11 +725,14 @@ def _apply_table_attributes(chart: Table, attrs: Dict[str, Any]) -> None:
 
         elif isinstance(col, LookupColumn):
             column_dict["columnType"] = "lookup"
-            # Store the relationship end name as lookupPath
-            column_dict["lookupPath"] = col.path.name if hasattr(col.path, "name") else str(col.path)
-            # Store the target class ID as lookupEntity
+            # The relationship end name. ``field`` is the key the editor and
+            # parse_columns read; ``lookupPath`` stays for compatibility.
+            path_name = col.path.name if hasattr(col.path, "name") else str(col.path)
+            column_dict["field"] = path_name
+            column_dict["lookupPath"] = path_name
+            # The target class, by id when it has one (the editor keys it by id)
             if hasattr(col.path, "type") and hasattr(col.path.type, "name"):
-                column_dict["lookupEntity"] = col.path.type.name
+                column_dict["lookupEntity"] = _element_ref(col.path.type)
             # Store the attribute name as lookupField
             column_dict["lookupField"] = col.field.name if hasattr(col.field, "name") else str(col.field)
 
@@ -791,7 +895,7 @@ def _apply_form_attributes(form: Form, attrs: Dict[str, Any]) -> None:
         attrs.setdefault("data-columns", form.columns)
     domain = getattr(getattr(form, "data_binding", None), "domain_concept", None)
     if domain is not None:
-        attrs.setdefault("data-source", domain.name)
+        attrs.setdefault("data-source", _element_ref(domain))
 def _apply_image_attributes(image: Image, attrs: Dict[str, Any]) -> None:
     if getattr(image, "source", None):
         attrs.setdefault("src", image.source)
@@ -1045,6 +1149,12 @@ def _slugify(name: Optional[str]) -> str:
         return ""
     cleaned = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip())
     return cleaned.strip("-").lower()
+def _element_ref(element: Any) -> Optional[str]:
+    """How the editor refers to a domain element: its id when it has one, else its name."""
+    element_id = getattr(element, "id", None)
+    if isinstance(element_id, str) and element_id:
+        return element_id
+    return getattr(element, "name", None)
 def _generate_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
 def _enum_value(value: Any) -> Optional[str]:

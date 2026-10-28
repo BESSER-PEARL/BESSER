@@ -291,16 +291,20 @@ _RUNTIME_UNVERIFIED_PREFIXES = (
 # BESSER_LLM_HISTORY_EVICTION=1.
 _HISTORY_EVICTION_ENABLED = os.environ.get("BESSER_LLM_HISTORY_EVICTION", "0") == "1"
 
-# Generators that produce a WHOLE application. Once one of them has built the
-# scaffold, none of them may run again: re-running the primary regenerates
-# over every edit Phase 2 has made, and a rival stack drops a second
-# application beside the assembled one. Single-artefact generators (rdf,
-# supabase, java/python classes) stay: a user can legitimately ask for one
-# alongside the app.
-_APPLICATION_PRIMARY_TOOLS = frozenset({
-    "generate_web_app", "generate_django", "generate_flutter",
-    "generate_fastapi_backend", "generate_rest_api",
-})
+# Generators that produce a WHOLE application, and the workspace folder each
+# writes. Once one of them has built the scaffold, none of them may run again:
+# re-running the primary regenerates over every edit Phase 2 has made, and a
+# rival stack drops a second application beside the assembled one.
+# Single-artefact generators (rdf, supabase, java/python classes) stay: a user
+# can legitimately ask for one alongside the app.
+_APPLICATION_OUTPUT_DIRS = {
+    "generate_web_app": "web_app",
+    "generate_django": "django",
+    "generate_flutter": "flutter",
+    "generate_fastapi_backend": "backend",
+    "generate_rest_api": "rest_api",
+}
+_APPLICATION_PRIMARY_TOOLS = frozenset(_APPLICATION_OUTPUT_DIRS)
 
 # Sub-generator tools that a chosen PRIMARY generator already bundles (e.g. a
 # FastAPI backend already contains SQLAlchemy models, Pydantic schemas and REST

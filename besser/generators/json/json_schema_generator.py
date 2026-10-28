@@ -9,6 +9,7 @@ from besser.BUML.metamodel.structural import (
     DateTimeType, TimeType,
 )
 from besser.generators import GeneratorInterface
+from besser.utilities import sort_by_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,10 @@ class JSONSchemaGenerator(GeneratorInterface):
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
         mode (str, optional): The generation mode, either 'regular' or 'smart_data'. Defaults to 'regular'.
     """
+
+    # B-UML primitive name -> JSON Schema type (regular mode)
+    TYPES = {"str": "string", "int": "integer", "float": "number", "bool": "boolean",
+             "date": "string", "datetime": "string"}
 
     def __init__(self, model: DomainModel, output_dir: str = None, mode: str = 'regular'):
         super().__init__(model, output_dir)
@@ -109,7 +114,7 @@ class JSONSchemaGenerator(GeneratorInterface):
         }
 
         # Process class attributes
-        for attr in class_def.attributes:
+        for attr in sort_by_timestamp(class_def.attributes):
             prop_type, prop_format = self._get_property_type(attr.type)
             prop_def = {"type": prop_type}
 
@@ -120,7 +125,7 @@ class JSONSchemaGenerator(GeneratorInterface):
             prop_def["description"] = self._get_property_description(attr, prop_type)
 
             if hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'Enumeration':
-                prop_def["enum"] = [lit.name for lit in attr.type.literals]
+                prop_def["enum"] = [lit.name for lit in sort_by_timestamp(attr.type.literals)]
                 prop_def["type"] = "string"
 
             if hasattr(attr, 'multiplicity') and attr.multiplicity.max > 1:
@@ -132,8 +137,8 @@ class JSONSchemaGenerator(GeneratorInterface):
             class_properties[attr.name] = prop_def
 
         # Process association ends for this class
-        for association in self.model.associations:
-            class_ends = [end for end in association.ends if end.type == class_def]
+        for association in sort_by_timestamp(self.model.associations):
+            class_ends = [end for end in sort_by_timestamp(association.ends) if end.type == class_def]
 
             if not class_ends:
                 continue
@@ -202,6 +207,50 @@ class JSONSchemaGenerator(GeneratorInterface):
         }
 
         return schema_data
+
+    def _prepare_schema(self):
+        """Builds the regular-mode schema: one entry per class under both
+        ``properties`` and ``definitions``, plus the enumerations."""
+        enumerations = sorted(self.model.get_enumerations(), key=lambda e: e.name)
+        enum_names = {enum.name for enum in enumerations}
+
+        def ref(name):
+            return {"$ref": f"#/definitions/{name}"}
+
+        def class_schema(class_def):
+            properties = {}
+            for attr in sort_by_timestamp(class_def.attributes):
+                if attr.type.name in enum_names:
+                    prop_def = ref(attr.type.name)
+                else:
+                    prop_def = {"type": self.TYPES.get(attr.type.name, attr.type.name)}
+                if attr.multiplicity.max > 1:
+                    prop_def = {"type": "array", "items": prop_def}
+                properties[attr.name] = prop_def
+            for end in sort_by_timestamp(class_def.association_ends()):
+                if end.is_navigable:
+                    end_def = ref(end.type.name)
+                    properties[end.name] = (
+                        {"type": "array", "items": end_def} if end.multiplicity.max > 1 else end_def
+                    )
+            for child in sorted(class_def.specializations(), key=lambda c: c.name):
+                properties[child.name] = ref(child.name)
+            parents = sorted(class_def.parents(), key=lambda c: c.name)
+            return {"allOf": [ref(parent.name) for parent in parents]
+                    + [{"type": "object", "properties": properties, "required": []}]}
+
+        classes = {c.name: class_schema(c) for c in self.model.classes_sorted_by_inheritance()}
+        definitions = {enum.name: {"type": "string",
+                                   "enum": [lit.name for lit in sort_by_timestamp(enum.literals)]}
+                       for enum in enumerations}
+        definitions.update(classes)
+        return {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "title": "Generated JSON Schema",
+            "type": "object",
+            "properties": classes,
+            "definitions": definitions,
+        }
 
     def generate(self):
         """
@@ -286,10 +335,7 @@ class JSONSchemaGenerator(GeneratorInterface):
             file_path = self.build_generation_path(file_name="json_schema.json")
 
             with open(file_path, mode="w") as f:
-                generated_code = template.render(
-                    classes=self.model.classes_sorted_by_inheritance(),
-                    enumerations = self.model.get_enumerations(),
-                )
+                generated_code = template.render(schema=self._prepare_schema())
                 f.write(generated_code)
                 logger.info("Code generated in the location: %s", file_path)
 
@@ -342,12 +388,12 @@ class JSONSchemaGenerator(GeneratorInterface):
         })
 
         # Add class attributes
-        for attr in class_def.attributes:
+        for attr in sort_by_timestamp(class_def.attributes):
             example[attr.name] = self._get_example_value_for_attribute(attr)
 
         # Add association relationships
-        for association in self.model.associations:
-            class_ends = [end for end in association.ends if end.type == class_def]
+        for association in sort_by_timestamp(self.model.associations):
+            class_ends = [end for end in sort_by_timestamp(association.ends) if end.type == class_def]
             if not class_ends:
                 continue
 
@@ -444,7 +490,7 @@ class JSONSchemaGenerator(GeneratorInterface):
     def _get_example_value_for_attribute(self, attr):
         """Get example value for a specific attribute."""
         if hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'Enumeration':
-            return next(iter(attr.type.literals)).name if attr.type.literals else "enum-value"
+            return sort_by_timestamp(attr.type.literals)[0].name if attr.type.literals else "enum-value"
         elif attr.type == IntegerType or (hasattr(attr.type, '__name__') and attr.type.__name__ == 'IntegerType'):
             return 10
         elif attr.type == FloatType or (hasattr(attr.type, '__name__') and attr.type.__name__ == 'FloatType'):

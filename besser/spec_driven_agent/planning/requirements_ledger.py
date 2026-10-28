@@ -34,6 +34,9 @@ logger = logging.getLogger(__name__)
 # The modeling agent appends the user's own text under this heading (see its
 # smart_generation_handler.py); everything before it is an LLM summary.
 VERBATIM_MARKER = "## The user's original request, verbatim"
+# Each later user message follows this heading (modeling-agent
+# generation_handler.py), inside the original request.
+LATER_REQUEST_MARKER = "## Subsequent user request, verbatim"
 
 _MAX_REQUIREMENTS = 128
 _EXTRACTION_INCOMPLETE = (
@@ -324,6 +327,16 @@ def original_request(instructions: str) -> str:
     if sep and head.startswith("This is the authority"):
         return rest.strip()
     return tail
+
+
+def latest_user_message(instructions: str) -> str:
+    """The user's newest message: the text after the last later-request
+    heading of :func:`original_request`, else the whole original request."""
+    text = original_request(instructions).rsplit(LATER_REQUEST_MARKER, 1)[-1].strip()
+    head, sep, rest = text.partition("\n\n")
+    if sep and head.startswith("This later request takes precedence"):
+        return rest.strip()
+    return text
 
 
 def _call_with_tool(llm_client, system: str, prompt: str, tool: dict, *,

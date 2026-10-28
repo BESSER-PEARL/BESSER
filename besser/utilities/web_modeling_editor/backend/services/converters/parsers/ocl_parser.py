@@ -38,6 +38,14 @@ from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 _KIND_FROM_KW = {"inv": "invariant", "pre": "precondition", "post": "postcondition"}
 _KW_FROM_KIND = {v: k for k, v in _KIND_FROM_KW.items()}
 
+
+class UnknownClassError(ValueError):
+    """The OCL header names a class the domain model does not have."""
+
+    def __init__(self, class_name: str):
+        super().__init__(f"OCL header references unknown class {class_name!r}")
+        self.missing_element = class_name
+
 # Match the routing prefix of an OCL constraint:
 #   context X inv [name]:
 #   context X::method(params) pre|post:
@@ -118,6 +126,12 @@ def _suggest_case_fix(domain_model: DomainModel, error_text: str) -> Optional[st
         if prop.name.lower() == missing_name.lower() and prop.name != missing_name
     }
     return candidates.pop() if len(candidates) == 1 else None
+
+
+def _parse_failure(error: Exception) -> dict:
+    """``parse_error``, plus the element the rule names but the model lacks when that is the cause."""
+    missing = getattr(error, "missing_element", None)
+    return {"code": "parse_error", **({"missing_element": missing} if missing else {})}
 
 
 def _typeref_name(t) -> str:
@@ -205,9 +219,7 @@ def parse_constraint_text(
         None,
     )
     if context_class is None:
-        raise ValueError(
-            f"OCL header references unknown class {class_name!r}"
-        )
+        raise UnknownClassError(class_name)
 
     constraint = parse_ocl(text, domain_model, context_class=context_class)
     # Store the full canonical OCL text on ``constraint.expression``.
@@ -303,13 +315,13 @@ def process_ocl_constraints(
                 )
             warnings.append(reason)
             if issues is not None:
-                issues.append({**details, "code": "parse_error", "reason": reason})
+                issues.append({**details, **_parse_failure(e), "reason": reason})
             continue
         except ValueError as e:
             reason = f"Warning: Could not parse OCL constraint '{line_for_parse}': {e}"
             warnings.append(reason)
             if issues is not None:
-                issues.append({**details, "code": "parse_error", "reason": reason})
+                issues.append({**details, **_parse_failure(e), "reason": reason})
             continue
 
         # Auto-generate a fallback name only when the user didn't supply one.

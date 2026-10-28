@@ -82,6 +82,68 @@ timestamps. They survive conversions that do not pass through the editor, such
 as importing a B-UML file and exporting it back.
 
 
+Class Diagrams: Element Ids
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Structural elements have an optional ``id`` (``Element.id``, ``None`` by
+default). ``process_class_diagram`` stores the editor's element id on each
+class, enumeration, enumeration literal, attribute, method, association,
+association class and generalization, and ``class_buml_to_json`` writes it back
+instead of minting a new one. An element keeps its id when it is renamed or the
+diagram is re-converted (for example when a Spec-Driven Agent modify run adds a
+class), so references from other diagrams keep resolving. An element without
+an id gets a fresh uuid, as before. So does an element whose id is already
+taken in the same diagram, so two elements never collapse into one, and one
+whose id is not 1-128 characters of ``A-Za-z0-9_:-`` (or is ``__proto__``):
+the editor uses ids as object keys and the GUI parser reads ``.`` as a path
+separator. Each replacement is logged as a warning. Association ends, method
+parameters and OCL constraints have no element id in the editor JSON and are
+not covered. The id takes no part in equality or hashing.
+
+Other diagrams refer to class-diagram elements by these ids:
+
+- Object diagrams: an object's ``classId``, a slot's ``attributeId`` and a
+  link's ``associationId``. ``process_object_diagram`` resolves the class and
+  the attribute by id first, so an object diagram still converts after its
+  class or attribute was renamed; it falls back to the names as before.
+  Exporting an object model to JSON resolves the references against the class
+  diagram by name, including links of compositions and aggregations.
+- GUI diagrams: ``data-source``, ``data-field`` and ``label-field`` of charts
+  and forms, a button's ``data-method`` and ``data-method-class``, and a
+  table's lookup ``columns`` (``lookupEntity``). The GUI export writes a domain
+  element's id when it has one, otherwise its name. A lookup column whose
+  ``field`` does not name an association end (the editor writes the target
+  class name for an end without a role) is resolved through ``lookupEntity``
+  when exactly one end of the table's class leads to that class.
+- Component diagrams: ``Component.realizes``.
+
+A Spec-Driven Agent modify run re-serialises the class diagram and leaves the
+other diagrams untouched, so these references keep resolving in the updated
+project and in the pushed ``buml/diagrams.json``.
+
+When a model is rebuilt on top of an existing one, such as an image imported
+into a class diagram that already has elements, ``adopt_element_ids``
+(``services/converters/element_ids.py``) carries the ids over with one rule:
+
+- an element that already carries an id is matched by it;
+- otherwise it is matched by name, ignoring case, within the same parent
+  (types by kind and name, attributes, methods and literals within their class
+  or enumeration, generalizations within their specific class);
+- an id is never given to two elements, and a name shared by two previous
+  elements matches neither;
+- renames are not guessed: an element whose name changed gets a new id.
+
+B-UML files: reading ``id="..."`` is always supported. The editor backend
+writes ids into exported B-UML (``.py`` export, project export, Spec-Driven
+Agent and GitHub pushes) only when the environment variable
+``BESSER_BUML_EMIT_IDS=1`` is set; it is off by default because BESSER 8.2.1
+and older cannot load a file that passes ``id=``. Without it, a project
+exported to B-UML and imported again comes back with new class-diagram ids,
+as before, and references from other diagrams no longer resolve. Ids of
+objects, slots and links, and of diagrams themselves, are never written to
+B-UML and are new after an import.
+
+
 Neural Network Diagrams
 ^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -102,6 +164,15 @@ Both accept an optional ``config`` payload with:
 
 The response filename embeds the generation type, e.g.
 ``pytorch_nn_subclassing.py`` or ``tf_nn_sequential.py``.
+
+A third NN generator, ``forecaster``, wraps the network in a time-series
+pipeline (see :doc:`generators/forecaster`). Its ``config`` holds the
+forecaster settings (``window``, ``horizon``, ``season``, ``difference``,
+``log``, ``calendar``, ``standardize``, ``seed`` or ``seeds``, ``description``)
+plus ``channel_last``; the response is ``forecaster_<model name>.py`` (a name
+outside ASCII is sent as ``filename*=UTF-8''...``). Invalid settings, and a
+network whose first layer does not read the window or whose last layer does not
+return the horizon, are a 400 naming every problem.
 
 **JSON ↔ BUML.** The ``/export-buml`` endpoint converts an NN diagram JSON
 into a BUML Python file (``nn_model.py``) that reproduces the model when
@@ -457,6 +528,14 @@ Conversion
 - ``POST /get-json-model-from-image`` -- Image to ClassDiagram JSON (requires OpenAI API key)
 - ``POST /get-json-model-from-kg`` -- **Deprecated.** Knowledge graph (TTL/RDF/JSON) to ClassDiagram JSON through OpenAI (requires an OpenAI API key). Use ``/kg/import-owl`` and ``/kg/to-class-diagram`` instead
 - ``POST /csv-to-domain-model`` -- CSV **or XLSX** files to domain model JSON (both extensions are accepted; XLSX needs ``openpyxl``)
+- ``POST /sdmx-to-domain-model`` -- The structure of an SDMX dataflow to domain model JSON, same response as ``/csv-to-domain-model``.
+  Body: ``{"provider": "ecb", "dataflow": "EXR"}`` or ``{"baseUrl": "https://...", "dataflow": "AGENCY,ID,VERSION"}``
+  (``agency``, ``version`` and ``modelName`` are optional; ``baseUrl`` only when ``BESSER_SDMX_ALLOW_CUSTOM_URL`` is on).
+  Fetched in safe mode: https on port 443 to public addresses only, each connection pinned to the address that was
+  checked, within the ``BESSER_SDMX_*`` limits below. 400 for invalid input, 404 for an unknown dataflow, 413 when
+  too large, 502 when the provider fails, 503 when too many imports are running, 504 when the import takes too long.
+  See :doc:`buml_language/model_building/sdmx_to_buml`.
+- ``GET /sdmx-providers`` -- The preset SDMX providers (``key``, ``name``, ``baseUrl``, ``agency``) and ``customUrlAllowed``
 - ``POST /transform-agent-model-json`` -- Agent model transformation with personalization
 - ``POST /get-svg`` -- B-UML class-diagram file to an auto-laid-out SVG. Rendering is delegated to the WME Node server (``WME_NODE_SERVER_URL``, default ``http://localhost:8080``), which runs ELK auto-layout headlessly.
 
@@ -689,6 +768,27 @@ agent: :doc:`spec_driven_agent/configuration`.
   persistent volume so sign-ins survive a restart
 - ``GITHUB_REDIRECT_URI`` -- OAuth redirect URL (default: ``http://localhost:9000/besser_api/github/auth/callback``)
 - ``DEPLOYMENT_URL`` -- Frontend URL for OAuth redirects (default: ``http://localhost:8080``)
+
+**SDMX import** (``POST /sdmx-to-domain-model``, read once at startup):
+
+- ``BESSER_SDMX_ALLOW_CUSTOM_URL`` (off) -- Accept an SDMX API that is not one of
+  the preset providers. Off by default, like ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL``:
+  even with its public-address checks, a hosted server should not fetch any URL
+  for anyone. Local and on-premises installs can turn it on.
+- ``BESSER_SDMX_TIMEOUT`` (``60``) -- Seconds for one whole import: every request,
+  redirect and retry, enforced while the answer is read.
+- ``BESSER_SDMX_MAX_MB`` (``32``) -- Largest single structure message. The largest
+  seen, Eurostat Comext's ``DS-045409``, is 23.6 MB; parsing takes about 15 times a
+  message's size in memory.
+- ``BESSER_SDMX_MAX_TOTAL_MB`` (``64``) -- All the messages of one import together.
+- ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` (``2``) -- Imports running at once; more
+  are answered with 503, so imports cannot fill the thread pool the conversion and
+  generation endpoints share.
+
+The import does not use the environment's HTTP proxies (a proxy would resolve the
+host itself, which the pinning prevents); it does use the CA bundle of
+``REQUESTS_CA_BUNDLE`` or ``CURL_CA_BUNDLE``, for servers behind a TLS-inspecting
+gateway.
 
 **Agent simulation** (read once at startup, except the token):
 

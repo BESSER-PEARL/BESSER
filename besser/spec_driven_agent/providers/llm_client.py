@@ -218,6 +218,16 @@ _ROUTE_PRICING: dict[str, dict[str, dict[str, float]]] = {
         "meta/muse-spark-1.3": {"input": 1.25, "output": 4.25, "cache_write": 0.0, "cache_read": 0.15},
         "poolside/laguna-s-2.1-free": {"input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0},
     },
+    # LIST's PIA gateway, its recommended models (rates per 1M, 2026-10-26).
+    # PIA publishes no cache rates, so cached tokens bill at the input rate.
+    "gateway.pia.private.list.lu": {
+        "claude-haiku-4-5-20251001": {"input": 1.1, "output": 5.5, "cache_write": 1.1, "cache_read": 1.1},
+        "gpt-6-luna": {"input": 0.1, "output": 0.5, "cache_write": 0.1, "cache_read": 0.1},
+        "claude-sonnet-5-5": {"input": 2.2, "output": 11.0, "cache_write": 2.2, "cache_read": 2.2},
+        "gpt-6.1-sol": {"input": 2.0, "output": 10.0, "cache_write": 2.0, "cache_read": 2.0},
+        "claude-opus-5-5": {"input": 4.4, "output": 22.0, "cache_write": 4.4, "cache_read": 4.4},
+        "gpt-6-astra": {"input": 10.0, "output": 50.0, "cache_write": 10.0, "cache_read": 10.0},
+    },
 }
 
 
@@ -601,6 +611,14 @@ class LLMProvider(ABC):
         if value <= 0:
             raise ValueError("max_tokens must be positive")
         self._max_tokens = value
+
+    def _request_max_tokens(self, model_override: str | None) -> int:
+        """Output ceiling for one call. A planning call on a cheaper sibling
+        keeps to that model's own ceiling: the agent loop's raised ceiling
+        (32768) is a 400 on gpt-4o-mini, which allows 16384."""
+        if not model_override:
+            return self._max_tokens
+        return min(self._max_tokens, max_output_tokens(model_override))
 
     @abstractmethod
     def chat(
@@ -1067,7 +1085,7 @@ class ClaudeLLMClient(LLMProvider):
             try:
                 request_kwargs: dict[str, Any] = {
                     "model": effective_model,
-                    "max_tokens": self._max_tokens,
+                    "max_tokens": self._request_max_tokens(model_override),
                     "system": _with_cache_control(system),
                     "messages": _with_message_cache(messages),
                     **extra,
@@ -1621,7 +1639,9 @@ class OpenAIProvider(LLMProvider):
 
     DEFAULT_MODEL = "gpt-4o"
     DEFAULT_MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
-    PLANNING_MODEL = "gpt-4o-mini"
+    # Measured against gpt-4o-mini on model-sync, gap analysis and the ledger
+    # judge (2026-10-22): as good or better, cheaper, 128000 output tokens.
+    PLANNING_MODEL = "gpt-6-luna"
 
     def __init__(
         self,
@@ -1752,11 +1772,11 @@ class OpenAIProvider(LLMProvider):
         env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
         if env:
             return None if env.lower() == "primary" else env
-        if any(tier in self._model.lower() for tier in ("mini", "nano")):
+        if any(tier in self._model.lower() for tier in ("mini", "nano", "luna")):
             return None  # already on a cheap tier
         # Self-hosted / free-local models (ollama gateways) and the keyless
         # route (not in its catalog): the OpenAI cheap sibling doesn't exist
-        # there — a gpt-4o-mini override just burns two failing round-trips
+        # there — a cheap-sibling override just burns two failing round-trips
         # per gap analysis before the primary-model retry kicks in.
         if self._free_route or _is_free_local_model(self._model.lower()):
             return None
@@ -1784,7 +1804,7 @@ class OpenAIProvider(LLMProvider):
                 tok_key = _openai_max_tokens_key(effective_model)
                 kwargs: dict[str, Any] = {
                     "model": effective_model,
-                    tok_key: self._max_tokens,
+                    tok_key: self._request_max_tokens(model_override),
                     "messages": api_messages,
                 }
                 # Per-model sampling. Empty for every model not in the

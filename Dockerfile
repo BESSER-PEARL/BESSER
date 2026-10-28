@@ -73,7 +73,8 @@ FROM python-deps AS smartgen-worker
 # Phase 3 compile validation soft-skips when these are missing from PATH
 # (shutil.which -> None), so nextjs/rust/spring-boot output ships unchecked.
 # JDK 21 because Debian Trixie no longer packages 17. build-essential is the
-# C linker cargo and native Python packages need.
+# C linker cargo and native Python packages need. Node 22: Node 20's npm
+# 10.8.2 crashes installing a vite 8 tree ("reading 'edgesOut'").
 #
 # bubblewrap confines run_command's model-authored shell to its own run
 # directory. The worker fails closed without it, and needs
@@ -88,7 +89,7 @@ RUN apt-get update \
         bubblewrap \
         passt \
         openjdk-21-jdk-headless \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g typescript \
     && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \

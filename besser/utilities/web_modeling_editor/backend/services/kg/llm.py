@@ -35,7 +35,7 @@ from besser.BUML.notations.kg_to_buml import Completer
 from besser.utilities.llm_utils import LLMUpstreamError, call_openai_chat_json
 from besser.utilities.web_modeling_editor.backend.models import KGLLMRequest
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
-    UpstreamServiceError,
+    UpstreamError,
     ValidationError,
 )
 
@@ -92,13 +92,13 @@ async def run_with_deadline(deadline: RequestDeadline, func: Callable[..., _T], 
     further call made through a completer built for ``deadline`` is refused.
 
     Raises:
-        UpstreamServiceError: the deadline passed first (HTTP 502).
+        UpstreamError: the deadline passed first (HTTP 502).
     """
     timeout = max(deadline.expires_at - time.monotonic(), 0.0)
     try:
         return await asyncio.wait_for(asyncio.to_thread(func, *args, **kwargs), timeout=timeout)
     except asyncio.TimeoutError as exc:
-        raise UpstreamServiceError(deadline.exceeded_message()) from exc
+        raise UpstreamError(deadline.exceeded_message()) from exc
 
 
 def build_completer(request: KGLLMRequest, deadline: RequestDeadline) -> Completer:

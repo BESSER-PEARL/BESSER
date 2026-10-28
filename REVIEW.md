@@ -23,6 +23,11 @@ best-practice rubric.
   - a BESSER exception (`ConversionError`, `ValidationError`, ...) re-raised as a plain `HTTPException`
   - `# TODO` / `# workaround` without a tracked issue
 - **Prefer deletion.** If a new code path does the job of an old one that is still there, ask why both exist.
+- **Production quality.** Grade against "Engineering standard" in `CLAUDE.md`. Flag:
+  - a hand-rolled helper or algorithm that BESSER or a maintained library already provides (name it)
+  - options, flags or abstractions without a caller or a rollout reason
+  - logic in a layer that doesn't own it, or a data shape defined on both sides of a contract
+  - a fallback or skip that changes the outcome without a warning log or a signal to the user
 - **Cite the canonical example.** A convention finding names the file and line that shows the correct pattern
   (for example "use `@handle_endpoint_errors` as in `routers/conversion_router.py`"). If you cannot point to
   one, do not post the finding.

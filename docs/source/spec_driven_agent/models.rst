@@ -77,7 +77,7 @@ provider default is used:
      - ``llm_model``
    * - ``openai``
      - ``gpt-4o``
-     - ``gpt-4o-mini``
+     - ``gpt-6-luna``
      - ``llm_model``
    * - ``mistral``
      - ``mistral-large-latest``
@@ -93,7 +93,7 @@ provider default is used:
      - ``llm_model``, restricted to the server's allowlist
    * - ``sponsored``
      - server-configured (``BESSER_SPONSORED_LLM_MODEL``)
-     - ``gpt-4o-mini``, unless the model reads as open-weight
+     - ``gpt-6-luna``, unless the model reads as open-weight
      - ``llm_model``
 
 For the free tier, ``llm_model`` may only name a model the server has
@@ -173,7 +173,7 @@ The cheap **planning** call (the *gap* phase, see :doc:`how_it_works`) uses the
 small sibling model above rather than the main one, so planning never costs
 more than it needs to. Cheap routing is skipped when it would not help or would
 not work: when the main model is already on the cheap tier (a ``haiku`` model
-on Anthropic, a ``mini`` / ``nano`` model on OpenAI), and — on the
+on Anthropic, a ``mini`` / ``nano`` / ``luna`` model on OpenAI), and — on the
 OpenAI-compatible providers — when the model reads as self-hosted or
 open-weight, whose endpoint has no such sibling. That last test is name-based
 (a ``name:size`` tag, or a known open-weight family). The ``free`` tier always
@@ -184,7 +184,7 @@ does not exist on that endpoint.
 .. important::
    The sponsored tier is served through an OpenAI-compatible aggregator, so a
    *paid* sponsored model id does **not** match the open-weight test and its
-   planning call is routed to ``gpt-4o-mini`` — which that aggregator may not
+   planning call is routed to ``gpt-6-luna`` — which that aggregator may not
    serve. On such a deploy, set ``BESSER_LLM_PLANNING_MODEL`` explicitly: to
    another model id the gateway does serve, or to ``primary`` to disable cheap
    routing entirely and plan on the main model.

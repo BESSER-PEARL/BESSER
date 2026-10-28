@@ -55,7 +55,7 @@ from besser.utilities.llm_utils import LLMUpstreamError
 # Custom exception types translated to HTTP codes by @handle_endpoint_errors.
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
-    UpstreamServiceError,
+    UpstreamError,
     ValidationError,
 )
 
@@ -143,7 +143,7 @@ async def _llm_report(call: Awaitable[KGPreflightReport]) -> Dict[str, Any]:
     except (ValueError, TypeError) as exc:
         raise ValidationError(str(exc)) from exc
     except LLMUpstreamError as exc:
-        raise UpstreamServiceError(str(exc)) from exc
+        raise UpstreamError(str(exc)) from exc
     return report_to_response(report)
 
 
@@ -478,7 +478,7 @@ async def get_json_model_from_kg(
             )
         except LLMUpstreamError as exc:
             # Its message never carries the provider's response body.
-            raise UpstreamServiceError(str(exc)) from exc
+            raise UpstreamError(str(exc)) from exc
         except LLMAnswerError as exc:
             # The model's answer did not make a class diagram; the details (which
             # can quote that answer) stay in the server log.

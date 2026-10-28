@@ -14,6 +14,7 @@ from besser.BUML.metamodel.structural.structural import (
     AssociationClass,
     Enumeration,
     MethodImplementationType,
+    UNLIMITED_MAX_MULTIPLICITY,
 )
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.utilities import sort_by_timestamp as sort
@@ -31,6 +32,7 @@ from besser.utilities.buml_code_builder.common import (
     safe_var_name,
     timestamp_expr,
     timestamp_kwarg,
+    id_kwarg,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,39 @@ def _timestamp_line(element) -> str:
     """``,\n    timestamp=...`` for a multi-line constructor call, or ``""``."""
     expr = timestamp_expr(element)
     return f",\n    timestamp={expr}" if expr else ""
+
+
+def _id_line(element, emit_ids) -> str:
+    """``,\n    id=...`` for a multi-line constructor call, or ``""``."""
+    kwarg = id_kwarg(element, emit_ids)
+    return f",\n    {kwarg[2:]}" if kwarg else ""
+
+
+def _attribute_kwargs(attr) -> str:
+    """The keyword arguments of an attribute's ``Property(...)`` after ``type=``."""
+    kwargs = ""
+    if attr.visibility != "public":
+        kwargs += f', visibility="{attr.visibility}"'
+    multiplicity = attr.multiplicity
+    if (multiplicity.min, multiplicity.max) != (1, 1):
+        max_value = '"*"' if multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else multiplicity.max
+        kwargs += f", multiplicity=Multiplicity({multiplicity.min}, {max_value})"
+    if attr.is_optional:
+        kwargs += ", is_optional=True"
+    if attr.is_id:
+        kwargs += ", is_id=True"
+    if attr.is_external_id:
+        kwargs += ", is_external_id=True"
+    if attr.is_read_only:
+        kwargs += ", is_read_only=True"
+    if attr.is_derived:
+        kwargs += ", is_derived=True"
+    if attr.default_value is not None:
+        if isinstance(attr.default_value, str):
+            kwargs += f', default_value="{_escape_python_string(attr.default_value)}"'
+        else:
+            kwargs += f', default_value={attr.default_value}'
+    return kwargs
 
 
 # Every name the generated script binds or reads besides its own element
@@ -156,6 +191,7 @@ def domain_model_to_code(
     model_var_name: str = "domain_model",
     metadata_var_name: Optional[str] = None,
     object_model_var_name: str = "object_model",
+    emit_ids: bool = False,
 ):
     """
     Generates Python code for a B-UML model and writes it to a specified file.
@@ -170,6 +206,8 @@ def domain_model_to_code(
             to "<model_var_name>_metadata" when not provided.
         object_model_var_name (str, optional): Name of the ObjectModel variable when an object model
             is included. Defaults to "object_model".
+        emit_ids (bool, optional): Write each element's ``id`` as an ``id="..."`` argument.
+            Off by default: BESSER releases before ``Element.id`` cannot load such a file.
 
     Outputs:
         - A Python file containing the base code representation of the B-UML domain model
@@ -216,7 +254,7 @@ def domain_model_to_code(
                 f.write(f"{enum_var_name}: Enumeration = Enumeration(\n")
                 f.write(f"    name=\"{_escape_python_string(enum.name)}\",\n")
                 literals_str = ",\n\t\t\t".join([
-                    f"EnumerationLiteral(name=\"{_escape_python_string(lit.name)}\"{timestamp_kwarg(lit)})"
+                    f"EnumerationLiteral(name=\"{_escape_python_string(lit.name)}\"{timestamp_kwarg(lit)}{id_kwarg(lit, emit_ids)})"
                     for lit in sort(enum.literals)
                 ])
                 f.write(
@@ -224,6 +262,7 @@ def domain_model_to_code(
                     f"            {literals_str}"
                     f"\n    }}")
                 f.write(_timestamp_line(enum))
+                f.write(_id_line(enum, emit_ids))
                 f.write("\n)\n\n")
 
         # Separate regular classes and association classes
@@ -260,7 +299,7 @@ def domain_model_to_code(
                     metadata_str = f"Metadata({', '.join(metadata_params)})"
                     class_params.append(f'metadata={metadata_str}')
 
-            f.write(f"{cls_var_name} = Class({', '.join(class_params)}{timestamp_kwarg(cls)})\n")
+            f.write(f"{cls_var_name} = Class({', '.join(class_params)}{timestamp_kwarg(cls)}{id_kwarg(cls, emit_ids)})\n")
         f.write("\n")
 
         # Write class members for regular classes
@@ -271,21 +310,8 @@ def domain_model_to_code(
             # Write attributes
             for attr in sort(cls.attributes):
                 attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
-                visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
-                is_optional_str = ", is_optional=True" if attr.is_optional else ""
-                is_id_str = ", is_id=True" if attr.is_id else ""
-                is_external_id_str = ", is_external_id=True" if attr.is_external_id else ""
-                is_derived_str = ", is_derived=True" if attr.is_derived else ""
-                if attr.default_value is not None:
-                    if isinstance(attr.default_value, str):
-                        default_value_str = f', default_value="{_escape_python_string(attr.default_value)}"'
-                    else:
-                        default_value_str = f', default_value={attr.default_value}'
-                else:
-                    default_value_str = ""
                 f.write(f"{attribute_var_name(cls.name, attr.name)}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
-                       f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}{is_derived_str}"
-                       f"{default_value_str}{timestamp_kwarg(attr)})\n")
+                       f"type={attr_type}{_attribute_kwargs(attr)}{timestamp_kwarg(attr)}{id_kwarg(attr, emit_ids)})\n")
 
             # Write methods
             for method in sort(cls.methods):
@@ -308,16 +334,17 @@ def domain_model_to_code(
                     for param in method.parameters:
                         param_type = PRIMITIVE_TYPE_MAPPING.get(param.type.name, safe_class_name(param.type.name))
                         default_str = f", default_value='{_escape_python_string(str(param.default_value))}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
-                        params[param.name] = f"Parameter(name='{_escape_python_string(param.name)}', type={param_type}{default_str}{timestamp_kwarg(param)})"
+                        params[param.name] = f"Parameter(name='{_escape_python_string(param.name)}', type={param_type}{default_str}{timestamp_kwarg(param)}{id_kwarg(param, emit_ids)})"
 
-                params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
+                # A list literal: parameter order is the method signature.
+                params_str = "[" + ", ".join(f"{param}" for name, param in params.items()) + "]"
 
                 if method_type:
                     f.write(f"{method_var}: Method = Method(name=\"{_escape_python_string(method.name)}\""
-                           f"{visibility_str}, parameters={params_str}, type={method_type}{impl_str}{timestamp_kwarg(method)})\n")
+                           f"{visibility_str}, parameters={params_str}, type={method_type}{impl_str}{timestamp_kwarg(method)}{id_kwarg(method, emit_ids)})\n")
                 else:
                     f.write(f"{method_var}: Method = Method(name=\"{_escape_python_string(method.name)}\""
-                           f"{visibility_str}, parameters={params_str}{impl_str}{timestamp_kwarg(method)})\n")
+                           f"{visibility_str}, parameters={params_str}{impl_str}{timestamp_kwarg(method)}{id_kwarg(method, emit_ids)})\n")
                 if method_code:
                     code_literal = _format_method_code_literal(method_code)
                     f.write(f"{method_var}.code = {code_literal}\n")
@@ -381,7 +408,7 @@ def domain_model_to_code(
                              f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value})"
                              f"{', is_navigable=' + str(end.is_navigable) if end.is_navigable is not True else ''}"
                              f"{', is_composite=True' if end.is_composite is True else ''}"
-                             f"{timestamp_kwarg(end)})")
+                             f"{timestamp_kwarg(end)}{id_kwarg(end, emit_ids)})")
                     ends_str.append(end_str)
 
                 # Write the BinaryAssociation with each property on a new line
@@ -390,7 +417,7 @@ def domain_model_to_code(
                     f"    name=\"{_escape_python_string(assoc.name)}\",\n"
                     "    ends={\n        " +
                     ",\n        ".join(ends_str) +
-                    "\n    }" + _timestamp_line(assoc) + "\n"
+                    "\n    }" + _timestamp_line(assoc) + _id_line(assoc, emit_ids) + "\n"
                     ")\n"
                 )
             f.write("\n")
@@ -414,7 +441,7 @@ def domain_model_to_code(
                              f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value})"
                              f"{', is_navigable=' + str(end.is_navigable) if end.is_navigable is not True else ''}"
                              f"{', is_composite=True' if end.is_composite is True else ''}"
-                             f"{timestamp_kwarg(end)})")
+                             f"{timestamp_kwarg(end)}{id_kwarg(end, emit_ids)})")
                     ends_str.append(end_str)
 
                 # Write the BinaryAssociation with each property on a new line
@@ -423,7 +450,7 @@ def domain_model_to_code(
                     f"    name=\"{_escape_python_string(assoc.name)}\",\n"
                     "    ends={\n        " +
                     ",\n        ".join(ends_str) +
-                    "\n    }" + _timestamp_line(assoc) + "\n"
+                    "\n    }" + _timestamp_line(assoc) + _id_line(assoc, emit_ids) + "\n"
                     ")\n"
                 )
                 f.write("\n")
@@ -431,21 +458,8 @@ def domain_model_to_code(
                 # Now write the attributes for the association class
                 for attr in sort(ac.attributes):
                     attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
-                    visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
-                    is_optional_str = ", is_optional=True" if attr.is_optional else ""
-                    is_id_str = ", is_id=True" if attr.is_id else ""
-                    is_external_id_str = ", is_external_id=True" if attr.is_external_id else ""
-                    is_derived_str = ", is_derived=True" if attr.is_derived else ""
-                    if attr.default_value is not None:
-                        if isinstance(attr.default_value, str):
-                            default_value_str = f', default_value="{_escape_python_string(attr.default_value)}"'
-                        else:
-                            default_value_str = f', default_value={attr.default_value}'
-                    else:
-                        default_value_str = ""
                     f.write(f"{attribute_var_name(ac.name, attr.name)}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
-                           f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_external_id_str}{is_derived_str}"
-                           f"{default_value_str}{timestamp_kwarg(attr)})\n")
+                           f"type={attr_type}{_attribute_kwargs(attr)}{timestamp_kwarg(attr)}{id_kwarg(attr, emit_ids)})\n")
 
                 # Write methods for the association class
                 for method in sort(ac.methods):
@@ -468,16 +482,17 @@ def domain_model_to_code(
                         for param in method.parameters:
                             param_type = PRIMITIVE_TYPE_MAPPING.get(param.type.name, safe_class_name(param.type.name))
                             default_str = f", default_value='{_escape_python_string(str(param.default_value))}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
-                            params[param.name] = f"Parameter(name='{_escape_python_string(param.name)}', type={param_type}{default_str}{timestamp_kwarg(param)})"
+                            params[param.name] = f"Parameter(name='{_escape_python_string(param.name)}', type={param_type}{default_str}{timestamp_kwarg(param)}{id_kwarg(param, emit_ids)})"
 
-                    params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
+                    # A list literal: parameter order is the method signature.
+                    params_str = "[" + ", ".join(f"{param}" for name, param in params.items()) + "]"
 
                     if method_type:
                         f.write(f"{method_var}: Method = Method(name=\"{_escape_python_string(method.name)}\""
-                               f"{visibility_str}, parameters={params_str}, type={method_type}{impl_str}{timestamp_kwarg(method)})\n")
+                               f"{visibility_str}, parameters={params_str}, type={method_type}{impl_str}{timestamp_kwarg(method)}{id_kwarg(method, emit_ids)})\n")
                     else:
                         f.write(f"{method_var}: Method = Method(name=\"{_escape_python_string(method.name)}\""
-                               f"{visibility_str}, parameters={params_str}{impl_str}{timestamp_kwarg(method)})\n")
+                               f"{visibility_str}, parameters={params_str}{impl_str}{timestamp_kwarg(method)}{id_kwarg(method, emit_ids)})\n")
                     if method_code:
                         code_literal = _format_method_code_literal(method_code)
                         f.write(f"{method_var}.code = {code_literal}\n")
@@ -516,7 +531,7 @@ def domain_model_to_code(
                 # Now create the association class
                 f.write(f"{ac_var_name} = AssociationClass(\n")
                 f.write(f"    name=\"{_escape_python_string(ac.name)}\",\n")
-                f.write(f"    {attributes_str}association={element_vars.name_for(assoc)}{methods_str}{timestamp_kwarg(ac)}\n")
+                f.write(f"    {attributes_str}association={element_vars.name_for(assoc)}{methods_str}{timestamp_kwarg(ac)}{id_kwarg(ac, emit_ids)}\n")
                 f.write(")\n\n")
             f.write("\n")
 
@@ -527,7 +542,7 @@ def domain_model_to_code(
                 specific_var_name = safe_class_name(gen.specific.name)
                 general_var_name = safe_class_name(gen.general.name)
                 f.write(f"{_generalization_var_name(gen)} = Generalization"
-                        f"(general={general_var_name}, specific={specific_var_name}{timestamp_kwarg(gen)})\n")
+                        f"(general={general_var_name}, specific={specific_var_name}{timestamp_kwarg(gen)}{id_kwarg(gen, emit_ids)})\n")
             f.write("\n")
 
         # Helper: emit a single ``Constraint(...)`` declaration. Reused for

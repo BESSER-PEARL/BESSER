@@ -391,10 +391,8 @@ def test_flutter_map_pubspec_contains_flutter_map_dep(tmp_path, monkeypatch):
     )
 
     from besser.generators.flutter import FlutterPubspecGenerator
-    # FlutterPubspecGenerator has a pre-existing bug: it passes output_dir as the
-    # model arg to super().__init__, so output_dir is always None and files are
-    # written to <cwd>/output/. Chdir into tmp_path so the writes (and cleanup)
-    # never touch a real working directory.
+    # Without output_dir the generator writes to <cwd>/output/. Chdir into
+    # tmp_path so the writes (and cleanup) never touch a real working directory.
     monkeypatch.chdir(tmp_path)
     gen = FlutterPubspecGenerator(gui_model=gui)
     gen.generate()

@@ -19,8 +19,10 @@ from besser.BUML.metamodel.structural import MethodImplementationType
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
     process_class_diagram,
 )
+from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
+    parse_buml_content,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.state_machine_processor import (
     process_state_machine,
@@ -1171,6 +1173,30 @@ class TestAssociationNavigabilityRoundtrip:
         assert rel["_target_class"] == "Book"
         assert rel["target"]["direction"] == "Right"
         assert rel["target"]["bounds"] == {"x": 160, "y": 40, "width": 0, "height": 0}
+
+    @pytest.mark.parametrize("class_name, role", [
+        ("Author", "author"),
+        # Renamed so that its (default, class-derived) end name sorts after "book"
+        ("Zeta", "zeta"),
+        ("Zeta", ""),
+    ])
+    def test_orientation_survives_a_buml_script_roundtrip(self, minimal_class_diagram_json, tmp_path,
+                                                          class_name, role):
+        """An exported .py carries no saved layout, so the drawn source/target was re-chosen by
+        end name: renaming a class could flip which side an association is drawn from (#679)."""
+        payload = _with_writes_relationship(minimal_class_diagram_json, "ClassBidirectional", True, True)
+        payload["model"]["elements"]["cls-author"]["name"] = class_name
+        payload["model"]["relationships"]["rel-writes"]["source"]["role"] = role
+        script = tmp_path / "model.py"
+        domain_model_to_code(process_class_diagram(payload), str(script))
+        result = class_buml_to_json(parse_buml_content(script.read_text()))
+
+        rel = next(r for r in result["relationships"].values() if r.get("type") == "ClassBidirectional")
+        source = result["elements"][rel["source"]["element"]]["name"]
+        target = result["elements"][rel["target"]["element"]]["name"]
+        assert (source, rel["source"]["role"], rel["source"]["multiplicity"]) == (
+            class_name, role or class_name.lower(), "1..*")
+        assert (target, rel["target"]["role"], rel["target"]["multiplicity"]) == ("Book", "book", "0..*")
 
     def test_no_navigable_end_is_corrected_with_warning(self, minimal_class_diagram_json):
         payload = _with_writes_relationship(minimal_class_diagram_json, "ClassBidirectional", False, False)

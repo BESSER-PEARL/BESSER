@@ -16,6 +16,7 @@ from .responses import (
     ValidationResponse,
 )
 from .spec_driven import SmartGenerateRequest
+from .sdmx import SdmxImportRequest, SdmxProvider, SdmxProvidersResponse
 
 __all__ = [
     'DiagramInput',
@@ -37,4 +38,7 @@ __all__ = [
     'SimulationValidationResponse',
     'ValidationResponse',
     'SmartGenerateRequest',
+    'SdmxImportRequest',
+    'SdmxProvider',
+    'SdmxProvidersResponse',
 ]

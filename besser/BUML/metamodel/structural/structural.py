@@ -40,19 +40,37 @@ class Element(ABC):
         timestamp (datetime): Object creation datetime (default is current time).
         is_derived (bool): Indicates whether the element is derived (False as default).
         uncertainty (float): Indicates the uncertainty level of the element as a probability between 0 and 1 (0.0 as default).
+        id (str): Persistent identifier of the element, such as its editor element id (None as default).
 
     Attributes:
         timestamp (datetime): Object creation datetime (default is current time).
         is_derived (bool): Indicates whether the element is derived (False as default).
         uncertainty (float): Indicates the uncertainty level of the element as a probability between 0 and 1 (0.0 as default).
+        id (str): Persistent identifier of the element, such as its editor element id (None as default).
     """
 
-    def __init__(self, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0):
+    def __init__(self, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0,
+                 id: str = None):
         self.timestamp: datetime = timestamp if timestamp is not None else _next_timestamp()
         # Explicit = passed in (or set later), as opposed to the clock default.
         self.__timestamp_explicit: bool = timestamp is not None
         self.is_derived: bool = is_derived
         self.uncertainty: float = uncertainty
+        self.id: str = id
+
+    @property
+    def id(self) -> str:
+        """str: Get the persistent identifier of the element (None when it has none).
+
+        The editor converters keep it across a round trip, so it survives a
+        rename. It takes no part in equality or hashing (both stay identity).
+        """
+        return getattr(self, "_Element__id", None)
+
+    @id.setter
+    def id(self, id: str):
+        """str: Set the persistent identifier of the element."""
+        self.__id = id
 
     @property
     def timestamp(self) -> datetime:
@@ -197,8 +215,9 @@ class NamedElement(Element):
     """
 
     def __init__(self, name: str, timestamp: datetime = None, metadata: Metadata = None,
-                 visibility: str = "public", is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(timestamp, is_derived, uncertainty)
+                 visibility: str = "public", is_derived: bool = False, uncertainty: float = 0.0,
+                 id: str = None):
+        super().__init__(timestamp, is_derived, uncertainty, id)
         self.name: str = name
         self.metadata: Metadata = metadata
         self.visibility: str = visibility
@@ -274,8 +293,8 @@ class Type(NamedElement):
     """
 
     def __init__(self, name: str, timestamp: datetime = None, metadata: Metadata = None,
-                is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+                is_derived: bool = False, uncertainty: float = 0.0, id: str = None):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty, id=id)
 
     def __repr__(self):
         return f"Type({self.name}, {self.timestamp}, {self.metadata})"
@@ -385,8 +404,9 @@ class EnumerationLiteral(NamedElement):
         metadata (Metadata): Metadata information for the literal (None as default).
     """
 
-    def __init__(self, name: str, owner: DataType=None, timestamp: datetime = None, metadata: Metadata = None, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, uncertainty=uncertainty)
+    def __init__(self, name: str, owner: DataType=None, timestamp: datetime = None, metadata: Metadata = None, uncertainty: float = 0.0,
+                 id: str = None):
+        super().__init__(name, timestamp, metadata, uncertainty=uncertainty, id=id)
         self.owner: DataType = owner
 
     @property
@@ -432,8 +452,8 @@ class Enumeration(DataType):
     """
 
     def __init__(self, name: str, literals: set[EnumerationLiteral] = None, timestamp: datetime = None,
-                 metadata: Metadata = None, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, uncertainty=uncertainty)
+                 metadata: Metadata = None, uncertainty: float = 0.0, id: str = None):
+        super().__init__(name, timestamp, metadata, uncertainty=uncertainty, id=id)
         self.literals: set[EnumerationLiteral] = literals if literals is not None else set()
 
     @property
@@ -519,8 +539,8 @@ class TypedElement(NamedElement):
     }
 
     def __init__(self, name: str, type: Union[Type, str], timestamp: datetime = None, metadata: Metadata = None,
-                 visibility: str="public", is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, visibility, is_derived, uncertainty)
+                 visibility: str="public", is_derived: bool = False, uncertainty: float = 0.0, id: str = None):
+        super().__init__(name, timestamp, metadata, visibility, is_derived, uncertainty, id)
         self.type = self.type_mapping.get(type, type)
 
     @property
@@ -642,9 +662,9 @@ class Property(TypedElement):
                  is_external_id: bool = False,
                  default_value: Any = None,
                  timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False,
-                 uncertainty: float = 0.0):
+                 uncertainty: float = 0.0, id: str = None):
 
-        super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
+        super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty, id)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
@@ -815,8 +835,8 @@ class Parameter(TypedElement):
     """
 
     def __init__(self, name: str, type: Type, default_value: Any = None, timestamp: datetime = None,
-                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, type, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0, id: str = None):
+        super().__init__(name, type, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty, id=id)
         self.default_value: Any = default_value
 
     @property
@@ -889,8 +909,8 @@ class Method(TypedElement):
                  state_machine: "StateMachine" = None, quantum_circuit: "QuantumCircuit" = None,
                  neural_network: "NN" = None,
                  timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0,
-                 pre: list["Constraint"] = None, post: list["Constraint"] = None):
-        super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
+                 pre: list["Constraint"] = None, post: list["Constraint"] = None, id: str = None):
+        super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty, id)
         self.is_abstract: bool = is_abstract
         self.parameters: list[Parameter] = parameters if parameters is not None else []
         self.owner: Type = owner
@@ -1301,8 +1321,9 @@ class Class(Type):
 
     def __init__(self, name: str, attributes: set[Property] = None, methods: set[Method] = None,
                  is_abstract: bool= False, is_read_only: bool= False, behaviors: set[BehaviorDeclaration] = None,
-                 timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+                 timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0,
+                 id: str = None):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty, id=id)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
         self.behaviors: set[BehaviorDeclaration] = behaviors if behaviors is not None else set()
@@ -1704,8 +1725,8 @@ class Association(NamedElement):
     """
 
     def __init__(self, name: str, ends: set[Property], timestamp: datetime = None, metadata: Metadata = None,
-                is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+                is_derived: bool = False, uncertainty: float = 0.0, id: str = None):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty, id=id)
         self.__ends: set[Property] = set()
         self.ends: set[Property] = ends
 
@@ -1850,9 +1871,9 @@ class AssociationClass(Class):
     """
 
     def __init__(self, name: str, attributes: set[Property], association: Association, timestamp: datetime = None,
-                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0, id: str = None):
         super().__init__(name, attributes, timestamp=timestamp, metadata=metadata, is_derived=is_derived,
-                         uncertainty=uncertainty)
+                         uncertainty=uncertainty, id=id)
         self.association: Association = association
 
     @property
@@ -1887,8 +1908,9 @@ class Generalization(Element):
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, general: Class, specific: Class, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(timestamp, is_derived, uncertainty)
+    def __init__(self, general: Class, specific: Class, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0,
+                 id: str = None):
+        super().__init__(timestamp, is_derived, uncertainty, id)
         self.general: Class = general
         self.specific: Class = specific
 

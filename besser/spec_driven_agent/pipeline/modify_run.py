@@ -20,6 +20,11 @@ import time
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
+from besser.spec_driven_agent.planning.model_change import FULL_MODEL, compare_with_base
+from besser.spec_driven_agent.planning.model_rules import (
+    is_dropped_by_model_change,
+    mark_rules_broken_by_model_change,
+)
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.providers.llm_client import MODIFY_MAX_TOKENS
@@ -31,7 +36,8 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_SNAPSHOT,
     EVENT_VALIDATION_ISSUE,
 )
-from besser.spec_driven_agent.validation.issues import ValidationIssue
+from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run
+from besser.spec_driven_agent.validation.model_conformance import model_conformance_issues
 from besser.spec_driven_agent.execution.workspace_fs import open_plain
 
 logger = logging.getLogger(__name__)
@@ -96,6 +102,15 @@ class ModifyRunMixin:
         self.executor.set_scaffold_family(
             self._scaffold_family(), self._instructions)
 
+        # How the user's model relates to the one the seed app was built from,
+        # read before the model-sync below adds classes of its own.
+        self._model_change = compare_with_base(self.output_dir, self.domain_model)
+        if self._model_change is not None and not self._model_change.base:
+            logger.warning(
+                "The base run's recipe records only class names (it predates "
+                "user_model): verdict %s, no model change list for this run",
+                self._model_change.verdict)
+
         # -- Model-sync: derive + apply class-diagram deltas implied by the
         # instruction BEFORE building the inventory, so a genuinely new
         # domain entity (e.g. a ``User`` class for "add authentication")
@@ -105,6 +120,7 @@ class ModifyRunMixin:
         # change, no crash. Scoped to modify() only; run()/_run_phase1
         # never invoke it, so from-scratch output is byte-identical.
         self._derive_and_apply_model_deltas(instructions)
+        self._mark_rules_broken_by_model_change()
 
         self._inventory = build_inventory(
             self.output_dir,
@@ -117,6 +133,10 @@ class ModifyRunMixin:
         session_recap = self._render_seed_history()
         if session_recap:
             self._inventory = f"{self._inventory}\n{session_recap}"
+        model_note = self._render_model_change()
+        if model_note:
+            self._inventory = (
+                f"{self._inventory}\n\n## Model change since the last run\n{model_note}")
 
         # -- Fix/modify success gate: parse the user-reported failure ------
         # A modify run seeded by a reported error (traceback / broken
@@ -135,6 +155,8 @@ class ModifyRunMixin:
             max_turns=self.max_turns,
             fix_run=self._is_fix_run,
             fix_target=(self._fix_target.descriptor if self._fix_target else None),
+            model_change=(self._model_change.to_dict() if self._model_change else None),
+            model_sync_error=self._model_sync_error,
         )
 
         # -- Phase 0: the model itself ------------------------------------
@@ -172,11 +194,17 @@ class ModifyRunMixin:
                 self._trace.write(
                     EVENT_VALIDATION_ISSUE, phase="fix_target_seed", message=issue,
                 )
+        # The model change leads the issues, after the reported failure's
+        # headline in a fix run.
+        leading = [model_note] if model_note else []
+        if leading and fix_seed_issues:
+            leading = fix_seed_issues[:1] + leading
+            fix_seed_issues = fix_seed_issues[1:]
         self._trace.write(EVENT_PHASE_ENTER, phase="phase2_modify")
         self._run_phase2(
             instructions,
             extra_issues=(
-                phase1_issues + self._seed_unresolved_issues + fix_seed_issues
+                leading + phase1_issues + self._seed_unresolved_issues + fix_seed_issues
             ),
         )
         self._trace.write(
@@ -234,6 +262,39 @@ class ModifyRunMixin:
         )
         return self.output_dir
 
+    def _render_model_change(self) -> str:
+        """Every model change since the seed run, so the edit follows the new
+        model instead of keeping old and new elements side by side."""
+        change = getattr(self, "_model_change", None)
+        # An older recipe lists the run's classes, model-sync additions included:
+        # a class missing from the editor may never have been the user's.
+        if change is None or not change.changes:
+            return ""
+        return (
+            "The class model changed since the last run. Model change: "
+            + "; ".join(change.changes)
+            + ". Update the code (generated and hand-written files) to this model "
+            "change. The new model wins: do not bring back removed or renamed elements."
+        )
+
+    def _collect_model_conformance_issues(self) -> list[str]:
+        """Phase 3: the FastAPI backend's ORM and schemas against the model change."""
+        change = getattr(self, "_model_change", None)
+        if not self._modify_mode or change is None or not change.changes:
+            return []
+        try:
+            issues = model_conformance_issues(self.output_dir, change.base, change.new)
+        except Exception as exc:
+            logger.warning("Model conformance check failed", exc_info=True)
+            return [_check_did_not_run(
+                "the model conformance check", f"it crashed: {type(exc).__name__}")]
+        if issues is None:
+            logger.warning("Model conformance check skipped: no FastAPI backend in the app")
+            return [_check_did_not_run(
+                "the model conformance check",
+                "the app has no FastAPI backend (sql_alchemy.py / pydantic_classes.py)")]
+        return issues
+
     def _render_seed_history(self) -> str:
         """Format the seed recipe's session history for the inventory."""
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
@@ -288,6 +349,11 @@ class ModifyRunMixin:
         if not isinstance(recipe, dict):
             return
         self._seed_generator_used = recipe.get("generator_used")
+        converted = (recipe.get("model") or {}).get("converted_rules")
+        if isinstance(converted, list):
+            self._seed_converted_rules = set(converted)
+            self._seed_dropped_rules = [
+                i for i in recipe.get("model_conversion_issues") or [] if is_dropped_by_model_change(i)]
         # Seed-issue forwarding: blockers the seed run could not fix are
         # THIS run's opening tasks. Blockers only — warnings/style would
         # bloat the prompt with ruff noise and dilute the real debt.
@@ -312,13 +378,29 @@ class ModifyRunMixin:
         except Exception:
             logger.debug("Seed recipe output_files malformed", exc_info=True)
 
+    def _mark_rules_broken_by_model_change(self) -> None:
+        """Mark rejected model rules whose element this model change removed or renamed.
+
+        Needs the previous run's converted-rule fingerprints and full model (an
+        older recipe's class names cannot show an attribute was removed);
+        without either, every rejected rule keeps the normal recovery path.
+        """
+        change = getattr(self, "_model_change", None)
+        converted = getattr(self, "_seed_converted_rules", None)
+        if change is None or change.basis != FULL_MODEL or converted is None:
+            return
+        mark_rules_broken_by_model_change(
+            getattr(self.domain_model, "conversion_issues", None), change,
+            converted_before=converted, dropped_before=self._seed_dropped_rules,
+        )
+
     def _detect_fix_target(self, instructions: str) -> None:
         """MODIFY-only: parse the user-reported failure into a target.
 
         Sets ``self._fix_target`` and ``self._is_fix_run``. Best-effort — a
-        parse failure (or a modify run with no fix/error vocabulary) leaves
-        the run ungated, so a plain feature-add modify is not gated on a
-        target. NEVER invoked from run()/resume(); from-scratch generation
+        parse failure, or a newest user message with no evidence of a failure
+        (``fix_target._EVIDENCE_RULES``), leaves the run ungated, so a plain
+        feature-add modify is not gated on a target. NEVER invoked from run()/resume(); from-scratch generation
         is untouched.
         """
         try:
@@ -508,9 +590,11 @@ class ModifyRunMixin:
             unit tests driving the full ``modify()`` loop with a scripted
             client are unaffected.
           * Any failure (LLM error, malformed delta, serialisation error)
-            is swallowed: ``modify()`` proceeds exactly as without it —
-            no model change beyond what already applied, no crash. An empty
-            result is the common, expected case.
+            is logged as a warning: ``modify()`` proceeds exactly as without
+            it — no model change beyond what already applied, no crash. A
+            failed LLM call is also kept in ``_model_sync_error`` for the
+            trace and the recipe. An empty result is the common, expected
+            case.
 
         NEVER invoked from ``run()`` / ``resume()`` / ``_run_phase1`` — the
         from-scratch path is untouched and byte-identical.
@@ -528,11 +612,12 @@ class ModifyRunMixin:
 
         try:
             new_classes = self._request_model_deltas(instructions)
-        except Exception:
-            logger.debug(
-                "modify: model-delta LLM call failed; proceeding without "
-                "model sync", exc_info=True,
+        except Exception as exc:
+            logger.warning(
+                "modify: model-sync LLM call failed; proceeding without "
+                "model sync: %s", exc, exc_info=True,
             )
+            self._model_sync_error = str(exc)[:500]
             return
 
         if not new_classes:
@@ -621,16 +706,28 @@ class ModifyRunMixin:
             "answer."
         )
         planning_model = getattr(self.client, "planning_model", None)
-        response = self.client.chat(
-            system=(
-                "You extract new domain-model entities implied by a code "
-                "modification. Call derive_model_deltas with your answer."
-            ),
-            messages=[{"role": "user", "content": prompt}],
-            tools=[delta_tool],
-            force_tool="derive_model_deltas",
-            model_override=planning_model,
-        )
+        # The user's key may not reach the planning model: retry on the
+        # primary, as the generator selection does.
+        for model_override in dict.fromkeys([planning_model, None]):
+            try:
+                response = self.client.chat(
+                    system=(
+                        "You extract new domain-model entities implied by a code "
+                        "modification. Call derive_model_deltas with your answer."
+                    ),
+                    messages=[{"role": "user", "content": prompt}],
+                    tools=[delta_tool],
+                    force_tool="derive_model_deltas",
+                    model_override=model_override,
+                )
+                break
+            except Exception as exc:
+                if model_override is None:
+                    raise
+                logger.warning(
+                    "modify: model-sync call on planning model %s failed (%s); "
+                    "retrying on the primary model", model_override, exc,
+                )
         for block in response.get("content", []):
             block_type = getattr(block, "type", None) or (
                 block.get("type") if isinstance(block, dict) else None

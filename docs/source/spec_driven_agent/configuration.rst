@@ -197,6 +197,13 @@ Context and token budgets
   The same ceiling for modify and fix runs, which routinely rewrite a whole
   existing file in one turn.
 
+Both ceilings apply to the main model's turns. A planning-model call keeps to
+the planning model's own output ceiling (16384 by default), since a cheaper
+sibling such as ``gpt-4o-mini`` rejects a larger request. If a modify run's
+model-sync call still fails, the run goes on without it, and the reason is
+logged as a warning and recorded as ``model_sync_error`` in the trace's
+``run_start`` event and in the recipe.
+
 Storage and lifecycle
 ---------------------
 

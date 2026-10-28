@@ -18,6 +18,7 @@ from besser.BUML.metamodel.structural import (
     AssociationClass,
     DomainModel,
 )
+from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
 
 
 def _multiplicity_str(mult) -> str:
@@ -341,9 +342,18 @@ def serialize_domain_model(model: DomainModel) -> dict[str, Any]:
         result["constraints"] = constraints
     # Rejected OCL is an unresolved obligation, not an executable constraint.
     # Preserve its source and original text for planners and model tools.
-    conversion_issues = getattr(model, "conversion_issues", None)
-    if conversion_issues:
-        result["conversion_issues"] = deepcopy(conversion_issues)
+    conversion_issues = getattr(model, "conversion_issues", None) or []
+    open_issues = [i for i in conversion_issues if not is_dropped_by_model_change(i)]
+    if open_issues:
+        result["conversion_issues"] = deepcopy(open_issues)
+    dropped = [i for i in conversion_issues if is_dropped_by_model_change(i)]
+    if dropped:
+        # The user's model change removed what these rules use: not obligations.
+        # No expression: quoted, the agent re-implemented it (and the removed attribute).
+        result[DROPPED] = [
+            {"name": i.get("name"), "context": i.get("context"), "missing": i[DROPPED]}
+            for i in dropped
+        ]
     return result
 
 

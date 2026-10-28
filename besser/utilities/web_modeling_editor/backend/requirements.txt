@@ -4,8 +4,8 @@
 # install each got different behaviour from one commit, and a Docker build
 # rolled the dice at exactly the moment of deploying. This range is what CI
 # resolves and tests against.
-fastapi>=0.110,<0.111
-starlette>=0.36,<0.37
+fastapi>=0.159,<0.160
+starlette>=1.9,<1.10
 uvicorn
 pydantic
 python-multipart
@@ -18,7 +18,7 @@ pyflakes>=3.2.0,<4
 # deploys share this one pin and see the same rule semantics.
 ruff==0.16.6
 deep_translator
-bocl == 1.0.3
+bocl == 1.0.4
 cryptography
 openpyxl >= 3.1.0
 openai >= 1.40.0

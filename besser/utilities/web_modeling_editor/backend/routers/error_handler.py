@@ -18,7 +18,7 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     GovernanceDslValidationError,
     ValidationError,
     GenerationError,
-    UpstreamServiceError,
+    UpstreamError,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ def handle_endpoint_errors(endpoint_name: str):
         * ``GovernanceDslValidationError`` -> HTTP 422
         * ``ValidationError``  -> HTTP 400
         * ``GenerationError``  -> HTTP 500
-        * ``UpstreamServiceError`` -> HTTP 502
+        * ``UpstreamError``    -> its ``status_code`` (an external service failed)
         * ``ConfigurationError`` -> HTTP 500 (server set-up, e.g. a missing
           optional dependency), with its message
         * ``HTTPException``    -> re-raised as-is
@@ -72,9 +72,9 @@ def handle_endpoint_errors(endpoint_name: str):
             except GenerationError as exc:
                 logger.error("Generation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
-            except UpstreamServiceError as exc:
-                logger.error("Upstream service error in %s: %s", endpoint_name, exc)
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            except UpstreamError as exc:
+                logger.warning("Upstream error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
             except ConfigurationError as exc:
                 logger.error("Configuration error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -105,9 +105,9 @@ def handle_endpoint_errors(endpoint_name: str):
             except GenerationError as exc:
                 logger.error("Generation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
-            except UpstreamServiceError as exc:
-                logger.error("Upstream service error in %s: %s", endpoint_name, exc)
-                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            except UpstreamError as exc:
+                logger.warning("Upstream error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
             except ConfigurationError as exc:
                 logger.error("Configuration error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -54,7 +54,8 @@ Start with :doc:`the browser editor <start/browser>` or
 :doc:`text grammars <buml_language/model_building/grammars>`,
 :doc:`draw.io import <buml_language/model_building/drawio_structural>`,
 :doc:`diagram images <buml_language/model_building/image_to_buml>`,
-:doc:`knowledge graphs <buml_language/model_building/kg_to_buml>`, and
+:doc:`knowledge graphs <buml_language/model_building/kg_to_buml>`,
+:doc:`SDMX statistics dataflows <buml_language/model_building/sdmx_to_buml>`, and
 :doc:`UI mockups <buml_language/model_building/mockup_to_buml>`.
 Supported model types and prerequisites are listed in each guide.
 

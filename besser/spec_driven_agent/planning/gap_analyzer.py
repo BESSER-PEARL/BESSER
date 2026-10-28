@@ -7,7 +7,7 @@ the customise (Phase 2) loop to execute.
 Model selection:
     The call prefers the provider's cheap planning sibling
     (``llm_client.planning_model`` — Haiku for Anthropic keys,
-    gpt-4o-mini for OpenAI keys, overridable via the
+    gpt-6-luna for OpenAI keys, overridable via the
     ``BESSER_LLM_PLANNING_MODEL`` env var, ``primary`` to disable). If
     the cheap model is unavailable on the user's gateway the call is
     retried once on the primary model, so cheap routing can never fail
@@ -47,6 +47,7 @@ from typing import Any, Callable
 
 from besser.spec_driven_agent.planning.action_inventory import ActionEndpoint, format_action_inventory
 from besser.spec_driven_agent.model_serializer import ordered_literals, serialize_domain_model
+from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
 
 logger = logging.getLogger(__name__)
 
@@ -515,8 +516,8 @@ def _note_rejected_constraints(domain_model, tasks: list) -> list[str]:
     issues = getattr(domain_model, "conversion_issues", None) or []
     added: list[str] = []
     for issue in issues:
-        if not isinstance(issue, dict):
-            continue
+        if not isinstance(issue, dict) or is_dropped_by_model_change(issue):
+            continue  # the user's model change removed what it uses
         name = issue.get("name")
         expression = issue.get("expression") or issue.get("original_text") or ""
         if not name or not expression:

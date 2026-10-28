@@ -566,7 +566,17 @@ def safe_load_buml(
     # Defence-in-depth: cap the total node count even if everything is
     # on the allowlist. A file full of legitimately-allowed ``Call``
     # nodes could still exhaust memory during traversal otherwise.
-    node_count = sum(1 for _ in ast.walk(tree))
+    # One ``id="..."`` keyword per call is not counted, so a model that fits
+    # without element ids also fits with them. A repeated ``id=`` parses (it
+    # only fails at compile time), so the others still count.
+    node_count = 0
+    for node in ast.walk(tree):
+        node_count += 1
+        if isinstance(node, ast.Call) and any(
+            kw.arg == "id" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
+            for kw in node.keywords
+        ):
+            node_count -= 2  # the keyword and its string
     if node_count > _MAX_AST_NODES:
         raise SafeBumlLoaderError(
             f"BUML AST too complex ({node_count} nodes > {_MAX_AST_NODES})"

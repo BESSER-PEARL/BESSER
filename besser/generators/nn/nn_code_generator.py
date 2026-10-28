@@ -499,7 +499,18 @@ class NNCodeGenerator(GeneratorInterface):
         """Clean excessive blank lines from generated code.
         Remove all blank lines from forward/call methods and normalize
         spacing throughout the file."""
-        # First pass: clean forward/call methods (subclassing only)
+        code = self._strip_forward_blank_lines(code)
+
+        # Second pass: normalize excessive blank lines globally (both modes)
+        code = re.sub(r'\n\n\n+', '\n\n', code)
+        # Clean up leading/trailing blank lines
+        code = code.strip() + '\n'
+        return code
+
+    @staticmethod
+    def _strip_forward_blank_lines(code: str) -> str:
+        """Remove the blank lines the layer macros leave inside the
+        forward/call method (subclassing only)."""
         lines = code.split('\n')
         cleaned_lines = []
         inside_forward = False
@@ -525,42 +536,25 @@ class NNCodeGenerator(GeneratorInterface):
 
             cleaned_lines.append(line)
 
-        code = '\n'.join(cleaned_lines)
+        return '\n'.join(cleaned_lines)
 
-        # Second pass: normalize excessive blank lines globally (both modes)
-        code = re.sub(r'\n\n\n+', '\n\n', code)
-        # Clean up leading/trailing blank lines
-        code = code.strip() + '\n'
-        return code
+    @staticmethod
+    def _make_env(templates_paths: list[str]) -> Environment:
+        """The Jinja environment of the NN templates: ``templates_paths``
+        searched in order, with the ``strip_counter_suffix`` filter."""
+        env = Environment(loader=FileSystemLoader(templates_paths))
 
-
-    def generate(self, *args):
-        """
-        Generates NN code based on the provided B-UML model and saves
-        it to the specified output directory.
-        If the output directory was not specified, the code generated
-        will be stored in the <current directory>/output folder.
-
-        Returns:
-            None, but stores the generated code as a file
-                named nn_code.py
-        """
-        file_name = f"{self.file_name[:-3]}_{self.generation_type}.py"
-        file_path = self.build_generation_path(file_name=file_name)
-        templates_path = os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), self.template_dir, "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-
-        # Add custom filter to strip counter suffix
         def strip_counter_suffix_filter(name):
-            """Strip trailing _cN where N is one or more digits 
+            """Strip trailing _cN where N is one or more digits
             (counter added by parser)."""
             return re.sub(r'_c\d+$', '', name)
         env.filters['strip_counter_suffix'] = strip_counter_suffix_filter
+        return env
 
-        template = env.get_template(self.template_name)
 
-        # Extract first module's input_var for forward signature
+    def forward_input_var(self) -> str:
+        """The name of the argument of ``forward`` (``call`` in TF): the
+        input variable of the first module, ``x`` by default."""
         forward_input_var = "x"
         if self.modules_details:
             first_module_data = next(iter(self.modules_details.values()))
@@ -577,14 +571,33 @@ class NNCodeGenerator(GeneratorInterface):
                         forward_input_var = first_module_data[1]  # Use out_var
                 else:
                     forward_input_var = first_module_data[1]
+        return forward_input_var
 
+    def generate(self, *args):
+        """
+        Generates NN code based on the provided B-UML model and saves
+        it to the specified output directory.
+        If the output directory was not specified, the code generated
+        will be stored in the <current directory>/output folder.
+
+        Returns:
+            None, but stores the generated code as a file
+                named nn_code.py
+        """
+        file_name = f"{self.file_name[:-3]}_{self.generation_type}.py"
+        file_path = self.build_generation_path(file_name=file_name)
+        templates_path = os.path.join(os.path.dirname(
+            os.path.abspath(__file__)), self.template_dir, "templates")
+        env = self._make_env([templates_path])
+
+        template = env.get_template(self.template_name)
 
         generated_code = template.render(
             model=self.model, modules_details=self.modules_details,
             generation_type=self.generation_type,
             strip_layer_counter_suffix=self.strip_layer_counter_suffix,
             has_training_aware_dropout=self.has_training_aware_dropout,
-            forward_input_var=forward_input_var)
+            forward_input_var=self.forward_input_var())
 
         # Post-process: clean excessive blank lines
         generated_code = self._clean_generated_code(generated_code)

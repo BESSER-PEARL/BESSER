@@ -110,7 +110,7 @@ def _write_temp_to_output(temp_path: str, out_file, section_header: str = ""):
     out_file.write("\n\n")
 
 
-def project_to_code(project: Project, file_path: str, sm: str = ""):
+def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bool = False):
     """
     Generates Python code for a complete B-UML project and writes it to a specified file.
 
@@ -126,6 +126,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
         sm (str): Deprecated. Legacy state machine code string (kept for backward
                   compatibility). StateMachine objects in the project's model list
                   are now handled automatically.
+        emit_ids (bool): Write element ids in the structural models (see
+                  ``domain_model_to_code``). Off by default.
 
     Outputs:
         - A Python file containing all models in the project
@@ -295,6 +297,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                         objectmodel=om,
                         model_var_name=var_name,
                         metadata_var_name=meta_var_name,
+                        emit_ids=emit_ids,
                         object_model_var_name=obj_var_name,
                     )
                     _write_temp_to_output(tmp_path, f, section_header=section)
@@ -306,6 +309,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                         file_path=tmp_path,
                         model_var_name=var_name,
                         metadata_var_name=meta_var_name,
+                        emit_ids=emit_ids,
                     )
                     _write_temp_to_output(tmp_path, f, section_header=section)
                     model_vars.append(var_name)
@@ -362,6 +366,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                     model_var_name=var_name,
                     metadata_var_name=meta_var,
                     object_model_var_name=obj_var,
+                    emit_ids=emit_ids,
                 )
                 _write_temp_to_output(tmp_path, f, section_header=section)
                 model_vars.append(var_name)

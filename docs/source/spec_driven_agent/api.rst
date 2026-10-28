@@ -24,7 +24,8 @@ Endpoints
    * - ``/spec-driven/preview``
      - POST
      - Pre-flight plan (primary model + target generator). No API key, no
-       LLM call.
+       LLM call. For ``mode: "modify"`` it also returns ``model_change``
+       (see :ref:`spec-driven-preview-model-change`).
    * - ``/spec-driven/config``
      - GET
      - Caps, feature flags, provider default models, and free-tier
@@ -146,6 +147,62 @@ Request body
    per deployment via ``BESSER_LLM_*`` environment variables — read the live
    values from ``GET /besser_api/spec-driven/config`` rather than hardcoding
    them in a client. The full variable reference is in :doc:`configuration`.
+
+.. _spec-driven-preview-model-change:
+
+Model change in the preview
+---------------------------
+
+With ``mode: "modify"`` and a
+``base_run_id`` whose workspace is still available, the ``/preview`` response
+carries ``model_change``: how the project's class diagram relates to the one
+the base run was built from. It is ``null`` for ``mode: "generate"``, an
+unknown or expired base run, or a base run without a recorded class model.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Field
+     - Meaning
+   * - ``verdict``
+     - ``small``, ``large`` or ``unrelated``. ``large`` means ``gone`` is
+       above 0.15. ``unrelated`` means
+       more than half of it is gone, most of the new model is new elements,
+       and either most base classes or three quarters of the base model are
+       gone. Deleting classes, even all of them, is ``large``.
+   * - ``basis``
+     - ``attributes``, or ``classes`` when the base run predates the recorded
+       model (then only class names are compared and ``changes`` is empty).
+   * - ``gone``
+     - Share of the base model's classes and attributes (0 to 1) that are
+       removed, or are attributes now under another name. A renamed attribute
+       counts because the code still changes everywhere it is used; a renamed
+       class, and a change of letter case only, do not.
+   * - ``removed`` / ``added``
+     - ``Class`` and ``Class.attribute`` names, for display. Renamed elements
+       are not listed here.
+   * - ``renamed``
+     - ``[{"from": "Room", "to": "Suite"}, {"from": "Room.floorType", "to":
+       "Room.floor"}]``: classes and attributes kept under a new name. Empty
+       when none.
+   * - ``changes``
+     - One line per change, the list a modify run receives (see
+       :ref:`spec-driven-modify-mode`).
+
+The verdict, ``removed``/``added``/``renamed`` and ``changes`` come from one
+matching of old and new elements, so they always agree. Two elements are the
+same element when:
+
+1. both carry an editor id and the ids are equal (two different ids are two
+   different elements, whatever their names);
+2. otherwise, they have the same name, compared exactly first and then
+   ignoring case; attributes are matched only within their matched class;
+3. for classes only, when neither is matched yet: they are the only class on
+   each side with the same non-empty set of attribute names (a class whose
+   name alone changed).
+
+No element is matched twice.
 
 SSE event types
 ---------------

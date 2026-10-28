@@ -16,6 +16,7 @@ import tempfile
 import importlib.util
 import asyncio
 import json
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -1224,6 +1225,9 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
     # cycles, unresolved NNReferences, ...) is caught and mapped to 400 by
     # @handle_endpoint_errors — no explicit re-raise needed here.
 
+    if generator_type == "forecaster":
+        return await _generate_forecaster(nn_model, generator_class, config, temp_dir)
+
     generation_type = config.get("generation_type", "subclassing") if config else "subclassing"
     if generator_type == "tensorflow":
         generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type)
@@ -1255,6 +1259,35 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
         media_type="text/plain",
         headers={"Content-Disposition": f'attachment; filename="{download_filename}"'},
     )
+
+
+async def _generate_forecaster(nn_model, generator_class, config: dict, temp_dir: str):
+    """Generate a time-series forecaster from an NN model.
+
+    ``config`` holds the ForecastConfig fields (window, horizon, season, log,
+    difference, calendar, standardize, seed or seeds) plus ``channel_last``.
+    Invalid settings, and a network the forecaster cannot take (its first layer
+    must read the window, its last return the horizon), raise ValidationError,
+    which @handle_endpoint_errors maps to a 400 with the generator's message.
+    """
+    # the generator class is only registered when this module imports
+    from besser.generators.nn.forecaster import ForecastConfig
+
+    settings = dict(config or {})
+    settings.pop("generation_type", None)  # sent with every NN generation; not a forecaster setting
+    channel_last = settings.pop("channel_last", False)
+    if not isinstance(channel_last, bool):
+        raise ValidationError(f"channel_last must be true or false, got {type(channel_last).__name__}")
+    try:
+        forecast_config = ForecastConfig.from_dict(settings)
+        generator_instance = generator_class(
+            nn_model, forecast_config, output_dir=temp_dir, channel_last=channel_last,
+        )
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    await asyncio.to_thread(generator_instance.generate)
+    # one file, forecaster_<model name>.py, shipped under that name (keep_generated_filename)
+    return _create_file_response(temp_dir, "forecaster")
 
 
 async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, temp_dir: str):
@@ -1478,5 +1511,17 @@ def _create_file_response(temp_dir: str, generator_type: str):
     return Response(
         content=file_content,
         media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{proper_filename}"'},
+        headers={"Content-Disposition": _attachment(proper_filename)},
     )
+
+
+def _attachment(file_name: str) -> str:
+    """The Content-Disposition of a download. HTTP headers are latin-1: a name
+    outside ASCII (a model called ``数据``) is sent as RFC 6266's UTF-8
+    ``filename*``, with an ASCII ``filename`` for older clients."""
+    if file_name.isascii():
+        return f'attachment; filename="{file_name}"'
+    stem, ext = os.path.splitext(file_name)
+    fallback = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "download"
+    return (f'attachment; filename="{fallback}{ext}"; '
+            f"filename*=UTF-8''{urllib.parse.quote(file_name)}")

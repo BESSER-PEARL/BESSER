@@ -997,10 +997,8 @@ async def push_spec_driven_to_github(
             # instruction added domain entities stores it on the registry
             # entry) so the pushed buml/ matches the code. Fall back to the
             # request's projectExport for every other run.
-            effective_export = (
-                getattr(entry, "updated_project_export", None)
-                or req.projectExport
-            )
+            run_export = getattr(entry, "updated_project_export", None)
+            effective_export = run_export or req.projectExport
             repo_model.write_model_files(workdir, effective_export)
 
             # ---- 5. Resolve the repo + target branch ----
@@ -1114,6 +1112,7 @@ async def push_spec_driven_to_github(
                 pull_request_url=pull_request_url,
                 base_run_id=base_run_id,
                 warnings=deploy_warnings,
+                project_export=run_export,
             )
 
     except HTTPException:

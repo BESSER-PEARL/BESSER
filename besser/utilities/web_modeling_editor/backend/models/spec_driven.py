@@ -347,6 +347,10 @@ class PushSmartToGitHubResponse(BaseModel):
     # Problems the user should know about, e.g. a layout change that keeps
     # the app from deploying as before.
     warnings: list[str] = []
+    # The model written to ``buml/`` when the run changed it (a modify run
+    # that added classes); None when it is the request's own export. The
+    # editor loads it, so its model matches the repo.
+    project_export: Optional[dict] = None
 
 
 class ImportGitHubRunRequest(BaseModel):

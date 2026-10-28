@@ -163,6 +163,8 @@ def test_push_prefers_updated_project_export(monkeypatch):
     assert fake.pushed_diagrams_json is not None
     # The model-synced export won — not the request's.
     assert fake.pushed_diagrams_json["name"] == "UPDATED_PROJECT"
+    # ...and comes back, so the editor shows the model the repo now holds.
+    assert r.json()["project_export"]["name"] == "UPDATED_PROJECT"
 
 
 def test_push_falls_back_to_request_export_when_no_delta(monkeypatch):
@@ -182,3 +184,4 @@ def test_push_falls_back_to_request_export_when_no_delta(monkeypatch):
     assert r.status_code == 200
     assert fake.pushed_diagrams_json is not None
     assert fake.pushed_diagrams_json["name"] == "REQUEST_PROJECT"
+    assert r.json()["project_export"] is None  # the editor already holds this model

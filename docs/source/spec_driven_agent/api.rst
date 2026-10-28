@@ -66,7 +66,10 @@ Endpoints
        holding the merged repo for the next modify run), ``"conflict"``
        (left on ``conflict_branch``) or ``"pull_request"``
        (``pull_request_url``); ``commit_sha`` is the next push's base.
-       Requires an ``X-GitHub-Session`` header.
+       When the run changed the model (a modify run that added classes),
+       ``project_export`` is the model written to ``buml/``, which the editor
+       loads; otherwise it is ``null``. Requires an ``X-GitHub-Session``
+       header.
    * - ``/spec-driven/import-github-run``
      - POST
      - Import a GitHub repo as a run, so it can be used as the seed of a

@@ -23,6 +23,8 @@ Choose a model type
      - :doc:`GUI <buml_language/model_types/gui>`
    * - Data rules and constraints
      - :doc:`OCL <buml_language/model_types/ocl>`
+   * - Ontologies, taxonomies, and linked data
+     - :doc:`Knowledge graph <buml_language/model_types/knowledge_graph>`
    * - States and transitions
      - :doc:`State machine <buml_language/model_types/state_machine>`
    * - Conversational behaviour

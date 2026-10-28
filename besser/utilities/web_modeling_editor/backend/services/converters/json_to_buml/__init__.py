@@ -13,6 +13,7 @@ from .a2a_tags import annotate_agent_with_a2a
 from .gui_diagram_processor import process_gui_diagram
 from .quantum_diagram_processor import process_quantum_diagram
 from .nn_diagram_processor import process_nn_diagram
+from .kg_diagram_processor import process_kg_diagram
 from .component_diagram_processor import process_component_diagram
 from .deployment_diagram_processor import process_deployment_diagram
 from .method_nn_linker import link_method_neural_networks

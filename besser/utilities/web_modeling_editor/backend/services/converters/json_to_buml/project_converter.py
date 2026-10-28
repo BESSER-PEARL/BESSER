@@ -19,6 +19,7 @@ from . import (
     process_deployment_diagram,
 )
 from .a2a_tags import annotate_agent_with_a2a
+from .kg_diagram_processor import process_kg_diagram
 from .method_nn_linker import link_method_neural_networks
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
@@ -154,6 +155,14 @@ def _is_valid_diagram(diag, diagram_type):
         cols = data.get("cols") if isinstance(data, dict) else getattr(model, "cols", None)
         return cols is not None  # Empty list is valid
 
+    if diagram_type == "KnowledgeGraphDiagram":
+        # An empty graph is skipped like any other empty diagram. ``empty_model``
+        # gives every project a ``nodes: []`` KG slot, so accepting the empty
+        # list turned each class-only project into [DomainModel, KnowledgeGraph]
+        # on its way back in, and its export gained a KNOWLEDGE_GRAPH section.
+        nodes = data.get("nodes") if isinstance(data, dict) else getattr(model, "nodes", None)
+        return bool(nodes)
+
     # Standard element-based diagrams accept the v4 ``nodes`` shape. The
     # editor migrator at ``packages/library/lib/utils/versionConverter.ts``
     # is the only place v3 is converted to v4 in the system; the backend
@@ -185,6 +194,7 @@ def _collect_valid_diagrams(project):
         "AgentDiagram",
         "GUINoCodeDiagram",
         "QuantumCircuitDiagram",
+        "KnowledgeGraphDiagram",
         "UserDiagram",
         "NNDiagram",
         "BPMN",
@@ -343,6 +353,23 @@ def json_to_buml_project(project):
         model_list.append(quantum_model)
         _remember(quantum_model, "QuantumCircuitDiagram", quantum_diag)
 
+    # The user-facing title of each NN and KG diagram, by id(model): those
+    # metamodels store only a sanitized name, so project_to_code writes this
+    # title into the section banner for project_to_json to read back.
+    diagram_titles: dict = {}
+
+    # ── Process ALL KnowledgeGraphDiagrams ────────────────────────────
+    for kg_diag in diagrams.get("KnowledgeGraphDiagram", []):
+        # Errors propagate, as they do for every other diagram type above and
+        # below. Logging a warning and carrying on produced an export that was
+        # silently missing the user's knowledge graph, and the only sign of it
+        # was a line in the server log the user never sees.
+        kg_model = process_kg_diagram(kg_diag.model_dump())
+        model_list.append(kg_model)
+        _remember(kg_model, "KnowledgeGraphDiagram", kg_diag)
+        if kg_diag.title:
+            diagram_titles[id(kg_model)] = kg_diag.title
+
     # ── Process ALL StateMachineDiagrams ──────────────────────────────
     for sm_diag in diagrams.get("StateMachineDiagram", []):
         sm_model = process_state_machine(sm_diag.model_dump())
@@ -353,19 +380,14 @@ def json_to_buml_project(project):
     # ── Process ALL NNDiagrams ────────────────────────────────────────
     from .nn_diagram_processor import process_nn_diagram
 
-    nn_titles: dict = {}
     processed_nn_models = {}  # diagram ID -> NN, reused to link methods
     for nn_diag in diagrams.get("NNDiagram", []):
         nn_model = process_nn_diagram(nn_diag.model_dump())
         model_list.append(nn_model)
         _remember(nn_model, "NNDiagram", nn_diag)
         processed_nn_models[nn_diag.id or id(nn_diag)] = nn_model
-        # Preserve the diagram's user-facing title so project_to_code can
-        # emit it in the section header — the NN metamodel only stores a
-        # sanitized name, so without this the title is lost on round-trip.
-        nn_title = getattr(nn_diag, "title", None)
-        if nn_title:
-            nn_titles[id(nn_model)] = nn_title
+        if nn_diag.title:
+            diagram_titles[id(nn_model)] = nn_diag.title
 
     # Methods implemented by a neural network point at the NN models above.
     for cd_model in processed_class_diagrams.values():
@@ -407,10 +429,10 @@ def json_to_buml_project(project):
         metadata=metadata
     )
 
-    # Attach NN titles as an attribute on the project so project_to_code
+    # Attach the titles as an attribute on the project so project_to_code
     # can read them without changing this function's return type (the
     # public API stays a single Project instance).
-    project_instance._nn_diagram_titles = nn_titles
+    project_instance._diagram_titles = diagram_titles
     if name != project.name:
         project_instance._display_name = project.name
     project_instance._diagram_ids = diagram_ids

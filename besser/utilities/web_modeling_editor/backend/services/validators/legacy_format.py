@@ -11,8 +11,8 @@ The current editor upgrades v3 diagrams on load, so a v3 payload reaching the
 backend means a stale client or a hand-made request. It is rejected with a
 :class:`LegacyDiagramFormatError` (a ``ConversionError``, so HTTP 400).
 
-GUI (GrapesJS) and quantum-circuit diagrams keep their own formats and are
-never treated as legacy UML.
+GUI (GrapesJS), quantum-circuit and Knowledge Graph diagrams keep their own
+formats and are never treated as legacy UML.
 """
 
 from typing import Any, Iterable, Mapping, Optional
@@ -23,7 +23,7 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 )
 
 # Diagram types whose model is not the UML nodes/edges shape.
-NON_UML_DIAGRAM_TYPES = frozenset({"GUINoCodeDiagram", "QuantumCircuitDiagram"})
+NON_UML_DIAGRAM_TYPES = frozenset({"GUINoCodeDiagram", "QuantumCircuitDiagram", "KnowledgeGraphDiagram"})
 
 LEGACY_V3_HINT = (
     "open it in the current BESSER web editor (which upgrades it to the v4 "
@@ -36,8 +36,8 @@ def is_legacy_v3_model(model: Any, diagram_type: Optional[str] = None) -> bool:
 
     A model is legacy when it declares a UML ``type`` and a ``version``
     starting with ``"3."``, or when it carries the v3 ``elements`` /
-    ``relationships`` maps and no v4 ``nodes``. GUI and quantum diagrams (by
-    ``diagram_type`` or ``model['type']``) are never legacy; the version rule
+    ``relationships`` maps and no v4 ``nodes``. GUI, quantum and Knowledge
+    Graph diagrams (by ``diagram_type`` or ``model['type']``) are never legacy; the version rule
     also needs a ``type`` because GrapesJS GUI models carry their own,
     unrelated ``version`` and no ``type``.
     """

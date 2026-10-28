@@ -21,13 +21,43 @@ Models and services
 -------------------
 
 Use class diagrams for data, GUI diagrams for screens, state machines and
-agent diagrams for behaviour, BPMN for processes, and neural-network diagrams
-for training architectures. See :doc:`buml_language` for the model catalogue.
+agent diagrams for behaviour, BPMN for processes, neural-network diagrams
+for training architectures, and knowledge-graph diagrams for ontologies. See :doc:`buml_language` for the model catalogue.
 Available generation actions depend on the selected diagram and deployment.
 
 The assistant service creates and edits diagrams. The :doc:`Spec-Driven Agent
 <spec_driven_agent/index>` handles application files. Agent chat simulation
 uses a separate :doc:`simulator service <utilities/agent_simulator>`.
+
+Knowledge-graph diagrams
+------------------------
+
+A knowledge-graph diagram models an ontology as a graph of classes, properties,
+individuals and literals, plus OWL axioms and SHACL/OWL constraints. It is a
+diagram type of its own (``KnowledgeGraphDiagram``) and needs no other diagram.
+The metamodel is described in :doc:`buml_language/model_types/knowledge_graph`.
+
+* **Edit.** The graph is drawn on a canvas rather than with the class-diagram
+  editor: drag node types from the palette, draw relations by dragging from a
+  source node to a target node, edit labels and constraints in the inspector,
+  and undo or redo changes. Large ontologies show only the highest-priority
+  nodes; the limit is set on the *KG Settings* page.
+* **Import.** Load an OWL/RDF ontology (``.owl``, ``.ttl``, ``.rdf``, ``.xml``,
+  ``.nt``, ``.n3``, up to 5 MB). Anything the importer had to skip is reported
+  as a warning.
+* **Export.** Download the graph as Turtle or RDF/XML, choosing whether
+  constraints are written as OWL restrictions, SHACL shapes or both, as a
+  standalone interactive HTML file, or as B-UML Python code.
+* **Refine and convert.** *Refine KG* checks the graph before it becomes a class
+  diagram. Its *Automatic* tab lists the elements that have no clean 1-to-1
+  B-UML mapping, each with a recommended and a skip action. Its *Consistency*
+  tab runs the OWL/SHACL consistency check, and its *AI* tab asks an LLM for
+  suggestions using your own provider key, which is sent with the request and
+  never logged by the backend. Converting then produces a class diagram with
+  OCL constraints; see :doc:`buml_language/model_building/kg_to_buml`.
+
+The endpoints behind these actions are listed under *Knowledge Graph* in
+:doc:`web_editor_backend`.
 
 Run or extend the editor
 ------------------------

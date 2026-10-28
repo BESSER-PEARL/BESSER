@@ -31,3 +31,7 @@ governancedsl==0.1.1
 # The Spec-Driven Agent's Claude client; 1.x changes the SDK surface.
 anthropic >= 0.88.0, < 1
 websockets >= 15.0
+# SHACL validation for Knowledge Graph consistency checks. The backend always
+# offers the check; for the library it is the optional ``besser[kg]`` extra
+# (setup.cfg), as only besser.BUML.notations.kg_to_buml.consistency uses it.
+pyshacl>=0.25.0

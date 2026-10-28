@@ -23,6 +23,7 @@ from .object_diagram_converter import object_buml_to_json
 from .gui_diagram_converter import gui_buml_to_json
 from .quantum_diagram_converter import quantum_buml_to_json
 from .nn_diagram_converter import nn_buml_to_json
+from .kg_diagram_converter import kg_buml_to_json
 from .component_diagram_converter import component_buml_to_json
 from .deployment_diagram_converter import deployment_buml_to_json
 
@@ -35,6 +36,7 @@ SECTION_CONFIG = {
     'agent': ('AGENT', 'AgentDiagram', 'Agent Diagram'),
     'gui_model': ('GUI', 'GUINoCodeDiagram', 'GUI Diagram'),
     'quantum_model': ('QUANTUM', 'QuantumCircuitDiagram', 'Quantum Circuit Diagram'),
+    'kg_model': ('KNOWLEDGE_GRAPH', 'KnowledgeGraphDiagram', 'Knowledge Graph Diagram'),
     'sm': ('STATE MACHINE', 'StateMachineDiagram', 'State Machine Diagram'),
     'nn_model': ('NN', 'NNDiagram', 'NN Diagram'),
     'bpmn_model': ('BPMN', 'BPMNDiagram', 'BPMN Diagram'),
@@ -153,7 +155,7 @@ def _ids_for(diagram_ids: Dict[str, List[str]], diagram_type: str, count: int) -
 # All known section header keywords used as boundary markers
 ALL_SECTION_KEYWORDS = [
     'STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN',
-    'BPMN', 'COMPONENT', 'DEPLOYMENT',
+    'BPMN', 'KNOWLEDGE_GRAPH', 'COMPONENT', 'DEPLOYMENT',
 ]
 
 
@@ -172,6 +174,15 @@ def empty_model(diagram_type: str) -> Dict[str, Any]:
             "styles": [],
             "assets": [],
             "symbols": []
+        }
+
+    # KnowledgeGraphDiagram stores nodes/edges rather than elements/relationships.
+    if diagram_type == "KnowledgeGraphDiagram":
+        return {
+            "version": "1.0.0",
+            "type": diagram_type,
+            "nodes": [],
+            "edges": [],
         }
 
     return {
@@ -196,6 +207,11 @@ def _build_section_boundary_pattern() -> str:
     # Match both old format: # KEYWORD MODEL #
     # and new numbered format: # KEYWORD MODEL 1: "Title" #
     return rf'#\s*(?:{keyword_alts})\s+MODEL(?:\s+\d+)?(?:\s*:\s*"[^"]*")?\s*#|# PROJECT DEFINITION'
+
+
+def _has_code(section_code: str) -> bool:
+    """True when ``section_code`` holds a line that is neither blank nor a comment."""
+    return any(line.strip() and not line.lstrip().startswith("#") for line in section_code.splitlines())
 
 
 def _extract_all_sections(content: str, keyword: str) -> List[Tuple[str, str]]:
@@ -229,9 +245,13 @@ def _extract_all_sections(content: str, keyword: str) -> List[Tuple[str, str]]:
     boundary_pattern = _build_section_boundary_pattern()
 
     sections = []
+    # (number, title) of a header with no code under it, waiting for the header
+    # that follows it straight away.
+    carried = (None, None)
     for match in header_pattern.finditer(content):
-        number = match.group(1)  # e.g. "1", "2", or None
-        title = match.group(2)   # e.g. "User Model" or None
+        number = match.group(1) or carried[0]  # e.g. "1", "2", or None
+        title = match.group(2) or carried[1]   # e.g. "User Model" or None
+        carried = (None, None)
         section_start = match.end()
 
         # Find the next section boundary after this header
@@ -242,8 +262,15 @@ def _extract_all_sections(content: str, keyword: str) -> List[Tuple[str, str]]:
             # Last section in the file: take everything until end
             section_code = content[section_start:].strip()
 
-        if not section_code:
+        if not _has_code(section_code):
+            # A header with nothing but comments (the ``####`` border of a
+            # builder's own banner) under it. ``project_to_code`` writes a
+            # numbered, titled header for each of several models right above
+            # the banner its builder writes, so the title belongs to the
+            # section that banner opens.
             logger.debug("Empty section found for keyword '%s' (number=%s)", keyword, number)
+            if next_boundary and header_pattern.match(content, section_start + next_boundary.start()):
+                carried = (number, title)
             continue
 
         # Build a descriptive title
@@ -345,6 +372,9 @@ def _convert_section(
         elif model_name == "bpmn_model":
             model = bpmn_buml_to_json(section_code)
 
+        elif model_name == "kg_model":
+            model = kg_buml_to_json(section_code)
+
         elif model_name == "sm":
             model = state_machine_to_json(section_code)
 
@@ -437,6 +467,7 @@ DIAGRAM_DEFAULT_TITLES: Dict[str, str] = {
     'ComponentDiagram': 'Component Diagram',
     'DeploymentDiagram': 'Deployment Diagram',
     'UserDiagram': 'User Diagram',
+    'KnowledgeGraphDiagram': 'Knowledge Graph Diagram',
 }
 
 

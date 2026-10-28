@@ -1,4 +1,5 @@
 from .diagram import DiagramInput, FeedbackSubmission
+from .kg import KGDiagramInput, KGLLMRequest, KGOrphanClassifyRequest
 from .project import ProjectInput
 from .simulation import SimulationSessionInput
 from .responses import (
@@ -19,6 +20,9 @@ from .sdmx import SdmxImportRequest, SdmxProvider, SdmxProvidersResponse
 
 __all__ = [
     'DiagramInput',
+    'KGDiagramInput',
+    'KGLLMRequest',
+    'KGOrphanClassifyRequest',
     'ProjectInput',
     'FeedbackSubmission',
     'SimulationSessionInput',

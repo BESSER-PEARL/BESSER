@@ -211,6 +211,18 @@ def test_project_python_round_trip_keeps_ids_and_every_reference(tmp_path):
     assert reimported._cross_diagram_errors["errors"] == []
 
 
+def test_a_knowledge_graph_keeps_its_diagram_id_and_title(tmp_path):
+    project = _project()
+    project["diagrams"]["KnowledgeGraphDiagram"] = [{"id": "d-kg", "title": "My Ontology", "model": {
+        "type": "KnowledgeGraphDiagram", "version": "1.0.0", "edges": [],
+        "nodes": [{"id": "n-person", "nodeType": "class", "label": "Person", "iri": "http://ex.org/Person"}]}}]
+
+    (kg,) = _round_trip(project, tmp_path, emit_ids=True)["diagrams"]["KnowledgeGraphDiagram"]
+
+    assert (kg["id"], kg["title"]) == ("d-kg", "My Ontology")
+    assert [n["id"] for n in kg["model"]["nodes"]] == ["n-person"]
+
+
 def test_object_links_on_compositions_keep_their_association(tmp_path):
     """Without ids in the .py, references still resolve to the re-imported class diagram."""
     back = _round_trip(_project(), tmp_path, emit_ids=False)

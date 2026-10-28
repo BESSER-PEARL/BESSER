@@ -4,7 +4,6 @@ Conversion Router
 Handles all conversion, export, and import endpoints for the BESSER web modeling editor backend.
 """
 
-import ast
 import asyncio
 import logging
 import os
@@ -28,7 +27,11 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
 
 # BESSER image-to-UML and BUML utilities
 from besser.utilities.image_to_buml import image_to_buml
-from besser.utilities.kg_to_buml import kg_to_buml
+
+# Custom exception types translated to HTTP codes by @handle_endpoint_errors.
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
+)
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
@@ -37,6 +40,7 @@ from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
+from besser.utilities.buml_code_builder.kg_model_builder import kg_model_to_code
 from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
 from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
 
@@ -70,6 +74,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     gui_buml_to_json,
     project_to_json,
     nn_buml_to_json,
+    kg_buml_to_json,
     component_buml_to_json,
     deployment_buml_to_json,
 )
@@ -91,6 +96,7 @@ from besser.utilities.web_modeling_editor.backend.services.reverse_engineering i
 from besser.utilities.web_modeling_editor.backend.services.svg_postprocess import (
     fit_svg_viewbox_to_content,
 )
+from besser.utilities.web_modeling_editor.backend.services.kg.payloads import parse_kg_diagram
 
 # Backend configuration
 from besser.utilities.web_modeling_editor.backend.config import (
@@ -109,7 +115,22 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     BPMN_DIAGRAM_TYPE,
     BPMN_PROJECT_DIAGRAM_KEY,
     DEPLOYMENT_DIAGRAM_TYPE,
+    KG_DIAGRAM_TYPE,
+    MAX_CSV_SIZE,
+    MAX_IMAGE_SIZE,
+    MAX_BUML_SIZE,
+    ALLOWED_SPREADSHEET_EXTENSIONS,
+    ALLOWED_IMAGE_EXTENSIONS,
+    ALLOWED_BUML_EXTENSIONS,
     BUML_EMIT_IDS,
+)
+
+# Upload validation and async file I/O, shared with kg_router
+from besser.utilities.web_modeling_editor.backend.services.utils.upload_validation import (
+    read_file_async,
+    validate_file_content,
+    validate_upload,
+    write_file_async,
 )
 
 # Centralized error handling
@@ -124,129 +145,6 @@ from besser.utilities.web_modeling_editor.backend.services.validators.legacy_for
 )
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# File upload size limits
-# ---------------------------------------------------------------------------
-MAX_CSV_SIZE = 5 * 1024 * 1024       # 5 MB
-MAX_IMAGE_SIZE = 10 * 1024 * 1024     # 10 MB
-MAX_BUML_SIZE = 2 * 1024 * 1024       # 2 MB
-
-# ---------------------------------------------------------------------------
-# Allowed MIME / extension sets per upload type
-# ---------------------------------------------------------------------------
-ALLOWED_SPREADSHEET_EXTENSIONS = {".csv", ".xlsx"}
-ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
-ALLOWED_BUML_EXTENSIONS = {".py"}
-ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}
-
-
-def _validate_upload(file: UploadFile, *, max_size: int, allowed_extensions: set[str], content: bytes) -> None:
-    """Validate an uploaded file's size and extension.
-
-    Raises ``HTTPException`` with status 413 (payload too large) or 415
-    (unsupported media type) when the check fails.
-    """
-    # --- size check ---
-    if len(content) > max_size:
-        max_mb = max_size / (1024 * 1024)
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum allowed size is {max_mb:.0f} MB.",
-        )
-
-    # --- extension check ---
-    filename = file.filename or ""
-    _, ext = os.path.splitext(filename)
-    if ext.lower() not in allowed_extensions:
-        raise HTTPException(
-            status_code=415,
-            detail=(
-                f"Unsupported file type '{ext}'. "
-                f"Allowed extensions: {', '.join(sorted(allowed_extensions))}."
-            ),
-        )
-
-
-def _validate_file_content(content: bytes, filename: str) -> None:
-    """Validate uploaded file content based on its extension.
-
-    Raises ``HTTPException`` with status 400 when the content does not match
-    the expected format for the given file type.
-    """
-    _, ext = os.path.splitext(filename)
-    ext = ext.lower()
-
-    if ext == ".csv":
-        # Must be valid UTF-8 text with at least one line containing comma or semicolon separators
-        try:
-            text = content.decode("utf-8")
-        except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail="CSV file is not valid UTF-8 text.")
-        lines = [line for line in text.splitlines() if line.strip()]
-        if not lines:
-            raise HTTPException(status_code=400, detail="CSV file is empty.")
-        has_separator = any("," in line or ";" in line for line in lines)
-        if not has_separator:
-            raise HTTPException(
-                status_code=400,
-                detail="CSV file does not contain comma or semicolon separators.",
-            )
-
-    elif ext == ".xlsx":
-        # XLSX files are ZIP archives — check the ZIP magic bytes.
-        if not content.startswith(b"PK\x03\x04"):
-            raise HTTPException(
-                status_code=400,
-                detail="XLSX file appears to be corrupted or is not a valid Excel workbook.",
-            )
-
-    elif ext == ".py":
-        # Must be valid Python syntax. Decode with utf-8-sig so a leading UTF-8
-        # BOM (common from Windows editors) is stripped instead of tripping the
-        # parser with "invalid non-printable character U+FEFF".
-        try:
-            text = content.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            raise HTTPException(status_code=400, detail="Python file is not valid UTF-8 text.")
-        try:
-            ast.parse(text, filename=filename)
-        except SyntaxError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Python file contains invalid syntax: {e.msg} (line {e.lineno}).",
-            )
-
-    elif ext in (".png", ".jpg", ".jpeg"):
-        # Check magic bytes
-        if ext == ".png":
-            if not content.startswith(b'\x89PNG'):
-                raise HTTPException(
-                    status_code=400,
-                    detail="File content does not match PNG format (invalid magic bytes).",
-                )
-        else:  # .jpg / .jpeg
-            if not content.startswith(b'\xff\xd8\xff'):
-                raise HTTPException(
-                    status_code=400,
-                    detail="File content does not match JPEG format (invalid magic bytes).",
-                )
-
-
-async def _read_file(path: str, mode: str = "r", **kwargs) -> str | bytes:
-    """Read a file without blocking the event loop."""
-    def _do_read():
-        with open(path, mode, **kwargs) as fh:
-            return fh.read()
-    return await asyncio.to_thread(_do_read)
-
-
-async def _write_file(path: str, data: bytes | str, mode: str = "wb") -> None:
-    """Write data to a file without blocking the event loop."""
-    def _do_write():
-        with open(path, mode) as fh:
-            fh.write(data)
-    await asyncio.to_thread(_do_write)
 
 
 def _xlsx_bytes_to_csv_file(xlsx_bytes: bytes, csv_path: str) -> None:
@@ -315,7 +213,7 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         output_file_path = os.path.join(temp_dir, "project.py")
         project_to_code(project=buml_project, file_path=output_file_path, emit_ids=BUML_EMIT_IDS)
-        file_content = await _read_file(output_file_path, "r", encoding="utf-8")
+        file_content = await read_file_async(output_file_path, "r", encoding="utf-8")
         return Response(
             content=file_content,
             media_type="text/plain",
@@ -334,7 +232,7 @@ async def export_buml(input_data: DiagramInput):
             state_machine = process_state_machine(json_data)
             output_file_path = os.path.join(temp_dir, "state_machine.py")
             state_machine_to_code(model=state_machine, file_path=output_file_path)
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -347,7 +245,7 @@ async def export_buml(input_data: DiagramInput):
             buml_model = process_class_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "domain_model.py")
             domain_model_to_code(model=buml_model, file_path=output_file_path, emit_ids=BUML_EMIT_IDS)
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -371,7 +269,7 @@ async def export_buml(input_data: DiagramInput):
             domain_model_to_code(
                 model=buml_model, file_path=output_file_path, objectmodel=object_model, emit_ids=BUML_EMIT_IDS,
             )
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -383,7 +281,7 @@ async def export_buml(input_data: DiagramInput):
             annotate_agent_with_a2a(agent_model, json_data)
             output_file_path = os.path.join(temp_dir, "agent_buml.py")
             agent_model_to_code(agent_model, output_file_path)
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -399,7 +297,7 @@ async def export_buml(input_data: DiagramInput):
                 raise ConversionError(f"Malformed BPMN diagram payload: {exc}") from exc
             output_file_path = os.path.join(temp_dir, "bpmn_model.py")
             bpmn_model_to_code(model=bpmn_model, file_path=output_file_path)
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -418,11 +316,25 @@ async def export_buml(input_data: DiagramInput):
             # @handle_endpoint_errors — no explicit re-raise needed.
             output_file_path = os.path.join(temp_dir, "nn_model.py")
             nn_model_to_code(model=nn_model, file_path=output_file_path)
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
                 headers={"Content-Disposition": 'attachment; filename="nn_model.py"'},
+            )
+
+        elif elements_data.get("type") == KG_DIAGRAM_TYPE:
+            kg_model = parse_kg_diagram(json_data)
+            output_file_path = os.path.join(temp_dir, "knowledge_graph.py")
+            # ``model_var_name`` must stay "kg_model": ``project_to_json``'s
+            # SECTION_CONFIG keys on that name, so any other value makes the
+            # emitted section unreadable on the way back in.
+            kg_model_to_code(model=kg_model, file_path=output_file_path, model_var_name="kg_model")
+            file_content = await read_file_async(output_file_path, "rb")
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={"Content-Disposition": 'attachment; filename="knowledge_graph.py"'},
             )
 
         elif elements_data.get("type") == "ComponentDiagram":
@@ -436,7 +348,7 @@ async def export_buml(input_data: DiagramInput):
             component_model_to_code(
                 model=component_model, file_path=output_file_path,
             )
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -456,7 +368,7 @@ async def export_buml(input_data: DiagramInput):
             deployment_model_to_code(
                 model=deployment_model, file_path=output_file_path,
             )
-            file_content = await _read_file(output_file_path, "rb")
+            file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -475,8 +387,8 @@ async def export_buml(input_data: DiagramInput):
 @handle_endpoint_errors("get_project_json_model")
 async def get_project_json_model(buml_file: UploadFile = File(...)):
     content = await buml_file.read()
-    _validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
-    _validate_file_content(content, buml_file.filename or "")
+    validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
+    validate_file_content(content, buml_file.filename or "")
     buml_content = content.decode("utf-8")
 
     parsed_project = project_to_json(buml_content)
@@ -495,8 +407,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     This endpoint handles both full project files and single diagram files.
     """
     content = await buml_file.read()
-    _validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
-    _validate_file_content(content, buml_file.filename or "")
+    validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
+    validate_file_content(content, buml_file.filename or "")
     buml_content = content.decode("utf-8")
 
     # First, try to detect what type of file this is by analyzing the content
@@ -534,6 +446,10 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         'bpmnmodel(', '.add_process(', '.add_flow_node(', '.add_sequence_flow('
     ])
 
+    is_kg = any(keyword in content_lower for keyword in [
+        'knowledgegraph(', 'kgclass(', 'kgproperty(', 'kgindividual('
+    ])
+
     # UML Component / Deployment markers: only calls specific to one of the two
     # builders (both emit `.add_relationship(`, so it identifies neither).
     is_uml_component = any(keyword in content_lower for keyword in [
@@ -565,8 +481,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             current_type = parsed_project.get("currentDiagramType")
 
             def _entry_is_populated(entry):
-                # v4 models carry {nodes, edges}; GUI models keep their
-                # bespoke {pages} shape.
+                # v4 and Knowledge Graph models carry {nodes, edges}; GUI
+                # models keep their bespoke {pages} shape.
                 model = (entry or {}).get("model") or {}
                 return bool(
                     model.get("nodes")
@@ -591,7 +507,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 "ClassDiagram", "ObjectDiagram", "StateMachineDiagram",
                 "AgentDiagram", "GUINoCodeDiagram", "NNDiagram",
                 BPMN_PROJECT_DIAGRAM_KEY, "QuantumCircuitDiagram",
-                "ComponentDiagram", DEPLOYMENT_DIAGRAM_TYPE,
+                KG_DIAGRAM_TYPE, "ComponentDiagram", DEPLOYMENT_DIAGRAM_TYPE,
             ):
                 if dtype not in priority:
                     priority.append(dtype)
@@ -691,6 +607,16 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         except Exception as bpmn_error:
             logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
 
+    elif is_kg:
+        # A ConversionError from the converter names the actual problem and is
+        # reported as such (HTTP 400) rather than as "format not recognized".
+        logger.info("Detected Knowledge Graph diagram, parsing...")
+        diagram_data = {
+            "title": diagram_title,
+            "model": kg_buml_to_json(buml_content),
+        }
+        diagram_type = KG_DIAGRAM_TYPE
+
     elif is_uml_component:
         # A ConversionError from the converter names the actual problem and is
         # reported as such (HTTP 400) rather than as "format not recognized".
@@ -714,7 +640,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
             "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, "
-            "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, ComponentDiagram, DeploymentDiagram, or Project."
+            "AgentDiagram, GUINoCodeDiagram, NNDiagram, BPMNDiagram, "
+            "KnowledgeGraphDiagram, ComponentDiagram, DeploymentDiagram, or Project."
         )
 
     # Return the diagram in the format expected by the frontend
@@ -741,8 +668,8 @@ async def get_svg(buml_file: UploadFile = File(...)):
     from the WME_NODE_SERVER_URL env var (default http://localhost:8080).
     """
     content = await buml_file.read()
-    _validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
-    _validate_file_content(content, buml_file.filename or "")
+    validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
+    validate_file_content(content, buml_file.filename or "")
     buml_content = content.decode("utf-8")
 
     domain_model = parse_buml_content(buml_content)
@@ -789,13 +716,13 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
         # Save uploaded files to temp dir
         for file in files:
             file_content = await file.read()
-            _validate_upload(
+            validate_upload(
                 file,
                 max_size=MAX_CSV_SIZE,
                 allowed_extensions=ALLOWED_SPREADSHEET_EXTENSIONS,
                 content=file_content,
             )
-            _validate_file_content(file_content, file.filename or "")
+            validate_file_content(file_content, file.filename or "")
             safe_filename = os.path.basename(file.filename)
             _, ext = os.path.splitext(safe_filename)
             ext = ext.lower()
@@ -806,7 +733,7 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
                 _xlsx_bytes_to_csv_file(file_content, file_path)
             else:
                 file_path = os.path.join(temp_dir, safe_filename)
-                await _write_file(file_path, file_content)
+                await write_file_async(file_path, file_content)
             file_paths.append(file_path)
 
         # Generate DomainModel from CSVs
@@ -894,8 +821,8 @@ async def get_json_model_from_image(
     """
     # Save uploaded image to a temp folder
     image_content = await image_file.read()
-    _validate_upload(image_file, max_size=MAX_IMAGE_SIZE, allowed_extensions=ALLOWED_IMAGE_EXTENSIONS, content=image_content)
-    _validate_file_content(image_content, image_file.filename or "")
+    validate_upload(image_file, max_size=MAX_IMAGE_SIZE, allowed_extensions=ALLOWED_IMAGE_EXTENSIONS, content=image_content)
+    validate_file_content(image_content, image_file.filename or "")
 
     existing_domain_model = None
     if existing_model:
@@ -910,7 +837,7 @@ async def get_json_model_from_image(
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         safe_filename = os.path.basename(image_file.filename)
         image_path = os.path.join(temp_dir, safe_filename)
-        await _write_file(image_path, image_content)
+        await write_file_async(image_path, image_content)
 
         # Create a folder for the image as expected by mockup_to_buml
         image_folder = os.path.join(temp_dir, "images")
@@ -943,47 +870,6 @@ async def get_json_model_from_image(
             "exportedAt": datetime.now(timezone.utc).isoformat(),
             "version": API_VERSION,
         }
-
-@router.post("/get-json-model-from-kg", response_model=DiagramExportResponse)
-@handle_endpoint_errors("get_json_model_from_kg")
-async def get_json_model_from_kg(
-    kg_file: UploadFile = File(...),
-    api_key: str = Form(...)
-):
-    """
-    Accepts an .TTL, .RDF, or .JSON knowledge graphs and an OpenAI API key, uses BESSER's kgtouml feature to transform the kg into a BUML class diagram in JSON.
-    """
-    # Save uploaded KG to a temp folder
-    kg_content = await kg_file.read()
-    _validate_upload(kg_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_KG_EXTENSIONS, content=kg_content)
-
-    with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
-        safe_filename = os.path.basename(kg_file.filename)
-        kg_path = os.path.join(temp_dir, safe_filename)
-        await _write_file(kg_path, kg_content)
-        # Create a folder for the kg as expected by mockup_to_buml
-        kg_folder = os.path.join(temp_dir, "kgs")
-        os.makedirs(kg_folder, exist_ok=True)
-        os.rename(kg_path, os.path.join(kg_folder, safe_filename))
-        # Use kg_to_buml to generate DomainModel from kg and API key
-        # Find the kg file path
-        kg_files = [f for f in os.listdir(kg_folder) if f.lower().endswith(('.ttl', '.json', '.rdf'))]
-        if not kg_files:
-            raise HTTPException(status_code=400, detail="No valid KG file found.")
-        kg_path = os.path.join(kg_folder, kg_files[0])
-        domain_model = kg_to_buml(kg_path=kg_path, openai_token=api_key)
-        diagram_json = class_buml_to_json(domain_model)
-
-        diagram_title = diagram_json.get("title", "Imported Class Diagram")
-        diagram_type = "ClassDiagram"
-        return {
-            "title": diagram_title,
-            "model": {**diagram_json, "type": diagram_type},
-            "diagramType": diagram_type,
-            "exportedAt": datetime.now(timezone.utc).isoformat(),
-            "version": API_VERSION,
-        }
-
 
 @router.post("/transform-agent-model-json")
 @handle_endpoint_errors("transform_agent_model_json")
@@ -1048,7 +934,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
                 personalized_agent_file = os.path.join(temp_dir, "personalized_agent_model.py")
                 agent_model_to_code(generator_instance.model, personalized_agent_file)
 
-                personalized_buml = await _read_file(personalized_agent_file, "r", encoding="utf-8")
+                personalized_buml = await read_file_async(personalized_agent_file, "r", encoding="utf-8")
                 personalized_json = agent_buml_to_json(personalized_buml)
             except Exception as conversion_error:
                 logger.exception("Failed to build fallback personalized agent JSON")

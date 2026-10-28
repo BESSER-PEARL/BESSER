@@ -30,6 +30,11 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     BPMN_DIAGRAM_TYPES,
     DEPLOYMENT_DIAGRAM_TYPE,
+    KG_DIAGRAM_TYPE,
+)
+from besser.utilities.web_modeling_editor.backend.services.kg.payloads import parse_kg_diagram
+from besser.utilities.web_modeling_editor.backend.services.kg.validation import (
+    validate_knowledge_graph,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
@@ -160,6 +165,14 @@ async def validate_diagram(input_data: DiagramInput):
                 process_agent_diagram(input_data.model_dump())
             except ValueError as e:
                 validation_errors.extend(str(e).splitlines())
+
+        elif diagram_type == KG_DIAGRAM_TYPE:
+            kg = parse_kg_diagram(input_data.model_dump())
+            # The preflight and the OWL/SHACL consistency check, as in the
+            # editor's Refine KG modal (see services/kg/validation.py).
+            kg_errors, kg_warnings = await validate_knowledge_graph(kg)
+            validation_errors.extend(kg_errors)
+            validation_warnings.extend(kg_warnings)
 
         elif diagram_type == "GUINoCodeDiagram":
             return {

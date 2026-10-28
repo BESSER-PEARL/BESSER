@@ -83,6 +83,16 @@ def _quantum_model() -> Dict[str, Any]:
     return {"cols": [], "gates": [], "gateMetadata": {}, "initialStates": [], "version": "1.0.0"}
 
 
+def _kg_model() -> Dict[str, Any]:
+    # Cytoscape-backed: nodes/edges like v4 UML, but its own format.
+    return {
+        "type": "KnowledgeGraphDiagram",
+        "version": "1.0.0",
+        "nodes": [{"id": "n1", "nodeType": "class", "label": "Person"}],
+        "edges": [],
+    }
+
+
 def _diagram(model: Dict[str, Any], title: str = "Legacy", **extra) -> Dict[str, Any]:
     return {"title": title, "model": model, **extra}
 
@@ -99,6 +109,7 @@ def _project(class_model: Dict[str, Any], **settings) -> Dict[str, Any]:
             "ClassDiagram": [{"id": "cd-1", "title": "Domain", "model": class_model}],
             "GUINoCodeDiagram": [{"id": "gui-1", "title": "GUI", "model": _gui_model()}],
             "QuantumCircuitDiagram": [{"id": "q-1", "title": "Circuit", "model": _quantum_model()}],
+            "KnowledgeGraphDiagram": [{"id": "kg-1", "title": "Graph", "model": _kg_model()}],
         },
         "settings": settings or None,
     }
@@ -130,9 +141,11 @@ class TestDetection:
         {},
         _gui_model(),
         _quantum_model(),
-        # GUI / quantum are exempt by type even with a v3-looking body.
+        _kg_model(),
+        # GUI / quantum / KG are exempt by type even with a v3-looking body.
         {"type": "GUINoCodeDiagram", "version": "3.1.0", "elements": {}},
         {"type": "QuantumCircuitDiagram", "version": "3.0.0", "elements": {}},
+        {"type": "KnowledgeGraphDiagram", "version": "3.0.0", "elements": {}},
         # A typeless model with a 3.x version is not UML (GrapesJS could get there).
         {"pages": [], "version": "3.0.0"},
         None,
@@ -144,6 +157,7 @@ class TestDetection:
     def test_exempt_by_project_key(self):
         assert not is_legacy_v3_model({"elements": {}}, "GUINoCodeDiagram")
         assert not is_legacy_v3_model({"elements": {}}, "QuantumCircuitDiagram")
+        assert not is_legacy_v3_model({"elements": {}}, "KnowledgeGraphDiagram")
 
     def test_error_is_a_conversion_error(self):
         assert issubclass(LegacyDiagramFormatError, ConversionError)
@@ -168,6 +182,7 @@ class TestDetection:
         DiagramInput(**_diagram(_v4_class_model()))
         DiagramInput(**_diagram(_gui_model()))
         DiagramInput(**_diagram(_quantum_model()))
+        DiagramInput(**_diagram(_kg_model()))
 
     def test_project_input_rejects_any_v3_uml_diagram(self):
         with pytest.raises(LegacyDiagramFormatError, match="'Domain'"):

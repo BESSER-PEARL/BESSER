@@ -45,8 +45,9 @@ intersphinx_disabled_domains = ['std']
 # ``deep_translator`` in the agent-personalization generator). They are not in
 # the docs build environment, so mock them for autodoc — otherwise importing the
 # module to read its docstrings fails with ModuleNotFoundError and the page is
-# dropped from the build.
-autodoc_mock_imports = ['deep_translator']
+# dropped from the build. ``pyshacl`` is likewise backend-only (imported at module
+# level by ``kg_to_buml.consistency``).
+autodoc_mock_imports = ['deep_translator', 'pyshacl']
 
 templates_path = ['_templates']
 

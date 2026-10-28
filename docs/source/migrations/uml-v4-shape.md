@@ -47,10 +47,12 @@ labels. Inheritance from v3:
 ## Project envelope
 
 `BesserProject.diagrams[T][i].model` is one diagram model. The current
-project schema is `PROJECT_SCHEMA_VERSION = 6`
+project schema is `PROJECT_SCHEMA_VERSION = 7`
 (`packages/webapp/src/main/shared/types/project.ts`): schema 5 lifted the
 diagram models to v4, schema 6 made Component and Deployment diagrams project
-types.
+types, schema 7 made the Knowledge Graph diagram a project type (the KG build
+stamped that step 6, so it runs on every project below 7). Knowledge Graph,
+GUI and quantum-circuit models keep their own formats and are never lifted.
 
 ### v3 model (legacy)
 

@@ -66,6 +66,9 @@ Optional dependencies
    # Neural-network dependencies
    python -m pip install "besser[nn]"
 
+   # pyshacl, for the Knowledge Graph OWL/SHACL consistency check
+   python -m pip install "besser[kg]"
+
 The hosted editor backend has its own requirements. Its runtime setup is
 covered by :doc:`contributor_guide` and the
 `editor's local deployment guide <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/user-guide/deploy_locally.html>`_.

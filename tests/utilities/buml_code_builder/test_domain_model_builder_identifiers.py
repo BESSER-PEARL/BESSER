@@ -125,3 +125,24 @@ def test_name_dispenser_unprefixed_mode_keeps_case():
     assert dispenser.name_for(first) == "Book_1"
     assert dispenser.name_for(second) == "datetime_1"
     assert dispenser.name_for(first) == "Book_1"
+
+
+def test_numeric_one_of_association_name_generates_valid_code(tmp_path):
+    """owl2uml names an ``owl:oneOf`` over numeric literals ``__2__4__5_OneOf``.
+
+    ``safe_var_name`` stripped the underscores down to ``2_4_5_OneOf`` and the
+    generated ``2_4_5_OneOf: BinaryAssociation = ...`` was a SyntaxError.
+    """
+    one_of = Class(name="__2__4__5_OneOf")
+    other = Class(name="B")
+    assoc = BinaryAssociation(name="__2__4__5_OneOf", ends={
+        Property(name="x", type=one_of, multiplicity=Multiplicity(0, 1)),
+        Property(name="y", type=other, multiplicity=Multiplicity(0, 1)),
+    })
+    model = DomainModel(name="D", types={one_of, other}, associations={assoc})
+
+    source = _generate(model, tmp_path)
+    namespace = {}
+    exec(compile(source, "model.py", "exec"), namespace)
+
+    assert {a.name for a in namespace["domain_model"].associations} == {"__2__4__5_OneOf"}

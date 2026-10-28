@@ -18,16 +18,12 @@ import zipfile
 from typing import Any, Dict
 
 import pytest
-import httpx
-from httpx._transports.asgi import ASGITransport
-
-from besser.utilities.web_modeling_editor.backend.backend import app
 
 # ---------------------------------------------------------------------------
-# Test-client helper
+# Test helpers
 # ---------------------------------------------------------------------------
 
-BASE_URL = "http://testserver"
+# HTTP calls go through the ``client`` fixture from conftest.py.
 
 
 def _run(coro):
@@ -35,35 +31,9 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-class _Client:
-    """Thin synchronous wrapper around httpx.AsyncClient for ASGI testing."""
-
-    def __init__(self):
-        self._transport = ASGITransport(app=app)
-
-    async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        async with httpx.AsyncClient(transport=self._transport, base_url=BASE_URL) as ac:
-            return await ac.request(method, url, **kwargs)
-
-    def get(self, url: str, **kwargs) -> httpx.Response:
-        return _run(self._request("GET", url, **kwargs))
-
-    def post(self, url: str, **kwargs) -> httpx.Response:
-        return _run(self._request("POST", url, **kwargs))
-
-
-client = _Client()
-
-
 # ---------------------------------------------------------------------------
 # Fixtures -- minimal valid diagram payloads
 # ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def isolate_backend_test_artifacts(tmp_path, monkeypatch):
-    """Keep generated test artifacts out of the repository root."""
-    monkeypatch.chdir(tmp_path)
-
 
 @pytest.fixture
 def class_diagram_model():
@@ -250,14 +220,14 @@ def enumeration_model():
 class TestHealthEndpoints:
     """Tests for health check and API info endpoints."""
 
-    def test_health_check(self):
+    def test_health_check(self, client):
         """GET /health returns 200 with ok status."""
         response = client.get("/health")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
 
-    def test_api_root(self):
+    def test_api_root(self, client):
         """GET /besser_api/ returns API metadata and supported generators list."""
         response = client.get("/besser_api/")
         assert response.status_code == 200
@@ -282,7 +252,7 @@ class TestHealthEndpoints:
 class TestGenerateOutput:
     """Tests for the /generate-output code generation endpoint."""
 
-    def test_generate_python_from_class_diagram(self, class_diagram_input):
+    def test_generate_python_from_class_diagram(self, client, class_diagram_input):
         """Generate Python classes from a valid class diagram."""
         response = client.post("/besser_api/generate-output", json=class_diagram_input)
         assert response.status_code == 200
@@ -294,14 +264,14 @@ class TestGenerateOutput:
         assert "Author" in body
         assert "Book" in body
 
-    def test_generate_python_single_class(self, single_class_input):
+    def test_generate_python_single_class(self, client, single_class_input):
         """Generate Python from a single-class diagram."""
         response = client.post("/besser_api/generate-output", json=single_class_input)
         assert response.status_code == 200
         body = response.text
         assert "Person" in body
 
-    def test_generate_sql_from_class_diagram(self, class_diagram_input):
+    def test_generate_sql_from_class_diagram(self, client, class_diagram_input):
         """Generate SQL from a class diagram."""
         payload = {
             **class_diagram_input,
@@ -315,7 +285,7 @@ class TestGenerateOutput:
         body = response.text
         assert "CREATE TABLE" in body.upper() or "create table" in body.lower()
 
-    def test_generate_pydantic_from_class_diagram(self, class_diagram_input):
+    def test_generate_pydantic_from_class_diagram(self, client, class_diagram_input):
         """Generate Pydantic models from a class diagram."""
         payload = {**class_diagram_input, "generator": "pydantic"}
         response = client.post("/besser_api/generate-output", json=payload)
@@ -326,7 +296,7 @@ class TestGenerateOutput:
         assert "Author" in body
         assert "Book" in body
 
-    def test_generate_sqlalchemy_from_class_diagram(self, class_diagram_input):
+    def test_generate_sqlalchemy_from_class_diagram(self, client, class_diagram_input):
         """Generate SQLAlchemy models from a class diagram."""
         payload = {**class_diagram_input, "generator": "sqlalchemy"}
         response = client.post("/besser_api/generate-output", json=payload)
@@ -334,7 +304,7 @@ class TestGenerateOutput:
         content_disp = response.headers.get("content-disposition", "")
         assert "sql_alchemy.py" in content_disp
 
-    def test_generate_jsonschema_from_class_diagram(self, class_diagram_input):
+    def test_generate_jsonschema_from_class_diagram(self, client, class_diagram_input):
         """Generate JSON Schema from a class diagram."""
         payload = {**class_diagram_input, "generator": "jsonschema"}
         response = client.post("/besser_api/generate-output", json=payload)
@@ -344,7 +314,7 @@ class TestGenerateOutput:
         # Should be valid JSON
         json.loads(response.text)
 
-    def test_generate_with_unsupported_generator(self, class_diagram_input):
+    def test_generate_with_unsupported_generator(self, client, class_diagram_input):
         """Request with an unsupported generator returns 400."""
         payload = {**class_diagram_input, "generator": "nonexistent_generator"}
         response = client.post("/besser_api/generate-output", json=payload)
@@ -353,7 +323,7 @@ class TestGenerateOutput:
         assert "detail" in data
         assert "nonexistent_generator" in data["detail"]
 
-    def test_generate_with_missing_generator(self):
+    def test_generate_with_missing_generator(self, client):
         """Request with no generator field defaults to None and returns 400."""
         payload = {
             "title": "Test",
@@ -362,7 +332,7 @@ class TestGenerateOutput:
         response = client.post("/besser_api/generate-output", json=payload)
         assert response.status_code == 400
 
-    def test_generate_with_empty_model(self):
+    def test_generate_with_empty_model(self, client):
         """An empty class diagram model should still work (produces empty output)."""
         payload = {
             "title": "EmptyModel",
@@ -373,7 +343,7 @@ class TestGenerateOutput:
         # Should succeed -- empty model generates an empty/stub file
         assert response.status_code == 200
 
-    def test_generate_with_sql_dialect_config(self, class_diagram_input):
+    def test_generate_with_sql_dialect_config(self, client, class_diagram_input):
         """SQL generation respects dialect config."""
         payload = {
             **class_diagram_input,
@@ -383,7 +353,7 @@ class TestGenerateOutput:
         response = client.post("/besser_api/generate-output", json=payload)
         assert response.status_code == 200
 
-    def test_generate_django_returns_zip(self, class_diagram_input):
+    def test_generate_django_returns_zip(self, client, class_diagram_input):
         """Django generator returns a ZIP archive.
 
         Note: The Django generator may fail with a 500 on some platforms
@@ -408,21 +378,21 @@ class TestGenerateOutput:
             # temp directory cleanup timing or path issues.
             assert response.status_code in (400, 500)
 
-    def test_generate_backend_returns_zip(self, class_diagram_input):
+    def test_generate_backend_returns_zip(self, client, class_diagram_input):
         """Backend (FastAPI) generator returns a ZIP archive."""
         payload = {**class_diagram_input, "generator": "backend"}
         response = client.post("/besser_api/generate-output", json=payload)
         assert response.status_code == 200
         assert "application/zip" in response.headers.get("content-type", "")
 
-    def test_generate_java_returns_zip(self, class_diagram_input):
+    def test_generate_java_returns_zip(self, client, class_diagram_input):
         """Java generator returns a ZIP archive."""
         payload = {**class_diagram_input, "generator": "java"}
         response = client.post("/besser_api/generate-output", json=payload)
         assert response.status_code == 200
         assert "application/zip" in response.headers.get("content-type", "")
 
-    def test_generate_spring_applies_the_submitted_config(self, spring_class_diagram_input):
+    def test_generate_spring_applies_the_submitted_config(self, client, spring_class_diagram_input):
         """The Spring dialog's fields must reach the generator, not be dropped."""
         payload = {
             **spring_class_diagram_input,
@@ -451,7 +421,7 @@ class TestGenerateOutput:
             assert "<version>3.4.4</version>" in pom
             assert "<java.version>21</java.version>" in pom
 
-    def test_generate_spring_without_config_uses_defaults(self, spring_class_diagram_input):
+    def test_generate_spring_without_config_uses_defaults(self, client, spring_class_diagram_input):
         """No config at all must still produce a project (the registry default path)."""
         payload = {**spring_class_diagram_input, "generator": "spring"}
         response = client.post("/besser_api/generate-output", json=payload)
@@ -461,7 +431,7 @@ class TestGenerateOutput:
             names = archive.namelist()
             assert "src/main/java/com/example/Application.java" in names
 
-    def test_generate_spring_rejects_a_traversing_project_name(self, spring_class_diagram_input):
+    def test_generate_spring_rejects_a_traversing_project_name(self, client, spring_class_diagram_input):
         """``project_name`` is a directory name; it must not escape the temp dir."""
         payload = {
             **spring_class_diagram_input,
@@ -473,7 +443,7 @@ class TestGenerateOutput:
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
             assert "pom.xml" in archive.namelist()
 
-    def test_generate_spring_rejects_an_invalid_package_name(self, spring_class_diagram_input):
+    def test_generate_spring_rejects_an_invalid_package_name(self, client, spring_class_diagram_input):
         payload = {
             **spring_class_diagram_input,
             "generator": "spring",
@@ -490,7 +460,7 @@ class TestGenerateOutput:
 class TestValidateDiagram:
     """Tests for the /validate-diagram endpoint."""
 
-    def test_validate_valid_class_diagram(self, class_diagram_input):
+    def test_validate_valid_class_diagram(self, client, class_diagram_input):
         """A well-formed class diagram validates successfully."""
         response = client.post("/besser_api/validate-diagram", json=class_diagram_input)
         assert response.status_code == 200
@@ -499,14 +469,14 @@ class TestValidateDiagram:
         assert isinstance(data["errors"], list)
         assert len(data["errors"]) == 0
 
-    def test_validate_single_class(self, single_class_input):
+    def test_validate_single_class(self, client, single_class_input):
         """A single-class diagram validates successfully."""
         response = client.post("/besser_api/validate-diagram", json=single_class_input)
         assert response.status_code == 200
         data = response.json()
         assert data["isValid"] is True
 
-    def test_validate_class_diagram_with_enum(self, enumeration_model):
+    def test_validate_class_diagram_with_enum(self, client, enumeration_model):
         """A class diagram with enumerations validates successfully."""
         payload = {
             "title": "EnumModel",
@@ -517,7 +487,7 @@ class TestValidateDiagram:
         data = response.json()
         assert data["isValid"] is True
 
-    def test_validate_invalid_class_name_with_spaces(self):
+    def test_validate_invalid_class_name_with_spaces(self, client):
         """A class name containing spaces triggers a validation error."""
         payload = {
             "title": "BadModel",
@@ -540,7 +510,7 @@ class TestValidateDiagram:
         assert data["isValid"] is False
         assert len(data["errors"]) > 0
 
-    def test_validate_empty_class_name(self):
+    def test_validate_empty_class_name(self, client):
         """An empty class name triggers a validation error."""
         payload = {
             "title": "BadModel",
@@ -563,7 +533,7 @@ class TestValidateDiagram:
         assert data["isValid"] is False
         assert len(data["errors"]) > 0
 
-    def test_validate_unsupported_diagram_type(self):
+    def test_validate_unsupported_diagram_type(self, client):
         """Unsupported diagram type returns isValid=False."""
         payload = {
             "title": "Unknown",
@@ -575,14 +545,14 @@ class TestValidateDiagram:
         assert data["isValid"] is False
         assert any("Unsupported" in err for err in data["errors"])
 
-    def test_validate_state_machine_valid(self, state_machine_input):
+    def test_validate_state_machine_valid(self, client, state_machine_input):
         """A valid state machine with an initial state passes validation."""
         response = client.post("/besser_api/validate-diagram", json=state_machine_input)
         assert response.status_code == 200
         data = response.json()
         assert data["isValid"] is True
 
-    def test_validate_state_machine_no_initial_state(self):
+    def test_validate_state_machine_no_initial_state(self, client):
         """State machine without an initial state (no StateInitialNode) fails validation."""
         payload = {
             "title": "NoInitialSM",
@@ -605,7 +575,7 @@ class TestValidateDiagram:
         # The first state must be initial; without StateInitialNode it fails
         assert len(data["errors"]) > 0
 
-    def test_validate_state_machine_no_states(self):
+    def test_validate_state_machine_no_states(self, client):
         """State machine with no states fails validation."""
         payload = {
             "title": "EmptySM",
@@ -621,7 +591,7 @@ class TestValidateDiagram:
         assert data["isValid"] is False
         assert any("no states" in err.lower() for err in data["errors"])
 
-    def test_validate_state_machine_duplicate_names(self):
+    def test_validate_state_machine_duplicate_names(self, client):
         """State machine with duplicate state names fails validation."""
         payload = {
             "title": "DupSM",
@@ -659,7 +629,7 @@ class TestValidateDiagram:
         assert data["isValid"] is False
         assert any("Alpha" in err for err in data["errors"])
 
-    def test_validate_gui_diagram_always_valid(self):
+    def test_validate_gui_diagram_always_valid(self, client):
         """GUINoCodeDiagram always returns valid (no metamodel validation)."""
         payload = {
             "title": "TestGUI",
@@ -670,7 +640,7 @@ class TestValidateDiagram:
         data = response.json()
         assert data["isValid"] is True
 
-    def test_validate_returns_warnings_list(self, class_diagram_input):
+    def test_validate_returns_warnings_list(self, client, class_diagram_input):
         """Validation response always includes a warnings list."""
         response = client.post("/besser_api/validate-diagram", json=class_diagram_input)
         assert response.status_code == 200
@@ -678,7 +648,7 @@ class TestValidateDiagram:
         assert "warnings" in data
         assert isinstance(data["warnings"], list)
 
-    def test_validate_missing_model_field(self):
+    def test_validate_missing_model_field(self, client):
         """Request with empty model dict should handle gracefully."""
         payload = {"title": "NoModel", "model": {}}
         response = client.post("/besser_api/validate-diagram", json=payload)
@@ -687,7 +657,7 @@ class TestValidateDiagram:
         # No type -> unsupported
         assert data["isValid"] is False
 
-    def test_validate_object_diagram_missing_reference(self):
+    def test_validate_object_diagram_missing_reference(self, client):
         """Object diagram without reference class data returns error."""
         payload = {
             "title": "ObjTest",
@@ -703,7 +673,7 @@ class TestValidateDiagram:
         assert data["isValid"] is False
         assert any("reference" in err.lower() for err in data["errors"])
 
-    def test_validate_user_diagram_runs_ocl_check(self, monkeypatch):
+    def test_validate_user_diagram_runs_ocl_check(self, client, monkeypatch):
         """UserDiagram validation should execute OCL checking with object model context."""
         from besser.utilities.web_modeling_editor.backend.routers import validation_router as vr
 
@@ -801,7 +771,7 @@ class TestValidateDiagram:
             },
         }
 
-    def test_validate_datetime_overlap_invariant(self):
+    def test_validate_datetime_overlap_invariant(self, client):
         """The issue's invariant is accepted once the role names it navigates exist."""
         response = client.post(
             "/besser_api/validate-diagram", json=self._conference_payload("scheduleSlot")
@@ -814,7 +784,7 @@ class TestValidateDiagram:
         assert len(data["valid_constraints"]) == 1
         assert "NoRoomTimeOverlap" in data["valid_constraints"][0]
 
-    def test_validate_datetime_overlap_invariant_unnamed_role_hint(self):
+    def test_validate_datetime_overlap_invariant_unnamed_role_hint(self, client):
         """An unnamed end defaults to the lower-cased class name ('scheduleslot'),
         so 's1.scheduleSlot' fails; the warning now says which name exists."""
         response = client.post("/besser_api/validate-diagram", json=self._conference_payload(""))
@@ -824,7 +794,7 @@ class TestValidateDiagram:
         assert "Property 'scheduleSlot' not found in context 'Session'" in warning
         assert "did you mean 'scheduleslot'?" in warning
 
-    def test_validate_forwards_ocl_checker_warnings(self, monkeypatch):
+    def test_validate_forwards_ocl_checker_warnings(self, client, monkeypatch):
         """Constraints the checker could not evaluate surface as diagram warnings."""
         from besser.utilities.web_modeling_editor.backend.routers import validation_router as vr
 
@@ -854,7 +824,7 @@ class TestValidateDiagram:
 class TestExportBuml:
     """Tests for the /export-buml endpoint."""
 
-    def test_export_class_diagram_as_buml(self, class_diagram_input):
+    def test_export_class_diagram_as_buml(self, client, class_diagram_input):
         """Export a class diagram as executable BUML Python code."""
         response = client.post("/besser_api/export-buml", json=class_diagram_input)
         assert response.status_code == 200
@@ -868,14 +838,14 @@ class TestExportBuml:
         # Should contain BUML metamodel imports
         assert "DomainModel" in body or "domain_model" in body.lower()
 
-    def test_export_single_class_as_buml(self, single_class_input):
+    def test_export_single_class_as_buml(self, client, single_class_input):
         """Export a single-class diagram as BUML."""
         response = client.post("/besser_api/export-buml", json=single_class_input)
         assert response.status_code == 200
         body = response.text
         assert "Person" in body
 
-    def test_export_state_machine_as_buml(self, state_machine_input):
+    def test_export_state_machine_as_buml(self, client, state_machine_input):
         """Export a state machine diagram as BUML Python code."""
         response = client.post("/besser_api/export-buml", json=state_machine_input)
         assert response.status_code == 200
@@ -885,7 +855,7 @@ class TestExportBuml:
         assert "Idle" in body
         assert "Active" in body
 
-    def test_export_unsupported_diagram_type(self):
+    def test_export_unsupported_diagram_type(self, client):
         """Exporting an unsupported diagram type returns 400."""
         payload = {
             "title": "Unknown",
@@ -896,7 +866,7 @@ class TestExportBuml:
         data = response.json()
         assert "detail" in data
 
-    def test_export_missing_diagram_type(self):
+    def test_export_missing_diagram_type(self, client):
         """Exporting without a diagram type returns 400."""
         payload = {
             "title": "NoType",
@@ -913,13 +883,13 @@ class TestExportBuml:
 class TestGetJsonModel:
     """Tests for the /get-json-model endpoint (BUML file upload to JSON)."""
 
-    def _upload_buml_content(self, content: str, filename: str = "model.py"):
+    def _upload_buml_content(self, client, content: str, filename: str = "model.py"):
         """Helper to upload BUML content as a file."""
         file_bytes = content.encode("utf-8")
         files = {"buml_file": (filename, file_bytes, "text/plain")}
         return client.post("/besser_api/get-json-model", files=files)
 
-    def test_upload_class_diagram_buml(self):
+    def test_upload_class_diagram_buml(self, client):
         """Upload a BUML domain model file and get back JSON.
 
         The parse_buml_content function execs the file in a sandbox and
@@ -933,24 +903,24 @@ class TestGetJsonModel:
             "person = Class(name='Person', attributes={Property(name='name', type=str_type)})\n"
             "domain_model = DomainModel('TestModel', types={person})\n"
         )
-        response = self._upload_buml_content(buml_code, "domain_model.py")
+        response = self._upload_buml_content(client, buml_code, "domain_model.py")
         assert response.status_code == 200
         data = response.json()
         assert data["diagramType"] == "ClassDiagram"
         assert "model" in data
         assert data["model"]["type"] == "ClassDiagram"
 
-    def test_upload_invalid_content(self):
+    def test_upload_invalid_content(self, client):
         """Upload non-BUML content returns 400 (invalid Python syntax)."""
-        response = self._upload_buml_content("this is not valid python code }{}{", "bad.py")
+        response = self._upload_buml_content(client, "this is not valid python code }{}{", "bad.py")
         assert response.status_code == 400
 
-    def test_upload_empty_file(self):
+    def test_upload_empty_file(self, client):
         """Upload an empty file returns 400."""
-        response = self._upload_buml_content("", "empty.py")
+        response = self._upload_buml_content(client, "", "empty.py")
         assert response.status_code == 400
 
-    def test_component_buml_with_relationships_round_trips(self):
+    def test_component_buml_with_relationships_round_trips(self, client):
         from besser.BUML.metamodel.uml_component import (
             Component, ComponentDependency, ComponentModel, Interface, InterfaceProvided,
         )
@@ -962,14 +932,14 @@ class TestGetJsonModel:
         model = ComponentModel("Shop", components={frontend, backend}, interfaces={api},
                                relationships={ComponentDependency(frontend, backend),
                                               InterfaceProvided(backend, api)})
-        response = self._upload_buml_content(component_model_to_code(model), "shop.py")
+        response = self._upload_buml_content(client, component_model_to_code(model), "shop.py")
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["diagramType"] == "ComponentDiagram"
         assert {r["type"] for r in data["model"]["relationships"].values()} == {
             "ComponentDependency", "ComponentInterfaceProvided"}
 
-    def test_deployment_buml_with_relationships_round_trips(self):
+    def test_deployment_buml_with_relationships_round_trips(self, client):
         from besser.BUML.metamodel.uml_deployment import (
             Artifact, CommunicationPath, DeploymentDependency, DeploymentModel, Node,
         )
@@ -983,7 +953,7 @@ class TestGetJsonModel:
         model = DeploymentModel("Infra", nodes={web, db}, artifacts={lib},
                                 relationships={CommunicationPath(web, db),
                                                DeploymentDependency(app, lib)})
-        response = self._upload_buml_content(deployment_model_to_code(model), "infra.py")
+        response = self._upload_buml_content(client, deployment_model_to_code(model), "infra.py")
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["diagramType"] == "DeploymentDiagram"
@@ -998,14 +968,14 @@ class TestGetJsonModel:
 class TestMiddlewareAndRequestValidation:
     """Tests for middleware behavior and request validation."""
 
-    def test_security_headers_present(self):
+    def test_security_headers_present(self, client):
         """Security headers are set on responses."""
         response = client.get("/health")
         assert response.headers.get("x-content-type-options") == "nosniff"
         assert response.headers.get("x-frame-options") == "DENY"
         assert response.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
 
-    def test_invalid_json_body(self):
+    def test_invalid_json_body(self, client):
         """Sending malformed JSON returns 422 (Pydantic validation error)."""
         response = client.post(
             "/besser_api/generate-output",
@@ -1014,12 +984,12 @@ class TestMiddlewareAndRequestValidation:
         )
         assert response.status_code == 422
 
-    def test_missing_required_fields(self):
+    def test_missing_required_fields(self, client):
         """Missing required fields (title, model) returns 422."""
         response = client.post("/besser_api/generate-output", json={})
         assert response.status_code == 422
 
-    def test_request_too_large(self):
+    def test_request_too_large(self, client):
         """Requests exceeding MAX_REQUEST_SIZE (50MB) are rejected with 413."""
         # Simulate with content-length header (the middleware checks the header
         # before reading the body).
@@ -1031,7 +1001,7 @@ class TestMiddlewareAndRequestValidation:
         )
         assert response.status_code == 413
 
-    def test_nonexistent_endpoint_returns_404(self):
+    def test_nonexistent_endpoint_returns_404(self, client):
         """Request to non-existent path returns 404."""
         response = client.get("/besser_api/does-not-exist")
         assert response.status_code in (404, 405)
@@ -1044,7 +1014,7 @@ class TestMiddlewareAndRequestValidation:
 class TestEdgeCases:
     """Tests for edge cases and special diagram features."""
 
-    def test_generate_class_diagram_with_enumeration(self, enumeration_model):
+    def test_generate_class_diagram_with_enumeration(self, client, enumeration_model):
         """Generating Python code from a diagram with enumerations."""
         payload = {
             "title": "EnumDiagram",
@@ -1056,7 +1026,7 @@ class TestEdgeCases:
         body = response.text
         assert "Color" in body
 
-    def test_generate_class_with_methods(self):
+    def test_generate_class_with_methods(self, client):
         """Generate code for a class that has methods."""
         payload = {
             "title": "MethodModel",
@@ -1083,7 +1053,7 @@ class TestEdgeCases:
         body = response.text
         assert "Calculator" in body
 
-    def test_generate_with_inheritance(self):
+    def test_generate_with_inheritance(self, client):
         """Generate code for classes with inheritance relationship."""
         payload = {
             "title": "InheritModel",
@@ -1123,7 +1093,7 @@ class TestEdgeCases:
         assert "Animal" in body
         assert "Dog" in body
 
-    def test_generate_abstract_class(self):
+    def test_generate_abstract_class(self, client):
         """Generate code for an abstract class."""
         payload = {
             "title": "AbstractModel",
@@ -1146,7 +1116,7 @@ class TestEdgeCases:
         body = response.text
         assert "Shape" in body
 
-    def test_validate_duplicate_enumeration_literal(self):
+    def test_validate_duplicate_enumeration_literal(self, client):
         """Duplicate enumeration literals cause a validation error.
 
         The ConversionError raised by the processor is caught by the
@@ -1176,7 +1146,7 @@ class TestEdgeCases:
         assert data["isValid"] is False
         assert len(data["errors"]) > 0
 
-    def test_validate_empty_enumeration_literal_name(self):
+    def test_validate_empty_enumeration_literal_name(self, client):
         """Empty enumeration literal name causes a validation error."""
         payload = {
             "title": "EmptyLit",
@@ -1207,7 +1177,7 @@ class TestEdgeCases:
 class TestDeprecatedEndpoints:
     """Tests for backwards-compatible deprecated endpoints."""
 
-    def test_check_ocl_redirects_to_validate(self, class_diagram_input):
+    def test_check_ocl_redirects_to_validate(self, client, class_diagram_input):
         """/check-ocl delegates to /validate-diagram and returns same structure."""
         response = client.post("/besser_api/check-ocl", json=class_diagram_input)
         assert response.status_code == 200
@@ -1224,7 +1194,7 @@ class TestDeprecatedEndpoints:
 class TestProjectGeneration:
     """Tests for the /generate-output-from-project endpoint."""
 
-    def test_project_generation_missing_generator(self):
+    def test_project_generation_missing_generator(self, client):
         """Project generation without generator in settings returns 400."""
         payload = {
             "id": "proj-1",
@@ -1248,7 +1218,7 @@ class TestProjectGeneration:
         response = client.post("/besser_api/generate-output-from-project", json=payload)
         assert response.status_code == 400
 
-    def test_project_generation_unsupported_generator(self):
+    def test_project_generation_unsupported_generator(self, client):
         """Project generation with unsupported generator returns 400."""
         payload = {
             "id": "proj-1",
@@ -1272,7 +1242,7 @@ class TestProjectGeneration:
         response = client.post("/besser_api/generate-output-from-project", json=payload)
         assert response.status_code == 400
 
-    def test_project_generation_python_from_class_diagram(self, class_diagram_model):
+    def test_project_generation_python_from_class_diagram(self, client, class_diagram_model):
         """Generate Python code from a project with a class diagram."""
         payload = {
             "id": "proj-1",
@@ -1297,7 +1267,7 @@ class TestProjectGeneration:
         assert "Author" in body
         assert "Book" in body
 
-    def test_project_backend_generation_runs_nn_implemented_method(self):
+    def test_project_backend_generation_runs_nn_implemented_method(self, client):
         """A method implemented by a project NNDiagram becomes an endpoint running that network."""
         fixture = os.path.join(
             os.path.dirname(__file__), os.pardir, "converters", "nn", "fixtures", "tutorial_example.json"
@@ -1555,19 +1525,19 @@ class TestDockerComposeRouting:
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
             return set(archive.namelist())
 
-    def test_single_docker_compose_returns_the_registered_zip(self):
+    def test_single_docker_compose_returns_the_registered_zip(self, client):
         response = client.post("/besser_api/generate-output", json={
             "title": "Deployment", "model": self._DEPLOYMENT, "generator": "docker_compose",
         })
         assert self._zip_names(response) == {"docker-compose.yml", "BESSER_GENERATION.md"}
 
-    def test_project_docker_compose_returns_zip_with_provenance(self):
+    def test_project_docker_compose_returns_zip_with_provenance(self, client):
         project = self._project_input("docker_compose", "DeploymentDiagram", self._DEPLOYMENT)
         response = client.post("/besser_api/generate-output-from-project",
                                json=project.model_dump(mode="json"))
         assert self._zip_names(response) == {"docker-compose.yml", "BESSER_GENERATION.md"}
 
-    def test_project_docker_compose_reports_an_invalid_deployment_as_400(self):
+    def test_project_docker_compose_reports_an_invalid_deployment_as_400(self, client):
         model = copy.deepcopy(self._DEPLOYMENT)
         model["relationships"]["bad"] = {
             "id": "bad", "name": "", "type": "DeploymentAssociation", "owner": None,
@@ -1609,7 +1579,7 @@ class TestRecommendationEndpoints:
         from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
         monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
 
-    def test_recommend_agent_config_llm_success_normalizes_output(self, monkeypatch):
+    def test_recommend_agent_config_llm_success_normalizes_output(self, client, monkeypatch):
         """LLM recommendation endpoint returns normalized config payload."""
         from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
 
@@ -1665,7 +1635,7 @@ class TestRecommendationEndpoints:
         assert data["config"]["system"]["agentPlatform"] == "streamlit"
         assert data["config"]["modality"]["inputModalities"] == ["text", "speech"]
 
-    def test_recommend_agent_config_llm_invalid_payload_returns_400(self):
+    def test_recommend_agent_config_llm_invalid_payload_returns_400(self, client):
         """LLM recommendation requires a userProfileModel object."""
         response = client.post(
             "/besser_api/recommend-agent-config-llm",
@@ -1675,7 +1645,7 @@ class TestRecommendationEndpoints:
         assert response.status_code == 400
         assert "userProfileModel" in response.json().get("detail", "")
 
-    def test_recommend_agent_config_llm_parse_error_returns_500(self, monkeypatch):
+    def test_recommend_agent_config_llm_parse_error_returns_500(self, client, monkeypatch):
         """Invalid LLM text should surface as a parse failure mapped to 500."""
         from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
 
@@ -1694,7 +1664,7 @@ class TestRecommendationEndpoints:
         assert response.status_code == 500
         assert "Failed to parse LLM recommendation response" in response.json().get("detail", "")
 
-    def test_recommend_agent_config_llm_runtime_error_returns_400(self, monkeypatch):
+    def test_recommend_agent_config_llm_runtime_error_returns_400(self, client, monkeypatch):
         """Runtime errors from the LLM client should map to HTTP 400."""
         from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
 
@@ -1715,7 +1685,7 @@ class TestRecommendationEndpoints:
         assert response.status_code == 400
         assert "Missing OpenAI API key" in response.json().get("detail", "")
 
-    def test_agent_config_manual_mapping_success(self):
+    def test_agent_config_manual_mapping_success(self, client):
         """Manual mapping endpoint returns mapping metadata."""
         response = client.get(
             "/besser_api/agent-config-manual-mapping",
@@ -1729,7 +1699,7 @@ class TestRecommendationEndpoints:
         assert "rules" in data["mapping"]
         assert isinstance(data["mapping"]["rules"], list)
 
-    def test_recommend_agent_config_mapping_success(self, monkeypatch):
+    def test_recommend_agent_config_mapping_success(self, client, monkeypatch):
         """Manual recommendation endpoint returns config and matching metadata."""
         from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
 
@@ -1762,7 +1732,7 @@ class TestRecommendationEndpoints:
         assert data["matchedRules"][0]["id"] == "older_adults_readability"
         assert data["signals"]["age"] == 70
 
-    def test_recommend_agent_config_mapping_invalid_payload_returns_400(self):
+    def test_recommend_agent_config_mapping_invalid_payload_returns_400(self, client):
         """Manual recommendation endpoint validates userProfileModel presence/type."""
         response = client.post(
             "/besser_api/recommend-agent-config-mapping",
@@ -1822,7 +1792,7 @@ class TestRecommendationEndpoints:
             },
         }
 
-    def test_recommend_agent_config_mapping_end_to_end_no_llm(self, monkeypatch):
+    def test_recommend_agent_config_mapping_end_to_end_no_llm(self, client, monkeypatch):
         """End-to-end: real ``_generate_user_profile_document`` + real
         ``build_manual_mapping_recommendation``. A profile with age >= 60 must
         trigger the ``older_adults_readability`` rule, which sets
@@ -1867,7 +1837,7 @@ class TestRecommendationEndpoints:
         # The age signal must be detected from the Personal_Information.age slot.
         assert data.get("signals", {}).get("age") == 72
 
-    def test_recommend_agent_config_llm_real_normalization_clamps_out_of_range(self, monkeypatch):
+    def test_recommend_agent_config_llm_real_normalization_clamps_out_of_range(self, client, monkeypatch):
         """End-to-end LLM path: real ``_generate_user_profile_document`` and real
         ``normalize_recommended_agent_config`` — only the OpenAI HTTP call
         (``call_openai_chat``) is mocked. Out-of-range LLM values (size=999,
@@ -1946,7 +1916,7 @@ class TestRecommendationEndpointsAuth:
     with HTTP 401.
     """
 
-    def test_recommend_agent_config_llm_requires_session(self):
+    def test_recommend_agent_config_llm_requires_session(self, client):
         response = client.post(
             "/besser_api/recommend-agent-config-llm",
             json={"userProfileModel": {}},
@@ -1955,13 +1925,13 @@ class TestRecommendationEndpointsAuth:
         detail = response.json().get("detail", "")
         assert "GitHub" in detail
 
-    def test_agent_config_manual_mapping_requires_session(self):
+    def test_agent_config_manual_mapping_requires_session(self, client):
         response = client.get("/besser_api/agent-config-manual-mapping")
         assert response.status_code == 401
         detail = response.json().get("detail", "")
         assert "GitHub" in detail
 
-    def test_recommend_agent_config_mapping_requires_session(self):
+    def test_recommend_agent_config_mapping_requires_session(self, client):
         response = client.post(
             "/besser_api/recommend-agent-config-mapping",
             json={"userProfileModel": {}},
@@ -2010,7 +1980,7 @@ class TestStandaloneChatbotDeploy:
             },
         }
 
-    def test_deploy_target_agent_invokes_chatbot_path(self, monkeypatch):
+    def test_deploy_target_agent_invokes_chatbot_path(self, client, monkeypatch):
         """``deploy_target='agent'`` should drive the standalone-chatbot
         deployment branch: response.deployment_type == 'chatbot' and the
         mocked PyGithub helper must be called with a render.yaml that
@@ -2179,7 +2149,7 @@ class TestStandaloneChatbotDeploy:
 class TestFeedbackEndpoint:
     """Tests for the feedback submission endpoint."""
 
-    def test_submit_valid_feedback(self):
+    def test_submit_valid_feedback(self, client):
         """Submit valid feedback returns success."""
         payload = {
             "satisfaction": "happy",
@@ -2193,7 +2163,7 @@ class TestFeedbackEndpoint:
         # Should succeed (200) or depend on feedback service config
         assert response.status_code in (200, 500)
 
-    def test_submit_feedback_invalid_satisfaction(self):
+    def test_submit_feedback_invalid_satisfaction(self, client):
         """Invalid satisfaction value returns 422."""
         payload = {
             "satisfaction": "invalid_value",
@@ -2204,13 +2174,13 @@ class TestFeedbackEndpoint:
         response = client.post("/besser_api/feedback", json=payload)
         assert response.status_code == 422
 
-    def test_submit_feedback_missing_required(self):
+    def test_submit_feedback_missing_required(self, client):
         """Missing required fields returns 422."""
         response = client.post("/besser_api/feedback", json={})
         assert response.status_code == 422
 
 
-def test_validation_does_not_return_internal_error_text(monkeypatch):
+def test_validation_does_not_return_internal_error_text(client, monkeypatch):
     """A bug in conversion must not describe our internals to the caller.
 
     The validation errors a diagram earns are meant to be read by the person who

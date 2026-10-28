@@ -72,11 +72,10 @@ class TestSafeVarName:
         assert safe_var_name("my-var!name") == "my_var_name"
 
     def test_leading_digit(self):
-        # safe_var_name adds '_' prefix for leading digits, but strip('_')
-        # at the end removes it -- the result still starts with a digit.
-        # This documents the current behaviour.
+        # The '_' prefix for a leading digit is applied after the underscore
+        # strip, so the result is a valid identifier.
         result = safe_var_name("1start")
-        assert result == "1start"
+        assert result == "_1start"
 
     def test_consecutive_underscores_collapsed(self):
         result = safe_var_name("a__b___c")

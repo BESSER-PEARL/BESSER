@@ -49,6 +49,18 @@ def too_large_model() -> DomainModel:
     return _team_player_model("self.age = 40000")
 
 
+@pytest.fixture
+def squad_model() -> DomainModel:
+    """``Team`` 1 -- 0..11 ``Player``: the bound 11 is outside Alloy's default integers, [-8, 7]."""
+    team = Class("Team")
+    player = Class("Player")
+    squad = BinaryAssociation("squad", ends={
+        Property("team", team, multiplicity=Multiplicity(1, 1)),
+        Property("players", player, multiplicity=Multiplicity(0, 11)),
+    })
+    return DomainModel("Football", types={team, player}, associations={squad})
+
+
 def test_check_consistency_consistent(consistent_model, tmp_path):
     solver = AlloySolver(consistent_model, output_dir=str(tmp_path))
     assert solver.check_consistency(scope=1) == AlloyResult.SAT
@@ -100,6 +112,11 @@ def test_generate_object_models_inconsistent(inconsistent_model, tmp_path):
     result, object_models = solver.generate_object_models(scope=1)
     assert result == AlloyResult.UNSAT
     assert object_models == []
+
+
+def test_check_consistency_squad_of_eleven(squad_model, tmp_path):
+    solver = AlloySolver(squad_model, output_dir=str(tmp_path))
+    assert solver.check_consistency(scope=5) == AlloyResult.SAT
 
 
 def test_scopes_before_any_analysis(consistent_model, tmp_path):

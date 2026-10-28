@@ -93,10 +93,10 @@ class BumlToAlloy:
             self._add_class(spec, cls)
         for cls in self.classes:
             self._add_id_facts(spec, cls)
-        for association in self.associations:
-            self._add_multiplicity_facts(spec, association)
-            self._add_inverse_fact(spec, association)
         literals = self._add_invariants(spec)
+        for association in self.associations:
+            self._add_multiplicity_facts(spec, association, literals)
+            self._add_inverse_fact(spec, association)
         self._add_strings(spec, literals)
         self._add_dates(spec, literals)
         self._add_instance_predicate(spec)
@@ -133,13 +133,16 @@ class BumlToAlloy:
                 field = spec.field_name(cls.name, attr.name)
                 spec.add_fact(f"all disj a, b: {spec.signature_name(cls.name)} | a.{field} != b.{field}")
 
-    def _add_multiplicity_facts(self, spec: AlloySpecification, association: BinaryAssociation) -> None:
+    def _add_multiplicity_facts(
+        self, spec: AlloySpecification, association: BinaryAssociation, literals: Literals
+    ) -> None:
         """Adds facts bounding the number of objects reachable through each end of *association*.
 
         The bounds of an end are checked from the class at the opposite end, navigating the
         end's field, or the opposite end's field backwards when the end itself is not
         navigable.  Lower bounds of 0 and unlimited upper bounds are skipped, as are navigable
-        1..1 ends, whose ``one`` field already enforces them.
+        1..1 ends, whose ``one`` field already enforces them.  Each bound written in a fact is
+        added to *literals*, so that the integer bitwidth can hold it.
         """
         first, second = self._ends(association)
         for end, opposite in ((first, second), (second, first)):
@@ -155,8 +158,10 @@ class BumlToAlloy:
             source = spec.signature_name(opposite.type.name)
             if bounds.min >= 1:
                 spec.add_fact(f"all a: {source} | #({navigation}) >= {bounds.min}")
+                literals.add_integer(bounds.min)
             if bounds.max < UNLIMITED_MAX_MULTIPLICITY:
                 spec.add_fact(f"all a: {source} | #({navigation}) <= {bounds.max}")
+                literals.add_integer(bounds.max)
 
     def _add_inverse_fact(self, spec: AlloySpecification, association: BinaryAssociation) -> None:
         """Adds a fact stating that the fields navigating to the two ends of *association* are inverses."""
@@ -220,13 +225,12 @@ class BumlToAlloy:
         The scopes of ``Str`` and ``Date`` are the numbers of their declared singletons: for
         ``Str``, the scope, or the number of OCL string literals when larger; for ``Date``, the
         number of declared dates, :attr:`dates`, which :meth:`_add_dates` filled up to the scope.  The
-        integer bitwidth must be able to hold the largest OCL integer literal.
+        integer bitwidth is the scope, or larger when needed to hold the largest integer literal: of
+        the OCL invariants or a multiplicity bound.
         """
         strings = max(self.scope, len(literals.strings())) if self._uses_strings(literals) else None
         dates = len(self.dates) if self._uses_dates(literals) else None
-        bitwidth = None
-        if "Int" in self.attribute_types or literals.integers():
-            bitwidth = max(self.scope, literals.largest_integer().bit_length() + 1)
+        bitwidth = max(self.scope, literals.largest_integer().bit_length() + 1)
         spec.set_run(
             "instance_model",
             [cls.name for cls in self.classes],

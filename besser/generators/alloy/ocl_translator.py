@@ -44,7 +44,7 @@ from besser.BUML.metamodel.structural import Class, Constraint, DomainModel, Pro
 from besser.BUML.notations.ocl.api import parse_ocl
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 from besser.BUML.notations.ocl.pretty_printer import pretty_print
-from besser.generators.alloy.alloy_specification import AlloySpecification
+from besser.generators.alloy.alloy_specification import INVALID_IDENTIFIER_CHARACTERS, AlloySpecification
 from besser.generators.alloy.exceptions import AlloyTranslationError
 
 
@@ -76,9 +76,6 @@ _CONNECTIVES = {"and": "and", "or": "or", "implies": "=>"}
 
 # Escape sequence of a string literal: a backslash and the escaped character.
 _STRING_ESCAPE = re.compile(r"\\(.)")
-
-# Characters that cannot be part of an Alloy identifier, hence of the name of a string literal's constant.
-_INVALID_IDENTIFIER_CHARACTERS = re.compile(r"[^A-Za-z0-9_]")
 
 # Type of the OCL null value.
 _NULL = "null"
@@ -444,13 +441,6 @@ class OclToAlloy:
         # Navigating from a collection collects the values of the property: a Bag
         return Term(f"{source.text}.{field}", self._spec.field_type(source.type, label), is_set, is_bag=source.is_set)
 
-    def _enumeration_literal(self, enumeration: str, literal: str) -> "Term":
-        # Not called yet: the B-OCL grammar has no enumeration literals.
-        try:
-            return Term(self._spec.enumeration_value(enumeration, literal), enumeration)
-        except KeyError as error:
-            raise OclTranslationError(f"Unknown enumeration literal '{enumeration}::{literal}': {error}") from None
-
     def _all_instances(self, label: str) -> "Term":
         return Term(self._spec.signature_name(label), label, is_set=True)
 
@@ -614,7 +604,8 @@ def date_label(value: date) -> str:
 class Literals:
     """The literals of the translated invariants, each once, in the order they were found.
 
-    Each string literal is named by the label of its Alloy constant, ``Str_<value>``, and each
+    The integers also include the multiplicity bounds that :class:`BumlToAlloy` writes in facts,
+    so that the integer bitwidth can hold them.  Each string literal is named by the label of its Alloy constant, ``Str_<value>``, and each
     date literal by the label of its Alloy date, ``Date_YYYY_MM_DD`` (see :func:`date_label`).
     """
 
@@ -632,7 +623,7 @@ class Literals:
         Raises:
             UnsupportedOclError: when *value* has characters that cannot be part of an Alloy identifier.
         """
-        invalid = dict.fromkeys(_INVALID_IDENTIFIER_CHARACTERS.findall(value))
+        invalid = dict.fromkeys(INVALID_IDENTIFIER_CHARACTERS.findall(value))
         if invalid:
             raise UnsupportedOclError(
                 f"String '{value}' is not supported: the characters "
@@ -663,10 +654,6 @@ class Literals:
 
     def dates(self) -> set[date]:
         return set(self._dates)
-
-    def date_labels(self) -> dict[date, str]:
-        """The labels of the dates of the date literals, by value."""
-        return dict(self._dates)
 
     def largest_integer(self) -> int:
         """The largest absolute value of the integer literals, 0 when there is none."""

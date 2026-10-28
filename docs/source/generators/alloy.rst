@@ -151,6 +151,7 @@ The following features are not supported yet:
 - Association classes.
 - Multiple inheritance.
 - Associations with more than two ends.
+- Attributes with several values (a multiplicity upper bound above 1).
 - Attributes of type ``float``, ``datetime``, ``time``, ``timedelta`` or ``any``, and reals in OCL.
 - OCL operations on strings and dates other than ``=`` and ``<>``.
 - Enumeration literals in OCL (``Enum::Literal``).

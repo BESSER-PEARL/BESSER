@@ -43,8 +43,8 @@ class BumlToAlloy:
 
     Raises:
         AlloyTranslationError: when the model has association classes, classes with several
-            parents, associations with more than two ends or attributes of an unsupported type,
-            or when an OCL invariant cannot be translated.
+            parents, associations with more than two ends, attributes with several values or
+            attributes of an unsupported type, or when an OCL invariant cannot be translated.
     """
 
     def __init__(self, model: DomainModel, scope: int, seed: int = 0):
@@ -59,6 +59,14 @@ class BumlToAlloy:
                     f"Class '{cls.name}' has several parents ({', '.join(parents)}): multiple inheritance is not "
                     "supported in the current version of the Alloy translation"
                 )
+            for attr in sorted(cls.attributes, key=lambda attr: attr.name):
+                bounds = attr.multiplicity
+                if bounds.max > 1:
+                    upper = "*" if bounds.max == UNLIMITED_MAX_MULTIPLICITY else bounds.max
+                    raise AlloyTranslationError(
+                        f"Attribute '{cls.name}.{attr.name}' has multiplicity {bounds.min}..{upper}: attributes "
+                        "with several values are not supported in the current version of the Alloy translation"
+                    )
         for association in sorted(model.associations, key=lambda association: association.name):
             if len(association.ends) != 2:
                 raise AlloyTranslationError(
@@ -117,8 +125,9 @@ class BumlToAlloy:
         parents = [parent.name for parent in cls.parents()]  # at most one: see __init__
         spec.add_signature(cls.name, is_abstract=cls.is_abstract, extends=parents[0] if parents else None)
         for attr in sorted(cls.attributes, key=lambda attr: attr.name):
-            # An optional attribute may have no value
-            spec.add_field(cls.name, attr.name, self._type(attr.type), "lone" if attr.is_optional else "")
+            # An optional attribute (is_optional, or multiplicity 0..1) may have no value
+            optional = attr.is_optional or attr.multiplicity.min == 0
+            spec.add_field(cls.name, attr.name, self._type(attr.type), "lone" if optional else "")
         # A navigable end is a field of the class at the opposite end.
         for association in self.associations:
             first, second = self._ends(association)

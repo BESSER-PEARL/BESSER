@@ -1,15 +1,16 @@
 import pytest
 
-from besser.BUML.metamodel.structural import Class, DomainModel, IntegerType, Property, StringType
+from besser.BUML.metamodel.structural import Class, DomainModel, IntegerType, Multiplicity, Property, StringType
 from tests.generators.alloy.utils_alloy_translation import AlloyTestSpec, set_constraint, translate
 
 
 @pytest.fixture
 def spec() -> AlloyTestSpec:
-    """``Book(isbn: str, id; note: str, optional; title: str)``."""
+    """``Book(isbn: str, id; note: str, optional; subtitle: str [0..1]; title: str)``."""
     book = Class("Book", attributes={
         Property("isbn", StringType, is_id=True),
         Property("note", StringType, is_optional=True),
+        Property("subtitle", StringType, multiplicity=Multiplicity(0, 1)),
         Property("title", StringType),
     })
     model = DomainModel("Books", types={book})
@@ -25,6 +26,7 @@ def people_model() -> DomainModel:
 
 def test_optional_attributes_may_have_no_value(spec):
     assert "Book_note: lone Str" in spec.fields["Book"]
+    assert "Book_subtitle: lone Str" in spec.fields["Book"]
     assert "Book_title: Str" in spec.fields["Book"]
 
 

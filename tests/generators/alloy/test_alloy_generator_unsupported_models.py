@@ -66,6 +66,14 @@ def test_attribute_types_without_translation_are_unsupported(meeting_model):
         translate(meeting_model, scope=5)
 
 
+@pytest.mark.parametrize("multiplicity", [Multiplicity(0, "*"), Multiplicity(2, "*"), Multiplicity(1, 3)])
+def test_multi_valued_attributes_are_unsupported(multiplicity):
+    player = Class("Player", attributes={Property("scores", IntegerType, multiplicity=multiplicity)})
+    model = DomainModel("Football", types={player})
+    with pytest.raises(AlloyTranslationError, match="Attribute 'Player.scores' has multiplicity"):
+        translate(model, scope=5)
+
+
 def test_unsupported_ocl_is_a_translation_error(counter_model):
     # Real division has no Alloy translation
     set_constraint(counter_model, "Counter", "self.value / 2 > 1")

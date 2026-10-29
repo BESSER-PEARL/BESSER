@@ -134,7 +134,7 @@ async def _search(
     """The search of :func:`check_semantic_consistency`; releases its *slot* when it ends, however it ends:
     with a result, an error, or the client going away."""
     try:
-        prepared = _prepare(input_data)
+        prepared = await asyncio.to_thread(_prepare, input_data)
         if isinstance(prepared, str):
             yield prepared
             return
@@ -170,6 +170,11 @@ async def _search(
                                 "Semantic check cancelled at scope %s: stopping the Alloy Analyzer", scope
                             )
                             solver.stop()
+                    object_diagram = None
+                    if result == AlloyResult.SAT and with_object_diagram:
+                        object_diagram = await asyncio.to_thread(
+                            _object_model_to_json, object_model, input_data.model, temp_dir
+                        )
                 except AlloyTranslationError as error:
                     yield _failure(
                         "The model cannot be translated to Alloy.", errors=[str(error)], warnings=warnings
@@ -190,9 +195,6 @@ async def _search(
                     yield _failure(f"The semantic check failed unexpectedly at scope {scope}.", warnings=warnings)
                     return
                 if result == AlloyResult.SAT:
-                    object_diagram = None
-                    if with_object_diagram:
-                        object_diagram = _object_model_to_json(object_model, input_data.model, temp_dir)
                     yield _success(
                         f"Instance found within {bounds}.", warnings=warnings, object_model=object_diagram
                     )

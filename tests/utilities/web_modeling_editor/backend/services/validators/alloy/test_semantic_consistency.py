@@ -207,6 +207,17 @@ def test_analyzer_error(monkeypatch, consistent_diagram):
 
 
 @needs_alloy
+def test_object_diagram_conversion_error(monkeypatch, consistent_diagram):
+    def failing_conversion(*args):
+        raise ValueError("cannot convert")
+    monkeypatch.setattr(semantic_consistency, "_object_model_to_json", failing_conversion)
+    events = _events(generate_object_diagram(consistent_diagram))
+    assert events[-1]["done"] is True
+    assert events[-1]["isValid"] is False
+    assert events[-1]["message"] == "The semantic check failed unexpectedly at scope 5."
+
+
+@needs_alloy
 def test_scopes_and_timeout_are_parameters(contradictory_diagram):
     events = _events(check_semantic_consistency(contradictory_diagram, scopes=(1, 2), timeout=10))
     assert events[-1]["message"].startswith("No instance within 2 objects per class")

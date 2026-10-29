@@ -70,12 +70,12 @@ class Base(DeclarativeBase):
 {%- endfor %}
 
 {% if enumerations %}# Definitions of Enumerations{% endif %}
-{%- for enum in enumerations|sort(attribute='name') %}
+{%- for enum in enumerations|sort(attribute='name') %}{% trace enum, "enumeration" %}
 class {{ enum.name }}(enum.Enum):
     {%- for literal in sort(enum.literals) %}
     {{ literal.name }} = "{{ literal.name }}"
     {%- endfor %}
-{% endfor %}
+{% endtrace %}{% endfor %}
 
 # Tables definition for many-to-many relationships
 
@@ -91,20 +91,20 @@ class {{ enum.name }}(enum.Enum):
 {%- set ns.has_association_class = True %}
 {%- endif %}
 {%- endfor %}
-{%- if ns.many_to_many == True and not ns.has_association_class %}
+{%- if ns.many_to_many == True and not ns.has_association_class %}{% trace association, "association_table" %}
 {{ association.name.lower() }} = Table_(
     "{{ association.name.lower() }}",
     Base.metadata,
     {%- for end in association.ends|sort(attribute='name') %}
     Column_("{{ end.name }}", ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True),
     {%- endfor %}
-)
+){% endtrace %}
 {%- endif %}
 {%- endfor %}
 
 # Tables definition
 
-{%- for class in classes %}
+{%- for class in classes %}{% trace class, "class" %}
 class {{ class.name }}(
     {%- if class.parents() -%}
     {% for parent in class.parents()|sort(attribute='name') -%}
@@ -174,11 +174,11 @@ class {{ class.name }}(
                 first. It is emitted nullable, with use_alter so the
                 constraint is added after both tables exist. See
                 get_deferred_fk_associations in structural_utils.py. #}
-            {%- if [class.name, end.name] == fkeys.get(end.owner.name) %}
+            {%- if [class.name, end.name] == fkeys.get(end.owner.name) %}{% trace end.owner, "foreign_key" %}
             {%- set deferred = end.owner.name in deferred_fks %}
     {{end.name}}_id: Mapped_[{% if deferred %}Optional_[{{ pk_types.get(end.type.name, 'int') }}]{% else %}{{ pk_types.get(end.type.name, 'int') }}{% endif %}] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}"{% if deferred %}, use_alter=True, name="fk_{{class.name.lower()}}_{{end.name.lower()}}"{% endif %})
             {%- if deferred or end.multiplicity.min == 0 %}, nullable=True{%- endif %}
-            {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
+            {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endtrace %}{% endif %}
         {%- endif %}
     {%- endfor %}
 
@@ -211,10 +211,10 @@ class {{ class.name }}(
 
 {{ normalize_code(method.code, method.name) | indent(4, first=true) }}
     {%- endfor %}
-{% endfor %}
+{% endtrace %}{% endfor %}
 
 {#- Association Classes #}
-{%- for asso_class in asso_classes %}
+{%- for asso_class in asso_classes %}{% trace asso_class, "association_class" %}
 class {{ asso_class.name }}(Base):
     __tablename__ = "{{asso_class.name.lower()}}"
     {%- set own_key = ids.get(asso_class.name) or asso_class.name in referenced_asso %}
@@ -256,7 +256,7 @@ class {{ asso_class.name }}(Base):
         {%- endif %}
     {%- endfor %}
     {{- helper.render_attributes(asso_class, enumerations, types, ids, sort)}}
-{% endfor %}
+{% endtrace %}{% endfor %}
 
 {#- Relationships #}
 {%- for class in classes %}
@@ -283,7 +283,7 @@ class {{ asso_class.name }}(Base):
 
 #--- Relationships of the {{ class.name.lower() }} table
             {%- endif %}
-{{ helper.render_relationship(class, end, ns, ids, fkeys, deferred_fks) }}
+{% trace end.owner, "relationship" %}{{ helper.render_relationship(class, end, ns, ids, fkeys, deferred_fks) }}{% endtrace %}
         {%- endif %}
     {%- endfor %}
 {%- endfor %}
@@ -318,7 +318,7 @@ class {{ asso_class.name }}(Base):
     (e.g. ExtraCharge recorded against a BookedRoom). #}
     {%- set link_ns = namespace() %}
     {%- for end in asso_class.association_ends()|sort(attribute='name') if end.owner.ends|length == 2 and end.owner.name != asso_class.association.name %}
-{{ helper.render_relationship(asso_class, end, link_ns, ids, fkeys, deferred_fks) }}
+{% trace end.owner, "relationship" %}{{ helper.render_relationship(asso_class, end, link_ns, ids, fkeys, deferred_fks) }}{% endtrace %}
     {%- endfor %}
 {%- endfor %}
 

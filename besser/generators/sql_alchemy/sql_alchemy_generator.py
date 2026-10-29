@@ -6,6 +6,7 @@ from besser.generators.default_literals import register_default_literals
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.generators.sql_alchemy.ocl_check_constraints import get_check_constraints
+from besser.utilities.generation_trace import TraceExtension, TraceRegion, extract_trace_regions
 from besser.utilities.utils import sort_by_timestamp
 from besser.generators.structural_utils import (
     get_deferred_fk_associations,
@@ -25,6 +26,10 @@ class SQLAlchemyGenerator(GeneratorInterface):
     Args:
         model (DomainModel): An instance of the DomainModel class representing the B-UML model.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
+
+    Attributes:
+        trace_regions (list[TraceRegion]): After ``generate()``, the lines of ``sql_alchemy.py`` rendered
+            from each class, enumeration and association that has an ``id``.
     """
 
     TYPES = {
@@ -82,6 +87,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         # Add enums to TYPES dictionary
         for enum in model.get_enumerations():
             self.TYPES[enum.name] = f"Enum('{enum.name}')"
+        self.trace_regions: list[TraceRegion] = []
 
     def get_pk_py_types(self):
         """Class name -> python type of its primary key (default 'int').
@@ -263,7 +269,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         file_path = self.build_generation_path(file_name="sql_alchemy.py")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
+        env = Environment(loader=FileSystemLoader(templates_path), extensions=[TraceExtension])
         env.globals.update(normalize_code=normalize_method_code)
         # default_value reaches the metamodel unvalidated from request JSON and
         # used to be interpolated raw into the generated module — which
@@ -271,7 +277,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         register_default_literals(env)
         template = env.get_template('sql_alchemy_template.py.j2')
         with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(
+            rendered = template.render(
                 classes=classes,
                 asso_classes=asso_classes,
                 referenced_asso=self.get_referenced_association_classes(asso_classes),
@@ -288,5 +294,6 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 concrete_parents=concrete_parents,
                 check_constraints=check_constraints,
             )
+            generated_code, self.trace_regions = extract_trace_regions(rendered)
             f.write(generated_code)
             logger.info("Code generated in the location: %s", file_path)

@@ -119,6 +119,7 @@ class _FakeGitHubService:
         base_commit_sha=None,
         keep_path=None,
         model_merge=None,
+        base_hashes=None,
     ):
         files = []
         for root, _dirs, names in os.walk(directory_path):

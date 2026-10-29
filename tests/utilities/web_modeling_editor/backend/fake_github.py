@@ -4,7 +4,9 @@ Blobs, trees, commits, refs, merges, compares and tarballs are real git objects
 made with the ``git`` CLI, so ``GitHubService`` runs its real requests against
 real merge results. Only the endpoints BESSER calls exist, with the status codes
 GitHub documents for them (422 for a non-fast-forward ref update, 409 for a merge
-conflict, 204 for a merge with nothing to merge, ``Link`` headers for paging).
+conflict, 204 for a merge with nothing to merge, ``Link`` headers for paging,
+409 from the git data API on a repository with no commit, which only the
+contents API can give its first one).
 
 ``use_fake_github(monkeypatch, fake)`` routes the GitHub requests of every
 ``httpx.AsyncClient`` that does not bring its own transport to the fake, so the
@@ -20,7 +22,7 @@ import subprocess
 import tempfile
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 from fastapi import FastAPI, Request, Response
@@ -60,6 +62,9 @@ class FakeGitHub:
         self.repos: dict[str, FakeRepo] = {}
         self.revoked: list[str] = []
         self.gists: dict[str, dict] = {}
+        # Called as ``(repo, branch)`` before a ref update is checked: a test can
+        # land someone else's commit between BESSER reading the head and moving it.
+        self.before_ref_update: Optional[Callable[[FakeRepo, str], None]] = None
         self.app = self._build_app()
 
     # ------------------------------------------------------------------
@@ -131,6 +136,10 @@ class FakeGitHub:
 
     def tree_of(self, repo: FakeRepo, commit: str) -> str:
         return self.out(repo, "rev-parse", f"{commit}^{{tree}}")
+
+    def is_empty(self, repo: FakeRepo) -> bool:
+        """True for a repository with no commit (created without ``auto_init``)."""
+        return not self.out(repo, "for-each-ref", "refs/heads")
 
     def is_ancestor(self, repo: FakeRepo, ancestor: str, descendant: str) -> bool:
         return self.git(repo, "merge-base", "--is-ancestor", ancestor, descendant, check=False).returncode == 0
@@ -253,9 +262,20 @@ class FakeGitHub:
                 raise _NotFound()
             return repo
 
+        def find_with_commits(owner: str, name: str) -> FakeRepo:
+            """A repo for the git data API, which refuses one with no commit."""
+            repo = find(owner, name)
+            if fake.is_empty(repo):
+                raise _Empty()
+            return repo
+
         @app.exception_handler(_NotFound)
         async def not_found(_request, _exc):
             return JSONResponse({"message": "Not Found"}, status_code=404)
+
+        @app.exception_handler(_Empty)
+        async def empty(_request, _exc):
+            return JSONResponse({"message": "Git Repository is empty."}, status_code=409)
 
         def paged(request: Request, items: list) -> Response:
             per_page = int(request.query_params.get("per_page", 30))
@@ -318,14 +338,14 @@ class FakeGitHub:
 
         @app.get("/repos/{owner}/{name}/git/ref/heads/{branch:path}")
         async def get_ref(owner: str, name: str, branch: str):
-            sha = fake.ref(find(owner, name), branch)
+            sha = fake.ref(find_with_commits(owner, name), branch)
             if not sha:
                 raise _NotFound()
             return {"ref": f"refs/heads/{branch}", "object": {"sha": sha, "type": "commit"}}
 
         @app.post("/repos/{owner}/{name}/git/refs")
         async def create_ref(owner: str, name: str, request: Request):
-            repo, body = find(owner, name), await request.json()
+            repo, body = find_with_commits(owner, name), await request.json()
             branch = body["ref"].removeprefix("refs/heads/")
             if fake.ref(repo, branch):
                 return JSONResponse({"message": "Reference already exists"}, status_code=422)
@@ -334,9 +354,11 @@ class FakeGitHub:
 
         @app.patch("/repos/{owner}/{name}/git/refs/heads/{branch:path}")
         async def update_ref(owner: str, name: str, branch: str, request: Request):
-            repo, body = find(owner, name), await request.json()
+            repo, body = find_with_commits(owner, name), await request.json()
             if not repo.can_push:
                 return JSONResponse({"message": "Permission denied"}, status_code=403)
+            if fake.before_ref_update is not None:
+                fake.before_ref_update(repo, branch)
             current = fake.ref(repo, branch)
             if current is None:
                 return JSONResponse({"message": "Reference does not exist"}, status_code=422)
@@ -357,11 +379,11 @@ class FakeGitHub:
         async def create_blob(owner: str, name: str, request: Request):
             body = await request.json()
             data = base64.b64decode(body["content"]) if body.get("encoding") == "base64" else body["content"].encode()
-            return JSONResponse({"sha": fake.blob(find(owner, name), data)}, status_code=201)
+            return JSONResponse({"sha": fake.blob(find_with_commits(owner, name), data)}, status_code=201)
 
         @app.post("/repos/{owner}/{name}/git/trees")
         async def create_tree(owner: str, name: str, request: Request):
-            repo, body = find(owner, name), await request.json()
+            repo, body = find_with_commits(owner, name), await request.json()
             try:
                 sha = fake.make_tree(repo, body["tree"], body.get("base_tree"))
             except KeyError:
@@ -370,7 +392,7 @@ class FakeGitHub:
 
         @app.get("/repos/{owner}/{name}/git/trees/{sha}")
         async def get_tree(owner: str, name: str, sha: str, request: Request):
-            repo = find(owner, name)
+            repo = find_with_commits(owner, name)
             args = ["ls-tree", "-l", "-z"]
             if request.query_params.get("recursive"):
                 args += ["-r", "-t"]
@@ -386,13 +408,13 @@ class FakeGitHub:
 
         @app.post("/repos/{owner}/{name}/git/commits")
         async def create_commit(owner: str, name: str, request: Request):
-            repo, body = find(owner, name), await request.json()
+            repo, body = find_with_commits(owner, name), await request.json()
             sha = fake.commit(repo, body["tree"], body.get("parents") or [], body["message"])
             return JSONResponse({"sha": sha, "tree": {"sha": body["tree"]}}, status_code=201)
 
         @app.get("/repos/{owner}/{name}/git/commits/{sha}")
         async def get_commit(owner: str, name: str, sha: str):
-            data = fake.commit_json(find(owner, name), sha)
+            data = fake.commit_json(find_with_commits(owner, name), sha)
             return {"sha": data["sha"], "tree": data["commit"]["tree"], "parents": data["parents"],
                     "message": data["commit"]["message"]}
 
@@ -452,6 +474,21 @@ class FakeGitHub:
                               "size": 0 if size == "-" else int(size)})
             return items
 
+        @app.put("/repos/{owner}/{name}/contents/{path:path}")
+        async def put_contents(owner: str, name: str, path: str, request: Request):
+            repo, body = find(owner, name), await request.json()
+            branch = body.get("branch") or repo.default_branch
+            head = fake.ref(repo, branch)
+            if not head and not fake.is_empty(repo):
+                return JSONResponse({"message": f"Branch {branch} not found"}, status_code=404)
+            existing = fake.out(repo, "rev-parse", "--verify", "--quiet", f"{head}:{path}", check=False) if head else ""
+            if existing and body.get("sha") != existing:
+                return JSONResponse({"message": "\"sha\" wasn't supplied."}, status_code=422)
+            sha = fake.commit_files(repo, {path: base64.b64decode(body["content"])}, body["message"], branch=branch)
+            blob = fake.out(repo, "rev-parse", f"{sha}:{path}")
+            return JSONResponse({"content": {"path": path, "sha": blob}, "commit": {"sha": sha}},
+                                status_code=200 if existing else 201)
+
         @app.get("/repos/{owner}/{name}/tarball/{ref:path}")
         async def tarball(owner: str, name: str, ref: str):
             repo = find(owner, name)
@@ -506,6 +543,10 @@ class FakeGitHub:
 
 
 class _NotFound(Exception):
+    pass
+
+
+class _Empty(Exception):
     pass
 
 

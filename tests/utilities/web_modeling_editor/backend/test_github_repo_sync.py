@@ -140,7 +140,8 @@ def test_a_push_after_someone_else_committed_is_merged_not_reverted():
     side = f"{SYNC_BRANCH_PREFIX}{OURS[:7]}"
     assert github.merges == [("main", side)]
     assert ("main", OURS) not in github.refs
-    assert outcome == {"commit_sha": MERGED, "status": "merged", "conflict_branch": None, "own_commit_sha": OURS}
+    assert outcome == {"commit_sha": MERGED, "status": "merged", "conflict_branch": None, "own_commit_sha": OURS,
+                       "warnings": []}
     assert github.deleted == [side]
 
 
@@ -160,7 +161,8 @@ def test_a_merge_github_cannot_resolve_is_kept_on_its_branch():
     outcome = _commit(github, BASE)
 
     side = f"{SYNC_BRANCH_PREFIX}{OURS[:7]}"
-    assert outcome == {"commit_sha": OURS, "status": "conflict", "conflict_branch": side, "own_commit_sha": OURS}
+    assert outcome == {"commit_sha": OURS, "status": "conflict", "conflict_branch": side, "own_commit_sha": OURS,
+                       "warnings": []}
     assert github.deleted == []
     assert ("main", OURS) not in github.refs
 
@@ -236,7 +238,7 @@ class _PushGitHub(_ImportGitHub):
 
     async def push_directory_to_repo(self, owner, repo_name, directory_path, commit_message="",
                                      branch="main", preserve_existing_files=False, base_commit_sha=None,
-                                     keep_path=None, model_merge=None):
+                                     keep_path=None, model_merge=None, base_hashes=None):
         files = sorted(
             os.path.relpath(os.path.join(root, name), directory_path).replace("\\", "/")
             for root, _dirs, names in os.walk(directory_path) for name in names
@@ -378,8 +380,8 @@ class _SidebarGitHub:
     async def create_blob(self, owner, repo, content):
         return f"blob-{len(content)}"
 
-    async def file_exists(self, owner, repo, path, branch):
-        return self.legacy_exists and path == repo_model.LEGACY_PROJECT_FILE
+    async def ensure_first_commit(self, owner, repo, branch, path, content, message):
+        pass
 
     async def commit_tree(self, owner, repo, branch, entries, message, layer_on_parent, base_commit_sha=None,
                           model_merge=None):
@@ -396,6 +398,8 @@ class _SidebarGitHub:
                                               ("1" * 40, "First\n\nBESSER-Origin: editor", [])]]
 
     async def get_file_content(self, owner, repo, path, branch="main", ref=None):
+        if ref is None and self.legacy_exists and path == repo_model.LEGACY_PROJECT_FILE:
+            return {"content": json.dumps(_project())}
         content = self.files_at.get((path, ref))
         return {"content": content} if content else None
 

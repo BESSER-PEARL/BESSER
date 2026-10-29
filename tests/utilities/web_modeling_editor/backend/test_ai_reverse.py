@@ -1,16 +1,21 @@
 """AI fallback reader: a repo with no data classes the exact reader understands gets a model proposed by an LLM."""
 
 import asyncio
+import importlib
 import json
 import os
+import sys
 import textwrap
 import time
 
 import httpx
+import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import ImportGitHubRunRequest
 from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
+from besser.utilities.web_modeling_editor.backend.services import reverse_engineering
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     ai_reverse,
     analyze_repository,
@@ -361,6 +366,8 @@ class _ImportGitHub:
 
 
 def _import(monkeypatch, tmp_path, files=None, **body):
+    """Import a repo; the user allowed the AI reading unless ``allow_ai_reading=False`` says otherwise."""
+    body = {"allow_ai_reading": True, **body}
     monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path))
     fake = _ImportGitHub(files or {"prisma/schema.prisma": PRISMA, "src/types/order.ts": TS_TYPES})
     monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: fake)
@@ -549,3 +556,81 @@ def test_orm_models_are_read_exactly_without_asking_the_ai(monkeypatch, tmp_path
 
     assert r.status_code == 200, r.text
     assert calls == [] and r.json()["analysis"]["entities"] == ["Room"]
+
+
+# ---------------------------------------------------------------------
+# The AI reading is the user's choice
+# ---------------------------------------------------------------------
+
+
+def test_without_the_users_consent_the_code_goes_to_no_model(monkeypatch, tmp_path):
+    """Review of #693: the import sent up to 40k characters of the repo's code to the free LLM chain,
+    whose first provider is a third party, without asking."""
+    _free_tier(monkeypatch)
+    calls = []
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: calls.append(prompt) or json.dumps(SPEC))
+
+    r = _import(monkeypatch, tmp_path, allow_ai_reading=False)
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert calls == []
+    assert body["ai_reading_offered"] is True
+    assert body["proposed_diagram"] is None and body["analysis"]["ai"] is False
+    assert "could not read this repo's data classes directly" in body["message"]
+    assert "if you allow it" in body["message"]
+
+
+def test_without_consent_the_exact_reading_is_still_proposed(monkeypatch, tmp_path):
+    _free_tier(monkeypatch)
+    calls = []
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: calls.append(prompt) or json.dumps(SPEC))
+
+    r = _import(monkeypatch, tmp_path, files=API_SCHEMAS, allow_ai_reading=False)
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert calls == []
+    assert body["ai_reading_offered"] is True
+    assert body["analysis"]["entities"] == ["UserInLogin"] and body["proposed_diagram"] is not None
+    assert "Pydantic models" in body["message"] and "if you allow it" in body["message"]
+
+
+def test_no_reading_is_offered_when_the_server_has_no_model(monkeypatch, tmp_path):
+    monkeypatch.delenv("BESSER_FREE_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("BESSER_FREE_LLM_MODEL", raising=False)
+
+    r = _import(monkeypatch, tmp_path, allow_ai_reading=False)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["ai_reading_offered"] is False
+    assert "AI reading is not available" in r.json()["message"]
+
+
+def test_an_allowed_reading_offers_nothing_more(monkeypatch, tmp_path):
+    _free_tier(monkeypatch)
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: json.dumps(SPEC))
+
+    r = _import(monkeypatch, tmp_path)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["ai_reading_offered"] is False and r.json()["analysis"]["ai"] is True
+
+
+def test_the_ai_reader_refuses_a_request_that_did_not_allow_it(tmp_path):
+    request = ImportGitHubRunRequest(owner="me", repo="shop")
+
+    with pytest.raises(PermissionError):
+        asyncio.run(spec_driven_router._read_repo_with_ai(request, str(tmp_path), CodeAnalysis(), "me", "shop"))
+
+
+def test_the_ai_reader_does_not_import_the_deprecated_kg_module(monkeypatch):
+    """``besser.utilities.kg_to_buml`` is a deprecated alias that warns on import."""
+    monkeypatch.delitem(sys.modules, "besser.utilities.kg_to_buml", raising=False)
+    monkeypatch.delitem(sys.modules, ai_reverse.__name__)
+    # Importing a submodule rebinds the package attribute; the original is put back after.
+    monkeypatch.setattr(reverse_engineering, "ai_reverse", ai_reverse)
+
+    importlib.import_module(ai_reverse.__name__)
+
+    assert "besser.utilities.kg_to_buml" not in sys.modules

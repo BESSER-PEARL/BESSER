@@ -253,7 +253,7 @@ class _PushGitHub:
 
     async def push_directory_to_repo(self, owner, repo_name, directory_path, commit_message="", branch="main",
                                      preserve_existing_files=False, base_commit_sha=None,
-                                     keep_path=None, model_merge=None):
+                                     keep_path=None, model_merge=None, base_hashes=None):
         self.files = {}
         for root, _dirs, names in os.walk(directory_path):
             for name in names:

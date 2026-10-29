@@ -568,3 +568,268 @@ def test_the_fake_refuses_a_repo_name_that_leaves_its_root(tmp_path):
         assert asyncio.run(create(name)).status_code == 422
     assert not (tmp_path / "escape.git").exists()
     assert asyncio.run(create("shop")).status_code == 201
+
+
+# ---------------------------------------------------------------------
+# Review of #693
+# ---------------------------------------------------------------------
+
+
+GITATTRIBUTES_REPO = {
+    ".gitattributes": "*.bat text eol=crlf\nversion.txt export-subst\nid.txt ident\n",
+    "run.bat": "@echo off\necho hi\n",
+    "version.txt": "$Format:%H$\n",
+    "id.txt": "$Id$\n",
+    "src/app.py": "print('v1')\n",
+}
+
+
+def test_a_push_leaves_alone_the_files_gitattributes_rewrote_on_import(github):
+    """The import is a git archive, which applies ``eol``, ``export-subst`` and ``ident``: the run's
+    bytes differed from the blobs, so every push rewrote files the run never touched (run.bat came
+    back CRLF, ``$Format:%H$`` became a literal commit id)."""
+    repo = github.create_repo("win", files=GITATTRIBUTES_REPO)
+    before = github.files(repo)
+    imported = _import("ana", "win")
+    first_run = _modify_run(imported["run_id"], lambda w: _write(w, "src/app.py", "print('v2')\n"))
+
+    r = _push(first_run, "win", base_commit_sha=imported["commit_sha"])
+
+    assert r.status_code == 200, r.text
+    after = github.files(repo)
+    assert after["src/app.py"][1] == b"print('v2')\n"
+    for untouched in ("run.bat", "version.txt", "id.txt"):
+        assert after[untouched] == before[untouched], untouched
+
+    # The record follows the pushed commit: the next push from this run leaves them alone too.
+    again = _push(_modify_run(first_run, lambda w: _write(w, "src/app.py", "print('v3')\n")), "win",
+                  base_commit_sha=github.ref(repo, "main"))
+
+    assert again.status_code == 200, again.text
+    latest = github.files(repo)
+    assert latest["src/app.py"][1] == b"print('v3')\n"
+    for untouched in ("run.bat", "version.txt", "id.txt"):
+        assert latest[untouched] == before[untouched], untouched
+
+
+def test_a_run_record_without_hashes_is_still_read(github, tmp_path):
+    """Records written before the hashes held a list of paths."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / runner_module.GITHUB_SOURCE_FILENAME).write_text(json.dumps(
+        {"owner": "ana", "repo": "shop", "commitSha": "a" * 40, "paths": ["src/app.py"]}), encoding="utf-8")
+
+    assert spec_driven_router._run_seed(str(run_dir), "ana", "shop") == ("a" * 40, {"src/app.py": None})
+
+
+def test_a_teammates_buml_helper_survives_a_model_merge(github):
+    """Every ``buml/*.py`` counted as a model file, so a merged save deleted a hand-written one."""
+    repo, base = _model_repo(github)
+    _teammate_saves(github, repo, _with_class(CLASS_DIAGRAM_MODEL, "Member"))
+    github.commit_files(repo, {"buml/seed_data.py": "ROWS = [1, 2, 3]\n"}, "Add seed data", author="ben")
+
+    r = _save(_with_class(CLASS_DIAGRAM_MODEL, "Loan"), base)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "merged"
+    assert github.files(repo)["buml/seed_data.py"][1] == b"ROWS = [1, 2, 3]\n"
+
+
+def test_a_failed_buml_export_keeps_the_generated_sources(github, monkeypatch):
+    """The B-UML export failure was swallowed, so the merge deleted ``domain_model.py`` as no longer produced."""
+    repo, base = _model_repo(github)
+    _teammate_saves(github, repo, _with_class(CLASS_DIAGRAM_MODEL, "Member"))
+
+    def broken(_export):
+        raise RuntimeError("export failed")
+    monkeypatch.setattr(repo_model, "_buml_sources", broken)
+    r = _save(_with_class(CLASS_DIAGRAM_MODEL, "Loan"), base)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "merged"
+    assert "buml/domain_model.py" in github.files(repo)
+    assert any("buml/domain_model.py" in warning for warning in r.json()["warnings"])
+    assert _saved_classes(github, repo) == {"Author", "Book", "Member", "Loan"}
+
+
+def test_deploying_an_agent_commits_no_agent_credentials(github, monkeypatch):
+    """/deploy-webapp wrote the raw ``projectExport`` to ``buml/diagrams.json``, agent API keys included."""
+    from types import SimpleNamespace
+
+    key = "sk-proj-" + "a1B2c3D4" * 4
+
+    class _Generator:
+        def __init__(self, agent_model, output_dir, **_kwargs):
+            self.output_dir = output_dir
+
+        def generate(self):
+            _write(self.output_dir, "agent.py", "# agent\n")
+
+    monkeypatch.setattr(github_deploy_api, "get_generator_info", lambda _name: SimpleNamespace(generator_class=_Generator))
+    agent = {
+        "id": "ag1", "title": "Helper", "model": {
+            "type": "AgentDiagram",
+            "elements": {"init": {"id": "init", "type": "StateInitialNode", "name": ""},
+                         "s1": {"id": "s1", "type": "AgentState", "name": "Greet", "bodies": [], "fallbackBodies": []}},
+            "relationships": {"t": {"type": "AgentStateTransitionInit", "name": "",
+                                    "source": {"element": "init"}, "target": {"element": "s1"}}},
+        },
+        "configYaml": f"nlp:\n  openai:\n    api_key: {key}\n",
+    }
+    export = _envelope()
+    export["project"]["diagrams"]["AgentDiagram"] = [agent]
+
+    r = _call("POST", "/besser_api/github/deploy-webapp", headers=SESSION, json={
+        "name": "Helper", "diagrams": {"AgentDiagram": [agent]}, "currentDiagramIndices": {"AgentDiagram": 0},
+        "deploy_config": {"target": "agent", "repo_name": "helper"}, "projectExport": export,
+    })
+
+    assert r.status_code == 200, r.text
+    files = github.files(github.repos["ana/helper"])
+    model = files[repo_model.MODEL_FILE][1].decode()
+    assert key not in model
+    assert json.loads(model)["project"]["diagrams"]["AgentDiagram"][0]["title"] == "Helper"
+
+
+def test_an_import_takes_a_run_slot_and_gives_it_back(github, monkeypatch):
+    """An import downloads up to 100 MB, unpacks up to 500 MB and may call an LLM, with no cap at all."""
+    github.create_repo("shop", files={"src/app.py": "print('v1')\n"})
+    slots = {"taken": 0, "returned": 0}
+
+    def take():
+        slots["taken"] += 1
+        return True
+
+    def give_back():
+        slots["returned"] += 1
+
+    monkeypatch.setattr(spec_driven_router, "try_acquire_run_slot", take)
+    monkeypatch.setattr(spec_driven_router, "release_run_slot", give_back)
+
+    assert _import("ana", "shop")["run_id"]
+    missing = _call("POST", "/besser_api/spec-driven/import-github-run", json={"owner": "ana", "repo": "nope"},
+                    headers=SESSION)
+
+    assert missing.status_code == 404
+    assert slots == {"taken": 2, "returned": 2}
+
+
+def test_an_import_is_refused_while_every_run_slot_is_taken(github, monkeypatch):
+    github.create_repo("shop", files={"src/app.py": "print('v1')\n"})
+    monkeypatch.setattr(spec_driven_router, "try_acquire_run_slot", lambda: False)
+
+    def no_download(*_args, **_kwargs):
+        raise AssertionError("the repo was downloaded")
+    monkeypatch.setattr(spec_driven_router, "_import_repo_as_run", no_download)
+
+    r = _call("POST", "/besser_api/spec-driven/import-github-run", json={"owner": "ana", "repo": "shop"},
+              headers=SESSION)
+
+    assert r.status_code == 429, r.text
+
+
+def test_saving_into_an_empty_repository_makes_its_first_commit(github):
+    """GitHub's git data API answers 409 "Git Repository is empty" until a repository has a commit."""
+    repo = github.create_repo("library")
+
+    r = _save(CLASS_DIAGRAM_MODEL, None)
+
+    assert r.status_code == 200, r.text
+    files = github.files(repo)
+    assert {repo_model.MODEL_FILE, repo_model.LINK_FILE, "buml/domain_model.py"} <= set(files)
+    assert r.json()["commit_sha"] == github.ref(repo, "main")
+
+
+def test_pushing_a_run_into_an_empty_repository_makes_its_first_commit(github):
+    repo = github.create_repo("library")
+    run_id = uuid.uuid4().hex
+    workdir = create_run_workspace(run_id)
+    _write(workdir, "backend/main_api.py", "app = None\n")
+    asyncio.run(SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "backend", "main_api.py"), file_name="app.zip", is_zip=True,
+        temp_dir=workdir, created_at=time.time(),
+    )))
+
+    r = _push(run_id, "library")
+
+    assert r.status_code == 200, r.text
+    files = github.files(repo)
+    assert files["backend/main_api.py"][1] == b"app = None\n"
+    assert repo_model.MODEL_FILE in files
+
+
+def _teammate_pushes_before_our_ref_update(github, repo):
+    """Land ben's commit on main once, just before BESSER's first update of main is checked."""
+    def land(target, branch):
+        if target is repo and branch == "main" and github.before_ref_update is not None:
+            github.before_ref_update = None
+            github.commit_files(repo, {"src/util.py": "X = 2\n"}, "Their change", author="ben")
+    github.before_ref_update = land
+
+
+def test_a_save_racing_a_teammates_push_is_merged_not_refused(github):
+    """The ref update was a fast-forward of the head read moments before: a push landing in between made
+    GitHub answer 422 "Update is not a fast forward" and the save failed."""
+    repo, base = _model_repo(github)
+    _teammate_pushes_before_our_ref_update(github, repo)
+
+    r = _save(_with_class(CLASS_DIAGRAM_MODEL, "Loan"), base)
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "merged"
+    files = github.files(repo)
+    assert files["src/util.py"][1] == b"X = 2\n"
+    assert _saved_classes(github, repo) == {"Author", "Book", "Loan"}
+
+
+def test_a_push_racing_a_teammates_push_is_merged_not_refused(github):
+    """The user saw a 409 for a push GitHub could have merged."""
+    repo = github.create_repo("shop", files={"src/app.py": "print('v1')\n"})
+    imported = _import("ana", "shop")
+    run_id = _modify_run(imported["run_id"], lambda w: _write(w, "src/app.py", "print('v2')\n"))
+    _teammate_pushes_before_our_ref_update(github, repo)
+
+    r = _push(run_id, "shop", base_commit_sha=imported["commit_sha"])
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "merged"
+    files = github.files(repo)
+    assert files["src/app.py"][1] == b"print('v2')\n"
+    assert files["src/util.py"][1] == b"X = 2\n"
+
+
+def _save_with_legacy(base_sha: str, legacy_file_path) -> httpx.Response:
+    envelope = _envelope()
+    return _call("POST", "/besser_api/github/project/save", headers=SESSION, json={
+        "owner": "ana", "repo": "library", "commit_message": "Save", "project_data": envelope["project"],
+        "project_export": envelope, "base_commit_sha": base_sha, "legacy_file_path": legacy_file_path,
+    })
+
+
+def test_a_save_removes_the_project_file_the_old_sidebar_saved(github):
+    """The old sidebar saved the model at ``<dir>/<project>.json``; after a save the repo held two models."""
+    repo = github.create_repo("library", files={
+        "models/Library.json": json.dumps(_envelope()["project"]),
+        "config/settings.json": json.dumps({"theme": "dark"}),
+    })
+    head = github.ref(repo, "main")
+
+    r = _save_with_legacy(head, "models/Library.json")
+
+    assert r.status_code == 200, r.text
+    files = github.files(repo)
+    assert "models/Library.json" not in files
+    assert repo_model.MODEL_FILE in files
+
+    # A JSON file that is not a BESSER project is never removed.
+    kept = _save_with_legacy(github.ref(repo, "main"), "config/settings.json")
+    assert kept.status_code == 200, kept.text
+    assert "config/settings.json" in github.files(repo)
+
+
+def test_the_legacy_project_path_must_stay_inside_the_repo(github):
+    repo, base = _model_repo(github)
+    for bad in ("../outside.json", "/etc/passwd.json", "models/notes.txt", "models//Library.json"):
+        r = _save_with_legacy(base, bad)
+        assert r.status_code == 422, (bad, r.text)
+    assert github.ref(repo, "main") == base

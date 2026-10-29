@@ -272,6 +272,14 @@ SDMX_MAX_CONCURRENT_IMPORTS = _env_int("BESSER_SDMX_MAX_CONCURRENT_IMPORTS", 2)
 # arbitrary URLs for anyone. Local and on-premises installs can turn it on.
 SDMX_ALLOW_CUSTOM_URL = _env_bool("BESSER_SDMX_ALLOW_CUSTOM_URL", False)
 
+# ---------------------------------------------------------------------
+# Semantic check (the Alloy Analyzer, behind /semantic-consistency-check and /generate-object-diagram)
+# ---------------------------------------------------------------------
+# Checks running at once, each in its own JVM; more are refused (HTTP 503).
+ALLOY_MAX_CONCURRENT_CHECKS = _env_int("BESSER_ALLOY_MAX_CONCURRENT_CHECKS", 1)
+# Maximum heap of each JVM, in MB (-Xmx), so that a large search cannot exhaust the host's memory.
+ALLOY_MAX_HEAP_MB = _env_int("BESSER_ALLOY_MAX_HEAP_MB", 1024)
+
 # Grace period added on top of the request's max_runtime_seconds before
 # the runner-level watchdog force-cancels a run (covers Phase 3 +
 # packaging time after the Phase 2 loop hits its own runtime check).

@@ -298,13 +298,15 @@ _SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "Connection": "keep-a
 
 
 @router.post("/semantic-consistency-check")
+@handle_endpoint_errors("semantic_consistency_check")
 async def semantic_consistency_check(input_data: DiagramInput) -> StreamingResponse:
     """Searches for an instance of a class diagram and its OCL invariants with the Alloy Analyzer.
 
     The search tries increasingly larger scopes (objects per class) and streams its progress as
     Server-Sent Events. A search that finds nothing reports what it searched, and why in ``reason``
     (``"unsat"`` or ``"timeout"``): "No instance within N objects per class, integers in [a, b],
-    ...". While the Alloy Analyzer runs, SSE comment lines are sent as heartbeats.
+    ...". While the Alloy Analyzer runs, SSE comment lines are sent as heartbeats. Answers 503,
+    without a stream, while ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` checks are running.
     """
     return StreamingResponse(
         check_semantic_consistency(input_data), media_type="text/event-stream", headers=_SSE_HEADERS
@@ -312,6 +314,7 @@ async def semantic_consistency_check(input_data: DiagramInput) -> StreamingRespo
 
 
 @router.post("/generate-object-diagram")
+@handle_endpoint_errors("generate_object_diagram")
 async def generate_object_diagram_endpoint(input_data: DiagramInput) -> StreamingResponse:
     """Generates an object diagram of a class diagram that satisfies its OCL invariants.
 

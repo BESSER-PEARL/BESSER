@@ -823,6 +823,15 @@ gateway.
   ``AGENT_SIMULATOR_DISK_MB``, ``AGENT_SIMULATOR_QUOTA_ENABLED`` -- Values
   reported by ``/limits``.
 
+**Semantic check** (``POST /semantic-consistency-check`` and ``/generate-object-diagram``,
+read once at startup):
+
+- ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` (``1``) -- Checks running at once, each in
+  its own Alloy Analyzer JVM; more are answered with 503. A client that disconnects
+  stops its JVM and frees its slot.
+- ``BESSER_ALLOY_MAX_HEAP_MB`` (``1024``) -- Maximum heap of each JVM (``-Xmx``), so
+  that a large search cannot exhaust the host's memory.
+
 
 Generator Configuration
 -----------------------

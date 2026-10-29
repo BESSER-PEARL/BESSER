@@ -5,6 +5,7 @@ import subprocess
 from enum import Enum
 from pathlib import Path
 
+from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConfigurationError
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,16 @@ class AlloyAnalyzerExecutor:
         self.alloy_jar_path = None
         self._resolve_java_path()
         self._resolve_alloy_jar_path()
+        # The running Alloy Analyzer, if any, and whether stop() was called
+        self._process: subprocess.Popen | None = None
+        self._stopped = False
+
+    def stop(self) -> None:
+        """Stops the running Alloy Analyzer, and any started afterwards; its analysis results in ERROR."""
+        self._stopped = True
+        process = self._process
+        if process is not None:
+            process.kill()
 
     def generate_instances(
         self, spec_als: str, output_dir: str, num_instances: int = 1, timeout: int = _DEFAULT_TIMEOUT_SECONDS
@@ -42,24 +53,31 @@ class AlloyAnalyzerExecutor:
         SCOPES_TOO_LARGE or ERROR and instance_files is a list of the generated instance files (if any).
         The Alloy Analyzer is stopped, and the result is TIMEOUT, after timeout seconds.
         The result is SCOPES_TOO_LARGE when the bounds of spec_als are too large for the Alloy
-        Analyzer, and ERROR when it fails for any other reason."""
+        Analyzer, and ERROR when it is stopped (see :meth:`stop`) or fails for any other reason."""
         # Clean up any previous instance files and receipt before generating new ones
         for file in Path(output_dir).glob("instance_model-solution-*.xml"):
             file.unlink()
         Path(output_dir, "receipt.json").unlink(missing_ok=True)
-        # Execute the Alloy Analyzer via subprocess
-        try:
-            result = subprocess.run(
-                [
-                    self.java_path, "-jar", self.alloy_jar_path, "exec", "-n", "-f",
-                    "-o", output_dir, "-t", "xml", "-r", str(num_instances), spec_als,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired:
-            return AlloyResult.TIMEOUT, []
+        # Execute the Alloy Analyzer via subprocess, with a bounded heap
+        command = [
+            self.java_path, f"-Xmx{backend_constants.ALLOY_MAX_HEAP_MB}m", "-jar", self.alloy_jar_path, "exec",
+            "-n", "-f", "-o", output_dir, "-t", "xml", "-r", str(num_instances), spec_als,
+        ]
+        with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
+            self._process = process
+            if self._stopped:  # stop() was called before the process started
+                process.kill()
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+                return AlloyResult.TIMEOUT, []
+            finally:
+                self._process = None
+        if self._stopped:
+            return AlloyResult.ERROR, []
+        result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
         analysis_result = self._result_in_alloy_receipt_json(result, output_dir)
         if analysis_result == AlloyResult.SAT:

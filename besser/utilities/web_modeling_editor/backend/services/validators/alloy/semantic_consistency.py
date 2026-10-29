@@ -17,6 +17,8 @@ import asyncio
 import logging
 import os
 import tempfile
+import threading
+import weakref
 from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
@@ -24,13 +26,14 @@ from besser.BUML.metamodel.object import ObjectModel
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators.alloy import AlloyTranslationError
 from besser.utilities.buml_code_builder.domain_model_builder import object_model_to_code
+from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
 from besser.utilities.web_modeling_editor.backend.models.diagram import DiagramInput
 from besser.utilities.web_modeling_editor.backend.models.responses import SemanticCheckEvent
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     object_buml_to_json,
     process_class_diagram,
 )
-from besser.utilities.web_modeling_editor.backend.services.exceptions import ConfigurationError
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConfigurationError, UpstreamError
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy.alloy_analyzer_executor import AlloyResult
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy.alloy_solver import AlloySolver
 from besser.utilities.web_modeling_editor.backend.services.validators.ocl_checker import check_ocl_constraint
@@ -47,90 +50,159 @@ DEFAULT_TIMEOUT_SECONDS = 30
 # proxies see the stream is alive.
 HEARTBEAT_SECONDS = 15
 
+# Slots of the checks running at once (ALLOY_MAX_CONCURRENT_CHECKS), each with its own JVM
+_check_slots: threading.BoundedSemaphore | None = None
+_slots_lock = threading.Lock()
 
-async def check_semantic_consistency(
+
+def check_semantic_consistency(
     input_data: DiagramInput,
     scopes: Sequence[int] = DEFAULT_SCOPES,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> AsyncGenerator[str, None]:
     """Searches for an instance of the class diagram *input_data* within each of the *scopes*, in turn,
-    each analysis timing out after *timeout* seconds; yields the progress as SSE lines."""
-    async for event in _search(input_data, scopes, timeout, with_object_diagram=False):
-        yield event
+    each analysis timing out after *timeout* seconds; the stream returned yields the progress as SSE lines.
+
+    Raises:
+        UpstreamError: (503) when ``ALLOY_MAX_CONCURRENT_CHECKS`` checks are already running.
+    """
+    return _start_search(input_data, scopes, timeout, with_object_diagram=False)
 
 
-async def generate_object_diagram(
+def generate_object_diagram(
     input_data: DiagramInput,
     scopes: Sequence[int] = DEFAULT_SCOPES,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> AsyncGenerator[str, None]:
     """Searches for an instance of the class diagram *input_data* as :func:`check_semantic_consistency`
     does; the event of the instance found carries it as an object diagram (``object_model``)."""
-    async for event in _search(input_data, scopes, timeout, with_object_diagram=True):
-        yield event
+    return _start_search(input_data, scopes, timeout, with_object_diagram=True)
+
+
+def _slots() -> threading.BoundedSemaphore:
+    """The check slots, built on first use so tests can change the cap before."""
+    global _check_slots
+    with _slots_lock:
+        if _check_slots is None:
+            _check_slots = threading.BoundedSemaphore(backend_constants.ALLOY_MAX_CONCURRENT_CHECKS)
+        return _check_slots
+
+
+def _start_search(
+    input_data: DiagramInput, scopes: Sequence[int], timeout: int, with_object_diagram: bool
+) -> AsyncGenerator[str, None]:
+    """Takes a check slot and returns the search, which releases it when it ends."""
+    if not scopes:
+        raise ValueError("The semantic check needs at least one scope")
+    slots = _slots()
+    if not slots.acquire(blocking=False):
+        logger.warning(
+            "Semantic check refused: %d checks already running", backend_constants.ALLOY_MAX_CONCURRENT_CHECKS
+        )
+        raise UpstreamError("Another semantic check is running on this server; try again in a minute", 503)
+    slot = _CheckSlot(slots)
+    stream = _search(input_data, scopes, timeout, with_object_diagram, slot)
+    # A stream discarded before it is read never runs its finally: give the slot back when it is collected
+    weakref.finalize(stream, slot.release)
+    return stream
+
+
+class _CheckSlot:
+    """A check slot taken from *slots*; release() gives it back once, however often it is called."""
+
+    def __init__(self, slots: threading.BoundedSemaphore):
+        self._slots = slots
+        # The finalizer of a discarded stream may run in another thread than the search's finally
+        self._lock = threading.Lock()
+        self._held = True
+
+    def release(self) -> None:
+        with self._lock:
+            if not self._held:
+                return
+            self._held = False
+        self._slots.release()
 
 
 async def _search(
-    input_data: DiagramInput, scopes: Sequence[int], timeout: int, with_object_diagram: bool
+    input_data: DiagramInput,
+    scopes: Sequence[int],
+    timeout: int,
+    with_object_diagram: bool,
+    slot: _CheckSlot,
 ) -> AsyncGenerator[str, None]:
-    if not scopes:
-        raise ValueError("The semantic check needs at least one scope")
-    prepared = _prepare(input_data)
-    if isinstance(prepared, str):
-        yield prepared
-        return
-    model, warnings = prepared
-
-    with tempfile.TemporaryDirectory(prefix="besser_alloy_") as temp_dir:
-        try:
-            solver = AlloySolver(model, output_dir=temp_dir)
-        except ConfigurationError:
-            logger.exception("The Alloy Analyzer is not available")
-            yield _failure("The Alloy Analyzer is not available on this server.", warnings=warnings)
+    """The search of :func:`check_semantic_consistency`; releases its *slot* when it ends, however it ends:
+    with a result, an error, or the client going away."""
+    try:
+        prepared = _prepare(input_data)
+        if isinstance(prepared, str):
+            yield prepared
             return
+        model, warnings = prepared
 
-        for scope in scopes:
+        with tempfile.TemporaryDirectory(prefix="besser_alloy_") as temp_dir:
             try:
-                bounds = await asyncio.to_thread(solver.generate_specification, scope)
-                yield _progress(f"Searching within {bounds}...")
-                analysis = asyncio.ensure_future(
-                    asyncio.to_thread(_analyze, solver, scope, timeout, with_object_diagram)
-                )
-                while True:
+                solver = AlloySolver(model, output_dir=temp_dir)
+            except ConfigurationError:
+                logger.exception("The Alloy Analyzer is not available")
+                yield _failure("The Alloy Analyzer is not available on this server.", warnings=warnings)
+                return
+
+            for scope in scopes:
+                try:
+                    bounds = await asyncio.to_thread(solver.generate_specification, scope)
+                    yield _progress(f"Searching within {bounds}...")
+                    analysis = asyncio.ensure_future(
+                        asyncio.to_thread(_analyze, solver, scope, timeout, with_object_diagram)
+                    )
                     try:
-                        result, object_model = await asyncio.wait_for(asyncio.shield(analysis), HEARTBEAT_SECONDS)
-                        break
-                    except asyncio.TimeoutError:
-                        yield _heartbeat()
-            except AlloyTranslationError as error:
-                yield _failure(
-                    "The model cannot be translated to Alloy.", errors=[str(error)], warnings=warnings
-                )
-                return
-            except Exception:
-                logger.exception("Unexpected error in the semantic check at scope %s", scope)
-                yield _failure(f"The semantic check failed unexpectedly at scope {scope}.", warnings=warnings)
-                return
+                        while True:
+                            try:
+                                result, object_model = await asyncio.wait_for(
+                                    asyncio.shield(analysis), HEARTBEAT_SECONDS
+                                )
+                                break
+                            except asyncio.TimeoutError:
+                                yield _heartbeat()
+                    finally:
+                        if not analysis.done():  # the stream was cancelled: the client went away
+                            logger.info(
+                                "Semantic check cancelled at scope %s: stopping the Alloy Analyzer", scope
+                            )
+                            solver.stop()
+                except AlloyTranslationError as error:
+                    yield _failure(
+                        "The model cannot be translated to Alloy.", errors=[str(error)], warnings=warnings
+                    )
+                    return
+                except Exception:
+                    logger.exception("Unexpected error in the semantic check at scope %s", scope)
+                    yield _failure(f"The semantic check failed unexpectedly at scope {scope}.", warnings=warnings)
+                    return
 
-            if result == AlloyResult.TIMEOUT:
-                yield _failure(f"Timed out searching within {bounds}.", warnings=warnings)
-                return
-            if result == AlloyResult.SCOPES_TOO_LARGE:
-                yield _failure(f"Too large to search within {bounds}.", warnings=warnings)
-                return
-            if result == AlloyResult.ERROR:
-                yield _failure(f"The semantic check failed unexpectedly at scope {scope}.", warnings=warnings)
-                return
-            if result == AlloyResult.SAT:
-                object_diagram = None
-                if with_object_diagram:
-                    object_diagram = _object_model_to_json(object_model, input_data.model, temp_dir)
-                yield _success(f"Instance found within {bounds}.", warnings=warnings, object_model=object_diagram)
-                return
-            if scope != scopes[-1]:
-                yield _progress(f"No instance within {bounds}.")
+                if result == AlloyResult.TIMEOUT:
+                    yield _failure(f"Timed out searching within {bounds}.", warnings=warnings)
+                    return
+                if result == AlloyResult.SCOPES_TOO_LARGE:
+                    yield _failure(f"Too large to search within {bounds}.", warnings=warnings)
+                    return
+                if result == AlloyResult.ERROR:
+                    yield _failure(f"The semantic check failed unexpectedly at scope {scope}.", warnings=warnings)
+                    return
+                if result == AlloyResult.SAT:
+                    object_diagram = None
+                    if with_object_diagram:
+                        object_diagram = _object_model_to_json(object_model, input_data.model, temp_dir)
+                    yield _success(
+                        f"Instance found within {bounds}.", warnings=warnings, object_model=object_diagram
+                    )
+                    return
+                if scope != scopes[-1]:
+                    yield _progress(f"No instance within {bounds}.")
 
-        yield _failure(f"No instance within {bounds}.", warnings=warnings)
+            yield _failure(f"No instance within {bounds}.", warnings=warnings)
+    finally:
+        slot.release()
 
 
 def _prepare(input_data: DiagramInput) -> tuple[DomainModel, list[str]] | str:

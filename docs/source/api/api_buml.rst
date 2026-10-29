@@ -13,6 +13,7 @@ B-UML Language
    BUML/metamodel/api_nn
    BUML/metamodel/api_feature
    BUML/metamodel/api_kg
+   BUML/metamodel/api_traceability
    BUML/notations/plantUML/api_plantuml
    BUML/notations/image2buml/image
    BUML/notations/kg2buml/kg

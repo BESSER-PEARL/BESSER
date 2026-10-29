@@ -77,7 +77,14 @@ turn on *Record traces for this project* on that page.
   elements and the elements' members, where a diagram shows the whole files generated
   from it, an element its lines, and both their history; and a *Coverage* matrix of
   generation runs against each diagram (its whole files) and its elements, where
-  anything changed after a run is marked *suspect* (its generated code may be stale).
+  anything changed after a run is marked *suspect* (its generated code may be stale);
+  and a *Lineage* graph of one diagram or element: what it was derived from and what
+  was derived from it, following trace links in both directions, column by column.
+  Each link shows its confidence (also as line thickness) and is coloured by its
+  evidence (a generator rule, an AI step); a link whose source changed since is
+  *suspect*, and everything further downstream *stale upstream*. Selecting a link
+  shows its evidence, the operation, actor and tool that made it, and the changes
+  that made it suspect. Older generation runs are hidden unless asked for.
 * **Stored.** In the browser, apart from the project, and exported or imported as
   ``<project>.trace.json``. Deleting the project deletes its trace.
 * **Exported with the project.** Once a trace has been recorded, the *Export

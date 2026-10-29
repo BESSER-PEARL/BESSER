@@ -4,9 +4,9 @@ Version 8.6.0
 Minor release: **GitHub integration** and **apps for any target**. A project
 is linked to one GitHub repository, and the editor and the Spec-Driven Agent
 save to it, merge with it and can start from any repository. The Spec-Driven
-Agent and the modeling assistant now build the app the user asked for (mobile,
-desktop, command line, ...), not always a web app, and the assistant replies in
-the user's language. Existing models and projects load as before.
+Agent and the modeling assistant now build the app the user asked for,
+**whatever the language** or platform (mobile, desktop, command line, ...), not
+always a web app, and the assistant replies in the user's language. Existing models and projects load as before.
 
 GitHub integration
 ------------------

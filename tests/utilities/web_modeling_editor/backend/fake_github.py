@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import subprocess
 import tempfile
 import uuid
@@ -28,6 +29,8 @@ from httpx._transports.asgi import ASGITransport
 
 API = "https://api.github.com"
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+# GitHub's rule for an account or repository name; "." and ".." are refused too.
+_NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,100}")
 
 
 @dataclass
@@ -139,7 +142,12 @@ class FakeGitHub:
                     private: bool = True, topics: Optional[list[str]] = None, can_push: bool = True,
                     default_branch: str = "main") -> FakeRepo:
         owner = owner or self.login
-        path = os.path.join(self.root, owner, f"{name}.git")
+        if not all(_NAME_RE.fullmatch(part) and part not in {".", ".."} for part in (owner, name)):
+            raise ValueError(f"invalid repository name: {owner}/{name}")
+        root = os.path.realpath(self.root)
+        path = os.path.realpath(os.path.join(root, owner, f"{name}.git"))
+        if not path.startswith(root + os.sep):
+            raise ValueError(f"invalid repository name: {owner}/{name}")
         os.makedirs(path, exist_ok=True)
         subprocess.run(["git", "init", "--bare", "-q", "-b", default_branch, path], check=True)
         repo = FakeRepo(owner, name, path, private, default_branch, list(topics or []), can_push)
@@ -281,8 +289,12 @@ class FakeGitHub:
                 return JSONResponse({"message": "Repository creation failed.",
                                      "errors": [{"message": "name already exists on this account"}]},
                                     status_code=422)
-            repo = fake.create_repo(body["name"], private=body.get("private", False),
-                                    files={"README.md": f"# {body['name']}\n"} if body.get("auto_init") else None)
+            try:
+                repo = fake.create_repo(body["name"], private=body.get("private", False),
+                                        files={"README.md": f"# {body['name']}\n"} if body.get("auto_init") else None)
+            except ValueError:
+                return JSONResponse({"message": "Repository creation failed.",
+                                     "errors": [{"message": "name is invalid"}]}, status_code=422)
             return JSONResponse(fake.repo_json(repo), status_code=201)
 
         @app.get("/repos/{owner}/{name}")
@@ -352,8 +364,8 @@ class FakeGitHub:
             repo, body = find(owner, name), await request.json()
             try:
                 sha = fake.make_tree(repo, body["tree"], body.get("base_tree"))
-            except KeyError as missing:
-                return JSONResponse({"message": f"GitRPC::BadObjectState {missing}"}, status_code=422)
+            except KeyError:
+                return JSONResponse({"message": "GitRPC::BadObjectState"}, status_code=422)
             return JSONResponse({"sha": sha}, status_code=201)
 
         @app.get("/repos/{owner}/{name}/git/trees/{sha}")

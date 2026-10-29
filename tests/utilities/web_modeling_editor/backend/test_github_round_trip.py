@@ -552,3 +552,19 @@ def test_a_shared_gist_carries_no_agent_credentials(github):
     (content,) = [f["content"] for f in gist["files"].values()]
     assert key not in content
     assert '"language": "en"' in content
+
+
+def test_the_fake_refuses_a_repo_name_that_leaves_its_root(tmp_path):
+    """CodeQL py/path-injection: a created repo's name was joined into a path unchecked."""
+    fake = FakeGitHub(root=str(tmp_path / "github"))
+
+    async def create(name):
+        transport = ASGITransport(app=fake.app)
+        async with httpx.AsyncClient(transport=transport, base_url="https://api.github.com") as client:
+            return await client.post("/user/repos", json={"name": name},
+                                     headers={"authorization": f"Bearer {fake.token}"})
+
+    for name in ("../escape", "..", "a/b"):
+        assert asyncio.run(create(name)).status_code == 422
+    assert not (tmp_path / "escape.git").exists()
+    assert asyncio.run(create("shop")).status_code == 201

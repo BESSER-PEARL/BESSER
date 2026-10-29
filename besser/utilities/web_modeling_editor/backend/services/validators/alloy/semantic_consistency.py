@@ -30,6 +30,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     object_buml_to_json,
     process_class_diagram,
 )
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConfigurationError
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy.alloy_analyzer_executor import AlloyResult
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy.alloy_solver import AlloySolver
 from besser.utilities.web_modeling_editor.backend.services.validators.ocl_checker import check_ocl_constraint
@@ -83,7 +84,7 @@ async def _search(
     with tempfile.TemporaryDirectory(prefix="besser_alloy_") as temp_dir:
         try:
             solver = AlloySolver(model, output_dir=temp_dir)
-        except RuntimeError:
+        except ConfigurationError:
             logger.exception("The Alloy Analyzer is not available")
             yield _failure("The Alloy Analyzer is not available on this server.", warnings=warnings)
             return

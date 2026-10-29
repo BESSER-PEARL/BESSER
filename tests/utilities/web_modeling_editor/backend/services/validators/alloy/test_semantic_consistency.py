@@ -99,6 +99,13 @@ def test_invalid_ocl_is_not_checked(invalid_ocl_diagram):
     assert len(events[0]["errors"]) >= 1
 
 
+def test_analyzer_not_available(monkeypatch, consistent_diagram):
+    monkeypatch.delenv("JAVA_HOME", raising=False)
+    events = _events(check_semantic_consistency(consistent_diagram))
+    assert events[-1]["isValid"] is False
+    assert events[-1]["message"] == "The Alloy Analyzer is not available on this server."
+
+
 # ---------------------------------------------------------------------------
 # Searches (Alloy needed)
 # ---------------------------------------------------------------------------

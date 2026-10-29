@@ -4,6 +4,8 @@ import subprocess
 from enum import Enum
 from pathlib import Path
 
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConfigurationError
+
 # Seconds the Alloy Analyzer may run before an analysis times out.
 _DEFAULT_TIMEOUT_SECONDS = 30
 
@@ -89,30 +91,36 @@ class AlloyAnalyzerExecutor:
     def _resolve_alloy_jar_path(self) -> None:
         """Locates the ``alloy.jar`` file used to run the Alloy Analyzer,
         using the ``BESSER_ALLOY_JAR`` environment variable.
+
+        Raises:
+            ConfigurationError: when ``BESSER_ALLOY_JAR`` is not set or points to a missing file.
         """
         env_path = os.getenv("BESSER_ALLOY_JAR")
         if not env_path:
-            raise RuntimeError("BESSER_ALLOY_JAR is not set.")
+            raise ConfigurationError("BESSER_ALLOY_JAR is not set.")
         candidate = Path(env_path).expanduser().resolve()
         if candidate.is_file():
             self.alloy_jar_path = str(candidate)
 
         if not self.alloy_jar_path:
-            raise RuntimeError(f"BESSER_ALLOY_JAR points to a missing file: {env_path}")
+            raise ConfigurationError(f"BESSER_ALLOY_JAR points to a missing file: {env_path}")
 
     def _resolve_java_path(self) -> None:
         """Locates the ``java`` executable strictly via JAVA_HOME.
+
+        Raises:
+            ConfigurationError: when ``JAVA_HOME`` is not set or has no ``java`` executable.
         """
         java_home = os.getenv("JAVA_HOME")
         if not java_home:
-            raise RuntimeError("JAVA_HOME is not set.")
+            raise ConfigurationError("JAVA_HOME is not set.")
         java_file = "java.exe" if os.name == "nt" else "java"
         candidate = Path(java_home).expanduser() / "bin" / java_file
         if candidate.is_file() and os.access(candidate, os.X_OK):
             self.java_path = str(candidate.resolve())
 
         if not self.java_path:
-            raise RuntimeError(f"JAVA_HOME points to a directory without a java executable: {java_home}")
+            raise ConfigurationError(f"JAVA_HOME points to a directory without a java executable: {java_home}")
 
     def _get_instance_xml_files(self, output_dir: str) -> list[str]:
         """Returns a list of XML filenames produced by the Alloy Analyzer, which

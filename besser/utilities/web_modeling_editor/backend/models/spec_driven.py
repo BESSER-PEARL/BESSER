@@ -344,6 +344,8 @@ class PushSmartToGitHubResponse(BaseModel):
     status: str = "pushed"
     conflict_branch: Optional[str] = None
     pull_request_url: Optional[str] = None
+    # The branch the pull request merges (``status`` "pull_request").
+    pull_request_branch: Optional[str] = None
     # Set when the push merged in other commits: a run holding the merged
     # repo, to use as the next modify run's ``base_run_id`` so the agent
     # edits the merged code rather than its own pre-merge copy.

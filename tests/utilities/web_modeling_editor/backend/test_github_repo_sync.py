@@ -357,6 +357,7 @@ def test_a_pull_request_push_lands_on_its_own_branch(monkeypatch, tmp_path):
     assert fake.pull_request == {"head": fake.push["branch"], "base": "main"}
     assert r.json()["status"] == "pull_request"
     assert r.json()["pull_request_url"] == "https://github.com/me/app/pull/3"
+    assert r.json()["pull_request_branch"] == fake.push["branch"]
 
 
 # ---------------------------------------------------------------------

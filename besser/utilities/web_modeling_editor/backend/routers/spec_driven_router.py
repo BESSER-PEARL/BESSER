@@ -1139,6 +1139,7 @@ async def push_spec_driven_to_github(
                 status=status,
                 conflict_branch=push_results.get("conflict_branch"),
                 pull_request_url=pull_request_url,
+                pull_request_branch=push_branch if pull_request_url else None,
                 base_run_id=base_run_id,
                 warnings=deploy_warnings,
                 project_export=run_export,

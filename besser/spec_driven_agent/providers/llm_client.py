@@ -7,8 +7,9 @@ Features:
 - Anthropic Claude API with tool-use support and prompt caching
 - OpenAI-compatible API (GPT, Mistral, etc.) with automatic tool format translation
 - **Cost tracking** — tracks input/output/cache tokens and estimates USD cost
-- **Retry with backoff** — retries on 429/5xx/timeouts (up to 5 attempts; honors
-  the server ``Retry-After`` header; a longer backoff ceiling for rate limits)
+- **Retry with backoff** — retries on 429/5xx/timeouts (up to 5 attempts, or
+  the client's ``max_retries``; honors the server ``Retry-After`` header; a
+  longer backoff ceiling for rate limits)
 - Custom base URL support for enterprise gateways
 - Streaming support for real-time text output
 - **Factory function** — ``create_llm_client()`` to instantiate the right provider
@@ -216,6 +217,16 @@ _ROUTE_PRICING: dict[str, dict[str, dict[str, float]]] = {
         "qwen/qwen3.8-max-0902": {"input": 2.0, "output": 6.0, "cache_write": 0.0, "cache_read": 0.25},
         "meta/muse-spark-1.3": {"input": 1.25, "output": 4.25, "cache_write": 0.0, "cache_read": 0.15},
         "poolside/laguna-s-2.1-free": {"input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0},
+    },
+    # LIST's PIA gateway, its recommended models (rates per 1M, 2026-10-26).
+    # PIA publishes no cache rates, so cached tokens bill at the input rate.
+    "gateway.pia.private.list.lu": {
+        "claude-haiku-4-5-20251001": {"input": 1.1, "output": 5.5, "cache_write": 1.1, "cache_read": 1.1},
+        "gpt-6-luna": {"input": 0.1, "output": 0.5, "cache_write": 0.1, "cache_read": 0.1},
+        "claude-sonnet-5-5": {"input": 2.2, "output": 11.0, "cache_write": 2.2, "cache_read": 2.2},
+        "gpt-6.1-sol": {"input": 2.0, "output": 10.0, "cache_write": 2.0, "cache_read": 2.0},
+        "claude-opus-5-5": {"input": 4.4, "output": 22.0, "cache_write": 4.4, "cache_read": 4.4},
+        "gpt-6-astra": {"input": 10.0, "output": 50.0, "cache_write": 10.0, "cache_read": 10.0},
     },
 }
 
@@ -655,6 +666,21 @@ _MAX_RETRIES = 4  # total 5 attempts, so a brief provider rate-limit
                   # doesn't kill a multi-turn customization run
 _INITIAL_BACKOFF = 0.5  # seconds
 _MAX_BACKOFF = 5.0  # seconds — cap for ordinary (5xx/timeout) retries
+
+
+def _resolve_max_retries(max_retries: int | None) -> int:
+    """A client's retry budget: ``_MAX_RETRIES`` unless the caller sets one.
+
+    ``0`` makes every call a single attempt, for a caller that runs under a
+    deadline of its own and must not have a retry (with its backoff) outlive it.
+    """
+    if max_retries is None:
+        return _MAX_RETRIES
+    if max_retries < 0:
+        raise ValueError("max_retries must not be negative")
+    return max_retries
+
+
 # Rate limits (429) need a longer ceiling: some providers (notably
 # Mistral) throttle hard and only recover after several seconds. A
 # sub-second backoff just burns the retry budget and aborts the run.
@@ -918,6 +944,7 @@ class ClaudeLLMClient(LLMProvider):
         max_tokens: int | None = None,
         base_url: str | None = None,
         timeout: float | None = None,
+        max_retries: int | None = None,
     ):
         try:
             import anthropic
@@ -938,6 +965,7 @@ class ClaudeLLMClient(LLMProvider):
             client_kwargs["base_url"] = resolved_base
 
         self._client = anthropic.Anthropic(**client_kwargs)
+        self._max_retries = _resolve_max_retries(max_retries)
         self._model = model or self.DEFAULT_MODEL
         self._max_tokens = max_tokens or max_output_tokens(self._model)
         self._usage = UsageTracker(self._model, billed=True)
@@ -1053,16 +1081,18 @@ class ClaudeLLMClient(LLMProvider):
         last_error = None
         effective_model = model_override or self._model
 
-        for attempt in range(_MAX_RETRIES + 1):
+        for attempt in range(self._max_retries + 1):
             try:
                 request_kwargs: dict[str, Any] = {
                     "model": effective_model,
                     "max_tokens": self._request_max_tokens(model_override),
                     "system": _with_cache_control(system),
                     "messages": _with_message_cache(messages),
-                    "tools": _with_tool_cache(request_tools),
                     **extra,
                 }
+                # A text-only call (no tools) must not send an empty list.
+                if request_tools:
+                    request_kwargs["tools"] = _with_tool_cache(request_tools)
                 response = self._client.messages.create(**request_kwargs)
                 # Track usage (billed at the effective model's pricing)
                 self.usage.record(response.usage, model=model_override)
@@ -1072,12 +1102,12 @@ class ClaudeLLMClient(LLMProvider):
                 }, response)
             except Exception as e:
                 last_error = e
-                if (attempt < _MAX_RETRIES and _is_retryable(e)
+                if (attempt < self._max_retries and _is_retryable(e)
                         and not _stop_retrying_transport(e, attempt, False)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "API call failed (attempt %d/%d), retrying in %.1fs: %s",
-                        attempt + 1, _MAX_RETRIES + 1, backoff, e,
+                        attempt + 1, self._max_retries + 1, backoff, e,
                     )
                     time.sleep(backoff)
                     continue
@@ -1085,7 +1115,7 @@ class ClaudeLLMClient(LLMProvider):
                     raise InvalidApiKeyError(f"Claude API rejected the key: {e}") from None
                 raise UpstreamLLMError(f"Claude API call failed: {e}") from None
 
-        raise UpstreamLLMError(f"Claude API call failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
+        raise UpstreamLLMError(f"Claude API call failed after {self._max_retries + 1} attempts: {last_error}") from None
 
     def chat_stream(
         self,
@@ -1096,7 +1126,7 @@ class ClaudeLLMClient(LLMProvider):
         """Stream a message with tools, yielding events."""
         last_error = None
 
-        for attempt in range(_MAX_RETRIES + 1):
+        for attempt in range(self._max_retries + 1):
             try:
                 with self._client.messages.stream(
                     model=self._model,
@@ -1119,7 +1149,7 @@ class ClaudeLLMClient(LLMProvider):
 
             except Exception as e:
                 last_error = e
-                if (attempt < _MAX_RETRIES and _is_retryable(e)
+                if (attempt < self._max_retries and _is_retryable(e)
                         and not _stop_retrying_transport(e, attempt, False)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning("Stream failed (attempt %d), retrying: %s", attempt + 1, e)
@@ -1129,7 +1159,7 @@ class ClaudeLLMClient(LLMProvider):
                     raise InvalidApiKeyError(f"Claude API rejected the key: {e}") from None
                 raise UpstreamLLMError(f"Claude API streaming failed: {e}") from None
 
-        raise UpstreamLLMError(f"Streaming failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
+        raise UpstreamLLMError(f"Streaming failed after {self._max_retries + 1} attempts: {last_error}") from None
 
 
 # ======================================================================
@@ -1623,6 +1653,7 @@ class OpenAIProvider(LLMProvider):
         default_headers: dict[str, str] | None = None,
         fallback: tuple[str, str, str] | None = None,
         free_route: bool = False,
+        max_retries: int | None = None,
     ):
         try:
             from openai import OpenAI
@@ -1645,6 +1676,7 @@ class OpenAIProvider(LLMProvider):
             client_kwargs["default_headers"] = default_headers
 
         self._client = OpenAI(**client_kwargs)
+        self._max_retries = _resolve_max_retries(max_retries)
         # Kept because reasoning_effort support is endpoint-specific, not just
         # model-specific — see _needs_reasoning_none_for_tools.
         self._base_url = resolved_base
@@ -1765,7 +1797,7 @@ class OpenAIProvider(LLMProvider):
         openai_tools = _anthropic_tools_to_openai(tools) if tools else None
         effective_model = model_override or self._model
 
-        for attempt in range(_MAX_RETRIES + 1):
+        for attempt in range(self._max_retries + 1):
             try:
                 # Newer models (GPT-5+, o3+) use max_completion_tokens
                 # instead of max_tokens
@@ -1823,12 +1855,12 @@ class OpenAIProvider(LLMProvider):
                         "OpenAI API call hit a daily quota limit — not retrying: %s",
                         str(e)[:200],
                     )
-                elif (attempt < _MAX_RETRIES and _is_retryable(e)
+                elif (attempt < self._max_retries and _is_retryable(e)
                       and not _stop_retrying_transport(e, attempt, self._has_fallback())):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "OpenAI API call failed (attempt %d/%d), retrying in %.1fs: %s",
-                        attempt + 1, _MAX_RETRIES + 1, backoff, e,
+                        attempt + 1, self._max_retries + 1, backoff, e,
                     )
                     time.sleep(backoff)
                     continue
@@ -1844,7 +1876,7 @@ class OpenAIProvider(LLMProvider):
                     )
                 raise UpstreamLLMError(f"OpenAI API call failed: {e}") from None
 
-        raise UpstreamLLMError(f"OpenAI API call failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
+        raise UpstreamLLMError(f"OpenAI API call failed after {self._max_retries + 1} attempts: {last_error}") from None
 
     def chat_stream(
         self,
@@ -1857,7 +1889,7 @@ class OpenAIProvider(LLMProvider):
         api_messages = _openai_messages_to_api(system, messages)
         openai_tools = _anthropic_tools_to_openai(tools) if tools else None
 
-        for attempt in range(_MAX_RETRIES + 1):
+        for attempt in range(self._max_retries + 1):
             try:
                 tok_key = _openai_max_tokens_key(self._model)
                 kwargs: dict[str, Any] = {
@@ -1985,7 +2017,7 @@ class OpenAIProvider(LLMProvider):
                         "OpenAI stream hit a daily quota limit — not retrying: %s",
                         str(e)[:200],
                     )
-                elif (attempt < _MAX_RETRIES and _is_retryable(e)
+                elif (attempt < self._max_retries and _is_retryable(e)
                       and not _stop_retrying_transport(e, attempt, self._has_fallback())):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning("OpenAI stream failed (attempt %d), retrying: %s", attempt + 1, e)
@@ -2004,7 +2036,7 @@ class OpenAIProvider(LLMProvider):
                     return
                 raise UpstreamLLMError(f"OpenAI API streaming failed: {e}") from None
 
-        raise UpstreamLLMError(f"OpenAI streaming failed after {_MAX_RETRIES + 1} attempts: {last_error}") from None
+        raise UpstreamLLMError(f"OpenAI streaming failed after {self._max_retries + 1} attempts: {last_error}") from None
 
 
 # ======================================================================
@@ -2054,6 +2086,7 @@ class MistralProvider(OpenAIProvider):
         max_tokens: int | None = None,
         base_url: str | None = None,
         timeout: float | None = None,
+        max_retries: int | None = None,
     ):
         # Resolve the base URL here so the inherited OpenAI client is
         # pointed at Mistral. Precedence: explicit arg → MISTRAL_BASE_URL
@@ -2070,6 +2103,7 @@ class MistralProvider(OpenAIProvider):
             max_tokens=max_tokens,
             base_url=resolved_base,
             timeout=timeout,
+            max_retries=max_retries,
         )
 
     @property
@@ -2136,6 +2170,7 @@ class NebiusProvider(OpenAIProvider):
         max_tokens: int | None = None,
         base_url: str | None = None,
         timeout: float | None = None,
+        max_retries: int | None = None,
     ):
         # Precedence: explicit arg → NEBIUS_BASE_URL env → the Nebius
         # default. We never fall back to OPENAI_BASE_URL for a Nebius
@@ -2151,6 +2186,7 @@ class NebiusProvider(OpenAIProvider):
             max_tokens=max_tokens,
             base_url=resolved_base,
             timeout=timeout,
+            max_retries=max_retries,
         )
 
     @property

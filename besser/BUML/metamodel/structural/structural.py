@@ -1,4 +1,5 @@
 from abc import ABC
+from collections import Counter as _Counter  # aliased: `from .structural import *` would re-export it
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Union, List, TYPE_CHECKING, Literal
@@ -1537,31 +1538,55 @@ class Class(Type):
         """Association: Add an association to the set of class associations."""
         self.__associations.add(association)
 
+    def _duplicate_end_names(self, extra_ends=()) -> set[str]:
+        """set[str]: Get the names of more than one association end this class reaches.
+
+        The ends counted are ``all_association_ends()`` -- the class's own and
+        every ancestor's -- plus ``extra_ends``. They are counted by identity: an
+        end reached along two inheritance paths (a diamond) is one end, while two
+        distinct ends of the same name are a duplicate.
+
+        This is the one statement of the end-name rule; construction
+        (``_validate_unique_end_names``) and ``DomainModel.validate()`` both
+        read it.
+        """
+        names = _Counter(end.name for end in self.all_association_ends().union(extra_ends))
+        return {name for name, count in names.items() if count > 1}
+
     def _validate_unique_end_names(self, ends):
-        """Ensure that no association end has a duplicate name in this class or its specializations."""
-        # Check for duplicate end names within the provided ends
-        new_names = [e.name for e in ends]
-        if len(new_names) != len(set(new_names)):
-            raise ValueError(
-                f"The association introduces duplicate end names: {', '.join(n for n in new_names if new_names.count(n) > 1)}"
-            )
+        """Ensure that reaching ``ends`` gives no class two association ends of the same name.
 
-        # Check against current class's ends
-        existing_end_names = {e.name for e in self.all_association_ends()}
-        for end in ends:
-            if end.name in existing_end_names:
+        ``ends`` become reachable from this class and, through inheritance, from
+        every class that specialises it, so each of those is checked against its
+        whole inherited set, including what a specialization inherits from its
+        *other* parents. Only clashes involving a name in ``ends`` are raised;
+        a pre-existing one is reported by ``DomainModel.validate()``.
+
+        Every class that reaches ``ends`` reaches the ends declared on it and
+        its ancestors, so the usual case -- no clash -- is settled with one walk
+        up from all of them at once (any other end of a new name found there is
+        reached by some such class, alongside the new one). Only a clash takes
+        the per-class look that names the class.
+
+        Raises:
+            ValueError: if this class or one of its specializations would reach
+                two distinct association ends with the same name.
+        """
+        ends = set(ends)
+        new_names = {end.name for end in ends}
+        reaching = {self} | self.all_specializations()
+        declaring = reaching | Class._closure(reaching, Class.parents)
+        if len(new_names) == len(ends) and not any(
+            end.name in new_names and end not in ends
+            for cls in declaring for end in cls.association_ends()
+        ):
+            return
+        for cls in [self, *sorted(reaching - {self}, key=lambda c: c.name)]:
+            clashes = sorted(cls._duplicate_end_names(ends) & new_names)
+            if clashes:
                 raise ValueError(
-                    f"The class '{self.name}' cannot have two association ends with the same name: '{end.name}'"
+                    f"The class '{cls.name}' cannot have two association ends with the same name: '{clashes[0]}'"
                 )
-
-        # Check against children/specialized classes' ends
-        for child in self.all_specializations():
-            child_end_names = {e.name for e in child.association_ends()}
-            for end in ends:
-                if end.name in child_end_names:
-                    raise ValueError(
-                        f"The class '{child.name}' cannot have two association ends with the same name: '{end.name}'"
-                    )
 
     def _delete_association(self, association):
         """Association: Remove an association to the set of class associations."""
@@ -1617,12 +1642,12 @@ class Class(Type):
         return parents
 
     def all_parents(self) -> set:
-        """set[Class]: Get the set of direct and indirect parents of the class."""
-        all_parents = set()
-        all_parents.update(self.parents())
-        for parent in self.parents():
-            all_parents.update(parent.all_parents())
-        return all_parents
+        """set[Class]: Get the set of direct and indirect parents of the class.
+
+        Never contains the class itself, even on an inheritance cycle (which
+        ``DomainModel.validate()`` reports). See :meth:`_closure`.
+        """
+        return Class._closure([self], Class.parents) - {self}
 
     def specializations(self) -> set:
         """set[Class]: Get the set of direct specializations (children) of the class."""
@@ -1633,12 +1658,32 @@ class Class(Type):
         return specializations
 
     def all_specializations(self) -> set:
-        """set[Class]: Get the set of direct and indirect specializations (children) of the class."""
-        all_spec = set()
-        all_spec.update(self.specializations())
-        for specialization in self.specializations():
-            all_spec.update(specialization.all_specializations())
-        return all_spec
+        """set[Class]: Get the set of direct and indirect specializations (children) of the class.
+
+        Never contains the class itself, even on an inheritance cycle. See
+        :meth:`_closure`.
+        """
+        return Class._closure([self], Class.specializations) - {self}
+
+    @staticmethod
+    def _closure(classes, step) -> set:
+        """set[Class]: Get every class reached from ``classes`` by applying ``step`` one or more times.
+
+        Iterative with a visited set: an inheritance chain deeper than Python's
+        recursion limit is walked like any other, a class reached along several
+        paths (a diamond, or from several of ``classes``) is expanded once, and
+        a cycle terminates. A class of ``classes`` is in the result only if
+        ``step`` leads back to it.
+        """
+        found = set()
+        pending = [nxt for cls in classes for nxt in step(cls)]
+        while pending:
+            cls = pending.pop()
+            if cls in found:
+                continue
+            found.add(cls)
+            pending.extend(step(cls))
+        return found
 
     def id_attribute(self) -> Property:
         """Property: Get the id attribute of the class."""
@@ -2490,19 +2535,29 @@ class DomainModel(Model):
         for cl in classes:
             for generalization in cl.generalizations:
                 child_map[generalization.general].add(cl)
-        # Helper function for DFS
-        def dfs(cl, visited, sorted_list):
-            visited.add(cl)
-            for child in sorted(child_map[cl], key=lambda c: c.name):
-                if child not in visited:
-                    dfs(child, visited, sorted_list)
-            sorted_list.append(cl)
-        # Perform DFS from each node that hasn't been visited yet
+        def children(cl):
+            return iter(sorted(child_map[cl], key=lambda c: c.name))
+
+        # Reverse post-order of a depth-first walk from each unvisited class.
+        # Iterative, with an explicit stack: a hierarchy can be deeper than
+        # Python's recursion limit.
         visited = set()
         sorted_list = []
         for cl in classes:
-            if cl not in visited:
-                dfs(cl, visited, sorted_list)
+            if cl in visited:
+                continue
+            visited.add(cl)
+            stack = [(cl, children(cl))]
+            while stack:
+                node, pending = stack[-1]
+                for child in pending:
+                    if child not in visited:
+                        visited.add(child)
+                        stack.append((child, children(child)))
+                        break
+                else:                       # every child of `node` is done
+                    stack.pop()
+                    sorted_list.append(node)
         sorted_list.reverse()
         return sorted_list
 
@@ -2704,28 +2759,38 @@ class DomainModel(Model):
                     _check(post, f"Postcondition on {cls.name}::{method.name}")
 
     def _validate_circular_inheritance(self, errors: list[str]):
-        """Detect circular inheritance in the class hierarchy."""
-        def has_cycle(cls: Class, visited: set, rec_stack: set) -> bool:
-            visited.add(cls)
-            rec_stack.add(cls)
+        """Detect circular inheritance in the class hierarchy.
 
-            for parent in cls.parents():
-                if parent not in visited:
-                    if has_cycle(parent, visited, rec_stack):
+        A depth-first walk up the parents of each class not yet visited; a
+        parent already on the current path closes a cycle. Iterative, with an
+        explicit stack, so a chain deeper than Python's recursion limit is
+        checked like any other.
+        """
+        def has_cycle(start: Class) -> bool:
+            visited.add(start)
+            on_path = {start}
+            stack = [(start, iter(start.parents()))]
+            while stack:
+                cls, parents = stack[-1]
+                for parent in parents:
+                    if parent in on_path:
                         return True
-                elif parent in rec_stack:
-                    return True
-
-            rec_stack.remove(cls)
+                    if parent not in visited:
+                        visited.add(parent)
+                        on_path.add(parent)
+                        stack.append((parent, iter(parent.parents())))
+                        break
+                else:                       # every parent of `cls` is done
+                    stack.pop()
+                    on_path.discard(cls)
             return False
 
         visited = set()
-        for cls in self.get_classes():
-            if cls not in visited:
-                if has_cycle(cls, visited, set()):
-                    errors.append(
-                        f"Circular inheritance detected involving class '{cls.name}'."
-                    )
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            if cls not in visited and has_cycle(cls):
+                errors.append(
+                    f"Circular inheritance detected involving class '{cls.name}'."
+                )
 
     def _validate_attribute_shadowing(self, errors: list[str]):
         """Validate that subclass attributes do not shadow inherited attributes."""
@@ -2762,9 +2827,8 @@ class DomainModel(Model):
         Construction checks this, but renaming an end (or a class, which
         propagates to role names) afterwards does not.
         """
-        for cls in self.get_classes():
-            names = [end.name for end in cls.all_association_ends()]
-            for name in sorted({n for n in names if names.count(n) > 1}):
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for name in sorted(cls._duplicate_end_names()):
                 errors.append(
                     f"Class '{cls.name}' has more than one association end named '{name}'."
                 )

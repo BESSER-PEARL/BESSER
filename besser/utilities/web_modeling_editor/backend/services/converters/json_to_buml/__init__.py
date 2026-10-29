@@ -14,6 +14,7 @@ from .bpmn_diagram_processor import process_bpmn_diagram
 from .gui_diagram_processor import process_gui_diagram
 from .quantum_diagram_processor import process_quantum_diagram
 from .nn_diagram_processor import process_nn_diagram
+from .kg_diagram_processor import process_kg_diagram
 from .component_diagram_processor import process_component_diagram
 from .deployment_diagram_processor import process_deployment_diagram
 from .method_nn_linker import link_method_neural_networks
@@ -34,6 +35,7 @@ __all__ = [
     'process_nn_diagram',
     'link_method_neural_networks',
     'process_bpmn_diagram',
+    'process_kg_diagram',
     'process_component_diagram',
     'process_deployment_diagram'
 ]

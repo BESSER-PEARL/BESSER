@@ -335,6 +335,13 @@ broken artifact as a green success is worse than spending a few more turns.
    would report "0 blockers" having verified nothing. These are ``warning``
    findings on purpose: not looking is not evidence of a defect.
 
+   The same finding names every compiled language that nothing here compiles,
+   for example ``validation: the Dart compiler did not run (the build server has
+   no Dart toolchain; 12 file(s) were not compiled)``: Dart, C#, Swift, Java,
+   Go, C/C++, Objective-C, GDScript and Scala always, and Rust and Kotlin when
+   toolchain validation is off. An Android Kotlin module is never compiled with
+   bare ``kotlinc``, which has no Android SDK; it reports the same way.
+
    For the same reason the acceptance matrix's ``route`` cell is *unmeasured*,
    not *missing*, on stacks its route parser does not read. That parser
    understands FastAPI decorators in ``.py`` files, so an Express, Django,

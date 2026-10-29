@@ -27,6 +27,7 @@ from besser.spec_driven_agent.planning.model_rules import (
 )
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
+from besser.spec_driven_agent.planning.target import Target
 from besser.spec_driven_agent.providers.llm_client import MODIFY_MAX_TOKENS
 from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_ENTER,
@@ -349,6 +350,9 @@ class ModifyRunMixin:
         if not isinstance(recipe, dict):
             return
         self._seed_generator_used = recipe.get("generator_used")
+        # The app keeps the target it was built for; "add a settings screen"
+        # must not re-decide it.
+        self.target = Target.from_payload(recipe.get("target"))
         converted = (recipe.get("model") or {}).get("converted_rules")
         if isinstance(converted, list):
             self._seed_converted_rules = set(converted)

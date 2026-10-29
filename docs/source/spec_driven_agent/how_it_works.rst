@@ -16,9 +16,21 @@ The three phases
    offered, and an explicitly approved target from the preview screen is
    honoured as-is — which also saves one paid LLM call.
 
+   The same selection call decides what the run builds, its *target*: a
+   ``web_app`` (anything used in a browser, the default for a bare "app"), a
+   ``backend`` (API-only or headless), or ``other`` (a native mobile or desktop
+   app, a CLI, a game, an extension, a library, ...). A generator is picked
+   only when its output *is* that target, so an ``other`` target is written
+   from scratch in the stack the user named, or the standard one for that
+   target. Every web-specific rule below applies to a ``web_app`` target only.
+   The target is recorded in the trace, the checkpoint and
+   ``.besser_recipe.json``, so a resume or a later modify run of the same app
+   keeps it.
+
    Two smaller steps bracket it. When no deterministic generator fits the
    target stack (Next.js, Rust, Kotlin/Spring), a *stack-metadata* step writes
-   the minimal build-config files that stack needs instead. Afterwards, the
+   the minimal build-config files that stack needs instead. Those templates are
+   server projects, so this step does not run for an ``other`` target. Afterwards, the
    Phase-1 output is validated so any pre-existing issue is handed to Phase 2
    as context rather than discovered later.
 
@@ -31,8 +43,8 @@ The three phases
    between the scaffold and the request and produces the task list; when it
    judges the scaffold already sufficient, Phase 2 is skipped entirely.
 
-   A request for something users interact with (an app, web app, UI,
-   website, dashboard or portal) gets a frontend even without a GUI model:
+   A ``web_app`` target (an app, web app, UI, website, dashboard or portal
+   with no other platform named) gets a frontend even without a GUI model:
    the FastAPI scaffold, plus a React frontend the LLM writes in Phase 2. An
    explicitly headless request (API or backend only, a REST API, no UI) stays
    backend-only, and in a modify run a bare "app" names the existing project

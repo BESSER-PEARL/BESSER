@@ -1,5 +1,10 @@
 import asyncio
+import gc
 import json
+import subprocess
+import sys
+import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -107,6 +112,37 @@ def test_analyzer_not_available(monkeypatch, consistent_diagram):
 
 
 # ---------------------------------------------------------------------------
+# Concurrent checks (no Alloy needed)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("path", ["/besser_api/semantic-consistency-check", "/besser_api/generate-object-diagram"])
+def test_endpoint_is_busy_while_a_check_runs(monkeypatch, path, state_machine_diagram):
+    slots = threading.BoundedSemaphore(1)
+    slots.acquire()  # the check running
+    monkeypatch.setattr(semantic_consistency, "_check_slots", slots)
+    client = TestClient(app)
+    response = client.post(path, json=state_machine_diagram.model_dump(mode="json"))
+    assert response.status_code == 503
+
+
+def test_slot_is_released_after_a_check(monkeypatch, state_machine_diagram):
+    monkeypatch.setattr(semantic_consistency, "_check_slots", threading.BoundedSemaphore(1))
+    first = _events(check_semantic_consistency(state_machine_diagram))
+    second = _events(check_semantic_consistency(state_machine_diagram))
+    assert first[-1]["done"] is True
+    assert second[-1]["done"] is True
+
+
+def test_slot_is_released_when_the_stream_never_starts(monkeypatch, state_machine_diagram):
+    monkeypatch.setattr(semantic_consistency, "_check_slots", threading.BoundedSemaphore(1))
+    stream = check_semantic_consistency(state_machine_diagram)
+    del stream  # the client went away before the stream was read
+    gc.collect()
+    events = _events(check_semantic_consistency(state_machine_diagram))
+    assert events[-1]["done"] is True
+
+
+# ---------------------------------------------------------------------------
 # Searches (Alloy needed)
 # ---------------------------------------------------------------------------
 
@@ -182,6 +218,34 @@ def test_untranslatable_diagram(untranslatable_diagram):
     assert events[-1]["isValid"] is False
     assert events[-1]["message"] == "The model cannot be translated to Alloy."
     assert "Reals" in events[-1]["errors"][0]
+
+
+@needs_alloy
+def test_cancelling_the_stream_stops_the_analyzer(monkeypatch, consistent_diagram):
+    # The Alloy Analyzer is replaced by a process that sleeps longer than the analysis timeout
+    started = []
+    popen = subprocess.Popen
+
+    def sleeping_analyzer(args, **kwargs):
+        process = popen([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", sleeping_analyzer)
+    monkeypatch.setattr(semantic_consistency, "HEARTBEAT_SECONDS", 0.01)
+
+    async def cancel_at_first_heartbeat():
+        stream = check_semantic_consistency(consistent_diagram, scopes=(5,))
+        async for line in stream:
+            if line.startswith(":"):
+                break
+        await stream.aclose()  # the client went away
+        deadline = time.monotonic() + 5
+        while started[0].poll() is None and time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+        return started[0].poll()
+
+    assert asyncio.run(cancel_at_first_heartbeat()) is not None
 
 
 # ---------------------------------------------------------------------------

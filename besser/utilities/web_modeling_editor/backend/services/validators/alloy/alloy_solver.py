@@ -43,6 +43,11 @@ class AlloySolver:
         self.specification: AlloySpecification | None = None
         self._specification_key: tuple[int, int] | None = None
 
+    def stop(self) -> None:
+        """Stops the running analysis, if any, and any started afterwards: their result is ERROR.
+        Safe to call from another thread than the one analyzing."""
+        self.executor.stop()
+
     def get_scopes(self) -> AlloyBounds | None:
         """Returns what the specification last generated (by :meth:`generate_specification` or an
         analysis) searches, ``None`` before any."""

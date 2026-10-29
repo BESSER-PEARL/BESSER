@@ -231,6 +231,16 @@ class BackendSettings(BaseSettings):
         False, validation_alias="BESSER_SDMX_ALLOW_CUSTOM_URL",
         description="Accept an SDMX API that is not one of the presets.")
 
+    # -- Semantic check (the Alloy Analyzer) ----------------------------------
+    # Behind /semantic-consistency-check and /generate-object-diagram.
+    alloy_max_concurrent_checks: _PositiveInt = Field(
+        1, validation_alias="BESSER_ALLOY_MAX_CONCURRENT_CHECKS",
+        description="Semantic checks running at once, each in its own JVM; more are refused with 503.")
+    alloy_max_heap_mb: _PositiveInt = Field(
+        1024, validation_alias="BESSER_ALLOY_MAX_HEAP_MB",
+        description="Maximum heap of each Alloy Analyzer JVM (-Xmx), in MB, so that a large search "
+                    "cannot exhaust the host's memory.")
+
     # -- Agent simulation ----------------------------------------------------
     # The rate limiter is per process: the backend runs one uvicorn worker.
     agent_simulator_url: Annotated[str, BeforeValidator(_simulator_url)] = Field(

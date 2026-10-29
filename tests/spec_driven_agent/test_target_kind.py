@@ -13,6 +13,8 @@ frontend: the user got a web app. The Phase 1 selector now decides the target
 import json
 import os
 
+import pytest
+
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
@@ -21,7 +23,7 @@ from besser.spec_driven_agent.agent.tools import (
     GENERATOR_TOOLS, get_available_generator_names,
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.planning.target import Target
+from besser.spec_driven_agent.planning.target import Target, named_target
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.state.checkpoint import (
     CHECKPOINT_SCHEMA_VERSION, Checkpoint, load_checkpoint, save_checkpoint,
@@ -42,6 +44,8 @@ NATIVE = {"target_kind": "other", "target_description": "native Android/iOS app"
           "has_user_interface": True}
 WEB = {"target_kind": "web_app", "target_description": "todo web app",
        "has_user_interface": True}
+API = {"target_kind": "backend", "target_description": "REST API",
+       "has_user_interface": False}
 
 
 class _Client:
@@ -102,6 +106,31 @@ def test_keywords_never_overrule_a_decided_none(tmp_path):
     # "REST API" is a FastAPI keyword; before, it turned the NONE back into FastAPI.
     orch = _orch(tmp_path, MOBILE)
     assert orch._select_generator(MOBILE) is None
+
+
+@pytest.mark.parametrize("answer, instructions", [
+    (WEB, "Create a web app for a library with a REST API backend"),
+    (API, "Build a FastAPI backend for a library"),
+])
+def test_a_web_or_backend_none_keeps_the_keyword_fallback(tmp_path, answer, instructions):
+    # Only an ``other`` NONE stands; a web or backend one was a from-scratch build.
+    orch = _orch(tmp_path, instructions, {**answer, "generator": "NONE"})
+    assert orch._select_generator(instructions) == "generate_fastapi_backend"
+
+
+def test_an_approved_web_app_generator_settles_the_target_without_a_call(tmp_path):
+    orch = _orch(tmp_path, TODO_APP, target_generator="generate_web_app")
+    assert orch._select_generator(TODO_APP) == "generate_web_app"
+    assert orch.client.calls == []
+    assert orch.target.is_web_app
+
+
+def test_an_approved_fastapi_generator_still_decides_the_target(tmp_path):
+    # FastAPI is also the scaffold of a mobile app's API.
+    orch = _orch(tmp_path, MOBILE, target_generator="generate_fastapi_backend")
+    assert orch._select_generator(MOBILE) == "generate_fastapi_backend"
+    assert len(orch.client.calls) == 1
+    assert orch.target.kind == "other"
 
 
 def test_web_app_target_still_gets_the_fastapi_scaffold(tmp_path):
@@ -240,3 +269,104 @@ def test_target_is_recorded_in_the_recipe_and_read_by_a_modify_run(tmp_path):
     follow_up._seed_generator_files_from_recipe()
     assert follow_up.target == orch.target
     assert not _frontend_task(follow_up)
+
+
+def _modify(tmp_path, instructions, seed, answer):
+    """A modify run's orchestrator, seeded with a recipe built for ``seed``."""
+    (tmp_path / ".besser_recipe.json").write_text(
+        json.dumps({"target": seed.to_dict()}), encoding="utf-8")
+    orch = _orch(tmp_path, instructions, answer)
+    orch._modify_mode = True
+    orch._seed_generator_files_from_recipe()
+    return orch
+
+
+def test_modify_on_a_backend_adds_the_frontend_it_asks_for(tmp_path):
+    instructions = "Add a React frontend with pages for every entity"
+    orch = _modify(tmp_path, instructions, Target("backend", "REST API", False),
+                   {**WEB, "generator": "NONE"})
+    assert orch.target.is_web_app
+    assert _frontend_task(orch)
+    orch._inventory = "backend/main_api.py (generate_fastapi_backend)"
+    assert RULE_15_WEB in orch._build_system_prompt(instructions)
+
+
+@pytest.mark.parametrize("instructions", [
+    "No, make it a native desktop app instead.",
+    "Target: native app (not a web app).\nBuild the workouts tracker.",
+])
+def test_modify_turns_a_web_app_into_the_target_the_user_now_names(tmp_path, instructions):
+    orch = _modify(tmp_path, instructions, Target("web_app", "workouts web app", True),
+                   {**NATIVE, "generator": "NONE"})
+    assert orch.target.kind == "other"
+    assert "The existing app was built as: workouts web app" in orch.client.calls[0]["prompt"]
+    assert not _frontend_task(orch)
+    orch._inventory = "backend/main_api.py, frontend/src/App.tsx (generate_fastapi_backend)"
+    prompt = orch._build_system_prompt(instructions)
+    assert RULE_15_WEB not in prompt
+    assert "Build exactly the requested target: native Android/iOS app" in prompt
+    # The keep-the-stack constraint would contradict the new target.
+    assert STACK_LOCK not in prompt
+
+
+@pytest.mark.parametrize("instructions, seed", [
+    ("add a settings screen", Target("other", "native Android/iOS app", True)),
+    ("Target: native Android/iOS app (not a web app).\nAdd a settings screen.",
+     Target("other", "native Android/iOS app", True)),
+    ("add a search box to the book list", Target("web_app", "library web app", True)),
+    ("add an endpoint that exports loans as CSV", Target("backend", "REST API", False)),
+])
+def test_modify_keeps_the_seed_target_without_a_call(tmp_path, instructions, seed):
+    orch = _modify(tmp_path, instructions, seed, {**WEB, "generator": "NONE"})
+    assert orch.target == seed
+    assert orch.client.calls == []
+    assert orch._previous_target is None
+
+
+def test_a_modify_that_keeps_the_kind_keeps_the_stack(tmp_path):
+    # "desktop" is only a cue; the selector keeps the web app.
+    instructions = "Make the dashboard easier to use on desktop screens"
+    orch = _modify(tmp_path, instructions, Target("web_app", "library web app", True),
+                   {**WEB, "generator": "NONE"})
+    assert len(orch.client.calls) == 1
+    assert orch.target.is_web_app and orch._previous_target is None
+    orch._inventory = "backend/main_api.py, frontend/src/App.tsx (generate_fastapi_backend)"
+    assert STACK_LOCK in orch._build_system_prompt(instructions)
+
+
+def test_a_failed_modify_decision_keeps_the_seed_target(tmp_path):
+    seed = Target("backend", "REST API", False)
+    orch = _modify(tmp_path, "Add a React frontend", seed, {"generator": "NONE"})
+    assert len(orch.client.calls) == 1
+    assert orch.target == seed
+
+
+# -- The cross-repo contract ------------------------------------------------
+
+def test_the_target_line_modeling_agent_writes_is_parsed():
+    # modeling-agent's generation_handler._instructions_naming_target writes
+    # f"Target: {description} (not a web app)." on a line of its own;
+    # smart_generation_handler then nests it under the assistant's notes.
+    description = "Windows 11 desktop app"
+    line = f"Target: {description} (not a web app)."
+    assert named_target(f"{line}\nBuild the inventory application.") == description
+    assert named_target(f"{line}\r\nArchitecture: MVC.\r\nBuild it.") == description
+    payload = (
+        "## Assistant's notes (may be inaccurate)\n\nUse these only for ...\n\n"
+        f"{line}\nBuild the inventory application.\n\n"
+        "## The user's original request, verbatim\n\nThis is the authority.\n\n"
+        "una app de windows 11 local para inventario")
+    assert named_target(payload) == description
+    assert named_target("Build the inventory application.") is None
+    assert named_target("Build it. Target: Windows 11 desktop app (not a web app).") is None
+
+
+def test_without_a_target_line_the_request_wording_decides(tmp_path):
+    # An oversized spec reaches BESSER as the original request alone.
+    request = "una app de windows 11 local para inventario"
+    orch = _orch(tmp_path, request, {**NATIVE, "target_description": "Windows 11 desktop app",
+                                     "generator": "NONE"})
+    assert named_target(request) is None
+    assert orch._select_generator(request) is None
+    assert orch.target.kind == "other"
+    assert not _frontend_task(orch)

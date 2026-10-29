@@ -17,7 +17,7 @@ import logging
 import os
 import time
 
-from besser.spec_driven_agent.agent.prompt_builder import build_inventory
+from besser.spec_driven_agent.agent.prompt_builder import build_inventory, requests_frontend
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
 from besser.spec_driven_agent.planning.model_change import FULL_MODEL, compare_with_base
@@ -27,7 +27,13 @@ from besser.spec_driven_agent.planning.model_rules import (
 )
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
-from besser.spec_driven_agent.planning.target import Target
+from besser.spec_driven_agent.planning.target import (
+    BACKEND,
+    WEB_APP,
+    Target,
+    may_name_other_target,
+    named_target,
+)
 from besser.spec_driven_agent.providers.llm_client import MODIFY_MAX_TOKENS
 from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_ENTER,
@@ -350,9 +356,14 @@ class ModifyRunMixin:
         if not isinstance(recipe, dict):
             return
         self._seed_generator_used = recipe.get("generator_used")
-        # The app keeps the target it was built for; "add a settings screen"
-        # must not re-decide it.
-        self.target = Target.from_payload(recipe.get("target"))
+        seed_target = Target.from_payload(recipe.get("target"))
+        self.target = self._modify_target(seed_target)
+        # A switch: another kind, or the Target line naming another product.
+        # A reworded description of the same kind is not one.
+        if self.target is not seed_target and (
+                self.target.kind != seed_target.kind
+                or named_target(self._instructions) is not None):
+            self._previous_target = seed_target
         converted = (recipe.get("model") or {}).get("converted_rules")
         if isinstance(converted, list):
             self._seed_converted_rules = set(converted)
@@ -381,6 +392,30 @@ class ModifyRunMixin:
                     self.executor._generator_files.add(entry["path"])
         except Exception:
             logger.debug("Seed recipe output_files malformed", exc_info=True)
+
+    def _modify_target(self, seed: Target | None) -> Target | None:
+        """The seed's target, unless this request names another kind of target.
+
+        "Add a settings screen" keeps it with no LLM call. "Add a React
+        frontend" on a backend, or "make it a desktop app" on a web app, asks
+        the selector again; a failed decision keeps the seed's target.
+        """
+        if seed is None or not self._may_change_target(seed):
+            return seed
+        self._decide_target(self._instructions, current=seed)
+        return self.target or seed
+
+    def _may_change_target(self, seed: Target) -> bool:
+        instructions = self._instructions
+        named = named_target(instructions)
+        if named is not None:
+            return named.lower() != seed.description.lower()
+        asks_web = requests_frontend(instructions, bare_app=False)
+        if seed.kind == WEB_APP:
+            return may_name_other_target(instructions)
+        if seed.kind == BACKEND:
+            return asks_web or may_name_other_target(instructions)
+        return asks_web
 
     def _mark_rules_broken_by_model_change(self) -> None:
         """Mark rejected model rules whose element this model change removed or renamed.

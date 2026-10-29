@@ -1,14 +1,16 @@
-"""What a run builds: decided once, by the Phase 1 selector's LLM call.
+"""What a run builds: decided by the Phase 1 selector's LLM call.
 
 Users name what they want ("a mobile app", "a Windows 11 app", "a CLI"),
 not a framework. Every web-specific gate (the React CRUD rule, the
 frontend checklist task, the missing-frontend blocker, the HTTP-write
 contract, the server manifests of Phase 0.5) applies only to a
 ``web_app`` target. ``None`` means the decision failed; callers then keep
-the pre-target behaviour.
+the pre-target behaviour. A modify run keeps its seed's target unless the
+request names another kind (``pipeline/modify_run.py``).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 
 WEB_APP = "web_app"
@@ -43,6 +45,30 @@ target_description names the product in a few words ("native Android/iOS app",
 "Windows 11 desktop app", "Python CLI"), with the framework only if the user named one.
 has_user_interface: true when people use the result through screens (web, mobile,
 desktop, game), false for APIs, CLIs, libraries and classes."""
+
+# The one structured part of the request modeling-agent sends: for a non-web
+# target whose description the instructions lack, a line of its own, anywhere
+# in them (generation_handler._instructions_naming_target). Optional: an
+# oversized spec falls back to the original request without it.
+TARGET_LINE_RE = re.compile(r"^Target: (?P<description>.+?) \(not a web app\)\.", re.MULTILINE)
+
+# Words that may name a non-web target. Only a cue to ask the selector again:
+# "a Windows server" or "cancellation windows" name no target.
+_OTHER_KIND_RE = re.compile(
+    r"\b(?:native|mobile|android|ios|iphone|ipad|desktop|windows|macos|linux|"
+    r"electron|tauri|wpf|cli|command[ -]line|game|extension|embedded|arduino|bot)\b",
+    re.IGNORECASE)
+
+
+def named_target(instructions: str | None) -> str | None:
+    """The description on modeling-agent's ``Target:`` line, or ``None``."""
+    match = TARGET_LINE_RE.search(instructions or "")
+    return match.group("description").strip() if match else None
+
+
+def may_name_other_target(instructions: str | None) -> bool:
+    """True when the request may ask for a non-web target."""
+    return named_target(instructions) is not None or bool(_OTHER_KIND_RE.search(instructions or ""))
 
 
 @dataclass(frozen=True)

@@ -945,7 +945,7 @@ def get_tools_for(
         Whether a ``DomainModel`` is available.
     has_gui_model, has_agent_model, has_state_machines, has_quantum_circuit
         Whether the corresponding BUML model is populated. Currently only
-        GUI affects filtering (for React/Flutter/WebApp); agent / SM /
+        GUI affects filtering (for React/WebApp); agent / SM /
         quantum flags are accepted for forward compatibility as future
         tools key on them.
     """

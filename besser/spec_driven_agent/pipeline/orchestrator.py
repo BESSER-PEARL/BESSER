@@ -105,6 +105,7 @@ from besser.spec_driven_agent.planning.target import (
     OTHER,
     TARGET_RULES,
     TARGET_TOOL_PROPERTIES,
+    WEB_APP,
     Target,
 )
 from besser.spec_driven_agent.planning.stack_metadata import (
@@ -467,6 +468,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # What the run builds (planning/target.py), decided by the Phase 1
         # selector call; None keeps the pre-target behaviour.
         self.target: Target | None = None
+        # The seed's target when this modify run builds another kind.
+        self._previous_target: Target | None = None
         self._inventory: str = ""
         # True once the client's per-call output-token limit was raised
         # above its default: by ``_apply_adaptive_budget`` for a pure
@@ -1087,7 +1090,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # no LLM call, no keywords. Validated upstream against the
         # registered generator tools.
         if self.target_generator_bound:
-            self._decide_target(instructions)
+            # The approved full-stack web app settles the target, so it costs
+            # no call; any other approved generator (FastAPI also scaffolds a
+            # mobile app's API) still needs the decision.
+            if self.target_generator == "generate_web_app":
+                self._record_target(Target(WEB_APP, "full-stack web app", True))
+            else:
+                self._decide_target(instructions)
             if self.target_generator is None:
                 logger.info(
                     "Phase 1: caller explicitly selected no deterministic generator"
@@ -1117,9 +1126,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if llm_result and llm_result != "":
             # LLM picked a specific generator — trust it
             return llm_result
-        # A structured NONE came with a target decision: it is the answer.
-        # Keywords would turn "a mobile app with a REST API" back into FastAPI.
-        if llm_result == "" and self.target is not None:
+        # A NONE for an ``other`` target is the answer: keywords would turn
+        # "a mobile app with a REST API" back into FastAPI. A web or backend
+        # NONE keeps the keyword safety net.
+        if llm_result == "" and self.target is not None and self.target.kind == OTHER:
             return None
 
         # LLM said "none" or failed — run keywords as safety net
@@ -1400,17 +1410,23 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return None
         return None
 
-    def _decide_target(self, instructions: str) -> None:
+    def _decide_target(self, instructions: str, current: Target | None = None) -> None:
         """Decide ``self.target`` when the generator is settled without the selector.
 
         The same forced call as the selector, with NONE as the only generator.
+        ``current`` is the target of the app a modify run changes.
         """
         if self.target is not None or not hasattr(self.client, "_client"):
             return
         if not self._client_supports_structured_chat():
             return
+        existing = (
+            f"The existing app was built as: {current.description or current.kind} ({current.kind}). "
+            "Keep that target unless the request asks for a different kind of software.\n"
+            if current is not None else ""
+        )
         self._select_generator_structured(
-            f"User request: {user_request(instructions)}\n\n{TARGET_RULES}\n"
+            f"User request: {user_request(instructions)}\n\n{TARGET_RULES}\n{existing}"
             "The generator is already settled: answer generator=NONE.",
             [],
         )
@@ -4127,6 +4143,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             modify_mode=self._modify_mode,
             design_system=design_system,
             target=self.target,
+            previous_target=self._previous_target,
             # Without both, the runtime-verification runbook never renders.
             allow_shell=self.allow_shell_tools,
             output_dir=self.output_dir,

@@ -133,6 +133,7 @@ def build_system_prompt(
     output_dir: str | None = None,
     design_system: str = "",
     target: Target | None = None,
+    previous_target: Target | None = None,
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -180,6 +181,10 @@ def build_system_prompt(
             joins the rules and replaces the guidance it conflicts with: the
             GUI "loose hint" framing, Rule 2's write_file fallback for pages,
             Rule 13's styling advice and Rule 15's "one shared stylesheet".
+        target: What the run builds (``planning/target.py``); ``None`` keeps
+            the pre-target rules.
+        previous_target: The seed's target when a modify run builds another
+            kind of software; it lifts the keep-the-stack constraint.
 
     Returns:
         The full system prompt string.
@@ -613,17 +618,26 @@ def build_system_prompt(
     if builds_other:
         crud_rule = _other_target_rule(target)
     if has_scaffold:
-        role = """\
+        if builds_other and previous_target is not None:
+            stack_rule = f"""\
+- **The user now wants a {target.description or "different kind of software"}, not
+  the existing {previous_target.description or previous_target.kind}.** Build it next to the existing
+  project, in the stack the user named or the standard one for it, and reuse
+  the existing domain logic and API where they fit."""
+        else:
+            stack_rule = """\
+- **Keep the existing tech stack and framework.** The scaffold below is already
+  built in a specific stack; extend it in that SAME framework. NEVER switch
+  frameworks — e.g. do NOT replace a FastAPI backend with Flask or Django, or a
+  React frontend with Vue. If the user's wording seems to imply a different
+  stack, ignore that and use the one that is already generated."""
+        role = f"""\
 You are an expert full-stack developer extending a deterministic scaffold.
 Preserve working code and verify its actual behavior; generated code is a
 starting point, not proof that the application satisfies the specification.
 
 ## HARD CONSTRAINTS — breaking any of these FAILS the task
-- **Keep the existing tech stack and framework.** The scaffold below is already
-  built in a specific stack; extend it in that SAME framework. NEVER switch
-  frameworks — e.g. do NOT replace a FastAPI backend with Flask or Django, or a
-  React frontend with Vue. If the user's wording seems to imply a different
-  stack, ignore that and use the one that is already generated.
+{stack_rule}
 - **Never delete or wholesale-rewrite the generated scaffold.** Do NOT call
   `delete_file` on any file shown below, and do NOT overwrite a generated file
   with a from-scratch rewrite in a different design. Edit files in place; add

@@ -87,14 +87,14 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 
 | Path | What |
 |------|------|
-| `besser/BUML/metamodel/` | Abstract syntax: `structural/` (DomainModel, Class, Property, associations, generalization), `state_machine/`, `gui/`, `action_language/` (BAL), `bpmn/`, `deployment/`, `feature_model/`, `nn/`, `object/`, `ocl/`, `project/`, `quantum/` |
+| `besser/BUML/metamodel/` | Abstract syntax: `structural/` (DomainModel, Class, Property, associations, generalization), `state_machine/`, `gui/`, `action_language/` (BAL), `bpmn/`, `deployment/`, `feature_model/`, `nn/`, `object/`, `ocl/`, `project/`, `quantum/`, `traceability/` (traces kept apart from models) |
 | `besser/BUML/notations/` | ANTLR-based parsers (PlantUML class/object, OCL, NN, deployment, BAL), draw.io import, LLM-assisted mockup → model, knowledge graph ↔ OWL/RDF/SHACL: import, export and the projection the conversion reads (`kg_rdf/`), KG → class diagram (`kg_to_buml/`) |
 | `besser/utilities/image_to_buml.py`, `kg_llm_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram via an LLM (`kg_to_buml.py` is its deprecated alias) |
 | `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/` |
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
 | `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks) |
-| `…/backend/routers/` | One router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator); `error_handler.py` has `@handle_endpoint_errors` |
+| `…/backend/routers/` | One router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator, traceability); `error_handler.py` has `@handle_endpoint_errors` |
 | `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` registry (`GeneratorInfo`, incl. download filenames) + `get_filename_for_generator` |
 | `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins, most `BESSER_LLM_*` caps and flags |
 | `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`) |

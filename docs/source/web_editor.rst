@@ -59,6 +59,37 @@ The metamodel is described in :doc:`buml_language/model_types/knowledge_graph`.
 The endpoints behind these actions are listed under *Knowledge Graph* in
 :doc:`web_editor_backend`.
 
+Traceability
+------------
+
+The *Traceability* page of a class diagram records and shows what happened to the
+project's models and the code generated from them. Recording is off by default;
+turn on *Record traces for this project* on that page.
+
+* **Recorded.** Class-diagram edits (creating, renaming, retyping or deleting a
+  class, attribute, method, enumeration, association, generalization or OCL
+  constraint) become modelling sessions, attributed to the project owner (or
+  ``anonymous``) and, for assistant edits, to the assistant. Layout changes are not
+  recorded, and quick successive edits of one element are merged. A SQLAlchemy
+  generation records which lines each class, enumeration and association produced.
+* **Shown.** A *Timeline* of sessions and generation runs, each naming the models
+  (diagrams) it changed or read; *Elements*, a tree of the project's diagrams, their
+  elements and the elements' members, where a diagram shows the whole files generated
+  from it, an element its lines, and both their history; and a *Coverage* matrix of
+  generation runs against each diagram (its whole files) and its elements, where
+  anything changed after a run is marked *suspect* (its generated code may be stale).
+* **Stored.** In the browser, apart from the project, and exported or imported as
+  ``<project>.trace.json``. Deleting the project deletes its trace.
+* **Exported with the project.** Once a trace has been recorded, the *Export
+  Project* dialog lists *Traceability* next to the diagrams. Ticked (it is off by
+  default), the trace goes into the JSON export as ``trace`` beside ``project``, or
+  into the B-UML export as a ``TRACEABILITY`` section. Importing either file restores
+  the trace under the new project. Importing a B-UML file with a trace also turns
+  recording on, because a B-UML file carries no project settings. A trace that cannot
+  be read is skipped with a warning, and the project imports without it.
+
+The trace format is the :doc:`traceability metamodel <buml_language/model_types/traceability>`.
+
 Run or extend the editor
 ------------------------
 

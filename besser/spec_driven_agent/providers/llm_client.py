@@ -1717,13 +1717,21 @@ class OpenAIProvider(LLMProvider):
     def _has_fallback(self) -> bool:
         return self._fallback_step < len(self._fallback_chain)
 
-    def _activate_fallback(self, error: Exception) -> bool:
+    def _activate_fallback(self, error: Exception, past_endpoint: str | None = None) -> bool:
         """Switch to the configured fallback endpoint, if any.
+
+        ``past_endpoint``: skip the chain entries on this base URL. A rejected
+        key is rejected for every model behind it, so only another endpoint
+        (with its own credentials) can serve the call.
 
         Returns True when the switch happened (caller should retry the
         call), False when no fallback is configured or it is already
         active (caller should raise).
         """
+        if past_endpoint is not None:
+            while (self._fallback_step < len(self._fallback_chain)
+                   and self._fallback_chain[self._fallback_step][0] == past_endpoint):
+                self._fallback_step += 1
         if self._fallback_step >= len(self._fallback_chain):
             return False
         from openai import OpenAI
@@ -1752,7 +1760,11 @@ class OpenAIProvider(LLMProvider):
         # Why we fell back — lets the runner/UI say "free daily quota exhausted"
         # instead of a generic "primary unavailable" (the daily quota is the
         # common cause on the free tier).
-        self.fallback_reason = "quota_exhausted" if _is_quota_exhausted(error) else "unavailable"
+        self.fallback_reason = (
+            "quota_exhausted" if _is_quota_exhausted(error)
+            else "key_rejected" if past_endpoint is not None
+            else "unavailable"
+        )
         return True
 
     @property
@@ -1865,6 +1877,15 @@ class OpenAIProvider(LLMProvider):
                     time.sleep(backoff)
                     continue
                 if _is_auth_error(e):
+                    # Only the server-paid tiers have a fallback: there a rejected
+                    # key is the server's (e.g. an expired free-tier token), and
+                    # another endpoint can still serve the run. A user's own key
+                    # has no fallback and fails here, loudly.
+                    if self._activate_fallback(e, past_endpoint=self._base_url):
+                        return self.chat(
+                            system, messages, tools,
+                            force_tool=force_tool, model_override=model_override,
+                        )
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
@@ -2024,6 +2045,10 @@ class OpenAIProvider(LLMProvider):
                     time.sleep(backoff)
                     continue
                 if _is_auth_error(e):
+                    # As in chat(): a server-paid key falls back, a user's key fails.
+                    if self._activate_fallback(e, past_endpoint=self._base_url):
+                        yield from self.chat_stream(system, messages, tools)
+                        return
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {e}") from None
                 if _is_tools_unsupported_error(e):
                     raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None

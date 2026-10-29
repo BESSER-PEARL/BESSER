@@ -2021,6 +2021,9 @@ class TestStandaloneChatbotDeploy:
             async def get_branches(self, *_args, **_kwargs):
                 return ["main"]
 
+            async def get_default_branch(self, *_args, **_kwargs):
+                return "main"
+
             async def create_repository(self, *_args, **kwargs):
                 captured["create_calls"] += 1
                 return {"default_branch": "main"}

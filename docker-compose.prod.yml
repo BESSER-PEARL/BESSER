@@ -12,19 +12,20 @@ services:
       - ./.env
     environment:
       - PYTHONPATH=/app
-      # BESSER_LLM_RUN_WORKSPACE_ROOT is deliberately unset here: the runner
-      # creates run directories inside that root, which would fail on the
-      # read-only /workspace mount below.
+      # The worker's run workspace. The backend reads finished runs from it
+      # (push-to-github) and writes repos imported from GitHub into it, which
+      # the worker then seeds modify runs from. It never runs generation.
+      - BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
       - WME_NODE_SERVER_URL=${WME_NODE_SERVER_URL:-http://besser-wme-frontend:8080}
       - AGENT_SIMULATOR_URL=${AGENT_SIMULATOR_URL:-http://besser-wme-agent-simulator:8001}
     volumes:
       - feedback_data:/app/besser/feedback_data
-      # Read-only view of the worker's run workspaces: push-to-github and
-      # import-github-run need the backend's OAuth session, so they run here
-      # and read the generated files through this mount.
-      - smartgen_workspace:/workspace:ro
+      # The worker's run workspaces: push-to-github and import-github-run need
+      # the backend's OAuth session, so they run here. Push reads a run's files;
+      # import writes the repo as a new run, which the worker then seeds from.
+      - smartgen_workspace:/workspace
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     restart: unless-stopped
     networks:
@@ -89,7 +90,7 @@ services:
       - BESSER_LLM_SHELL_NETWORK=${BESSER_LLM_SHELL_NETWORK:-private}
       - BESSER_LLM_SHELL_SESSION_IDLE_SECONDS=${BESSER_LLM_SHELL_SESSION_IDLE_SECONDS:-900}
       - BESSER_LLM_SHELL_SESSION_MAX=${BESSER_LLM_SHELL_SESSION_MAX:-10}
-      # Shared (read-only) with the backend, which serves push-to-github.
+      # Shared with the backend, which serves push-to-github and import-github-run.
       - BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs
       - BESSER_LLM_RUN_STORE_PATH=/workspace/runs/run_store.sqlite3
       # Budgets

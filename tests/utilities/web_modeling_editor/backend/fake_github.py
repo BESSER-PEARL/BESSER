@@ -6,9 +6,9 @@ real merge results. Only the endpoints BESSER calls exist, with the status codes
 GitHub documents for them (422 for a non-fast-forward ref update, 409 for a merge
 conflict, 204 for a merge with nothing to merge, ``Link`` headers for paging).
 
-``use_fake_github(monkeypatch, fake)`` routes every ``httpx.AsyncClient`` that
-does not bring its own transport to the fake, so the backend's GitHub calls land
-here while a test client keeps its own ASGI transport.
+``use_fake_github(monkeypatch, fake)`` routes the GitHub requests of every
+``httpx.AsyncClient`` that does not bring its own transport to the fake, so the
+backend's GitHub calls land here while a test client keeps its own transport.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ class FakeGitHub:
             ["git", "-c", "core.autocrlf=false", "-C", repo.path, *args], input=input, capture_output=True, env=full_env,
         )
         if check and result.returncode != 0:
-            raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.decode(errors='replace')}")
+            raise RuntimeError(f"git {' '.join(args)} failed ({result.returncode}): {result.stderr.decode(errors='replace')}")
         return result
 
     def out(self, repo: FakeRepo, *args: str, **kwargs) -> str:
@@ -233,7 +233,7 @@ class FakeGitHub:
         @app.middleware("http")
         async def auth(request: Request, call_next):
             if request.headers.get("authorization") != f"Bearer {fake.token}" \
-                    and not request.url.path.startswith("/applications/"):
+                    and not request.url.path.startswith(("/applications/", "/login/oauth/")):
                 return JSONResponse({"message": "Bad credentials"}, status_code=401)
             return await call_next(request)
 
@@ -469,6 +469,11 @@ class FakeGitHub:
             return [p for p in repo.pulls
                     if (not head or p["head"]["ref"] == branch) and (state == "all" or p["state"] == state)]
 
+        @app.post("/login/oauth/access_token")
+        async def exchange_code():
+            # github.com's OAuth code exchange: any code yields the account's token.
+            return {"access_token": fake.token, "token_type": "bearer", "scope": "repo,gist,user"}
+
         @app.delete("/applications/{client_id}/token")
         async def revoke(client_id: str, request: Request):
             fake.revoked.append((await request.json())["access_token"])
@@ -481,14 +486,33 @@ class _NotFound(Exception):
     pass
 
 
-def use_fake_github(monkeypatch, fake: FakeGitHub) -> None:
-    """Send every ``httpx.AsyncClient`` request without its own transport to ``fake``."""
-    real_client = httpx.AsyncClient
-    transport = ASGITransport(app=fake.app)
+GITHUB_HOSTS = ("api.github.com", "github.com")
 
-    class _Client(real_client):
+
+class _GitHubRouter(httpx.AsyncBaseTransport):
+    """GitHub's hosts go to the fake; every other host to the network as usual."""
+
+    def __init__(self, fake: FakeGitHub):
+        self.fake = ASGITransport(app=fake.app)
+        self.network = httpx.AsyncHTTPTransport()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        target = self.fake if request.url.host in GITHUB_HOSTS else self.network
+        return await target.handle_async_request(request)
+
+
+def github_client_class(fake: FakeGitHub) -> type:
+    """An ``httpx.AsyncClient`` whose GitHub requests reach ``fake`` unless it is given a transport."""
+    router = _GitHubRouter(fake)
+
+    class _Client(httpx.AsyncClient):
         def __init__(self, *args, **kwargs):
-            kwargs.setdefault("transport", transport)
+            kwargs.setdefault("transport", router)
             super().__init__(*args, **kwargs)
 
-    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    return _Client
+
+
+def use_fake_github(monkeypatch, fake: FakeGitHub) -> None:
+    """Route the backend's GitHub requests to ``fake`` for one test."""
+    monkeypatch.setattr(httpx, "AsyncClient", github_client_class(fake))

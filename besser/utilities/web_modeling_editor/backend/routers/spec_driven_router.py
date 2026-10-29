@@ -1121,11 +1121,21 @@ async def push_spec_driven_to_github(
 
             # After a merge the run's files no longer match the branch: hand
             # back the merged repo as the next modify run's base.
+            # The push has landed: a failure from here on is reported, not raised,
+            # or the user would see a failed push and push again.
             base_run_id = None
             if status == "merged":
-                base_run_id, _ = await _import_repo_as_run(
-                    github, owner, repo_name, push_results["commit_sha"]
-                )
+                try:
+                    base_run_id, _ = await _import_repo_as_run(
+                        github, owner, repo_name, push_results["commit_sha"]
+                    )
+                except Exception:
+                    logger.warning("Pushed and merged %s/%s, but could not read the merged repo back",
+                                   owner, repo_name, exc_info=True)
+                    deploy_warnings.append(
+                        "Your changes were merged on GitHub, but BESSER could not read the merged code back. "
+                        "Use Get latest before the next change, so it starts from the merged code."
+                    )
 
             return PushSmartToGitHubResponse(
                 success=True,

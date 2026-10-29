@@ -330,6 +330,8 @@ def test_an_agent_push_merges_a_teammates_code_and_model_changes(github):
     assert _saved_classes(github, repo) == {"Author", "Book", "Member", "Loan"}
     # The next modify run starts from the merged repo.
     assert r.json()["base_run_id"]
+    # The scratch and code branches of the merge are gone.
+    assert github.out(repo, "for-each-ref", "--format=%(refname:lstrip=2)").split() == ["main"]
 
 
 def test_the_same_code_lines_changed_on_both_sides_is_a_conflict(github):
@@ -396,3 +398,53 @@ def test_the_sync_status_follows_a_pending_branch_until_its_pull_request_is_merg
     github.merge_pull(repo, number)
 
     assert _sync_status(branch)["pull_request_state"] == "merged"
+
+
+# ---------------------------------------------------------------------
+# Signing in and out
+# ---------------------------------------------------------------------
+
+
+def test_sign_in_then_out_revokes_the_token(github, monkeypatch):
+    from besser.utilities.web_modeling_editor.backend.services.deployment import github_oauth
+
+    monkeypatch.setattr(github_oauth, "GITHUB_CLIENT_ID", "client")
+    monkeypatch.setattr(github_oauth, "GITHUB_CLIENT_SECRET", "secret")
+    monkeypatch.setattr(github_oauth, "DEPLOYMENT_URL", "http://editor")
+    for module in (spec_driven_router, github_deploy_api):
+        monkeypatch.setattr(module, "get_user_token", github_oauth.get_user_token)
+    state = "s" * 32
+    github_oauth._oauth_sessions.set(state, {"client_ip": "test"})
+
+    callback = _call("GET", "/besser_api/github/auth/callback", params={"code": "c", "state": state})
+    assert callback.status_code == 302, callback.text
+    fragment = dict(part.split("=", 1) for part in callback.headers["location"].split("#", 1)[1].split("&"))
+    session = {"X-GitHub-Session": fragment["github_session"]}
+    assert fragment["username"] == "ana"
+    assert _call("GET", "/besser_api/github/repos", headers=session).status_code == 200
+
+    out = _call("POST", "/besser_api/github/auth/logout", json={"session_id": fragment["github_session"]})
+
+    assert out.status_code == 200, out.text
+    assert github.revoked == [github.token]
+    assert _call("GET", "/besser_api/github/repos", headers=session).status_code == 401
+
+
+def test_a_merged_push_is_reported_as_done_even_if_reading_it_back_fails(github, monkeypatch):
+    """The push had landed, then reading the merged repo back failed: the user saw a failed push."""
+    files = {**repo_model.model_files(_envelope()), "src/app.py": "print('v1')\n"}
+    repo = github.create_repo("library", files=files)
+    imported = _import("ana", "library")
+    github.commit_files(repo, {"src/util.py": "X = 2\n"}, "Their change", author="ben")
+    run_id = _modify_run(imported["run_id"], lambda workdir: _write(workdir, "src/app.py", "print('v2')\n"))
+
+    async def unreadable(*args, **kwargs):
+        raise ValueError("Repository archive exceeds the 100 MB size cap")
+    monkeypatch.setattr(spec_driven_router, "_import_repo_as_run", unreadable)
+    r = _push(run_id, "library", base_commit_sha=imported["commit_sha"])
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "merged"
+    assert r.json()["base_run_id"] is None
+    assert any("Get latest" in warning for warning in r.json()["warnings"])
+    assert github.files(repo)["src/app.py"][1] == b"print('v2')\n"

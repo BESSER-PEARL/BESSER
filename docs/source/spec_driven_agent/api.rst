@@ -58,14 +58,22 @@ Endpoints
    * - ``/spec-driven/push-to-github``
      - POST
      - Push a finished run's code — plus the re-importable model under
-       ``buml/`` — to a GitHub repository. ``deploy_config.base_commit_sha``
+       ``buml/`` — to a GitHub repository, as the change the run made: only
+       files that differ from the base commit are sent, modes are kept, and
+       paths the run never held (build output, ``*.db``, symlinks, secret
+       ``.env`` files) are left as they are. ``deploy_config.owner`` is the
+       owner of an existing repo (an organization or another user; the
+       signed-in user when omitted). ``deploy_config.base_commit_sha``
        is the commit the run's code came from: commits made on the branch
-       since are merged in, never reverted. ``deploy_config.push_mode`` is
+       since are merged in, never reverted, with the model merged as data.
+       ``deploy_config.push_mode`` is
        ``"commit"`` (default) or ``"pull_request"``. The response's
        ``status`` is ``"pushed"``, ``"merged"`` (with ``base_run_id``, a run
        holding the merged repo for the next modify run), ``"conflict"``
        (left on ``conflict_branch``) or ``"pull_request"``
-       (``pull_request_url``); ``commit_sha`` is the next push's base.
+       (``pull_request_url``, on ``pull_request_branch``); ``commit_sha`` is
+       the next push's base and ``files_uploaded`` the number of files the
+       push changed (0 when nothing changed: no commit is made).
        When the run changed the model (a modify run that added classes),
        ``project_export`` is the model written to ``buml/``, which the editor
        loads; otherwise it is ``null``. Requires an ``X-GitHub-Session``

@@ -596,12 +596,12 @@ GitHub Integration
 - ``POST /github/auth/logout`` -- End the session (JSON body ``{"session_id": ...}``) and revoke its GitHub token
 - ``GET /github/star/status``, ``PUT /github/star``, ``DELETE /github/star`` -- Read / set / clear the signed-in user's star on the BESSER repository
 - ``POST /github/deploy-webapp`` -- Deploy generated app to GitHub repository
-- ``GET /github/repos``, ``GET /github/branches``, ``GET /github/commits``, ``GET /github/contents``, ``GET /github/file/exists`` -- Repository browsing for the editor's save/load flow (``/repos`` includes each repository's topics; ``/commits`` marks each commit's ``origin``)
+- ``GET /github/repos``, ``GET /github/branches``, ``GET /github/commits``, ``GET /github/contents``, ``GET /github/file/exists`` -- Repository browsing for the editor's save/load flow. ``/repos`` lists every repository the user can open (own, collaborator and organization), most recently updated first, across GitHub's pages up to 1,000, with each one's topics and ``can_push``; ``truncated`` says the account has more. ``/branches`` follows the pages too. ``/commits`` marks each commit's ``origin``.
 - ``POST /github/project/save``, ``GET /github/project/load``, ``GET /github/project/load-commit``, ``POST /github/project/create-repo`` -- Store and retrieve a BESSER project in a repository (including loading it back from a specific commit)
 - ``GET /github/repo-summary`` -- What a repository holds: the model's name, diagrams per type, classes, and the last commit
-- ``GET /github/sync-status`` -- Commits on a branch since ``base_sha``, the commit the editor last synced
+- ``GET /github/sync-status`` -- Commits on a branch since ``base_sha``, the commit the editor last synced. With ``pending_branch`` (a ``besser/…`` branch a conflict or pull-request push left), ``pending`` says whether that branch still exists and the state of its pull request (``open``, ``closed``, ``merged``, or none yet)
 - ``GET /github/model-history`` -- Recent commits that changed the model, each with its class-diagram changes
-- ``POST /github/pull-request`` -- Open a pull request, e.g. for a push GitHub could not merge
+- ``POST /github/pull-request`` -- Open a pull request, e.g. for a push GitHub could not merge. Without a ``body`` the description lists the model changes between the two branches. Asking again for a branch that already has an open pull request returns that one
 - ``GET /github/app/capabilities``, ``POST /github/app/go-live`` -- "Go live": commit Render deploy files into the project's own repository, for its real folder layout (see below). Off unless ``BESSER_DEPLOY_FROM_REPO=true``.
 
 Every GitHub endpoint except the OAuth flow and logout reads the session from
@@ -626,10 +626,38 @@ repository.
 Writes never revert newer commits. ``/github/project/save`` and
 ``/spec-driven/push-to-github`` take the commit the editor last synced
 (``base_commit_sha``). When the branch has moved past it, the new commit is made
-on top of that base and merged into the branch with GitHub's merge API, so both
-sides' changes are kept. A merge GitHub cannot resolve is left on a
-``besser/sync-<sha>`` branch and reported as ``status: "conflict"``, and nothing
-is overwritten.
+on top of that base and merged into the branch, so both sides' changes are kept.
+A write that cannot be merged is left on a ``besser/sync-<sha>`` branch and
+reported as ``status: "conflict"``, and nothing is overwritten.
+
+The model is not merged as text. Git merges ``diagrams.json`` and the B-UML
+sources line by line, so two people who each add a class would collide on the
+same lines. ``GitHubService.commit_tree`` therefore merges in two parts when
+the write holds the model (``repo_model.ModelMerge``): GitHub's merge API merges
+everything else on a scratch branch, and ``services/deployment/model_merge.py``
+merges ``diagrams.json`` three ways as data (objects key by key, lists of
+objects with an ``id`` item by item, lists of unique values as sets; layout and
+timestamps keep this side's value). A value both sides changed differently is
+a conflict, as is a merged model that no longer builds. The B-UML sources are
+written again from the merged model, and the branch moves only by a
+fast-forward to a merge commit whose parents are the branch head and the
+write's own commit.
+
+A Spec-Driven push sends only what the run changed. ``push_directory_to_repo``
+compares the workspace with GitHub's recursive tree of the base commit: a file
+whose blob id and mode match is not uploaded, a changed file keeps its mode,
+links and submodules are never touched, and a repository path the run could
+not hold (build and dependency output, ``*.db``, BESSER's ``.besser_*`` files,
+a scrubbed secret ``.env``) is not taken as a deletion. A push with no change
+makes no commit. ``files_uploaded`` counts the files added, changed or deleted.
+Once the push has landed, a failure to read the merged repository back for the
+next run is reported in ``warnings`` rather than failing the request.
+
+Tests run the real ``GitHubService`` against
+``tests/utilities/web_modeling_editor/backend/fake_github.py``, a GitHub REST
+stand-in backed by real git repositories (blobs, trees, merges, paging, pull
+requests, the OAuth code exchange); ``use_fake_github(monkeypatch, fake)``
+routes the backend's GitHub requests to it.
 
 The base of an agent push is the commit the run itself started from, recorded
 in the run's workspace (``.besser_github_source.json``, written by the import

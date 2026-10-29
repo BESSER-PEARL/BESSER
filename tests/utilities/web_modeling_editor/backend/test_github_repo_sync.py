@@ -244,7 +244,7 @@ class _PushGitHub(_ImportGitHub):
                          message=commit_message)
         sha = MERGED if self.status == "merged" else OURS
         return {"commit_sha": sha, "total_files": len(files), "status": self.status, "conflict_branch": None,
-                "own_commit_sha": OURS}
+                "own_commit_sha": OURS, "uploaded_files": files, "deleted_files": []}
 
     async def add_topic(self, owner, repo_name, topic):
         self.topics.append(topic)

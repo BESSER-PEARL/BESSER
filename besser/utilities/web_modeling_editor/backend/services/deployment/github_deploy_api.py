@@ -1842,25 +1842,33 @@ async def get_model_history(
     branch: str = Query("main"),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
-    """Recent commits that changed ``buml/diagrams.json``, each with its class-diagram changes."""
+    """Recent commits that changed ``buml/diagrams.json``, each with its class-diagram changes.
+
+    Each commit is compared with its first parent, not with the commit listed
+    after it: after a merge, the next commit by date is on the other branch.
+    """
     github = _github_for(github_session)
     try:
         commits = await github.get_commits(
-            owner, repo, repo_model.MODEL_FILE, per_page=_MODEL_HISTORY_LIMIT + 1, ref=branch
+            owner, repo, repo_model.MODEL_FILE, per_page=_MODEL_HISTORY_LIMIT, ref=branch
         )
-        versions = []
-        for commit in commits:
-            file_data = await github.get_file_content(owner, repo, repo_model.MODEL_FILE, ref=commit["sha"])
-            try:
-                content = file_data.get("content") if file_data else None
-                versions.append(json.loads(content) if content else None)
-            except json.JSONDecodeError:
-                versions.append(None)
+        models: dict[str, Optional[dict]] = {}
+
+        async def model_at(sha: str) -> Optional[dict]:
+            if sha not in models:
+                file_data = await github.get_file_content(owner, repo, repo_model.MODEL_FILE, ref=sha)
+                try:
+                    content = file_data.get("content") if file_data else None
+                    models[sha] = json.loads(content) if content else None
+                except json.JSONDecodeError:
+                    models[sha] = None
+            return models[sha]
 
         entries = []
-        for index, commit in enumerate(commits[:_MODEL_HISTORY_LIMIT]):
-            current = versions[index]
-            older = versions[index + 1] if index + 1 < len(versions) else None
+        for commit in commits:
+            current = await model_at(commit["sha"])
+            parents = commit.get("parents") or []
+            older = await model_at(parents[0]) if parents else None
             changes = repo_model.describe_change(older, current) if current is not None else []
             entries.append(ModelHistoryEntry(**_commit_response(commit).model_dump(), changes=changes))
         return ModelHistoryResponse(commits=entries)

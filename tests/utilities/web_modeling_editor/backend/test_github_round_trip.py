@@ -448,3 +448,21 @@ def test_a_merged_push_is_reported_as_done_even_if_reading_it_back_fails(github,
     assert r.json()["base_run_id"] is None
     assert any("Get latest" in warning for warning in r.json()["warnings"])
     assert github.files(repo)["src/app.py"][1] == b"print('v2')\n"
+
+
+def test_the_model_history_describes_each_commit_against_its_parent(github):
+    """History compared each commit with the one listed next by date, so after a merge
+    "Add Loan" read "class Member removed" (Member came from the other branch)."""
+    repo, base = _model_repo(github)
+    _teammate_saves(github, repo, _with_class(CLASS_DIAGRAM_MODEL, "Member"))
+    assert _save(_with_class(CLASS_DIAGRAM_MODEL, "Loan"), base).json()["status"] == "merged"
+
+    r = _call("GET", "/besser_api/github/model-history", headers=SESSION,
+              params={"owner": "ana", "repo": "library", "branch": "main"})
+
+    assert r.status_code == 200, r.text
+    changes = {c["message"].splitlines()[0]: c["changes"] for c in r.json()["commits"]}
+    assert changes["Add Loan"] == ["class Loan added"]
+    assert changes["Add a class"] == ["class Member added"]
+    # The merge brings Loan into the branch that had Member.
+    assert changes["Merge BESSER changes into main"] == ["class Loan added"]

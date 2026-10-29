@@ -387,8 +387,9 @@ class _SidebarGitHub:
         pass
 
     async def get_commits(self, owner, repo, path=None, per_page=30, ref=None):
-        return [{"sha": sha, "message": message, "author": "Ana", "date": "", "html_url": ""}
-                for sha, message in [("2" * 40, "Add Loan"), ("1" * 40, f"First\n\nBESSER-Origin: editor")]]
+        return [{"sha": sha, "message": message, "author": "Ana", "date": "", "html_url": "", "parents": parents}
+                for sha, message, parents in [("2" * 40, "Add Loan", ["1" * 40]),
+                                              ("1" * 40, "First\n\nBESSER-Origin: editor", [])]]
 
     async def get_file_content(self, owner, repo, path, branch="main", ref=None):
         content = self.files_at.get((path, ref))

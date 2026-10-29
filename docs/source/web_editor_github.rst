@@ -61,10 +61,15 @@ editor's Save, the agent's push, Go live) uses the same layout, defined once in
 ``repo_model.py``:
 
 - ``buml/diagrams.json``: the model, a V2 project export. The only model file
-  the editor reads back (the legacy ``besser-project.json`` is still read and
-  removed on the next save).
-- ``buml/*.py``: the same model as B-UML Python source, for people reading the
-  repository. Always written from ``diagrams.json``, never read.
+  the editor reads back. The legacy ``besser-project.json`` is still read; it,
+  or the ``<dir>/<project>.json`` the old sidebar saved (``legacy_file_path`` on
+  ``/github/project/save``), is removed by the next save when it holds a
+  BESSER project.
+- ``buml/domain_model.py``, ``buml/gui_model.py``, ``buml/agent_model_<agent>.py``:
+  the same model as B-UML Python source, for people reading the repository.
+  Always written from ``diagrams.json``, never read. Only these names are
+  BESSER's: another file under ``buml/`` (a ``seed_data.py``) is the
+  repository's own and is merged like any code.
 - ``.besser/project.json``: which BESSER project the repository belongs to.
 - The ``besser`` topic on the repository, which is how the repo browser lists
   BESSER projects first.
@@ -74,7 +79,7 @@ editor's Save, the agent's push, Go live) uses the same layout, defined once in
 
 Agent credentials (LLM keys, bot tokens, database passwords in the agent
 diagram's config) are replaced with ``[REDACTED]`` before ``diagrams.json`` is
-written; the editor keeps the user's local values when it reads the file back
+written, by every path including ``/github/deploy-webapp``; the editor keeps the user's local values when it reads the file back
 (``shared/utils/redactedSecrets.ts``). New repositories are private unless the
 user asks otherwise.
 
@@ -85,8 +90,10 @@ Sign-in and the session
 a token, keeps the token server-side and returns to the editor with a session
 id in the URL fragment, which browsers never send to a server. The editor keeps
 that id in ``sessionStorage`` and sends it in the ``X-GitHub-Session`` header,
-never in a URL. Sessions live in the backend's memory, so a backend restart ends
-them.
+never in a URL. For one release, ``/github/auth/status``, the star endpoints and
+logout still accept the old ``session_id`` query parameter when the header (or
+logout's body) is absent, and log a deprecation warning. Sessions live in the
+backend's memory, so a backend restart ends them.
 
 The editor has one sign-in store for the tab. Its states are ``checking`` (a
 stored session is being verified; actions wait instead of starting a new
@@ -123,11 +130,20 @@ commit the run started from, recorded in the run's
 - **It has moved**: the commit is merged with the newer ones (next section).
 - **The merge fails**: the commit stays on a ``besser/sync-<sha>`` branch and the
   answer is ``status: "conflict"``. Nothing is overwritten.
+- **The branch moves while committing** (someone pushed between reading the
+  head and moving it, which GitHub refuses with 422): the commit is made again
+  on the new head, once; a second race is reported as a conflict (HTTP 409).
+- **The repository has no commit**: GitHub's git data API answers 409 "Git
+  Repository is empty", so the first commit is made through the contents API
+  (one model or run file), and the write continues on top of it.
 
 An agent push changes only what the run changed. ``push_directory_to_repo``
 compares the run's files with GitHub's recursive tree of the base commit:
 
-- a file whose git blob id and mode match is not uploaded;
+- a file whose git blob id and mode match is not uploaded, nor is one whose
+  bytes still hash as they did when the run got them: the import is a git
+  archive, which applies ``.gitattributes`` (``eol``, ``export-subst``,
+  ``ident``) and LFS, so a file the run never touched can differ from its blob;
 - a changed file keeps its mode, so an executable stays executable;
 - symlinks and submodules in the repository are never touched;
 - a repository path the run could not hold (build and dependency output,
@@ -136,8 +152,10 @@ compares the run's files with GitHub's recursive tree of the base commit:
 - only a run seeded from this repository can delete a file at all; a run
   generated from the model (a first generation) only adds and updates;
 - a seeded run deletes only paths it held: import and every push record the
-  run's files in ``.besser_github_source.json``, and a path missing from that
-  list (an ``export-ignore`` file the archive left out, say) is kept;
+  run's files in ``.besser_github_source.json`` (``paths``: repo path to the
+  SHA-256 of the bytes the run held; a record from before the hashes is a plain
+  list and is still read), and a path missing from it (an ``export-ignore``
+  file the archive left out, say) is kept;
 - a push that changes nothing makes no commit.
 
 Merging
@@ -154,7 +172,9 @@ who each add a class collide on the same lines. When a write holds the model,
    either editor engine), lists of unique values as sets. Layout and timestamps
    keep this side's value. A value both sides changed differently, or a merged
    model that no longer builds, is a conflict.
-3. The B-UML sources are written again from the merged model.
+3. The B-UML sources are written again from the merged model. If that export
+   fails, the previous sources are kept, not deleted, and the answer's
+   ``warnings`` says they may be out of date.
 4. The branch moves only by a fast-forward, to a merge commit whose parents are
    the branch head and the write's own commit. If the branch moved again
    meanwhile, the fast-forward fails rather than reverting anything.
@@ -184,11 +204,17 @@ Starting from any repository
 ``/spec-driven/import-github-run`` pins the branch head, extracts the tarball
 into the shared run workspace (limits: 100 MB archive, 500 MB unpacked, 50,000
 files; links and devices are skipped) and registers it as a run the next modify
-run seeds from. A repository with ``buml/diagrams.json`` opens with its model.
-For any other, ``code_reverse.py`` reads SQLAlchemy, Django, Pydantic and
-dataclass models; when there are none (or only API shapes), ``ai_reverse.py``
-asks the server's model to read a digest of the code. The result is a proposed
-class diagram the user accepts or discards on the canvas. A relationship the
+run seeds from. An import takes one of the ``BESSER_LLM_MAX_CONCURRENT_RUNS``
+slots for its duration and answers 429 when they are all taken. A repository
+with ``buml/diagrams.json`` opens with its model. For any other,
+``code_reverse.py`` reads SQLAlchemy, Django, Pydantic and dataclass models.
+When there are none (or only API shapes), ``ai_reverse.py`` can ask the
+server's model to read a digest of the code, whose first provider may be a
+third party, so only with the user's consent: without ``allow_ai_reading`` the
+import calls no model, still returns the exact reading if any, and answers
+``ai_reading_offered: true`` with a message offering it; the editor imports
+again with ``allow_ai_reading: true`` once the user allows it. The result is a
+proposed class diagram the user accepts or discards on the canvas. A relationship the
 metamodel rejects is left out on its own and named in the import message
 (``skipped_relationships``); the rest of the model is kept.
 

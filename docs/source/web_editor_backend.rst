@@ -371,9 +371,10 @@ Four middlewares wrap every request, outermost first:
   HSTS, and a Content-Security-Policy on every response.
 
 There is no per-client rate limiting. The only throughput control is
-``BESSER_LLM_MAX_CONCURRENT_RUNS`` (default 10) on spec-driven runs, which
-answers ``429`` when the slots are full; starting or resuming a run that is
-already in flight answers ``409``. See
+``BESSER_LLM_MAX_CONCURRENT_RUNS`` (default 10) on spec-driven runs and GitHub
+imports (``/spec-driven/import-github-run``), which answers ``429`` when the
+slots are full; starting or resuming a run that is already in flight answers
+``409``. See
 :doc:`spec_driven_agent/configuration`.
 
 API Endpoints
@@ -600,7 +601,7 @@ testing against a GitHub stand-in) is described in :doc:`web_editor_github`.
 - ``GET /github/star/status``, ``PUT /github/star``, ``DELETE /github/star`` -- Read / set / clear the signed-in user's star on the BESSER repository
 - ``POST /github/deploy-webapp`` -- Deploy generated app to GitHub repository
 - ``GET /github/repos``, ``GET /github/branches``, ``GET /github/commits``, ``GET /github/contents``, ``GET /github/file/exists`` -- Repository browsing for the editor's save/load flow. ``/repos`` lists every repository the user can open (own, collaborator and organization), most recently updated first, across GitHub's pages up to 1,000, with each one's topics and ``can_push``; ``truncated`` says the account has more. ``/branches`` follows the pages too. ``/commits`` marks each commit's ``origin``.
-- ``POST /github/project/save``, ``GET /github/project/load``, ``GET /github/project/load-commit``, ``POST /github/project/create-repo`` -- Store and retrieve a BESSER project in a repository (including loading it back from a specific commit)
+- ``POST /github/project/save``, ``GET /github/project/load``, ``GET /github/project/load-commit``, ``POST /github/project/create-repo`` -- Store and retrieve a BESSER project in a repository (including loading it back from a specific commit). A save takes an optional ``legacy_file_path`` (a relative ``.json`` path without ``..``; default ``besser-project.json``): the project file the old editor sidebar saved, removed in the same commit when it holds a BESSER project. A merged save lists anything the user should know in ``warnings``
 - ``GET /github/repo-summary`` -- What a repository holds: the model's name, diagrams per type, classes, and the last commit
 - ``GET /github/sync-status`` -- Commits on a branch since ``base_sha``, the commit the editor last synced. With ``pending_branch`` (a ``besser/…`` branch a conflict or pull-request push left), ``pending`` says whether that branch still exists and the state of its pull request (``open``, ``closed``, ``merged``, or none yet)
 - ``GET /github/model-history`` -- Recent commits that changed the model, each with its class-diagram changes
@@ -609,17 +610,23 @@ testing against a GitHub stand-in) is described in :doc:`web_editor_github`.
 - ``POST /github/gist/create`` -- Share a model as a GitHub gist
 
 Every GitHub endpoint except the OAuth flow and logout reads the session from
-the ``X-GitHub-Session`` header, never from the URL.
+the ``X-GitHub-Session`` header, never from the URL. For one release,
+``/github/auth/status`` and the star endpoints still accept the deprecated
+``session_id`` query parameter when the header is absent (and logout when its
+body is), with a warning in the server log.
 
 Every repository BESSER writes has one layout, defined in
 ``services/deployment/repo_model.py``: the model in ``buml/diagrams.json`` (a V2
 project export; the legacy ``besser-project.json`` is still read), the B-UML
-sources in ``buml/*.py``, the owning project in ``.besser/project.json``, and the
+sources ``buml/domain_model.py``, ``buml/gui_model.py`` and
+``buml/agent_model_<agent>.py`` (any other file under ``buml/`` is the
+repository's own), the owning project in ``.besser/project.json``, and the
 ``besser`` topic on the repository. Commits BESSER makes end with a
 ``BESSER-Origin: spec-driven-agent`` or ``BESSER-Origin: editor`` trailer.
 
 Repositories BESSER creates are private unless the request sets
-``is_private: false``. Before ``buml/diagrams.json`` is written, the agent
+``is_private: false``. Before ``buml/diagrams.json`` is written (by every
+endpoint, ``/github/deploy-webapp`` included), the agent
 diagrams' credentials (API keys, bot and webhook tokens, database passwords in
 ``config``, ``agentConfigForm``, ``configYaml`` and ``agentConfigCustomYaml``)
 and any provider token elsewhere in the model are replaced with
@@ -632,7 +639,11 @@ Writes never revert newer commits. ``/github/project/save`` and
 (``base_commit_sha``). When the branch has moved past it, the new commit is made
 on top of that base and merged into the branch, so both sides' changes are kept.
 A write that cannot be merged is left on a ``besser/sync-<sha>`` branch and
-reported as ``status: "conflict"``, and nothing is overwritten.
+reported as ``status: "conflict"``, and nothing is overwritten. When the branch
+moves between reading its head and updating it, the commit is made again on the
+new head once before a race is reported. A repository with no commit yet gets
+its first one through the contents API, since GitHub's git data API refuses an
+empty repository with 409.
 
 The model is not merged as text. Git merges ``diagrams.json`` and the B-UML
 sources line by line, so two people who each add a class would collide on the
@@ -645,11 +656,15 @@ timestamps keep this side's value). A value both sides changed differently is
 a conflict, as is a merged model that no longer builds. The B-UML sources are
 written again from the merged model, and the branch moves only by a
 fast-forward to a merge commit whose parents are the branch head and the
-write's own commit.
+write's own commit. If the merged model's B-UML export fails, the previous
+sources are kept rather than deleted, and ``warnings`` says so.
 
 A Spec-Driven push sends only what the run changed. ``push_directory_to_repo``
 compares the workspace with GitHub's recursive tree of the base commit: a file
-whose blob id and mode match is not uploaded, a changed file keeps its mode,
+whose blob id and mode match is not uploaded, nor is one whose bytes still have
+the SHA-256 recorded when the run got them (the import is a git archive, which
+applies ``.gitattributes`` such as ``eol=crlf`` and ``export-subst``, so an
+untouched file can differ from its blob), a changed file keeps its mode,
 links and submodules are never touched, and a repository path the run could
 not hold (build and dependency output, ``*.db``, BESSER's ``.besser_*`` files,
 a scrubbed secret ``.env``) is not taken as a deletion. Only a run seeded from

@@ -90,14 +90,20 @@ Endpoints
        found and ``proposed_diagram`` is the resulting class diagram, or ``null``.
        When no such models are found, or only Pydantic and dataclass models
        (mostly API shapes), and the server offers the keyless model, that
-       model reads a bounded digest of the code (schemas, migrations, types,
-       entities, README; secrets left out) and proposes the diagram instead,
-       with ``analysis.ai: true``; a failed or timed-out reading falls back to
-       the Pydantic or dataclass models when there are any, else returns no
-       proposal and a ``message``. A body carrying the valid demo secret
-       (``demo_token``, from a ``?demo=`` link) is read by the sponsored
-       model instead; a wrong secret falls back to the keyless one.
-       Requires an ``X-GitHub-Session`` header.
+       model can read a bounded digest of the code (schemas, migrations,
+       types, entities, README; secrets left out) and propose the diagram
+       instead, with ``analysis.ai: true``, but only when the body sets
+       ``allow_ai_reading: true`` (default ``false``): the code goes to a
+       model that may be a third party's. Without it no model is called, the
+       exact reading (if any) is still proposed, and the response sets
+       ``ai_reading_offered: true`` with a ``message`` offering the reading.
+       A failed or timed-out reading falls back to the Pydantic or dataclass
+       models when there are any, else returns no proposal and a
+       ``message``. A body carrying the valid demo secret (``demo_token``,
+       from a ``?demo=`` link) is read by the sponsored model instead; a
+       wrong secret falls back to the keyless one. An import takes a
+       ``BESSER_LLM_MAX_CONCURRENT_RUNS`` slot while it runs and answers
+       ``429`` when none is free. Requires an ``X-GitHub-Session`` header.
 
 Request body
 ------------

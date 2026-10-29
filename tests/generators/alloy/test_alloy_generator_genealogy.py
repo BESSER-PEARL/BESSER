@@ -1,11 +1,11 @@
 import pytest
-from tests.generators.alloy.BUML_genealogy_model import domain_model
+from tests.generators.alloy.BUML_genealogy_model import genealogy_model  # noqa: F401
 from tests.generators.alloy.utils_alloy_translation import translate
 
 
 @pytest.fixture
-def spec():
-    return translate(domain_model, scope=5)
+def spec(genealogy_model):  # noqa: F811
+    return translate(genealogy_model, scope=5)
 
 
 def test_library_modules(spec):

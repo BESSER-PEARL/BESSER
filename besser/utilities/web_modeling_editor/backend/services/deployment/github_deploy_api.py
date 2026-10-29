@@ -1217,11 +1217,15 @@ class GitHubRepoResponse(BaseModel):
     updated_at: str
     default_branch: str
     topics: List[str] = []
+    # False for a repo the user may only read (e.g. an organization repo they are not a writer on).
+    can_push: bool = True
 
 
 class GitHubReposListResponse(BaseModel):
     """Response for list of repositories."""
     repositories: List[GitHubRepoResponse]
+    # True when the account has more repositories than the listing covers.
+    truncated: bool = False
 
 
 class GitHubCommitResponse(BaseModel):
@@ -1307,24 +1311,18 @@ async def get_user_repositories(
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
     """
-    Get list of repositories for the authenticated user.
-
-    Returns only repositories owned by the user, sorted by last updated.
+    The repositories the signed-in user can open: their own, those they
+    collaborate on and their organizations', most recently updated first.
     """
-    if not github_session:
-        raise HTTPException(status_code=401, detail="GitHub authentication required")
-
-    access_token = get_user_token(github_session)
-    if not access_token:
-        raise HTTPException(status_code=401, detail="GitHub session expired")
-
+    github = _github_for(github_session)
     try:
-        github = create_github_service(access_token)
-        repos = await github.get_user_repositories()
-
+        listing = await github.get_user_repositories()
         return GitHubReposListResponse(
-            repositories=[GitHubRepoResponse(**r) for r in repos]
+            repositories=[GitHubRepoResponse(**r) for r in listing["repositories"]],
+            truncated=listing["truncated"],
         )
+    except httpx.HTTPStatusError as exc:
+        raise _github_http_error(exc) from exc
     except Exception:
         logger.exception("Unexpected error fetching GitHub repositories")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching repositories.")
@@ -1344,18 +1342,12 @@ async def get_repository_branches(
     """
     Get list of branches for a repository.
     """
-    if not github_session:
-        raise HTTPException(status_code=401, detail="GitHub authentication required")
-
-    access_token = get_user_token(github_session)
-    if not access_token:
-        raise HTTPException(status_code=401, detail="GitHub session expired")
-
+    github = _github_for(github_session)
     try:
-        github = create_github_service(access_token)
         branches = await github.get_branches(owner, repo)
-
         return GitHubBranchesListResponse(branches=branches)
+    except httpx.HTTPStatusError as exc:
+        raise _github_http_error(exc) from exc
     except Exception:
         logger.exception("Unexpected error fetching GitHub branches")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching branches.")
@@ -1551,6 +1543,7 @@ async def save_project_to_github(
             repo_model.with_origin(request.commit_message, repo_model.ORIGIN_EDITOR),
             layer_on_parent=True,
             base_commit_sha=request.base_commit_sha,
+            model_merge=repo_model.ModelMerge(request.project_export or request.project_data),
         )
         await github.add_topic(request.owner, request.repo, repo_model.BESSER_TOPIC)
         conflict = outcome["status"] == "conflict"
@@ -1756,12 +1749,42 @@ async def get_repo_summary(
         raise HTTPException(status_code=500, detail="An internal error occurred while reading the repository.")
 
 
+class PendingChangeStatus(BaseModel):
+    """Where a save or push that did not land on the branch stands."""
+    branch: str
+    # False once the branch was deleted (e.g. after its pull request was merged).
+    branch_exists: bool
+    pull_request_number: Optional[int] = None
+    pull_request_url: Optional[str] = None
+    # "open", "closed" or "merged"; None while no pull request was opened.
+    pull_request_state: Optional[str] = None
+
+
 class SyncStatusResponse(BaseModel):
     """How a linked repo's branch relates to the commit the editor last synced."""
     head_sha: str
     # Commits on the branch since ``base_sha``, newest first.
     commits_since: List[GitHubCommitResponse]
     in_sync: bool
+    # Set when the request named a ``pending_branch``.
+    pending: Optional[PendingChangeStatus] = None
+
+
+# A branch BESSER left for a pull request: a conflict (besser/sync-*) or a pull-request push (besser/update-*).
+_PENDING_BRANCH_PATTERN = r"^besser/[A-Za-z0-9._-]{1,64}$"
+
+
+async def _pending_status(github, owner: str, repo: str, branch: str) -> PendingChangeStatus:
+    exists = await github.get_branch_head(owner, repo, branch) is not None
+    pull = await github.get_pull_request_for_branch(owner, repo, branch)
+    state = None
+    if pull:
+        state = "merged" if pull["merged"] else pull["state"]
+    return PendingChangeStatus(
+        branch=branch, branch_exists=exists,
+        pull_request_number=pull and pull["number"], pull_request_url=pull and pull["html_url"],
+        pull_request_state=state,
+    )
 
 
 @router.get("/sync-status", response_model=SyncStatusResponse)
@@ -1770,19 +1793,26 @@ async def get_sync_status(
     repo: str = Query(...),
     branch: str = Query("main"),
     base_sha: Optional[str] = Query(None, pattern=r"^[0-9a-f]{40}$"),
+    pending_branch: Optional[str] = Query(None, pattern=_PENDING_BRANCH_PATTERN),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
-    """Commits made on ``branch`` since ``base_sha`` (the editor's last sync)."""
+    """Commits made on ``branch`` since ``base_sha`` (the editor's last sync).
+
+    ``pending_branch`` is a save or push that did not land on ``branch``
+    (a conflict, or a pull request): the answer says whether its pull
+    request was opened, merged or closed.
+    """
     github = _github_for(github_session)
     try:
         head = await github.get_branch_head(owner, repo, branch)
         if not head:
             raise HTTPException(status_code=404, detail="branch_missing")
+        pending = await _pending_status(github, owner, repo, pending_branch) if pending_branch else None
         if not base_sha or base_sha == head:
-            return SyncStatusResponse(head_sha=head, commits_since=[], in_sync=bool(base_sha))
+            return SyncStatusResponse(head_sha=head, commits_since=[], in_sync=bool(base_sha), pending=pending)
         comparison = await github.compare_commits(owner, repo, base_sha, head)
         commits = [_commit_response(c) for c in reversed(comparison["commits"])]
-        return SyncStatusResponse(head_sha=head, commits_since=commits, in_sync=not commits)
+        return SyncStatusResponse(head_sha=head, commits_since=commits, in_sync=not commits, pending=pending)
     except HTTPException:
         raise
     except httpx.HTTPStatusError as exc:
@@ -1847,6 +1877,7 @@ class CreatePullRequestRequest(BaseModel):
     head: str
     base: str = "main"
     title: str = Field(..., min_length=1, max_length=256)
+    # Empty: BESSER writes one listing the model changes.
     body: str = ""
 
 
@@ -1860,15 +1891,32 @@ async def create_pull_request(
     request: CreatePullRequestRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
-    """Open a pull request, e.g. for a push GitHub could not merge on its own."""
+    """Open a pull request, e.g. for a save GitHub could not merge on its own.
+
+    Asking again for a branch that already has an open pull request returns it.
+    """
     github = _github_for(github_session)
     try:
+        body = request.body or await _pull_request_body(
+            github, request.owner, request.repo, request.base, request.head
+        )
         result = await github.create_pull_request(
-            request.owner, request.repo, request.head, request.base, request.title, request.body
+            request.owner, request.repo, request.head, request.base, request.title, body
         )
         return CreatePullRequestResponse(**result)
     except httpx.HTTPStatusError as exc:
         raise _github_http_error(exc) from exc
+
+
+async def _pull_request_body(github, owner: str, repo: str, base: str, head: str) -> str:
+    """A pull request description: what the model changes between ``base`` and ``head``."""
+    try:
+        theirs = await _read_model(github, owner, repo, base)
+        ours = await _read_model(github, owner, repo, head)
+    except json.JSONDecodeError:
+        theirs = ours = None
+    changes = repo_model.describe_change(theirs, ours) if ours is not None else []
+    return repo_model.pull_request_body(changes)
 
 
 # ============================================================================

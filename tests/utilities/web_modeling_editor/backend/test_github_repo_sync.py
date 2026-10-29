@@ -234,7 +234,8 @@ class _PushGitHub(_ImportGitHub):
         return {"login": "me"}
 
     async def push_directory_to_repo(self, owner, repo_name, directory_path, commit_message="",
-                                     branch="main", preserve_existing_files=False, base_commit_sha=None):
+                                     branch="main", preserve_existing_files=False, base_commit_sha=None,
+                                     keep_path=None, model_merge=None):
         files = sorted(
             os.path.relpath(os.path.join(root, name), directory_path).replace("\\", "/")
             for root, _dirs, names in os.walk(directory_path) for name in names
@@ -375,7 +376,8 @@ class _SidebarGitHub:
     async def file_exists(self, owner, repo, path, branch):
         return self.legacy_exists and path == repo_model.LEGACY_PROJECT_FILE
 
-    async def commit_tree(self, owner, repo, branch, entries, message, layer_on_parent, base_commit_sha=None):
+    async def commit_tree(self, owner, repo, branch, entries, message, layer_on_parent, base_commit_sha=None,
+                          model_merge=None):
         self.commit = dict(paths={e["path"]: e["sha"] for e in entries}, message=message,
                            layer_on_parent=layer_on_parent, base=base_commit_sha)
         return {"commit_sha": OURS, "status": "pushed", "conflict_branch": None}

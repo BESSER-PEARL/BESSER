@@ -23,6 +23,7 @@ events, and never stored on disk.
 # ``handle_endpoint_errors``' wrapper points at the decorator module.
 import asyncio
 import dataclasses
+import fnmatch
 import hmac
 import json
 import logging
@@ -86,6 +87,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
     release_run_slot,
     request_cancellation,
     reserve_active_run,
+    run_changes,
     try_acquire_run_slot,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
@@ -881,6 +883,26 @@ def _scrub_secret_env_files(workdir: str) -> list[str]:
     return list(scrub_secret_files(workdir).removed_files)
 
 
+# The run's own files the push never sends; the import and the seed skip build
+# output too, so a repo path under one of these was never in the run.
+_RUN_INTERNAL_FILES = ".besser_*"
+
+
+def _hidden_from_run(path: str, scrubbed: list[str]) -> bool:
+    """True for a repo path the pushed run could not hold, so its absence is no deletion.
+
+    The seed and the push copy skip ``_EXCLUDED_OUTPUT_DIRS`` and BESSER's
+    internal files, and the push removes secret ``.env`` files (``scrubbed``).
+    """
+    if path in scrubbed:
+        return True
+    return any(
+        fnmatch.fnmatch(part, pattern)
+        for part in path.split("/")
+        for pattern in (*_EXCLUDED_OUTPUT_DIRS, _RUN_INTERNAL_FILES)
+    )
+
+
 def _resolve_target_branch(
     requested: Optional[str],
     available: Optional[list[str]],
@@ -927,7 +949,9 @@ async def push_spec_driven_to_github(
          carries a real secret.
       4. Inject ``buml/`` model files + ``buml/diagrams.json``.
       5. Create (default private) or reuse the repo, resolve the branch.
-      6. Replace the repo tree with this push (each run is a full app).
+      6. Commit what the run changed relative to the commit it started from:
+         files the run never held (build output, ``*.db``, symlinks, secret
+         files) stay as they are in the repo.
     """
     # ---- 1. GitHub auth gate ----
     if not github_session:
@@ -956,12 +980,13 @@ async def push_spec_driven_to_github(
         github = create_github_service(access_token)
 
         user_info = await github.get_authenticated_user()
-        owner = user_info.get("login")
-        if not owner:
+        login = user_info.get("login")
+        if not login:
             raise HTTPException(
                 status_code=401,
                 detail="Could not resolve GitHub user from session.",
             )
+        owner = (deploy_config.use_existing and deploy_config.owner) or login
 
         with tempfile.TemporaryDirectory(
             prefix=f"besser_smart_push_{uuid.uuid4().hex}_"
@@ -975,7 +1000,7 @@ async def push_spec_driven_to_github(
             # falls back to "build from scratch" framing.
             # Symlinks are dropped, never read through.
             copytree_no_links(
-                entry.temp_dir, workdir, [*_EXCLUDED_OUTPUT_DIRS, ".besser_*"],
+                entry.temp_dir, workdir, [*_EXCLUDED_OUTPUT_DIRS, _RUN_INTERNAL_FILES],
             )
             # The same goes for the line attribution state: the next
             # continue-from-GitHub run diffs the repo against it to tell
@@ -1040,8 +1065,8 @@ async def push_spec_driven_to_github(
                 else await _refresh_deploy_files(github, owner, repo_name, target_branch, workdir)
             )
 
-            # ---- 6. Push the whole tree (replace — full app per run) ----
-            # The tree replaces the one at the commit the run started from;
+            # ---- 6. Push what the run changed ----
+            # The tree is compared with the commit the run started from;
             # commits made on the branch since are merged in, never reverted.
             # The run records that commit itself: the editor's link may have
             # moved on (a pull after the run started), and pushing over the
@@ -1070,6 +1095,8 @@ async def push_spec_driven_to_github(
                 branch=push_branch,
                 preserve_existing_files=False,
                 base_commit_sha=base_sha,
+                keep_path=lambda path: _hidden_from_run(path, scrubbed),
+                model_merge=repo_model.ModelMerge(effective_export) if effective_export else None,
             )
             if not push_results.get("commit_sha"):
                 raise HTTPException(
@@ -1081,7 +1108,9 @@ async def push_spec_driven_to_github(
                 pull_request = await github.create_pull_request(
                     owner, repo_name, head=push_branch, base=target_branch,
                     title=deploy_config.commit_message or "Update from the BESSER Spec-Driven Agent",
-                    body=_PULL_REQUEST_BODY,
+                    body=repo_model.pull_request_body(
+                        _model_changes(entry), push_results["uploaded_files"] + push_results["deleted_files"],
+                    ),
                 )
                 pull_request_url = pull_request["html_url"]
                 status = "pull_request"
@@ -1144,17 +1173,20 @@ async def push_spec_driven_to_github(
         )
 
 
-_PULL_REQUEST_BODY = (
-    "Changes made by the BESSER Spec-Driven Agent. The model is in "
-    f"`{repo_model.MODEL_FILE}`."
-)
+def _model_changes(entry) -> list[str]:
+    """What the run changed in the model, from its recipe (empty when it changed none)."""
+    try:
+        with open(os.path.join(entry.temp_dir, ".besser_recipe.json"), "r", encoding="utf-8") as fh:
+            return run_changes(json.load(fh))["modelChanges"]
+    except (OSError, ValueError):
+        return []
 
 
 async def _refresh_deploy_files(github, owner: str, repo: str, branch: str, workdir: str) -> list[str]:
     """Rewrite the Render files "Go live" put in the repo, for the pushed tree's layout.
 
-    A push replaces the repo's tree, so without this it would delete them; with
-    it, the next deploy also follows a layout change the agent made. A
+    The run does not hold them, so without this the push would delete them;
+    with it, the next deploy also follows a layout change the agent made. A
     render.yaml BESSER did not write is left alone (it is in the pushed tree or
     not, as the run left it). Returns warnings for the user.
     """
@@ -1189,7 +1221,8 @@ def _run_seed_commit(run_dir: str, owner: str, repo: str) -> Optional[str]:
             source = json.load(fh)
     except (OSError, ValueError):
         return None
-    if source.get("owner") != owner or source.get("repo") != repo:
+    # GitHub names are case-insensitive: "Ana/Shop" and "ana/shop" are one repo.
+    if str(source.get("owner")).lower() != owner.lower() or str(source.get("repo")).lower() != repo.lower():
         return None
     sha = source.get("commitSha")
     return sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) else None

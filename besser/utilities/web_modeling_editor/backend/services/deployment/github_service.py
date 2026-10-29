@@ -5,13 +5,15 @@ Handles creating GitHub repositories and pushing generated code.
 """
 
 import base64
+import hashlib
 import io
 import logging
 import os
 import shutil
+import stat
 import tarfile
 import tempfile
-from typing import Optional, Dict, Any, List
+from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 
 import httpx
@@ -23,6 +25,22 @@ logger = logging.getLogger(__name__)
 # Side branch a push lands on when the target branch moved since the push's
 # base commit; it is merged and deleted, or kept for a pull request on conflict.
 SYNC_BRANCH_PREFIX = "besser/sync-"
+
+# Git tree modes of a regular file; links (120000) and submodules (160000) are never pushed.
+_FILE_MODE = "100644"
+_EXECUTABLE_MODE = "100755"
+_FILE_MODES = (_FILE_MODE, _EXECUTABLE_MODE)
+
+# GitHub's largest page. A listing stops after this many pages, so a huge
+# account or repo costs a bounded number of requests.
+_PAGE_SIZE = 100
+_MAX_REPO_PAGES = 10
+_MAX_BRANCH_PAGES = 10
+
+
+def git_blob_sha(content: bytes) -> str:
+    """The object id git gives a blob holding ``content``, to tell an unchanged file without uploading it."""
+    return hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()
 
 
 class GitHubService:
@@ -327,11 +345,15 @@ class GitHubService:
         branch: str = "main",
         preserve_existing_files: bool = False,
         base_commit_sha: Optional[str] = None,
+        keep_path: Optional[Callable[[str], bool]] = None,
+        model_merge: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """
-        Push entire directory contents to GitHub repository.
+        """Commit a directory to ``branch`` as a change to the commit it was derived from.
 
-        Uses GitHub Git Data API to create a single commit.
+        Only what differs from that commit is sent: a file whose content and
+        mode match it uploads nothing, a changed file keeps its mode (an
+        executable stays executable), and symlinks and submodules in the repo
+        are never touched, since the directory cannot hold them.
 
         Args:
             owner: Repository owner username
@@ -340,36 +362,73 @@ class GitHubService:
             commit_message: Commit message
             branch: Target branch name
             preserve_existing_files: If True, files already in the repo that
-                are not part of this push are kept (merge). If False, the
-                commit replaces the entire tree (clean slate).
-            base_commit_sha: The commit this directory was derived from. When
-                the branch has moved past it, the push is committed on top of
-                it and merged into the branch (see ``commit_tree``), so
-                commits made since are kept instead of reverted.
+                are not in the directory are kept. If False, they are deleted,
+                except those ``keep_path`` keeps.
+            base_commit_sha: The commit this directory was derived from (else
+                the branch head). When the branch has moved past it, the push
+                is merged into the branch (see ``commit_tree``), so commits
+                made since are kept instead of reverted.
+            keep_path: True for a repo path the directory never held (build
+                output, a secret file it was not given), so its absence is not
+                a deletion.
+            model_merge: Passed on to ``commit_tree``.
 
         Returns:
-            Dictionary with push results; ``status`` and ``conflict_branch``
-            are described on ``commit_tree``.
+            ``total_files`` (paths added, changed or deleted), ``uploaded_files``,
+            ``deleted_files`` and the ``commit_tree`` outcome.
         """
-        results = {
-            "uploaded_files": [],
-            "failed_files": [],
-            "total_files": 0,
-            "commit_sha": "",
-            "status": "",
-            "conflict_branch": None,
+        local = self._collect_push_files(directory_path)
+        if not local:
+            raise RuntimeError("No files found to upload.")
+        head_sha = await self._get_ref_sha(owner, repo_name, branch)
+        parent_sha = base_commit_sha or head_sha
+        parent = await self.get_tree_entries(owner, repo_name, parent_sha) if parent_sha else {}
+
+        tree_entries = []
+        uploaded = []
+        for path, (content, executable) in local.items():
+            old = parent.get(path)
+            kept_mode = old["mode"] if old and old["mode"] in _FILE_MODES else None
+            mode = kept_mode or (_EXECUTABLE_MODE if executable else _FILE_MODE)
+            if old and old["sha"] == git_blob_sha(content) and old["mode"] == mode:
+                continue
+            blob_sha = await self.create_blob(owner=owner, repo_name=repo_name, content=content)
+            if not blob_sha:
+                raise RuntimeError(f"GitHub did not return a blob SHA for {path}.")
+            tree_entries.append({"path": path, "mode": mode, "type": "blob", "sha": blob_sha})
+            uploaded.append(path)
+
+        deleted = []
+        if not preserve_existing_files:
+            for path, old in parent.items():
+                if old["mode"] in _FILE_MODES and path not in local and not (keep_path and keep_path(path)):
+                    tree_entries.append({"path": path, "mode": old["mode"], "type": "blob", "sha": None})
+                    deleted.append(path)
+
+        outcome = await self.commit_tree(
+            owner, repo_name, branch, tree_entries, commit_message,
+            layer_on_parent=True,
+            base_commit_sha=parent_sha,
+            model_merge=model_merge,
+        )
+        return {
+            "uploaded_files": uploaded,
+            "deleted_files": deleted,
+            "total_files": len(uploaded) + len(deleted),
+            **outcome,
         }
 
-        directory = Path(directory_path)
+    @staticmethod
+    def _collect_push_files(directory_path: str) -> Dict[str, tuple[bytes, bool]]:
+        """``repo path -> (content, executable)`` for the regular files under ``directory_path``.
 
-        # `is_file()` FOLLOWS symlinks, and this tree is a Spec-Driven workspace
-        # written by model-authored code. A symlink dropped in there (`ln -s
-        # /proc/self/environ leak.txt`) would be read through and its target
-        # committed to the user's public repo by a backend holding the full
-        # secret set; `:ro` blocks writes, not traversal. So skip symlinks, and
-        # re-check every survivor resolves back inside the directory.
-        directory = directory.resolve()
-        all_files = []
+        The tree is a Spec-Driven workspace written by model-authored code. A
+        symlink in it (``ln -s /proc/self/environ leak.txt``) would be read
+        through and its target committed by a backend holding the full secret
+        set, so symlinks are skipped and every file must resolve inside the tree.
+        """
+        directory = Path(directory_path).resolve()
+        files: Dict[str, tuple[bytes, bool]] = {}
         skipped_unsafe = 0
         for candidate in directory.rglob("*"):
             if candidate.is_symlink():
@@ -382,69 +441,40 @@ class GitHubService:
                 if os.path.commonpath([str(directory), str(resolved)]) != str(directory):
                     skipped_unsafe += 1
                     continue
+                content = candidate.read_bytes()
+                executable = bool(candidate.stat().st_mode & stat.S_IXUSR)
             except (OSError, ValueError):
                 skipped_unsafe += 1
                 continue
-            all_files.append(candidate)
-
+            files[candidate.relative_to(directory).as_posix()] = (content, executable)
         if skipped_unsafe:
             logger.warning(
                 "Skipped %d symlinked/out-of-tree entr%s while pushing %s",
                 skipped_unsafe, "y" if skipped_unsafe == 1 else "ies", directory,
             )
+        return files
 
-        results["total_files"] = len(all_files)
-
-        tree_entries = []
-        for file_path in all_files:
-            try:
-                # Get relative path from directory
-                rel_path = file_path.relative_to(directory)
-                github_path = str(rel_path).replace("\\", "/")
-
-                # Read file content
-                with open(file_path, "rb") as f:
-                    content = f.read()
-
-                blob_sha = await self.create_blob(
-                    owner=owner,
-                    repo_name=repo_name,
-                    content=content
-                )
-                if not blob_sha:
-                    raise ValueError("GitHub did not return a blob SHA.")
-                tree_entries.append({
-                    "path": github_path,
-                    "mode": "100644",
-                    "type": "blob",
-                    "sha": blob_sha
-                })
-
-                results["uploaded_files"].append(github_path)
-
-            except Exception as e:
-                results["failed_files"].append({
-                    "file": str(file_path),
-                    "error": str(e)
-                })
-
-        if results["failed_files"]:
-            first_error = results["failed_files"][0]
-            raise RuntimeError(
-                f"Failed to upload {len(results['failed_files'])} files. "
-                f"First error: {first_error['file']} - {first_error['error']}"
+    async def get_tree_entries(self, owner: str, repo_name: str, commit_sha: str) -> Dict[str, Dict[str, str]]:
+        """``path -> {mode, type, sha}`` of every blob, symlink and submodule at ``commit_sha``."""
+        tree_sha = await self._get_commit_tree_sha(owner, repo_name, commit_sha)
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_url}/repos/{owner}/{repo_name}/git/trees/{tree_sha}",
+                headers=self.headers,
+                params={"recursive": "1"},
+                timeout=60
             )
-
-        if not tree_entries:
-            raise RuntimeError("No files found to upload.")
-
-        outcome = await self.commit_tree(
-            owner, repo_name, branch, tree_entries, commit_message,
-            layer_on_parent=preserve_existing_files,
-            base_commit_sha=base_commit_sha,
-        )
-        results.update(outcome)
-        return results
+            response.raise_for_status()
+            data = response.json()
+        if data.get("truncated"):
+            # GitHub caps a recursive listing (100,000 entries / 7 MB); a partial
+            # listing would turn every unlisted file into a deletion.
+            raise RuntimeError(f"{owner}/{repo_name} has too many files for BESSER to update it.")
+        return {
+            entry["path"]: {"mode": entry["mode"], "type": entry["type"], "sha": entry["sha"]}
+            for entry in data.get("tree", [])
+            if entry.get("type") in ("blob", "commit")
+        }
 
     async def commit_tree(
         self,
@@ -455,6 +485,7 @@ class GitHubService:
         commit_message: str,
         layer_on_parent: bool,
         base_commit_sha: Optional[str] = None,
+        model_merge: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Commit ``tree_entries`` to ``branch`` without reverting newer commits.
 
@@ -471,6 +502,9 @@ class GitHubService:
                 not list. When False the tree replaces the parent's.
             tree_entries: Git tree entries; an entry with ``"sha": None``
                 deletes that path (only meaningful with ``layer_on_parent``).
+            model_merge: A ``repo_model.ModelMerge`` when the entries hold the
+                BESSER model: on a merge its files are merged as a model rather
+                than as text (see ``_merge_with_model``).
 
         Returns:
             ``commit_sha`` (the branch head after the push, or the side-branch
@@ -482,6 +516,13 @@ class GitHubService:
         """
         head_sha = await self._get_ref_sha(owner, repo_name, branch)
         parent_sha = base_commit_sha or head_sha
+
+        if not tree_entries and layer_on_parent and head_sha:
+            # Nothing differs from the parent: the branch already holds it, merged
+            # with anything newer. No commit, so the history gets no empty one.
+            status = "pushed" if head_sha == parent_sha else "merged"
+            return {"commit_sha": head_sha, "status": status, "conflict_branch": None,
+                    "own_commit_sha": parent_sha}
 
         base_tree_sha = None
         if layer_on_parent and parent_sha:
@@ -501,6 +542,12 @@ class GitHubService:
             return {"commit_sha": commit_sha, "status": "pushed", "conflict_branch": None,
                     "own_commit_sha": commit_sha}
 
+        if model_merge is not None and any(model_merge.is_model_path(e["path"]) for e in tree_entries):
+            return await self._merge_with_model(
+                owner, repo_name, branch, head_sha, parent_sha, base_tree_sha,
+                commit_sha, commit_message, tree_entries, model_merge,
+            )
+
         side_branch = f"{SYNC_BRANCH_PREFIX}{commit_sha[:7]}"
         await self._update_or_create_ref(owner, repo_name, side_branch, commit_sha, None)
         merge_sha = await self.merge_branch(
@@ -508,16 +555,86 @@ class GitHubService:
             commit_message=f"Merge BESSER changes into {branch}",
         )
         if merge_sha is None:
-            logger.warning(
-                "GitHub could not merge %s into %s/%s@%s; left it on %s for a pull request",
-                commit_sha[:7], owner, repo_name, branch, side_branch,
-            )
-            return {"commit_sha": commit_sha, "status": "conflict", "conflict_branch": side_branch,
-                    "own_commit_sha": commit_sha}
+            return await self._keep_for_pull_request(owner, repo_name, branch, commit_sha)
 
         await self.delete_branch(owner, repo_name, side_branch)
         return {"commit_sha": merge_sha, "status": "merged", "conflict_branch": None,
                 "own_commit_sha": commit_sha}
+
+    async def _merge_with_model(
+        self, owner: str, repo_name: str, branch: str, head_sha: str, parent_sha: str,
+        base_tree_sha: Optional[str], own_sha: str, commit_message: str,
+        tree_entries: List[Dict[str, Any]], model_merge: Any,
+    ) -> Dict[str, Any]:
+        """Merge ``own_sha`` into ``branch``: the code by GitHub, the model by ``model_merge``.
+
+        Git merges ``diagrams.json`` and the B-UML sources as text, so two
+        people adding a class each conflict. Here GitHub merges everything but
+        the model files on a scratch branch; the model is merged as data and
+        its files are written from the result. The branch only moves, by a
+        fast-forward, once both merges succeeded, to a merge commit whose
+        parents are the branch head and ``own_sha``.
+        """
+        code_entries = [e for e in tree_entries if not model_merge.is_model_path(e["path"])]
+        scratch = f"{SYNC_BRANCH_PREFIX}merge-{own_sha[:7]}"
+        await self._update_or_create_ref(owner, repo_name, scratch, head_sha, None)
+        try:
+            merged_head = head_sha
+            if code_entries:
+                code_tree = await self._create_tree(owner, repo_name, code_entries, base_tree=base_tree_sha)
+                code_sha = await self._create_commit(owner, repo_name, commit_message, code_tree, parent_sha)
+                code_branch = f"{SYNC_BRANCH_PREFIX}code-{code_sha[:7]}"
+                await self._update_or_create_ref(owner, repo_name, code_branch, code_sha, None)
+                merged_head = await self.merge_branch(
+                    owner, repo_name, base=scratch, head=code_branch, commit_message=commit_message,
+                )
+                await self.delete_branch(owner, repo_name, code_branch)
+            merged_files = None
+            if merged_head is not None:
+                base_file = await self.get_file_content(owner, repo_name, model_merge.model_file, ref=parent_sha)
+                theirs_file = await self.get_file_content(owner, repo_name, model_merge.model_file, ref=head_sha)
+                merged_files = model_merge.merge(
+                    base_file and base_file.get("content"), theirs_file and theirs_file.get("content"),
+                )
+            if merged_files is None:
+                return await self._keep_for_pull_request(owner, repo_name, branch, own_sha)
+
+            current = await self.get_tree_entries(owner, repo_name, merged_head)
+            entries = [
+                {"path": path, "mode": _FILE_MODE, "type": "blob",
+                 "sha": await self.create_blob(owner, repo_name, content)}
+                for path, content in merged_files.items()
+                if (current.get(path) or {}).get("sha") != git_blob_sha(content)
+            ]
+            entries += [
+                {"path": path, "mode": entry["mode"], "type": "blob", "sha": None}
+                for path, entry in current.items()
+                if model_merge.is_model_path(path) and path not in merged_files and entry["mode"] in _FILE_MODES
+            ]
+            merged_tree = await self._get_commit_tree_sha(owner, repo_name, merged_head)
+            if entries:
+                merged_tree = await self._create_tree(owner, repo_name, entries, base_tree=merged_tree)
+            merge_sha = await self._create_commit(
+                owner, repo_name, f"Merge BESSER changes into {branch}", merged_tree, head_sha,
+                second_parent=own_sha,
+            )
+            # A fast-forward: it fails, rather than reverting, if the branch moved again meanwhile.
+            await self._update_or_create_ref(owner, repo_name, branch, merge_sha, head_sha)
+            return {"commit_sha": merge_sha, "status": "merged", "conflict_branch": None,
+                    "own_commit_sha": own_sha}
+        finally:
+            await self.delete_branch(owner, repo_name, scratch)
+
+    async def _keep_for_pull_request(self, owner: str, repo_name: str, branch: str, own_sha: str) -> Dict[str, Any]:
+        """Leave an unmergeable commit on its own branch, for a pull request."""
+        side_branch = f"{SYNC_BRANCH_PREFIX}{own_sha[:7]}"
+        await self._update_or_create_ref(owner, repo_name, side_branch, own_sha, None)
+        logger.warning(
+            "Could not merge %s into %s/%s@%s; left it on %s for a pull request",
+            own_sha[:7], owner, repo_name, branch, side_branch,
+        )
+        return {"commit_sha": own_sha, "status": "conflict", "conflict_branch": side_branch,
+                "own_commit_sha": own_sha}
 
     async def _get_commit_tree_sha(self, owner: str, repo_name: str, commit_sha: str) -> Optional[str]:
         """Return the tree SHA of ``commit_sha``."""
@@ -574,7 +691,10 @@ class GitHubService:
     async def create_pull_request(
         self, owner: str, repo_name: str, head: str, base: str, title: str, body: str
     ) -> Dict[str, Any]:
-        """Open a pull request from ``head`` into ``base``; returns ``number`` and ``html_url``."""
+        """Open a pull request from ``head`` into ``base``; returns ``number`` and ``html_url``.
+
+        When ``head`` already has an open pull request, that one is returned.
+        """
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.base_url}/repos/{owner}/{repo_name}/pulls",
@@ -582,9 +702,34 @@ class GitHubService:
                 json={"head": head, "base": base, "title": title, "body": body},
                 timeout=15
             )
-            response.raise_for_status()
-            data = response.json()
+        if response.status_code == 422:
+            existing = await self.get_pull_request_for_branch(owner, repo_name, head)
+            if existing and existing["state"] == "open":
+                return {"number": existing["number"], "html_url": existing["html_url"]}
+        response.raise_for_status()
+        data = response.json()
         return {"number": data.get("number"), "html_url": data.get("html_url", "")}
+
+    async def get_pull_request_for_branch(self, owner: str, repo_name: str, branch: str) -> Optional[Dict[str, Any]]:
+        """The newest pull request from ``branch`` (open, closed or merged), or None."""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_url}/repos/{owner}/{repo_name}/pulls",
+                headers=self.headers,
+                params={"head": f"{owner}:{branch}", "state": "all", "per_page": 1},
+                timeout=15
+            )
+            response.raise_for_status()
+            pulls = response.json()
+        if not pulls:
+            return None
+        pull = pulls[0]
+        return {
+            "number": pull.get("number"),
+            "html_url": pull.get("html_url", ""),
+            "state": pull.get("state", ""),
+            "merged": bool(pull.get("merged_at")),
+        }
 
     async def compare_commits(
         self, owner: str, repo_name: str, base: str, head: str
@@ -867,13 +1012,14 @@ If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESS
         repo_name: str,
         message: str,
         tree_sha: str,
-        parent_sha: Optional[str]
+        parent_sha: Optional[str],
+        second_parent: Optional[str] = None,
     ) -> str:
-        """Create a commit and return its SHA."""
+        """Create a commit and return its SHA; ``second_parent`` makes it a merge commit."""
         payload = {
             "message": message,
             "tree": tree_sha,
-            "parents": [parent_sha] if parent_sha else []
+            "parents": [sha for sha in (parent_sha, second_parent) if sha]
         }
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -956,82 +1102,66 @@ If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESS
             "render": f"{RENDER_DEPLOY_URL}?repo={repo_url}"
         }
 
-    async def get_user_repositories(
-        self,
-        per_page: int = 100,
-        sort: str = "updated"
-    ) -> List[Dict[str, Any]]:
-        """
-        Get list of repositories for the authenticated user.
+    async def _get_pages(self, url: str, params: Dict[str, Any], max_pages: int) -> tuple[List[Any], bool]:
+        """Every item of a paged GitHub listing, following its ``Link: rel="next"`` headers.
 
-        Args:
-            per_page: Number of repositories per page (max 100)
-            sort: Sort by 'created', 'updated', 'pushed', 'full_name'
+        Returns the items and whether ``max_pages`` cut the listing short.
+        """
+        items: List[Any] = []
+        next_url: Optional[str] = url
+        query: Optional[Dict[str, Any]] = {**params, "per_page": _PAGE_SIZE}
+        async with httpx.AsyncClient() as client:
+            for _ in range(max_pages):
+                response = await client.get(next_url, headers=self.headers, params=query, timeout=15)
+                response.raise_for_status()
+                items.extend(response.json())
+                next_url = response.links.get("next", {}).get("url")
+                if not next_url:
+                    return items, False
+                query = None  # the next link carries the query
+        logger.warning("Listing %s stopped after %d pages", url, max_pages)
+        return items, True
+
+    async def get_user_repositories(self, sort: str = "updated") -> Dict[str, Any]:
+        """The repositories the signed-in user can open, most recently updated first.
+
+        Those they own, those they collaborate on and those of their
+        organizations (``affiliation``), across every page up to
+        ``_MAX_REPO_PAGES``.
 
         Returns:
-            List of repository information dictionaries
+            ``repositories`` (simplified repo dicts, ``can_push`` saying whether
+            the user may write to it) and ``truncated``.
         """
-        params = {
-            "per_page": min(per_page, 100),
-            "sort": sort,
-            "affiliation": "owner"  # Only repos owned by user
+        repos, truncated = await self._get_pages(
+            f"{self.base_url}/user/repos",
+            {"sort": sort, "affiliation": "owner,collaborator,organization_member"},
+            _MAX_REPO_PAGES,
+        )
+        return {
+            "repositories": [
+                {
+                    "id": r.get("id"),
+                    "name": r.get("name"),
+                    "full_name": r.get("full_name"),
+                    "description": r.get("description"),
+                    "html_url": r.get("html_url"),
+                    "private": r.get("private"),
+                    "updated_at": r.get("updated_at"),
+                    "default_branch": r.get("default_branch", "main"),
+                    "topics": r.get("topics", []),
+                    "can_push": bool((r.get("permissions") or {}).get("push", True)),
+                }
+                for r in repos
+            ],
+            "truncated": truncated,
         }
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.base_url}/user/repos",
-                headers=self.headers,
-                params=params,
-                timeout=15
-            )
-            response.raise_for_status()
-
-            repos = response.json()
-        # Return simplified repo info
-        return [
-            {
-                "id": r.get("id"),
-                "name": r.get("name"),
-                "full_name": r.get("full_name"),
-                "description": r.get("description"),
-                "html_url": r.get("html_url"),
-                "private": r.get("private"),
-                "updated_at": r.get("updated_at"),
-                "default_branch": r.get("default_branch", "main"),
-                "topics": r.get("topics", []),
-            }
-            for r in repos
-        ]
-
-    async def get_branches(
-        self,
-        owner: str,
-        repo_name: str,
-        per_page: int = 100
-    ) -> List[str]:
-        """
-        Get list of branches for a repository.
-
-        Args:
-            owner: Repository owner
-            repo_name: Repository name
-            per_page: Number of branches per page (max 100)
-
-        Returns:
-            List of branch names
-        """
-        params = {"per_page": min(per_page, 100)}
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.base_url}/repos/{owner}/{repo_name}/branches",
-                headers=self.headers,
-                params=params,
-                timeout=15
-            )
-            response.raise_for_status()
-
-            branches = response.json()
+    async def get_branches(self, owner: str, repo_name: str) -> List[str]:
+        """Every branch name of a repository (up to ``_MAX_BRANCH_PAGES`` pages)."""
+        branches, _ = await self._get_pages(
+            f"{self.base_url}/repos/{owner}/{repo_name}/branches", {}, _MAX_BRANCH_PAGES,
+        )
         return [b.get("name") for b in branches]
 
     async def get_default_branch(self, owner: str, repo_name: str) -> str:

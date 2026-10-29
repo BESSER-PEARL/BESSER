@@ -29,6 +29,10 @@ from besser.utilities.buml_code_builder import (
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import BUML_EMIT_IDS
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+from besser.utilities.web_modeling_editor.backend.services.deployment.model_merge import (
+    MergeConflict,
+    merge_documents,
+)
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
 )
@@ -49,6 +53,8 @@ ORIGIN_AGENT = "spec-driven-agent"
 ORIGIN_EDITOR = "editor"
 # The agent diagram's config.yaml text (frontend ``ProjectDiagram``, shared/types/project.ts).
 AGENT_CONFIG_YAML_FIELDS = ("configYaml", "agentConfigCustomYaml")
+# Files a pull request description lists before "and N more".
+PULL_REQUEST_FILE_LIMIT = 30
 
 
 def with_origin(message: str, origin: str) -> str:
@@ -179,3 +185,67 @@ def describe_change(old_export: Optional[dict], new_export: dict) -> list[str]:
     if old_export is None:
         return [f"class {name} added" for name in sorted(new.get("classes", {}))]
     return describe_model_change(_domain_summary(old_export), new)
+
+
+def is_model_path(path: str) -> bool:
+    """True for a file BESSER writes from the model: ``diagrams.json``, the link file, the B-UML sources."""
+    return path in (MODEL_FILE, LINK_FILE) or (path.startswith(f"{MODEL_DIR}/") and path.endswith(".py"))
+
+
+def _builds(project_export: dict) -> bool:
+    try:
+        assemble_models_from_project(ProjectInput.model_validate(project_of(project_export)))
+    except Exception:
+        return False
+    return True
+
+
+class ModelMerge:
+    """How a commit that changed the model is merged with newer commits (``GitHubService.commit_tree``).
+
+    The model files are left out of git's text merge. ``diagrams.json`` is
+    merged as data (``model_merge``) and the other model files are written
+    again from the result, so the B-UML sources always match the model.
+    """
+
+    model_file = MODEL_FILE
+    is_model_path = staticmethod(is_model_path)
+
+    def __init__(self, ours_export: dict):
+        # Compared as stored: the repo copy has its credentials redacted.
+        self.ours, _ = redact_credentials(ours_export, yaml_fields=AGENT_CONFIG_YAML_FIELDS)
+
+    def merge(self, base_text: Optional[str], theirs_text: Optional[str]) -> Optional[dict[str, bytes]]:
+        """The model files of the merged model, or None when the two versions conflict."""
+        try:
+            base = json.loads(base_text) if base_text else None
+            theirs = json.loads(theirs_text) if theirs_text else None
+            merged = merge_documents(base, self.ours, theirs)
+        except ValueError:
+            logger.warning("The repo's %s is not valid JSON; the model is not merged", MODEL_FILE)
+            return None
+        except MergeConflict as conflict:
+            logger.info("Model changes conflict at %s", conflict.path)
+            return None
+        # A merge of two models that build must build too (no attribute of a deleted class).
+        if not _builds(merged) and _builds(self.ours) and (theirs is None or _builds(theirs)):
+            logger.info("The merged model does not build; treating the merge as a conflict")
+            return None
+        return model_files(merged)
+
+
+def pull_request_body(model_changes: list[str], changed_files: Optional[list[str]] = None) -> str:
+    """The description of a pull request BESSER opens: the model changes, then the files."""
+    sections = []
+    if model_changes:
+        sections.append("**Model changes**\n\n" + "\n".join(f"- {change}" for change in model_changes))
+    if changed_files:
+        shown = changed_files[:PULL_REQUEST_FILE_LIMIT]
+        more = len(changed_files) - len(shown)
+        lines = "\n".join(f"- `{path}`" for path in shown) + (f"\n- and {more} more" if more > 0 else "")
+        sections.append("**Files**\n\n" + lines)
+    sections.append(
+        f"Opened from the [BESSER](https://github.com/BESSER-PEARL/BESSER) editor. "
+        f"The model is in `{MODEL_FILE}`; GitHub shows any conflict to resolve before merging."
+    )
+    return "\n\n".join(sections)

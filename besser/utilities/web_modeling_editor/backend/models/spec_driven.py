@@ -277,6 +277,10 @@ class SmartPushDeployConfig(BaseModel):
     """
 
     repo_name: str = Field(..., min_length=1, max_length=100)
+    # Owner of an existing repo (an organization, or a user who made the
+    # signed-in user a collaborator). Omitted: the signed-in user. A new repo
+    # is always created under the signed-in user.
+    owner: Optional[str] = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9-]+$")
     description: Optional[str] = Field(default=None, max_length=350)
     is_private: bool = True
     use_existing: bool = False

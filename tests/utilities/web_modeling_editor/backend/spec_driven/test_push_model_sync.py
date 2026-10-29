@@ -89,6 +89,8 @@ class _CapturingGitHubService:
         branch="main",
         preserve_existing_files=False,
         base_commit_sha=None,
+        keep_path=None,
+        model_merge=None,
     ):
         path = os.path.join(directory_path, "buml", "diagrams.json")
         if os.path.isfile(path):

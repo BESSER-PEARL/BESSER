@@ -155,7 +155,8 @@ class _RepoGitHub:
     async def create_blob(self, owner, repo, content):
         return content.decode("utf-8")
 
-    async def commit_tree(self, owner, repo, branch, entries, message, layer_on_parent, base_commit_sha=None):
+    async def commit_tree(self, owner, repo, branch, entries, message, layer_on_parent, base_commit_sha=None,
+                          model_merge=None):
         self.commit = dict(files={e["path"]: e["sha"] for e in entries}, layer=layer_on_parent, base=base_commit_sha)
         return {"commit_sha": OURS, "status": "pushed", "conflict_branch": None, "own_commit_sha": OURS}
 
@@ -251,7 +252,8 @@ class _PushGitHub:
         return {"content": self.render_yaml} if file_path == "render.yaml" and self.render_yaml else None
 
     async def push_directory_to_repo(self, owner, repo_name, directory_path, commit_message="", branch="main",
-                                     preserve_existing_files=False, base_commit_sha=None):
+                                     preserve_existing_files=False, base_commit_sha=None,
+                                     keep_path=None, model_merge=None):
         self.files = {}
         for root, _dirs, names in os.walk(directory_path):
             for name in names:

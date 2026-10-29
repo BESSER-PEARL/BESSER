@@ -31,6 +31,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     AssembledModels,
 )
+from besser.spec_driven_agent.pipeline.constants import _names_unsupported_stack
 
 
 # Names mirrored from the orchestrator's keyword branch so that the
@@ -200,6 +201,9 @@ def _predict_target_generator(
     for framework in _EXPLICIT_NO_GENERATOR_FRAMEWORKS:
         if framework in lower:
             return None, 0.9
+    # The orchestrator's hard override for a named language (Swift, Kotlin, C#, ...).
+    if _names_unsupported_stack(instructions):
+        return None, 0.9
 
     # Specialist generators for non-class modeling artifacts.
     if assembled.bpmn_model is not None and (
@@ -389,7 +393,6 @@ def _build_summary(
             "generate_django": "Django project (models + views + admin)",
             "generate_web_app": "full-stack web app (FastAPI + React + Docker)",
             "generate_react": "React frontend",
-            "generate_flutter": "Flutter app",
             "generate_pydantic": "Pydantic models",
             "generate_sqlalchemy": "SQLAlchemy ORM models",
             "generate_sql": "SQL CREATE TABLE statements",

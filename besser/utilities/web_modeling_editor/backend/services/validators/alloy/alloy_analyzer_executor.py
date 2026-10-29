@@ -1,10 +1,13 @@
 import json
+import logging
 import os
 import subprocess
 from enum import Enum
 from pathlib import Path
 
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConfigurationError
+
+logger = logging.getLogger(__name__)
 
 # Seconds the Alloy Analyzer may run before an analysis times out.
 _DEFAULT_TIMEOUT_SECONDS = 30
@@ -74,6 +77,7 @@ class AlloyAnalyzerExecutor:
             output = (result.stdout or "") + (result.stderr or "")
             if "Translation capacity exceeded" in output:
                 return AlloyResult.SCOPES_TOO_LARGE
+            logger.warning("The Alloy Analyzer wrote no receipt (exit code %s): %s", result.returncode, output.strip())
             return AlloyResult.ERROR
 
         with open(receipt_path, "r", encoding="utf-8") as f:

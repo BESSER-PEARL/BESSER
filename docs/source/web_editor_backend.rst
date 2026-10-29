@@ -648,7 +648,9 @@ compares the workspace with GitHub's recursive tree of the base commit: a file
 whose blob id and mode match is not uploaded, a changed file keeps its mode,
 links and submodules are never touched, and a repository path the run could
 not hold (build and dependency output, ``*.db``, BESSER's ``.besser_*`` files,
-a scrubbed secret ``.env``) is not taken as a deletion. A push with no change
+a scrubbed secret ``.env``) is not taken as a deletion. Only a run seeded from
+the repository (``.besser_github_source.json`` names it) can delete files at
+all; any other run only adds and updates. A push with no change
 makes no commit. ``files_uploaded`` counts the files added, changed or deleted.
 Once the push has landed, a failure to read the merged repository back for the
 next run is reported in ``warnings`` rather than failing the request.

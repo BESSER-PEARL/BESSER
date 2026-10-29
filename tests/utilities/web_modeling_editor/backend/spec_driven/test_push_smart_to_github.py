@@ -309,7 +309,7 @@ class TestPushSmartToGitHub:
         assert ".env" not in files
         assert ".env.example" in files
 
-    def test_use_existing_pushes_requested_branch_replacing_tree(self, monkeypatch):
+    def test_use_existing_pushes_requested_branch_keeping_files_the_run_never_saw(self, monkeypatch):
         run_id = "d" * 32
         _seed_run(run_id)
         fake = _FakeGitHubService(branches=["main", "dev"])
@@ -331,8 +331,9 @@ class TestPushSmartToGitHub:
         # Reused, not created.
         assert fake.created is False
         assert fake.push["branch"] == "dev"
-        # Each spec-driven run is a full app → replace the tree.
-        assert fake.push["preserve_existing_files"] is False
+        # The run did not start from this repo, so it cannot have deleted any of
+        # its files: it adds and updates, and e.g. the repo's README stays.
+        assert fake.push["preserve_existing_files"] is True
 
     def test_without_a_requested_branch_the_push_lands_on_the_repos_real_default(self, monkeypatch):
         """The default was guessed from the branch list, so a leftover sync branch sorted first could win."""

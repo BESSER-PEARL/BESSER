@@ -1093,7 +1093,9 @@ async def push_spec_driven_to_github(
                 directory_path=workdir,
                 commit_message=commit_message,
                 branch=push_branch,
-                preserve_existing_files=False,
+                # Only a run that started from this repo held its files, so only
+                # such a run can have deleted one; any other run adds and updates.
+                preserve_existing_files=seed_sha is None,
                 base_commit_sha=base_sha,
                 keep_path=lambda path: _hidden_from_run(path, scrubbed),
                 model_merge=repo_model.ModelMerge(effective_export) if effective_export else None,

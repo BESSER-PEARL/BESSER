@@ -466,3 +466,23 @@ def test_the_model_history_describes_each_commit_against_its_parent(github):
     assert changes["Add a class"] == ["class Member added"]
     # The merge brings Loan into the branch that had Member.
     assert changes["Merge BESSER changes into main"] == ["class Loan added"]
+
+
+def test_a_fresh_run_pushed_into_a_repo_deletes_nothing_it_never_saw(github, tmp_path):
+    """Found on experimental: a first generation pushed into the project's repo deleted its
+    README, because the run was generated from the model, not seeded from the repo."""
+    repo = github.create_repo("library", files={**repo_model.model_files(_envelope()), "README.md": "# Library\n"})
+    run_id = uuid.uuid4().hex
+    workdir = create_run_workspace(run_id)
+    _write(workdir, "backend/main_api.py", "app = None\n")
+    asyncio.run(SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "backend", "main_api.py"), file_name="app.zip", is_zip=True,
+        temp_dir=workdir, created_at=time.time(),
+    )))
+
+    r = _push(run_id, "library", base_commit_sha=github.ref(repo, "main"))
+
+    assert r.status_code == 200, r.text
+    files = github.files(repo)
+    assert files["README.md"][1] == b"# Library\n"
+    assert files["backend/main_api.py"][1] == b"app = None\n"

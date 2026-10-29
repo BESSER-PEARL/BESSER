@@ -434,6 +434,9 @@ class FakeGitHub:
         async def compare(owner: str, name: str, spec: str):
             repo = find(owner, name)
             base, head = spec.split("...")
+            # GitHub answers 404 for a commit the repo does not have (e.g. after a force-push).
+            if any(fake.git(repo, "cat-file", "-e", f"{ref}^{{commit}}", check=False).returncode for ref in (base, head)):
+                return JSONResponse({"message": "Not Found"}, status_code=404)
             ahead = fake.out(repo, "rev-list", "--reverse", f"{base}..{head}").split()
             behind = fake.out(repo, "rev-list", f"{head}..{base}").split()
             status = "identical" if not ahead and not behind else "ahead" if not behind else \

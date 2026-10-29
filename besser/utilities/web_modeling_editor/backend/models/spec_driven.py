@@ -381,12 +381,17 @@ class ImportGitHubRunRequest(BaseModel):
         The demo-link secret (``?demo=<token>``). When valid, a repo without
         readable data classes is read by the sponsored (demo) model instead
         of the keyless one.
+    allow_ai_reading
+        The user allowed BESSER to send the repo's code to an AI model when it
+        cannot read the data classes directly. Without it no model is called;
+        the response offers the reading instead (``ai_reading_offered``).
     """
 
     owner: str = Field(..., min_length=1, max_length=100)
     repo: str = Field(..., min_length=1, max_length=100)
     branch: Optional[str] = Field(default=None, max_length=250)
     demo_token: Optional[SecretStr] = Field(default=None, max_length=200)
+    allow_ai_reading: bool = False
 
     def resolved_demo_token(self) -> str:
         """The plaintext demo token, or ``""`` when the request carries none."""
@@ -419,6 +424,9 @@ class ImportGitHubRunResponse(BaseModel):
     proposed_diagram: Optional[dict] = None
     # Human-readable hint when there is no model (or it was unreadable).
     message: Optional[str] = None
+    # True when an AI model could read the code for a better diagram and the
+    # request did not allow it: import again with ``allow_ai_reading`` to read it.
+    ai_reading_offered: bool = False
 
 
 class SmartPreviewRequest(BaseModel):

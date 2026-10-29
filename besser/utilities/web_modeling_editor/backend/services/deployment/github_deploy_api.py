@@ -15,7 +15,7 @@ from typing import Optional, List
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_credentials
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
@@ -308,23 +308,7 @@ async def deploy_webapp_to_github(
                 except Exception:
                     logger.warning("Failed to export agent B-UML model — continuing without it", exc_info=True)
 
-                try:
-                    # Prefer the V2 project-export the frontend already builds via
-                    # `exportProjectAsJson` — writing it as-is keeps `diagrams.json`
-                    # re-importable through the editor's "Import Project" action.
-                    project_export = body.get("projectExport") if isinstance(body, dict) else None
-                    diagrams_payload = project_export if isinstance(project_export, dict) else diagrams
-                    if not isinstance(project_export, dict):
-                        logger.warning(
-                            "Deploy body did not include 'projectExport'; falling back to "
-                            "raw diagrams. The resulting diagrams.json will not be "
-                            "re-importable via the editor."
-                        )
-                    json_path = os.path.join(buml_dir, "diagrams.json")
-                    with open(json_path, "w", encoding="utf-8") as f:
-                        json.dump(diagrams_payload, f, indent=2, default=str)
-                except Exception:
-                    logger.warning("Failed to export diagram JSON — continuing without it", exc_info=True)
+                _write_deploy_model(temp_dir, body, diagrams)
 
                 write_generation_provenance(temp_dir, "agent")
                 readme_path = os.path.join(temp_dir, "README.md")
@@ -505,25 +489,7 @@ async def deploy_webapp_to_github(
             except Exception:
                 logger.warning("Failed to export B-UML models — continuing without them", exc_info=True)
 
-            # Prefer the V2 project-export the frontend already builds via
-            # `exportProjectAsJson` so the resulting diagrams.json can be
-            # re-imported via the editor's "Import Project" action. Fall back
-            # to the raw diagrams payload only when the frontend has not been
-            # updated to send `projectExport` yet.
-            try:
-                project_export = body.get("projectExport") if isinstance(body, dict) else None
-                diagrams_payload = project_export if isinstance(project_export, dict) else diagrams
-                if not isinstance(project_export, dict):
-                    logger.warning(
-                        "Deploy body did not include 'projectExport'; falling back to "
-                        "raw diagrams. The resulting diagrams.json will not be "
-                        "re-importable via the editor."
-                    )
-                json_path = os.path.join(buml_dir, "diagrams.json")
-                with open(json_path, "w", encoding="utf-8") as f:
-                    json.dump(diagrams_payload, f, indent=2, default=str)
-            except Exception:
-                logger.warning("Failed to export diagram JSON — continuing without it", exc_info=True)
+            _write_deploy_model(temp_dir, body, diagrams)
 
             # Add README before push so everything lands in one commit
             write_generation_provenance(temp_dir, "web_app")
@@ -635,6 +601,22 @@ async def deploy_webapp_to_github(
             status_code=500,
             detail="An internal error occurred during GitHub deployment."
         )
+
+
+def _write_deploy_model(temp_dir: str, body: dict, diagrams: dict) -> None:
+    """Write the deployed project's model files, credentials redacted, as every repo write does.
+
+    The frontend sends the V2 ``projectExport`` envelope, which the editor can
+    import again; a client without it gets the raw diagrams as ``diagrams.json``.
+    """
+    project_export = body.get("projectExport")
+    if not isinstance(project_export, dict):
+        logger.warning(
+            "Deploy body did not include 'projectExport'; writing the raw diagrams, "
+            "which the editor cannot import again."
+        )
+        project_export = diagrams
+    repo_model.write_model_files(temp_dir, project_export)
 
 
 def _extract_github_error_message(error: httpx.HTTPStatusError) -> str:
@@ -1250,9 +1232,10 @@ class SaveProjectRequest(BaseModel):
     owner: str
     repo: str
     branch: str = "main"
-    # A legacy project file the repo may still hold; it is removed in the
-    # same commit, since ``buml/diagrams.json`` is now the model file.
-    file_path: str = repo_model.LEGACY_PROJECT_FILE
+    # Where the old editor sidebar saved this project (``<dir>/<project>.json``).
+    # When that file holds a BESSER project it is removed in the same commit,
+    # since ``buml/diagrams.json`` is now the model file.
+    legacy_file_path: Optional[str] = repo_model.LEGACY_PROJECT_FILE
     commit_message: str
     project_data: dict
     # The V2 export envelope written as ``buml/diagrams.json``. Falls back to
@@ -1260,6 +1243,17 @@ class SaveProjectRequest(BaseModel):
     project_export: Optional[dict] = None
     # The commit the editor last synced; newer commits are merged, not reverted.
     base_commit_sha: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+
+    @field_validator("legacy_file_path")
+    @classmethod
+    def _legacy_file_path_in_repo(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        parts = value.split("/")
+        if value.startswith("/") or "\\" in value or any(part in ("", ".", "..") for part in parts) \
+                or not value.endswith(".json"):
+            raise ValueError("legacy_file_path must be a relative repo path to a .json file, without '..'")
+        return value
 
 
 class SaveProjectResponse(BaseModel):
@@ -1270,6 +1264,8 @@ class SaveProjectResponse(BaseModel):
     # "pushed", "merged" or "conflict" (see GitHubService.commit_tree).
     status: str = "pushed"
     conflict_branch: Optional[str] = None
+    # What the user should know about a merged save (see GitHubService.commit_tree).
+    warnings: List[str] = []
 
 
 class LoadProjectResponse(BaseModel):
@@ -1501,6 +1497,15 @@ async def _read_model(github, owner: str, repo: str, ref: str) -> Optional[dict]
     return None
 
 
+async def _holds_besser_project(github, owner: str, repo: str, path: str, branch: str) -> bool:
+    """True when ``path`` on ``branch`` is a BESSER project file (the old sidebar's save)."""
+    try:
+        file_data = await github.get_file_content(owner, repo, path, branch=branch)
+        return bool(file_data) and repo_model.is_besser_project(json.loads(file_data.get("content") or ""))
+    except (UnicodeDecodeError, ValueError):
+        return False
+
+
 async def _model_tree_entries(github, owner: str, repo: str, files: dict[str, bytes]) -> list[dict]:
     """Git tree entries for ``files`` (repo path -> content), one blob each."""
     entries = []
@@ -1524,24 +1529,30 @@ async def save_project_to_github(
     Save a BESSER project to a GitHub repository.
 
     Writes the model files (``buml/diagrams.json``, the B-UML sources and
-    ``.besser/project.json``) in one commit, keeping every other file. A
-    legacy project file at ``file_path`` is removed in the same commit. When
-    the branch moved past ``base_commit_sha`` the commit is merged with the
-    newer commits.
+    ``.besser/project.json``) in one commit, keeping every other file. The
+    project file the old sidebar saved (``legacy_file_path``) is removed in the
+    same commit. When the branch moved past ``base_commit_sha`` the commit is
+    merged with the newer commits. An empty repository gets its first commit
+    through the contents API first.
     """
     github = _github_for(github_session)
     try:
         files = repo_model.model_files(request.project_export or request.project_data)
+        message = repo_model.with_origin(request.commit_message, repo_model.ORIGIN_EDITOR)
+        if files:
+            await github.ensure_first_commit(
+                request.owner, request.repo, request.branch,
+                repo_model.MODEL_FILE, files[repo_model.MODEL_FILE], message,
+            )
         entries = await _model_tree_entries(github, request.owner, request.repo, files)
-        legacy = request.file_path
-        if legacy and legacy not in files and await github.file_exists(
-            request.owner, request.repo, legacy, request.branch
+        legacy = request.legacy_file_path
+        if legacy and legacy not in files and await _holds_besser_project(
+            github, request.owner, request.repo, legacy, request.branch
         ):
             entries.append({"path": legacy, "mode": "100644", "type": "blob", "sha": None})
 
         outcome = await github.commit_tree(
-            request.owner, request.repo, request.branch, entries,
-            repo_model.with_origin(request.commit_message, repo_model.ORIGIN_EDITOR),
+            request.owner, request.repo, request.branch, entries, message,
             layer_on_parent=True,
             base_commit_sha=request.base_commit_sha,
             model_merge=repo_model.ModelMerge(request.project_export or request.project_data),
@@ -1557,6 +1568,7 @@ async def save_project_to_github(
             ),
             status=outcome["status"],
             conflict_branch=outcome["conflict_branch"],
+            warnings=outcome.get("warnings", []),
         )
     except httpx.HTTPStatusError as exc:
         logger.warning("GitHub API error saving project", exc_info=True)

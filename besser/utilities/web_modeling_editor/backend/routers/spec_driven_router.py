@@ -104,6 +104,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
     class_buml_to_json,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
+    content_hash,
     create_github_service,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import (
@@ -1073,7 +1074,7 @@ async def push_spec_driven_to_github(
             # The run records that commit itself: the editor's link may have
             # moved on (a pull after the run started), and pushing over the
             # link's newer base would revert what was pulled.
-            seed_sha, held_paths = _run_seed(entry.temp_dir, owner, repo_name)
+            seed_sha, held_files = _run_seed(entry.temp_dir, owner, repo_name)
             commit_message = repo_model.with_origin(
                 deploy_config.commit_message or "Spec-driven app + model — BESSER",
                 repo_model.ORIGIN_AGENT,
@@ -1100,8 +1101,9 @@ async def push_spec_driven_to_github(
                 preserve_existing_files=seed_sha is None,
                 base_commit_sha=base_sha,
                 keep_path=lambda path: (_hidden_from_run(path, scrubbed)
-                                        or (held_paths is not None and path not in held_paths)),
+                                        or (held_files is not None and path not in held_files)),
                 model_merge=repo_model.ModelMerge(effective_export) if effective_export else None,
+                base_hashes={path: digest for path, digest in (held_files or {}).items() if digest},
             )
             if not push_results.get("commit_sha"):
                 raise HTTPException(
@@ -1109,6 +1111,7 @@ async def push_spec_driven_to_github(
                     detail="Failed to create GitHub commit for pushed files.",
                 )
             status = push_results.get("status") or "pushed"
+            deploy_warnings += push_results.get("warnings", [])
             if push_branch != target_branch:
                 pull_request = await github.create_pull_request(
                     owner, repo_name, head=push_branch, base=target_branch,
@@ -1123,7 +1126,7 @@ async def push_spec_driven_to_github(
             if status in ("pushed", "merged"):
                 # Runs seeded from this one start from the commit holding its tree.
                 _record_run_seed(entry.temp_dir, owner, repo_name, push_results["own_commit_sha"],
-                                 _plain_files(workdir))
+                                 _plain_file_hashes(workdir))
 
             # After a merge the run's files no longer match the branch: hand
             # back the merged repo as the next modify run's base.
@@ -1224,12 +1227,14 @@ async def _refresh_deploy_files(github, owner: str, repo: str, branch: str, work
     return warnings
 
 
-def _run_seed(run_dir: str, owner: str, repo: str) -> tuple[Optional[str], Optional[set[str]]]:
-    """The commit of ``owner/repo`` the run's files were derived from, and the repo paths it held.
+def _run_seed(run_dir: str, owner: str, repo: str) -> tuple[Optional[str], Optional[dict[str, Optional[str]]]]:
+    """The commit of ``owner/repo`` the run's files were derived from, and the files it held then.
 
     Import writes them (``GITHUB_SOURCE_FILENAME``), a push updates them, and
-    seeding copies them into every modify run that starts from that run.
-    ``(None, None)`` for a run that did not start from this repo; the paths are
+    seeding copies them into every modify run that starts from that run. The
+    files are ``repo path -> content_hash`` of the bytes the run held; the hash
+    is None in a record written before hashes were kept (a list of paths).
+    ``(None, None)`` for a run that did not start from this repo; the files are
     None for a record written before they were kept.
     """
     source = read_run_json(os.path.join(run_dir, GITHUB_SOURCE_FILENAME))
@@ -1242,29 +1247,33 @@ def _run_seed(run_dir: str, owner: str, repo: str) -> tuple[Optional[str], Optio
     if not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha)):
         return None, None
     paths = source.get("paths")
-    held = set(paths) if isinstance(paths, list) and all(isinstance(p, str) for p in paths) else None
-    return sha, held
+    if isinstance(paths, dict) and all(isinstance(p, str) and isinstance(h, str) for p, h in paths.items()):
+        return sha, dict(paths)
+    if isinstance(paths, list) and all(isinstance(p, str) for p in paths):
+        return sha, dict.fromkeys(paths)
+    return sha, None
 
 
-def _record_run_seed(run_dir: str, owner: str, repo: str, commit_sha: str, paths: list[str]) -> None:
-    """Record that the run's files now match ``commit_sha``, where they are ``paths`` (best effort)."""
+def _record_run_seed(run_dir: str, owner: str, repo: str, commit_sha: str, files: dict[str, str]) -> None:
+    """Record that the run's files now match ``commit_sha``, as ``repo path -> content_hash`` (best effort)."""
     try:
         write_run_json(os.path.join(run_dir, GITHUB_SOURCE_FILENAME),
-                       {"owner": owner, "repo": repo, "commitSha": commit_sha, "paths": paths})
+                       {"owner": owner, "repo": repo, "commitSha": commit_sha, "paths": files})
     except OSError:
         logger.warning("Could not record the pushed commit in run %s", run_dir, exc_info=True)
 
 
-def _plain_files(root: str) -> list[str]:
-    """Repo-relative paths of the regular files under ``root``, BESSER's own records left out."""
-    found = []
+def _plain_file_hashes(root: str) -> dict[str, str]:
+    """``repo path -> content_hash`` of the regular files under ``root``, BESSER's own records left out."""
+    found = {}
     for directory, dirs, names in os.walk(root):
         dirs[:] = [d for d in dirs if is_plain_entry(os.path.join(directory, d))]
         for name in names:
             full = os.path.join(directory, name)
             if is_plain_entry(full) and not fnmatch.fnmatch(name, _RUN_INTERNAL_FILES):
-                found.append(os.path.relpath(full, root).replace(os.sep, "/"))
-    return sorted(found)
+                with open(full, "rb") as fh:
+                    found[os.path.relpath(full, root).replace(os.sep, "/")] = content_hash(fh.read())
+    return dict(sorted(found.items()))
 
 
 async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) -> tuple[str, str]:
@@ -1282,8 +1291,10 @@ async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) ->
         # this one also records where the run came from and which files it
         # holds: an archive leaves out export-ignore paths, links and
         # submodules, and a later push must not read their absence as deletions.
+        # It hashes each file too: the archive's bytes can differ from the blob
+        # (.gitattributes, LFS), so only a changed hash means the run changed it.
         source_path = os.path.join(extract_dir, GITHUB_SOURCE_FILENAME)
-        _record_run_seed(extract_dir, owner, repo, commit_sha, _plain_files(extract_dir))
+        _record_run_seed(extract_dir, owner, repo, commit_sha, _plain_file_hashes(extract_dir))
     except BaseException:
         shutil.rmtree(extract_dir, ignore_errors=True)
         raise
@@ -1297,17 +1308,39 @@ async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) ->
     return run_id, extract_dir
 
 
-async def _read_repo_with_ai(extract_dir, code_analysis, owner, repo, provider=FREE_TIER_PROVIDER):
+_AI_READING_UNAVAILABLE = (
+    "This repo has no BESSER model and no data classes BESSER can read, and "
+    "AI reading is not available on this server; you can still work on its code.")
+_AI_READING_OFFER = (
+    "BESSER could not read this repo's data classes directly. It can read the code with an "
+    "AI model and propose a class diagram, if you allow it to send the code to that model.")
+
+
+def _ai_reading_provider(req: ImportGitHubRunRequest) -> str:
+    """The server-paid tier that reads a repo: ``sponsored`` for a demo tab, else ``free``.
+
+    A wrong demo secret just means the keyless model: it opens nothing up, so
+    it is not worth failing the import.
+    """
+    demo = req.demo_token is not None and _is_demo_token(req.resolved_demo_token())
+    if req.demo_token is not None and not demo:
+        logger.warning("import-github-run: invalid demo token, reading with the keyless model")
+    return SPONSORED_PROVIDER if demo else FREE_TIER_PROVIDER
+
+
+async def _read_repo_with_ai(req: ImportGitHubRunRequest, extract_dir, code_analysis, owner, repo):
     """``(model, analysis, message)`` from the AI fallback reader; the message explains a missing model.
 
-    ``provider`` is the server-paid tier: ``sponsored`` for a demo tab, else ``free``.
+    The repo's code goes to the server's model chain, whose first provider may
+    be a third party, so only a request that allowed it (``allow_ai_reading``) is read.
     """
+    if not req.allow_ai_reading:
+        raise PermissionError("AI reading of a repository needs allow_ai_reading")
+    provider = _ai_reading_provider(req)
     if not ai_reading_available(provider):
         logger.warning("import-github-run: no readable data classes in %s/%s and no %s model "
                        "for an AI reading", owner, repo, provider)
-        return None, code_analysis, (
-            "This repo has no BESSER model and no data classes BESSER can read, and "
-            "AI reading is not available on this server; you can still work on its code.")
+        return None, code_analysis, _AI_READING_UNAVAILABLE
     # A copy: a timed-out reading keeps running in its thread and must not mark this response.
     ai_analysis = dataclasses.replace(code_analysis)
     try:
@@ -1386,6 +1419,23 @@ async def import_github_run(
                 status_code=400, detail="Invalid GitHub owner or repository name."
             )
 
+    # An import downloads and unpacks up to the archive caps and may call an
+    # LLM, so it takes a run slot (BESSER_LLM_MAX_CONCURRENT_RUNS) like a run.
+    if not try_acquire_run_slot():
+        raise HTTPException(
+            status_code=429,
+            detail="Too many imports and generation runs are in flight right now. Retry in a moment.",
+        )
+    try:
+        return await _import_github_run(req, access_token, owner, repo)
+    finally:
+        release_run_slot()
+
+
+async def _import_github_run(
+    req: ImportGitHubRunRequest, access_token: str, owner: str, repo: str,
+) -> ImportGitHubRunResponse:
+    """Steps 2-5 of ``import_github_run``, under its run slot."""
     try:
         github = create_github_service(access_token)
 
@@ -1430,19 +1480,20 @@ async def import_github_run(
                     "be parsed."
                 )
         analysis = proposed_diagram = None
+        ai_reading_offered = False
         if not has_model:
             # Not a BESSER repo: read its code for a model the user can accept.
             code_analysis, domain_model = await asyncio.to_thread(analyze_repository, extract_dir)
             ai_message = None
-            if should_read_with_ai(code_analysis, domain_model):
-                # A demo tab reads with the demo (sponsored) model; a wrong secret just means
-                # the keyless one: it opens nothing up, so it is not worth failing the import.
-                demo = req.demo_token is not None and _is_demo_token(req.resolved_demo_token())
-                if req.demo_token is not None and not demo:
-                    logger.warning("import-github-run: invalid demo token, reading with the keyless model")
+            if should_read_with_ai(code_analysis, domain_model) and not req.allow_ai_reading:
+                # The code would leave the server: the user decides, then imports again.
+                ai_reading_offered = ai_reading_available(_ai_reading_provider(req))
+                ai_message = _AI_READING_OFFER if ai_reading_offered else _AI_READING_UNAVAILABLE
+                logger.info("import-github-run: %s/%s needs an AI reading; %s", owner, repo,
+                            "offered it" if ai_reading_offered else "none available")
+            elif should_read_with_ai(code_analysis, domain_model):
                 ai_model, ai_analysis, ai_message = await _read_repo_with_ai(
-                    extract_dir, code_analysis, owner, repo,
-                    SPONSORED_PROVIDER if demo else FREE_TIER_PROVIDER)
+                    req, extract_dir, code_analysis, owner, repo)
                 if ai_model is not None:
                     domain_model, code_analysis = ai_model, ai_analysis
                 elif domain_model is not None:
@@ -1467,6 +1518,8 @@ async def import_github_run(
                         f" {len(code_analysis.skipped_relationships)} relationship(s) could not be "
                         f"read and are not in it: {', '.join(code_analysis.skipped_relationships)}."
                     )
+                if ai_reading_offered:
+                    message += f" {_AI_READING_OFFER}"
             elif message is None:
                 message = ai_message or (
                     "This repo has no BESSER model and no data classes BESSER "
@@ -1484,6 +1537,7 @@ async def import_github_run(
             message=message,
             analysis=analysis,
             proposed_diagram=proposed_diagram,
+            ai_reading_offered=ai_reading_offered,
         )
 
     except HTTPException:

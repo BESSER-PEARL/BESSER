@@ -6,8 +6,9 @@ save, the Spec-Driven push, continue-from-GitHub, the repo browser):
 - ``buml/diagrams.json``: the project's model, a V2 project-export envelope.
   It is the only model file; ``besser-project.json`` is the legacy name the
   sidebar used and is still read.
-- ``buml/*.py``: the same model as B-UML Python source, for people reading the
-  repo. Never read back.
+- ``buml/domain_model.py``, ``buml/gui_model.py``, ``buml/agent_model_<agent>.py``:
+  the same model as B-UML Python source, for people reading the repo. Never
+  read back. Other files under ``buml/`` are the repo's own.
 - ``.besser/project.json``: which BESSER project the repo belongs to, so any
   browser that opens the repo finds its project again.
 
@@ -18,7 +19,7 @@ history tells the agent's and the editor's commits from a person's.
 import json
 import logging
 import os
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.spec_driven_agent.planning.model_change import describe_model_change, model_summary
@@ -44,6 +45,10 @@ MODEL_DIR = "buml"
 MODEL_FILE = f"{MODEL_DIR}/diagrams.json"
 LEGACY_PROJECT_FILE = "besser-project.json"
 LINK_FILE = ".besser/project.json"
+# The B-UML sources BESSER generates under ``MODEL_DIR``.
+DOMAIN_SOURCE = "domain_model.py"
+GUI_SOURCE = "gui_model.py"
+AGENT_SOURCE_PREFIX = "agent_model_"
 LINK_SCHEMA_VERSION = 1
 # GitHub topic set on every repo BESSER pushes, so the repo browser can list
 # a user's BESSER repos without opening each one.
@@ -88,15 +93,26 @@ def link_record(export: dict) -> dict:
     }
 
 
+class ModelFiles(NamedTuple):
+    """The model files of an export and whether its B-UML sources could be written."""
+    files: dict[str, bytes]
+    sources_built: bool
+
+
 def model_files(project_export: Optional[dict]) -> dict[str, bytes]:
     """Every BESSER model file for ``project_export``, as repo path -> content.
 
     The B-UML ``.py`` exports are best effort: a model that fails to build
     still gets its ``diagrams.json`` and link file, with a logged warning.
     """
+    return build_model_files(project_export).files
+
+
+def build_model_files(project_export: Optional[dict]) -> ModelFiles:
+    """:func:`model_files`, also saying whether the B-UML sources are among them."""
     if not isinstance(project_export, dict) or not project_export:
         logger.warning("No project export given; the repo gets no BESSER model files")
-        return {}
+        return ModelFiles({}, False)
 
     # Agent diagrams carry the agent's runtime config (LLM keys, bot tokens, DB passwords).
     project_export, findings = redact_credentials(project_export, yaml_fields=AGENT_CONFIG_YAML_FIELDS)
@@ -111,7 +127,8 @@ def model_files(project_export: Optional[dict]) -> dict[str, bytes]:
         files.update(_buml_sources(project_export))
     except Exception:
         logger.warning("Could not export the B-UML model files; continuing without them", exc_info=True)
-    return files
+        return ModelFiles(files, False)
+    return ModelFiles(files, True)
 
 
 def _buml_sources(project_export: dict) -> dict[str, bytes]:
@@ -120,13 +137,13 @@ def _buml_sources(project_export: dict) -> dict[str, bytes]:
     assembled = assemble_models_from_project(ProjectInput.model_validate(project_of(project_export)))
     writers = []
     if assembled.domain_model is not None:
-        writers.append(("domain_model.py", lambda path: domain_model_to_code(
+        writers.append((DOMAIN_SOURCE, lambda path: domain_model_to_code(
             model=assembled.domain_model, file_path=path, emit_ids=BUML_EMIT_IDS)))
     if assembled.gui_model is not None:
-        writers.append(("gui_model.py", lambda path: gui_model_to_code(
+        writers.append((GUI_SOURCE, lambda path: gui_model_to_code(
             model=assembled.gui_model, file_path=path, domain_model=assembled.domain_model)))
     if assembled.agent_model is not None:
-        writers.append((f"agent_model_{agent_slug(assembled.agent_model.name)}.py",
+        writers.append((f"{AGENT_SOURCE_PREFIX}{agent_slug(assembled.agent_model.name)}.py",
                         lambda path: agent_model_to_code(assembled.agent_model, path)))
 
     sources: dict[str, bytes] = {}
@@ -188,8 +205,21 @@ def describe_change(old_export: Optional[dict], new_export: dict) -> list[str]:
 
 
 def is_model_path(path: str) -> bool:
-    """True for a file BESSER writes from the model: ``diagrams.json``, the link file, the B-UML sources."""
-    return path in (MODEL_FILE, LINK_FILE) or (path.startswith(f"{MODEL_DIR}/") and path.endswith(".py"))
+    """True for a file BESSER writes from the model: ``diagrams.json``, the link file, the B-UML sources.
+
+    Only the generated names count: a ``buml/seed_data.py`` someone wrote is the repo's own.
+    """
+    if path in (MODEL_FILE, LINK_FILE):
+        return True
+    directory, _, name = path.rpartition("/")
+    return directory == MODEL_DIR and (
+        name in (DOMAIN_SOURCE, GUI_SOURCE) or (name.startswith(AGENT_SOURCE_PREFIX) and name.endswith(".py"))
+    )
+
+
+def is_besser_project(document: object) -> bool:
+    """True for a parsed model file: a V2 export envelope or a bare project, both holding ``diagrams``."""
+    return isinstance(document, dict) and isinstance(project_of(document).get("diagrams"), dict)
 
 
 def _builds(project_export: dict) -> bool:
@@ -215,7 +245,7 @@ class ModelMerge:
         # Compared as stored: the repo copy has its credentials redacted.
         self.ours, _ = redact_credentials(ours_export, yaml_fields=AGENT_CONFIG_YAML_FIELDS)
 
-    def merge(self, base_text: Optional[str], theirs_text: Optional[str]) -> Optional[dict[str, bytes]]:
+    def merge(self, base_text: Optional[str], theirs_text: Optional[str]) -> Optional[ModelFiles]:
         """The model files of the merged model, or None when the two versions conflict."""
         try:
             base = json.loads(base_text) if base_text else None
@@ -231,7 +261,7 @@ class ModelMerge:
         if not _builds(merged) and _builds(self.ours) and (theirs is None or _builds(theirs)):
             logger.info("The merged model does not build; treating the merge as a conflict")
             return None
-        return model_files(merged)
+        return build_model_files(merged)
 
 
 def pull_request_body(model_changes: list[str], changed_files: Optional[list[str]] = None) -> str:

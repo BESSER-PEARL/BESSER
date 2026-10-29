@@ -24,7 +24,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     free_tier_available,
     sponsored_tier_available,
 )
-from besser.utilities.kg_to_buml import clean_json_response, convert_spec_json_to_buml, parse_json_safely
+from besser.utilities.kg_llm_to_buml import clean_json_response, convert_spec_json_to_buml, parse_json_safely
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
     process_class_diagram,
 )

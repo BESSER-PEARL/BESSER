@@ -38,9 +38,25 @@ _MAX_REPO_PAGES = 10
 _MAX_BRANCH_PAGES = 10
 
 
+# A commit retries once when the branch moved between reading its head and
+# updating it; moving again within that window is a real race, reported as one.
+_COMMIT_ATTEMPTS = 2
+
+
 def git_blob_sha(content: bytes) -> str:
     """The object id git gives a blob holding ``content``, to tell an unchanged file without uploading it."""
     return hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest()
+
+
+def content_hash(content: bytes) -> str:
+    """The hash a run records of each file it got from a repo (``push_directory_to_repo``'s ``base_hashes``)."""
+    return hashlib.sha256(content).hexdigest()
+
+
+def _branch_moved(exc: httpx.HTTPStatusError) -> bool:
+    """True for GitHub refusing a ref update that is no longer a fast-forward (someone pushed meanwhile)."""
+    return (exc.response is not None and exc.response.status_code == 422
+            and exc.request.method == "PATCH" and "/git/refs/heads/" in exc.request.url.path)
 
 
 class GitHubService:
@@ -347,13 +363,15 @@ class GitHubService:
         base_commit_sha: Optional[str] = None,
         keep_path: Optional[Callable[[str], bool]] = None,
         model_merge: Optional[Any] = None,
+        base_hashes: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """Commit a directory to ``branch`` as a change to the commit it was derived from.
 
         Only what differs from that commit is sent: a file whose content and
         mode match it uploads nothing, a changed file keeps its mode (an
         executable stays executable), and symlinks and submodules in the repo
-        are never touched, since the directory cannot hold them.
+        are never touched, since the directory cannot hold them. A repository
+        with no commit yet gets its first one through the contents API.
 
         Args:
             owner: Repository owner username
@@ -372,6 +390,11 @@ class GitHubService:
                 output, a secret file it was not given), so its absence is not
                 a deletion.
             model_merge: Passed on to ``commit_tree``.
+            base_hashes: ``path -> content_hash`` of each file as the directory
+                received it from ``base_commit_sha``. A file that still hashes
+                the same is unchanged even when its bytes differ from the blob:
+                the archive a run is imported from applies ``.gitattributes``
+                (``eol``, ``export-subst``, ``ident``) and LFS on the way out.
 
         Returns:
             ``total_files`` (paths added, changed or deleted), ``uploaded_files``,
@@ -380,9 +403,13 @@ class GitHubService:
         local = self._collect_push_files(directory_path)
         if not local:
             raise RuntimeError("No files found to upload.")
+        # A plain file, so the contents API's 100644 is its mode.
+        first = next((path for path in sorted(local) if not local[path][1]), min(local))
+        await self.ensure_first_commit(owner, repo_name, branch, first, local[first][0], commit_message)
         head_sha = await self._get_ref_sha(owner, repo_name, branch)
         parent_sha = base_commit_sha or head_sha
         parent = await self.get_tree_entries(owner, repo_name, parent_sha) if parent_sha else {}
+        base_hashes = base_hashes or {}
 
         tree_entries = []
         uploaded = []
@@ -390,7 +417,8 @@ class GitHubService:
             old = parent.get(path)
             kept_mode = old["mode"] if old and old["mode"] in _FILE_MODES else None
             mode = kept_mode or (_EXECUTABLE_MODE if executable else _FILE_MODE)
-            if old and old["sha"] == git_blob_sha(content) and old["mode"] == mode:
+            unchanged = old and (old["sha"] == git_blob_sha(content) or base_hashes.get(path) == content_hash(content))
+            if unchanged and old["mode"] == mode:
                 continue
             blob_sha = await self.create_blob(owner=owner, repo_name=repo_name, content=content)
             if not blob_sha:
@@ -510,10 +538,33 @@ class GitHubService:
             ``commit_sha`` (the branch head after the push, or the side-branch
             commit on a conflict), ``status`` (``"pushed"`` fast-forward,
             ``"merged"`` merged with newer commits, ``"conflict"`` not merged),
-            ``conflict_branch`` (the side branch on a conflict, else None) and
+            ``conflict_branch`` (the side branch on a conflict, else None),
             ``own_commit_sha`` (the commit holding exactly ``tree_entries``,
-            which differs from ``commit_sha`` after a merge).
+            which differs from ``commit_sha`` after a merge) and ``warnings``
+            (what the user should know about the merge).
+
+        When the branch moves between reading its head and updating it, the
+        commit is made again on the new head, once; GitHub's 422 is raised if
+        it moved again.
         """
+        for attempt in range(1, _COMMIT_ATTEMPTS + 1):
+            try:
+                return await self._commit_tree_once(
+                    owner, repo_name, branch, tree_entries, commit_message,
+                    layer_on_parent, base_commit_sha, model_merge,
+                )
+            except httpx.HTTPStatusError as exc:
+                if not _branch_moved(exc) or attempt == _COMMIT_ATTEMPTS:
+                    raise
+                logger.warning("%s/%s@%s moved while committing; committing again on its new head",
+                               owner, repo_name, branch)
+        raise AssertionError("unreachable")
+
+    async def _commit_tree_once(
+        self, owner: str, repo_name: str, branch: str, tree_entries: List[Dict[str, Any]],
+        commit_message: str, layer_on_parent: bool, base_commit_sha: Optional[str], model_merge: Optional[Any],
+    ) -> Dict[str, Any]:
+        """One attempt of ``commit_tree``, against the branch head as it is now."""
         head_sha = await self._get_ref_sha(owner, repo_name, branch)
         parent_sha = base_commit_sha or head_sha
 
@@ -522,7 +573,7 @@ class GitHubService:
             # with anything newer. No commit, so the history gets no empty one.
             status = "pushed" if head_sha == parent_sha else "merged"
             return {"commit_sha": head_sha, "status": status, "conflict_branch": None,
-                    "own_commit_sha": parent_sha}
+                    "own_commit_sha": parent_sha, "warnings": []}
 
         base_tree_sha = None
         if layer_on_parent and parent_sha:
@@ -540,7 +591,7 @@ class GitHubService:
         if not head_sha or head_sha == parent_sha:
             await self._update_or_create_ref(owner, repo_name, branch, commit_sha, head_sha)
             return {"commit_sha": commit_sha, "status": "pushed", "conflict_branch": None,
-                    "own_commit_sha": commit_sha}
+                    "own_commit_sha": commit_sha, "warnings": []}
 
         if model_merge is not None and any(model_merge.is_model_path(e["path"]) for e in tree_entries):
             return await self._merge_with_model(
@@ -559,7 +610,7 @@ class GitHubService:
 
         await self.delete_branch(owner, repo_name, side_branch)
         return {"commit_sha": merge_sha, "status": "merged", "conflict_branch": None,
-                "own_commit_sha": commit_sha}
+                "own_commit_sha": commit_sha, "warnings": []}
 
     async def _merge_with_model(
         self, owner: str, repo_name: str, branch: str, head_sha: str, parent_sha: str,
@@ -589,28 +640,33 @@ class GitHubService:
                     owner, repo_name, base=scratch, head=code_branch, commit_message=commit_message,
                 )
                 await self.delete_branch(owner, repo_name, code_branch)
-            merged_files = None
+            merged = None
             if merged_head is not None:
                 base_file = await self.get_file_content(owner, repo_name, model_merge.model_file, ref=parent_sha)
                 theirs_file = await self.get_file_content(owner, repo_name, model_merge.model_file, ref=head_sha)
-                merged_files = model_merge.merge(
+                merged = model_merge.merge(
                     base_file and base_file.get("content"), theirs_file and theirs_file.get("content"),
                 )
-            if merged_files is None:
+            if merged is None:
                 return await self._keep_for_pull_request(owner, repo_name, branch, own_sha)
 
             current = await self.get_tree_entries(owner, repo_name, merged_head)
             entries = [
                 {"path": path, "mode": _FILE_MODE, "type": "blob",
                  "sha": await self.create_blob(owner, repo_name, content)}
-                for path, content in merged_files.items()
+                for path, content in merged.files.items()
                 if (current.get(path) or {}).get("sha") != git_blob_sha(content)
             ]
-            entries += [
-                {"path": path, "mode": entry["mode"], "type": "blob", "sha": None}
-                for path, entry in current.items()
-                if model_merge.is_model_path(path) and path not in merged_files and entry["mode"] in _FILE_MODES
-            ]
+            # Model files the merged model no longer produces (a removed agent's source).
+            stale = [path for path, entry in current.items()
+                     if model_merge.is_model_path(path) and path not in merged.files and entry["mode"] in _FILE_MODES]
+            warnings = []
+            if stale and not merged.sources_built:
+                logger.warning("Kept %s in %s/%s: the merged model's B-UML export failed", stale, owner, repo_name)
+                warnings.append("BESSER could not write the B-UML sources of the merged model, so the "
+                                f"previous ones were kept and may be out of date: {', '.join(sorted(stale))}.")
+                stale = []
+            entries += [{"path": path, "mode": current[path]["mode"], "type": "blob", "sha": None} for path in stale]
             merged_tree = await self._get_commit_tree_sha(owner, repo_name, merged_head)
             if entries:
                 merged_tree = await self._create_tree(owner, repo_name, entries, base_tree=merged_tree)
@@ -621,7 +677,7 @@ class GitHubService:
             # A fast-forward: it fails, rather than reverting, if the branch moved again meanwhile.
             await self._update_or_create_ref(owner, repo_name, branch, merge_sha, head_sha)
             return {"commit_sha": merge_sha, "status": "merged", "conflict_branch": None,
-                    "own_commit_sha": own_sha}
+                    "own_commit_sha": own_sha, "warnings": warnings}
         finally:
             await self.delete_branch(owner, repo_name, scratch)
 
@@ -634,7 +690,7 @@ class GitHubService:
             own_sha[:7], owner, repo_name, branch, side_branch,
         )
         return {"commit_sha": own_sha, "status": "conflict", "conflict_branch": side_branch,
-                "own_commit_sha": own_sha}
+                "own_commit_sha": own_sha, "warnings": []}
 
     async def _get_commit_tree_sha(self, owner: str, repo_name: str, commit_sha: str) -> Optional[str]:
         """Return the tree SHA of ``commit_sha``."""
@@ -777,7 +833,8 @@ class GitHubService:
         repo_name: str,
         file_path: str,
         content_b64: str,
-        message: str
+        message: str,
+        branch: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload a single file to GitHub repository.
@@ -788,6 +845,7 @@ class GitHubService:
             file_path: Path within repository
             content_b64: Base64-encoded file content
             message: Commit message
+            branch: Branch to commit to (the default branch when None)
 
         Returns:
             Response from GitHub API
@@ -796,6 +854,8 @@ class GitHubService:
             "message": message,
             "content": content_b64
         }
+        if branch:
+            data["branch"] = branch
 
         async with httpx.AsyncClient() as client:
             response = await client.put(
@@ -1031,15 +1091,40 @@ If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESS
             response.raise_for_status()
             return response.json().get("sha", "")
 
+    async def ensure_first_commit(
+        self, owner: str, repo_name: str, branch: str, path: str, content: bytes, message: str,
+    ) -> None:
+        """Give a repository with no commit its first one: ``path`` holding ``content``, on ``branch``.
+
+        GitHub's git data API (blobs, trees, commits, refs) answers 409 "Git
+        Repository is empty" until a repository has a commit; the contents API
+        can make that first commit. A repository that has commits is left alone.
+        """
+        if await self._get_ref_sha(owner, repo_name, branch):
+            return
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_url}/repos/{owner}/{repo_name}/branches",
+                headers=self.headers,
+                params={"per_page": 1},
+                timeout=10
+            )
+            response.raise_for_status()
+        if response.json():
+            return
+        logger.info("%s/%s is empty; making its first commit through the contents API", owner, repo_name)
+        await self._upload_file(owner, repo_name, path, base64.b64encode(content).decode("utf-8"), message, branch)
+
     async def _get_ref_sha(self, owner: str, repo_name: str, branch: str) -> Optional[str]:
-        """Get the current SHA for a branch ref, or None if it doesn't exist."""
+        """Get the current SHA for a branch ref, or None if it doesn't exist (or the repo has no commit)."""
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 f"{self.base_url}/repos/{owner}/{repo_name}/git/ref/heads/{branch}",
                 headers=self.headers,
                 timeout=10
             )
-            if response.status_code == 404:
+            # 409: "Git Repository is empty".
+            if response.status_code in (404, 409):
                 return None
             response.raise_for_status()
             return response.json().get("object", {}).get("sha")

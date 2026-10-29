@@ -303,10 +303,11 @@ async def semantic_consistency_check(input_data: DiagramInput) -> StreamingRespo
     """Searches for an instance of a class diagram and its OCL invariants with the Alloy Analyzer.
 
     The search tries increasingly larger scopes (objects per class) and streams its progress as
-    Server-Sent Events. A search that finds nothing reports what it searched, and why in ``reason``
-    (``"unsat"`` or ``"timeout"``): "No instance within N objects per class, integers in [a, b],
-    ...". While the Alloy Analyzer runs, SSE comment lines are sent as heartbeats. Answers 503,
-    without a stream, while ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` checks are running.
+    Server-Sent Events. A search that finds nothing says in its ``message`` what it searched and
+    why it stopped: "No instance within N objects per class, integers in [a, b], ...", "Timed out
+    searching within ..." or "Too large to search within ...". While the Alloy Analyzer runs, SSE
+    comment lines are sent as heartbeats. Answers 503, without a stream, while
+    ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` checks are running.
     """
     return StreamingResponse(
         check_semantic_consistency(input_data), media_type="text/event-stream", headers=_SSE_HEADERS

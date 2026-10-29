@@ -17,6 +17,7 @@ from .json_to_buml import (
     process_component_diagram,
     process_deployment_diagram,
     link_method_neural_networks,
+    process_trace,
 )
 from .buml_to_json import (
     class_buml_to_json,
@@ -29,6 +30,7 @@ from .buml_to_json import (
     gui_buml_to_json,
     parse_gui_buml_content,
     project_to_json,
+    project_trace_to_json,
     empty_model,
     nn_model_to_json,
     nn_buml_to_json,
@@ -39,7 +41,9 @@ from .buml_to_json import (
     component_object_to_json,
     component_buml_to_json,
     deployment_object_to_json,
-    deployment_buml_to_json
+    deployment_buml_to_json,
+    parse_trace_code,
+    trace_buml_to_json,
 )
 
 __all__ = [
@@ -57,6 +61,7 @@ __all__ = [
     "process_component_diagram",
     "process_deployment_diagram",
     "link_method_neural_networks",
+    "process_trace",
     "class_buml_to_json",
     "parse_buml_content",
     "state_machine_to_json",
@@ -67,6 +72,7 @@ __all__ = [
     "gui_buml_to_json",
     "parse_gui_buml_content",
     "project_to_json",
+    "project_trace_to_json",
     "empty_model",
     "nn_model_to_json",
     "nn_buml_to_json",
@@ -77,5 +83,7 @@ __all__ = [
     "component_object_to_json",
     "component_buml_to_json",
     "deployment_object_to_json",
-    "deployment_buml_to_json"
+    "deployment_buml_to_json",
+    "parse_trace_code",
+    "trace_buml_to_json",
 ]

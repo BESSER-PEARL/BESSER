@@ -13,6 +13,9 @@ class ProjectInput(BaseModel):
     currentDiagramIndices: Optional[Dict[str, int]] = None
     diagrams: Dict[str, List[DiagramInput]]
     settings: Optional[Dict[str, Any]] = None
+    # The project trace (trace file JSON, see services/converters/json_to_buml/trace_processor.py),
+    # sent only when the user exports the project with its trace.
+    trace: Optional[Dict[str, Any]] = None
 
     @model_validator(mode="before")
     @classmethod

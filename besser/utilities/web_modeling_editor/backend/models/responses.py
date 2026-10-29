@@ -19,6 +19,8 @@ class ProjectExportResponse(BaseModel):
     project: Dict[str, Any]
     exportedAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     version: str = "1.0.0"
+    # The project trace (trace file JSON) when the B-UML file has a TRACEABILITY section.
+    trace: Optional[Dict[str, Any]] = None
 
 
 class ValidationResponse(BaseModel):

@@ -19,7 +19,8 @@ Available entry points
   and agentic ``AgenticComponentModel``)
 * ``deployment_model_to_code`` - UML Deployment models
 * ``bpmn_model_to_code`` - BPMN process models
-* ``project_to_code`` - full projects that bundle multiple diagrams
+* ``trace_model_to_code`` - traceability models (see :doc:`../buml_language/model_types/traceability`)
+* ``project_to_code`` - full projects that bundle multiple diagrams, optionally with their trace
 
 Domain model generation
 -----------------------
@@ -89,7 +90,13 @@ Use the specialized helpers in the same way:
     buml_code_builder.state_machine_to_code(state_machine, file_path="output/state_machine.py")
     buml_code_builder.quantum_model_to_code(quantum_circuit, file_path="output/quantum.py")
     buml_code_builder.kg_model_to_code(knowledge_graph, file_path="output/kg.py")
+    buml_code_builder.trace_model_to_code(trace_model, file_path="output/trace.py")
     buml_code_builder.project_to_code(project_model, file_path="output/project.py")
+
+``project_to_code`` also takes ``trace=``, a ``TraceModel``: it is written as a
+``TRACEABILITY`` section bound to ``trace_model``, after the models and outside
+``Project(models=[...])``, since a trace describes the models rather than being
+one of them.
 
 All builder functions accept an optional ``model_var_name`` parameter to customize the variable
 name used in the generated code (defaults vary by builder type, e.g., ``"domain_model"``,

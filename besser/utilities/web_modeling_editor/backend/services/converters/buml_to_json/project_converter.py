@@ -13,6 +13,8 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.buml_code_builder.project_builder import is_user_reference_domain_model
+from besser.utilities.buml_code_builder.trace_model_builder import TRACE_SECTION_KEYWORD
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 from .class_diagram_converter import parse_buml_content, class_buml_to_json
 from .state_machine_converter import state_machine_to_json
@@ -25,6 +27,7 @@ from .bpmn_diagram_converter import bpmn_buml_to_json
 from .kg_diagram_converter import kg_buml_to_json
 from .component_diagram_converter import component_buml_to_json
 from .deployment_diagram_converter import deployment_buml_to_json
+from .trace_converter import parse_trace_code, trace_buml_to_json
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +86,7 @@ def _object_model_title(section_code: str) -> str:
 # All known section header keywords used as boundary markers
 ALL_SECTION_KEYWORDS = [
     'STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN',
-    'BPMN', 'KNOWLEDGE_GRAPH', 'COMPONENT', 'DEPLOYMENT',
+    'BPMN', 'KNOWLEDGE_GRAPH', 'COMPONENT', 'DEPLOYMENT', TRACE_SECTION_KEYWORD,
 ]
 
 
@@ -690,3 +693,20 @@ def project_to_json(content: str) -> Dict[str, Any]:
             "collaborationEnabled": False,
         },
     }
+
+
+def project_trace_to_json(content: str) -> Optional[Dict[str, Any]]:
+    """The trace file JSON of a project file's TRACEABILITY section, or None when it has none.
+
+    The trace is not one of the project's models (it is not in ``models=[...]``),
+    so it is found by its section banner alone.
+
+    Raises:
+        ConversionError: If the section does not load as a TraceModel.
+    """
+    sections = _extract_all_sections(content, TRACE_SECTION_KEYWORD)
+    if not sections:
+        return None
+    if len(sections) > 1:
+        raise ConversionError(f"A project file holds one traceability section, found {len(sections)}.")
+    return trace_buml_to_json(parse_trace_code(sections[0][1]))

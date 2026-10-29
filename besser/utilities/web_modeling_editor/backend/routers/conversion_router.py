@@ -64,6 +64,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_component_diagram,
     process_deployment_diagram,
     json_to_buml_project,
+    process_trace,
     # BUML to JSON converters
     class_buml_to_json,
     parse_buml_content,
@@ -71,6 +72,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     agent_buml_to_json,
     gui_buml_to_json,
     project_to_json,
+    project_trace_to_json,
     nn_buml_to_json,
     bpmn_buml_to_json,
     kg_buml_to_json,
@@ -200,10 +202,11 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     errors = buml_project._cross_diagram_errors["errors"]
     if errors:
         raise ConversionError("Cannot export project: " + "; ".join(errors))
+    trace = process_trace(input_data.trace) if input_data.trace is not None else None
 
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         output_file_path = os.path.join(temp_dir, "project.py")
-        project_to_code(project=buml_project, file_path=output_file_path, emit_ids=BUML_EMIT_IDS)
+        project_to_code(project=buml_project, file_path=output_file_path, emit_ids=BUML_EMIT_IDS, trace=trace)
         file_content = await read_file_async(output_file_path, "r", encoding="utf-8")
         return Response(
             content=file_content,
@@ -386,7 +389,8 @@ async def get_project_json_model(buml_file: UploadFile = File(...)):
     return {
         "project": parsed_project,
         "exportedAt": datetime.now(timezone.utc).isoformat(),
-        "version": API_VERSION
+        "version": API_VERSION,
+        "trace": project_trace_to_json(buml_content),
     }
 
 @router.post("/get-json-model", response_model=DiagramExportResponse)

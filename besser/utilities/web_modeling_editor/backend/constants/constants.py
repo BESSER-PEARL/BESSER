@@ -483,3 +483,17 @@ WS_CLOSE_BAD_REQUEST = 4400
 WS_CLOSE_UNAUTHORIZED = 4401
 WS_CLOSE_NOT_FOUND = 4404
 WS_CLOSE_RATE_LIMITED = 4429
+
+# Traceability
+# Version of the trace file format (`<project>.trace.json`); bump it with a
+# migration in the frontend's trace store when the shape changes.
+TRACE_SCHEMA_VERSION = 1
+# Generators whose output carries trace links (their templates use `{% trace %}`).
+TRACED_GENERATORS = frozenset({"sqlalchemy"})
+# A generated file up to this size is kept in the trace so the trace view can
+# show its lines; above it only its hash is (browser storage is ~5 MB per origin).
+TRACE_MAX_STORED_CONTENT_BYTES = 200_000
+# Longest actor name accepted on a traced generation (the project owner field).
+TRACE_MAX_ACTOR_NAME_LENGTH = 200
+# Actor recorded when the project has no owner.
+TRACE_ANONYMOUS_ACTOR = "anonymous"

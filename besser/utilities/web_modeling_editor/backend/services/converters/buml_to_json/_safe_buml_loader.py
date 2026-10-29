@@ -504,6 +504,7 @@ def _collect_assigned_names(module: ast.Module) -> Set[str]:
 def safe_load_buml(
     content: str,
     allowed_names: Mapping[str, Any],
+    max_ast_nodes: int = _MAX_AST_NODES,
 ) -> Dict[str, Any]:
     """
     Parse ``content`` as Python, validate against the allowlist, and execute
@@ -522,6 +523,10 @@ def safe_load_buml(
         reach ``knowledge_graph.copy.dispatch_table.clear()`` and change
         interpreter-wide state). Callers may therefore build the mapping
         from ``dir(package)``, which lists submodules too.
+    max_ast_nodes:
+        Cap on the number of AST nodes. A trace is a long flat list of
+        constructor calls and gets a higher one; the source-size and depth
+        caps still apply.
 
     Returns
     -------
@@ -577,9 +582,9 @@ def safe_load_buml(
             for kw in node.keywords
         ):
             node_count -= 2  # the keyword and its string
-    if node_count > _MAX_AST_NODES:
+    if node_count > max_ast_nodes:
         raise SafeBumlLoaderError(
-            f"BUML AST too complex ({node_count} nodes > {_MAX_AST_NODES})"
+            f"BUML AST too complex ({node_count} nodes > {max_ast_nodes})"
         )
 
     # Only module-level statements are allowed to be Assign or Expr. Things

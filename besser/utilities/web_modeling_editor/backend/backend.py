@@ -72,6 +72,7 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router,
     telemetry_router,
     agent_simulator_router,
+    traceability_router,
 )
 
 # Spec-driven download registry — started/cancelled in the lifespan below
@@ -293,6 +294,7 @@ app.include_router(deployment_router.router)
 app.include_router(spec_driven_router.router)
 app.include_router(telemetry_router.router)
 app.include_router(agent_simulator_router.router)
+app.include_router(traceability_router.router)
 
 
 # Exception handlers

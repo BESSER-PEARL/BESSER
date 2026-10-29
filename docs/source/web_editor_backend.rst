@@ -20,6 +20,7 @@ services. Endpoints are organized by concern:
 - **``routers/spec_driven_router.py``** -- The :doc:`Spec-Driven Agent <spec_driven_agent/index>`: SSE generation runs, preview, config, durable run status and event replay, resume, cancel, download, and GitHub push/import
 - **``routers/telemetry_router.py``** -- Opt-in run telemetry collection and reporting
 - **``routers/agent_simulator_router.py``** -- Live agent simulation (see `Agent Simulation`_)
+- **``routers/traceability_router.py``** -- Code generation that also returns the trace of the run (see `Traceability`_)
 - **``routers/error_handler.py``** -- Centralized ``@handle_endpoint_errors`` decorator
 - **``routers/auth.py``** -- Shared GitHub-session gate (``require_github_session``, HTTP 401)
 
@@ -34,10 +35,12 @@ Additional infrastructure:
 - **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError`` and ``ConfigurationError``.
   ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
 - **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions), ``llm.py`` (reaching the user's own LLM provider under one request deadline) and ``validation.py`` (the consistency check under its concurrency cap, and the KG findings of ``/validate-diagram``)
+- **``services/traceability/``** -- ``traced_generation.py``: runs a traced generator on a class diagram and builds the trace fragment of the run with ``besser.utilities.generation_trace``
 - **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``sse_events.py`` (the typed event schema), ``secret_redaction.py``, ``telemetry.py``, ``incidents.py``
 - **``constants/constants.py``** -- API version, temp prefixes, generator defaults, CORS origins, and the ``BESSER_LLM_*`` caps and feature flags
 - **``models/responses.py``** -- Standardized Pydantic response models
 - **``models/kg.py``** -- Request models of the KG endpoints: ``KGDiagramInput`` (a ``DiagramInput`` plus the refinement fields, with typed ``resolutions`` and ``llmIssues``) and the LLM requests, which share ``KGLLMCredentials`` (``provider``, ``llm_model``, and the key as a ``SecretStr``). Data fields are camelCase; only the credentials keep the snake_case names of the other LLM features
+- **``models/traceability.py``** -- ``TracedGenerationInput`` (a ``DiagramInput`` plus ``actorName``) and ``TracedGenerationResponse``
 - **``models/spec_driven.py``** -- Request/response models for the spec-driven endpoints (the API key is a ``SecretStr``; the caps are clamped by field validators)
 
 Multi-Diagram Projects
@@ -522,9 +525,9 @@ Conversion
 ^^^^^^^^^^
 
 - ``POST /export-buml`` -- Diagram JSON to BUML Python code
-- ``POST /export-project-as-buml`` -- Full project to BUML Python code
+- ``POST /export-project-as-buml`` -- Full project to BUML Python code. An optional ``trace`` (trace file JSON) is written as a ``TRACEABILITY`` section; an invalid trace is a 400
 - ``POST /get-json-model`` -- BUML Python file to JSON (auto-detects diagram type)
-- ``POST /get-project-json-model`` -- BUML project file to JSON
+- ``POST /get-project-json-model`` -- BUML project file to JSON; ``trace`` holds the trace file JSON of its ``TRACEABILITY`` section (null when it has none). That section is loaded with the same AST allowlist as the models, restricted to the traceability metamodel; a section that fails to load is a 400
 - ``POST /get-json-model-from-image`` -- Image to ClassDiagram JSON (requires OpenAI API key)
 - ``POST /get-json-model-from-kg`` -- **Deprecated.** Knowledge graph (TTL/RDF/JSON) to ClassDiagram JSON through OpenAI (requires an OpenAI API key). Use ``/kg/import-owl`` and ``/kg/to-class-diagram`` instead
 - ``POST /csv-to-domain-model`` -- CSV **or XLSX** files to domain model JSON (both extensions are accepted; XLSX needs ``openpyxl``)
@@ -556,6 +559,16 @@ Refine KG dialog that precedes it.
 - ``POST /kg/llm-clean`` -- LLM-suggested cleanup of the graph, using the caller's own LLM key (see above); the optional ``description`` adds context, otherwise the model infers the domain from the KG
 - ``POST /kg/classify-orphans`` -- Per-node classification for orphan nodes deferred from the Refine dialog (``description`` is optional here too)
 - ``POST /kg/apply-refinement`` -- Apply Refine KG decisions (``source`` selects the static analyzer or the LLM suggestions in ``llmIssues``) and return the cleaned KG
+
+Traceability
+^^^^^^^^^^^^
+
+The editor records modelling traces itself and keeps the project trace in the
+browser (see :doc:`buml_language/model_types/traceability`); the backend records
+what only it sees, the trace links of a generation run. Under
+``/besser_api/traceability`` (OpenAPI tag ``traceability``).
+
+- ``POST /traceability/generate-output`` -- The ``/generate-output`` request of a class diagram plus ``actorName`` (the project owner; blank means ``anonymous``), for a generator in ``TRACED_GENERATORS`` (``sqlalchemy``); the diagram ``id`` is required. Returns JSON ``{fileName, mediaType, contentBase64, trace}``: the file ``/generate-output`` would deliver, byte for byte, and the run's trace fragment (trace file JSON, ``projectId`` null) whose line numbers refer to that file. The file content is kept in the trace only up to ``TRACE_MAX_STORED_CONTENT_BYTES`` (200 kB); above it only its hash is. 400 for an untraced generator or a missing diagram id
 
 Validation
 ^^^^^^^^^^

@@ -17,6 +17,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
 from pydantic import BaseModel, Field
 
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_credentials
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service
@@ -2084,8 +2085,13 @@ async def create_gist_from_project(
     try:
         github = create_github_service(access_token)
 
-        # Convert project to JSON
-        project_json = json.dumps(request.project_data, indent=2)
+        # A gist can be public: the agent's credentials are redacted as in a repo save.
+        project_data, findings = redact_credentials(
+            request.project_data, yaml_fields=repo_model.AGENT_CONFIG_YAML_FIELDS
+        )
+        if findings:
+            logger.warning("Redacted %d credential(s) from the project before sharing it as a gist", findings)
+        project_json = json.dumps(project_data, indent=2)
 
         # Get project name for filename
         project_name = request.project_data.get("name", "besser-project")

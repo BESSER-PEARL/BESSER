@@ -17,6 +17,7 @@ import base64
 import os
 import subprocess
 import tempfile
+import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -55,6 +56,7 @@ class FakeGitHub:
         self.root = root or tempfile.mkdtemp(prefix="besser_fake_github_")
         self.repos: dict[str, FakeRepo] = {}
         self.revoked: list[str] = []
+        self.gists: dict[str, dict] = {}
         self.app = self._build_app()
 
     # ------------------------------------------------------------------
@@ -468,6 +470,15 @@ class FakeGitHub:
             branch = head.split(":", 1)[-1]
             return [p for p in repo.pulls
                     if (not head or p["head"]["ref"] == branch) and (state == "all" or p["state"] == state)]
+
+        @app.post("/gists")
+        async def create_gist(request: Request):
+            body = await request.json()
+            gist_id = uuid.uuid4().hex
+            fake.gists[gist_id] = body
+            return JSONResponse({"id": gist_id, "html_url": f"https://gist.github.com/{gist_id}", "files": {
+                name: {"raw_url": f"https://gist.githubusercontent.com/{gist_id}/{name}"} for name in body["files"]}},
+                status_code=201)
 
         @app.post("/login/oauth/access_token")
         async def exchange_code():

@@ -486,3 +486,69 @@ def test_a_fresh_run_pushed_into_a_repo_deletes_nothing_it_never_saw(github, tmp
     files = github.files(repo)
     assert files["README.md"][1] == b"# Library\n"
     assert files["backend/main_api.py"][1] == b"app = None\n"
+
+
+# ---------------------------------------------------------------------
+# What a push must never touch or leak
+# ---------------------------------------------------------------------
+
+
+def test_a_push_keeps_paths_the_import_did_not_extract(github):
+    """An import is a git archive: export-ignore paths are not in it, so a push read them as deleted."""
+    repo = github.create_repo("shop", files={
+        ".gitattributes": "tests/ export-ignore\n",
+        "src/app.py": "print('v1')\n",
+        "tests/test_app.py": "def test_app(): pass\n",
+    })
+    imported = _import("ana", "shop")
+    run_id = _modify_run(imported["run_id"], lambda workdir: _write(workdir, "src/app.py", "print('v2')\n"))
+
+    r = _push(run_id, "shop", base_commit_sha=imported["commit_sha"])
+
+    assert r.status_code == 200, r.text
+    files = github.files(repo)
+    assert files["src/app.py"][1] == b"print('v2')\n"
+    assert files["tests/test_app.py"][1] == b"def test_app(): pass\n"
+
+
+def test_a_link_planted_at_the_runs_github_record_is_replaced_not_written_through(github, tmp_path):
+    """The backend updates the run's GitHub record after a push; the run's sandboxed code can make it a link."""
+    victim = tmp_path / "backend_file.py"
+    victim.write_text("ORIGINAL = True\n", encoding="utf-8")
+    github.create_repo("shop", files={"src/app.py": "print('v1')\n"})
+    imported = _import("ana", "shop")
+
+    def plant(workdir):
+        _write(workdir, "src/app.py", "print('v2')\n")
+        record = os.path.join(workdir, runner_module.GITHUB_SOURCE_FILENAME)
+        os.remove(record)
+        try:
+            os.symlink(victim, record)
+        except (OSError, NotImplementedError):
+            pytest.skip("this platform cannot create symlinks")
+
+    run_id = _modify_run(imported["run_id"], plant)
+    r = _push(run_id, "shop", base_commit_sha=imported["commit_sha"])
+
+    assert r.status_code == 200, r.text
+    assert victim.read_text(encoding="utf-8") == "ORIGINAL = True\n"
+
+
+def test_a_shared_gist_carries_no_agent_credentials(github):
+    """Repo saves redacted the agent's keys; sharing the project as a (possibly public) gist did not."""
+    key = "sk-proj-" + "a1B2c3D4" * 4
+    project = _envelope()["project"]
+    project["diagrams"]["AgentDiagram"] = [{
+        "id": "ag1", "title": "Helper", "model": {},
+        "agentConfigForm": {"nlp": {"openai_api_key": key, "language": "en"}},
+        "configYaml": f"nlp:\n  openai:\n    api_key: {key}\n",
+    }]
+
+    r = _call("POST", "/besser_api/github/gist/create", headers=SESSION,
+              json={"project_data": project, "description": "Library", "is_public": True})
+
+    assert r.status_code == 200, r.text
+    (gist,) = github.gists.values()
+    (content,) = [f["content"] for f in gist["files"].values()]
+    assert key not in content
+    assert '"language": "en"' in content

@@ -95,11 +95,14 @@ class CodeAnalysis:
     source_files: list[str] = field(default_factory=list)
     entities: list[str] = field(default_factory=list)
     ai: bool = False  # True when an LLM proposed the model (ai_reverse), not this exact reader
+    # Relationships read from the code that the model could not take, as "Source -> Target".
+    skipped_relationships: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "stack": self.stack, "model_source": self.model_source,
             "source_files": self.source_files, "entities": self.entities, "ai": self.ai,
+            "skipped_relationships": self.skipped_relationships,
         }
 
 
@@ -711,11 +714,18 @@ def _build_model(entities: list[_Entity], module: _Module) -> DomainModel:
 
     model = DomainModel(name="ImportedModel", types=set(classes.values()) | set(enums.values()),
                         generalizations=generalizations)
-    names = set()
+    # Two links between the same classes (two association tables, two foreign
+    # keys) share a default name; the second one gets a numbered name.
+    taken: set[str] = set()
     for association in associations:
-        if association.name not in names:
-            names.add(association.name)
-            model.add_association(association)
+        name, n = association.name, 2
+        while name in taken:
+            name, n = f"{association.name}_{n}", n + 1
+        if name != association.name:
+            logger.info("Code reading: association %s renamed to %s, its name was taken", association.name, name)
+            association.name = name
+        taken.add(name)
+        model.add_association(association)
     return model
 
 

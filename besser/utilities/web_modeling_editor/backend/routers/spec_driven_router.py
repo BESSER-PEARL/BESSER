@@ -76,6 +76,8 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_re
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
     copytree_no_links,
     is_plain_entry,
+    read_run_json,
+    write_run_json,
 )
 # Underscored names below are shared on purpose; tests patch them by name.
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
@@ -1071,7 +1073,7 @@ async def push_spec_driven_to_github(
             # The run records that commit itself: the editor's link may have
             # moved on (a pull after the run started), and pushing over the
             # link's newer base would revert what was pulled.
-            seed_sha = _run_seed_commit(entry.temp_dir, owner, repo_name)
+            seed_sha, held_paths = _run_seed(entry.temp_dir, owner, repo_name)
             commit_message = repo_model.with_origin(
                 deploy_config.commit_message or "Spec-driven app + model — BESSER",
                 repo_model.ORIGIN_AGENT,
@@ -1097,7 +1099,8 @@ async def push_spec_driven_to_github(
                 # such a run can have deleted one; any other run adds and updates.
                 preserve_existing_files=seed_sha is None,
                 base_commit_sha=base_sha,
-                keep_path=lambda path: _hidden_from_run(path, scrubbed),
+                keep_path=lambda path: (_hidden_from_run(path, scrubbed)
+                                        or (held_paths is not None and path not in held_paths)),
                 model_merge=repo_model.ModelMerge(effective_export) if effective_export else None,
             )
             if not push_results.get("commit_sha"):
@@ -1119,7 +1122,8 @@ async def push_spec_driven_to_github(
             await github.add_topic(owner, repo_name, repo_model.BESSER_TOPIC)
             if status in ("pushed", "merged"):
                 # Runs seeded from this one start from the commit holding its tree.
-                _record_run_seed(entry.temp_dir, owner, repo_name, push_results["own_commit_sha"])
+                _record_run_seed(entry.temp_dir, owner, repo_name, push_results["own_commit_sha"],
+                                 _plain_files(workdir))
 
             # After a merge the run's files no longer match the branch: hand
             # back the merged repo as the next modify run's base.
@@ -1188,11 +1192,8 @@ async def push_spec_driven_to_github(
 
 def _model_changes(entry) -> list[str]:
     """What the run changed in the model, from its recipe (empty when it changed none)."""
-    try:
-        with open(os.path.join(entry.temp_dir, ".besser_recipe.json"), "r", encoding="utf-8") as fh:
-            return run_changes(json.load(fh))["modelChanges"]
-    except (OSError, ValueError):
-        return []
+    recipe = read_run_json(os.path.join(entry.temp_dir, ".besser_recipe.json"))
+    return run_changes(recipe)["modelChanges"] if isinstance(recipe, dict) else []
 
 
 async def _refresh_deploy_files(github, owner: str, repo: str, branch: str, workdir: str) -> list[str]:
@@ -1223,31 +1224,47 @@ async def _refresh_deploy_files(github, owner: str, repo: str, branch: str, work
     return warnings
 
 
-def _run_seed_commit(run_dir: str, owner: str, repo: str) -> Optional[str]:
-    """The commit of ``owner/repo`` the run's files were derived from, or None.
+def _run_seed(run_dir: str, owner: str, repo: str) -> tuple[Optional[str], Optional[set[str]]]:
+    """The commit of ``owner/repo`` the run's files were derived from, and the repo paths it held.
 
-    Import writes it (``GITHUB_SOURCE_FILENAME``), a push updates it, and
-    seeding copies it into every modify run that starts from that run.
+    Import writes them (``GITHUB_SOURCE_FILENAME``), a push updates them, and
+    seeding copies them into every modify run that starts from that run.
+    ``(None, None)`` for a run that did not start from this repo; the paths are
+    None for a record written before they were kept.
     """
-    try:
-        with open(os.path.join(run_dir, GITHUB_SOURCE_FILENAME), "r", encoding="utf-8") as fh:
-            source = json.load(fh)
-    except (OSError, ValueError):
-        return None
+    source = read_run_json(os.path.join(run_dir, GITHUB_SOURCE_FILENAME))
+    if not isinstance(source, dict):
+        return None, None
     # GitHub names are case-insensitive: "Ana/Shop" and "ana/shop" are one repo.
     if str(source.get("owner")).lower() != owner.lower() or str(source.get("repo")).lower() != repo.lower():
-        return None
+        return None, None
     sha = source.get("commitSha")
-    return sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) else None
+    if not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha)):
+        return None, None
+    paths = source.get("paths")
+    held = set(paths) if isinstance(paths, list) and all(isinstance(p, str) for p in paths) else None
+    return sha, held
 
 
-def _record_run_seed(run_dir: str, owner: str, repo: str, commit_sha: str) -> None:
-    """Record ``commit_sha`` as the commit the run's files now match (best effort)."""
+def _record_run_seed(run_dir: str, owner: str, repo: str, commit_sha: str, paths: list[str]) -> None:
+    """Record that the run's files now match ``commit_sha``, where they are ``paths`` (best effort)."""
     try:
-        with open(os.path.join(run_dir, GITHUB_SOURCE_FILENAME), "w", encoding="utf-8") as fh:
-            json.dump({"owner": owner, "repo": repo, "commitSha": commit_sha}, fh)
+        write_run_json(os.path.join(run_dir, GITHUB_SOURCE_FILENAME),
+                       {"owner": owner, "repo": repo, "commitSha": commit_sha, "paths": paths})
     except OSError:
         logger.warning("Could not record the pushed commit in run %s", run_dir, exc_info=True)
+
+
+def _plain_files(root: str) -> list[str]:
+    """Repo-relative paths of the regular files under ``root``, BESSER's own records left out."""
+    found = []
+    for directory, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if is_plain_entry(os.path.join(directory, d))]
+        for name in names:
+            full = os.path.join(directory, name)
+            if is_plain_entry(full) and not fnmatch.fnmatch(name, _RUN_INTERNAL_FILES):
+                found.append(os.path.relpath(full, root).replace(os.sep, "/"))
+    return sorted(found)
 
 
 async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) -> tuple[str, str]:
@@ -1262,10 +1279,11 @@ async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) ->
     try:
         await github.download_repo_tarball(owner, repo, commit_sha, dest_dir=extract_dir)
         # The registry persists a manifest pointing at one file of the run;
-        # this one also records where the run came from.
+        # this one also records where the run came from and which files it
+        # holds: an archive leaves out export-ignore paths, links and
+        # submodules, and a later push must not read their absence as deletions.
         source_path = os.path.join(extract_dir, GITHUB_SOURCE_FILENAME)
-        with open(source_path, "w", encoding="utf-8") as fh:
-            json.dump({"owner": owner, "repo": repo, "commitSha": commit_sha}, fh)
+        _record_run_seed(extract_dir, owner, repo, commit_sha, _plain_files(extract_dir))
     except BaseException:
         shutil.rmtree(extract_dir, ignore_errors=True)
         raise
@@ -1444,6 +1462,11 @@ async def import_github_run(
                     f"This repo has no BESSER model. BESSER read its "
                     f"{code_analysis.model_source} and proposes one."
                 )
+                if code_analysis.skipped_relationships:
+                    message += (
+                        f" {len(code_analysis.skipped_relationships)} relationship(s) could not be "
+                        f"read and are not in it: {', '.join(code_analysis.skipped_relationships)}."
+                    )
             elif message is None:
                 message = ai_message or (
                     "This repo has no BESSER model and no data classes BESSER "

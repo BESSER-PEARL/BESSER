@@ -10,11 +10,15 @@ credential-shaped text everywhere else with a stable placeholder.
 from __future__ import annotations
 
 import fnmatch
+import logging
 import os
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+import yaml
+
+logger = logging.getLogger(__name__)
 
 REDACTED_SECRET = "[REDACTED]"
 _MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024
@@ -160,7 +164,8 @@ _CREDENTIAL_KEY_RE = re.compile(
 _YAML_ASSIGNMENT_RE = re.compile(r"(?m)^(\s*([A-Za-z0-9_-]+)\s*:[ \t]*)(\S[^\r\n]*)$")
 
 
-def _redact_yaml_credentials(text: str) -> tuple[str, int]:
+def _redact_yaml_lines(text: str) -> tuple[str, int]:
+    """Redact ``key: value`` credential lines, keeping the text as written."""
     findings = 0
 
     def _replacement(match: re.Match[str]) -> str:
@@ -171,6 +176,52 @@ def _redact_yaml_credentials(text: str) -> tuple[str, int]:
         return f"{match.group(1)}'{REDACTED_SECRET}'"
 
     return _YAML_ASSIGNMENT_RE.sub(_replacement, text), findings
+
+
+def _is_credential_value(key: Any, value: Any) -> bool:
+    return (isinstance(value, (str, int, float)) and not isinstance(value, bool)
+            and _CREDENTIAL_KEY_RE.search(str(key)) is not None
+            and str(value) != REDACTED_SECRET and not _is_placeholder(str(value)))
+
+
+def _redact_yaml_data(value: Any) -> tuple[Any, int]:
+    """Parsed YAML with every value under a credential key replaced."""
+    if isinstance(value, list):
+        results = [_redact_yaml_data(item) for item in value]
+        return [item for item, _ in results], sum(count for _, count in results)
+    if not isinstance(value, dict):
+        return value, 0
+    output, findings = {}, 0
+    for key, item in value.items():
+        if _is_credential_value(key, item):
+            output[key], findings = REDACTED_SECRET, findings + 1
+            continue
+        output[key], count = _redact_yaml_data(item)
+        findings += count
+    return output, findings
+
+
+def _redact_yaml_credentials(text: str) -> tuple[str, int]:
+    """Redact the credentials in a YAML document.
+
+    The line rule keeps the user's formatting but cannot see a credential in a
+    list item, a flow mapping (``db: {password: x}``) or a block scalar
+    (``api_key: |``). When the parsed result still holds one, the document is
+    redacted as data and written again.
+    """
+    redacted, findings = _redact_yaml_lines(text)
+    try:
+        if _redact_yaml_data(yaml.safe_load(redacted))[1] == 0:
+            return redacted, findings
+    except yaml.YAMLError:
+        pass  # e.g. a block scalar the line rule cut: read the original instead
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        logger.warning("Agent config is not valid YAML; only its credential lines were redacted")
+        return redacted, findings
+    safe, count = _redact_yaml_data(data)
+    return yaml.safe_dump(safe, sort_keys=False, allow_unicode=True), count
 
 
 def redact_credentials(value: Any, yaml_fields: Iterable[str] = ()) -> tuple[Any, int]:

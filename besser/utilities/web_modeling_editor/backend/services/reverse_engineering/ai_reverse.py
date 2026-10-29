@@ -29,6 +29,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
     process_class_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import sanitize_name
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.code_reverse import (
     _MAX_FILE_BYTES,
     _SKIPPED_DIRS,
@@ -261,9 +262,10 @@ def propose_model_with_ai(root: str, analysis: CodeAnalysis,
     if spec is None:
         logger.warning("AI code reading failed: the reply was not a JSON system spec")
         return None
-    model = _spec_to_model(_normalise_spec(spec))
+    model, skipped = _spec_to_model(_normalise_spec(spec))
     if model is None:
         return None
+    analysis.skipped_relationships = skipped
     analysis.ai = True
     analysis.model_source = AI_MODEL_SOURCE
     analysis.source_files = digest.files
@@ -403,6 +405,19 @@ def _multiplicity(value, default: str) -> str:
     return text if _MULTIPLICITY_RE.fullmatch(text) else default
 
 
+def _inherits(cls: str, ancestor: str, parents: dict[str, set[str]]) -> bool:
+    """Whether ``cls`` is ``ancestor`` or reaches it through ``parents``."""
+    seen, pending = set(), [cls]
+    while pending:
+        current = pending.pop()
+        if current == ancestor:
+            return True
+        if current not in seen:
+            seen.add(current)
+            pending.extend(parents.get(current, ()))
+    return False
+
+
 def _normalise_spec(spec: dict) -> dict:
     """The spec with invalid names, unknown types and dangling relationships removed, within the caps."""
     classes: dict[str, list] = {}
@@ -438,7 +453,7 @@ def _normalise_spec(spec: dict) -> dict:
             attributes.append({"name": name, "type": kind, "visibility": "public"})
         out_classes.append({"className": class_name, "attributes": attributes})
 
-    relationships, pairs = [], set()
+    relationships, parents = [], {}
     for rel in spec.get("relationships") or []:
         if not isinstance(rel, dict):
             continue
@@ -448,10 +463,11 @@ def _normalise_spec(spec: dict) -> dict:
         if source not in classes or target not in classes or kind not in _RELATION_TYPES:
             continue
         if kind in {"inheritance", "generalization"}:
-            # A self-parent or a two-way pair is a cycle the metamodel rejects.
-            if source == target or ("inherit", target, source) in pairs or ("inherit", source, target) in pairs:
+            # A link that repeats one or closes a cycle (A -> B -> C -> A) is one the metamodel rejects.
+            if target in parents.get(source, ()) or _inherits(target, source, parents):
+                logger.warning("AI code reading dropped the inheritance %s -> %s: it closes a cycle", source, target)
                 continue
-            pairs.add(("inherit", source, target))
+            parents.setdefault(source, set()).add(target)
             relationships.append({"type": "Inheritance", "source": source, "target": target})
             continue
         relationships.append({
@@ -477,24 +493,45 @@ def _normalise_spec(spec: dict) -> dict:
     }
 
 
-def _spec_to_model(spec: dict) -> Optional[DomainModel]:
-    """Convert the normalised spec; relationships the metamodel rejects are dropped, with a warning."""
-    if not spec["classes"]:
-        logger.warning("AI code reading found no classes in the model's reply")
-        return None
+def _convert(spec: dict) -> Optional[DomainModel]:
+    """The spec as a domain model, or None when the metamodel rejects it."""
     try:
         return process_class_diagram(_with_enumerations(spec))
-    except Exception:
-        if not spec["relationships"]:
-            logger.warning("AI code reading failed: its classes could not be converted", exc_info=True)
-            return None
-        logger.warning("AI code reading: relationships rejected by the metamodel; keeping the classes",
-                       exc_info=True)
-    try:
-        return process_class_diagram(_with_enumerations({**spec, "relationships": []}))
-    except Exception:
-        logger.warning("AI code reading failed: its classes could not be converted", exc_info=True)
+    except (ValueError, ConversionError):
         return None
+
+
+def _relationship_label(relationship: dict) -> str:
+    return f"{relationship.get('source')} -> {relationship.get('target')}"
+
+
+def _spec_to_model(spec: dict) -> tuple[Optional[DomainModel], list[str]]:
+    """Convert the normalised spec; returns the model and the relationships it had to leave out.
+
+    One relationship the metamodel rejects (an end name used twice, an
+    inheritance cycle) must not cost the others, so each one is added only if
+    the model still converts with it.
+    """
+    if not spec["classes"]:
+        logger.warning("AI code reading found no classes in the model's reply")
+        return None, []
+    model = _convert(spec)
+    if model is not None:
+        return model, []
+    kept: list[dict] = []
+    skipped: list[str] = []
+    for relationship in spec["relationships"]:
+        if _convert({**spec, "relationships": [*kept, relationship]}) is None:
+            skipped.append(_relationship_label(relationship))
+        else:
+            kept.append(relationship)
+    model = _convert({**spec, "relationships": kept})
+    if model is None:
+        logger.warning("AI code reading failed: its classes could not be converted")
+        return None, []
+    logger.warning("AI code reading: %d relationship(s) rejected by the metamodel and left out: %s",
+                   len(skipped), ", ".join(skipped))
+    return model, skipped
 
 
 def _with_enumerations(spec: dict) -> dict:

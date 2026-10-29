@@ -19,6 +19,7 @@ import time
 
 import httpx
 import pytest
+import yaml
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
@@ -335,7 +336,10 @@ def test_a_pushed_run_records_its_commit_for_the_runs_seeded_from_it(monkeypatch
     _push(monkeypatch, _PushGitHub(), run_id, base_commit_sha=BASE)
 
     with open(tmp_path / "run" / runner_module.GITHUB_SOURCE_FILENAME, encoding="utf-8") as fh:
-        assert json.load(fh) == {"owner": "me", "repo": "app", "commitSha": OURS}
+        record = json.load(fh)
+    assert {key: record[key] for key in ("owner", "repo", "commitSha")} == {"owner": "me", "repo": "app", "commitSha": OURS}
+    # The files the run now holds, so the next push deletes only what the run removed.
+    assert "main.py" in record["paths"]
 
 
 def test_a_merged_push_hands_back_the_merged_repo_as_the_next_base(monkeypatch, tmp_path):
@@ -478,6 +482,28 @@ def test_agent_credentials_never_reach_the_repo_model_file():
     assert saved["agentConfigForm"]["db"]["sqlDatabases"][0]["username"] == "admin"
     # The class diagram is untouched.
     assert json.loads(text)["project"]["diagrams"]["ClassDiagram"] == envelope["project"]["diagrams"]["ClassDiagram"]
+
+
+def test_agent_credentials_in_any_yaml_shape_never_reach_the_repo_model_file():
+    """The line rule saw only ``key: value`` lines: a list item, a flow map and a block scalar kept their secrets."""
+    envelope = _envelope()
+    envelope["project"]["diagrams"]["AgentDiagram"] = [{
+        "id": "ag1", "title": "Helper", "model": {},
+        "configYaml": "databases:\n  - name: shop\n    password: list-item-pass\n"
+                      "cache: {host: redis, password: flow-map-pass}\n"
+                      "openai:\n  api_key: |\n    sk-block-scalar-value\n  language: en\n",
+        "agentConfigCustomYaml": "custom:\n  - token: list-token-value\n  - retries: 3\n",
+    }]
+
+    text = repo_model.model_files(envelope)[repo_model.MODEL_FILE].decode("utf-8")
+    saved = json.loads(text)["project"]["diagrams"]["AgentDiagram"][0]
+
+    for secret in ("list-item-pass", "flow-map-pass", "sk-block-scalar-value", "list-token-value"):
+        assert secret not in text
+    config = yaml.safe_load(saved["configYaml"])
+    assert config["databases"][0]["name"] == "shop" and config["cache"]["host"] == "redis"
+    assert config["openai"]["language"] == "en"
+    assert yaml.safe_load(saved["agentConfigCustomYaml"])["custom"][1] == {"retries": 3}
 
 
 def test_a_new_project_repo_is_private_unless_the_user_asks_for_public(monkeypatch):

@@ -473,3 +473,40 @@ def test_pydantic_links_declared_on_both_sides_and_key_lists_are_one_association
     ]
     assert set(_attrs(model, "Book")) == {"title"}
     assert set(_attrs(model, "Author")) == {"email"}
+
+
+def test_two_links_between_the_same_classes_are_two_associations(tmp_path):
+    """Two association tables between the same classes share a default name; the second link was dropped."""
+    root = _repo(tmp_path, {
+        "app/models.py": '''
+            from sqlalchemy import Column, ForeignKey, Integer, String, Table
+            from sqlalchemy.orm import DeclarativeBase, relationship
+
+            class Base(DeclarativeBase):
+                pass
+
+            likes = Table("likes", Base.metadata,
+                          Column("user_id", ForeignKey("users.id")), Column("article_id", ForeignKey("articles.id")))
+            bookmarks = Table("bookmarks", Base.metadata,
+                              Column("user_id", ForeignKey("users.id")), Column("article_id", ForeignKey("articles.id")))
+
+            class User(Base):
+                __tablename__ = "users"
+                id = Column(Integer, primary_key=True)
+                name = Column(String(80))
+                liked = relationship("Article", secondary=likes, backref="liked_by")
+                saved = relationship("Article", secondary=bookmarks, backref="saved_by")
+
+            class Article(Base):
+                __tablename__ = "articles"
+                id = Column(Integer, primary_key=True)
+                title = Column(String(80))
+            ''',
+    })
+
+    _, model = analyze_repository(root)
+
+    ends = _ends(model)
+    assert ["liked->Article[0..9999]", "liked_by->User[0..9999]"] in ends
+    assert ["saved->Article[0..9999]", "saved_by->User[0..9999]"] in ends
+    assert len({a.name for a in model.associations}) == len(model.associations) == 2

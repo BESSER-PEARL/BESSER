@@ -268,6 +268,44 @@ def test_inheritance_source_is_the_subclass_and_a_two_way_pair_is_dropped(monkey
     assert [(g.specific.name, g.general.name) for g in model.generalizations] == [("Admin", "User")]
 
 
+def test_one_rejected_relationship_does_not_cost_the_others(monkeypatch, tmp_path):
+    """Admin would inherit a second ``items`` end; the metamodel rejected the reply and every link was dropped."""
+    spec = {
+        "classes": [{"className": "User", "attributes": [{"name": "name", "type": "str"}]},
+                    {"className": "Admin", "attributes": [{"name": "level", "type": "int"}]},
+                    {"className": "Order", "attributes": [{"name": "total", "type": "float"}]},
+                    {"className": "Invoice", "attributes": [{"name": "number", "type": "str"}]}],
+        "relationships": [{"type": "Association", "source": "User", "target": "Order", "name": "items"},
+                          {"type": "Association", "source": "Admin", "target": "Order", "name": "items"},
+                          {"type": "Inheritance", "source": "Admin", "target": "User"},
+                          {"type": "Association", "source": "Order", "target": "Invoice", "name": "invoices"}],
+    }
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: json.dumps(spec))
+    analysis = CodeAnalysis()
+
+    model = propose_model_with_ai(_shop_repo(tmp_path), analysis)
+
+    assert len(model.associations) == 3
+    assert model.generalizations == set()
+    assert analysis.skipped_relationships == ["Admin -> User"]
+    assert analysis.to_dict()["skipped_relationships"] == ["Admin -> User"]
+
+
+def test_an_inheritance_cycle_through_three_classes_is_cut(monkeypatch, tmp_path):
+    """A -> B -> C -> A crashed the metamodel mid-construction, and the reading lost every relationship."""
+    spec = {
+        "classes": [{"className": name, "attributes": [{"name": "x", "type": "str"}]} for name in "ABC"],
+        "relationships": [{"type": "Inheritance", "source": "A", "target": "B"},
+                          {"type": "Inheritance", "source": "B", "target": "C"},
+                          {"type": "Inheritance", "source": "C", "target": "A"}],
+    }
+    monkeypatch.setattr(ai_reverse, "_ask_model", lambda prompt, *_: json.dumps(spec))
+
+    model = propose_model_with_ai(_shop_repo(tmp_path), CodeAnalysis())
+
+    assert sorted((g.specific.name, g.general.name) for g in model.generalizations) == [("A", "B"), ("B", "C")]
+
+
 def test_empty_unrelated_classes_are_dropped():
     """github.com/gothinkster/aspnetcore-realworld-example-app, 2nd benchmark run: the model drew each
     many-to-many directly and also kept its join tables as empty boxes with no link."""

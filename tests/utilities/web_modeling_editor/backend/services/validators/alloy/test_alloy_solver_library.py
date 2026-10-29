@@ -14,7 +14,7 @@ pytestmark = needs_alloy
 
 @pytest.fixture
 def library_model() -> DomainModel:
-    """The model of ``run_alloy_solver_object_generation_API.py``: ``Library`` 1 -- * ``Book`` * -- 1..* ``Author``."""
+    """``Library`` 1 -- * ``Book`` * -- 1..* ``Author``."""
     library = Class("Library", attributes={Property("name", StringType), Property("address", StringType)})
     book = Class("Book", attributes={
         Property("title", StringType), Property("pages", IntegerType), Property("release", DateType),

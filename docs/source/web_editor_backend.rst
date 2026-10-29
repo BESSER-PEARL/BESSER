@@ -590,6 +590,9 @@ personalization flow end-to-end:
 GitHub Integration
 ^^^^^^^^^^^^^^^^^^
 
+How the pieces fit (sign-in, sync, the push and merge rules, pull requests,
+testing against a GitHub stand-in) is described in :doc:`web_editor_github`.
+
 - ``GET /github/auth/login`` -- Initiate GitHub OAuth flow
 - ``GET /github/auth/callback`` -- OAuth callback handler; returns to the editor with the session in the URL fragment (``#github_session=...``), which is never sent to a server
 - ``GET /github/auth/status`` -- Check authentication status
@@ -603,6 +606,7 @@ GitHub Integration
 - ``GET /github/model-history`` -- Recent commits that changed the model, each with its class-diagram changes
 - ``POST /github/pull-request`` -- Open a pull request, e.g. for a push GitHub could not merge. Without a ``body`` the description lists the model changes between the two branches. Asking again for a branch that already has an open pull request returns that one
 - ``GET /github/app/capabilities``, ``POST /github/app/go-live`` -- "Go live": commit Render deploy files into the project's own repository, for its real folder layout (see below). Off unless ``BESSER_DEPLOY_FROM_REPO=true``.
+- ``POST /github/gist/create`` -- Share a model as a GitHub gist
 
 Every GitHub endpoint except the OAuth flow and logout reads the session from
 the ``X-GitHub-Session`` header, never from the URL.
@@ -684,7 +688,6 @@ pushed tree and keeps the service names, so the URLs stay the same. Render's
 build filter skips rebuilds for saves that only touch ``buml/`` or
 ``.besser/``. The classic ``/github/deploy-webapp`` is unchanged and shares the
 same service writer.
-- ``POST /github/gist/create`` -- Share a model as a GitHub gist
 
 Agent Simulation
 ^^^^^^^^^^^^^^^^
@@ -791,6 +794,8 @@ Environment Variables
 
 - ``GITHUB_CLIENT_ID`` -- GitHub OAuth app ID
 - ``GITHUB_CLIENT_SECRET`` -- GitHub OAuth app secret
+- ``BESSER_DEPLOY_FROM_REPO`` (optional, default ``false``) -- offers "Go live"
+  (``/github/app/go-live``), which deploys the project's own repository
 
 **Optional:**
 

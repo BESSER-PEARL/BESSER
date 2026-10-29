@@ -13,12 +13,53 @@ The three phases
    pages). This is exactly the machinery documented under
    :doc:`../generators` — the agent drives those generators rather than
    replacing them. Only generators whose required models are present are
-   offered, and an explicitly approved target from the preview screen is
-   honoured as-is — which also saves one paid LLM call.
+   offered, and a generator approved on the preview screen is honoured as-is,
+   with no selection call.
+
+   The same selection call decides what the run builds, its *target*: a
+   ``web_app`` (anything used in a browser, the default for a bare "app"), a
+   ``backend`` (API-only or headless), or ``other`` (a native mobile or desktop
+   app, a CLI, a game, an extension, a library, ...). A generator is picked
+   only when its output *is* that target, so an ``other`` target is written
+   from scratch in the stack the user named, or the standard one for that
+   target. Every web-specific rule below applies to a ``web_app`` target only.
+   When the selection call answers NONE for a web app or a backend, the
+   keyword fallback still picks a generator ("a web app with a REST API" gets
+   the FastAPI scaffold); for an ``other`` target, NONE stands. When no
+   selection call runs (an approved generator, a named language BESSER has no
+   generator for, a run with no class diagram), one small call decides the
+   target alone. An approved ``generate_web_app`` settles it as a web app and
+   costs no call.
+
+   The target is recorded in the trace, the checkpoint and
+   ``.besser_recipe.json``, so a resume or a later modify run of the same app
+   keeps it. A modify run decides it again only when the request may name
+   another kind of software: "add a React frontend" on a backend, "make it a
+   desktop app" on a web app, or a ``Target:`` line that differs from the
+   recorded target. Any other request keeps the recorded target with no LLM
+   call, as does a failed decision.
+
+   The request is free text; the one structured part of it is a ``Target:``
+   line. When the user asks for something that is not a web app, the BESSER
+   modeling agent adds this line, on a line of its own, to the instructions it
+   sends (under "Assistant's notes" when the original request is attached):
+
+   .. code-block:: text
+
+      Target: Windows 11 desktop app (not a web app).
+
+   The selection call reads it as part of the request, and a modify run
+   compares its description with the recorded target
+   (``planning/target.py``, ``TARGET_LINE_RE``). The line is optional: the
+   modeling agent omits it for a web app or a backend and when the
+   instructions already name the target, and an oversized specification falls
+   back to the original request without it. Without the line, the target is
+   decided from the wording of the request, as for any other caller.
 
    Two smaller steps bracket it. When no deterministic generator fits the
    target stack (Next.js, Rust, Kotlin/Spring), a *stack-metadata* step writes
-   the minimal build-config files that stack needs instead. Afterwards, the
+   the minimal build-config files that stack needs instead. Those templates are
+   server projects, so this step does not run for an ``other`` target. Afterwards, the
    Phase-1 output is validated so any pre-existing issue is handed to Phase 2
    as context rather than discovered later.
 
@@ -31,8 +72,8 @@ The three phases
    between the scaffold and the request and produces the task list; when it
    judges the scaffold already sufficient, Phase 2 is skipped entirely.
 
-   A request for something users interact with (an app, web app, UI,
-   website, dashboard or portal) gets a frontend even without a GUI model:
+   A ``web_app`` target (an app, web app, UI, website, dashboard or portal
+   with no other platform named) gets a frontend even without a GUI model:
    the FastAPI scaffold, plus a React frontend the LLM writes in Phase 2. An
    explicitly headless request (API or backend only, a REST API, no UI) stays
    backend-only, and in a modify run a bare "app" names the existing project

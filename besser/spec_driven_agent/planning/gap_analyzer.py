@@ -101,6 +101,7 @@ def analyze_gaps_via_llm(
     modify_mode: bool = False,
     workspace_files: list[str] | None = None,
     action_endpoints: list[ActionEndpoint] | None = None,
+    target_description: str = "",
 ) -> list[str] | None:
     """Return a focused task list for Phase 2.
 
@@ -134,6 +135,8 @@ def analyze_gaps_via_llm(
         action_endpoints: Source-derived operation routes and their handler
             locations. Presence in the domain model is not an implementation;
             this inventory identifies the actual executable extension points.
+        target_description: What the run builds when it is not a web app
+            (``planning/target.py``), named in the from-scratch task.
 
     Returns:
         ``None`` on failure, ``[]`` when no work is needed, otherwise
@@ -167,6 +170,14 @@ def analyze_gaps_via_llm(
                 "failure (e.g. rename reserved identifiers in the code you "
                 "write). Every entity, attribute, type, and relationship in "
                 "your code must match the model."
+            ]
+        elif target_description:
+            fallback = [
+                f"No BESSER generator was used. Build the {target_description} "
+                "from scratch, in the stack the user asked for, using the domain "
+                "model as your specification. "
+                "Every entity, attribute, type, and relationship in your code "
+                "must match the model."
             ]
         else:
             fallback = [

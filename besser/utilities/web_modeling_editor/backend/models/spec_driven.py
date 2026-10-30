@@ -277,6 +277,10 @@ class SmartPushDeployConfig(BaseModel):
     """
 
     repo_name: str = Field(..., min_length=1, max_length=100)
+    # Owner of an existing repo (an organization, or a user who made the
+    # signed-in user a collaborator). Omitted: the signed-in user. A new repo
+    # is always created under the signed-in user.
+    owner: Optional[str] = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9-]+$")
     description: Optional[str] = Field(default=None, max_length=350)
     is_private: bool = True
     use_existing: bool = False
@@ -284,6 +288,13 @@ class SmartPushDeployConfig(BaseModel):
     # rather than blindly taking the first branch.
     branch: Optional[str] = Field(default=None, max_length=250)
     commit_message: Optional[str] = Field(default=None, max_length=500)
+    # The commit the run's code was derived from (the import, or the last
+    # push). When the branch has moved past it, the push is merged with the
+    # newer commits instead of replacing them.
+    base_commit_sha: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    # "commit" lands on ``branch``; "pull_request" lands on a new branch and
+    # opens a pull request into ``branch``.
+    push_mode: Literal["commit", "pull_request"] = "commit"
 
 
 class PushSmartToGitHubRequest(BaseModel):
@@ -324,6 +335,28 @@ class PushSmartToGitHubResponse(BaseModel):
     # when it appended a commit to an existing one.
     is_first_push: bool
     files_uploaded: int
+    branch: str = ""
+    # Head of ``branch`` after the push: the next push's ``base_commit_sha``.
+    commit_sha: str = ""
+    # "pushed" (fast-forward), "merged" (merged with commits made since
+    # ``base_commit_sha``), "conflict" (left on ``conflict_branch``) or
+    # "pull_request" (opened ``pull_request_url``).
+    status: str = "pushed"
+    conflict_branch: Optional[str] = None
+    pull_request_url: Optional[str] = None
+    # The branch the pull request merges (``status`` "pull_request").
+    pull_request_branch: Optional[str] = None
+    # Set when the push merged in other commits: a run holding the merged
+    # repo, to use as the next modify run's ``base_run_id`` so the agent
+    # edits the merged code rather than its own pre-merge copy.
+    base_run_id: Optional[str] = None
+    # Problems the user should know about, e.g. a layout change that keeps
+    # the app from deploying as before.
+    warnings: list[str] = []
+    # The model written to ``buml/`` when the run changed it (a modify run
+    # that added classes); None when it is the request's own export. The
+    # editor loads it, so its model matches the repo.
+    project_export: Optional[dict] = None
 
 
 class ImportGitHubRunRequest(BaseModel):
@@ -344,11 +377,25 @@ class ImportGitHubRunRequest(BaseModel):
     branch
         Optional branch/ref to import. When omitted the repo default is
         resolved.
+    demo_token
+        The demo-link secret (``?demo=<token>``). When valid, a repo without
+        readable data classes is read by the sponsored (demo) model instead
+        of the keyless one.
+    allow_ai_reading
+        The user allowed BESSER to send the repo's code to an AI model when it
+        cannot read the data classes directly. Without it no model is called;
+        the response offers the reading instead (``ai_reading_offered``).
     """
 
     owner: str = Field(..., min_length=1, max_length=100)
     repo: str = Field(..., min_length=1, max_length=100)
     branch: Optional[str] = Field(default=None, max_length=250)
+    demo_token: Optional[SecretStr] = Field(default=None, max_length=200)
+    allow_ai_reading: bool = False
+
+    def resolved_demo_token(self) -> str:
+        """The plaintext demo token, or ``""`` when the request carries none."""
+        return "" if self.demo_token is None else self.demo_token.get_secret_value()
 
 
 class ImportGitHubRunResponse(BaseModel):
@@ -365,8 +412,21 @@ class ImportGitHubRunResponse(BaseModel):
     owner: str
     repo: str
     branch: str
+    # The commit that was imported: the first push's ``base_commit_sha``.
+    commit_sha: str = ""
+    # Repos without a BESSER model: what their code holds ({stack,
+    # model_source, source_files, entities, ai}) and a class diagram read from
+    # their data classes, in the shape the editor imports, for the user to
+    # accept. ``ai`` is true when no data classes were readable and an LLM
+    # proposed the diagram from the code instead. proposed_diagram is None
+    # when the repo has a model, or neither reading produced one.
+    analysis: Optional[dict] = None
+    proposed_diagram: Optional[dict] = None
     # Human-readable hint when there is no model (or it was unreadable).
     message: Optional[str] = None
+    # True when an AI model could read the code for a better diagram and the
+    # request did not allow it: import again with ``allow_ai_reading`` to read it.
+    ai_reading_offered: bool = False
 
 
 class SmartPreviewRequest(BaseModel):

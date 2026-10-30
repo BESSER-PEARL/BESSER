@@ -371,9 +371,10 @@ Four middlewares wrap every request, outermost first:
   HSTS, and a Content-Security-Policy on every response.
 
 There is no per-client rate limiting. The only throughput control is
-``BESSER_LLM_MAX_CONCURRENT_RUNS`` (default 10) on spec-driven runs, which
-answers ``429`` when the slots are full; starting or resuming a run that is
-already in flight answers ``409``. See
+``BESSER_LLM_MAX_CONCURRENT_RUNS`` (default 10) on spec-driven runs and GitHub
+imports (``/spec-driven/import-github-run``), which answers ``429`` when the
+slots are full; starting or resuming a run that is already in flight answers
+``409``. See
 :doc:`spec_driven_agent/configuration`.
 
 API Endpoints
@@ -590,15 +591,118 @@ personalization flow end-to-end:
 GitHub Integration
 ^^^^^^^^^^^^^^^^^^
 
+How the pieces fit (sign-in, sync, the push and merge rules, pull requests,
+testing against a GitHub stand-in) is described in :doc:`web_editor_github`.
+
 - ``GET /github/auth/login`` -- Initiate GitHub OAuth flow
-- ``GET /github/auth/callback`` -- OAuth callback handler
+- ``GET /github/auth/callback`` -- OAuth callback handler; returns to the editor with the session in the URL fragment (``#github_session=...``), which is never sent to a server
 - ``GET /github/auth/status`` -- Check authentication status
-- ``POST /github/auth/logout`` -- End session
+- ``POST /github/auth/logout`` -- End the session (JSON body ``{"session_id": ...}``) and revoke its GitHub token
 - ``GET /github/star/status``, ``PUT /github/star``, ``DELETE /github/star`` -- Read / set / clear the signed-in user's star on the BESSER repository
 - ``POST /github/deploy-webapp`` -- Deploy generated app to GitHub repository
-- ``GET /github/repos``, ``GET /github/branches``, ``GET /github/commits``, ``GET /github/contents``, ``GET /github/file/exists`` -- Repository browsing for the editor's save/load flow
-- ``POST /github/project/save``, ``GET /github/project/load``, ``GET /github/project/load-commit``, ``POST /github/project/create-repo`` -- Store and retrieve a BESSER project in a repository (including loading it back from a specific commit)
+- ``GET /github/repos``, ``GET /github/branches``, ``GET /github/commits``, ``GET /github/contents``, ``GET /github/file/exists`` -- Repository browsing for the editor's save/load flow. ``/repos`` lists every repository the user can open (own, collaborator and organization), most recently updated first, across GitHub's pages up to 1,000, with each one's topics and ``can_push``; ``truncated`` says the account has more. ``/branches`` follows the pages too. ``/commits`` marks each commit's ``origin``.
+- ``POST /github/project/save``, ``GET /github/project/load``, ``GET /github/project/load-commit``, ``POST /github/project/create-repo`` -- Store and retrieve a BESSER project in a repository (including loading it back from a specific commit). A save takes an optional ``legacy_file_path`` (a relative ``.json`` path without ``..``; default ``besser-project.json``): the project file the old editor sidebar saved, removed in the same commit when it holds a BESSER project. A merged save lists anything the user should know in ``warnings``
+- ``GET /github/repo-summary`` -- What a repository holds: the model's name, diagrams per type, classes, and the last commit
+- ``GET /github/sync-status`` -- Commits on a branch since ``base_sha``, the commit the editor last synced. With ``pending_branch`` (a ``besser/…`` branch a conflict or pull-request push left), ``pending`` says whether that branch still exists and the state of its pull request (``open``, ``closed``, ``merged``, or none yet)
+- ``GET /github/model-history`` -- Recent commits that changed the model, each with its class-diagram changes
+- ``POST /github/pull-request`` -- Open a pull request, e.g. for a push GitHub could not merge. Without a ``body`` the description lists the model changes between the two branches. Asking again for a branch that already has an open pull request returns that one
+- ``GET /github/app/capabilities``, ``POST /github/app/go-live`` -- "Go live": commit Render deploy files into the project's own repository, for its real folder layout (see below). Off unless ``BESSER_DEPLOY_FROM_REPO=true``.
 - ``POST /github/gist/create`` -- Share a model as a GitHub gist
+
+Every GitHub endpoint except the OAuth flow and logout reads the session from
+the ``X-GitHub-Session`` header, never from the URL. For one release,
+``/github/auth/status`` and the star endpoints still accept the deprecated
+``session_id`` query parameter when the header is absent (and logout when its
+body is), with a warning in the server log.
+
+Every repository BESSER writes has one layout, defined in
+``services/deployment/repo_model.py``: the model in ``buml/diagrams.json`` (a V2
+project export; the legacy ``besser-project.json`` is still read), the B-UML
+sources ``buml/domain_model.py``, ``buml/gui_model.py`` and
+``buml/agent_model_<agent>.py`` (any other file under ``buml/`` is the
+repository's own), the owning project in ``.besser/project.json``, and the
+``besser`` topic on the repository. Commits BESSER makes end with a
+``BESSER-Origin: spec-driven-agent`` or ``BESSER-Origin: editor`` trailer.
+
+Repositories BESSER creates are private unless the request sets
+``is_private: false``. Before ``buml/diagrams.json`` is written (by every
+endpoint, ``/github/deploy-webapp`` included), the agent
+diagrams' credentials (API keys, bot and webhook tokens, database passwords in
+``config``, ``agentConfigForm``, ``configYaml`` and ``agentConfigCustomYaml``)
+and any provider token elsewhere in the model are replaced with
+``[REDACTED]``; placeholders such as ``YOUR-API-KEY`` are kept. When no branch
+is given, writes and reads use the default branch GitHub reports for the
+repository.
+
+Writes never revert newer commits. ``/github/project/save`` and
+``/spec-driven/push-to-github`` take the commit the editor last synced
+(``base_commit_sha``). When the branch has moved past it, the new commit is made
+on top of that base and merged into the branch, so both sides' changes are kept.
+A write that cannot be merged is left on a ``besser/sync-<sha>`` branch and
+reported as ``status: "conflict"``, and nothing is overwritten. When the branch
+moves between reading its head and updating it, the commit is made again on the
+new head once before a race is reported. A repository with no commit yet gets
+its first one through the contents API, since GitHub's git data API refuses an
+empty repository with 409.
+
+The model is not merged as text. Git merges ``diagrams.json`` and the B-UML
+sources line by line, so two people who each add a class would collide on the
+same lines. ``GitHubService.commit_tree`` therefore merges in two parts when
+the write holds the model (``repo_model.ModelMerge``): GitHub's merge API merges
+everything else on a scratch branch, and ``services/deployment/model_merge.py``
+merges ``diagrams.json`` three ways as data (objects key by key, lists of
+objects with an ``id`` item by item, lists of unique values as sets; layout and
+timestamps keep this side's value). A value both sides changed differently is
+a conflict, as is a merged model that no longer builds. The B-UML sources are
+written again from the merged model, and the branch moves only by a
+fast-forward to a merge commit whose parents are the branch head and the
+write's own commit. If the merged model's B-UML export fails, the previous
+sources are kept rather than deleted, and ``warnings`` says so.
+
+A Spec-Driven push sends only what the run changed. ``push_directory_to_repo``
+compares the workspace with GitHub's recursive tree of the base commit: a file
+whose blob id and mode match is not uploaded, nor is one whose bytes still have
+the SHA-256 recorded when the run got them (the import is a git archive, which
+applies ``.gitattributes`` such as ``eol=crlf`` and ``export-subst``, so an
+untouched file can differ from its blob), a changed file keeps its mode,
+links and submodules are never touched, and a repository path the run could
+not hold (build and dependency output, ``*.db``, BESSER's ``.besser_*`` files,
+a scrubbed secret ``.env``) is not taken as a deletion. Only a run seeded from
+the repository (``.besser_github_source.json`` names it) can delete files at
+all; any other run only adds and updates. A push with no change
+makes no commit. ``files_uploaded`` counts the files added, changed or deleted.
+Once the push has landed, a failure to read the merged repository back for the
+next run is reported in ``warnings`` rather than failing the request.
+
+Tests run the real ``GitHubService`` against
+``tests/utilities/web_modeling_editor/backend/fake_github.py``, a GitHub REST
+stand-in backed by real git repositories (blobs, trees, merges, paging, pull
+requests, the OAuth code exchange); ``use_fake_github(monkeypatch, fake)``
+routes the backend's GitHub requests to it.
+
+The base of an agent push is the commit the run itself started from, recorded
+in the run's workspace (``.besser_github_source.json``, written by the import
+and updated by each push, and copied into every modify run seeded from that
+run). The ``base_commit_sha`` the editor sends is used only for runs with no
+recorded start, so pulling while a run is open cannot make its push revert the
+pulled commits.
+
+**Go live** (``POST /github/app/go-live``, behind ``BESSER_DEPLOY_FROM_REPO``)
+deploys the code that is in the project's repository, which is the code the
+Spec-Driven Agent wrote. ``services/deployment/render_blueprint.py`` reads the
+repository's layout: a FastAPI backend (``main_api.py`` beside
+``requirements.txt``) and an optional Vite frontend, at the root or nested (the
+agent puts web apps under ``web_app/``), with the frontend's real build
+folder. It writes ``render.yaml`` and the frontend's ``.env.production``, and
+commits only those files. A layout it cannot deploy (Django, Flutter, several
+backends, built-in agents) is refused with ``422`` and the reason; an existing
+``render.yaml`` BESSER did not write is never overwritten (``409``). The
+``render.yaml`` starts with a marker line; for a repository whose
+``render.yaml`` carries it, every agent push regenerates both files for the
+pushed tree and keeps the service names, so the URLs stay the same. Render's
+build filter skips rebuilds for saves that only touch ``buml/`` or
+``.besser/``. The classic ``/github/deploy-webapp`` is unchanged and shares the
+same service writer.
 
 Agent Simulation
 ^^^^^^^^^^^^^^^^
@@ -705,6 +809,8 @@ Environment Variables
 
 - ``GITHUB_CLIENT_ID`` -- GitHub OAuth app ID
 - ``GITHUB_CLIENT_SECRET`` -- GitHub OAuth app secret
+- ``BESSER_DEPLOY_FROM_REPO`` (optional, default ``false``) -- offers "Go live"
+  (``/github/app/go-live``), which deploys the project's own repository
 
 **Optional:**
 

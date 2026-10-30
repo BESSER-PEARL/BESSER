@@ -1921,17 +1921,6 @@ class ToolExecutor:
         ReactGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 
-    def _gen_flutter(self, args: dict) -> dict:
-        err = self._require_domain_model("generate_flutter")
-        if err:
-            return err
-        if not self.gui_model:
-            return {"error": "No GUI model available. The Flutter generator requires a GUI model."}
-        from besser.generators.flutter import FlutterGenerator
-        out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_flutter"])
-        FlutterGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
-
     def _gen_web_app(self, args: dict) -> dict:
         err = self._require_domain_model("generate_web_app")
         if err:
@@ -3446,7 +3435,6 @@ class ToolExecutor:
         "generate_json_schema": _gen_json_schema,
         "generate_rest_api": _gen_rest_api,
         "generate_react": _gen_react,
-        "generate_flutter": _gen_flutter,
         "generate_web_app": _gen_web_app,
         "generate_rdf": _gen_rdf,
         "generate_qiskit": _gen_qiskit,

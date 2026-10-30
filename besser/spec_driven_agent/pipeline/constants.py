@@ -300,7 +300,6 @@ _HISTORY_EVICTION_ENABLED = os.environ.get("BESSER_LLM_HISTORY_EVICTION", "0") =
 _APPLICATION_OUTPUT_DIRS = {
     "generate_web_app": "web_app",
     "generate_django": "django",
-    "generate_flutter": "flutter",
     "generate_fastapi_backend": "backend",
     "generate_rest_api": "rest_api",
 }

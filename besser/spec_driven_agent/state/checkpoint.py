@@ -92,6 +92,8 @@ class Checkpoint:
     repair_progress: dict = field(default_factory=dict)
     # Whole-application generators the run refuses (#666); a resume keeps them.
     locked_generators: list[str] = field(default_factory=list)
+    # What the run builds (planning/target.py), so a resume keeps its gates.
+    target: dict | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -118,6 +120,7 @@ class Checkpoint:
             "phase2_exited_cleanly": self.phase2_exited_cleanly,
             "repair_progress": self.repair_progress,
             "locked_generators": self.locked_generators,
+            "target": self.target,
         }
 
 
@@ -376,6 +379,7 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             phase2_exited_cleanly=data.get("phase2_exited_cleanly") is True,
             repair_progress=progress,
             locked_generators=[t for t in data.get("locked_generators") or [] if isinstance(t, str)],
+            target=data.get("target"),
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Checkpoint at %s has unexpected shape: %s", path, exc)

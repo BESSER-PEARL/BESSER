@@ -130,6 +130,9 @@ _DEFAULT_MODELS = DEFAULT_MODELS
 
 _REGISTRY_SWEEP_INTERVAL_SECONDS = 60
 _DOWNLOAD_MANIFEST_NAME = ".besser_download.json"
+# Written into a run imported from GitHub: where it came from. Its ``.besser_``
+# prefix keeps it out of every push and download.
+GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
 _MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
 
 # Upper bound on queued SSE events so a runaway worker can't exhaust
@@ -283,6 +286,31 @@ def _capped(items: list[VerificationItem]) -> list[VerificationItem]:
 def _conversion_label(issue: dict) -> str:
     """The label ``_requirements_for_validation`` names the rule by."""
     return issue.get("name") or issue.get("context") or issue.get("id") or "unnamed rule"
+
+
+# Agent tools that change a file; shell commands are not tracked.
+_FILE_CHANGE_TOOLS = frozenset({"write_file", "modify_file", "replace_file_lines", "delete_file"})
+# The card lists this many paths; the count covers the rest.
+_MAX_CHANGED_FILES = 50
+
+
+def run_changes(recipe: dict) -> dict:
+    """The ``DoneEvent`` fields that say what a run changed, read from its recipe."""
+    history = recipe.get("history") or []
+    mode = (history[-1] if history and isinstance(history[-1], dict) else {}).get("mode")
+    changed = sorted({
+        (call.get("input") or {}).get("path")
+        for call in recipe.get("tool_calls") or []
+        if isinstance(call, dict) and call.get("tool") in _FILE_CHANGE_TOOLS
+        and isinstance((call.get("input") or {}).get("path"), str)
+    })
+    model_change = recipe.get("model_change") or {}
+    return {
+        "mode": "modify" if mode == "modify" else "create",
+        "changedFiles": changed[:_MAX_CHANGED_FILES],
+        "changedFileCount": len(changed),
+        "modelChanges": [c for c in model_change.get("changes") or [] if isinstance(c, str)],
+    }
 
 
 def build_verification_report(recipe: dict) -> VerificationReport:
@@ -863,6 +891,16 @@ def _run_workspace_root() -> str:
     root = LLM_RUN_WORKSPACE_ROOT or tempfile.gettempdir()
     os.makedirs(root, exist_ok=True)
     return root
+
+
+def create_run_workspace(run_id: str) -> str:
+    """A fresh directory for ``run_id`` in the shared run workspace.
+
+    The name is the one ``SmartRunRegistry.get`` rescans for, so a run the
+    backend registers (a repo imported from GitHub) is found by the
+    Spec-Driven worker when it seeds a modify run from it, and vice versa.
+    """
+    return tempfile.mkdtemp(prefix=f"{LLM_TEMP_DIR_PREFIX}{run_id}_", dir=_run_workspace_root())
 
 
 def _locate_run_temp_dir(run_id: str) -> str | None:
@@ -2431,6 +2469,7 @@ class SmartGenerationRunner:
             tokensUsed=int(getattr(self, "_final_tokens", 0) or 0),
             verification=verification,
             aiShare=ai_share,
+            **run_changes(recipe),
         )
         return event, entry
 

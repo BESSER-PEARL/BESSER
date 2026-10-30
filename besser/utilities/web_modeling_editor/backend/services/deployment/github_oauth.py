@@ -11,7 +11,7 @@ import os
 import secrets
 from typing import Optional
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
 logger = logging.getLogger(__name__)
 from fastapi.responses import RedirectResponse
@@ -54,6 +54,24 @@ class GitHubOAuthResponse(BaseModel):
 
 
 router = APIRouter(prefix="/github", tags=["GitHub OAuth"])
+
+
+def github_session_id(
+    header: Optional[str] = Header(None, alias="X-GitHub-Session"),
+    session_id: Optional[str] = Query(None, deprecated=True),
+) -> Optional[str]:
+    """The request's GitHub session: the ``X-GitHub-Session`` header.
+
+    For one release after the move to the header, a client that still sends
+    the session as the ``session_id`` query parameter (which puts it in proxy
+    and server logs) is served too, with a deprecation warning.
+    """
+    if header:
+        return header
+    if session_id:
+        logger.warning("GitHub session sent as the deprecated session_id query parameter; "
+                       "send the X-GitHub-Session header")
+    return session_id
 
 
 @router.get("/auth/login")
@@ -160,9 +178,9 @@ async def github_callback(code: str, state: str):
             "avatar_url": user_data.get("avatar_url"),
         })
 
-        # Redirect to frontend with session ID
+        # The session id rides in the fragment, which browsers never send to a server or proxy log.
         return RedirectResponse(
-            url=f"{DEPLOYMENT_URL}?github_session={session_id}&username={username}",
+            url=f"{DEPLOYMENT_URL}#github_session={session_id}&username={username}",
             status_code=302
         )
 
@@ -174,7 +192,7 @@ async def github_callback(code: str, state: str):
 
 
 @router.get("/auth/status")
-async def get_auth_status(session_id: str) -> GitHubOAuthResponse:
+async def get_auth_status(session_id: Optional[str] = Depends(github_session_id)) -> GitHubOAuthResponse:
     """
     Check GitHub authentication status.
 
@@ -184,7 +202,7 @@ async def get_auth_status(session_id: str) -> GitHubOAuthResponse:
     Returns:
         Authentication status
     """
-    session_data = _user_tokens.get(session_id)
+    session_data = _user_tokens.get(session_id) if session_id else None
 
     if not session_data:
         return GitHubOAuthResponse(
@@ -202,17 +220,50 @@ async def get_auth_status(session_id: str) -> GitHubOAuthResponse:
     )
 
 
-@router.post("/auth/logout")
-async def github_logout(session_id: str):
-    """
-    Logout and revoke GitHub session.
+class LogoutRequest(BaseModel):
+    """Body of ``POST /auth/logout``, as the editor sends it."""
+    session_id: str
 
-    Args:
-        session_id: Session ID to revoke
+
+@router.post("/auth/logout")
+async def github_logout(
+    body: Optional[LogoutRequest] = None,
+    session_id: Optional[str] = Query(None, deprecated=True),
+):
+    """End the BESSER session and revoke its GitHub token.
+
+    The session comes in the JSON body; for one release the deprecated
+    ``session_id`` query parameter is read too, with a warning.
     """
+    if body is None:
+        if not session_id:
+            raise HTTPException(status_code=422, detail="session_id is required")
+        logger.warning("GitHub logout sent the deprecated session_id query parameter; send it in the body")
+    session_id = body.session_id if body is not None else session_id
+    session_data = _user_tokens.get(session_id)
     _user_tokens.delete(session_id)
+    if session_data:
+        await _revoke_github_token(session_data["access_token"])
 
     return {"success": True, "message": "Logged out successfully"}
+
+
+async def _revoke_github_token(access_token: str) -> None:
+    """Revoke the OAuth token at GitHub, so a copy of it stops working too."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.request(
+                "DELETE",
+                f"https://api.github.com/applications/{GITHUB_CLIENT_ID}/token",
+                auth=(GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET),
+                headers={"Accept": "application/vnd.github+json"},
+                json={"access_token": access_token},
+                timeout=10,
+            )
+        if response.status_code not in (204, 404):
+            logger.warning("GitHub token revocation returned HTTP %s", response.status_code)
+    except httpx.HTTPError:
+        logger.warning("Could not revoke the GitHub token at logout", exc_info=True)
 
 
 def get_user_token(session_id: str) -> Optional[str]:
@@ -238,7 +289,7 @@ BESSER_REPO_NAME = "BESSER"
 
 
 @router.get("/star/status")
-async def get_star_status(session_id: str):
+async def get_star_status(session_id: Optional[str] = Depends(github_session_id)):
     """Check if the authenticated user has starred the BESSER repository."""
     token = get_user_token(session_id)
     if not token:
@@ -260,7 +311,7 @@ async def get_star_status(session_id: str):
 
 
 @router.put("/star")
-async def star_besser_repo(session_id: str):
+async def star_besser_repo(session_id: Optional[str] = Depends(github_session_id)):
     """Star the BESSER repository on behalf of the authenticated user."""
     token = get_user_token(session_id)
     if not token:
@@ -284,7 +335,7 @@ async def star_besser_repo(session_id: str):
 
 
 @router.delete("/star")
-async def unstar_besser_repo(session_id: str):
+async def unstar_besser_repo(session_id: Optional[str] = Depends(github_session_id)):
     """Unstar the BESSER repository on behalf of the authenticated user."""
     token = get_user_token(session_id)
     if not token:

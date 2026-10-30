@@ -132,6 +132,10 @@ def _env_path(name: str) -> str | None:
 # Write element ids (id="...") into exported B-UML files. Off until every
 # install in use reads them: releases before Element.id reject such a file.
 BUML_EMIT_IDS = _env_bool("BESSER_BUML_EMIT_IDS", False)
+# "Go live" deploys the project's own repo (the agent's code) instead of a
+# regenerated copy. Off until it is proven on experimental; turning it off
+# brings back the classic deploy without a redeploy of the frontend.
+DEPLOY_FROM_REPO = _env_bool("BESSER_DEPLOY_FROM_REPO", False)
 
 # Per-run spend / runtime caps. The HARD_CAP values are the absolute
 # ceiling a request's fields are clamped to; DEFAULT values are what

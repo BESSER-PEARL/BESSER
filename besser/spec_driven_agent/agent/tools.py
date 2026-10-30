@@ -151,14 +151,6 @@ GENERATOR_TOOLS: list[dict[str, Any]] = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
-        "name": "generate_flutter",
-        "description": (
-            "Generate a Flutter mobile app from the domain model + GUI model. "
-            "REQUIRES a GUI model. Output: full Flutter app directory"
-        ),
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
         "name": "generate_web_app",
         "description": (
             "Generate a complete full-stack web app: React frontend + FastAPI backend "
@@ -859,7 +851,6 @@ _TOOL_MODEL_REQUIREMENTS: dict[str, frozenset[str]] = {
     "generate_rdf":             frozenset({"domain"}),
     # Generators that need domain + GUI
     "generate_react":           frozenset({"domain", "gui"}),
-    "generate_flutter":         frozenset({"domain", "gui"}),
     "generate_web_app":         frozenset({"domain", "gui"}),
     # Supabase DDL is domain-only, like the other database generators
     "generate_supabase":        frozenset({"domain"}),
@@ -954,7 +945,7 @@ def get_tools_for(
         Whether a ``DomainModel`` is available.
     has_gui_model, has_agent_model, has_state_machines, has_quantum_circuit
         Whether the corresponding BUML model is populated. Currently only
-        GUI affects filtering (for React/Flutter/WebApp); agent / SM /
+        GUI affects filtering (for React/WebApp); agent / SM /
         quantum flags are accepted for forward compatibility as future
         tools key on them.
     """

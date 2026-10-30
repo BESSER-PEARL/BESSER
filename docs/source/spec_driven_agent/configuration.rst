@@ -24,7 +24,11 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
 - ``BESSER_FREE_LLM_FALLBACK_BASE_URL`` / ``BESSER_FREE_LLM_FALLBACK_MODEL`` /
   ``BESSER_FREE_LLM_FALLBACK_TOKEN`` -- A second,
   independently credentialed endpoint used as the last resort in the fallback
-  chain.
+  chain. A run moves along the chain when its endpoint is unavailable, out of
+  quota or credits, or rejects the server's token (an expired
+  ``BESSER_FREE_LLM_TOKEN``); a rejected token skips the alternative models
+  on the same endpoint, which share it. A user's own key has no fallback: a
+  rejected key fails the run with ``INVALID_KEY``.
 - ``BESSER_SPONSORED_LLM_BASE_URL`` / ``BESSER_SPONSORED_LLM_TOKEN`` /
   ``BESSER_SPONSORED_LLM_MODEL`` -- An additional server-funded keyless tier,
   served through an OpenAI-compatible endpoint. The URL and token are

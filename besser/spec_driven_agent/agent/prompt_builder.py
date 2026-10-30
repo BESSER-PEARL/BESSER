@@ -28,6 +28,7 @@ from besser.spec_driven_agent.agent.runbook import runbook_section
 from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
 from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section
 from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.spec_driven_agent.planning.target import OTHER, Target
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,23 @@ def requests_frontend(instructions: str | None, *, bare_app: bool = True) -> boo
     if _FRONTEND_ASK_RE.search(low):
         return True
     return bare_app and bool(_APP_ASK_RE.search(low)) and not _BACKEND_APP_RE.search(low)
+
+def _other_target_rule(target: Target) -> str:
+    """Rule 15 for a target that is not a web app (planning/target.py)."""
+    ui = (
+        "    It is used through screens: build a complete, navigable UI for that\n"
+        "    platform - every entity reachable, working create / edit / delete -\n"
+        "    and keep the data locally unless the user asked for a server.\n"
+        if target.has_user_interface else ""
+    )
+    return f"""\
+15. **Build exactly the requested target: {target.description or "what the user asked for"}.**
+    No BESSER generator produces it. Use the stack the user named, or the most
+    standard one for this target when they named none, with its standard project
+    manifest and entry point so it builds and runs with that stack's usual commands.
+{ui}    Do NOT add a web frontend or a web backend the user did not ask for.
+"""
+
 
 DROPPED_RULES_NOTE = (
     "dropped_by_model_change lists rules whose attributes or classes the user "
@@ -114,6 +132,8 @@ def build_system_prompt(
     allow_shell: bool = False,
     output_dir: str | None = None,
     design_system: str = "",
+    target: Target | None = None,
+    previous_target: Target | None = None,
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -161,6 +181,10 @@ def build_system_prompt(
             joins the rules and replaces the guidance it conflicts with: the
             GUI "loose hint" framing, Rule 2's write_file fallback for pages,
             Rule 13's styling advice and Rule 15's "one shared stylesheet".
+        target: What the run builds (``planning/target.py``); ``None`` keeps
+            the pre-target rules.
+        previous_target: The seed's target when a modify run builds another
+            kind of software; it lifts the keep-the-stack constraint.
 
     Returns:
         The full system prompt string.
@@ -206,7 +230,7 @@ def build_system_prompt(
             # GUI-driven run: the screens ARE the spec — match them.
             gui_framing = (
                 "Screens, components and data bindings declared in the editor. "
-                "This is the UI spec — build the React/Flutter output to match "
+                "This is the UI spec — build the UI to match "
                 "these screens and wire components to the domain classes."
             )
         else:
@@ -448,7 +472,9 @@ def build_system_prompt(
     # turn-to-turn cache hits; it only varies between runs, same as the
     # rest of this header already does via primary_kind. See
     # stack_metadata.idiom_guidance_section for the detection + content.
-    idiom_section = idiom_guidance_section(instructions)
+    # The idiom blocks assume a web / server project.
+    builds_other = target is not None and target.kind == OTHER
+    idiom_section = "" if builds_other else idiom_guidance_section(instructions)
     # Named only when offered: tools.py withholds these without a domain model.
     model_tools_section = _MODEL_TOOLS_SECTION if domain_model is not None else ""
 
@@ -532,11 +558,14 @@ def build_system_prompt(
         )
     # Rule 15 orders a React CRUD frontend; a backend-only run (no GUI, no
     # frontend in the scaffold, none asked for) must not be told to build one.
-    needs_frontend = (
-        gui_model is not None or bool(design_system)
-        or bool(_FRONTEND_FILE_RE.search(f"{inventory}\n{scaffold_snapshot}"))
-        or requests_frontend(instructions, bare_app=not modify_mode)
-    )
+    if target is not None:
+        needs_frontend = target.is_web_app
+    else:
+        needs_frontend = (
+            gui_model is not None or bool(design_system)
+            or bool(_FRONTEND_FILE_RE.search(f"{inventory}\n{scaffold_snapshot}"))
+            or requests_frontend(instructions, bare_app=not modify_mode)
+        )
     crud_rule = f"""\
 15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
     the UI is already specified by GUI screens. Read-only lists are NOT
@@ -586,17 +615,29 @@ def build_system_prompt(
       `plugins: [react()]` from `@vitejs/plugin-react`. Every page then dies
       with "React is not defined".
 """ if needs_frontend else ""
-    stable_header = f"""\
+    if builds_other:
+        crud_rule = _other_target_rule(target)
+    if has_scaffold:
+        if builds_other and previous_target is not None:
+            stack_rule = f"""\
+- **The user now wants a {target.description or "different kind of software"}, not
+  the existing {previous_target.description or previous_target.kind}.** Build it next to the existing
+  project, in the stack the user named or the standard one for it, and reuse
+  the existing domain logic and API where they fit."""
+        else:
+            stack_rule = """\
+- **Keep the existing tech stack and framework.** The scaffold below is already
+  built in a specific stack; extend it in that SAME framework. NEVER switch
+  frameworks — e.g. do NOT replace a FastAPI backend with Flask or Django, or a
+  React frontend with Vue. If the user's wording seems to imply a different
+  stack, ignore that and use the one that is already generated."""
+        role = f"""\
 You are an expert full-stack developer extending a deterministic scaffold.
 Preserve working code and verify its actual behavior; generated code is a
 starting point, not proof that the application satisfies the specification.
 
 ## HARD CONSTRAINTS — breaking any of these FAILS the task
-- **Keep the existing tech stack and framework.** The scaffold below is already
-  built in a specific stack; extend it in that SAME framework. NEVER switch
-  frameworks — e.g. do NOT replace a FastAPI backend with Flask or Django, or a
-  React frontend with Vue. If the user's wording seems to imply a different
-  stack, ignore that and use the one that is already generated.
+{stack_rule}
 - **Never delete or wholesale-rewrite the generated scaffold.** Do NOT call
   `delete_file` on any file shown below, and do NOT overwrite a generated file
   with a from-scratch rewrite in a different design. Edit files in place; add
@@ -604,13 +645,23 @@ starting point, not proof that the application satisfies the specification.
 - **Only ADD what the user asked for**, on top of what already exists.
 
 Read the generated code before changing it and keep changes tightly scoped to the user's request.
-Make surgical modifications, not from-scratch rewrites.{primary_banner}
+Make surgical modifications, not from-scratch rewrites."""
+        plan_first_step = "What does the user request imply on top of the generated scaffold?"
+    else:
+        role = """\
+You are an expert software engineer. No generator produced a scaffold for this
+request: you write the whole project, in the stack the user asked for, from the
+specification and the models below. Verify its actual behavior; a file that
+exists is not proof that the software satisfies the specification."""
+        plan_first_step = "What does the user request need, and in which stack and project layout?"
+    stable_header = f"""\
+{role}{primary_banner}
 
 ## Plan before you implement
 
 State your plan ONCE, in your first turn, then execute it. Do not restate it
 before later edits - every preamble is a turn:
-1. What does the user request imply on top of the generated scaffold?
+1. {plan_first_step}
 2. Which generated files/components must change, and which new files are needed?
 3. In what order, to avoid broken imports or circular dependencies?
 4. Which model elements (classes, attributes, relationships, OCL constraints) must
@@ -705,14 +756,19 @@ Keep the plan short (a few lines), then proceed with surgical edits.
 {crud_rule}{design_system}
 {idiom_section}{model_tools_section}"""
 
+    request_intro = (
+        "The generator handled the base app (CRUD, ORM, schemas, pages). Your job is to\n"
+        "implement what the user asked for, on top of the generator output:"
+        if has_scaffold else
+        "No generator ran. Build what the user asked for, from the specification and the models:"
+    )
     variable_tail = f"""\
 
 ## Variable context (per-run — not cached below this line)
 {inventory_section}{endpoint_section}{snapshot_section}{requirements_section}
 ## User request
 
-The generator handled the base app (CRUD, ORM, schemas, pages). Your job is to
-implement what the user asked for, on top of the generator output:
+{request_intro}
 
 > {instructions.strip()}
 {_render_gap_section(gap_tasks)}

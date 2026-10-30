@@ -194,7 +194,7 @@ def build_generation_trace(
     def link(source, target, rule: str):
         evidence = RuleEvidence(rule, timestamp=ended_at)
         trace.add_trace_link(TraceLink(source, target, operation, [evidence],
-                                       Confidence(1.0, [evidence], timestamp=ended_at), timestamp=ended_at))
+                                       Confidence(1.0, timestamp=ended_at), timestamp=ended_at))
 
     link(model_artifact, file_artifact, f"generator:{generator}")
     lines = content.split("\n")

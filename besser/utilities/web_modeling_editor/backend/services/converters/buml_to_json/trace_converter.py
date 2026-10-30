@@ -112,7 +112,7 @@ def _evidence(evidence: Evidence) -> Dict[str, Any]:
 
 def _confidence(confidence: Confidence) -> Dict[str, Any]:
     return _with_optional(
-        {"id": confidence.id, "value": confidence.value, "basedOn": [e.id for e in confidence.based_on],
+        {"id": confidence.id, "value": confidence.value,
          "timestamp": utc_iso(confidence.timestamp)},
         explanation=confidence.explanation,
     )

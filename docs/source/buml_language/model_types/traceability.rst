@@ -45,8 +45,9 @@ Concepts
   - **Modeling** -- edits made to models, recorded as its **Changes** (at least one).
     Whether a person or the assistant made them is told by the actors (a ``Person``,
     an ``Agent``, or both), not by the kind of operation.
-  - **CodeGeneration** -- a generator run, deriving code from models; it uses at least
-    one ``CodeGenerator``. It is a **Transformation** (abstract): an operation that
+  - **CodeGeneration** -- a generation run, deriving code from models; it uses at least
+    one ``CodeGenerator`` or ``LLM`` (a deterministic generator, or an LLM writing the
+    code; its links' evidence tells which). It is a **Transformation** (abstract): an operation that
     derives new artifacts and the trace links to them, and edits nothing.
   - **Conversation** -- a dialogue between a user and an agent (the BESSER assistant),
     with its messages as log records; at least one actor is an ``Agent``. What it leads
@@ -97,7 +98,7 @@ Example
     generation = CodeGeneration([owner], uses=[generator], consumes=[book],
                                 produces=[file, lines])
     evidence = RuleEvidence("sql_alchemy_template.py.j2#class")
-    link = TraceLink(book, lines, generation, [evidence], Confidence(1.0, [evidence]))
+    link = TraceLink(book, lines, generation, [evidence], Confidence(1.0))
 
     trace = TraceModel(project_id="my-project", artifacts=[book, file, lines],
                        operations=[generation], trace_links=[link],

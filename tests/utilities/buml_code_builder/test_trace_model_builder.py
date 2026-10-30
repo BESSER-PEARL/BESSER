@@ -48,9 +48,9 @@ def trace():
     ai = AIEvidence("embedding similarity", logs=[log], timestamp=_at(5))
     from_changes = ChangeEvidence([rename], timestamp=_at(5))
     links = [
-        TraceLink(book, lines, generation, [rule], Confidence(1.0, [rule], timestamp=_at(5)), timestamp=_at(5)),
+        TraceLink(book, lines, generation, [rule], Confidence(1.0, timestamp=_at(5)), timestamp=_at(5)),
         TraceLink(model, file, generation, [file_rule, ai, from_changes],
-                  Confidence(0.75, [ai], explanation="multi\nline", timestamp=_at(5)), timestamp=_at(5)),
+                  Confidence(0.75, explanation="multi\nline", timestamp=_at(5)), timestamp=_at(5)),
     ]
     prompt = PromptArtifact("Library", 'Books have a "title".\nAnd pages.', "c" * 64, timestamp=_at(0))
     answer = LogRecord("Noted: Book(title, pages).", 2, LogType.OUTPUT_RESPONSE, tool=llm, timestamp=_at(0))

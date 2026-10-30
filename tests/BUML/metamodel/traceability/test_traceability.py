@@ -6,7 +6,7 @@ import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
 from besser.BUML.metamodel.traceability import (
-    Agent, Change, ChangeEvidence, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence, ModelArtifact,
+    LLM, Agent, Change, ChangeEvidence, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence, ModelArtifact,
     Conversation, Modeling, Operation, Person, PromptArtifact, RuleEvidence, TraceLink, TraceModel, Transformation,
 )
 
@@ -24,7 +24,7 @@ def generation_trace():
     fragment = CodeArtifact("Book (10-20)", "sql_alchemy.py", "h1", start_line=10, end_line=20, parent=file)
     generation = CodeGeneration([owner], started_at=T0, uses=[generator], consumes=[book], produces=[file, fragment])
     evidence = RuleEvidence("sql_alchemy_template.py.j2#class", timestamp=T0)
-    link = TraceLink(book, fragment, generation, [evidence], Confidence(1.0, [evidence], timestamp=T0), timestamp=T0)
+    link = TraceLink(book, fragment, generation, [evidence], Confidence(1.0, timestamp=T0), timestamp=T0)
     trace = TraceModel(project_id="p1", artifacts=[book, title, file, fragment], operations=[generation],
                        trace_links=[link], actors=[owner], tools=[generator])
     return trace, link, owner, book, title
@@ -179,7 +179,7 @@ def test_validate_checks_each_operation_kind(generation_trace):
     trace.add_operation(Conversation([owner], started_at=T0))
     errors = trace.validate(raise_exception=False)["errors"]
     assert any("Modeling with no changes" in e for e in errors)
-    assert any("uses no CodeGenerator" in e for e in errors)
+    assert any("uses no CodeGenerator or LLM" in e for e in errors)
     assert any("Conversation with no Agent" in e for e in errors)
 
 
@@ -246,3 +246,12 @@ def test_a_model_artifact_references_its_element_or_records_it():
     assert recorded.element is None and recorded.resolve(model) is None
     with pytest.raises(ValueError):
         ModelArtifact("Ghost", None, "Class")  # a record needs its id
+
+
+def test_code_can_be_generated_by_an_llm(generation_trace):
+    trace, _, owner, book, _ = generation_trace
+    llm = trace.add_tool(LLM("claude", provider="anthropic"))
+    code = trace.add_artifact(CodeArtifact("app.py", "app.py", "h2"))
+    trace.add_operation(CodeGeneration([owner, trace.add_actor(Agent("assistant"))], started_at=T0, uses=[llm],
+                                       consumes=[book], produces=[code]))
+    assert trace.validate(raise_exception=False)["success"]

@@ -897,10 +897,12 @@ class Transformation(Operation, ABC):
 
 
 class CodeGeneration(Transformation):
-    """A generator run: code derived from models.
+    """A generation run: code derived from models, by a generator or by an LLM.
 
-    It uses at least one :class:`CodeGenerator` (checked by ``TraceModel.validate``),
-    consumes the model artifacts and produces the code artifacts it links them to.
+    It uses at least one :class:`CodeGenerator` or :class:`LLM` (checked by
+    ``TraceModel.validate``), consumes the model artifacts and produces the code artifacts
+    it links them to. Which of the two made a link is told by its evidence: a
+    :class:`RuleEvidence` for a generator's template, an :class:`AIEvidence` for an LLM.
     """
 
 
@@ -1015,17 +1017,14 @@ class Confidence(TraceElement):
 
     Args:
         value (float): Probability between 0 and 1.
-        based_on (list[Evidence]): The evidence the value is calculated from.
         explanation (str): How the value was obtained (None when self-evident).
         id (str): Persistent identifier.
         timestamp (datetime): When it was calculated.
     """
 
-    def __init__(self, value: float, based_on: List[Evidence] = None, explanation: str = None,
-                 id: str = None, timestamp: datetime = None):
+    def __init__(self, value: float, explanation: str = None, id: str = None, timestamp: datetime = None):
         super().__init__(id, timestamp)
         self.value: float = value
-        self.based_on: List[Evidence] = based_on
         self.explanation: Optional[str] = explanation
 
     @property
@@ -1043,16 +1042,6 @@ class Confidence(TraceElement):
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
             raise ValueError("Confidence.value must be a probability between 0 and 1 inclusive.")
         self.__value = float(value)
-
-    @property
-    def based_on(self) -> List[Evidence]:
-        """list[Evidence]: Get the evidence the value is calculated from."""
-        return list(self.__based_on)
-
-    @based_on.setter
-    def based_on(self, based_on: List[Evidence]):
-        """list[Evidence]: Set the evidence the value is calculated from."""
-        self.__based_on = _instances(based_on, Evidence, "Confidence", "based_on")
 
     @property
     def explanation(self) -> Optional[str]:
@@ -1340,8 +1329,8 @@ class TraceModel(Model):
                 for change in operation.changes:
                     check(change.artifact, artifacts, "artifact", f"Change {change.id!r}")
             elif isinstance(operation, CodeGeneration):
-                if not any(isinstance(tool, CodeGenerator) for tool in operation.uses):
-                    errors.append(f"{where} is a CodeGeneration that uses no CodeGenerator.")
+                if not any(isinstance(tool, (CodeGenerator, LLM)) for tool in operation.uses):
+                    errors.append(f"{where} is a CodeGeneration that uses no CodeGenerator or LLM.")
             elif isinstance(operation, Conversation):
                 if not any(isinstance(actor, Agent) for actor in operation.performed_by):
                     errors.append(f"{where} is a Conversation with no Agent among its actors.")

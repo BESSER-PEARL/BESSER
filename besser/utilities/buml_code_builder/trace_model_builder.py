@@ -259,10 +259,8 @@ class _TraceWriter:
         raise TypeError(f"Unsupported evidence type {type(evidence).__name__}.")
 
     def _trace_link(self, link: TraceLink):
-        based_on = link.confidence.based_on if link.confidence is not None else []
-        for evidence in link.evidence + based_on:
-            if evidence.id not in self.vars:  # a confidence is usually based on the link's own evidence
-                self._bind(evidence, "evidence", self._evidence(evidence))
+        for evidence in link.evidence:
+            self._bind(evidence, "evidence", self._evidence(evidence))
         confidence = "None"
         if link.confidence is not None:
             self._bind(link.confidence, "confidence", self._confidence(link.confidence))
@@ -273,7 +271,7 @@ class _TraceWriter:
         ))
 
     def _confidence(self, confidence: Confidence) -> str:
-        return (f"Confidence({confidence.value!r}, based_on={self._refs(confidence.based_on)}, "
+        return (f"Confidence({confidence.value!r}, "
                 f"explanation={_optional(confidence.explanation)}, {_common(confidence)})")
 
 

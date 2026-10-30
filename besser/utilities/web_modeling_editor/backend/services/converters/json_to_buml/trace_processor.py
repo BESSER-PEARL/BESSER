@@ -214,7 +214,6 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
             cwhere = f"Confidence of {where}"
             confidence = _build(
                 Confidence, cwhere, value=_field(raw_conf, "value", cwhere),
-                based_on=[_resolve(evidence, i, "evidence", cwhere) for i in _list(raw_conf, "basedOn", cwhere)],
                 explanation=_field(raw_conf, "explanation", cwhere, optional=True),
                 id=_field(raw_conf, "id", cwhere), timestamp=_timestamp(raw_conf, "timestamp", cwhere))
         trace.add_trace_link(_build(

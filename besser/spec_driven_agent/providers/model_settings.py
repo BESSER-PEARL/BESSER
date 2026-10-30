@@ -116,9 +116,10 @@ _GPT_6_TOOLS_NEED_REASONING_OFF = ModelSettings(
     # reasoning_effort to 'none'"), and work with "none". temperature != 1 is
     # a 400 while reasoning is on, so no sampling is sent here either.
     #
-    # gpt-6-astra has no row on purpose: it rejects "none" (only low / medium
-    # / high / xhigh) AND rejects tools with any reasoning, so it cannot run a
-    # tool loop on chat/completions at all. Without a row its tools-400 maps
+    # gpt-6-astra and gpt-6.1-sol have no row on purpose: they reject "none"
+    # (only low / medium / high / xhigh) AND reject tools with any reasoning,
+    # so they cannot run a tool loop on chat/completions at all (gpt-6.1-sol
+    # probed 2026-10-30; a gateway may still serve it with tools). Without a row its tools-400 maps
     # to the actionable "pick a tool-capable model" message.
     reasoning_effort_for_tools="none",
 )

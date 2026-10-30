@@ -209,10 +209,10 @@ a request shaped for them, which the client does automatically:
        ``api.openai.com``; gateways get no ``reasoning_effort``.
    * - ``gpt-5.6-sol``, ``gpt-5.6-terra``, ``gpt-5.6-luna``
      - Same as GPT-6 sol / luna.
-   * - ``gpt-6-astra``
-     - **Not usable.** It accepts no ``reasoning_effort="none"`` and rejects
-       tools with reasoning on, so it cannot run the tool loop on
-       ``/v1/chat/completions``. A run on it fails with a message asking for a
+   * - ``gpt-6-astra``, ``gpt-6.1-sol``
+     - **Not usable.** They accept no ``reasoning_effort="none"`` and reject
+       tools with reasoning on, so they cannot run the tool loop on
+       ``/v1/chat/completions``. A run on them fails with a message asking for a
        tool-capable model.
    * - ``claude-fable-5-1``, ``claude-opus-5-5``, ``claude-sonnet-5-5``
      - A forced tool call (planning, gap analysis, requirements ledger,

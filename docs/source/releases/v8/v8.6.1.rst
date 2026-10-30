@@ -5,8 +5,8 @@ Patch release: **models are configuration**. The LLM providers and models the
 key dialog offers, the endpoint of a gateway provider and the rates a gateway
 bills now come from one model catalog file instead of code, so adding,
 removing or repricing a model is an edit and a restart, not a release. The
-model lists are brought up to date (Claude Sonnet 5.5 and Haiku 5.5, GPT-6.1
-Sol, Devstral), and the free tier keeps serving when one of its free models
+model lists are brought up to date (Claude Sonnet 5.5 and Haiku 5.5,
+Devstral), and the free tier keeps serving when one of its free models
 reaches the end of its free period.
 
 Model catalog
@@ -55,8 +55,10 @@ Current models
 --------------
 
 * **Default lists.** Anthropic: Claude Fable 5.1, Opus 5.5, Sonnet 5.5 (the
-  new default) and Haiku 5.5. OpenAI: GPT-6.1 Sol, GPT-6 Sol (the new
-  default, replacing GPT-4o) and GPT-6 Luna. Mistral: Large, Devstral, Medium
+  new default) and Haiku 5.5. OpenAI: GPT-6 Sol (the new default,
+  replacing GPT-4o) and GPT-6 Luna. GPT-6.1 Sol and GPT-6 Astra are not
+  listed: on ``/v1/chat/completions`` they accept function tools only with
+  reasoning off, which they refuse. Mistral: Large, Devstral, Medium
   and Small. The previous generations (Claude Opus 5, Sonnet 5, the 4.x
   models, GPT-5.x, GPT-4o) leave the lists; any of them can still be entered
   as a custom model ID.

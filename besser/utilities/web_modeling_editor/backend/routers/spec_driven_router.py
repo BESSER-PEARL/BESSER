@@ -42,6 +42,7 @@ from fastapi.responses import StreamingResponse
 
 from besser.spec_driven_agent.planning.model_change import compare_with_base
 from besser.spec_driven_agent.state.agent_trace import ATTRIBUTION_FILENAME
+from besser.utilities.provenance import PROVENANCE_FILENAME, add_readme_block, readme_besser_block
 from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_CANCEL_ABANDONED_RUNS,
@@ -1071,6 +1072,15 @@ async def push_spec_driven_to_github(
                 [] if is_first_push
                 else await _refresh_deploy_files(github, owner, repo_name, target_branch, workdir)
             )
+
+            # ---- 5c. Link the README back to BESSER and the model ----
+            # Only a new repo gets a README the run lacks; an existing one keeps its own.
+            model_source = f"{repo_model.MODEL_DIR}/{repo_model.DOMAIN_SOURCE}"
+            add_readme_block(workdir, readme_besser_block(
+                owner, repo_name, target_branch,
+                model_source=model_source if os.path.isfile(os.path.join(workdir, *model_source.split("/"))) else None,
+                has_provenance=os.path.isfile(os.path.join(workdir, PROVENANCE_FILENAME)),
+            ), title=repo_name if is_first_push else None)
 
             # ---- 6. Push what the run changed ----
             # The tree is compared with the commit the run started from;

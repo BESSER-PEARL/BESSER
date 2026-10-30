@@ -433,6 +433,13 @@ Backend-side notes that do not belong in the contract:
   computation.
 - ``/spec-driven/push-to-github`` pushes the run's *stored* code, not a fresh
   deterministic regeneration, which would discard the LLM's customizations.
+- The pushed ``README.md`` keeps the agent's text and ends with a block between
+  ``<!-- besser:begin -->`` and ``<!-- besser:end -->``: a "Built with BESSER"
+  badge, a link that opens ``buml/domain_model.py`` in the editor (``?buml=``),
+  the Built with BESSER catalog and ``BESSER_GENERATION.md``. A repo without a
+  README gets one titled with the repo name. Each push renders the block again in
+  place, and a run seeded from the repo starts without it, so its lines are never
+  attributed to a person.
 - ``/spec-driven/push-to-github`` and ``/spec-driven/import-github-run`` require
   the ``X-GitHub-Session`` header, like the other GitHub endpoints below.
 - ``/spec-driven/import-github-run`` answers ``400`` for an owner or repository

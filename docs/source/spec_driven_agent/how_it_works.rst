@@ -82,13 +82,13 @@ The three phases
    backend-only, and in a modify run a bare "app" names the existing project
    rather than asking for a UI. Such a request also puts "build the frontend"
    on the checklist, and Phase 3 reports a blocker if the output ends with no
-   frontend files. A project with both a class model and an agent model gets
-   a checklist item to connect them while no agent code names a domain class
-   or enumeration (in any casing, in code: a reply text or a training
-   sentence does not count). The agent's intents about the model's data must
-   read and write it, not answer with canned text. The item also keeps
-   Phase 2 from being skipped, and the agent may drop it with a reason when
-   it has nothing to do with the data. The
+   frontend files. A new project with both a class model and an agent model
+   gets a checklist item to connect them: the agent's intents about the
+   model's records must read and write them, not answer with canned text.
+   The item also keeps Phase 2 from being skipped, and the agent may drop it
+   with a reason when it has nothing to do with the data. Phase 3 checks the
+   same thing as a judged requirement (see :doc:`validation`), in any language
+   and however the agent reaches the data. The
    system prompt adapts to the run: the rule that asks for a complete CRUD
    frontend applies only when the run has or needs a frontend, and when shell
    tools are on and a FastAPI backend is present it gains a runtime

@@ -95,7 +95,7 @@ READERS = {
     "design_css": lambda ws: str(design_system.find_design_css(str(ws)))
     + design_system.design_system_section(str(ws), None),
     "compaction_summary": lambda ws: str(compaction._summarize_messages([], [], str(ws))),
-    "requirements_sources": lambda ws: repr(requirements_ledger.source_files(str(ws))),
+    "requirements_sources": lambda ws: repr(requirements_ledger._source_files(str(ws))),
     "phase3_snapshot": _snapshot_tree,
     "probe_scratch_copy": _copied_tree,
     "walk_plain": lambda ws: repr(list(walk_plain(str(ws)))),

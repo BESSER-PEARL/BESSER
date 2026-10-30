@@ -175,7 +175,12 @@ Findings are classified into three severities:
        when every part is code in the file it names, and each part is
        checked on its own text, so an invented part cannot supply the proof.
        Prose, a paraphrase or another file's code leaves the requirement
-       unverified);
+       unverified. With a class model and an agent model, the list also holds
+       one requirement built from the models: every intent that creates,
+       lists or changes the model's records reads or writes them through the
+       app's code (its models, database, API or a helper), while a greeting
+       or a fixed fact may keep a fixed reply; the citation is the line that
+       reads or writes the records);
        partial requirements and unverified evidence (distinct from proven missing
        behavior); unresolved checklist work and unimplemented action contracts;
        a method button that takes its row id from a table of another

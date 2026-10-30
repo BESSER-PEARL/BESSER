@@ -19,6 +19,7 @@ from besser.BUML.metamodel.structural import (
 from besser.spec_driven_agent.agent.prompt_builder import _other_target_rule
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning import requirements_ledger
+from besser.spec_driven_agent.planning.agent_wiring import AGENT_DATA_KIND
 from besser.spec_driven_agent.planning.target import Target
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
@@ -219,34 +220,57 @@ def _agent_orch(tmp_path, files):
 
 def _agent_task(orch):
     return [t for t in orch._deterministic_gap_tasks()
-            if isinstance(t, dict) and "Connect the TaskAssistant agent" in t["text"]]
+            if isinstance(t, str) and "Connect the TaskAssistant agent" in t]
 
 
-def test_an_agent_that_ignores_the_model_gets_a_task(tmp_path):
-    orch = _agent_orch(tmp_path, {"baf/TaskAssistant.py": "def add_task_body(session):\n"
-                                                          "    session.reply('Task added!')\n"})
-    task = _agent_task(orch)
-    assert task and task[0]["verify"]() is False
+def _agent_requirement(orch):
+    return [r for r in orch._requirements_to_judge() if r["kind"] == AGENT_DATA_KIND]
 
 
-def test_an_agent_wired_to_the_model_gets_no_task(tmp_path):
-    orch = _agent_orch(tmp_path, {"baf/TaskAssistant.py": "from models import TodoItem\n"
-                                                          "def add_task_body(session):\n"
-                                                          "    TodoItem.create(title=session.message)\n"})
+def test_a_create_run_with_an_agent_and_a_class_model_gets_the_task(tmp_path):
+    # Whatever the scaffold holds: whether the agent uses the data is the judge's
+    # call. A name match passed shell bots whose classes were Message or User.
+    orch = _agent_orch(tmp_path, {"baf/TaskAssistant.py": "from models import TodoItem\n"})
+    assert _agent_task(orch)
+
+
+def test_a_modify_run_is_judged_but_not_given_the_task_again(tmp_path):
+    orch = _agent_orch(tmp_path, {})
+    orch._modify_mode = True
     assert not _agent_task(orch)
+    assert _agent_requirement(orch)
 
 
-def test_a_chat_service_implementing_the_intents_counts_as_the_agent(tmp_path):
-    # The web run's chat service never names the agent; it implements its intents.
-    orch = _agent_orch(tmp_path, {"backend/chat_service.py": "INTENTS = ['greet', 'add_task', 'list_tasks']\n"
-                                                             "def create(db):\n    return db.add(TodoItem())\n"})
-    assert not _agent_task(orch)
+def test_the_judge_checks_the_agent_on_a_baf_scaffold(tmp_path):
+    # The live failure was a generate_baf run, where entity checks are skipped.
+    orch = _agent_orch(tmp_path, {})
+    orch._generator_used = "generate_baf"
+    [requirement] = _agent_requirement(orch)
+    assert "TaskAssistant agent" in requirement["text"]
+    assert "add_task ('add_task')" in requirement["text"]
+    assert "Base, Tag, TodoItem records" in requirement["text"]
 
 
-def test_no_agent_task_without_an_agent_model(tmp_path):
+def test_no_agent_task_or_requirement_without_an_agent_model(tmp_path):
     orch = _orch(tmp_path, DESKTOP)
-    assert not [t for t in orch._deterministic_gap_tasks()
-                if isinstance(t, dict) and "agent" in t["text"].lower()]
+    assert not [t for t in orch._deterministic_gap_tasks() if "agent" in str(t).lower()]
+    assert not [r for r in orch._requirements_to_judge() if r["kind"] == AGENT_DATA_KIND]
+
+
+def test_an_agent_that_never_uses_the_data_is_a_blocker():
+    from besser.spec_driven_agent.validation.issues import _classify_issue
+    verdict = {"id": 4, "text": "The TaskAssistant agent handles ...", "kind": AGENT_DATA_KIND,
+               "status": "missing", "note": "add_task only replies 'Task added!'"}
+    [issue] = requirements_ledger.ledger_issues([verdict])
+    assert _classify_issue(issue).severity == "blocker"
+
+
+def test_an_import_is_not_evidence_that_the_agent_uses_the_data(tmp_path):
+    _write(tmp_path, "bot.py", "from models import TodoItem\n\ndef add(session):\n    TodoItem.create(title=session.message)\n")
+    base = {"id": 1, "text": "agent uses data", "kind": AGENT_DATA_KIND, "status": "implemented"}
+    cited = lambda line: requirements_ledger.verify_evidence([dict(base, evidence=f"bot.py: {line}")], str(tmp_path))
+    assert cited("from models import TodoItem")[0]["status"] == "unverified"
+    assert cited("TodoItem.create(title=session.message)")[0]["status"] == "implemented"
 
 
 def test_a_linked_parent_directory_is_never_formatted(tmp_path):
@@ -263,21 +287,3 @@ def test_a_linked_parent_directory_is_never_formatted(tmp_path):
         pytest.skip("symlinks are not available here")
     assert format_python_files(str(workspace), ["pkg/x.py"]) == []
     assert (outside / "x.py").read_text(encoding="utf-8") == _DENSE
-
-
-def test_a_canned_agent_is_caught_even_when_the_entity_is_named_like_its_replies(tmp_path):
-    # Review: with an entity called Task, the reply "Task added!" and the training
-    # sentence "add a task" used to count as using the domain model.
-    from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
-    from besser.spec_driven_agent.planning.agent_wiring import agent_uses_domain
-    task = Class(name="Task")
-    task.attributes = {Property(name="title", type=PrimitiveDataType("str"))}
-    model = DomainModel(name="Tasks", types={task})
-    agent = _agent()
-    canned = tmp_path / "TaskAssistant.py"
-    canned.write_text("import time\nTRAINING = ['add a task']\n"
-                      "def add_task_body(session):\n    session.reply('Task added!')  # Task\n", encoding="utf-8")
-    assert agent_uses_domain(str(tmp_path), agent, model) is False
-    canned.write_text(canned.read_text(encoding="utf-8")
-                      + "def list_tasks_body(session):\n    session.reply(str(Task.all()))\n", encoding="utf-8")
-    assert agent_uses_domain(str(tmp_path), agent, model) is True

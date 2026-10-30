@@ -311,7 +311,7 @@ def _note_action_placement(tasks: list[str], endpoints: list[ActionEndpoint]) ->
     noted = []
     for task in tasks:
         matches = [item for item in endpoints if re.search(
-            rf"\b{class_name_pattern(item.action)}\b", task, re.IGNORECASE,
+            rf"\b{_class_name_pattern(item.action)}\b", task, re.IGNORECASE,
         )]
         if matches:
             locations = "; ".join(
@@ -559,7 +559,7 @@ def _mentioned_classes(sentence: str, classes: list) -> list:
     ``Booking``)."""
     found = []
     for cls in classes:
-        pattern = class_name_pattern(cls.name)
+        pattern = _class_name_pattern(cls.name)
         if re.search(rf"\b{pattern}(?:Create|Update|Read|Response)?\b", sentence):
             found.append(cls)
     return found
@@ -713,7 +713,7 @@ def _note_present_regex_validations(tasks: list, domain_model) -> list:
                 if not _REGEX_VALIDATION_MARKER_RE.search(sentence):
                     continue
                 names = {cls_name} | subclasses
-                if any(re.search(rf"\b{class_name_pattern(n)}\b", sentence) for n in names):
+                if any(re.search(rf"\b{_class_name_pattern(n)}\b", sentence) for n in names):
                     hit = (cls_name, attr_name, constraint_name)
                     break
             if hit:
@@ -988,7 +988,7 @@ def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
 _CREATE_VERB = r"\bcreat(?:e|es|ed|ing|ion)(?:[\s_-]+(?:a|an|the|new|each|every|of))*[\s_-]+"
 
 
-def class_name_pattern(name: str) -> str:
+def _class_name_pattern(name: str) -> str:
     return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", lambda _: r"[\s_-]*", re.escape(name))
 
 
@@ -1023,7 +1023,7 @@ def _note_dependent_rule_placement(tasks: list, domain_model) -> list:
         text = task
         squashed = re.sub(r"[\s_-]+", "", task.lower())
         for parent in sorted(dependents):
-            name = class_name_pattern(parent)
+            name = _class_name_pattern(parent)
             creates_parent = re.search(
                 rf"{_CREATE_VERB}{name}\b|\b{name}[\s_-]*creat(?:e|ion)\b|\bpost\s+/{name}/?",
                 task, re.IGNORECASE,

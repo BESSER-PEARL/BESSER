@@ -104,17 +104,25 @@ _MAX_UNQUOTED_TAIL = 24
 _BLOCK_PUNCTUATION = frozenset("{(:;,[")
 
 
-def _normalise_quote(text: str) -> str:
+def _normalise_quote(text: str, escapes: bool = True) -> str:
     """The judge's quote, made comparable to file text: literal escape
-    sequences become spaces, single quotes become double quotes (a judge may
+    sequences become spaces (unless ``escapes`` is off, for a quote of code
+    such as ``"\\n".join(...)``), single quotes become double quotes (a judge may
     rewrite ``Mapped_["Booking"]`` as ``Mapped_['Booking']``), and
     only the first quoted line counts - later lines are often abridged."""
-    text = text.replace("\\n", "\n").replace("\\t", " ")
+    if escapes:
+        text = text.replace("\\n", "\n").replace("\\t", " ")
     first = text.strip().split("\n", 1)[0]
     # read_file numbers what the model sees; no real source line starts with
     # "175| ", so such a prefix is always a copied artifact.
     first = _READ_NUMBER_PREFIX_RE.sub("", first, count=1)
     return _collapse(first.replace("'", '"'))
+
+
+def _normalise_line(line: str) -> str:
+    """A source line in a quote's form. Its escapes stay as written: turning
+    ``"\\n".join(...)`` into a line break cut the line at that string."""
+    return _collapse(line.replace("'", '"'))
 
 
 def _citation_parts(raw: str, path: str) -> list[tuple[str, str, bool]]:
@@ -219,22 +227,22 @@ def _quote_spans(quoted: str, source: _Source, cut: bool = False):
                 break
 
 
-def _evidence_quote(text: str) -> str:
+def _evidence_quote(text: str, escapes: bool = True) -> str:
     """Keep a decorated function's identity instead of a shared registration line.
 
     The judge sometimes quotes a block despite the one-line contract. Taking
     only ``@model_validator(mode='after')`` confused a no-op capacity validator
     with a real date validator elsewhere in the same file.
     """
-    lines = text.replace("\\n", "\n").strip().splitlines()
+    lines = (text.replace("\\n", "\n") if escapes else text).strip().splitlines()
     if lines and lines[0].lstrip().startswith("@"):
         for line in lines:
             stripped = line.strip()
             if not stripped or stripped.startswith("@"):
                 continue
-            return _normalise_quote(line) if stripped.startswith(("def ", "async def ")) else ""
+            return _normalise_quote(line, escapes) if stripped.startswith(("def ", "async def ")) else ""
         return ""
-    return _normalise_quote(text)
+    return _normalise_quote(text, escapes)
 
 
 _DIGEST_SKIP_NAMES = frozenset({"bal_stdlib.py", "database.py", "__init__.py"})
@@ -580,7 +588,7 @@ def _digest_priority(rel: str) -> tuple[int, str]:
     return (4, rel)
 
 
-def source_files(output_dir: str) -> dict[str, str]:
+def _source_files(output_dir: str) -> dict[str, str]:
     """Only application source, never run logs/recipes or an escaped symlink."""
     base = Path(output_dir).resolve()
     files: dict[str, str] = {}
@@ -640,7 +648,7 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     Citation repair can prioritize a few cited files and read them beyond the
     ordinary per-file cap, while keeping the same total prompt budget.
     """
-    files = source_files(output_dir)
+    files = _source_files(output_dir)
     focused = set()
     for path in (focus_paths or [])[:10]:
         if not isinstance(path, str):
@@ -988,8 +996,8 @@ def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
             except SyntaxError:
                 pass
         lines = source.splitlines()
-        normalised = [_normalise_quote(line) for line in lines]
-        code = [_normalise_quote(line) for line in code_only(source, candidate).splitlines()]
+        normalised = [_normalise_line(line) for line in lines]
+        code = [_normalise_line(line) for line in code_only(source, candidate).splitlines()]
         parsed[candidate] = _Source(
             candidate, lines, normalised, code if len(code) == len(lines) else normalised, tree,
             python_structural_diagnostics(tree, sqlite=sqlite) if tree else [],
@@ -1059,7 +1067,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
     cannot prove enforcement or behaviour. Failed evidence is ``unverified``:
     it does not prove that no implementation exists elsewhere.
     """
-    files = source_files(output_dir)
+    files = _source_files(output_dir)
     sqlite = workspace_uses_sqlite(output_dir)
     parsed: dict[str, _Source] = {}
     quote_cache: dict = {}
@@ -1082,7 +1090,13 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
             reason = "the citation must identify an implemented statement, not only a decorator"
         if quoted and len(candidates) == 1:
             source = _load_source(candidates[0], parsed, sqlite)
-            located = [(source, quoted, list(_quote_spans(quoted, source)))]
+            spans = list(_quote_spans(quoted, source))
+            literal = _evidence_quote(raw_quote, escapes=False)
+            if not spans and literal and literal != quoted:
+                # The quote may copy a source escape, e.g. "\n".join(...).
+                spans = list(_quote_spans(literal, source))
+                quoted = literal if spans else quoted
+            located = [(source, quoted, spans)]
             if not located[0][2]:
                 located = []
                 for part_path, part, cut in _citation_parts(raw_quote, path):

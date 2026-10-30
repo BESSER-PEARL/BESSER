@@ -247,3 +247,30 @@ def test_a_call_whose_last_argument_has_a_trailing_comma_verifies(tmp_path):
     evidence = 'todos/tags.py: self.conn.execute("INSERT INTO item_tags(item_id, tag_id) VALUES (?,?)", (cur.lastrowid, t))'
     verdict = verify_evidence([_verdict(evidence)], str(tmp_path))[0]
     assert verdict["status"] == "implemented", verdict.get("note")
+
+
+# Live (2026-10-30, agent judge): a line holding a "\\n" string was cut at it, so
+# its call db.query(Task).all() could not be cited, and an invented tail after
+# the escape matched the real line.
+_JOINED = 'def listing_body(session):\n    session.reply("\\n".join(t.title for t in db.query(Task).all()) or "No tasks.")\n'
+
+
+def _check_joined(tmp_path, quote):
+    (tmp_path / "bot.py").write_text(_JOINED, encoding="utf-8")
+    return verify_evidence([_verdict(f"bot.py: {quote}", text="lists tasks", kind="agent_data")], str(tmp_path))[0]
+
+
+def test_a_call_after_an_escaped_newline_verifies(tmp_path):
+    verdict = _check_joined(tmp_path, "db.query(Task).all()")
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_a_whole_line_holding_an_escaped_newline_verifies(tmp_path):
+    quote = 'session.reply("\\n".join(t.title for t in db.query(Task).all()) or "No tasks.")'
+    verdict = _check_joined(tmp_path, quote)
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_an_invented_tail_after_an_escaped_newline_is_refused(tmp_path):
+    verdict = _check_joined(tmp_path, 'session.reply("\\n".join(t.title for t in db.query(Task).filter(done=False)))')
+    assert verdict["status"] == "unverified"

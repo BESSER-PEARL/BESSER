@@ -30,7 +30,6 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timezone
-from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
@@ -102,7 +101,7 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     requests_frontend,
     _FRONTEND_ASK_RE,
 )
-from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_uses_domain
+from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_data_requirement
 from besser.spec_driven_agent.planning.target import (
     OTHER,
     entity_requirements,
@@ -3462,10 +3461,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # Cheat-proof: done is refused until frontend files exist.
                 "verify": self._has_frontend_files,
             })
-        if self.agent_model is not None and self.domain_model is not None:
-            uses_domain = partial(agent_uses_domain, self.output_dir, self.agent_model, self.domain_model)
-            if not uses_domain():
-                tasks.append({"text": AGENT_DOMAIN_TASK.format(agent=self.agent_model.name), "verify": uses_domain})
+        if not self._modify_mode and agent_data_requirement(self.agent_model, self.domain_model):
+            # The requirements judge checks it in Phase 3 (agent_data); a modify
+            # run's app already has an agent, so only the judge applies there.
+            tasks.append(AGENT_DOMAIN_TASK.format(agent=self.agent_model.name))
         tasks.extend(action_gap_tasks(self.output_dir, self._expected_action_endpoints()))
         tasks.extend(self._unenforced_rule_tasks())
         tasks.extend(item["text"] for item in self._requirements_for_validation()
@@ -3717,16 +3716,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return requirements
 
     def _requirements_to_judge(self) -> list[dict]:
-        """What Phase 3 judges: the validation list plus the per-entity checks
-        of a non-web app, which are reported and never planned as obligations."""
+        """What Phase 3 judges: the validation list, the agent's use of the
+        model's data, and the per-entity checks of a non-web app (reported,
+        never planned as obligations)."""
         requirements = self._requirements_for_validation()
-        if self._generator_used:
+        derived = [item for item in [agent_data_requirement(self.agent_model, self.domain_model)] if item]
+        if not self._generator_used:
             # A BESSER generator built the base (a BAF chatbot, Python classes):
             # per-entity screens are not what it delivers.
-            return requirements
+            derived += entity_requirements(self.target, self.domain_model)
         next_id = max((item["id"] for item in requirements), default=0) + 1
-        return requirements + [{"id": next_id + i, **item} for i, item in
-                               enumerate(entity_requirements(self.target, self.domain_model))]
+        return requirements + [{"id": next_id + i, **item} for i, item in enumerate(derived)]
 
     def _collect_requirement_issues(self) -> list[str]:
         """``requirement:`` blockers for what the user asked for and the code

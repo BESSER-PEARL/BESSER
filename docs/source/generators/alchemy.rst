@@ -38,10 +38,10 @@ Trace Links
 -----------
 
 The generator records which lines of ``sql_alchemy.py`` come from which model element: after ``generate()``,
-``generator.trace_regions`` lists, for every class, enumeration and association that has an ``id`` (as every
-element drawn in the web editor does), the line ranges rendered from it and the template block that rendered
-them (``class``, ``enumeration``, ``association_table``, ``association_class``, ``foreign_key``,
-``relationship``). Recording them does not change the generated file. ``build_generation_trace`` in
+``generator.traced_files["sql_alchemy.py"].regions`` lists, for every class, enumeration and association that
+has an ``id`` (as every element drawn in the web editor does), the line ranges rendered from it and the template
+block that rendered them (``class``, ``enumeration``, ``association_table``, ``association_class``,
+``foreign_key``, ``relationship``). Recording them does not change the generated file. ``build_generation_trace`` in
 ``besser.utilities.generation_trace`` turns them into a :doc:`traceability model
 <../buml_language/model_types/traceability>`; the web editor shows them on its *Traceability* page.
 

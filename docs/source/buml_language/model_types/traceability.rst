@@ -117,20 +117,29 @@ in the ``{% trace %}`` tag of ``besser.utilities.generation_trace``::
     {% endtrace %}
 
 The tag leaves the generated text unchanged; ``extract_trace_regions`` returns the
-line range of each block, and ``build_generation_trace`` turns them into the
-``TraceModel`` of the run: one ``CodeGeneration`` operation and one trace link per
-block, with the template rule as evidence and confidence 1. Elements without an
-``id`` (a model built in Python rather than in the editor) are rendered untraced.
-The :doc:`SQLAlchemy generator <../../generators/alchemy>` is the first generator
-that records traces.
+line range of each block (and the element's owner, so a method's block nests under
+its class). A file generated as a whole from one element -- a backend router from
+its class -- records it as a ``TraceSource`` instead (``trace_source(element, rule)``).
+A generator exposes both per file as ``traced_files``, a ``FileTrace`` by path in
+its output folder.
+
+``build_generation_trace`` takes the files of a run (``GeneratedFile``: path,
+content, ``FileTrace``) and builds its ``TraceModel``: one ``CodeGeneration``
+operation, a link from the model to every file, from each whole-file source to its
+file, and from each element to each of its blocks, with the template rule as
+evidence and confidence 1. A file's content is kept only when it has blocks (the
+views show their lines) and is under the size cap; otherwise only its hash is.
+Elements without an ``id`` (a model built in Python rather than in the editor) are
+rendered untraced. The :doc:`SQLAlchemy <../../generators/alchemy>` and
+:doc:`backend <../../generators/backend>` generators record traces.
 
 In the web editor
 -----------------
 
 The editor records traces per project when *Record traces for this project* is
 turned on (off by default) on the project's *Traceability* page. Class
-diagram edits are recorded as modeling sessions, SQLAlchemy generations as
-generation runs. The trace is kept in the browser apart from the project, and
+diagram edits are recorded as modeling sessions, SQLAlchemy and backend
+generations as generation runs. The trace is kept in the browser apart from the project, and
 travels with a project export when asked for: in a JSON export as the JSON form of
 this metamodel (see ``trace_converter.py`` / ``trace_processor.py`` in the backend
 converters), in a B-UML export as its Python form (below). See

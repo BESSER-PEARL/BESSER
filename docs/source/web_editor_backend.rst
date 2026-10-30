@@ -568,7 +568,7 @@ browser (see :doc:`buml_language/model_types/traceability`); the backend records
 what only it sees, the trace links of a generation run. Under
 ``/besser_api/traceability`` (OpenAPI tag ``traceability``).
 
-- ``POST /traceability/generate-output`` -- The ``/generate-output`` request of a class diagram plus ``actorName`` (the project owner; blank means ``anonymous``), for a generator in ``TRACED_GENERATORS`` (``sqlalchemy``); the diagram ``id`` is required. Returns JSON ``{fileName, mediaType, contentBase64, trace}``: the file ``/generate-output`` would deliver, byte for byte, and the run's trace fragment (trace file JSON, ``projectId`` null) whose line numbers refer to that file. The file content is kept in the trace only up to ``TRACE_MAX_STORED_CONTENT_BYTES`` (200 kB); above it only its hash is. 400 for an untraced generator or a missing diagram id
+- ``POST /traceability/generate-output`` -- The ``/generate-output`` request of a class diagram plus ``actorName`` (the project owner; blank means ``anonymous``), for a generator in ``TRACED_GENERATORS`` (``sqlalchemy``, ``backend``); the diagram ``id`` is required. Returns JSON ``{fileName, mediaType, contentBase64, trace}``: the file or ZIP ``/generate-output`` would deliver, byte for byte, and the run's trace fragment (trace file JSON, ``projectId`` null) whose paths and line numbers refer to that delivery (paths inside the ZIP; ``BESSER_GENERATION.md`` and binary files are left out). A file's content is kept in the trace only when it has traced lines and up to ``TRACE_MAX_STORED_CONTENT_BYTES`` (200 kB); otherwise only its hash is. 400 for an untraced generator or a missing diagram id
 
 Validation
 ^^^^^^^^^^

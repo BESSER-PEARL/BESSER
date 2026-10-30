@@ -73,7 +73,8 @@ turn on *Record traces for this project* on that page.
   constraint) become modeling sessions, attributed to the project owner (or
   ``anonymous``) and, for assistant edits, to the assistant. Layout changes are not
   recorded, and quick successive edits of one element are merged. A SQLAlchemy
-  generation records which lines each class, enumeration and association produced.
+  or *Full Backend* generation records which files and lines each class,
+  enumeration, association and method produced.
 * **Shown.** A *Timeline* of sessions and generation runs, each naming the models
   (diagrams) it changed or read; *Diagrams*, a tree of the project's diagrams, their
   elements and the elements' members, where a diagram shows the whole files generated

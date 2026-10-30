@@ -82,14 +82,31 @@ A deployment's file names only what differs from the default:
   drops the default catalog altogether. Keys starting with ``_`` are notes.
 - A provider has a ``label``, optional ``hint`` and ``key_prefix`` for the key
   field, and its ``models``: an ``id``, a ``label``, an optional ``default``
-  (the model the dialog preselects for ``pia`` and ``local``) and an optional
-  ``price``.
+  and an optional ``price``. The model marked ``"default": true`` is what a
+  run uses when the request names no model ("Recommended default" in the key
+  dialog, which preselects it for ``pia`` and ``local``); without one, the
+  built-in default in the table below applies.
 - ``base_url`` makes the provider a **gateway**: its runs go to that
   OpenAI-compatible endpoint, which the server resolves, so the browser never
   holds the host. A request for a gateway carries no ``base_url`` and is not
   subject to the custom-endpoint gate below. The editor knows one gateway
   provider, ``pia``; the public default has none, so the editor offers it only
   where a deployment's catalog defines it.
+- A model's optional ``request`` object sets how BESSER shapes requests to
+  it, over the built-in rules in the table under `Model-specific request
+  handling`_: ``forced_tool_choice`` (``false`` when ``tool_choice`` of type
+  ``tool`` / ``any`` is rejected; the call is then sent as ``auto`` plus an
+  instruction), ``thinking_can_be_disabled`` (``false`` when
+  ``thinking: {"type": "disabled"}`` is rejected) and
+  ``reasoning_effort_for_tools`` (the ``reasoning_effort`` an OpenAI model
+  needs to accept function tools, e.g. ``"none"``). A new model with one of
+  these quirks is then a catalog edit, not a release:
+
+  .. code-block:: json
+
+     {"id": "claude-sonnet-6", "label": "Claude Sonnet 6",
+      "request": {"forced_tool_choice": false, "thinking_can_be_disabled": false}}
+
 - Prices are USD per 1M tokens (``input``, ``output``, optional
   ``cache_read`` and ``cache_write``; a missing cache rate bills at the input
   rate). A price on a gateway model applies on that gateway; ``route_prices``
@@ -124,7 +141,8 @@ Default models per provider
 ---------------------------
 
 The model is chosen per run. If the request doesn't specify one, the
-provider default is used:
+provider default is used: the model catalog's ``"default": true`` model when
+it marks one, otherwise the built-in default below:
 
 .. list-table::
    :header-rows: 1
@@ -196,7 +214,7 @@ a request shaped for them, which the client does automatically:
        tools with reasoning on, so it cannot run the tool loop on
        ``/v1/chat/completions``. A run on it fails with a message asking for a
        tool-capable model.
-   * - ``claude-fable-5-1``, ``claude-opus-5-5``
+   * - ``claude-fable-5-1``, ``claude-opus-5-5``, ``claude-sonnet-5-5``
      - A forced tool call (planning, gap analysis, requirements ledger,
        recovery steps) is sent as ``tool_choice: auto`` with an instruction
        naming the tool, plus ``strict: true`` when it is the only tool, and is
@@ -205,7 +223,7 @@ a request shaped for them, which the client does automatically:
    * - ``claude-fable-5``
      - Forced tool calls keep ``tool_choice``, but without
        ``thinking: disabled``, which the model rejects.
-   * - ``claude-opus-5``, ``claude-sonnet-5``, ``claude-haiku-4-5``, and the
+   * - ``claude-opus-5``, ``claude-sonnet-5``, ``claude-haiku-5-5``, ``claude-haiku-4-5``, and the
        4.x models
      - Forced tool calls use ``tool_choice`` with thinking disabled.
 

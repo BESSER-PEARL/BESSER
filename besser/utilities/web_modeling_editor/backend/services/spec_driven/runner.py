@@ -49,6 +49,7 @@ from besser.spec_driven_agent.execution.shell_session import close_sessions_for
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,
+    default_model,
     free_alt_choice,
     free_tier_model,
     is_free_fallback_choice,
@@ -1198,7 +1199,7 @@ class SmartGenerationRunner:
         else:
             llm_model = (
                 self.request.llm_model
-                or _DEFAULT_MODELS.get(self.request.provider)
+                or default_model(self.request.provider)
                 or load_model_catalog().default_model(self.request.provider)
                 or ""
             )

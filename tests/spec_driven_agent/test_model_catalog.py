@@ -203,7 +203,7 @@ def _get_config() -> dict:
 def test_config_lists_the_default_providers():
     providers = {p["id"]: p for p in _get_config()["providers"]}
     assert "pia" not in providers
-    assert {"id": "gpt-6-sol", "label": "GPT-6 Sol — balanced", "default": False} in (
+    assert {"id": "gpt-6-sol", "label": "GPT-6 Sol — balanced (recommended)", "default": True} in (
         providers["openai"]["models"])
 
 
@@ -232,3 +232,76 @@ def test_a_gateway_request_drops_a_stray_base_url():
     request = _build_request(provider="pia", base_url="http://169.254.169.254/")
     assert request.provider == "pia"
     assert request.base_url is None
+
+
+# --- the provider's default model -------------------------------------------
+
+def test_the_default_catalog_sets_current_defaults():
+    from besser.spec_driven_agent.providers.llm_client import default_model
+    assert default_model("anthropic") == "claude-sonnet-5-5"
+    assert default_model("openai") == "gpt-6-sol"
+
+
+def test_without_a_flag_the_built_in_default_holds(use_catalog):
+    from besser.spec_driven_agent.providers.llm_client import DEFAULT_MODELS, default_model
+    use_catalog({"replace": True, "providers": {"openai": {"label": "OpenAI", "models": [
+        {"id": "gpt-6-luna"}]}}})
+    assert default_model("openai") == DEFAULT_MODELS["openai"]
+    assert default_model("anthropic") == DEFAULT_MODELS["anthropic"]
+
+
+def test_a_flagged_model_is_the_default_a_run_and_the_config_use(use_catalog):
+    use_catalog({"providers": {"openai": {"label": "OpenAI", "models": [
+        {"id": "gpt-6-luna", "label": "Luna"},
+        {"id": "gpt-9-nova", "label": "Nova", "default": True},
+    ]}}})
+    client = create_llm_client(provider="openai", api_key="sk-test")
+    assert client._model == "gpt-9-nova"
+    assert create_llm_client(provider="openai", api_key="sk-test", model="gpt-6-luna")._model == "gpt-6-luna"
+    assert _get_config()["default_models"]["openai"] == "gpt-9-nova"
+
+
+# --- request quirks from the catalog ----------------------------------------
+
+def test_a_new_model_gets_its_request_quirks_from_the_catalog(use_catalog):
+    """A model with the Sonnet 5.5 quirks, before any code row knows it."""
+    from besser.spec_driven_agent.providers.model_settings import (
+        forced_tool_choice_supported,
+        reasoning_effort_for_tools,
+        thinking_can_be_disabled,
+    )
+    assert forced_tool_choice_supported("claude-sonnet-6") is True
+    use_catalog({"providers": {
+        "anthropic": {"label": "Anthropic", "models": [
+            {"id": "claude-sonnet-6", "request": {
+                "forced_tool_choice": False, "thinking_can_be_disabled": False}},
+        ]},
+        "openai": {"label": "OpenAI", "models": [
+            {"id": "gpt-7-sol", "request": {"reasoning_effort_for_tools": "none"}},
+        ]},
+    }})
+    assert forced_tool_choice_supported("claude-sonnet-6") is False
+    assert thinking_can_be_disabled("claude-sonnet-6") is False
+    assert reasoning_effort_for_tools("gpt-7-sol") == "none"
+    # Models the catalog does not mention keep their built-in rows.
+    assert forced_tool_choice_supported("claude-opus-5-5") is False
+    assert forced_tool_choice_supported("claude-sonnet-5") is True
+
+
+def test_the_catalog_can_correct_a_built_in_row(use_catalog):
+    from besser.spec_driven_agent.providers.model_settings import reasoning_effort_for_tools
+    assert reasoning_effort_for_tools("gpt-6-sol") == "none"
+    use_catalog({"providers": {"openai": {"label": "OpenAI", "models": [
+        {"id": "gpt-6-sol", "request": {"reasoning_effort_for_tools": None}},
+    ]}}})
+    assert reasoning_effort_for_tools("gpt-6-sol") is None
+
+
+@pytest.mark.parametrize("request_block, message", [
+    ({"forced_tools": False}, "unknown request field 'forced_tools'"),
+    ({"forced_tool_choice": "no"}, "request.forced_tool_choice has the wrong type"),
+])
+def test_a_malformed_request_block_fails_loudly(use_catalog, request_block, message):
+    use_catalog({"providers": {"x": {"label": "X", "models": [{"id": "m", "request": request_block}]}}})
+    with pytest.raises(ModelCatalogError, match=message):
+        load_model_catalog()

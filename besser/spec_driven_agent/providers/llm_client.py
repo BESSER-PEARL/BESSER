@@ -2230,6 +2230,15 @@ DEFAULT_MODELS: dict[str, str] = {
 }
 
 
+def default_model(provider: str) -> str | None:
+    """The model a run uses when the request names none.
+
+    The model catalog's ``"default": true`` entry for the provider wins, so a
+    deployment changes a default by config; DEFAULT_MODELS is the fallback.
+    """
+    return load_model_catalog().flagged_default(provider) or DEFAULT_MODELS.get(provider)
+
+
 # ======================================================================
 # OpenAI API key resolution
 # ======================================================================
@@ -2611,7 +2620,9 @@ def create_llm_client(
             free_route=True,
             **kwargs,
         )
-    elif provider == "anthropic":
+    if provider in DEFAULT_MODELS:
+        model = model or default_model(provider)
+    if provider == "anthropic":
         resolved_key = _resolve_api_key(api_key=api_key)
         resolved_base = _resolve_base_url(base_url=base_url)
         return ClaudeLLMClient(

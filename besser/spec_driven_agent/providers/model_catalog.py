@@ -24,7 +24,12 @@ A provider entry::
 over the OpenAI-compatible protocol, so the browser never holds the host.
 Prices are USD per 1M tokens; a missing cache rate bills at the input rate.
 Public vendor list prices stay in ``data/model_prices.json``; a model's
-``price`` here overrides them on that provider's route.
+``price`` here overrides them on that provider's route. A model marked
+``"default": true`` is the provider's default when a request names none. An
+optional ``"request"`` object sets the model's request quirks
+(``forced_tool_choice``, ``thinking_can_be_disabled``,
+``reasoning_effort_for_tools``) over model_settings' built-in row, so a new
+model with a known quirk needs no release.
 """
 
 from __future__ import annotations
@@ -44,6 +49,13 @@ CATALOG_ENV_VAR = "BESSER_MODEL_CATALOG"
 DEFAULT_CATALOG_PATH = Path(__file__).with_name("data") / "model_catalog.json"
 
 _PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
+# A model's request quirks, overriding model_settings' row for its id:
+# field -> accepted types.
+_REQUEST_FIELDS = {
+    "forced_tool_choice": (bool,),
+    "thinking_can_be_disabled": (bool,),
+    "reasoning_effort_for_tools": (str, type(None)),
+}
 
 
 class ModelCatalogError(ValueError):
@@ -57,11 +69,20 @@ class ModelCatalog:
     route_prices: dict[str, dict[str, dict[str, float]]]
     # lower-cased model id -> rates, from providers without a base_url
     listed_prices: dict[str, dict[str, float]]
+    # lower-cased model id -> request quirks (see _REQUEST_FIELDS)
+    request_overrides: dict[str, dict[str, Any]]
 
     def base_url(self, provider: str) -> str | None:
         """The endpoint of a gateway provider, or ``None``."""
         entry = self.providers.get(provider)
         return entry["base_url"] if entry else None
+
+    def flagged_default(self, provider: str) -> str | None:
+        """The model the catalog marks ``"default": true`` for ``provider``."""
+        entry = self.providers.get(provider)
+        if not entry:
+            return None
+        return next((m["id"] for m in entry["models"] if m["default"]), None)
 
     def default_model(self, provider: str) -> str | None:
         entry = self.providers.get(provider)
@@ -76,6 +97,10 @@ class ModelCatalog:
             return None
         host = (urlparse(route).hostname or route).lower()
         return self.route_prices.get(host, {}).get(model_id.lower())
+
+    def request_override(self, model_id: str) -> dict[str, Any]:
+        """Request quirks the catalog sets for ``model_id`` (possibly empty)."""
+        return self.request_overrides.get(model_id.lower(), {})
 
     def listed_price(self, model_id: str) -> dict[str, float] | None:
         """A rate the catalog sets for a vendor model (no gateway)."""
@@ -144,6 +169,19 @@ def _price(raw: Any, where: str) -> dict[str, float]:
     return rate
 
 
+def _request(raw: Any, where: str) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ModelCatalogError(f"{where}: request must be an object")
+    for key, value in raw.items():
+        if key not in _REQUEST_FIELDS:
+            raise ModelCatalogError(
+                f"{where}: unknown request field {key!r} "
+                f"(known: {', '.join(_REQUEST_FIELDS)})")
+        if not isinstance(value, _REQUEST_FIELDS[key]):
+            raise ModelCatalogError(f"{where}: request.{key} has the wrong type")
+    return dict(raw)
+
+
 def _optional_str(entry: dict, key: str, where: str) -> str | None:
     value = entry.get(key)
     if value is None:
@@ -184,6 +222,8 @@ def _provider(provider_id: str, raw: Any) -> dict[str, Any]:
             "default": model.get("default") is True,
             "price": (_price(model["price"], model_where)
                       if model.get("price") is not None else None),
+            "request": (_request(model["request"], model_where)
+                        if model.get("request") is not None else {}),
         })
     return {
         "label": label.strip(),
@@ -215,14 +255,18 @@ def _build(data: dict) -> ModelCatalog:
             if not model_id.startswith("_")
         }
     listed_prices: dict[str, dict[str, float]] = {}
+    request_overrides: dict[str, dict[str, Any]] = {}
     for entry in providers.values():
+        for model in entry["models"]:
+            if model["request"]:
+                request_overrides.setdefault(model["id"].lower(), {}).update(model["request"])
         priced = {m["id"].lower(): m["price"] for m in entry["models"] if m["price"]}
         if entry["base_url"]:
             host = urlparse(entry["base_url"]).hostname.lower()
             route_prices.setdefault(host, {}).update(priced)
         else:
             listed_prices.update(priced)
-    return ModelCatalog(providers, route_prices, listed_prices)
+    return ModelCatalog(providers, route_prices, listed_prices, request_overrides)
 
 
 @lru_cache(maxsize=1)

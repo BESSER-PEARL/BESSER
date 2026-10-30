@@ -87,8 +87,10 @@ turn on *Record traces for this project* on that page.
   *suspect*, and everything further downstream *stale upstream*. Selecting a link
   shows its evidence, the operation, actor and tool that made it, and the changes
   that made it suspect. Older generation runs are hidden unless asked for.
-* **Stored.** In the browser, apart from the project. Deleting the project deletes
-  its trace, and *Clear* on the page deletes it alone.
+* **Stored.** In the browser (IndexedDB), apart from the project. Deleting the
+  project deletes its trace, and *Clear* on the page deletes it alone. The newest five
+  runs of each generator keep their trace links; older runs keep only their files and
+  hashes, so the trace stops growing with every generation.
 * **Exported with the project.** Once a trace has been recorded, the *Export
   Project* dialog lists *Traceability* next to the diagrams. Ticked (it is off by
   default), the trace goes into the JSON export as ``trace`` beside ``project``, or

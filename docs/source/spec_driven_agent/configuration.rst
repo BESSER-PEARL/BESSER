@@ -37,7 +37,9 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
   chain. A run moves along the chain when its endpoint is unavailable, out of
   quota or credits, or rejects the server's token (an expired
   ``BESSER_FREE_LLM_TOKEN``); a rejected token skips the alternative models
-  on the same endpoint, which share it. A user's own key has no fallback: a
+  on the same endpoint, which share it. A refusal of one model while the
+  token is accepted (a model outside the plan, or a free period that ended)
+  moves to the next model on the same endpoint. A user's own key has no fallback: a
   rejected key fails the run with ``INVALID_KEY``.
 - ``BESSER_SPONSORED_LLM_BASE_URL`` / ``BESSER_SPONSORED_LLM_TOKEN`` /
   ``BESSER_SPONSORED_LLM_MODEL`` -- An additional server-funded keyless tier,

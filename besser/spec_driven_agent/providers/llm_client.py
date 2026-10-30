@@ -754,11 +754,22 @@ def _is_model_unavailable(error: Exception) -> bool:
     for. Auth errors are excluded by the caller before this check.
     """
     s = str(error).lower()
-    return any(marker in s for marker in (
+    return _is_model_access_denied(error) or any(marker in s for marker in (
         "model_not_found", "model not found", "no such model",
         "unknown model", "invalid model", "does not exist",
-        "is not available", "not_found", "model_not_in_plan",
+        "is not available", "not_found",
     ))
+
+
+# 403s that refuse one model, not the key: the model is outside the plan, or its
+# free period ended (Command Code: "The free <model> window has ended").
+_MODEL_ACCESS_DENIED_MARKERS = ("model_not_in_plan", "window has ended")
+
+
+def _is_model_access_denied(error: Exception) -> bool:
+    """True when the provider refuses this model to a key it otherwise accepts."""
+    s = str(error).lower()
+    return any(marker in s for marker in _MODEL_ACCESS_DENIED_MARKERS)
 
 
 def _is_rate_limit(error: Exception) -> bool:
@@ -858,7 +869,7 @@ def _backoff_seconds(error: Exception, attempt: int) -> float:
 
 def _is_auth_error(error: Exception) -> bool:
     """Did the provider reject our credentials? Decided by status when known."""
-    if "model_not_in_plan" in str(error).lower():
+    if _is_model_access_denied(error):
         return False
     status = _status_code(error)
     if status is not None:

@@ -390,7 +390,7 @@ async def get_project_json_model(buml_file: UploadFile = File(...)):
         "project": parsed_project,
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "version": API_VERSION,
-        "trace": project_trace_to_json(buml_content),
+        "trace": project_trace_to_json(buml_content, parsed_project),
     }
 
 @router.post("/get-json-model", response_model=DiagramExportResponse)

@@ -28,6 +28,7 @@ from .kg_diagram_converter import kg_buml_to_json
 from .component_diagram_converter import component_buml_to_json
 from .deployment_diagram_converter import deployment_buml_to_json
 from .trace_converter import parse_trace_code, trace_buml_to_json
+from .trace_matching import match_trace_to_project
 
 logger = logging.getLogger(__name__)
 
@@ -695,11 +696,16 @@ def project_to_json(content: str) -> Dict[str, Any]:
     }
 
 
-def project_trace_to_json(content: str) -> Optional[Dict[str, Any]]:
+_DOMAIN_MODEL_NAME = re.compile(r'DomainModel\(\s*name\s*=\s*"((?:[^"\\]|\\.)*)"')
+
+
+def project_trace_to_json(content: str, project: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The trace file JSON of a project file's TRACEABILITY section, or None when it has none.
 
     The trace is not one of the project's models (it is not in ``models=[...]``),
-    so it is found by its section banner alone.
+    so it is found by its section banner alone. It references the elements of the
+    structural sections, so it is loaded after them, then matched by name to
+    ``project``, the project imported from the same file, whose elements have new ids.
 
     Raises:
         ConversionError: If the section does not load as a TraceModel.
@@ -709,4 +715,11 @@ def project_trace_to_json(content: str) -> Optional[Dict[str, Any]]:
         return None
     if len(sections) > 1:
         raise ConversionError(f"A project file holds one traceability section, found {len(sections)}.")
-    return trace_buml_to_json(parse_trace_code(sections[0][1]))
+    structural = _extract_all_sections(content, SECTION_CONFIG["domain_model"][0])
+    trace = parse_trace_code(sections[0][1], context_code="\n".join(code for _, code in structural))
+    class_sections = [code for _, code in structural if _parse_user_reference_section(code) is None]
+    model_names = [(_DOMAIN_MODEL_NAME.search(code) or [None, None])[1] for code in class_sections]
+    unmatched = match_trace_to_project(trace, project, model_names)
+    if unmatched:
+        logger.info("%d trace artifact(s) match no imported element (deleted elements keep their old id).", unmatched)
+    return trace_buml_to_json(trace)

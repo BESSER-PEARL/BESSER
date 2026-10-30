@@ -96,7 +96,10 @@ Use the specialized helpers in the same way:
 ``project_to_code`` also takes ``trace=``, a ``TraceModel``: it is written as a
 ``TRACEABILITY`` section bound to ``trace_model``, after the models and outside
 ``Project(models=[...])``, since a trace describes the models rather than being
-one of them.
+one of them. The section references the structural elements it is about
+(``ModelArtifact(element=Library)``) by the variables the structural sections bind
+them to; ``structural_variables`` computes them with the structural builder's own
+naming helpers (``safe_class_name``, ``attribute_var_name``, ``method_var_name``).
 
 All builder functions accept an optional ``model_var_name`` parameter to customize the variable
 name used in the generated code (defaults vary by builder type, e.g., ``"domain_model"``,

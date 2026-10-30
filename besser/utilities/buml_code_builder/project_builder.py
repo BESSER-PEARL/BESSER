@@ -35,7 +35,7 @@ from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
 from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
 from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
-from besser.utilities.buml_code_builder.trace_model_builder import trace_model_to_code
+from besser.utilities.buml_code_builder.trace_model_builder import structural_variables, trace_model_to_code
 
 logger = logging.getLogger(__name__)
 
@@ -132,8 +132,9 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
         emit_ids (bool): Write element ids in the structural models (see
                   ``domain_model_to_code``). Off by default.
         trace (TraceModel): The project trace, written as a TRACEABILITY
-                  section bound to ``trace_model``. It is not one of the
-                  project's models, so it stays out of ``Project(models=...)``.
+                  section bound to ``trace_model``, which references the
+                  elements of the structural sections it is about. It is not one
+                  of the project's models, so it stays out of ``Project(models=...)``.
 
     Outputs:
         - A Python file containing all models in the project
@@ -609,8 +610,13 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                 f.write("\n\n")
 
             if trace is not None:
+                # The trace references the elements the structural sections above define.
+                references = structural_variables(
+                    [(dm, _suffixed_name("domain_model", idx, n_domain)) for idx, (dm, _) in enumerate(domain_pairs, start=1)],
+                    other_models=[udm for udm, _ in user_pairs],
+                )
                 tmp_path = os.path.join(temp_dir, "trace_model.py")
-                trace_model_to_code(trace, tmp_path)
+                trace_model_to_code(trace, tmp_path, references=references)
                 _write_temp_to_output(tmp_path, f)
 
         finally:

@@ -5,8 +5,9 @@ Patch release: **models are configuration**. The LLM providers and models the
 key dialog offers, the endpoint of a gateway provider and the rates a gateway
 bills now come from one model catalog file instead of code, so adding,
 removing or repricing a model is an edit and a restart, not a release. The
-free tier also keeps serving when one of its free models reaches the end of
-its free period.
+model lists are brought up to date (Claude Sonnet 5.5 and Haiku 5.5, GPT-6.1
+Sol, Devstral), and the free tier keeps serving when one of its free models
+reaches the end of its free period.
 
 Model catalog
 -------------
@@ -31,6 +32,12 @@ Model catalog
   ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL`` or
   ``BESSER_AGENT_ALLOW_CUSTOM_BASE_URL``. The public default holds no
   gateway.
+* **Defaults and request rules in the catalog too.** The model marked
+  ``"default": true`` is what a run uses when the user picks none
+  (*Recommended default*). A model's optional ``request`` object
+  (``forced_tool_choice``, ``thinking_can_be_disabled``,
+  ``reasoning_effort_for_tools``) tells BESSER how a model whose API differs
+  must be called, so the next such model is also a catalog edit.
 * **Pricing reads the catalog.** A run is priced at the catalog's gateway rate
   for the endpoint it uses, then at a rate the catalog sets on a vendor model,
   then at the vendored list price. The modeling agent prices its calls from
@@ -43,6 +50,21 @@ Model catalog
    agent, and set ``BESSER_MODEL_CATALOG`` on all three; otherwise the
    provider no longer appears in the key dialog. An install without a gateway
    needs no change.
+
+Current models
+--------------
+
+* **Default lists.** Anthropic: Claude Fable 5.1, Opus 5.5, Sonnet 5.5 (the
+  new default) and Haiku 5.5. OpenAI: GPT-6.1 Sol, GPT-6 Sol (the new
+  default, replacing GPT-4o) and GPT-6 Luna. Mistral: Large, Devstral, Medium
+  and Small. The previous generations (Claude Opus 5, Sonnet 5, the 4.x
+  models, GPT-5.x, GPT-4o) leave the lists; any of them can still be entered
+  as a custom model ID.
+* **Claude Sonnet 5.5 runs.** It rejects a forced ``tool_choice`` and
+  ``thinking: {"type": "disabled"}``, which a Spec-Driven run sends for forced
+  tool calls, so every run on it failed. It is now called like Claude Opus 5.5
+  (``auto`` plus an instruction naming the tool). Claude Haiku 5.5 needs no
+  change.
 
 Spec-Driven Agent
 -----------------

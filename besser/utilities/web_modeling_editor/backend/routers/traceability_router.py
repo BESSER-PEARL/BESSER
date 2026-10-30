@@ -2,7 +2,7 @@
 Traceability Router
 
 The traceability endpoints of the BESSER web modeling editor backend, all under
-``/besser_api/traceability``. The editor records modelling traces itself and
+``/besser_api/traceability``. The editor records modeling traces itself and
 keeps the trace file in the browser; the backend records what only it can see,
 the trace links of a generation run. Logic lives in ``services/traceability``.
 """

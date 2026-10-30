@@ -6,7 +6,7 @@ import pytest
 from jinja2 import DictLoader, Environment
 
 from besser.BUML.metamodel.structural import Class, Enumeration
-from besser.BUML.metamodel.traceability import CodeArtifact, ModelArtifact, OperationType
+from besser.BUML.metamodel.traceability import CodeArtifact, CodeGeneration, ModelArtifact
 from besser.utilities.generation_trace import (
     TraceExtension, TraceRegion, build_generation_trace, extract_trace_regions, shift_regions,
 )
@@ -106,7 +106,7 @@ def test_build_generation_trace_links_each_region():
     trace = _trace("h\nclass Book:\n  x\n\nrel\n", cap=1000)
     assert trace.validate()["success"]
     (operation,) = trace.operations
-    assert operation.operation_type is OperationType.CODE_GENERATION
+    assert isinstance(operation, CodeGeneration)
     assert [a.name for a in operation.performed_by] == ["BESSER User"]
     model, file = trace.artifacts[:2]
     assert isinstance(model, ModelArtifact) and model.element_id == "diagram-1"

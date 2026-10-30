@@ -32,7 +32,7 @@ from markupsafe import Markup
 
 from besser.BUML.metamodel.structural import NamedElement
 from besser.BUML.metamodel.traceability import (
-    CodeArtifact, CodeGenerator, Confidence, ModelArtifact, Operation, OperationStatus, OperationType, Person,
+    CodeArtifact, CodeGeneration, CodeGenerator, Confidence, ModelArtifact, OperationStatus, Person,
     RuleEvidence, TraceLink, TraceModel,
 )
 
@@ -166,7 +166,7 @@ def build_generation_trace(
 ) -> TraceModel:
     """The trace fragment of one generation run that wrote one file.
 
-    It holds a CODE_GENERATION operation performed by ``actor_name`` with the
+    It holds a CodeGeneration operation performed by ``actor_name`` with the
     generator, consuming the model and producing the file and one fragment per
     region; and one trace link per region, from the element to its fragment,
     with the template rule as evidence and confidence 1 (the link is made by
@@ -186,9 +186,9 @@ def build_generation_trace(
     file_artifact = CodeArtifact(file_path, file_path, _sha256(content), content=stored)
 
     trace = TraceModel(actors=[actor], tools=[tool], artifacts=[model_artifact, file_artifact])
-    operation = Operation(OperationType.CODE_GENERATION, [actor], OperationStatus.SUCCEEDED,
-                          started_at=started_at, ended_at=ended_at, uses=[tool],
-                          consumes=[model_artifact], produces=[file_artifact])
+    operation = CodeGeneration([actor], status=OperationStatus.SUCCEEDED,
+                               started_at=started_at, ended_at=ended_at, uses=[tool],
+                               consumes=[model_artifact], produces=[file_artifact])
     trace.add_operation(operation)
 
     def link(source, target, rule: str):

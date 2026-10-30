@@ -16,9 +16,12 @@ from typing import Any, Dict, Optional
 import besser.BUML.metamodel.traceability.traceability as traceability_module
 from besser.BUML.metamodel.traceability import (
     AIEvidence, Artifact, Change, ChangeEvidence, CodeArtifact, Confidence, Evidence, LogRecord, ModelArtifact,
-    Operation, RuleEvidence, TraceLink, TraceModel,
+    Modeling, Operation, PromptArtifact, RuleEvidence, TraceLink, TraceModel,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_SCHEMA_VERSION
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+    structural_allowed_names,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     SAFE_DATETIME_MODULE, safe_load_buml, strip_buml_imports,
 )
@@ -47,10 +50,16 @@ def _artifact(artifact: Artifact) -> Dict[str, Any]:
     if artifact.parent is not None:
         data["parentId"] = artifact.parent.id
     if isinstance(artifact, ModelArtifact):
+        if artifact.element_id is None:
+            # A reference to an element without an id (a project's Python export run as a script):
+            # JSON names elements by id, so the importer assigns them first (project_trace_to_json).
+            raise ConversionError(f"ModelArtifact {artifact.id!r} references {artifact.name!r}, which has no id.")
         data.update(elementId=artifact.element_id, elementType=artifact.element_type)
     elif isinstance(artifact, CodeArtifact):
         data.update(path=artifact.path, contentHash=artifact.content_hash)
         _with_optional(data, content=artifact.content, startLine=artifact.start_line, endLine=artifact.end_line)
+    elif isinstance(artifact, PromptArtifact):
+        data.update(content=artifact.content, contentHash=artifact.content_hash)
     return data
 
 
@@ -71,21 +80,23 @@ def _log(log: LogRecord) -> Dict[str, Any]:
 
 
 def _operation(operation: Operation) -> Dict[str, Any]:
-    return _with_optional(
+    data = _with_optional(
         {
             "id": operation.id,
-            "operationType": operation.operation_type.value,
+            "type": type(operation).__name__,
             "status": operation.status.value,
             "startedAt": utc_iso(operation.started_at),
             "performedBy": [a.id for a in operation.performed_by],
             "uses": [t.id for t in operation.uses],
             "consumes": [a.id for a in operation.consumes],
             "produces": [a.id for a in operation.produces],
-            "changes": [_change(c) for c in operation.changes],
             "logs": [_log(log) for log in operation.logs],
         },
         endedAt=utc_iso(operation.ended_at) if operation.ended_at else None,
     )
+    if isinstance(operation, Modeling):
+        data["changes"] = [_change(c) for c in operation.changes]
+    return data
 
 
 def _evidence(evidence: Evidence) -> Dict[str, Any]:
@@ -136,21 +147,29 @@ def trace_buml_to_json(trace: TraceModel) -> Dict[str, Any]:
     }
 
 
-def parse_trace_code(content: str) -> TraceModel:
+def parse_trace_code(content: str, context_code: Optional[str] = None) -> TraceModel:
     """Load the TraceModel that trace B-UML code (``trace_model_builder``) builds.
 
     ``content`` comes from a user upload, so it runs through ``safe_load_buml``:
     only the public names of ``besser.BUML.metamodel.traceability`` and
-    ``datetime.datetime`` can be called.
+    ``datetime.datetime`` can be called, plus the structural ones when
+    ``context_code`` is given.
+
+    Args:
+        content: The trace code.
+        context_code: The structural code the trace references (``ModelArtifact(element=Library)``),
+            run first; a project file's STRUCTURAL sections.
 
     Raises:
         ConversionError: If the code is refused, fails, or builds no TraceModel.
     """
-    allowed_names: Dict[str, Any] = {"datetime": SAFE_DATETIME_MODULE}
+    allowed_names: Dict[str, Any] = structural_allowed_names() if context_code else {}
+    allowed_names["datetime"] = SAFE_DATETIME_MODULE
     for name in traceability_module.__all__:
         allowed_names[name] = getattr(traceability_module, name)
+    code = f"{context_code}\n{content}" if context_code else content
     try:
-        local_vars = safe_load_buml(strip_buml_imports(content), allowed_names,
+        local_vars = safe_load_buml(strip_buml_imports(code), allowed_names,
                                     max_ast_nodes=_TRACE_MAX_AST_NODES)
     except Exception as exc:
         raise ConversionError(f"Failed to load the traceability section: {exc}") from exc

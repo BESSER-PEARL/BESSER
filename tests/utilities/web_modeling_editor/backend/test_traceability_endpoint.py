@@ -61,7 +61,8 @@ def test_trace_records_actor_tool_and_model(traced):
     assert [(a["type"], a["name"]) for a in trace["actors"]] == [("Person", "BESSER User")]
     assert [(t["type"], t["name"]) for t in trace["tools"]] == [("CodeGenerator", "sqlalchemy")]
     (operation,) = trace["operations"]
-    assert operation["operationType"] == "CODE_GENERATION" and operation["status"] == "SUCCEEDED"
+    assert operation["type"] == "CodeGeneration" and operation["status"] == "SUCCEEDED"
+    assert "changes" not in operation
     model = next(a for a in trace["artifacts"] if a.get("elementType") == "DomainModel")
     assert model["elementId"] == "diagram-1" and model["id"] in operation["consumes"]
     file = next(a for a in trace["artifacts"] if a["type"] == "CodeArtifact" and "startLine" not in a)
@@ -94,17 +95,29 @@ def test_trace_with_edits_round_trips(traced):
     class_artifact = next(a for a in trace["artifacts"] if a.get("elementType") == "Class")
     trace["projectId"] = "project-1"
     trace["operations"].append({
-        "id": "op-edit", "operationType": "MANUAL_MODELLING", "status": "SUCCEEDED",
+        "id": "op-edit", "type": "Modeling", "status": "SUCCEEDED",
         "startedAt": "2026-10-29T10:00:00.000Z", "endedAt": "2026-10-29T10:05:00.000Z",
         "performedBy": [trace["actors"][0]["id"]], "uses": [], "consumes": [], "produces": [],
         "changes": [{"id": "ch-1", "kind": "UPDATED", "artifactId": class_artifact["id"], "feature": "name",
                      "oldValue": "Libro", "newValue": "Book", "timestamp": "2026-10-29T10:01:00.000Z"}],
         "logs": [],
     })
+    trace["actors"].append({"id": "assistant", "type": "Agent", "name": "BESSER modeling assistant",
+                            "timestamp": "2026-10-29T09:59:00.000Z"})
+    trace["artifacts"].append({"id": "prompt-1", "type": "PromptArtifact", "name": "Library",
+                               "timestamp": "2026-10-29T09:58:00.000Z", "content": "Books have a title.",
+                               "contentHash": "h"})
+    trace["operations"].append({
+        "id": "op-chat", "type": "Conversation", "status": "SUCCEEDED", "startedAt": "2026-10-29T09:58:00.000Z",
+        "performedBy": [trace["actors"][0]["id"], "assistant"], "uses": [], "consumes": ["prompt-1"],
+        "produces": [], "logs": [],
+    })
     assert trace_buml_to_json(process_trace(trace)) == trace
 
 
 @pytest.mark.parametrize("corrupt, message", [
+    (lambda t: t["operations"][0].update(type="CODE_GENERATION"), "unknown type"),
+    (lambda t: t["operations"][0].update(changes=[{"id": "c"}]), "only a Modeling has changes"),
     (lambda t: t.update(schemaVersion=99), "schemaVersion"),
     (lambda t: t["traceLinks"][0].update(sourceId="missing"), "unknown artifact"),
     (lambda t: t["operations"][0].update(startedAt="yesterday"), "ISO 8601"),

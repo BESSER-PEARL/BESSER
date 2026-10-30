@@ -563,7 +563,7 @@ Refine KG dialog that precedes it.
 Traceability
 ^^^^^^^^^^^^
 
-The editor records modelling traces itself and keeps the project trace in the
+The editor records modeling traces itself and keeps the project trace in the
 browser (see :doc:`buml_language/model_types/traceability`); the backend records
 what only it sees, the trace links of a generation run. Under
 ``/besser_api/traceability`` (OpenAPI tag ``traceability``).

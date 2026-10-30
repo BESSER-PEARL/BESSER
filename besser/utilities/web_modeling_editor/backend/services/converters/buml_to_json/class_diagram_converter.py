@@ -95,6 +95,43 @@ def fresh_primitive_types() -> dict:
     }
 
 
+def structural_allowed_names() -> dict:
+    """The names structural B-UML code may use, for ``safe_load_buml``; everything else is refused.
+
+    Shared with the loaders of sections that build on a structural model (a project's trace).
+    """
+    return {
+        "Class": Class,
+        "Property": Property,
+        "Method": Method,
+        "Parameter": StructuralParameter,
+        "PrimitiveDataType": PrimitiveDataType,
+        "BinaryAssociation": BinaryAssociation,
+        "Constraint": Constraint,
+        "Multiplicity": Multiplicity,
+        "UNLIMITED_MAX_MULTIPLICITY": UNLIMITED_MAX_MULTIPLICITY,
+        "Generalization": Generalization,
+        "Enumeration": Enumeration,
+        "EnumerationLiteral": EnumerationLiteral,
+        "DomainModel": DomainModel,
+        "AssociationClass": AssociationClass,
+        "Metadata": Metadata,
+        "MethodImplementationType": MethodImplementationType,
+        # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
+        "datetime": SAFE_DATETIME_MODULE,
+        "set": set,
+        "list": list,
+        "dict": dict,
+        "tuple": tuple,
+        **fresh_primitive_types(),
+        # No-op stub: project-exported files often end with a
+        # `project = Project(name=..., models=[domain_model], ...)` tail.
+        # The class converter only cares about the DomainModel; swallowing
+        # the Project(...) call with a stub keeps the sandbox import-tolerant.
+        "Project": lambda *args, **kwargs: None,
+    }
+
+
 def parse_buml_content(content: str) -> DomainModel:
     """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
     try:
@@ -104,36 +141,7 @@ def parse_buml_content(content: str) -> DomainModel:
 
         # Allowlist of names that may appear in the BUML source. Everything
         # else is rejected by the safe loader.
-        allowed_names = {
-            "Class": Class,
-            "Property": Property,
-            "Method": Method,
-            "Parameter": StructuralParameter,
-            "PrimitiveDataType": PrimitiveDataType,
-            "BinaryAssociation": BinaryAssociation,
-            "Constraint": Constraint,
-            "Multiplicity": Multiplicity,
-            "UNLIMITED_MAX_MULTIPLICITY": UNLIMITED_MAX_MULTIPLICITY,
-            "Generalization": Generalization,
-            "Enumeration": Enumeration,
-            "EnumerationLiteral": EnumerationLiteral,
-            "DomainModel": DomainModel,
-            "AssociationClass": AssociationClass,
-            "Metadata": Metadata,
-            "MethodImplementationType": MethodImplementationType,
-            # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
-            "datetime": SAFE_DATETIME_MODULE,
-            "set": set,
-            "list": list,
-            "dict": dict,
-            "tuple": tuple,
-            **fresh_primitive_types(),
-            # No-op stub: project-exported files often end with a
-            # `project = Project(name=..., models=[domain_model], ...)` tail.
-            # The class converter only cares about the DomainModel; swallowing
-            # the Project(...) call with a stub keeps the sandbox import-tolerant.
-            "Project": lambda *args, **kwargs: None,
-        }
+        allowed_names = structural_allowed_names()
 
         # Ensure we have a string before preprocessing
         if not isinstance(content, str):

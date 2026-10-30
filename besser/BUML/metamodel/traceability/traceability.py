@@ -5,9 +5,12 @@ generated code) and the links derived between them. It follows W3C PROV:
 an :class:`Artifact` is an entity, an :class:`Operation` is an activity and an
 :class:`Actor` is an agent.
 
-* An Operation (manual modelling session, code generation, ...) is performed by
-  Actors with Tools. It consumes and produces Artifacts and holds the granular
-  :class:`Change` records of what it did to each artifact.
+* An :class:`Operation` is performed by Actors with Tools and consumes and
+  produces Artifacts. Its kind is its class: :class:`Modeling` edits models and
+  holds the granular :class:`Change` records of what it did, :class:`CodeGeneration`
+  (a :class:`Transformation`) derives code from models, :class:`Conversation` is
+  a dialogue between a user and an agent. Whether a person or an agent did the
+  work is told by its actors, not by its kind.
 * A :class:`TraceLink` connects a source and a target Artifact (a class and the
   code generated from it). :class:`Evidence` says why the link holds and
   :class:`Confidence` how sure it is.
@@ -29,7 +32,6 @@ from typing import Iterable, List, Optional
 from besser.BUML.metamodel.structural import Element, Model
 
 __all__ = [
-    "OperationType",
     "OperationStatus",
     "ChangeKind",
     "LogType",
@@ -37,6 +39,7 @@ __all__ = [
     "Artifact",
     "ModelArtifact",
     "CodeArtifact",
+    "PromptArtifact",
     "Actor",
     "Person",
     "Agent",
@@ -47,6 +50,10 @@ __all__ = [
     "LogRecord",
     "Change",
     "Operation",
+    "Modeling",
+    "Transformation",
+    "CodeGeneration",
+    "Conversation",
     "Evidence",
     "RuleEvidence",
     "AIEvidence",
@@ -55,16 +62,6 @@ __all__ = [
     "TraceLink",
     "TraceModel",
 ]
-
-
-class OperationType(Enum):
-    """How an operation was carried out. The granular effect is in its :class:`Change` records."""
-    MANUAL_MODELLING = "MANUAL_MODELLING"
-    ASSISTANT_MODELLING = "ASSISTANT_MODELLING"
-    IMPORT = "IMPORT"
-    CODE_GENERATION = "CODE_GENERATION"
-    LLM_CODE_EDITING = "LLM_CODE_EDITING"
-    VALIDATION = "VALIDATION"
 
 
 class OperationStatus(Enum):
@@ -201,56 +198,98 @@ class Artifact(TraceElement, ABC):
 
 
 class ModelArtifact(Artifact):
-    """A model, or an element of one, referenced by its persistent id.
+    """A model, or an element of one.
+
+    When the element is at hand (a trace loaded together with its model, as in a project
+    exported to Python), the artifact references it (``element``) and takes its name, type
+    and id from it instead of repeating them. Otherwise it records them: for an element
+    that no longer exists (deleted, kept as history), or a trace stored apart from the
+    model (the editor's JSON), where the element is known by its persistent id.
 
     Args:
-        name (str): Last known name of the element (kept readable after deletion).
-        element_id (str): The ``Element.id`` of the element (the diagram id for a whole model).
-        element_type (str): Its B-UML metaclass name (``DomainModel``, ``Class``, ``Property``, ...).
+        name (str): Last known name of the element (None when ``element`` is given).
+        element_id (str): The ``Element.id`` of the element, the diagram id for a whole model
+            (None when ``element`` is given and has no id yet).
+        element_type (str): Its B-UML metaclass name: ``DomainModel``, ``Class``, ``Property``, ...
+            (None when ``element`` is given).
         parent (Artifact): The model artifact holding this element.
         id (str): Persistent identifier of the artifact.
         timestamp (datetime): When the artifact was first recorded.
+        element (Element): The referenced B-UML element, when it is at hand.
+
+    Raises:
+        ValueError: If neither ``element`` nor the recorded name, id and type are given.
     """
 
-    def __init__(self, name: str, element_id: str, element_type: str, parent: Artifact = None,
-                 id: str = None, timestamp: datetime = None):
+    def __init__(self, name: str = None, element_id: str = None, element_type: str = None, parent: Artifact = None,
+                 id: str = None, timestamp: datetime = None, element: Element = None):
+        self.element: Optional[Element] = element  # first: name, id and type fall back to it
         super().__init__(name, parent, id, timestamp)
-        self.element_id: str = element_id
-        self.element_type: str = element_type
+        self.element_id: Optional[str] = element_id
+        self.element_type: Optional[str] = element_type
 
     @property
-    def element_id(self) -> str:
-        """str: Get the persistent id of the referenced element."""
-        return self.__element_id
+    def element(self) -> Optional[Element]:
+        """Element: Get the referenced B-UML element (None when only recorded)."""
+        return self.__element
+
+    @element.setter
+    def element(self, element: Optional[Element]):
+        """Element: Set the referenced B-UML element."""
+        self.__element = _instance(element, Element, "ModelArtifact", "element", optional=True)
+
+    @property
+    def name(self) -> str:
+        """str: Get the element's name: the referenced element's, else the recorded one."""
+        return self.__element.name if self.__element is not None else self.__name
+
+    @name.setter
+    def name(self, name: Optional[str]):
+        """str: Set the recorded name (optional when an element is referenced)."""
+        self.__name = None if name is None and self.__element is not None else _text(name, "ModelArtifact", "name")
+
+    @property
+    def element_id(self) -> Optional[str]:
+        """str: Get the element's persistent id: the recorded one, else the referenced element's."""
+        if self.__element_id is not None:
+            return self.__element_id
+        return self.__element.id if self.__element is not None else None
 
     @element_id.setter
-    def element_id(self, element_id: str):
-        """str: Set the persistent id of the referenced element.
+    def element_id(self, element_id: Optional[str]):
+        """str: Set the recorded id (optional when an element is referenced).
 
         Raises:
-            ValueError: If it is not a non-empty string.
+            ValueError: If it is not a non-empty string while no element is referenced.
         """
-        self.__element_id = _text(element_id, "ModelArtifact", "element_id")
+        if element_id is None and self.__element is not None:
+            self.__element_id = None
+        else:
+            self.__element_id = _text(element_id, "ModelArtifact", "element_id")
 
     @property
     def element_type(self) -> str:
-        """str: Get the B-UML metaclass name of the referenced element."""
-        return self.__element_type
+        """str: Get the B-UML metaclass name: the referenced element's class, else the recorded one."""
+        return type(self.__element).__name__ if self.__element is not None else self.__element_type
 
     @element_type.setter
-    def element_type(self, element_type: str):
-        """str: Set the B-UML metaclass name of the referenced element.
-
-        Raises:
-            ValueError: If it is not a non-empty string.
-        """
-        self.__element_type = _text(element_type, "ModelArtifact", "element_type")
+    def element_type(self, element_type: Optional[str]):
+        """str: Set the recorded metaclass name (optional when an element is referenced)."""
+        if element_type is None and self.__element is not None:
+            self.__element_type = None
+        else:
+            self.__element_type = _text(element_type, "ModelArtifact", "element_type")
 
     def resolve(self, model: Model) -> Optional[Element]:
-        """The element of ``model`` with this artifact's ``element_id``, or None when it is not there.
+        """The element of ``model`` this artifact stands for, or None when it is not there: the
+        referenced element when it belongs to ``model``, else the one with this ``element_id``.
 
-        A whole-model artifact resolves to ``model`` itself when the ids match.
+        A whole-model artifact resolves to ``model`` itself.
         """
+        if self.__element is not None:
+            if self.__element is model or any(e is self.__element for e in _model_elements(model)):
+                return self.__element
+            return None
         if model.id == self.element_id:
             return model
         for element in _model_elements(model):
@@ -362,6 +401,47 @@ class CodeArtifact(Artifact):
                 raise ValueError(f"Invalid line range {start_line}-{end_line}: need 1 <= start_line <= end_line.")
         self.__start_line = start_line
         self.__end_line = end_line
+
+
+class PromptArtifact(Artifact):
+    """A message given to an agent, kept as an artifact because something was derived from it
+    (a requirement, a model element): it is the source of a trace link. The other messages of a
+    :class:`Conversation` stay in its log.
+
+    Args:
+        name (str): Display name (a short label for the prompt).
+        content (str): The prompt text.
+        content_hash (str): SHA-256 of the content.
+        parent (Artifact): An artifact holding this one, if any.
+        id (str): Persistent identifier.
+        timestamp (datetime): When the prompt was given.
+    """
+
+    def __init__(self, name: str, content: str, content_hash: str, parent: Artifact = None,
+                 id: str = None, timestamp: datetime = None):
+        super().__init__(name, parent, id, timestamp)
+        self.content: str = content
+        self.content_hash: str = content_hash
+
+    @property
+    def content(self) -> str:
+        """str: Get the prompt text."""
+        return self.__content
+
+    @content.setter
+    def content(self, content: str):
+        """str: Set the prompt text."""
+        self.__content = _text(content, "PromptArtifact", "content")
+
+    @property
+    def content_hash(self) -> str:
+        """str: Get the SHA-256 of the content."""
+        return self.__content_hash
+
+    @content_hash.setter
+    def content_hash(self, content_hash: str):
+        """str: Set the SHA-256 of the content."""
+        self.__content_hash = _text(content_hash, "PromptArtifact", "content_hash")
 
 
 class Actor(TraceElement, ABC):
@@ -653,50 +733,41 @@ class Change(TraceElement):
         self.__new_value = _optional_text(new_value, "Change", "new_value")
 
 
-class Operation(TraceElement):
-    """An activity on the project: a modelling session, a generation run, ...
+class Operation(TraceElement, ABC):
+    """An activity on the project. Abstract: an operation is a :class:`Modeling`, a
+    :class:`CodeGeneration` or a :class:`Conversation`.
 
     ``started_at`` is the element's timestamp.
 
     Args:
-        operation_type (OperationType): How the operation was carried out.
-        performed_by (list[Actor]): Who performed it (at least one).
+        performed_by (list[Actor]): Who performed it (at least one): a Person, an Agent, or both.
         status (OperationStatus): Lifecycle state (SUCCEEDED as default).
         started_at (datetime): When it started (current time when None).
         ended_at (datetime): When it ended (None while it runs).
         uses (list[Tool]): Tools it was carried out with.
         consumes (list[Artifact]): Artifacts it read.
         produces (list[Artifact]): Artifacts it created.
-        changes (list[Change]): Its granular effects, in order.
         logs (list[LogRecord]): Its log records, in order.
         id (str): Persistent identifier.
+
+    Raises:
+        TypeError: When instantiated directly, or as a bare Transformation.
     """
 
-    def __init__(self, operation_type: OperationType, performed_by: List[Actor],
-                 status: OperationStatus = OperationStatus.SUCCEEDED, started_at: datetime = None,
-                 ended_at: datetime = None, uses: List[Tool] = None, consumes: List[Artifact] = None,
-                 produces: List[Artifact] = None, changes: List[Change] = None, logs: List[LogRecord] = None,
+    def __init__(self, performed_by: List[Actor], status: OperationStatus = OperationStatus.SUCCEEDED,
+                 started_at: datetime = None, ended_at: datetime = None, uses: List[Tool] = None,
+                 consumes: List[Artifact] = None, produces: List[Artifact] = None, logs: List[LogRecord] = None,
                  id: str = None):
+        if type(self) in (Operation, Transformation):
+            raise TypeError(f"{type(self).__name__} is abstract: use Modeling, CodeGeneration or Conversation.")
         super().__init__(id, started_at)
-        self.operation_type: OperationType = operation_type
         self.performed_by: List[Actor] = performed_by
         self.status: OperationStatus = status
         self.ended_at: Optional[datetime] = ended_at
         self.uses: List[Tool] = uses
         self.consumes: List[Artifact] = consumes
         self.produces: List[Artifact] = produces
-        self.changes: List[Change] = changes
         self.logs: List[LogRecord] = logs
-
-    @property
-    def operation_type(self) -> OperationType:
-        """OperationType: Get how the operation was carried out."""
-        return self.__operation_type
-
-    @operation_type.setter
-    def operation_type(self, operation_type: OperationType):
-        """OperationType: Set how the operation was carried out."""
-        self.__operation_type = _instance(operation_type, OperationType, "Operation", "operation_type")
 
     @property
     def performed_by(self) -> List[Actor]:
@@ -781,20 +852,6 @@ class Operation(TraceElement):
         self.__produces = _instances(produces, Artifact, "Operation", "produces")
 
     @property
-    def changes(self) -> List[Change]:
-        """list[Change]: Get the operation's granular effects, in order."""
-        return list(self.__changes)
-
-    @changes.setter
-    def changes(self, changes: List[Change]):
-        """list[Change]: Set the operation's granular effects."""
-        self.__changes = _instances(changes, Change, "Operation", "changes")
-
-    def add_change(self, change: Change):
-        """Append a change to the operation."""
-        self.changes = self.__changes + [change]
-
-    @property
     def logs(self) -> List[LogRecord]:
         """list[LogRecord]: Get the operation's log records, in order."""
         return list(self.__logs)
@@ -803,6 +860,59 @@ class Operation(TraceElement):
     def logs(self, logs: List[LogRecord]):
         """list[LogRecord]: Set the operation's log records."""
         self.__logs = _instances(logs, LogRecord, "Operation", "logs")
+
+
+class Modeling(Operation):
+    """A modeling session: edits made to models, by a person, an agent (an
+    assistant), or both, recorded change by change.
+
+    Args:
+        performed_by (list[Actor]): Who made the edits (at least one).
+        changes (list[Change]): The edits, in order (at least one in a valid trace).
+        **kwargs: The other :class:`Operation` arguments.
+    """
+
+    def __init__(self, performed_by: List[Actor], changes: List[Change] = None, **kwargs):
+        super().__init__(performed_by, **kwargs)
+        self.changes: List[Change] = changes
+
+    @property
+    def changes(self) -> List[Change]:
+        """list[Change]: Get the session's edits, in order."""
+        return list(self.__changes)
+
+    @changes.setter
+    def changes(self, changes: List[Change]):
+        """list[Change]: Set the session's edits."""
+        self.__changes = _instances(changes, Change, "Modeling", "changes")
+
+    def add_change(self, change: Change):
+        """Append an edit to the session."""
+        self.changes = self.__changes + [change]
+
+
+class Transformation(Operation, ABC):
+    """An operation that derives new artifacts from others (and the trace links
+    between them) without editing anything. Abstract: see :class:`CodeGeneration`."""
+
+
+class CodeGeneration(Transformation):
+    """A generator run: code derived from models.
+
+    It uses at least one :class:`CodeGenerator` (checked by ``TraceModel.validate``),
+    consumes the model artifacts and produces the code artifacts it links them to.
+    """
+
+
+class Conversation(Operation):
+    """A dialogue between a user and an agent (the BESSER assistant), with its messages in the log.
+
+    What it leads to varies, so it is not a :class:`Transformation`: a clarification question
+    produces nothing; stated requirements are artifacts it produces, linked from the
+    :class:`PromptArtifact` they came from; an edit or a generation it asks for is a separate
+    :class:`Modeling` or :class:`CodeGeneration`. At least one of its actors is an :class:`Agent`
+    (checked by ``TraceModel.validate``).
+    """
 
 
 class Evidence(TraceElement, ABC):
@@ -1155,11 +1265,13 @@ class TraceModel(Model):
 
     def changes_of(self, artifact: Artifact) -> List[Change]:
         """Every change recorded on ``artifact``, in time order."""
-        changes = [c for op in self.__operations for c in op.changes if c.artifact is artifact]
+        changes = [c for op in self.__operations if isinstance(op, Modeling) for c in op.changes
+                   if c.artifact is artifact]
         return sorted(changes, key=lambda c: c.timestamp)
 
     def is_suspect(self, trace_link: TraceLink) -> bool:
-        """True when the link's source, or a fragment of it, changed after the link was created."""
+        """True when the link's source, or a fragment of it, changed after the link was made:
+        the target may no longer match it."""
         pending = [trace_link.source]
         while pending:
             artifact = pending.pop()
@@ -1167,6 +1279,23 @@ class TraceModel(Model):
                 return True
             pending.extend(self.fragments_of(artifact))
         return False
+
+    def is_stale(self, trace_link: TraceLink) -> bool:
+        """``TraceLink./stale``, derived: the link may no longer hold, because it is suspect or
+        because a link into its source, further upstream, is stale."""
+        incoming: dict[int, List[TraceLink]] = {}
+        for link in self.__trace_links:
+            incoming.setdefault(id(link.target), []).append(link)
+        stale: dict[int, bool] = {}
+
+        def visit(link: TraceLink) -> bool:
+            if id(link) not in stale:
+                stale[id(link)] = False  # a cycle back to this link adds nothing
+                stale[id(link)] = self.is_suspect(link) or any(
+                    visit(upstream) for upstream in incoming.get(id(link.source), []))
+            return stale[id(link)]
+
+        return visit(trace_link)
 
     def validate(self, raise_exception: bool = True) -> dict:
         """Check that every reference stays inside the trace and every id is unique.
@@ -1203,10 +1332,19 @@ class TraceModel(Model):
                     errors.append(f"Artifact {artifact.id!r} is produced by both operation "
                                   f"{producer[id(artifact)]!r} and {operation.id!r}.")
                 producer[id(artifact)] = operation.id
-            for change in operation.changes:
-                check(change.artifact, artifacts, "artifact", f"Change {change.id!r}")
             for log in operation.logs:
                 check(log.tool, tools, "tool", f"LogRecord {log.id!r}")
+            if isinstance(operation, Modeling):
+                if not operation.changes:
+                    errors.append(f"{where} is a Modeling with no changes.")
+                for change in operation.changes:
+                    check(change.artifact, artifacts, "artifact", f"Change {change.id!r}")
+            elif isinstance(operation, CodeGeneration):
+                if not any(isinstance(tool, CodeGenerator) for tool in operation.uses):
+                    errors.append(f"{where} is a CodeGeneration that uses no CodeGenerator.")
+            elif isinstance(operation, Conversation):
+                if not any(isinstance(actor, Agent) for actor in operation.performed_by):
+                    errors.append(f"{where} is a Conversation with no Agent among its actors.")
         for link in self.__trace_links:
             where = f"TraceLink {link.id!r}"
             check(link.source, artifacts, "artifact", where)
@@ -1229,7 +1367,9 @@ class TraceModel(Model):
         """Every trace element owned by the model, each once."""
         elements: list = self.artifacts + self.actors + self.tools + self.operations
         for operation in self.__operations:
-            elements += operation.changes + operation.logs
+            elements += operation.logs
+            if isinstance(operation, Modeling):
+                elements += operation.changes
         for link in self.__trace_links:
             elements.append(link)
             elements += link.evidence

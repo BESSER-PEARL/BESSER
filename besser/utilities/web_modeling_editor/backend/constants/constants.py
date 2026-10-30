@@ -487,7 +487,7 @@ WS_CLOSE_RATE_LIMITED = 4429
 # Traceability
 # Version of the trace file format (the `trace` of a project export); bump it with a
 # migration in the frontend's trace store when the shape changes.
-TRACE_SCHEMA_VERSION = 1
+TRACE_SCHEMA_VERSION = 2
 # Generators whose output carries trace links (their templates use `{% trace %}`).
 TRACED_GENERATORS = frozenset({"sqlalchemy"})
 # A generated file up to this size is kept in the trace so the trace view can

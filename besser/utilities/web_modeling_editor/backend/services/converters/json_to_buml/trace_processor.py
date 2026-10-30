@@ -10,15 +10,16 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from besser.BUML.metamodel.traceability import (
-    LLM, AIEvidence, Agent, Change, ChangeEvidence, ChangeKind, CodeArtifact, CodeGenerator, Confidence, Editor,
-    LogRecord, LogType, ModelArtifact, Operation, OperationStatus, OperationType, Person, RuleEvidence, TraceLink,
-    TraceModel,
+    LLM, AIEvidence, Agent, Change, ChangeEvidence, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
+    Conversation, Editor, LogRecord, LogType, ModelArtifact, Modeling, OperationStatus, Person, PromptArtifact,
+    RuleEvidence, TraceLink, TraceModel,
 )
 from besser.utilities.utils import parse_iso_timestamp
 from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_SCHEMA_VERSION
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 _ACTOR_TYPES = {"Person": Person, "Agent": Agent}
+_OPERATION_TYPES = {"Modeling": Modeling, "CodeGeneration": CodeGeneration, "Conversation": Conversation}
 _TOOL_TYPES = {"Editor": Editor, "CodeGenerator": CodeGenerator, "LLM": LLM}
 
 
@@ -117,6 +118,9 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
                               content=_field(raw, "content", where, optional=True),
                               start_line=_field(raw, "startLine", where, optional=True),
                               end_line=_field(raw, "endLine", where, optional=True), **common)
+        elif kind == "PromptArtifact":
+            artifact = _build(PromptArtifact, where, content=_field(raw, "content", where),
+                              content_hash=_field(raw, "contentHash", where), **common)
         else:
             raise ConversionError(f"{where} has unknown type {kind!r}.")
         if artifact.id in artifacts:
@@ -138,6 +142,11 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
 
     for raw in _list(data, "operations", "Trace"):
         where = f"Operation {raw.get('id') if isinstance(raw, dict) else raw!r}"
+        kind = _field(raw, "type", where)
+        if kind not in _OPERATION_TYPES:
+            raise ConversionError(f"{where} has unknown type {kind!r}; expected one of {sorted(_OPERATION_TYPES)}.")
+        if kind != "Modeling" and _list(raw, "changes", where):
+            raise ConversionError(f"{where} is a {kind}: only a Modeling has changes.")
         op_changes = []
         for raw_change in _list(raw, "changes", where):
             cwhere = f"Change {raw_change.get('id') if isinstance(raw_change, dict) else raw_change!r}"
@@ -162,17 +171,20 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
                 id=_field(raw_log, "id", lwhere), timestamp=_timestamp(raw_log, "timestamp", lwhere))
             logs[log.id] = log
             op_logs.append(log)
-        operation = _build(
-            Operation, where,
-            operation_type=_enum(OperationType, raw, "operationType", where),
-            performed_by=[_resolve(actors, i, "actor", where) for i in _list(raw, "performedBy", where)],
-            status=_enum(OperationStatus, raw, "status", where),
-            started_at=_timestamp(raw, "startedAt", where),
-            ended_at=_timestamp(raw, "endedAt", where, optional=True),
-            uses=[_resolve(tools, i, "tool", where) for i in _list(raw, "uses", where)],
-            consumes=[_resolve(artifacts, i, "artifact", where) for i in _list(raw, "consumes", where)],
-            produces=[_resolve(artifacts, i, "artifact", where) for i in _list(raw, "produces", where)],
-            changes=op_changes, logs=op_logs, id=_field(raw, "id", where))
+        common = {
+            "performed_by": [_resolve(actors, i, "actor", where) for i in _list(raw, "performedBy", where)],
+            "status": _enum(OperationStatus, raw, "status", where),
+            "started_at": _timestamp(raw, "startedAt", where),
+            "ended_at": _timestamp(raw, "endedAt", where, optional=True),
+            "uses": [_resolve(tools, i, "tool", where) for i in _list(raw, "uses", where)],
+            "consumes": [_resolve(artifacts, i, "artifact", where) for i in _list(raw, "consumes", where)],
+            "produces": [_resolve(artifacts, i, "artifact", where) for i in _list(raw, "produces", where)],
+            "logs": op_logs, "id": _field(raw, "id", where),
+        }
+        if kind == "Modeling":
+            operation = _build(Modeling, where, changes=op_changes, **common)
+        else:
+            operation = _build(_OPERATION_TYPES[kind], where, **common)
         operations[operation.id] = operation
         trace.add_operation(operation)
 

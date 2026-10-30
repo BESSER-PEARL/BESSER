@@ -31,7 +31,7 @@ from besser.spec_driven_agent.validation.issues import (
     _RUFF_LINE_RE,
     _RUFF_STYLE_CODES,
 )
-from besser.spec_driven_agent.execution.workspace_fs import open_plain_write, walk_plain
+from besser.spec_driven_agent.execution.workspace_fs import is_plain_entry, open_plain_write, walk_plain
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,38 @@ def _collect_uncompiled_source_issues(output_dir: str, compiled: frozenset[str])
         )
         for language, count in sorted(counts.items())
     ]
+
+
+def format_python_files(output_dir: str, rel_paths: list[str]) -> list[str]:
+    """``ruff format`` the given workspace files; returns SKIPPED notes, if any.
+
+    Formatting changes layout only (ruff checks the AST is unchanged), so it
+    cannot alter what the validated code does.
+    """
+    import shutil as _shutil
+    import subprocess
+
+    # A model-planted link must never point the formatter outside the workspace.
+    paths = [p for p in rel_paths if is_plain_entry(os.path.join(output_dir, p))]
+    if not paths:
+        return []
+    ruff_bin = _shutil.which("ruff")
+    if not ruff_bin:
+        return [_check_did_not_run(
+            "ruff format", "ruff is not installed on this host; the generated Python ships unformatted")]
+    try:
+        result = subprocess.run(
+            [ruff_bin, "format", "--no-cache", "--", *paths],
+            capture_output=True, text=True, timeout=60, cwd=output_dir, env=_safe_subprocess_env(),
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return [_check_did_not_run("ruff format", f"it could not run: {type(exc).__name__}")]
+    if result.returncode != 0:
+        # Exit 2 names files it could not parse; it still formats the others.
+        detail = (result.stderr or result.stdout or "").strip().splitlines()[:1]
+        return [_check_did_not_run(
+            "ruff format", f"some files were left unformatted: {detail[0] if detail else 'no output'}")]
+    return []
 
 
 def _is_android_module(module_dir: str) -> bool:

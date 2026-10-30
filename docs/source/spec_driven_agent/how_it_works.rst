@@ -79,7 +79,12 @@ The three phases
    backend-only, and in a modify run a bare "app" names the existing project
    rather than asking for a UI. Such a request also puts "build the frontend"
    on the checklist, and Phase 3 reports a blocker if the output ends with no
-   frontend files. The
+   frontend files. A project with both a class model and an agent model gets
+   a checklist item to connect them while no agent code names a domain type:
+   the agent's intents about the model's data must read and write it, not
+   answer with canned text. The item also keeps Phase 2 from being skipped,
+   and the agent may drop it with a reason when it has nothing to do with the
+   data. The
    system prompt adapts to the run: the rule that asks for a complete CRUD
    frontend applies only when the run has or needs a frontend, and when shell
    tools are on and a FastAPI backend is present it gains a runtime
@@ -260,6 +265,14 @@ reading a trace and wondering why a run did what it did.
        probes' scratch copies), and not when it opens or writes a named file
        (the recipe, checkpoint and trace, the ``BESSER_GENERATION.md``
        provenance file, or a generated source file).
+
+After Phase 3, the Python files the LLM wrote whole in a create run are passed
+through ``ruff format``, which changes layout only; a file it only edited,
+generator files and the files of a modify run keep their own layout. The download's
+``BESSER_GENERATION.md`` gains a *This run* section: what was built, the base
+generator and the verification counts, with the items found missing in the code
+and the checks that could not run. It leaves out the request itself, because the
+file also goes into GitHub pushes.
 
 Every ``BESSER_LLM_*`` switch named above is collected in
 :doc:`configuration`.

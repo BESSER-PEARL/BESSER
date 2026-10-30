@@ -103,6 +103,7 @@ from besser.spec_driven_agent.agent.prompt_builder import (
 )
 from besser.spec_driven_agent.planning.target import (
     OTHER,
+    entity_requirements,
     TARGET_RULES,
     TARGET_TOOL_PROPERTIES,
     WEB_APP,
@@ -134,6 +135,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _collect_kotlinc_issues,
     _collect_ruff_issues,
     _collect_uncompiled_source_issues,
+    format_python_files,
     _collect_tsc_issues,
     _demote_tsc_without_deps,
     _is_real_undefined_name,
@@ -787,6 +789,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Log cost
         logger.info("Cost: %s", self.client.usage)
 
+        self._format_python_output()
         self._save_recipe(instructions, elapsed)
 
         # Clean up snapshot
@@ -938,6 +941,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
 
         elapsed = time.monotonic() - self._start_time
+        self._format_python_output()
         self._save_recipe(instructions, elapsed)
         self._remove_snapshot()
         self._finish_checkpoint()
@@ -3435,6 +3439,42 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         "task cannot be marked done until frontend files exist on disk."
     )
 
+    # Live: "build my task assistant chatbot" on a class model + agent model
+    # shipped the BAF scaffold alone in 7 seconds; its "add a task" intent
+    # replied with canned text and never touched a task.
+    _AGENT_DOMAIN_TASK = (
+        "Connect the {agent} agent to the domain model: every intent about the "
+        "model's data (adding, listing or changing records) reads and writes "
+        "that data through the app's model or persistence code, not a canned "
+        "reply. Drop this item, with the reason, only if the agent has nothing "
+        "to do with the model's data."
+    )
+
+    def _agent_uses_domain(self) -> bool:
+        """A source file that holds the agent also names a domain type, in any casing.
+
+        Agent code names the agent (or is named after it), imports BAF, or
+        implements its intents (a web app's chat service often never writes
+        the agent's name).
+        """
+        agent_name = str(getattr(self.agent_model, "name", "") or "").lower()
+        intents = [str(i.name).lower() for i in getattr(self.agent_model, "intents", ()) if getattr(i, "name", "")]
+        names = {t.name for t in getattr(self.domain_model, "types", ()) if getattr(t, "name", "")}
+        forms = {form for name in names
+                 for form in (name.lower(), _re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower())}
+        for path in _requirements_ledger._source_files(self.output_dir).values():
+            try:
+                with open(path, encoding="utf-8", errors="ignore") as fh:
+                    text = fh.read().lower()
+            except OSError:
+                continue
+            holds_agent = ((agent_name and (agent_name in text or agent_name in os.path.basename(path).lower()))
+                           or "besser.agent" in text
+                           or (intents and sum(i in text for i in intents) >= min(2, len(intents))))
+            if holds_agent and any(_re.search(rf"\b{_re.escape(form)}\b", text) for form in forms):
+                return True
+        return False
+
     def _deterministic_gap_tasks(self) -> list[str]:
         """Checklist items the harness ADDS regardless of the planner.
 
@@ -3450,6 +3490,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "text": self._FRONTEND_CHECKLIST_TASK,
                 # Cheat-proof: done is refused until frontend files exist.
                 "verify": self._has_frontend_files,
+            })
+        if self.agent_model is not None and self.domain_model is not None and not self._agent_uses_domain():
+            tasks.append({
+                "text": self._AGENT_DOMAIN_TASK.format(agent=getattr(self.agent_model, "name", "the")),
+                "verify": self._agent_uses_domain,
             })
         tasks.extend(action_gap_tasks(self.output_dir, self._expected_action_endpoints()))
         tasks.extend(self._unenforced_rule_tasks())
@@ -3701,6 +3746,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             next_id += 1
         return requirements
 
+    def _requirements_to_judge(self) -> list[dict]:
+        """What Phase 3 judges: the validation list plus the per-entity checks
+        of a non-web app, which are reported and never planned as obligations."""
+        requirements = self._requirements_for_validation()
+        if self._generator_used:
+            # A BESSER generator built the base (a BAF chatbot, Python classes):
+            # per-entity screens are not what it delivers.
+            return requirements
+        next_id = max((item["id"] for item in requirements), default=0) + 1
+        return requirements + [{"id": next_id + i, **item} for i, item in
+                               enumerate(entity_requirements(self.target, self.domain_model))]
+
     def _collect_requirement_issues(self) -> list[str]:
         """``requirement:`` blockers for what the user asked for and the code
         does not do: the check of the app against the request itself, which
@@ -3726,7 +3783,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "treat this as an empty requirement list or verified completion."
                 ]
             return []  # Offline clients cannot run the optional LLM judge.
-        requirements = self._requirements_for_validation()
+        requirements = self._requirements_to_judge()
         if not requirements:
             return []
         digest = _requirements_ledger.build_app_digest(self.output_dir)
@@ -3784,6 +3841,31 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirement_verdicts = _requirements_ledger.scope_to_output(
             self._requirement_verdicts, self._ui_in_scope())
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
+
+    def _format_python_output(self) -> None:
+        """Format the Python files the LLM wrote whole (``write_file``) in this run.
+
+        A file it only edited keeps its author's layout, generator files keep
+        the templates' own, and a modify run leaves the existing app alone.
+        """
+        if self._modify_mode:
+            return
+        generated = {os.path.normcase(p) for p in getattr(self.executor, "_generator_files", ())}
+        written: set[str] = set()
+        for call in self.tool_calls_log:
+            path = (call.get("input") or {}).get("path")
+            if (call.get("tool") != "write_file"
+                    or call.get("success") is False or not isinstance(path, str)):
+                continue
+            rel = os.path.normpath(path.replace("\\", "/")).replace("\\", "/")
+            if (rel.endswith(".py") and not os.path.isabs(rel)
+                    and not rel.startswith(("..", _SNAPSHOT_DIR, ".besser_"))
+                    and os.path.normcase(rel) not in generated
+                    and os.path.isfile(os.path.join(self.output_dir, rel))):
+                written.add(rel)
+        for issue in format_python_files(self.output_dir, sorted(written)):
+            logger.warning("Phase 3: %s", issue)
+            self._validation_issues.append(_classify_issue(issue))
 
     def _ui_in_scope(self) -> bool:
         """A UI the user asked for but the tree lacks keeps UI requirements in scope."""

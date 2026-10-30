@@ -23,6 +23,7 @@ import time
 
 from besser.spec_driven_agent.planning.gap_analyzer import _chat_supports_kwargs, _is_real_provider
 from besser.spec_driven_agent.planning.specification import validate_specification
+from besser.spec_driven_agent.planning.target import ENTITY_CRUD_KIND
 from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
 from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
@@ -83,6 +84,17 @@ def _demands_enforcement(kind: str, text: str) -> bool:
 
 
 _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
+# A judge abridges a run of code as "a ... b", lists lines as "a; b", and cites
+# two places as "x.py: a and y.py: b". Each part must still be verbatim source.
+_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026)(?=[\s)\]}]|$)|;\s+|\s+and\s+[\w./\\-]+\.\w{1,5}:\s")
+# A formatted statement, or a def followed by its first body line, spans lines;
+# the judge quotes it on one. Lines a quote may span: a Kotlin/Compose call
+# puts one argument per line.
+_MAX_QUOTE_LINES = 25
+# Characters a multi-line quote may leave off its last line: a return
+# annotation and colon ("-> List[Row]:"), not a statement's substance.
+_MAX_UNQUOTED_TAIL = 24
+_BLOCK_PUNCTUATION = frozenset("{(:;,[")
 
 
 def _normalise_quote(text: str) -> str:
@@ -96,6 +108,84 @@ def _normalise_quote(text: str) -> str:
     # "175| ", so such a prefix is always a copied artifact.
     first = _READ_NUMBER_PREFIX_RE.sub("", first, count=1)
     return _collapse(first.replace("'", '"'))
+
+
+def _quote_candidates(raw: str) -> list[tuple[str, bool]]:
+    """(quote, cut) pairs: the normalised quote, then each part of an abridged
+    or double citation; ``cut`` when an ellipsis right after it marks the rest
+    of its line as left out.
+
+    Every part is checked as a citation of its own; "class X: ... <the code>"
+    names the behaviour only in a later part.
+    """
+    candidates = [(_evidence_quote(raw), False)]
+    position = 0
+    for match in _ABRIDGED_RE.finditer(raw):
+        is_ellipsis = match.group().strip().startswith(("...", "…"))
+        candidates.append((_evidence_quote(raw[position:match.start()]), is_ellipsis))
+        position = match.end()
+    candidates.append((_evidence_quote(raw[position:]), False))
+    seen: set = set()
+    return [c for c in candidates if c[0] and not (c in seen or seen.add(c))]
+
+
+_TRAILING_COMMA_RE = re.compile(r",(?=[)\]}])")
+
+
+def _joined_strings(text: str) -> str:
+    """Adjacent string literals ``"a " "b"`` read as the one string ``"a b"``, and
+    a formatter's trailing comma before a closing bracket is dropped."""
+    return _TRAILING_COMMA_RE.sub("", text.replace('""', ""))
+
+
+_CALL_RE = re.compile(r"[\w.$]+\(.*\);?")
+# Shorter than this, a call such as "f(x)" is too generic to identify code.
+_MIN_CALL_QUOTE = 12
+# Shortest visible start of a line the judge cut with an ellipsis.
+_MIN_CUT_QUOTE = 20
+# Shortest run copied from inside one line that identifies it on its own
+# ("onClick = { selected = if (on) a - b else a + b }" quotes the assignment).
+_MIN_INLINE_QUOTE = 30
+
+
+def _is_complete_call(quoted: str) -> bool:
+    """A whole call expression (balanced, closed), whitespace already removed."""
+    return (len(quoted) >= _MIN_CALL_QUOTE and bool(_CALL_RE.fullmatch(quoted))
+            and quoted.count("(") == quoted.count(")") and quoted.count("{") == quoted.count("}"))
+
+
+def _quote_spans(quoted: str, normalised: list[str], cut: bool = False):
+    """1-based (first, last) source line spans whose text is the quote."""
+    target = _joined_strings(quoted)
+    for start, first in enumerate(normalised):
+        # A line may end in the block it opens ("Card(...) {", "def f():"), which
+        # the judge leaves off; nothing else may be missing. A complete call
+        # may also be quoted from inside its line ("onPressed: () => save(x),"),
+        # and a line's start when an ellipsis says the rest was left out.
+        if (first == quoted
+                or (first.startswith(quoted) and set(first[len(quoted):]) <= _BLOCK_PUNCTUATION)
+                or (_is_complete_call(quoted) and quoted in first)
+                or (cut and len(quoted) >= _MIN_CUT_QUOTE and first.startswith(quoted))
+                or (len(quoted) >= _MIN_INLINE_QUOTE and quoted in first)):
+            yield start + 1, start + 1
+            continue
+        if not first or not target.startswith(_joined_strings(first)):
+            continue
+        joined = first
+        for end in range(start + 1, min(start + _MAX_QUOTE_LINES, len(normalised))):
+            earlier = _joined_strings(joined)
+            joined += normalised[end]
+            span_text = _joined_strings(joined)
+            # The quote may stop inside its last line (a signature quoted without
+            # its "-> T:"), never inside an earlier one.
+            if (span_text.startswith(target) and len(target) > len(earlier)
+                    and len(span_text) - len(target) <= _MAX_UNQUOTED_TAIL):
+                yield start + 1, end + 1
+                break
+            # A string piece's closing quote, or a trailing comma, waits for what
+            # follows on the next line (its partner string, the closing bracket).
+            if not target.startswith(span_text.rstrip('",')):
+                break
 
 
 def _evidence_quote(text: str) -> str:
@@ -878,6 +968,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
         path = path.strip().replace("\\", "/")
         while path.startswith("./"):
             path = path[2:]
+        raw_quote = quoted
         quoted = _evidence_quote(quoted)
         candidates = [] if not path or path.startswith("/") or ".." in path.split("/") else (
             [files[path]] if path in files else
@@ -917,10 +1008,14 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
                 parsed[candidate] = ([], None, [], set())
             lines, tree, diagnostics, comments = parsed[candidate]
             reason = "the quoted executable line was not found in the cited source"
-            for lineno, line in enumerate(lines, 1):
-                if quoted != _normalise_quote(line):
-                    continue
-                if lineno in comments:
+            normalised = [_normalise_quote(line) for line in lines]
+            spans = [span for quote, cut in _quote_candidates(raw_quote)
+                     for span in _quote_spans(quote, normalised, cut)]
+            for first_line, lineno in spans:
+                line = lines[first_line - 1]
+                # A span's checks apply to its last line: the body statement of a
+                # def-and-body quote, the same statement for a formatted call.
+                if first_line in comments or lineno in comments:
                     reason = "the cited line is a comment, not an implementation"
                     continue
                 statement = None
@@ -981,6 +1076,11 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
             continue
         if v.get("kind") == "verification":
             issues.append(f"requirement unverified: {label}{note}")
+            continue
+        if v.get("kind") == ENTITY_CRUD_KIND:
+            if status != "implemented":
+                # Unclassified prefix: a warning, like the web acceptance matrix.
+                issues.append(f"entity coverage: {v['text']} ({status}){note}")
             continue
         if status == "missing":
             issues.append(f"requirement: {label} is not implemented{note}")

@@ -166,7 +166,12 @@ Findings are classified into three severities:
        atomic requirements once and each is judged against the generated
        code, with every "implemented" citation re-checked by the harness;
        only behaviour the request states is listed, so a vague request
-       yields few requirements or none);
+       yields few requirements or none. A citation is code copied from the
+       cited file: a whole line, a statement spread over up to 25 lines, a
+       complete call or a run of at least 30 characters from inside a line,
+       or a line's start the judge cut with ``...``; an abridged or listed
+       quote is checked part by part. Prose, a paraphrase or another file's
+       code leaves the requirement unverified);
        partial requirements and unverified evidence (distinct from proven missing
        behavior); unresolved checklist work and unimplemented action contracts;
        a method button that takes its row id from a table of another
@@ -182,7 +187,11 @@ Findings are classified into three severities:
        variable), ``E501``, whitespace, blank lines, import order.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now), ``form field type:``, the model-derived acceptance matrix, and ``requirement out of
+       now), ``form field type:``, the model-derived acceptance matrix,
+       ``entity coverage:`` (for an ``other`` target used through screens, the
+       judge also checks that every entity can be created, viewed, edited and
+       deleted, since the acceptance matrix only reads web routes and pages;
+       like the matrix it is reported, never a blocker), and ``requirement out of
        scope:`` — a UI requirement on a run that neither has nor asked for a
        frontend, which a backend-only output has no files to satisfy.
 

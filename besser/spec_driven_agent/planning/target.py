@@ -33,14 +33,19 @@ TARGET — decide WHAT the user wants built, from their words:
 - web_app: anything used in a browser: web app, website, dashboard, portal, PWA,
   a "mobile-friendly" or "responsive" web app. Also a bare "app" or "application"
   with no platform named (the default).
-- backend: API-only / headless: a REST API, a backend, a server, also "an API
-  for my mobile app".
+- backend: API-only / headless: a REST API, a backend, a server, in any
+  language ("a REST API in Go"), also "an API for my mobile app".
 - other: anything that is not a web app or a backend: a native mobile app
   (Android / iOS / "mobile app"), a desktop app (Windows / macOS / Linux,
   "local", Electron, Tauri, WPF), a CLI, a game, a browser or IDE extension,
   embedded / Arduino code, a bot, a library, plain classes.
 Platform words that are not the target do not count: "deploy on a Windows
 server", "cancellation windows", "native speakers".
+An app that USES an API is that app: "a mobile app that syncs through a REST
+API" is other, not backend.
+An architecture pattern (MVC, MVVM, layered, hexagonal) says how to structure
+the app, not where it runs: "a library system following the MVC pattern" is a
+web_app unless a platform is named.
 target_description names the product in a few words ("native Android/iOS app",
 "Windows 11 desktop app", "Python CLI"), with the framework only if the user named one.
 has_user_interface: true when people use the result through screens (web, mobile,
@@ -71,6 +76,10 @@ def may_name_other_target(instructions: str | None) -> bool:
     return named_target(instructions) is not None or bool(_OTHER_KIND_RE.search(instructions or ""))
 
 
+# Caps the judge prompt on a large model; the classes past it stay unlisted.
+_MAX_ENTITY_REQUIREMENTS = 20
+
+
 @dataclass(frozen=True)
 class Target:
     kind: str
@@ -97,3 +106,25 @@ class Target:
         if not isinstance(has_ui, bool):
             has_ui = kind == WEB_APP
         return cls(kind=kind, description=description[:120], has_user_interface=has_ui)
+
+
+ENTITY_CRUD_KIND = "entity_crud"
+
+
+def entity_requirements(target: Target | None, domain_model) -> list[dict]:
+    """Create/view/edit/delete per entity, for a non-web app used through screens.
+
+    A web app's entities are measured by the acceptance matrix (routes and
+    pages). A native app has no such parser, so the requirements judge reads
+    the code instead. Like the matrix, the result is reported, never a
+    blocker: an app may leave reference data or a single user without screens.
+    """
+    if target is None or target.kind != OTHER or not target.has_user_interface or domain_model is None:
+        return []
+    names = sorted(c.name for c in domain_model.get_classes() if not c.is_abstract)
+    where = target.description or "app"
+    return [
+        {"kind": ENTITY_CRUD_KIND,
+         "text": f"Users can create, view, edit and delete {name} records from the {where}'s screens."}
+        for name in names[:_MAX_ENTITY_REQUIREMENTS]
+    ]

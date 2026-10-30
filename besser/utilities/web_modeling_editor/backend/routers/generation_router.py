@@ -32,6 +32,7 @@ from besser.utilities.buml_code_builder.agent_model_builder import agent_model_t
 from besser.generators.agents.baf_generator import GenerationMode
 from besser.generators.agents.agent_personalization import call_openai_chat
 from besser.utilities.provenance import add_generation_provenance_to_zip, with_version_comment
+from besser.utilities.web_modeling_editor.backend.services.utils.zip_utils import zip_directory
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -1422,22 +1423,6 @@ async def _generate_standard(buml_model, generator_class, generator_type: str, g
         return _create_file_response(temp_dir, generator_type)
 
 
-def _zip_directory(source_dir: str) -> io.BytesIO:
-    """Zip every file under ``source_dir`` into an in-memory archive.
-
-    Entry names are relative to ``source_dir``, so the archive root is the
-    directory's content rather than the directory itself.
-    """
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for root, _, files in os.walk(source_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                arc_name = os.path.relpath(file_path, source_dir)
-                zip_file.write(file_path, arc_name)
-    return zip_buffer
-
-
 def _create_zip_response(
     source_dir: str,
     generator_type: str,
@@ -1454,7 +1439,7 @@ def _create_zip_response(
         file_name: Download filename override; defaults to
             ``get_filename_for_generator(generator_type)``.
     """
-    zip_buffer = _zip_directory(source_dir)
+    zip_buffer = zip_directory(source_dir)
     add_generation_provenance_to_zip(zip_buffer, generator_type, options)
     file_name = file_name or get_filename_for_generator(generator_type)
 

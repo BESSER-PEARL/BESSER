@@ -34,7 +34,7 @@ def _generate(model, tmp_path, name):
 def test_trace_regions_point_at_the_generated_definitions(tmp_path):
     generator, code = _generate(_model(with_ids=True), tmp_path, "traced")
     lines = code.split("\n")
-    regions = {(r.element_id, r.rule.split("#")[1]): r for r in generator.trace_regions}
+    regions = {(r.element_id, r.rule.split("#")[1]): r for r in generator.traced_files["sql_alchemy.py"].regions}
 
     assert lines[regions[("enum-1", "enumeration")].start_line - 1] == "class Status(enum.Enum):"
     assert lines[regions[("class-1", "class")].start_line - 1].startswith("class Library(")
@@ -45,7 +45,7 @@ def test_trace_regions_point_at_the_generated_definitions(tmp_path):
     # The foreign key line sits inside the class that holds it.
     book = regions[("class-2", "class")]
     assert book.start_line < fk.start_line <= book.end_line
-    relationship_lines = [lines[r.start_line - 1] for r in generator.trace_regions
+    relationship_lines = [lines[r.start_line - 1] for r in generator.traced_files["sql_alchemy.py"].regions
                           if r.element_id == "assoc-1" and r.rule.endswith("#relationship")]
     assert any(line.startswith("Library.books") for line in relationship_lines)
     assert any(line.startswith("Book.library") for line in relationship_lines)
@@ -55,5 +55,5 @@ def test_tracing_does_not_change_the_generated_code(tmp_path):
     _, traced = _generate(_model(with_ids=True), tmp_path, "traced")
     untraced_generator, untraced = _generate(_model(with_ids=False), tmp_path, "untraced")
     assert traced == untraced
-    assert untraced_generator.trace_regions == []
+    assert untraced_generator.traced_files["sql_alchemy.py"].regions == ()
     assert "\x02" not in traced

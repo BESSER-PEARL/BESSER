@@ -6,7 +6,7 @@ from besser.generators.default_literals import register_default_literals
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.generators.sql_alchemy.ocl_check_constraints import get_check_constraints
-from besser.utilities.generation_trace import TraceExtension, TraceRegion, extract_trace_regions
+from besser.utilities.generation_trace import FileTrace, TraceExtension, extract_trace_regions
 from besser.utilities.utils import sort_by_timestamp
 from besser.generators.structural_utils import (
     get_deferred_fk_associations,
@@ -28,7 +28,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
 
     Attributes:
-        trace_regions (list[TraceRegion]): After ``generate()``, the lines of ``sql_alchemy.py`` rendered
+        traced_files (dict[str, FileTrace]): After ``generate()``, ``sql_alchemy.py`` with the lines rendered
             from each class, enumeration and association that has an ``id``.
     """
 
@@ -87,7 +87,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         # Add enums to TYPES dictionary
         for enum in model.get_enumerations():
             self.TYPES[enum.name] = f"Enum('{enum.name}')"
-        self.trace_regions: list[TraceRegion] = []
+        self.traced_files: dict[str, FileTrace] = {}
 
     def get_pk_py_types(self):
         """Class name -> python type of its primary key (default 'int').
@@ -294,6 +294,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 concrete_parents=concrete_parents,
                 check_constraints=check_constraints,
             )
-            generated_code, self.trace_regions = extract_trace_regions(rendered)
+            generated_code, regions = extract_trace_regions(rendered)
+            self.traced_files = {os.path.basename(file_path): FileTrace(tuple(regions))}
             f.write(generated_code)
             logger.info("Code generated in the location: %s", file_path)

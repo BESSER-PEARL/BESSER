@@ -148,11 +148,11 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 #
 ############################################
 
-{% for class in classes %}
+{% for class in classes %}{% trace class, "router_include" %}
 app.include_router({{ class.name | lower }}_router.router)
 {% if class.methods %}app.include_router({{ class.name | lower }}_methods_router.router)
 {% endif %}
-{% endfor %}
+{% endtrace %}{% endfor %}
 
 ############################################
 #

@@ -489,7 +489,7 @@ WS_CLOSE_RATE_LIMITED = 4429
 # migration in the frontend's trace store when the shape changes.
 TRACE_SCHEMA_VERSION = 2
 # Generators whose output carries trace links (their templates use `{% trace %}`).
-TRACED_GENERATORS = frozenset({"sqlalchemy"})
+TRACED_GENERATORS = frozenset({"sqlalchemy", "backend"})
 # A generated file up to this size is kept in the trace so the trace view can
 # show its lines; above it only its hash is (browser storage is ~5 MB per origin).
 TRACE_MAX_STORED_CONTENT_BYTES = 200_000

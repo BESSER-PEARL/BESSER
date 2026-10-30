@@ -8,7 +8,8 @@ from jinja2 import DictLoader, Environment
 from besser.BUML.metamodel.structural import Class, Enumeration
 from besser.BUML.metamodel.traceability import CodeArtifact, CodeGeneration, ModelArtifact
 from besser.utilities.generation_trace import (
-    TraceExtension, TraceRegion, build_generation_trace, extract_trace_regions, shift_regions,
+    ElementRef, FileTrace, GeneratedFile, TraceExtension, TraceRegion, TraceSource, build_generation_trace,
+    extract_trace_regions, shift_regions,
 )
 
 TEMPLATE = """header
@@ -93,13 +94,16 @@ def test_shift_regions_moves_every_line():
     assert shift_regions([region], 1) == [TraceRegion("a", "Class", "A", "r", 4, 6)]
 
 
-def _trace(content: str, cap: int):
-    regions = [TraceRegion("c1", "Class", "Book", "t#class", 2, 3), TraceRegion("c1", "Class", "Book", "t#rel", 5, 5)]
+def _build(files, cap: int = 1000):
     now = datetime(2026, 10, 1)
     return build_generation_trace(
-        regions, file_path="out.py", content=content, model_id="diagram-1", model_name="Library",
-        generator="sqlalchemy", generator_version="8.5.0", actor_name="BESSER User",
-        max_stored_content_bytes=cap, started_at=now, ended_at=now)
+        files, model_id="diagram-1", model_name="Library", generator="sqlalchemy", generator_version="8.5.0",
+        actor_name="BESSER User", max_stored_content_bytes=cap, started_at=now, ended_at=now)
+
+
+def _trace(content: str, cap: int):
+    regions = (TraceRegion("c1", "Class", "Book", "t#class", 2, 3), TraceRegion("c1", "Class", "Book", "t#rel", 5, 5))
+    return _build([GeneratedFile("out.py", content, FileTrace(regions))], cap)
 
 
 def test_build_generation_trace_links_each_region():
@@ -125,3 +129,39 @@ def test_build_generation_trace_keeps_only_the_hash_above_the_cap():
     content = "h\nclass Book:\n  x\n\nrel\n"
     _, file = _trace(content, cap=len(content) - 1).artifacts[:2]
     assert file.content is None and file.content_hash
+
+
+def test_build_generation_trace_over_several_files():
+    """A backend run: a file with blocks, a file generated as a whole from a class, and boilerplate."""
+    book, close = ElementRef("c1", "Class", "Book"), ElementRef("m1", "Method", "close")
+    files = [
+        GeneratedFile("main_api.py", "app\ninclude(book)\n",
+                      FileTrace((TraceRegion("c1", "Class", "Book", "main_api.py.j2#router_include", 2, 2),))),
+        GeneratedFile("routers/book.py", "router for book\n", FileTrace(sources=(TraceSource(book, "router.py.j2#router"),))),
+        GeneratedFile("routers/book_methods.py", "def close():\n  pass\n",
+                      FileTrace((TraceRegion("m1", "Method", "close", "router_methods.py.j2#method", 1, 2, owner=book),))),
+        GeneratedFile("database.py", "engine\n"),
+    ]
+    trace = _build(files)
+    assert trace.validate()["success"]
+    model = trace.model_artifact_for("diagram-1")
+    by_path = {a.path: a for a in trace.artifacts if isinstance(a, CodeArtifact) and a.start_line is None}
+    assert set(by_path) == {"main_api.py", "routers/book.py", "routers/book_methods.py", "database.py"}
+    # The model is linked to every file; the class to its router as a whole; the method nests under its class.
+    assert {link.target.path for link in trace.trace_links if link.source is model} == set(by_path)
+    book_artifact, close_artifact = trace.model_artifact_for("c1"), trace.model_artifact_for(close.element_id)
+    assert by_path["routers/book.py"] in {link.target for link in trace.trace_links if link.source is book_artifact}
+    assert close_artifact.parent is book_artifact
+    # Content is kept only for files with fragments (the views show their lines).
+    assert by_path["main_api.py"].content is not None and by_path["routers/book_methods.py"].content is not None
+    assert by_path["routers/book.py"].content is None and by_path["database.py"].content is None
+    assert all(f.content_hash for f in by_path.values())
+
+
+def test_a_traced_block_records_its_element_owner():
+    from besser.BUML.metamodel.structural import Class, Method
+    method = Method("close")
+    owner = Class("Book", methods={method})
+    owner.id, method.id = "c1", "m1"
+    _, (region,) = extract_trace_regions(_render("{% trace m %}def close(): pass{% endtrace %}", m=method))
+    assert region.owner == ElementRef("c1", "Class", "Book")

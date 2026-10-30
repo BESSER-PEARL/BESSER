@@ -14,6 +14,7 @@ from besser.generators.structural_utils import (
 )
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.utilities.utils import sort_by_timestamp
+from besser.utilities.generation_trace import FileTrace, TraceExtension, extract_trace_regions
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +32,17 @@ class PydanticGenerator(GeneratorInterface):
                                             are enabled. If set to False, only the ID of the linked entity will be used.
                                             The default value is False.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, ``pydantic_classes.py`` with the lines rendered
+            from each class and enumeration that has an ``id``.
     """
     def __init__(self, model: DomainModel, backend: bool = False, nested_creations: bool = False, output_dir: str = None):
         super().__init__(model, output_dir)
         self.domain_model = model
         self.backend = backend
         self.nested_creations = nested_creations
+        self.traced_files: dict = {}
 
     def generate(self):
         """
@@ -63,7 +69,7 @@ class PydanticGenerator(GeneratorInterface):
             trim_blocks=True,
             lstrip_blocks=True,
             keep_trailing_newline=True,
-            extensions=['jinja2.ext.do']
+            extensions=['jinja2.ext.do', TraceExtension]
         )
         env.filters["ascii_identifier"] = ascii_identifier
         env.globals["is_server_owned_attribute"] = is_server_owned_attribute
@@ -117,7 +123,7 @@ class PydanticGenerator(GeneratorInterface):
             ]
 
         with open(file_path, mode="w", newline='\n', encoding="utf-8") as f:
-            generated_code = template.render(
+            rendered = template.render(
                 domain=self.domain_model,
                 sorted_classes=sorted_classes,
                 backend=self.backend,
@@ -132,5 +138,7 @@ class PydanticGenerator(GeneratorInterface):
                 assoc_end_fields=assoc_end_fields,
                 sort_by_timestamp=sort_by_timestamp,
             )
+            generated_code, regions = extract_trace_regions(rendered)
+            self.traced_files = {os.path.basename(file_path): FileTrace(tuple(regions))}
             f.write(generated_code)
             logger.info("Code generated in the location: %s", file_path)

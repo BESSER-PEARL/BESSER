@@ -35,6 +35,11 @@ class BackendGenerator(GeneratorInterface):
         api_description (str, optional): Description shown in the generated API docs. Defaults to a generic
                                 description of the generated API.
         api_version (str, optional): Version of the generated API. Defaults to ``"1.0.0"``.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, what each traced file was rendered from,
+            by path relative to the output folder: ``sql_alchemy.py``, ``pydantic_classes.py``,
+            ``main_api.py`` and the routers (see ``besser.utilities.generation_trace``).
     """
 
     def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None,
@@ -55,6 +60,7 @@ class BackendGenerator(GeneratorInterface):
         self.api_version = api_version
         self.config = self.load_config()
         self.has_nn_methods = False
+        self.traced_files: dict = {}
 
     def load_config(self):
         """
@@ -107,7 +113,7 @@ class BackendGenerator(GeneratorInterface):
 
         # main_api.py (slim app + router includes) + database.py + bal_stdlib.py
         # + routers/<class>.py, one router per resource.
-        generate_modular_api(
+        api_files = generate_modular_api(
             model=self.model,
             http_methods=self.http_methods,
             nested_creations=self.nested_creations,
@@ -123,6 +129,9 @@ class BackendGenerator(GeneratorInterface):
 
         pydantic_model = PydanticGenerator(model=self.model, output_dir=backend_folder_path, backend=True, nested_creations=self.nested_creations)
         pydantic_model.generate()
+
+        # The files of the generators this one is built from, by path in the output folder.
+        self.traced_files = {**api_files, **sql_alchemy.traced_files, **pydantic_model.traced_files}
 
         # Methods implemented by a neural network: PyTorch modules + runtime + torch requirement.
         self.has_nn_methods = generate_nn_methods(self.model, backend_folder_path)

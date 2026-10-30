@@ -130,3 +130,56 @@ def test_invalid_trace_is_a_conversion_error(traced, corrupt, message):
     corrupt(trace)
     with pytest.raises(ConversionError, match=message):
         process_trace(trace)
+
+
+# ---------------------------------------------------------------- the backend: a ZIP of many files
+
+def _zip_entries(data: bytes) -> dict:
+    import io
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        return {name: archive.read(name) for name in archive.namelist()}
+
+
+@pytest.fixture
+def traced_backend(client, payload):
+    response = client.post(URL, json={**payload, "generator": "backend", "config": {}})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_backend_delivery_is_the_plain_download(client, payload, traced_backend):
+    plain = client.post("/besser_api/generate-output", json={**payload, "generator": "backend", "config": {}})
+    assert plain.status_code == 200
+    assert traced_backend["fileName"] == "fastapi_backend.zip" and traced_backend["mediaType"] == "application/zip"
+    # Same entries, same bytes (only the archive's timestamps may differ).
+    assert _zip_entries(base64.b64decode(traced_backend["contentBase64"])) == _zip_entries(plain.content)
+
+
+def test_backend_trace_covers_its_files_and_points_at_their_lines(payload, traced_backend):
+    trace = traced_backend["trace"]
+    assert trace_buml_to_json(process_trace(trace)) == trace
+    entries = {name: data.decode("utf-8") for name, data in
+               _zip_entries(base64.b64decode(traced_backend["contentBase64"])).items()}
+    artifacts = {a["id"]: a for a in trace["artifacts"]}
+    files = {a["path"]: a for a in artifacts.values() if a["type"] == "CodeArtifact" and "startLine" not in a}
+    # Every generated text file is in the trace (the provenance note is added to the ZIP, not generated).
+    assert set(files) == set(entries) - {"BESSER_GENERATION.md"}
+    classes = {e["id"]: e["name"] for e in payload["model"]["elements"].values() if e["type"] == "Class"}
+    whole_files, lines = {}, {}
+    for link in trace["traceLinks"]:
+        source, target = artifacts[link["sourceId"]], artifacts[link["targetId"]]
+        if source.get("elementId") not in classes:
+            continue
+        name, rule = classes[source["elementId"]], link["evidence"][0]["rule"].split("#")[1]
+        if "startLine" in target:
+            lines[(name, target["path"], rule)] = entries[target["path"]].split("\n")[target["startLine"] - 1]
+        else:
+            whole_files.setdefault(name, set()).add(target["path"])
+    for name in classes.values():
+        assert f"routers/{name.lower()}.py" in whole_files[name]
+        assert lines[(name, "pydantic_classes.py", "class")].startswith(f"class {name}Create(")
+        assert lines[(name, "sql_alchemy.py", "class")].startswith(f"class {name}(")
+        assert f"{name.lower()}_router.router" in lines[(name, "main_api.py", "router_include")]
+    # Only files with fragments keep their content.
+    assert files["pydantic_classes.py"].get("content") and not files["routers/book.py"].get("content")

@@ -23,7 +23,7 @@ router = APIRouter()
 ############################################
 #   {{ class.name }} Method Endpoints
 ############################################
-{% for method in class.methods|sort(attribute='name') %}
+{% for method in class.methods|sort(attribute='name') %}{% trace method, "method" %}
 {% set clean_name = method.name | clean_method_name %}
 {% set method_params = [] %}
 {% for param in method.parameters %}
@@ -266,5 +266,5 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
 {% endif %}
 {% endif %}
 
-{% endfor %}
+{% endtrace %}{% endfor %}
 {% endif %}

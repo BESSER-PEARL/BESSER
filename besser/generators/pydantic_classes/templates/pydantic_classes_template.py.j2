@@ -34,13 +34,13 @@ from abc import ABC, abstractmethod
 ############################################
 
 {# Handle enums first #}
-{% for enum in domain.get_enumerations()|sort(attribute='name') -%}
+{% for enum in domain.get_enumerations()|sort(attribute='name') -%}{% trace enum, "enumeration" %}
 class {{ enum.name }}(Enum):
 {% for literal in sort_by_timestamp(enum.literals) %}
     {{ literal.name }} = "{{ literal.name }}"
 {% endfor %}
 
-{% endfor -%}
+{% endtrace %}{% endfor -%}
 
 {% if backend and assoc_link_meta %}
 ############################################
@@ -60,7 +60,7 @@ class {{ link.link_class }}(BaseModel):
 ############################################
 # Classes are defined here
 ############################################
-{% for class in sorted_classes %}
+{% for class in sorted_classes %}{% trace class, "class" %}
 class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}({% for parent in class.parents()|sort(attribute='name') %}{{parent.name}}{% if backend %}Create{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC, BaseModel){% else %}(BaseModel){% endif %}:
     {% set ns.id_found = false -%}
     {% set ns.has_field = false %}
@@ -384,4 +384,4 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
 {% endif %}
 
 {# Spacing #}
-{% endfor %}
+{% endtrace %}{% endfor %}

@@ -62,8 +62,10 @@ The endpoints behind these actions are listed under *Knowledge Graph* in
 Traceability
 ------------
 
-The *Traceability* page of a class diagram records and shows what happened to the
-project's models and the code generated from them. Recording is off by default;
+The *Traceability* page (in the project section of the sidebar, next to *Settings*)
+records and shows what happened to the project's models and the code generated from
+them. Class diagrams are recorded today; the page is project-wide so that other model
+types can join. Recording is off by default;
 turn on *Record traces for this project* on that page.
 
 * **Recorded.** Class-diagram edits (creating, renaming, retyping or deleting a
@@ -85,8 +87,8 @@ turn on *Record traces for this project* on that page.
   *suspect*, and everything further downstream *stale upstream*. Selecting a link
   shows its evidence, the operation, actor and tool that made it, and the changes
   that made it suspect. Older generation runs are hidden unless asked for.
-* **Stored.** In the browser, apart from the project, and exported or imported as
-  ``<project>.trace.json``. Deleting the project deletes its trace.
+* **Stored.** In the browser, apart from the project. Deleting the project deletes
+  its trace, and *Clear* on the page deletes it alone.
 * **Exported with the project.** Once a trace has been recorded, the *Export
   Project* dialog lists *Traceability* next to the diagrams. Ticked (it is off by
   default), the trace goes into the JSON export as ``trace`` beside ``project``, or

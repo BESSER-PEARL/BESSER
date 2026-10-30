@@ -485,7 +485,7 @@ WS_CLOSE_NOT_FOUND = 4404
 WS_CLOSE_RATE_LIMITED = 4429
 
 # Traceability
-# Version of the trace file format (`<project>.trace.json`); bump it with a
+# Version of the trace file format (the `trace` of a project export); bump it with a
 # migration in the frontend's trace store when the shape changes.
 TRACE_SCHEMA_VERSION = 1
 # Generators whose output carries trace links (their templates use `{% trace %}`).

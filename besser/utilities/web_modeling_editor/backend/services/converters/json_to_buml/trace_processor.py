@@ -1,5 +1,5 @@
 """
-Trace file JSON (``<project>.trace.json``) -> TraceModel.
+Trace file JSON (the ``trace`` of a project export) -> TraceModel.
 
 The inverse of ``buml_to_json/trace_converter.py``. Unlike the diagram
 processors it is strict: a trace is a record, so a missing or malformed field

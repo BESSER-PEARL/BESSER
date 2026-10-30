@@ -104,11 +104,12 @@ In the web editor
 -----------------
 
 The editor records traces per project when *Record traces for this project* is
-turned on (off by default) on the *Traceability* page of a class diagram. Class
+turned on (off by default) on the project's *Traceability* page. Class
 diagram edits are recorded as modelling sessions, SQLAlchemy generations as
-generation runs. The trace is kept in the browser apart from the project and
-exported as ``<project>.trace.json``, the JSON form of this metamodel (see
-``trace_converter.py`` / ``trace_processor.py`` in the backend converters). See
+generation runs. The trace is kept in the browser apart from the project, and
+travels with a project export when asked for: in a JSON export as the JSON form of
+this metamodel (see ``trace_converter.py`` / ``trace_processor.py`` in the backend
+converters), in a B-UML export as its Python form (below). See
 :doc:`../../web_editor`.
 
 Python form

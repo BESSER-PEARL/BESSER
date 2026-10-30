@@ -1,5 +1,5 @@
 """
-TraceModel -> trace file JSON (``<project>.trace.json``).
+TraceModel -> trace file JSON (the ``trace`` of a project export).
 
 The frontend type of this shape is ``TraceFile`` in the webapp's
 ``shared/types/traceability.ts``; ``json_to_buml/trace_processor.py`` reads it

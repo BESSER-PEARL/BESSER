@@ -73,6 +73,18 @@ _STREAMLIT_PORT = int(os.environ.get("STUDY_AGENT_STREAMLIT_PORT", "5000"))
 # a raw port.  Leave empty for local/direct access.
 _STUDY_AGENT_URL_PATH = os.environ.get("STUDY_AGENT_URL_PATH", "").rstrip("/")
 
+# Default (non-personalized) museum agent: bundled with the backend and started
+# once at boot whenever study mode is on (STUDY_AGENT_URL_PATH set), independent
+# of participant deploys.  Uses its own ports/subpath so both agents coexist.
+_DEFAULT_AGENT_SRC = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "study_default_agent"
+)
+_DEFAULT_AGENT_DIR = os.path.join(tempfile.gettempdir(), "besser_study_default_agent")
+_DEFAULT_AGENT_PID_FILE = os.path.join(tempfile.gettempdir(), "besser_study_default_agent.pid")
+_DEFAULT_AGENT_STREAMLIT_PORT = 5001
+_DEFAULT_AGENT_WS_PORT = 8767
+_DEFAULT_AGENT_URL_PATH = "/study-agent-default"
+
 router = APIRouter(prefix="/besser_api", tags=["study"])
 
 
@@ -92,11 +104,15 @@ class StudyDeployRequest(BaseModel):
 
 async def _deploy_study_website(request: StudyDeployRequest) -> str:
     """Generate the normal React export and ask the existing frontend to build it."""
-    internal_url = os.environ.get("STUDY_FRONTEND_INTERNAL_URL", "").rstrip("/")
-    public_url = os.environ.get("STUDY_FRONTEND_PUBLIC_URL", "").rstrip("/")
+    # Defaults fit the docker-compose study setup: the frontend container is
+    # reached internally by service name and published through the same
+    # reverse proxy (and host) as the editor, under /study-site/.
+    internal_url = (os.environ.get("STUDY_FRONTEND_INTERNAL_URL")
+                    or os.environ.get("WME_NODE_SERVER_URL") or "http://besser-wme-frontend:8080").rstrip("/")
+    public_url = (os.environ.get("STUDY_FRONTEND_PUBLIC_URL") or os.environ.get("DEPLOYMENT_URL", "")).rstrip("/")
     token = os.environ.get("STUDY_DEPLOY_TOKEN", "")
-    if not internal_url or not public_url or not token:
-        raise HTTPException(status_code=503, detail="Study website deployment requires STUDY_FRONTEND_INTERNAL_URL, STUDY_FRONTEND_PUBLIC_URL and STUDY_DEPLOY_TOKEN")
+    if not public_url or not token:
+        raise HTTPException(status_code=503, detail="Study website deployment requires STUDY_DEPLOY_TOKEN (and DEPLOYMENT_URL or STUDY_FRONTEND_PUBLIC_URL)")
     if len(token) < 32:
         raise HTTPException(status_code=503, detail="STUDY_DEPLOY_TOKEN must contain at least 32 characters")
     internal_origin = urlparse(internal_url)
@@ -106,9 +122,6 @@ async def _deploy_study_website(request: StudyDeployRequest) -> str:
             or public_origin.scheme not in {"http", "https"}
             or not public_origin.hostname or public_origin.path):
         raise HTTPException(status_code=503, detail="Study frontend URLs must be HTTP(S) origins without a path")
-    editor_host = urlparse(os.environ.get("DEPLOYMENT_URL", "")).hostname
-    if editor_host and public_origin.hostname == editor_host:
-        raise HTTPException(status_code=503, detail="The study website must use a hostname distinct from the editor")
 
     from besser.utilities.web_modeling_editor.backend.routers.generation_router import _handle_web_app_project_generation
 
@@ -166,18 +179,19 @@ async def _deploy_study_website(request: StudyDeployRequest) -> str:
 # ── process management helpers ─────────────────────────────────────────────
 
 
-def _kill_study_agent() -> None:
+def _kill_study_agent(pid_file: Optional[str] = None) -> None:
     """Kill the currently running study agent (and its children) if any.
 
     On Windows, waits up to 5 s for the process tree to exit so that file
     handles on the log files are released before the caller clears the
     directory.
     """
-    if not os.path.exists(_STUDY_PID_FILE):
+    pid_file = pid_file or _STUDY_PID_FILE
+    if not os.path.exists(pid_file):
         return
     pid = None
     try:
-        with open(_STUDY_PID_FILE) as fh:
+        with open(pid_file) as fh:
             pid = int(fh.read().strip())
         if sys.platform == "win32":
             subprocess.run(
@@ -207,14 +221,22 @@ def _kill_study_agent() -> None:
         pass
     finally:
         try:
-            os.remove(_STUDY_PID_FILE)
+            os.remove(pid_file)
         except OSError:
             pass
 
 
-def _start_study_agent(script_name: str) -> int:
+def _start_study_agent(
+    script_name: str,
+    agent_dir: Optional[str] = None,
+    streamlit_port: Optional[int] = None,
+    url_path: Optional[str] = None,
+) -> int:
     """Launch the agent as a detached subprocess and return its PID."""
-    log_path = os.path.join(_STUDY_AGENT_DIR, "application.log")
+    agent_dir = agent_dir or _STUDY_AGENT_DIR
+    streamlit_port = streamlit_port or _STREAMLIT_PORT
+    url_path = _STUDY_AGENT_URL_PATH if url_path is None else url_path
+    log_path = os.path.join(agent_dir, "application.log")
     logger.info("[study-deploy] Agent log: %s", log_path)
 
     # Prepend the Scripts dirs of the running Python so BAF's subprocess.run(["streamlit",...])
@@ -228,14 +250,14 @@ def _start_study_agent(script_name: str) -> int:
     # Force Streamlit to bind on all interfaces (not just localhost) so it is
     # reachable from outside the Docker container.
     env.setdefault("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
-    env.setdefault("STREAMLIT_SERVER_PORT", str(_STREAMLIT_PORT))
+    env.setdefault("STREAMLIT_SERVER_PORT", str(streamlit_port))
     env.setdefault("STREAMLIT_SERVER_HEADLESS", "true")
-    if _STUDY_AGENT_URL_PATH:
-        env.setdefault("STREAMLIT_SERVER_BASE_URL_PATH", _STUDY_AGENT_URL_PATH)
+    if url_path:
+        env["STREAMLIT_SERVER_BASE_URL_PATH"] = url_path
     logger.info("[study-deploy] Using Python: %s", sys.executable)
 
     kwargs: Dict[str, Any] = dict(
-        cwd=_STUDY_AGENT_DIR,
+        cwd=agent_dir,
         env=env,
     )
     if sys.platform == "win32":
@@ -366,6 +388,7 @@ def _generate_study_agent_files(json_data: dict, config: dict, config_yaml: Opti
             config_yaml=config_yaml,
         )
         generator.generate()
+        _inject_server_openai_key(os.path.join(_STUDY_AGENT_DIR, "config.yaml"))
         logger.info("[study-deploy] Generated agent '%s' in %s", agent_name, _STUDY_AGENT_DIR)
 
     # Write user_profiles.json alongside the agent files so the BAF runtime can
@@ -389,6 +412,86 @@ def _generate_study_agent_files(json_data: dict, config: dict, config_yaml: Opti
             )
 
     return f"{agent_name}.py"
+
+
+# ── default agent ──────────────────────────────────────────────────────────
+
+
+def _inject_server_openai_key(config_path: str) -> None:
+    """Write the server's OPENAI_API_KEY into an agent ``config.yaml``.
+
+    Keeps the key out of the editor/browser: participants never enter it, and
+    whatever placeholder the generated config carries is replaced here.
+    """
+    import yaml
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key or not os.path.isfile(config_path):
+        return
+    with open(config_path, encoding="utf-8") as fh:
+        config = yaml.safe_load(fh) or {}
+    config.setdefault("nlp", {}).setdefault("openai", {})["api_key"] = api_key
+    with open(config_path, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(config, fh, sort_keys=False)
+
+
+def _prepare_default_agent_dir() -> str:
+    """Copy the default agent to a runtime dir, patching ports and the API key.
+
+    Returns the entry-point script name.  The source directory is never
+    modified; ports are rewritten so the default agent does not collide with the
+    participant agent, and the OpenAI key is taken from ``OPENAI_API_KEY`` so
+    no secret has to live in the bundled ``config.yaml``.
+    """
+    import yaml
+
+    shutil.rmtree(_DEFAULT_AGENT_DIR, ignore_errors=True)
+    shutil.copytree(_DEFAULT_AGENT_SRC, _DEFAULT_AGENT_DIR)
+
+    config_path = os.path.join(_DEFAULT_AGENT_DIR, "config.yaml")
+    with open(config_path, encoding="utf-8") as fh:
+        config = yaml.safe_load(fh) or {}
+    ws = config.setdefault("platforms", {}).setdefault("websocket", {})
+    ws["host"] = "localhost"
+    ws["port"] = _DEFAULT_AGENT_WS_PORT
+    streamlit = ws.setdefault("streamlit", {})
+    streamlit["host"] = "0.0.0.0"
+    streamlit["port"] = _DEFAULT_AGENT_STREAMLIT_PORT
+    with open(config_path, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(config, fh, sort_keys=False)
+    _inject_server_openai_key(config_path)
+
+    return "Museum_Agent.py"
+
+
+def start_default_study_agent() -> Optional[int]:
+    """Start the always-on default agent when study mode is on.
+
+    Failures are logged, not raised, so a broken default agent never prevents
+    the backend from starting.
+    """
+    if not _STUDY_AGENT_URL_PATH:
+        return None
+    try:
+        _kill_study_agent(_DEFAULT_AGENT_PID_FILE)
+        script = _prepare_default_agent_dir()
+        pid = _start_study_agent(
+            script,
+            agent_dir=_DEFAULT_AGENT_DIR,
+            streamlit_port=_DEFAULT_AGENT_STREAMLIT_PORT,
+            url_path=_DEFAULT_AGENT_URL_PATH,
+        )
+        with open(_DEFAULT_AGENT_PID_FILE, "w") as fh:
+            fh.write(str(pid))
+        logger.info("[study-deploy] Default agent started PID=%d script=%s", pid, script)
+        return pid
+    except Exception:
+        logger.exception("[study-deploy] Could not start the default study agent")
+        return None
+
+
+def stop_default_study_agent() -> None:
+    _kill_study_agent(_DEFAULT_AGENT_PID_FILE)
 
 
 # ── endpoint ───────────────────────────────────────────────────────────────

@@ -70,12 +70,12 @@ turn on *Record traces for this project* on that page.
 
 * **Recorded.** Class-diagram edits (creating, renaming, retyping or deleting a
   class, attribute, method, enumeration, association, generalization or OCL
-  constraint) become modelling sessions, attributed to the project owner (or
+  constraint) become modeling sessions, attributed to the project owner (or
   ``anonymous``) and, for assistant edits, to the assistant. Layout changes are not
   recorded, and quick successive edits of one element are merged. A SQLAlchemy
   generation records which lines each class, enumeration and association produced.
 * **Shown.** A *Timeline* of sessions and generation runs, each naming the models
-  (diagrams) it changed or read; *Elements*, a tree of the project's diagrams, their
+  (diagrams) it changed or read; *Diagrams*, a tree of the project's diagrams, their
   elements and the elements' members, where a diagram shows the whole files generated
   from it, an element its lines, and both their history; and a *Coverage* matrix of
   generation runs against each diagram (its whole files) and its elements, where

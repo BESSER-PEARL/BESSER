@@ -38,6 +38,86 @@ A request for the keyless tiers must not carry a key; one is silently discarded
 rather than used. A request for a commercial provider without a key is rejected
 with a provider-aware message.
 
+The model catalog
+-----------------
+
+Which providers and models the editor's key dialog offers, the endpoint of a
+gateway provider, and the rates a gateway bills are configuration, held in one
+JSON file. BESSER ships a public default,
+``besser/spec_driven_agent/providers/data/model_catalog.json``. A deployment
+points ``BESSER_MODEL_CATALOG`` at its own file, which is merged over the
+default (see :doc:`configuration`). Adding, removing or repricing a model is an
+edit to that file and a restart of the backend, the Spec-Driven worker and the
+modeling agent; no code change or release.
+
+A deployment's file names only what differs from the default:
+
+.. code-block:: json
+
+   {
+     "providers": {
+       "pia": {
+         "label": "Company gateway",
+         "hint": "Your personal gateway key (starts with sk-).",
+         "key_prefix": "sk-",
+         "base_url": "https://gateway.example.internal/v1",
+         "models": [
+           {"id": "claude-sonnet-5-5", "label": "Claude Sonnet 5.5", "default": true,
+            "price": {"input": 2.2, "output": 11.0}},
+           {"id": "gpt-6-luna", "label": "GPT-6 Luna — fast & cheap",
+            "price": {"input": 0.1, "output": 0.5}}
+         ]
+       },
+       "mistral": null
+     },
+     "route_prices": {
+       "llm-proxy.example.org": {
+         "moonshotai/kimi-k3": {"input": 3.0, "output": 15.0, "cache_read": 0.3}
+       }
+     }
+   }
+
+- ``providers.<id>`` replaces that provider's entry, ``null`` removes it, and a
+  new id is added after the default ones. ``"replace": true`` at the top level
+  drops the default catalog altogether. Keys starting with ``_`` are notes.
+- A provider has a ``label``, optional ``hint`` and ``key_prefix`` for the key
+  field, and its ``models``: an ``id``, a ``label``, an optional ``default``
+  and an optional ``price``. The model marked ``"default": true`` is what a
+  run uses when the request names no model ("Recommended default" in the key
+  dialog, which preselects it for ``pia`` and ``local``); without one, the
+  built-in default in the table below applies.
+- ``base_url`` makes the provider a **gateway**: its runs go to that
+  OpenAI-compatible endpoint, which the server resolves, so the browser never
+  holds the host. A request for a gateway carries no ``base_url`` and is not
+  subject to the custom-endpoint gate below. The editor knows one gateway
+  provider, ``pia``; the public default has none, so the editor offers it only
+  where a deployment's catalog defines it.
+- A model's optional ``request`` object sets how BESSER shapes requests to
+  it, over the built-in rules in the table under `Model-specific request
+  handling`_: ``forced_tool_choice`` (``false`` when ``tool_choice`` of type
+  ``tool`` / ``any`` is rejected; the call is then sent as ``auto`` plus an
+  instruction), ``thinking_can_be_disabled`` (``false`` when
+  ``thinking: {"type": "disabled"}`` is rejected) and
+  ``reasoning_effort_for_tools`` (the ``reasoning_effort`` an OpenAI model
+  needs to accept function tools, e.g. ``"none"``). A new model with one of
+  these quirks is then a catalog edit, not a release:
+
+  .. code-block:: json
+
+     {"id": "claude-sonnet-6", "label": "Claude Sonnet 6",
+      "request": {"forced_tool_choice": false, "thinking_can_be_disabled": false}}
+
+- Prices are USD per 1M tokens (``input``, ``output``, optional
+  ``cache_read`` and ``cache_write``; a missing cache rate bills at the input
+  rate). A price on a gateway model applies on that gateway; ``route_prices``
+  prices a gateway that is not a picker provider, such as the keyless tiers'
+  endpoint. A price on a vendor model overrides the published list price.
+
+``GET /besser_api/spec-driven/config`` returns the catalog's providers and
+models as ``providers`` (``id``, ``label``, ``hint``, ``key_prefix``,
+``models``), without endpoints or rates. A broken catalog file stops the
+backend at startup with a message naming the file and the field.
+
 The fallback chain
 ------------------
 
@@ -61,7 +141,8 @@ Default models per provider
 ---------------------------
 
 The model is chosen per run. If the request doesn't specify one, the
-provider default is used:
+provider default is used: the model catalog's ``"default": true`` model when
+it marks one, otherwise the built-in default below:
 
 .. list-table::
    :header-rows: 1
@@ -105,7 +186,7 @@ fallback. Any other value pins the run to the primary.
 Completions API. Its endpoint is **fixed server-side**
 (``https://api.tokenfactory.nebius.com/v1/``, overridable only by the operator
 through ``NEBIUS_BASE_URL``), so a Nebius run carries no ``base_url`` and is
-not subject to the custom-endpoint gate that ``local`` / ``PIA`` runs are.
+not subject to the custom-endpoint gate that ``local`` runs are.
 Because the whole customization loop is tool-driven, any ``llm_model`` chosen
 here must support OpenAI-style function calling.
 
@@ -133,7 +214,7 @@ a request shaped for them, which the client does automatically:
        tools with reasoning on, so it cannot run the tool loop on
        ``/v1/chat/completions``. A run on it fails with a message asking for a
        tool-capable model.
-   * - ``claude-fable-5-1``, ``claude-opus-5-5``
+   * - ``claude-fable-5-1``, ``claude-opus-5-5``, ``claude-sonnet-5-5``
      - A forced tool call (planning, gap analysis, requirements ledger,
        recovery steps) is sent as ``tool_choice: auto`` with an instruction
        naming the tool, plus ``strict: true`` when it is the only tool, and is
@@ -142,7 +223,7 @@ a request shaped for them, which the client does automatically:
    * - ``claude-fable-5``
      - Forced tool calls keep ``tool_choice``, but without
        ``thinking: disabled``, which the model rejects.
-   * - ``claude-opus-5``, ``claude-sonnet-5``, ``claude-haiku-4-5``, and the
+   * - ``claude-opus-5``, ``claude-sonnet-5``, ``claude-haiku-5-5``, ``claude-haiku-4-5``, and the
        4.x models
      - Forced tool calls use ``tool_choice`` with thinking disabled.
 
@@ -153,8 +234,9 @@ the run with that reason and its category rather than an opaque provider
 error.
 
 Every model above has a price, so ``max_cost_usd`` counts its real spend.
-Prices come first from a per-gateway table of published rates (currently
-Command Code's), then from a vendored copy of litellm's published price table.
+Prices come first from the gateway rates in the model catalog (the default
+holds Command Code's), then from a rate the catalog sets on a vendor model,
+then from a vendored copy of litellm's published price table.
 A route to a paid vendor API (Anthropic, the official OpenAI endpoint,
 Mistral, Nebius) is always billed: the name-based open-weight test that prices
 self-hosted models at zero is skipped there. A paid model id found in no table

@@ -36,6 +36,7 @@ from besser.spec_driven_agent.providers.model_settings import (
     thinking_can_be_disabled,
 )
 from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
+from besser.spec_driven_agent.providers.model_catalog import load_model_catalog
 from besser.spec_driven_agent.providers.tool_input import normalize_tool_blocks
 
 logger = logging.getLogger(__name__)
@@ -206,37 +207,14 @@ _VENDORED_PRICES_PATH = Path(__file__).with_name("data") / "model_prices.json"
 # listed, so a resold id can never be priced at some third party's rate.
 _PRICE_LOOKUP_PREFIXES = ("", "anthropic/", "openai/", "mistral/", "nebius/")
 
-# Gateways bill their own rates, which the vendored table does not know: pricing
-# Command Code's Kimi-K3 from the Nebius row billed cached input at the full
-# input rate ($3 instead of $0.30 per 1M), so long runs hit the per-run cap
-# about 3x too early. Source: https://commandcode.ai/docs/resources/pricing-limits
-# (USD per 1M tokens, checked 2026-09-30). Keys: endpoint host, lower-cased id.
-_ROUTE_PRICING: dict[str, dict[str, dict[str, float]]] = {
-    "api.commandcode.ai": {
-        "moonshotai/kimi-k3": {"input": 3.0, "output": 15.0, "cache_write": 0.0, "cache_read": 0.30},
-        "qwen/qwen3.8-max-0902": {"input": 2.0, "output": 6.0, "cache_write": 0.0, "cache_read": 0.25},
-        "meta/muse-spark-1.3": {"input": 1.25, "output": 4.25, "cache_write": 0.0, "cache_read": 0.15},
-        "poolside/laguna-s-2.1-free": {"input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0},
-    },
-    # LIST's PIA gateway, its recommended models (rates per 1M, 2026-10-26).
-    # PIA publishes no cache rates, so cached tokens bill at the input rate.
-    "gateway.pia.private.list.lu": {
-        "claude-haiku-4-5-20251001": {"input": 1.1, "output": 5.5, "cache_write": 1.1, "cache_read": 1.1},
-        "gpt-6-luna": {"input": 0.1, "output": 0.5, "cache_write": 0.1, "cache_read": 0.1},
-        "claude-sonnet-5-5": {"input": 2.2, "output": 11.0, "cache_write": 2.2, "cache_read": 2.2},
-        "gpt-6.1-sol": {"input": 2.0, "output": 10.0, "cache_write": 2.0, "cache_read": 2.0},
-        "claude-opus-5-5": {"input": 4.4, "output": 22.0, "cache_write": 4.4, "cache_read": 4.4},
-        "gpt-6-astra": {"input": 10.0, "output": 50.0, "cache_write": 10.0, "cache_read": 10.0},
-    },
-}
-
-
 def _route_pricing(model_id: str, route: "str | None") -> "dict[str, float] | None":
-    """The rate a known gateway publishes for ``model_id``, if any."""
-    if not route:
-        return None
-    host = (urlparse(route).hostname or route).lower()
-    return _ROUTE_PRICING.get(host, {}).get(model_id.lower())
+    """The rate a gateway bills for ``model_id``, from the model catalog.
+
+    Gateways bill their own rates, which the vendored table does not know:
+    pricing Command Code's Kimi-K3 from the Nebius row billed cached input at
+    the full input rate, so long runs hit the per-run cap about 3x too early.
+    """
+    return load_model_catalog().route_price(model_id, route)
 
 
 @lru_cache(maxsize=1)
@@ -338,6 +316,10 @@ def _get_pricing(model_id: str, billed: bool = False, route: "str | None" = None
     # Self-hosted / free local models — never bill, never trip the cost cap.
     if not billed and _is_free_local_model(model_lower):
         return _ZERO_PRICING
+    # A rate the deployment's catalog sets beats the vendored list price.
+    listed = load_model_catalog().listed_price(model_id)
+    if listed is not None:
+        return listed
     published = _published_pricing(model_id)
     if published is not None:
         return published
@@ -772,11 +754,22 @@ def _is_model_unavailable(error: Exception) -> bool:
     for. Auth errors are excluded by the caller before this check.
     """
     s = str(error).lower()
-    return any(marker in s for marker in (
+    return _is_model_access_denied(error) or any(marker in s for marker in (
         "model_not_found", "model not found", "no such model",
         "unknown model", "invalid model", "does not exist",
-        "is not available", "not_found", "model_not_in_plan",
+        "is not available", "not_found",
     ))
+
+
+# 403s that refuse one model, not the key: the model is outside the plan, or its
+# free period ended (Command Code: "The free <model> window has ended").
+_MODEL_ACCESS_DENIED_MARKERS = ("model_not_in_plan", "window has ended")
+
+
+def _is_model_access_denied(error: Exception) -> bool:
+    """True when the provider refuses this model to a key it otherwise accepts."""
+    s = str(error).lower()
+    return any(marker in s for marker in _MODEL_ACCESS_DENIED_MARKERS)
 
 
 def _is_rate_limit(error: Exception) -> bool:
@@ -876,7 +869,7 @@ def _backoff_seconds(error: Exception, attempt: int) -> float:
 
 def _is_auth_error(error: Exception) -> bool:
     """Did the provider reject our credentials? Decided by status when known."""
-    if "model_not_in_plan" in str(error).lower():
+    if _is_model_access_denied(error):
         return False
     status = _status_code(error)
     if status is not None:
@@ -2237,6 +2230,15 @@ DEFAULT_MODELS: dict[str, str] = {
 }
 
 
+def default_model(provider: str) -> str | None:
+    """The model a run uses when the request names none.
+
+    The model catalog's ``"default": true`` entry for the provider wins, so a
+    deployment changes a default by config; DEFAULT_MODELS is the fallback.
+    """
+    return load_model_catalog().flagged_default(provider) or DEFAULT_MODELS.get(provider)
+
+
 # ======================================================================
 # OpenAI API key resolution
 # ======================================================================
@@ -2526,8 +2528,9 @@ def create_llm_client(
 
     Args:
         provider: ``"anthropic"`` (default), ``"openai"``, ``"mistral"``,
-            ``"nebius"``, or ``"free"`` (server-hosted open-weight model;
-            needs no user key).
+            ``"nebius"``, ``"free"`` (server-hosted open-weight model;
+            needs no user key), or a gateway provider listed in the model
+            catalog (e.g. ``"pia"``).
         api_key: API key. If not provided, resolved from environment variables.
             Ignored for the ``"free"`` provider.
         model: Model identifier. Defaults to provider-specific default. For the
@@ -2538,7 +2541,8 @@ def create_llm_client(
             primary's token); any other value is ignored and the client is
             pinned to the server's primary model.
         base_url: Custom API base URL. Ignored for the ``"free"`` provider,
-            which reads its endpoint from server env.
+            which reads its endpoint from server env, and for a gateway
+            provider of the model catalog, whose endpoint is its ``base_url``.
         **kwargs: Additional keyword arguments passed to the provider constructor
             (e.g. ``max_tokens``).
 
@@ -2616,7 +2620,9 @@ def create_llm_client(
             free_route=True,
             **kwargs,
         )
-    elif provider == "anthropic":
+    if provider in DEFAULT_MODELS:
+        model = model or default_model(provider)
+    if provider == "anthropic":
         resolved_key = _resolve_api_key(api_key=api_key)
         resolved_base = _resolve_base_url(base_url=base_url)
         return ClaudeLLMClient(
@@ -2642,8 +2648,19 @@ def create_llm_client(
         # carries one is already rejected upstream by the runner's SSRF gate
         # unless BESSER_LLM_ALLOW_CUSTOM_BASE_URL is on.
         return NebiusProvider(api_key=resolved_key, model=model, **kwargs)
-    else:
-        raise ValueError(
-            f"Unknown provider: {provider!r}. Supported providers: "
-            f"'anthropic', 'openai', 'mistral', 'nebius'."
+    gateway_url = load_model_catalog().base_url(provider)
+    if gateway_url:
+        # A gateway from the deployment's model catalog (e.g. ``pia``): the
+        # endpoint is server config, so a request-supplied base_url is ignored.
+        if not api_key:
+            raise InvalidApiKeyError(f"No API key given for provider {provider!r}.")
+        return OpenAIProvider(
+            api_key=api_key,
+            model=model or load_model_catalog().default_model(provider),
+            base_url=gateway_url, **kwargs,
         )
+    raise ValueError(
+        f"Unknown provider: {provider!r}. Supported providers: "
+        f"'anthropic', 'openai', 'mistral', 'nebius', or a gateway listed "
+        f"in the model catalog."
+    )

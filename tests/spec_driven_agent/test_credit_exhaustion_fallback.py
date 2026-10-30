@@ -159,3 +159,37 @@ def test_an_expired_server_key_falls_back_past_its_own_endpoint(monkeypatch, str
     # The alt model on the rejected endpoint is skipped: same token, same 401.
     assert p.model == "qwen3-coder:30b"
     assert p.fallback_reason == "key_rejected"
+
+
+# Measured on prod 2026-10-30: Command Code ended the free period of two ``:free``
+# models in the chain. Each answered this 403, which read as a rejected key and
+# skipped every other model on the endpoint, so runs went to the self-hosted
+# fallback although beam :free and laguna-s-2.1-free on the same key still served.
+WINDOW_ENDED_403 = (
+    "Error code: 403 - The free Ornith 1.5 122B window has ended. Run /model and pick "
+    "Ornith 1.5 122B to keep going.\nhttps://commandcode.ai/models"
+)
+
+
+def test_an_ended_free_window_is_not_a_rejected_key():
+    assert not _is_auth_error(_status_error(openai.PermissionDeniedError, 403, WINDOW_ENDED_403))
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_an_ended_free_window_moves_to_the_next_model_on_the_same_endpoint(monkeypatch, stream):
+    primary = "https://api.commandcode.ai/provider/v1"
+    p = OpenAIProvider(
+        api_key="free", model="ornith/ornith-1.5-122b:free", base_url=primary,
+        fallback=[(primary, "same-token", "reflection/beam:free"),
+                  ("https://ollama.example/v1", "own-token", "qwen3-coder:30b")],
+    )
+    p._client = _FakeClient(_status_error(openai.PermissionDeniedError, 403, WINDOW_ENDED_403))
+    monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
+    monkeypatch.setattr(openai, "OpenAI", lambda **kw: _FakeClient(RuntimeError("fallback reached")))
+
+    with pytest.raises(Exception) as raised:
+        list(p.chat_stream("sys", _MESSAGES, tools=[])) if stream else p.chat("sys", _MESSAGES, tools=[])
+
+    assert not isinstance(raised.value, InvalidApiKeyError)
+    assert p.model == "reflection/beam:free"
+    assert p.fallback_reason == "unavailable"

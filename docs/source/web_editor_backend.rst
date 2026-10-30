@@ -1003,12 +1003,11 @@ registry restore and sweepers) runs in the FastAPI ``lifespan`` handler
 declared in ``backend.py``; the agent simulator service declares its own
 ``lifespan`` in ``agent_simulator_api.py``.
 
-The Spec-Driven Agent's PIA provider is LIST's private AI gateway, an
-OpenAI-compatible endpoint backed by AWS Bedrock and reachable only from the
-LIST network. To use it, or the Local (e.g. Ollama) provider, from this local
+To use the Spec-Driven Agent's Local (e.g. Ollama) provider from this local
 backend, start it with ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` (off by
-default; the local ``docker-compose.yml`` sets it). See
-:doc:`spec_driven_agent/configuration`.
+default; the local ``docker-compose.yml`` sets it). A gateway provider such as
+PIA comes from the deployment's model catalog (``BESSER_MODEL_CATALOG``)
+instead. See :doc:`spec_driven_agent/configuration`.
 
 For the full-stack experience with Docker:
 

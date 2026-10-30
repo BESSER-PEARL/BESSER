@@ -115,6 +115,8 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.github_dep
     _sanitize_repo_name,
 )
 from besser.spec_driven_agent.providers.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
+from besser.spec_driven_agent.providers.llm_client import default_model as _llm_default_model
+from besser.spec_driven_agent.providers.model_catalog import load_model_catalog
 from besser.spec_driven_agent.providers.llm_client import (
     FREE_TIER_PROVIDER,
     SPONSORED_PROVIDER,
@@ -591,10 +593,12 @@ async def smart_gen_config() -> dict:
             "disconnected_grace_seconds": backend_constants.LLM_DISCONNECTED_GRACE_SECONDS,
         },
         "supported_providers": ["anthropic", "openai", "mistral", "nebius"],
+        # The key dialog's providers and models, from the model catalog
+        # (BESSER_MODEL_CATALOG). Gateway endpoints and rates stay server-side.
+        "providers": load_model_catalog().public_providers(),
         # Per-provider default model names, sourced from the LLM client
-        # layer (single source of truth — the BYOK dialog should read
-        # these instead of hardcoding its own copies).
-        "default_models": dict(_LLM_DEFAULT_MODELS),
+        # layer (the model catalog's default, else the built-in one).
+        "default_models": {p: _llm_default_model(p) for p in _LLM_DEFAULT_MODELS},
         # Keyless free tier (server-hosted open-weight model). The frontend
         # shows the "Free" option only when ``available`` is true, so a deploy
         # without the endpoint configured never offers a button that 500s.

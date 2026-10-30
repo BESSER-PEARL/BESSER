@@ -29,6 +29,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 from besser.utilities.web_modeling_editor.backend.constants.constants import VALID_PRIMITIVE_TYPES
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 from besser.utilities.utils import parse_iso_timestamp
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import sanitize_name
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
     reject_unreadable_model,
 )
@@ -1090,9 +1091,7 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     ``docs/source/migrations/uml-v4-shape.md``.
     """
     reject_unreadable_model(json_data, "ClassDiagram")
-    title = json_data.get('title', '')
-    if ' ' in title:
-        title = title.replace(' ', '_')
+    title = sanitize_name(json_data.get('title', ''))
 
     model_payload = json_data.get('model') or {}
     domain_model = DomainModel(title, timestamp=parse_iso_timestamp(model_payload.get('timestamp')))

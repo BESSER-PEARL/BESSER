@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response as StarletteResponse
 
+from besser.spec_driven_agent.providers.model_catalog import load_model_catalog
 from besser.utilities.provenance import get_besser_version, get_build_sha
 from besser.utilities.web_modeling_editor.backend.middleware import setup_middleware
 
@@ -208,6 +209,9 @@ def _validate_env_vars() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _validate_env_vars()
+    # A broken BESSER_MODEL_CATALOG stops startup here rather than silently
+    # dropping a provider from the key dialog.
+    load_model_catalog()
 
     # Run an immediate cleanup of stale temp files left from previous runs,
     # then schedule a background task that repeats every hour.

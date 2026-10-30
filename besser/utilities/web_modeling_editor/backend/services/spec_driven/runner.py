@@ -49,10 +49,12 @@ from besser.spec_driven_agent.execution.shell_session import close_sessions_for
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,
+    default_model,
     free_alt_choice,
     free_tier_model,
     is_free_fallback_choice,
 )
+from besser.spec_driven_agent.providers.model_catalog import load_model_catalog
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
@@ -61,6 +63,7 @@ from besser.spec_driven_agent.state import agent_trace
 from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
     get_besser_version,
+    remove_readme_block,
     write_generation_provenance,
 )
 from besser.spec_driven_agent.validation.issues import (
@@ -130,6 +133,9 @@ _DEFAULT_MODELS = DEFAULT_MODELS
 
 _REGISTRY_SWEEP_INTERVAL_SECONDS = 60
 _DOWNLOAD_MANIFEST_NAME = ".besser_download.json"
+# Written into a run imported from GitHub: where it came from. Its ``.besser_``
+# prefix keeps it out of every push and download.
+GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
 _MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
 
 # Upper bound on queued SSE events so a runaway worker can't exhaust
@@ -283,6 +289,31 @@ def _capped(items: list[VerificationItem]) -> list[VerificationItem]:
 def _conversion_label(issue: dict) -> str:
     """The label ``_requirements_for_validation`` names the rule by."""
     return issue.get("name") or issue.get("context") or issue.get("id") or "unnamed rule"
+
+
+# Agent tools that change a file; shell commands are not tracked.
+_FILE_CHANGE_TOOLS = frozenset({"write_file", "modify_file", "replace_file_lines", "delete_file"})
+# The card lists this many paths; the count covers the rest.
+_MAX_CHANGED_FILES = 50
+
+
+def run_changes(recipe: dict) -> dict:
+    """The ``DoneEvent`` fields that say what a run changed, read from its recipe."""
+    history = recipe.get("history") or []
+    mode = (history[-1] if history and isinstance(history[-1], dict) else {}).get("mode")
+    changed = sorted({
+        (call.get("input") or {}).get("path")
+        for call in recipe.get("tool_calls") or []
+        if isinstance(call, dict) and call.get("tool") in _FILE_CHANGE_TOOLS
+        and isinstance((call.get("input") or {}).get("path"), str)
+    })
+    model_change = recipe.get("model_change") or {}
+    return {
+        "mode": "modify" if mode == "modify" else "create",
+        "changedFiles": changed[:_MAX_CHANGED_FILES],
+        "changedFileCount": len(changed),
+        "modelChanges": [c for c in model_change.get("changes") or [] if isinstance(c, str)],
+    }
 
 
 def build_verification_report(recipe: dict) -> VerificationReport:
@@ -865,6 +896,16 @@ def _run_workspace_root() -> str:
     return root
 
 
+def create_run_workspace(run_id: str) -> str:
+    """A fresh directory for ``run_id`` in the shared run workspace.
+
+    The name is the one ``SmartRunRegistry.get`` rescans for, so a run the
+    backend registers (a repo imported from GitHub) is found by the
+    Spec-Driven worker when it seeds a modify run from it, and vice versa.
+    """
+    return tempfile.mkdtemp(prefix=f"{LLM_TEMP_DIR_PREFIX}{run_id}_", dir=_run_workspace_root())
+
+
 def _locate_run_temp_dir(run_id: str) -> str | None:
     """Locate a spec-driven temp directory by ``run_id``.
 
@@ -990,6 +1031,11 @@ def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
     # The old provenance file is not user code; packaging writes a fresh one.
     with contextlib.suppress(OSError):
         os.remove(os.path.join(dest_dir, PROVENANCE_FILENAME))
+    # Nor is the README's BESSER block: the push renders it again.
+    try:
+        remove_readme_block(dest_dir)
+    except OSError:
+        logger.warning("Could not strip the BESSER block from the seed README in %s", dest_dir, exc_info=True)
 
 
 # ---------------------------------------------------------------------
@@ -1158,7 +1204,10 @@ class SmartGenerationRunner:
             llm_model = self.request.llm_model or sponsored_tier_model() or "sponsored"
         else:
             llm_model = (
-                self.request.llm_model or _DEFAULT_MODELS.get(self.request.provider, "")
+                self.request.llm_model
+                or default_model(self.request.provider)
+                or load_model_catalog().default_model(self.request.provider)
+                or ""
             )
 
         self._llm_model = llm_model
@@ -1171,16 +1220,16 @@ class SmartGenerationRunner:
             maxRuntime=self.request.max_runtime_seconds,
         ))
 
-        # ---- 1b. SSRF gate for the 'PIA' / 'local' providers -----------
-        # These send a custom OpenAI-compatible base_url. Having the server
+        # ---- 1b. SSRF gate for the 'local' provider -------------------
+        # It sends a custom OpenAI-compatible base_url. Having the server
         # open an arbitrary user URL is an SSRF surface on a shared box, so it
-        # is opt-in per deploy (local / on-prem / PIA set the flag). Fail fast
+        # is opt-in per deploy (local / on-prem set the flag). Fail fast
         # with a clear, actionable message.
         if self.request.base_url and not LLM_ALLOW_CUSTOM_BASE_URL:
             yield self._sse(ErrorEvent(
                 code="BAD_REQUEST",
                 message=(
-                    "Custom LLM endpoints (PIA / local) are disabled on this "
+                    "Custom LLM endpoints (local) are disabled on this "
                     "deployment. Run the WME locally with "
                     "BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true "
                     "to use your own gateway or model server."
@@ -2431,6 +2480,7 @@ class SmartGenerationRunner:
             tokensUsed=int(getattr(self, "_final_tokens", 0) or 0),
             verification=verification,
             aiShare=ai_share,
+            **run_changes(recipe),
         )
         return event, entry
 

@@ -61,7 +61,7 @@ def _provider(exc, monkeypatch):
     monkeypatch.setattr(llm_client.time, "sleep", sleeps.append)
     fallbacks: list = []
     monkeypatch.setattr(p, "_activate_fallback",
-                        lambda err: (fallbacks.append(err), False)[1])
+                        lambda err, past_endpoint=None: (fallbacks.append(err), False)[1])
     return p, sleeps, fallbacks
 
 
@@ -104,11 +104,13 @@ class TestReachesTheFallback:
         assert sleeps == []
         assert len(fallbacks) == 1
 
-    def test_a_real_401_still_raises_invalid_key(self, monkeypatch):
-        p, _, fallbacks = _provider(_status_error(openai.AuthenticationError, 401, "bad"), monkeypatch)
+    def test_a_users_rejected_key_raises_invalid_key(self, monkeypatch):
+        """A user's own key has no fallback: a 401 says so instead of switching models."""
+        p = OpenAIProvider(api_key="sk-user", model="gpt-5.6-terra")
+        p._client = _FakeClient(_status_error(openai.AuthenticationError, 401, "bad"))
+        monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
         with pytest.raises(InvalidApiKeyError):
             p.chat("sys", _MESSAGES, tools=[])
-        assert fallbacks == []
 
 
 def test_the_fallback_records_quota_exhausted_for_credits(monkeypatch):
@@ -118,3 +120,76 @@ def test_the_fallback_records_quota_exhausted_for_credits(monkeypatch):
     assert p._activate_fallback(_status_error(openai.BadRequestError, 400, CREDITS_400))
     assert p.fallback_reason == "quota_exhausted"
     assert p.model == "qwen3-coder:30b"
+
+
+# Measured on experimental 2026-10-29: the free tier's Command Code token
+# expired. Every call answered 401 "Your API key has expired", which raised
+# InvalidApiKeyError before the fallback check, so runs failed although the
+# self-hosted fallback was configured and up.
+EXPIRED_401 = (
+    "Error code: 401 - {'error': {'message': 'Your API key has expired. Log in again to get a "
+    "new key.', 'type': 'authentication_error'}}"
+)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_an_expired_server_key_falls_back_past_its_own_endpoint(monkeypatch, stream):
+    primary = "https://api.commandcode.ai/provider/v1"
+    p = OpenAIProvider(
+        api_key="free", model="moonshotai/Kimi-K3", base_url=primary,
+        fallback=[(primary, "same-token", "poolside/laguna-s-2.1-free"),
+                  ("https://ollama.example/v1", "own-token", "qwen3-coder:30b")],
+    )
+    p._client = _FakeClient(_status_error(openai.AuthenticationError, 401, EXPIRED_401))
+    monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
+    switched = []
+
+    def activate(err, past_endpoint=None):
+        switched.append(past_endpoint)
+        return OpenAIProvider._activate_fallback.__get__(p)(err, past_endpoint)
+
+    monkeypatch.setattr(p, "_activate_fallback", activate)
+    monkeypatch.setattr(openai, "OpenAI", lambda **kw: _FakeClient(RuntimeError("fallback reached")))
+
+    with pytest.raises(Exception) as raised:
+        list(p.chat_stream("sys", _MESSAGES, tools=[])) if stream else p.chat("sys", _MESSAGES, tools=[])
+
+    assert not isinstance(raised.value, InvalidApiKeyError)
+    assert switched[0] == primary
+    # The alt model on the rejected endpoint is skipped: same token, same 401.
+    assert p.model == "qwen3-coder:30b"
+    assert p.fallback_reason == "key_rejected"
+
+
+# Measured on prod 2026-10-30: Command Code ended the free period of two ``:free``
+# models in the chain. Each answered this 403, which read as a rejected key and
+# skipped every other model on the endpoint, so runs went to the self-hosted
+# fallback although beam :free and laguna-s-2.1-free on the same key still served.
+WINDOW_ENDED_403 = (
+    "Error code: 403 - The free Ornith 1.5 122B window has ended. Run /model and pick "
+    "Ornith 1.5 122B to keep going.\nhttps://commandcode.ai/models"
+)
+
+
+def test_an_ended_free_window_is_not_a_rejected_key():
+    assert not _is_auth_error(_status_error(openai.PermissionDeniedError, 403, WINDOW_ENDED_403))
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_an_ended_free_window_moves_to_the_next_model_on_the_same_endpoint(monkeypatch, stream):
+    primary = "https://api.commandcode.ai/provider/v1"
+    p = OpenAIProvider(
+        api_key="free", model="ornith/ornith-1.5-122b:free", base_url=primary,
+        fallback=[(primary, "same-token", "reflection/beam:free"),
+                  ("https://ollama.example/v1", "own-token", "qwen3-coder:30b")],
+    )
+    p._client = _FakeClient(_status_error(openai.PermissionDeniedError, 403, WINDOW_ENDED_403))
+    monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
+    monkeypatch.setattr(openai, "OpenAI", lambda **kw: _FakeClient(RuntimeError("fallback reached")))
+
+    with pytest.raises(Exception) as raised:
+        list(p.chat_stream("sys", _MESSAGES, tools=[])) if stream else p.chat("sys", _MESSAGES, tools=[])
+
+    assert not isinstance(raised.value, InvalidApiKeyError)
+    assert p.model == "reflection/beam:free"
+    assert p.fallback_reason == "unavailable"

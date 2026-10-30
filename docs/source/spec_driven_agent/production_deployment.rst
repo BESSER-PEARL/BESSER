@@ -78,9 +78,13 @@ and, at the top level, its volume and network:
        name: smartgen_network
        driver: bridge
 
-The backend mounts the same volume read-only (``smartgen_workspace:/workspace:ro``)
-so that push-to-GitHub and import-from-GitHub, which need the backend's OAuth
-session, can read the generated files.
+The backend mounts the same volume (``smartgen_workspace:/workspace``) with
+``BESSER_LLM_RUN_WORKSPACE_ROOT=/workspace/runs``, because push-to-GitHub and
+import-from-GitHub need the backend's OAuth session. Push reads the worker's
+finished runs from it. Import writes the repo into it as a run, which is where
+the worker finds it when a modify run seeds from that repo. A read-only mount
+breaks import: the modify run cannot see the repo and rebuilds from scratch.
+The backend never runs generation, so it creates no other runs there.
 
 Environment
 -----------
@@ -106,8 +110,9 @@ budget overrides (``BESSER_LLM_DEFAULT_MAX_COST_USD``,
   secrets. See :ref:`spec-driven-shell-tools`.
 - ``BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION`` -- the backend image has no
   compilers to run.
-- ``BESSER_LLM_RUN_WORKSPACE_ROOT`` and ``BESSER_LLM_RUN_STORE_PATH`` -- the
-  backend's ``/workspace`` is read-only, so runs created under it fail.
+- ``BESSER_LLM_RUN_WORKSPACE_ROOT`` and ``BESSER_LLM_RUN_STORE_PATH`` -- each
+  service sets its own in its ``environment`` block. The run store belongs to
+  the worker alone.
 - ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` -- keep it off on every hosted
   service (SSRF); the worker sets it to ``false`` explicitly.
 - ``BESSER_LLM_SHELL_SANDBOX=off`` -- a development opt-out that runs

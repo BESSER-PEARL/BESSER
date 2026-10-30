@@ -75,7 +75,7 @@ class LLMGenerator(GeneratorInterface):
         llm_model: Model ID (default depends on provider).
         provider: LLM provider to use: ``"anthropic"``, ``"openai"``,
             ``"mistral"``, or ``"nebius"``.
-        gui_model: Optional GUI model (for React/Flutter/WebApp generators).
+        gui_model: Optional GUI model (for the React/WebApp generators).
         agent_model: Optional agent model (for BAF generator).
         agent_config: Optional agent config dict.
         output_dir: Where to write generated files (default: ./output).

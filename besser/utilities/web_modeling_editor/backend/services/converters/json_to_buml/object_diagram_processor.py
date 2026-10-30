@@ -24,6 +24,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import sanitize_name
 from datetime import datetime, timedelta
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
     reject_unreadable_model,
@@ -163,9 +164,7 @@ def process_object_diagram(json_data, domain_model):
             "Please ensure a ClassDiagram is provided or linked as reference data."
         )
 
-    title = json_data.get('title', 'Generated_Object_Model')
-    if ' ' in title:
-        title = title.replace(' ', '_')
+    title = sanitize_name(json_data.get('title', 'Generated_Object_Model'))
 
     object_model = ObjectModel(title)
     model_data = json_data.get('model', {}) or {}

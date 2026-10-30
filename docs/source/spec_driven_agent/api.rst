@@ -58,13 +58,52 @@ Endpoints
    * - ``/spec-driven/push-to-github``
      - POST
      - Push a finished run's code — plus the re-importable model under
-       ``buml/`` — to a GitHub repository. Requires an ``X-GitHub-Session``
+       ``buml/`` — to a GitHub repository, as the change the run made: only
+       files that differ from the base commit are sent, modes are kept, and
+       paths the run never held (build output, ``*.db``, symlinks, secret
+       ``.env`` files) are left as they are. ``deploy_config.owner`` is the
+       owner of an existing repo (an organization or another user; the
+       signed-in user when omitted). ``deploy_config.base_commit_sha``
+       is the commit the run's code came from: commits made on the branch
+       since are merged in, never reverted, with the model merged as data.
+       ``deploy_config.push_mode`` is
+       ``"commit"`` (default) or ``"pull_request"``. The response's
+       ``status`` is ``"pushed"``, ``"merged"`` (with ``base_run_id``, a run
+       holding the merged repo for the next modify run), ``"conflict"``
+       (left on ``conflict_branch``) or ``"pull_request"``
+       (``pull_request_url``, on ``pull_request_branch``); ``commit_sha`` is
+       the next push's base and ``files_uploaded`` the number of files the
+       push changed (0 when nothing changed: no commit is made).
+       When the run changed the model (a modify run that added classes),
+       ``project_export`` is the model written to ``buml/``, which the editor
+       loads; otherwise it is ``null``. Requires an ``X-GitHub-Session``
        header.
    * - ``/spec-driven/import-github-run``
      - POST
-     - Import a BESSER-created repo back as a run, so it can be used as the
-       seed of a subsequent modify run. Requires an ``X-GitHub-Session``
-       header.
+     - Import a GitHub repo as a run, so it can be used as the seed of a
+       subsequent modify run. The repo is pinned at its branch head
+       (``commit_sha`` in the response) and written to the shared run
+       workspace, where the Spec-Driven worker finds it. A repo without a
+       BESSER model (``has_model: false``) is read for SQLAlchemy, Django,
+       Pydantic or dataclass models, with their enumerations (including
+       Django ``TextChoices``) and inheritance: ``analysis`` says what was
+       found and ``proposed_diagram`` is the resulting class diagram, or ``null``.
+       When no such models are found, or only Pydantic and dataclass models
+       (mostly API shapes), and the server offers the keyless model, that
+       model can read a bounded digest of the code (schemas, migrations,
+       types, entities, README; secrets left out) and propose the diagram
+       instead, with ``analysis.ai: true``, but only when the body sets
+       ``allow_ai_reading: true`` (default ``false``): the code goes to a
+       model that may be a third party's. Without it no model is called, the
+       exact reading (if any) is still proposed, and the response sets
+       ``ai_reading_offered: true`` with a ``message`` offering the reading.
+       A failed or timed-out reading falls back to the Pydantic or dataclass
+       models when there are any, else returns no proposal and a
+       ``message``. A body carrying the valid demo secret (``demo_token``,
+       from a ``?demo=`` link) is read by the sponsored model instead; a
+       wrong secret falls back to the keyless one. An import takes a
+       ``BESSER_LLM_MAX_CONCURRENT_RUNS`` slot while it runs and answers
+       ``429`` when none is free. Requires an ``X-GitHub-Session`` header.
 
 Request body
 ------------
@@ -242,7 +281,10 @@ SSE event types
        blocker-severity findings), ``incomplete`` / ``incompleteReason``,
        a three-way authorship split of the output tree, and ``aiShare``, the
        AI-written share of the lines from the run's Agent Trace record (see
-       :ref:`spec-driven-agent-trace`).
+       :ref:`spec-driven-agent-trace`). ``mode`` is ``create`` or ``modify``;
+       ``changedFiles`` (capped) and ``changedFileCount`` are the files the
+       agent wrote, edited or deleted, and ``modelChanges`` how the model
+       differs from the one the base app was built from (modify runs).
    * - ``error``
      - ``INVALID_KEY`` / ``UPSTREAM_LLM`` / ``INTERNAL`` / ``BAD_REQUEST`` /
        ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` / ``INCOMPLETE``

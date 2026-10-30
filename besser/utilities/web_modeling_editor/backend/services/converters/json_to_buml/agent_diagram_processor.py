@@ -63,6 +63,7 @@ from besser.utilities.web_modeling_editor.backend.services.validators.python_cod
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml._node_helpers import (
     reject_unreadable_model,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import sanitize_name
 
 logger = logging.getLogger(__name__)
 
@@ -666,9 +667,7 @@ def process_agent_diagram(json_data):
             send_reply=bool(element.get("sendReply", True)),
         )
 
-    title = json_data.get('title', 'Generated_Agent') or 'Generated_Agent'
-    if ' ' in title:
-        title = title.replace(' ', '_')
+    title = sanitize_name(json_data.get('title') or 'Generated_Agent')
 
     agent = Agent(title)
 

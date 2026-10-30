@@ -341,23 +341,16 @@ def test_github_deploy_webapp_rejects_v3_before_calling_github(monkeypatch):
     ))
 
 
-def test_github_project_save_skips_buml_export_of_legacy_diagrams():
-    """Saving to GitHub is storage: a v3 project is stored, but no empty B-UML is written for it."""
-    from besser.utilities.web_modeling_editor.backend.services.deployment import github_deploy_api as gda
+def test_github_project_save_stores_a_legacy_project_without_buml_sources():
+    """Saving to GitHub is storage: a v3 project is stored, but no B-UML is written for it."""
+    from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 
-    pushed = []
+    legacy = repo_model.build_model_files(_project(_v3_model()))
+    current = repo_model.build_model_files(_project(_v4_class_model()))
 
-    class _FakeGitHub:
-        async def create_or_update_file(self, **kwargs):
-            pushed.append(kwargs["file_path"])
-
-    for class_model, expected in ((_v3_model(), []), (_v4_class_model(), ["buml/domain_model.py"])):
-        pushed.clear()
-        asyncio.run(gda._export_buml_files_to_repo(
-            _FakeGitHub(), "owner", "repo", "main", "project.json",
-            _project(class_model), "save",
-        ))
-        assert pushed == expected
+    assert repo_model.MODEL_FILE in legacy.files and not legacy.sources_built
+    assert "buml/domain_model.py" not in legacy.files
+    assert current.sources_built and "buml/domain_model.py" in current.files
 
 
 # ---------------------------------------------------------------------------

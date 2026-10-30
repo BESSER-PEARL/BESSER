@@ -57,8 +57,9 @@ class _FakeGitHubService:
     during the call, which is exactly what the endpoint does in practice.
     """
 
-    def __init__(self, *, branches=None, get_branches_404=False):
+    def __init__(self, *, branches=None, get_branches_404=False, default_branch="main"):
         self._branches = ["main"] if branches is None else branches
+        self._default_branch = default_branch
         self._get_branches_404 = get_branches_404
         self.created = False
         self.created_kwargs = None
@@ -90,6 +91,23 @@ class _FakeGitHubService:
             )
         return self._branches
 
+    async def get_default_branch(self, owner, repo_name):
+        await self.get_branches(owner, repo_name)  # same 404 when the repo is missing
+        return self._default_branch
+
+    async def get_branch_head(self, owner, repo_name, branch):
+        return "a" * 40
+
+    async def get_file_content(self, owner, repo_name, file_path, branch="main", ref=None):
+        return None
+
+    async def add_topic(self, owner, repo_name, topic):
+        self.topics = getattr(self, "topics", []) + [topic]
+
+    async def create_pull_request(self, owner, repo_name, head, base, title, body):
+        self.pull_request = dict(head=head, base=base, title=title)
+        return {"number": 7, "html_url": f"https://github.com/{owner}/{repo_name}/pull/7"}
+
     async def push_directory_to_repo(
         self,
         owner,
@@ -98,6 +116,10 @@ class _FakeGitHubService:
         commit_message="",
         branch="main",
         preserve_existing_files=False,
+        base_commit_sha=None,
+        keep_path=None,
+        model_merge=None,
+        base_hashes=None,
     ):
         files = []
         for root, _dirs, names in os.walk(directory_path):
@@ -114,11 +136,19 @@ class _FakeGitHubService:
             commit_message=commit_message,
             branch=branch,
             preserve_existing_files=preserve_existing_files,
+            base_commit_sha=base_commit_sha,
         )
+        readme = os.path.join(directory_path, "README.md")
+        if os.path.isfile(readme):
+            with open(readme, encoding="utf-8", newline="") as fh:
+                self.push["readme"] = fh.read()
         return {
-            "commit_sha": "deadbeef",
+            "commit_sha": "d" * 40,
             "total_files": len(files),
             "uploaded_files": files,
+            "status": "pushed",
+            "conflict_branch": None,
+            "own_commit_sha": "d" * 40,
         }
 
 
@@ -284,7 +314,7 @@ class TestPushSmartToGitHub:
         assert ".env" not in files
         assert ".env.example" in files
 
-    def test_use_existing_pushes_requested_branch_replacing_tree(self, monkeypatch):
+    def test_use_existing_pushes_requested_branch_keeping_files_the_run_never_saw(self, monkeypatch):
         run_id = "d" * 32
         _seed_run(run_id)
         fake = _FakeGitHubService(branches=["main", "dev"])
@@ -306,8 +336,25 @@ class TestPushSmartToGitHub:
         # Reused, not created.
         assert fake.created is False
         assert fake.push["branch"] == "dev"
-        # Each spec-driven run is a full app → replace the tree.
-        assert fake.push["preserve_existing_files"] is False
+        # The run did not start from this repo, so it cannot have deleted any of
+        # its files: it adds and updates, and e.g. the repo's README stays.
+        assert fake.push["preserve_existing_files"] is True
+
+    def test_without_a_requested_branch_the_push_lands_on_the_repos_real_default(self, monkeypatch):
+        """The default was guessed from the branch list, so a leftover sync branch sorted first could win."""
+        run_id = "f" * 32
+        _seed_run(run_id)
+        fake = _FakeGitHubService(branches=["besser/sync-1", "develop"], default_branch="develop")
+        _install(monkeypatch, fake)
+
+        body = {
+            "run_id": run_id,
+            "projectExport": _project_export(),
+            "deploy_config": {"repo_name": "my-generated-app", "use_existing": True},
+        }
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        assert fake.push["branch"] == "develop"
 
     def test_use_existing_missing_repo_returns_404_repo_missing(self, monkeypatch):
         run_id = "e" * 32
@@ -325,3 +372,43 @@ class TestPushSmartToGitHub:
         assert r.json()["detail"] == "repo_missing"
         # Must NOT silently create a repo when the user asked to reuse one.
         assert fake.created is False
+
+    def test_push_links_the_readme_back_to_besser_and_the_model(self, monkeypatch):
+        run_id = "1" * 32
+        tmp = _seed_run(run_id)
+        with open(os.path.join(tmp, "README.md"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("# Library\n\nRun `python main.py`.\n")
+        fake = _FakeGitHubService()
+        _install(monkeypatch, fake)
+
+        body = {
+            "run_id": run_id,
+            "projectExport": _project_export(),
+            "deploy_config": {"repo_name": "my-generated-app"},
+        }
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        readme = fake.push["readme"]
+        assert readme.startswith("# Library\n\nRun `python main.py`.\n\n<!-- besser:begin -->")
+        assert ("https://editor.besser-pearl.org/?buml=https://github.com/test-owner/my-generated-app/"
+                "blob/main/buml/domain_model.py") in readme
+        assert "https://github.com/BESSER-PEARL/Built-with-BESSER" in readme
+        # The stored run keeps the agent's README; only the pushed copy carries the block.
+        with open(os.path.join(tmp, "README.md"), encoding="utf-8") as fh:
+            assert "besser:begin" not in fh.read()
+
+    def test_push_without_a_readme_adds_one_named_after_the_repo(self, monkeypatch):
+        run_id = "2" * 32
+        _seed_run(run_id)
+        fake = _FakeGitHubService()
+        _install(monkeypatch, fake)
+
+        body = {
+            "run_id": run_id,
+            "projectExport": _project_export(),
+            "deploy_config": {"repo_name": "my-generated-app"},
+        }
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        assert fake.push["readme"].startswith("# my-generated-app\n\n<!-- besser:begin -->")
+        assert "README.md" in fake.push["files"]

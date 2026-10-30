@@ -103,7 +103,7 @@ def _provider(exc, monkeypatch):
     monkeypatch.setattr(llm_client.time, "sleep", sleeps.append)
     fallbacks: list = []
     monkeypatch.setattr(p, "_activate_fallback",
-                        lambda err: (fallbacks.append(err), False)[1])
+                        lambda err, past_endpoint=None: (fallbacks.append(err), False)[1])
     return p, sleeps, fallbacks
 
 

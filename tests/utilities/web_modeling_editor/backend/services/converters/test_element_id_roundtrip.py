@@ -202,15 +202,15 @@ def test_the_editor_export_writes_ids_only_when_the_deployment_turns_it_on(monke
 
 
 def test_the_spec_driven_push_writes_ids_only_when_the_deployment_turns_it_on(tmp_path, monkeypatch):
-    from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
+    from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 
     export = {"id": "p", "type": "Project", "name": "Lending", "createdAt": "2026-01-01T00:00:00Z",
               "diagrams": {"ClassDiagram": [{"id": "d", "title": "Lending", "model": _diagram()["model"]}]}}
 
     def pushed(workdir):
-        spec_driven_router._write_smart_model_to_buml(str(workdir), export)
+        repo_model.write_model_files(str(workdir), export)
         return open(os.path.join(workdir, "buml", "domain_model.py"), encoding="utf-8").read()
 
     assert 'id="' not in pushed(tmp_path / "off")
-    monkeypatch.setattr(spec_driven_router, "BUML_EMIT_IDS", True)
+    monkeypatch.setattr(repo_model, "BUML_EMIT_IDS", True)
     assert 'id="library"' in pushed(tmp_path / "on")

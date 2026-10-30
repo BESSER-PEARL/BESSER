@@ -6,7 +6,6 @@ the agent simply went missing from the output.
 """
 
 import asyncio
-import logging
 
 import httpx
 import pytest
@@ -72,19 +71,16 @@ def test_docker_compose_reports_an_agent_without_states():
     assert "'Helper' has no states" in response.json()["detail"]
 
 
-def test_github_buml_export_warns_about_an_agent_without_states(caplog):
-    from besser.utilities.web_modeling_editor.backend.services.deployment import github_deploy_api as gda
+def test_saving_to_github_keeps_the_model_files_of_an_agent_without_states():
+    """Saving is storage, not generation: an agent still being drawn does not block the save."""
+    from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 
-    class _FakeGitHub:
-        async def create_or_update_file(self, **kwargs):
-            pass
+    project = {"id": "p", "type": "Project", "name": "P", "createdAt": "2026-01-01T00:00:00Z",
+               "currentDiagramIndices": {}, "diagrams": {"AgentDiagram": [_entry(_COMPONENTS_ONLY)]}}
+    saved = repo_model.build_model_files(project)
 
-    project = {"name": "P", "diagrams": {"AgentDiagram": [_entry(_COMPONENTS_ONLY)]}}
-    with caplog.at_level(logging.WARNING):
-        asyncio.run(gda._export_buml_files_to_repo(
-            _FakeGitHub(), "owner", "repo", "main", "project.json", project, "save",
-        ))
-    assert any("'Helper' has no states" in record.getMessage() for record in caplog.records)
+    assert saved.sources_built
+    assert repo_model.MODEL_FILE in saved.files
 
 
 def test_standalone_agent_deploy_reports_an_agent_without_states(monkeypatch):

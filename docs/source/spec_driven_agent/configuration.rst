@@ -8,6 +8,16 @@ and by ``besser/spec_driven_agent/``; the live values of the caps and feature
 flags are reported by ``GET /besser_api/spec-driven/config``, which is what a
 client should read rather than hardcoding the figures below.
 
+Models
+------
+
+- ``BESSER_MODEL_CATALOG`` -- Path to the deployment's model catalog, a JSON
+  file merged over the public default: the providers and models the key dialog
+  offers, gateway endpoints (such as ``pia``) and gateway rates. Set it on the
+  backend, the Spec-Driven worker and the modeling agent, with the same file
+  mounted in each. Read once at startup; a missing or malformed file stops the
+  service. See :doc:`models`.
+
 Keyless tiers
 -------------
 
@@ -24,7 +34,13 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
 - ``BESSER_FREE_LLM_FALLBACK_BASE_URL`` / ``BESSER_FREE_LLM_FALLBACK_MODEL`` /
   ``BESSER_FREE_LLM_FALLBACK_TOKEN`` -- A second,
   independently credentialed endpoint used as the last resort in the fallback
-  chain.
+  chain. A run moves along the chain when its endpoint is unavailable, out of
+  quota or credits, or rejects the server's token (an expired
+  ``BESSER_FREE_LLM_TOKEN``); a rejected token skips the alternative models
+  on the same endpoint, which share it. A refusal of one model while the
+  token is accepted (a model outside the plan, or a free period that ended)
+  moves to the next model on the same endpoint. A user's own key has no fallback: a
+  rejected key fails the run with ``INVALID_KEY``.
 - ``BESSER_SPONSORED_LLM_BASE_URL`` / ``BESSER_SPONSORED_LLM_TOKEN`` /
   ``BESSER_SPONSORED_LLM_MODEL`` -- An additional server-funded keyless tier,
   served through an OpenAI-compatible endpoint. The URL and token are
@@ -52,10 +68,11 @@ config endpoint reports ``free_tier.available``. See :doc:`models`.
   its own OpenAI-compatible ``base_url``. Having the server open a
   user-supplied URL is an SSRF surface, so this is meant for local or
   single-tenant deployments. The local ``docker-compose.yml`` turns it on so
-  the editor's PIA (LIST's private AI gateway, an OpenAI-compatible endpoint
-  backed by AWS Bedrock) and Local (e.g. Ollama) providers work; it stays off in
-  code and in ``docker-compose.prod.yml``. For a backend started without
-  Docker, set ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` yourself.
+  the editor's Local (e.g. Ollama) provider works; it stays off in code and in
+  ``docker-compose.prod.yml``. For a backend started without Docker, set
+  ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` yourself. A gateway from the model
+  catalog (``BESSER_MODEL_CATALOG``) does not need it: its endpoint is the
+  operator's, not the request's.
 
 Caps and limits
 ---------------

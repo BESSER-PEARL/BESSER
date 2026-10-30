@@ -132,6 +132,10 @@ def _env_path(name: str) -> str | None:
 # Write element ids (id="...") into exported B-UML files. Off until every
 # install in use reads them: releases before Element.id reject such a file.
 BUML_EMIT_IDS = _env_bool("BESSER_BUML_EMIT_IDS", False)
+# "Go live" deploys the project's own repo (the agent's code) instead of a
+# regenerated copy. Off until it is proven on experimental; turning it off
+# brings back the classic deploy without a redeploy of the frontend.
+DEPLOY_FROM_REPO = _env_bool("BESSER_DEPLOY_FROM_REPO", False)
 
 # Per-run spend / runtime caps. The HARD_CAP values are the absolute
 # ceiling a request's fields are clamped to; DEFAULT values are what
@@ -244,11 +248,11 @@ LLM_ENABLE_IMPORT_SMOKE_CHECK = _env_bool("BESSER_LLM_ENABLE_IMPORT_SMOKE_CHECK"
 LLM_ENABLE_REQUIREMENTS_LEDGER = _env_bool("BESSER_LLM_ENABLE_REQUIREMENTS_LEDGER", True)
 
 # Whether a spec-driven generation request may carry a custom LLM ``base_url`` (the
-# 'PIA (LIST)' and 'Local / self-hosted' BYOK providers route through an
-# OpenAI-compatible endpoint at a user-supplied URL). OFF by default: on a
-# shared hosted box, having the server open an arbitrary user-provided URL is an
-# SSRF vector. Local / on-prem / PIA deploys set this TRUE (their whole point is
-# reaching a private gateway or localhost). When FALSE the request is rejected
+# 'Local / self-hosted' BYOK provider routes through an OpenAI-compatible
+# endpoint at a user-supplied URL). OFF by default: on a shared hosted box,
+# having the server open an arbitrary user-provided URL is an SSRF vector. Local
+# / on-prem deploys set this TRUE (their whole point is reaching localhost). A
+# gateway from the model catalog (e.g. PIA) does not need it. When FALSE the request is rejected
 # with a clear "run WME locally" message and the providers stay visible-but-inert
 # in the dropdown.
 LLM_ALLOW_CUSTOM_BASE_URL = _env_bool("BESSER_LLM_ALLOW_CUSTOM_BASE_URL", False)

@@ -374,6 +374,7 @@ Common pages to update:
   (``configuration.rst``)
 * ``web_editor.rst`` — editor workflows
 * ``web_editor_backend.rst`` — backend endpoints and environment variables
+* ``web_editor_github.rst`` — how the editor and the agent work with GitHub
 * ``utilities.rst`` — new utilities
 * ``contributor_guide.rst`` / ``ai_assistant_guide.rst`` — workflow changes
 

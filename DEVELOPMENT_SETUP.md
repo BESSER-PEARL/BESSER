@@ -95,7 +95,7 @@ accepts `--host`, `--port` and `--log-level`; run it with `--help` for details.
 same server.
 
 The backend runs on `http://localhost:9000/besser_api`. To use the
-Spec-Driven Agent's PIA or Local (e.g. Ollama) providers, set
+Spec-Driven Agent's Local (e.g. Ollama) provider, set
 `BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true` before starting it (the local
 `docker-compose.yml` does this for you).
 

@@ -68,8 +68,10 @@ docker compose up --build           # backend on :9000, frontend on :8080
 python -m besser.utilities.web_modeling_editor.backend.backend   # backend alone, on :9000
 besser-wme-backend --port 9000      # same, via the console script (--host, --port, --log-level)
 ```
-The Spec-Driven Agent's PIA / Local (Ollama) providers need `BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`
-(the local `docker-compose.yml` sets it; running the backend alone does not).
+The Spec-Driven Agent's Local (Ollama) provider needs `BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`
+(the local `docker-compose.yml` sets it; running the backend alone does not). Gateway providers such as
+PIA, and the key dialog's model lists, come from the model catalog (`BESSER_MODEL_CATALOG`, default in
+`besser/spec_driven_agent/providers/data/model_catalog.json`).
 
 ### Docker images
 The root `Dockerfile` has two targets. `backend` is Python + requirements + `besser`, no compilers.
@@ -173,7 +175,7 @@ Invariants and rules:
   `env_file`, receives only LLM credentials, and confines each run's shell with bubblewrap. Enable per
   service, never through the shared `.env`; changing the code default is a maintainer decision.
 - `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` — **off** by default (SSRF: the server would open a user-supplied URL).
-  Requests carrying `base_url` (PIA, Local/Ollama) are rejected unless set. Keep it off on shared hosts and
+  Requests carrying `base_url` (Local/Ollama) are rejected unless set. Keep it off on shared hosts and
   in `docker-compose.prod.yml`; only the local `docker-compose.yml` turns it on.
 
 ### Debugging a run

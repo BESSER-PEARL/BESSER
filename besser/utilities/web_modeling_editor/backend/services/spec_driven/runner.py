@@ -53,6 +53,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     free_tier_model,
     is_free_fallback_choice,
 )
+from besser.spec_driven_agent.providers.model_catalog import load_model_catalog
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
@@ -1196,7 +1197,10 @@ class SmartGenerationRunner:
             llm_model = self.request.llm_model or sponsored_tier_model() or "sponsored"
         else:
             llm_model = (
-                self.request.llm_model or _DEFAULT_MODELS.get(self.request.provider, "")
+                self.request.llm_model
+                or _DEFAULT_MODELS.get(self.request.provider)
+                or load_model_catalog().default_model(self.request.provider)
+                or ""
             )
 
         self._llm_model = llm_model
@@ -1209,16 +1213,16 @@ class SmartGenerationRunner:
             maxRuntime=self.request.max_runtime_seconds,
         ))
 
-        # ---- 1b. SSRF gate for the 'PIA' / 'local' providers -----------
-        # These send a custom OpenAI-compatible base_url. Having the server
+        # ---- 1b. SSRF gate for the 'local' provider -------------------
+        # It sends a custom OpenAI-compatible base_url. Having the server
         # open an arbitrary user URL is an SSRF surface on a shared box, so it
-        # is opt-in per deploy (local / on-prem / PIA set the flag). Fail fast
+        # is opt-in per deploy (local / on-prem set the flag). Fail fast
         # with a clear, actionable message.
         if self.request.base_url and not LLM_ALLOW_CUSTOM_BASE_URL:
             yield self._sse(ErrorEvent(
                 code="BAD_REQUEST",
                 message=(
-                    "Custom LLM endpoints (PIA / local) are disabled on this "
+                    "Custom LLM endpoints (local) are disabled on this "
                     "deployment. Run the WME locally with "
                     "BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true "
                     "to use your own gateway or model server."

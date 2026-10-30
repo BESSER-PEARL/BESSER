@@ -58,6 +58,11 @@ def _inline(value) -> str:
     return " ".join(str(value).split()).replace("`", "'")
 
 
+def inline_code(value) -> str:
+    """A value as one markdown code span: never a link, heading or HTML."""
+    return f"`{_inline(value)}`"
+
+
 def generation_provenance_markdown(
     generator: str,
     options: Optional[Mapping[str, object]] = None,

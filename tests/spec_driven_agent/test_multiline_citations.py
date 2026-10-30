@@ -60,10 +60,36 @@ def test_an_abridged_run_verifies_on_its_first_part(tmp_path):
     assert verdict["status"] == "implemented", verdict.get("note")
 
 
-def test_two_joined_citations_verify_on_the_first(tmp_path):
+def test_two_joined_citations_verify_when_both_exist(tmp_path):
+    (tmp_path / "todos").mkdir()
+    (tmp_path / "todos" / "ui.py").write_text("def main():\n    App().mainloop()\n", encoding="utf-8")
     verdict = _check(tmp_path, "todos/db.py: res = self.dialog().show() and todos/ui.py: App().mainloop()",
                      text="Open the task dialog", kind="ui")
     assert verdict["status"] == "implemented", verdict.get("note")
+
+
+# Review of this change: a real part must never carry an invented one.
+def test_an_invented_part_rejects_the_whole_citation(tmp_path):
+    for evidence in (
+        "todos/db.py: return cur.lastrowid; self.conn.execute(\"DELETE FROM todo_item WHERE id=?\", (id,))",
+        "todos/db.py: return cur.lastrowid ... raise ValueError(\"duplicate title\")",
+        "todos/db.py: res = self.dialog().show() and todos/missing.py: App().mainloop()",
+    ):
+        assert _check(tmp_path, evidence)["status"] == "unverified", evidence
+
+
+def test_text_inside_a_comment_or_string_is_not_code(tmp_path):
+    (tmp_path / "todos").mkdir(exist_ok=True)
+    (tmp_path / "todos" / "svc.py").write_text(
+        "def add(title):\n"
+        "    save(title)  # must be unique, raise ValueError on duplicate title\n"
+        "    print(\"validates that the due date is after the start date\")\n",
+        encoding="utf-8")
+    for quote in ("must be unique, raise ValueError on duplicate title",
+                  "validates that the due date is after the start date"):
+        verdict = verify_evidence([_verdict(f"todos/svc.py: {quote}", kind="rule", text="Titles are unique")],
+                                  str(tmp_path))[0]
+        assert verdict["status"] == "unverified", quote
 
 
 def test_a_quote_that_skips_lines_is_still_rejected(tmp_path):
@@ -205,4 +231,19 @@ def test_a_short_line_start_without_an_ellipsis_is_rejected(tmp_path):
 def test_a_long_run_from_inside_a_line_verifies(tmp_path):
     # Live (Compose): the statement inside "onClick = { ... }" was quoted alone.
     verdict = _check_tk(tmp_path, 'todos/ui.py: text="New", command=self.new_tag).pack(side="left"')
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_a_call_whose_last_argument_has_a_trailing_comma_verifies(tmp_path):
+    # Live (desktop): "(cur.lastrowid, t),\n)" - the comma on the line before the
+    # closing bracket made the span look complete one line too early.
+    (tmp_path / "todos").mkdir(exist_ok=True)
+    (tmp_path / "todos" / "tags.py").write_text(
+        "def tag(self, cur, t):\n"
+        "    self.conn.execute(\n"
+        "        \"INSERT INTO item_tags(item_id, tag_id) VALUES (?,?)\",\n"
+        "        (cur.lastrowid, t),\n"
+        "    )\n", encoding="utf-8")
+    evidence = 'todos/tags.py: self.conn.execute("INSERT INTO item_tags(item_id, tag_id) VALUES (?,?)", (cur.lastrowid, t))'
+    verdict = verify_evidence([_verdict(evidence)], str(tmp_path))[0]
     assert verdict["status"] == "implemented", verdict.get("note")

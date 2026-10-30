@@ -22,7 +22,10 @@ The three phases
    app, a CLI, a game, an extension, a library, ...). A generator is picked
    only when its output *is* that target, so an ``other`` target is written
    from scratch in the stack the user named, or the standard one for that
-   target. Every web-specific rule below applies to a ``web_app`` target only.
+   target. An app that uses an API is that app, not a backend; an API is a
+   backend in any language; and an architecture pattern such as MVC describes
+   the app's structure, not its platform. Every web-specific rule below
+   applies to a ``web_app`` target only.
    When the selection call answers NONE for a web app or a backend, the
    keyword fallback still picks a generator ("a web app with a REST API" gets
    the FastAPI scaffold); for an ``other`` target, NONE stands. When no
@@ -80,11 +83,12 @@ The three phases
    rather than asking for a UI. Such a request also puts "build the frontend"
    on the checklist, and Phase 3 reports a blocker if the output ends with no
    frontend files. A project with both a class model and an agent model gets
-   a checklist item to connect them while no agent code names a domain type:
-   the agent's intents about the model's data must read and write it, not
-   answer with canned text. The item also keeps Phase 2 from being skipped,
-   and the agent may drop it with a reason when it has nothing to do with the
-   data. The
+   a checklist item to connect them while no agent code names a domain class
+   or enumeration (in any casing, in code: a reply text or a training
+   sentence does not count). The agent's intents about the model's data must
+   read and write it, not answer with canned text. The item also keeps
+   Phase 2 from being skipped, and the agent may drop it with a reason when
+   it has nothing to do with the data. The
    system prompt adapts to the run: the rule that asks for a complete CRUD
    frontend applies only when the run has or needs a frontend, and when shell
    tools are on and a FastAPI backend is present it gains a runtime
@@ -266,13 +270,17 @@ reading a trace and wondering why a run did what it did.
        (the recipe, checkpoint and trace, the ``BESSER_GENERATION.md``
        provenance file, or a generated source file).
 
-After Phase 3, the Python files the LLM wrote whole in a create run are passed
-through ``ruff format``, which changes layout only; a file it only edited,
-generator files and the files of a modify run keep their own layout. The download's
+Between Phase 2 and Phase 3, the Python files the LLM wrote whole in a create
+run are passed through ``ruff format --isolated``, which changes layout only,
+so Phase 3 validates the layout that ships; a file it only edited, generator
+files and the files of a modify run keep their own layout. A formatter that
+could not run is reported under *Not checked*. The download's
 ``BESSER_GENERATION.md`` gains a *This run* section: what was built, the base
-generator and the verification counts, with the items found missing in the code
-and the checks that could not run. It leaves out the request itself, because the
-file also goes into GitHub pushes.
+generator and the verification counts, with up to eight items each found missing
+in the code or not checked (a check that could not run, a requirement whose
+evidence did not verify). It leaves out the request itself, because the file
+also goes into GitHub pushes, and shows model-written values as code, never as
+links or markup.
 
 Every ``BESSER_LLM_*`` switch named above is collected in
 :doc:`configuration`.

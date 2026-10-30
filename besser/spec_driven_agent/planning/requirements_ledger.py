@@ -17,10 +17,13 @@ from __future__ import annotations
 import ast
 import json
 import logging
+from functools import lru_cache
 from pathlib import Path
+from typing import NamedTuple
 import re
 import time
 
+from besser.spec_driven_agent.planning.code_text import code_only
 from besser.spec_driven_agent.planning.gap_analyzer import _chat_supports_kwargs, _is_real_provider
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import ENTITY_CRUD_KIND
@@ -86,7 +89,11 @@ def _demands_enforcement(kind: str, text: str) -> bool:
 _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
 # A judge abridges a run of code as "a ... b", lists lines as "a; b", and cites
 # two places as "x.py: a and y.py: b". Each part must still be verbatim source.
-_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026)(?=[\s)\]}]|$)|;\s+|\s+and\s+[\w./\\-]+\.\w{1,5}:\s")
+_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026)(?=[\s)\]}]|$)|;\s+|\s+and\s+([\w./\\-]+\.\w{1,5}):\s")
+# A part shorter than this ("pass", "}") identifies no code; it is left out.
+_MIN_PART_QUOTE = 8
+# Evidence longer than this is cut before matching (the judge is asked for one line).
+_MAX_EVIDENCE_CHARS = 2000
 # A formatted statement, or a def followed by its first body line, spans lines;
 # the judge quotes it on one. Lines a quote may span: a Kotlin/Compose call
 # puts one argument per line.
@@ -110,28 +117,30 @@ def _normalise_quote(text: str) -> str:
     return _collapse(first.replace("'", '"'))
 
 
-def _quote_candidates(raw: str) -> list[tuple[str, bool]]:
-    """(quote, cut) pairs: the normalised quote, then each part of an abridged
-    or double citation; ``cut`` when an ellipsis right after it marks the rest
-    of its line as left out.
+def _citation_parts(raw: str, path: str) -> list[tuple[str, str, bool]]:
+    """(path, quote, cut) for each part of an abridged or listed citation.
 
-    Every part is checked as a citation of its own; "class X: ... <the code>"
-    names the behaviour only in a later part.
+    ``cut`` when an ellipsis right after the part marks the rest of its line
+    as left out; "and other.py: b" moves the following parts to that file.
     """
-    candidates = [(_evidence_quote(raw), False)]
+    parts: list[tuple[str, str, bool]] = []
     position = 0
     for match in _ABRIDGED_RE.finditer(raw):
-        is_ellipsis = match.group().strip().startswith(("...", "…"))
-        candidates.append((_evidence_quote(raw[position:match.start()]), is_ellipsis))
+        quote = _evidence_quote(raw[position:match.start()])
+        if len(quote) >= _MIN_PART_QUOTE:
+            parts.append((path, quote, match.group().strip().startswith(("...", "\u2026"))))
+        path = match.group(1) or path
         position = match.end()
-    candidates.append((_evidence_quote(raw[position:]), False))
-    seen: set = set()
-    return [c for c in candidates if c[0] and not (c in seen or seen.add(c))]
+    quote = _evidence_quote(raw[position:])
+    if len(quote) >= _MIN_PART_QUOTE:
+        parts.append((path, quote, False))
+    return parts
 
 
 _TRAILING_COMMA_RE = re.compile(r",(?=[)\]}])")
 
 
+@lru_cache(maxsize=65536)
 def _joined_strings(text: str) -> str:
     """Adjacent string literals ``"a " "b"`` read as the one string ``"a b"``, and
     a formatter's trailing comma before a closing bracket is dropped."""
@@ -148,15 +157,38 @@ _MIN_CUT_QUOTE = 20
 _MIN_INLINE_QUOTE = 30
 
 
+class _Source(NamedTuple):
+    """One cited file, read once per verification."""
+    path: str
+    lines: list[str]
+    normalised: list[str]
+    code: list[str]  # normalised lines without comments and strings (Pygments)
+    tree: ast.AST | None
+    diagnostics: list[dict]
+    comments: set[int]
+
+
+def _in_code(quoted: str, source: _Source, index: int) -> bool:
+    """The quote is verbatim in the line, and not inside its strings or comment.
+
+    Both tests are needed: removing strings alone makes CheckConstraint("a > 0")
+    and CheckConstraint("b > 0") the same text.
+    """
+    return (quoted in source.normalised[index]
+            and _collapse(code_only(quoted, source.path)) in source.code[index])
+
+
 def _is_complete_call(quoted: str) -> bool:
     """A whole call expression (balanced, closed), whitespace already removed."""
     return (len(quoted) >= _MIN_CALL_QUOTE and bool(_CALL_RE.fullmatch(quoted))
             and quoted.count("(") == quoted.count(")") and quoted.count("{") == quoted.count("}"))
 
 
-def _quote_spans(quoted: str, normalised: list[str], cut: bool = False):
+def _quote_spans(quoted: str, source: _Source, cut: bool = False):
     """1-based (first, last) source line spans whose text is the quote."""
+    normalised = source.normalised
     target = _joined_strings(quoted)
+    inline = _is_complete_call(quoted) or len(_collapse(code_only(quoted, source.path))) >= _MIN_INLINE_QUOTE
     for start, first in enumerate(normalised):
         # A line may end in the block it opens ("Card(...) {", "def f():"), which
         # the judge leaves off; nothing else may be missing. A complete call
@@ -164,9 +196,8 @@ def _quote_spans(quoted: str, normalised: list[str], cut: bool = False):
         # and a line's start when an ellipsis says the rest was left out.
         if (first == quoted
                 or (first.startswith(quoted) and set(first[len(quoted):]) <= _BLOCK_PUNCTUATION)
-                or (_is_complete_call(quoted) and quoted in first)
                 or (cut and len(quoted) >= _MIN_CUT_QUOTE and first.startswith(quoted))
-                or (len(quoted) >= _MIN_INLINE_QUOTE and quoted in first)):
+                or (inline and _in_code(quoted, source, start))):
             yield start + 1, start + 1
             continue
         if not first or not target.startswith(_joined_strings(first)):
@@ -178,7 +209,7 @@ def _quote_spans(quoted: str, normalised: list[str], cut: bool = False):
             span_text = _joined_strings(joined)
             # The quote may stop inside its last line (a signature quoted without
             # its "-> T:"), never inside an earlier one.
-            if (span_text.startswith(target) and len(target) > len(earlier)
+            if (span_text.startswith(target) and len(target) > len(earlier.rstrip('",'))
                     and len(span_text) - len(target) <= _MAX_UNQUOTED_TAIL):
                 yield start + 1, end + 1
                 break
@@ -381,6 +412,7 @@ _SUBMIT_VERDICTS_TOOL = {
                         "status": {"type": "string", "enum": list(_STATUSES)},
                         "evidence": {
                             "type": "string",
+                            "maxLength": _MAX_EVIDENCE_CHARS,
                             "description": (
                                 "The file's relative path, a colon, and one "
                                 "line copied verbatim from it - the line that "
@@ -548,7 +580,7 @@ def _digest_priority(rel: str) -> tuple[int, str]:
     return (4, rel)
 
 
-def _source_files(output_dir: str) -> dict[str, str]:
+def source_files(output_dir: str) -> dict[str, str]:
     """Only application source, never run logs/recipes or an escaped symlink."""
     base = Path(output_dir).resolve()
     files: dict[str, str] = {}
@@ -608,7 +640,7 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     Citation repair can prioritize a few cited files and read them beyond the
     ordinary per-file cap, while keeping the same total prompt budget.
     """
-    files = _source_files(output_dir)
+    files = source_files(output_dir)
     focused = set()
     for path in (focus_paths or [])[:10]:
         if not isinstance(path, str):
@@ -940,18 +972,96 @@ def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) ->
     return statement, ""
 
 
+def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
+    """One cited file, read and prepared once per verification."""
+    if candidate not in parsed:
+        try:
+            with open(candidate, "r", encoding="utf-8-sig", errors="ignore") as fh:
+                source = fh.read()
+        except OSError:
+            parsed[candidate] = _Source(candidate, [], [], [], None, [], set())
+            return parsed[candidate]
+        tree = None
+        if candidate.endswith(".py"):
+            try:
+                tree = ast.parse(source)
+            except SyntaxError:
+                pass
+        lines = source.splitlines()
+        normalised = [_normalise_quote(line) for line in lines]
+        code = [_normalise_quote(line) for line in code_only(source, candidate).splitlines()]
+        parsed[candidate] = _Source(
+            candidate, lines, normalised, code if len(code) == len(lines) else normalised, tree,
+            python_structural_diagnostics(tree, sqlite=sqlite) if tree else [],
+            _comment_only_lines(source, Path(candidate).suffix.lower()),
+        )
+    return parsed[candidate]
+
+
+def _resolve_cited_path(path: str, quoted: str, files: dict[str, str], quote_cache: dict) -> list[str]:
+    """The source files a citation's path can name (one, when unambiguous)."""
+    path = path.strip().replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    candidates = [] if not path or path.startswith("/") or ".." in path.split("/") else (
+        [files[path]] if path in files else
+        [full for rel, full in files.items() if rel.endswith("/" + path)]
+    )
+    # The judge is asked for ``<path>:<line>`` and sometimes answers with
+    # the CLASS the line belongs to - ``Person: id: Mapped_[int] =
+    # mapped_column(Integer_, primary_key=True)``. Accept the class as a
+    # locator only when the tree defines exactly one class by that name,
+    # so a placeholder such as the literal word "path" stays unverified.
+    if not candidates and quoted and _IDENTIFIER_RE.match(path):
+        homes = _class_homes(files, quote_cache).get(path, ())
+        if len(homes) == 1:
+            candidates = list(homes)
+    return candidates
+
+
+def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quote: str) -> str:
+    """Why a located span does not implement the requirement; "" when it does.
+
+    A span's checks apply to its last line: the body statement of a
+    def-and-body quote, the same statement for a formatted call.
+    """
+    if first_line in source.comments or lineno in source.comments:
+        return "the cited line is a comment, not an implementation"
+    statement = None
+    if source.path.endswith(".py"):
+        statement, reason = _python_citation(source.tree, lineno, item.get("kind", ""), item.get("text", ""))
+        if reason:
+            return reason
+        invalid = next((d for d in source.diagnostics if (
+            d["line"] <= lineno <= d.get("end_line", d["line"])
+            or statement is not None and _statement_start(statement) <= d["line"]
+            <= d.get("end_line", d["line"]) <= statement.end_lineno
+        )), None)
+        if invalid:
+            return "the cited implementation is invalid: " + invalid["message"]
+    if (_demands_enforcement(item.get("kind", ""), item.get("text", ""))
+            and not isinstance(statement, (ast.If, ast.Raise, ast.Assert))
+            and not source.lines[first_line - 1].lstrip().startswith(("if ", "if(", "if\t", "else if "))
+            and not any(tok in quote.lower() for tok in _ENFORCEMENT_TOKENS)):
+        return "the cited line declares data; it does not demonstrate enforcement"
+    return ""
+
+
 def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
     """Re-check every 'implemented' citation against the output tree.
 
     The cited application source must exist (an unambiguous path suffix is
-    accepted) and contain the quoted executable line. Never search a different
+    accepted) and contain the quoted code. An abridged or listed quote
+    ("a ... b", "a; b", "x.py: a and y.py: b") passes only when every part is
+    found in the file it names, and each part is checked on its own text, so
+    an invented part can never supply the proof. Never search a different
     file or the run's own recipe to rescue a bad citation. A declaration alone
     cannot prove enforcement or behaviour. Failed evidence is ``unverified``:
     it does not prove that no implementation exists elsewhere.
     """
-    files = _source_files(output_dir)
+    files = source_files(output_dir)
     sqlite = workspace_uses_sqlite(output_dir)
-    parsed: dict[str, tuple[list[str], ast.AST | None, list[dict], set[int]]] = {}
+    parsed: dict[str, _Source] = {}
     quote_cache: dict = {}
     checked: list[dict] = []
     for verdict in verdicts:
@@ -964,83 +1074,36 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
         if item.get("status") != "implemented":
             checked.append(item)
             continue
-        path, _, quoted = (item.get("evidence") or "").partition(":")
-        path = path.strip().replace("\\", "/")
-        while path.startswith("./"):
-            path = path[2:]
-        raw_quote = quoted
-        quoted = _evidence_quote(quoted)
-        candidates = [] if not path or path.startswith("/") or ".." in path.split("/") else (
-            [files[path]] if path in files else
-            [full for rel, full in files.items() if rel.endswith("/" + path)]
-        )
-        # The judge is asked for ``<path>:<line>`` and sometimes answers with
-        # the CLASS the line belongs to - ``Person: id: Mapped_[int] =
-        # mapped_column(Integer_, primary_key=True)``. Accept the class as a
-        # locator only when the tree defines exactly one class by that name,
-        # so a placeholder such as the literal word "path" stays unverified.
-        # This never widens the search for a citation that does name a file,
-        # and every later test (comment, statement kind, diagnostics,
-        # enforcement) still applies.
-        if not candidates and quoted and _IDENTIFIER_RE.match(path):
-            homes = _class_homes(files, quote_cache).get(path, ())
-            if len(homes) == 1:
-                candidates = list(homes)
+        path, _, raw_quote = (item.get("evidence") or "")[:_MAX_EVIDENCE_CHARS].partition(":")
+        quoted = _evidence_quote(raw_quote)
+        candidates = _resolve_cited_path(path, quoted, files, quote_cache)
         reason = "the cited source path is missing, excluded or ambiguous"
         if not quoted:
             reason = "the citation must identify an implemented statement, not only a decorator"
         if quoted and len(candidates) == 1:
-            candidate = candidates[0]
-            try:
-                if candidate not in parsed:
-                    with open(candidate, "r", encoding="utf-8-sig", errors="ignore") as fh:
-                        source = fh.read()
-                    tree = None
-                    if candidate.endswith(".py"):
-                        try:
-                            tree = ast.parse(source)
-                        except SyntaxError:
-                            pass
-                    diagnostics = python_structural_diagnostics(tree, sqlite=sqlite) if tree else []
-                    parsed[candidate] = (source.splitlines(), tree, diagnostics,
-                                         _comment_only_lines(source, Path(candidate).suffix.lower()))
-            except OSError:
-                parsed[candidate] = ([], None, [], set())
-            lines, tree, diagnostics, comments = parsed[candidate]
+            source = _load_source(candidates[0], parsed, sqlite)
+            located = [(source, quoted, list(_quote_spans(quoted, source)))]
+            if not located[0][2]:
+                located = []
+                for part_path, part, cut in _citation_parts(raw_quote, path):
+                    homes = _resolve_cited_path(part_path, part, files, quote_cache)
+                    part_source = _load_source(homes[0], parsed, sqlite) if len(homes) == 1 else None
+                    spans = list(_quote_spans(part, part_source, cut)) if part_source else []
+                    # A part need not be a whole statement ("{ save(n); done = true }"
+                    # splits at its ";"), but it must be code in that file.
+                    if not spans and not (part_source and any(
+                            _in_code(part, part_source, i) for i in range(len(part_source.lines)))):
+                        located = []
+                        break
+                    located.append((part_source, part, spans))
             reason = "the quoted executable line was not found in the cited source"
-            normalised = [_normalise_quote(line) for line in lines]
-            spans = [span for quote, cut in _quote_candidates(raw_quote)
-                     for span in _quote_spans(quote, normalised, cut)]
-            for first_line, lineno in spans:
-                line = lines[first_line - 1]
-                # A span's checks apply to its last line: the body statement of a
-                # def-and-body quote, the same statement for a formatted call.
-                if first_line in comments or lineno in comments:
-                    reason = "the cited line is a comment, not an implementation"
-                    continue
-                statement = None
-                if candidate.endswith(".py"):
-                    statement, reason = _python_citation(
-                        tree, lineno, item.get("kind", ""), item.get("text", ""),
-                    )
-                    if reason:
-                        continue
-                    invalid = next((d for d in diagnostics if (
-                        d["line"] <= lineno <= d.get("end_line", d["line"])
-                        or statement is not None and _statement_start(statement) <= d["line"]
-                        <= d.get("end_line", d["line"]) <= statement.end_lineno
-                    )), None)
-                    if invalid:
-                        reason = "the cited implementation is invalid: " + invalid["message"]
-                        continue
-                if (_demands_enforcement(item.get("kind", ""), item.get("text", ""))
-                        and not isinstance(statement, (ast.If, ast.Raise, ast.Assert))
-                        and not line.lstrip().startswith(("if ", "if(", "if\t", "else if "))
-                        and not any(tok in quoted.lower() for tok in _ENFORCEMENT_TOKENS)):
-                    reason = "the cited line declares data; it does not demonstrate enforcement"
-                    continue
-                reason = ""
-                break
+            for part_source, part, spans in located:
+                for first_line, lineno in spans:
+                    reason = _span_failure(item, part_source, first_line, lineno, part)
+                    if not reason:
+                        break
+                if not reason:
+                    break
         if reason:
             item["status"] = "unverified"
             item["note"] = " ".join(f"{item.get('note', '')} [{reason}]".split())

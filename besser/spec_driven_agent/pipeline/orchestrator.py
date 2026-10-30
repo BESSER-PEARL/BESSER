@@ -30,6 +30,7 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timezone
+from functools import partial
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
@@ -101,6 +102,7 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     requests_frontend,
     _FRONTEND_ASK_RE,
 )
+from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_uses_domain
 from besser.spec_driven_agent.planning.target import (
     OTHER,
     entity_requirements,
@@ -470,6 +472,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # What the run builds (planning/target.py), decided by the Phase 1
         # selector call; None keeps the pre-target behaviour.
         self.target: Target | None = None
+        # Notes from formatting the LLM's Python (format_python_files), for Phase 3.
+        self._format_notes: list[str] = []
         # The seed's target when this modify run builds another kind.
         self._previous_target: Target | None = None
         self._inventory: str = ""
@@ -758,6 +762,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             stop_detail=self._phase2_stop_detail,
         )
 
+        # Before Phase 3, so validation and the recipe describe the shipped layout.
+        self._format_python_output()
+
         # -- Snapshot BEFORE Phase 3 (preserves all Phase 2 work) ---------
         # If Phase 3 fixes make things worse, we roll back here
         # (keeping Phase 2 work intact), not back to Phase 1.
@@ -789,7 +796,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Log cost
         logger.info("Cost: %s", self.client.usage)
 
-        self._format_python_output()
         self._save_recipe(instructions, elapsed)
 
         # Clean up snapshot
@@ -928,6 +934,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self.executor.set_scaffold_family(
                 self._scaffold_family(), self._instructions)
 
+        self._format_python_output()
         self._create_snapshot()
         self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_resume")
         if (checkpoint.phase == "phase3" or self._phase2_exited_cleanly
@@ -941,7 +948,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
 
         elapsed = time.monotonic() - self._start_time
-        self._format_python_output()
         self._save_recipe(instructions, elapsed)
         self._remove_snapshot()
         self._finish_checkpoint()
@@ -3221,6 +3227,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # never enables tooling. Already-authorized dependency setup is an
         # actionable verification prerequisite, not a request for source edits.
         raw_issues.extend(self._collect_tsc_issues())
+        raw_issues.extend(self._format_notes)
         raw_issues.extend(_collect_uncompiled_source_issues(
             self.output_dir,
             frozenset({".rs", ".kt"}) if self.enable_toolchain_validation else frozenset()))
@@ -3439,42 +3446,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         "task cannot be marked done until frontend files exist on disk."
     )
 
-    # Live: "build my task assistant chatbot" on a class model + agent model
-    # shipped the BAF scaffold alone in 7 seconds; its "add a task" intent
-    # replied with canned text and never touched a task.
-    _AGENT_DOMAIN_TASK = (
-        "Connect the {agent} agent to the domain model: every intent about the "
-        "model's data (adding, listing or changing records) reads and writes "
-        "that data through the app's model or persistence code, not a canned "
-        "reply. Drop this item, with the reason, only if the agent has nothing "
-        "to do with the model's data."
-    )
-
-    def _agent_uses_domain(self) -> bool:
-        """A source file that holds the agent also names a domain type, in any casing.
-
-        Agent code names the agent (or is named after it), imports BAF, or
-        implements its intents (a web app's chat service often never writes
-        the agent's name).
-        """
-        agent_name = str(getattr(self.agent_model, "name", "") or "").lower()
-        intents = [str(i.name).lower() for i in getattr(self.agent_model, "intents", ()) if getattr(i, "name", "")]
-        names = {t.name for t in getattr(self.domain_model, "types", ()) if getattr(t, "name", "")}
-        forms = {form for name in names
-                 for form in (name.lower(), _re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower())}
-        for path in _requirements_ledger._source_files(self.output_dir).values():
-            try:
-                with open(path, encoding="utf-8", errors="ignore") as fh:
-                    text = fh.read().lower()
-            except OSError:
-                continue
-            holds_agent = ((agent_name and (agent_name in text or agent_name in os.path.basename(path).lower()))
-                           or "besser.agent" in text
-                           or (intents and sum(i in text for i in intents) >= min(2, len(intents))))
-            if holds_agent and any(_re.search(rf"\b{_re.escape(form)}\b", text) for form in forms):
-                return True
-        return False
-
     def _deterministic_gap_tasks(self) -> list[str]:
         """Checklist items the harness ADDS regardless of the planner.
 
@@ -3491,11 +3462,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # Cheat-proof: done is refused until frontend files exist.
                 "verify": self._has_frontend_files,
             })
-        if self.agent_model is not None and self.domain_model is not None and not self._agent_uses_domain():
-            tasks.append({
-                "text": self._AGENT_DOMAIN_TASK.format(agent=getattr(self.agent_model, "name", "the")),
-                "verify": self._agent_uses_domain,
-            })
+        if self.agent_model is not None and self.domain_model is not None:
+            uses_domain = partial(agent_uses_domain, self.output_dir, self.agent_model, self.domain_model)
+            if not uses_domain():
+                tasks.append({"text": AGENT_DOMAIN_TASK.format(agent=self.agent_model.name), "verify": uses_domain})
         tasks.extend(action_gap_tasks(self.output_dir, self._expected_action_endpoints()))
         tasks.extend(self._unenforced_rule_tasks())
         tasks.extend(item["text"] for item in self._requirements_for_validation()
@@ -3521,7 +3491,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # Only the current source+requirements judgment can discharge it;
             # a stale verdict or a task_list claim cannot.
             verdicts = self._requirement_judgments.get(
-                self._requirement_cache_key(self._requirements_for_validation()), [],
+                self._requirement_cache_key(self._requirements_to_judge()), [],
             )
             verified_ids = {item["id"] for item in _requirements_ledger.verify_evidence(
                 verdicts, self.output_dir,
@@ -3846,26 +3816,21 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """Format the Python files the LLM wrote whole (``write_file``) in this run.
 
         A file it only edited keeps its author's layout, generator files keep
-        the templates' own, and a modify run leaves the existing app alone.
+        the templates' own, and a modify run leaves the existing app alone. A
+        formatter that could not run is reported by Phase 3.
         """
         if self._modify_mode:
             return
-        generated = {os.path.normcase(p) for p in getattr(self.executor, "_generator_files", ())}
-        written: set[str] = set()
-        for call in self.tool_calls_log:
-            path = (call.get("input") or {}).get("path")
-            if (call.get("tool") != "write_file"
-                    or call.get("success") is False or not isinstance(path, str)):
-                continue
-            rel = os.path.normpath(path.replace("\\", "/")).replace("\\", "/")
-            if (rel.endswith(".py") and not os.path.isabs(rel)
-                    and not rel.startswith(("..", _SNAPSHOT_DIR, ".besser_"))
-                    and os.path.normcase(rel) not in generated
-                    and os.path.isfile(os.path.join(self.output_dir, rel))):
-                written.add(rel)
-        for issue in format_python_files(self.output_dir, sorted(written)):
-            logger.warning("Phase 3: %s", issue)
-            self._validation_issues.append(_classify_issue(issue))
+        generated = {os.path.normcase(os.path.join(self.output_dir, p)) for p in self.executor._generator_files}
+        written = sorted(
+            os.path.relpath(path, self.output_dir).replace("\\", "/")
+            for path in self._llm_edited_paths_by(frozenset({"write_file"}))
+            if path.endswith(".py") and path not in generated
+        )
+        app_files = [rel for rel in written if not rel.startswith(("..", _SNAPSHOT_DIR, ".besser_"))]
+        self._format_notes = format_python_files(self.output_dir, app_files)
+        for note in self._format_notes:
+            logger.warning("Phase 2: %s", note)
 
     def _ui_in_scope(self) -> bool:
         """A UI the user asked for but the tree lacks keeps UI requirements in scope."""
@@ -3968,7 +3933,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _llm_edited_paths(self) -> set[str]:
         """Delegate to the toolchain module."""
-        return _llm_edited_paths(self.output_dir, self.tool_calls_log, _WRITE_TOOLS_ON_RECORD)
+        return self._llm_edited_paths_by(_WRITE_TOOLS_ON_RECORD)
+
+    def _llm_edited_paths_by(self, tools: frozenset[str]) -> set[str]:
+        """Absolute, normalised paths the LLM wrote with these tools."""
+        return _llm_edited_paths(self.output_dir, self.tool_calls_log, tools)
 
     @staticmethod
     def _ruff_line_path(line: str) -> str:

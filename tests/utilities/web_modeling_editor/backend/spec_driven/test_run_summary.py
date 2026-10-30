@@ -15,7 +15,8 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     VerificationCounts, VerificationItem, VerificationReport,
 )
 
-KEY = "sk-test-0123456789abcdefghijklmnop"
+# No known provider prefix: only the run's own key list can redact it.
+KEY = "abcd1234efgh5678ijkl9012mnop"
 
 
 def _report():
@@ -42,10 +43,10 @@ def _summary(**recipe):
 def test_summary_names_target_and_verification_but_not_the_request():
     text = _summary()
     assert "quiero una app" not in text and "Request" not in text
-    assert "Built as: Windows 11 desktop todo app" in text
+    assert "Built as: `Windows 11 desktop todo app`" in text
     assert "none, written from scratch" in text
     assert "1 checked and working, 1 not checked, 1 checked and missing" in text
-    assert "edit and delete Tag records: tags can only be added" in text
+    assert "edit and delete Tag records`: `tags can only be added`" in text
 
 
 def test_summary_never_ships_the_run_key():
@@ -61,3 +62,19 @@ def test_provenance_file_carries_the_summary():
     assert "## This run" in text
     assert text.index("## This run") < text.index("Regenerating from the model")
     assert "## This run" not in generation_provenance_markdown("django", {})
+
+
+def test_model_text_is_shown_as_code_never_as_markup():
+    # Review: the file goes to GitHub, where a model-written link or HTML would render.
+    report = _report()
+    report.shippedUnenforced[0].why = "see [docs](https://evil.example) <img src=x> `tick`"
+    text = "\n".join(run_summary_markdown({"generator_used": "generate_django\n# Pwn"}, report))
+    assert "`see [docs](https://evil.example) <img src=x> 'tick'`" in text
+    assert "\n# Pwn" not in text and "`generate_django # Pwn`" in text
+
+
+def test_without_the_run_key_list_a_prefixless_key_would_leak():
+    # Shows the secrets argument is what protects a key with no known prefix.
+    report = _report()
+    report.notVerified[0].why = f"refused with key {KEY}"
+    assert KEY in "\n".join(run_summary_markdown({"generator_used": None}, report, secrets=()))

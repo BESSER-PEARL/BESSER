@@ -129,7 +129,7 @@ def test_llm_written_python_is_formatted_and_still_compiles(tmp_path):
     text = app.read_text(encoding="utf-8")
     assert ";" not in text
     compile(text, "todo_app.py", "exec")
-    assert not orch._validation_issues
+    assert not orch._format_notes
 
 
 @needs_ruff
@@ -159,10 +159,12 @@ def test_missing_ruff_is_reported_not_silent(tmp_path, monkeypatch):
     orch.tool_calls_log = [{"tool": "write_file", "input": {"path": "todo_app.py"}, "success": True}]
     monkeypatch.setattr(shutil, "which", lambda name: None)
     orch._format_python_output()
-    assert [i.severity for i in orch._validation_issues] == ["warning"]
-    assert "ruff format did not run" in orch._validation_issues[0].message
+    from besser.spec_driven_agent.validation.issues import _classify_issue
+    assert [_classify_issue(n).severity for n in orch._format_notes] == ["warning"]
+    assert "ruff format did not run" in orch._format_notes[0]
 
 
+@needs_ruff
 def test_a_path_outside_the_workspace_is_never_formatted(tmp_path):
     outside = tmp_path.parent / f"{tmp_path.name}-outside.py"
     outside.write_text(_DENSE, encoding="utf-8")
@@ -245,3 +247,37 @@ def test_no_agent_task_without_an_agent_model(tmp_path):
     orch = _orch(tmp_path, DESKTOP)
     assert not [t for t in orch._deterministic_gap_tasks()
                 if isinstance(t, dict) and "agent" in t["text"].lower()]
+
+
+def test_a_linked_parent_directory_is_never_formatted(tmp_path):
+    # Review: the model writes pkg/x.py, then swaps pkg for a link to outside.
+    from besser.spec_driven_agent.validation.toolchain import format_python_files
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "x.py").write_text(_DENSE, encoding="utf-8")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    try:
+        os.symlink(outside, workspace / "pkg", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available here")
+    assert format_python_files(str(workspace), ["pkg/x.py"]) == []
+    assert (outside / "x.py").read_text(encoding="utf-8") == _DENSE
+
+
+def test_a_canned_agent_is_caught_even_when_the_entity_is_named_like_its_replies(tmp_path):
+    # Review: with an entity called Task, the reply "Task added!" and the training
+    # sentence "add a task" used to count as using the domain model.
+    from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
+    from besser.spec_driven_agent.planning.agent_wiring import agent_uses_domain
+    task = Class(name="Task")
+    task.attributes = {Property(name="title", type=PrimitiveDataType("str"))}
+    model = DomainModel(name="Tasks", types={task})
+    agent = _agent()
+    canned = tmp_path / "TaskAssistant.py"
+    canned.write_text("import time\nTRAINING = ['add a task']\n"
+                      "def add_task_body(session):\n    session.reply('Task added!')  # Task\n", encoding="utf-8")
+    assert agent_uses_domain(str(tmp_path), agent, model) is False
+    canned.write_text(canned.read_text(encoding="utf-8")
+                      + "def list_tasks_body(session):\n    session.reply(str(Task.all()))\n", encoding="utf-8")
+    assert agent_uses_domain(str(tmp_path), agent, model) is True

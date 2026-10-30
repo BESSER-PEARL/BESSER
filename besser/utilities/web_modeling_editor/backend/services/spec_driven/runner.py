@@ -63,6 +63,7 @@ from besser.spec_driven_agent.state import agent_trace
 from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
     get_besser_version,
+    inline_code,
     remove_readme_block,
     write_generation_provenance,
 )
@@ -327,19 +328,22 @@ def run_summary_markdown(
     """The run section of ``BESSER_GENERATION.md``: target and verification.
 
     The recipe stays out of the download, so without this a downloaded run
-    says nothing about what was checked. The request itself is left out: this
-    file also goes into GitHub pushes, public ones included.
+    says nothing about what was checked. This file also goes into GitHub
+    pushes, public ones included: the request text is left out, and the
+    model-written values (which restate parts of it) are redacted and shown
+    as code, never as links or markup.
     """
     def one_line(text: object) -> str:
         cleaned, _ = redact_text(" ".join(str(text).split()), env_style=False, secrets=secrets)
-        return cleaned
+        return inline_code(cleaned)
 
     target = recipe.get("target") if isinstance(recipe.get("target"), dict) else None
     counts = verification.counts
     lines = ["## This run", ""]
     if target:
         lines.append(f"- Built as: {one_line(target.get('description') or target.get('kind'))}")
-    lines.append(f"- Base generator: {recipe.get('generator_used') or 'none, written from scratch'}")
+    generator = recipe.get("generator_used")
+    lines.append(f"- Base generator: {one_line(generator) if generator else 'none, written from scratch'}")
     lines.append(
         f"- Verification: {counts.verified} checked and working, {counts.notVerified} not checked, "
         f"{counts.shippedUnenforced} checked and missing in the code")
@@ -2413,7 +2417,7 @@ class SmartGenerationRunner:
             verification = VerificationReport(notVerified=[VerificationItem(
                 kind="check", what="everything this run did",
                 why="the run's verification report could not be built",
-            )])
+            )], counts=VerificationCounts(notVerified=1))
         recipe["verification"] = verification.model_dump(mode="json")
         recipe["besser_version"] = get_besser_version()
         recipe_path = os.path.join(result_path, ".besser_recipe.json")

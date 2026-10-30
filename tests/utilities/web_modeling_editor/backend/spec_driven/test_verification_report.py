@@ -327,7 +327,6 @@ def test_the_synthetic_recovery_requirement_the_orchestrator_writes_is_matchable
     owner = SimpleNamespace(
         _requirements=[],
         domain_model=SimpleNamespace(conversion_issues=[_NO_DOUBLE_BOOKING]),
-        target=None,
     )
     synthetic = LLMOrchestrator._requirements_for_validation(owner)
     assert len(synthetic) == 1

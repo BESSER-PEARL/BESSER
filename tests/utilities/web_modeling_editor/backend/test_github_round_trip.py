@@ -154,8 +154,9 @@ def test_a_push_sends_only_the_files_that_changed(github):
     r = _push(run_id, "shop", base_commit_sha=imported["commit_sha"])
 
     assert r.status_code == 200, r.text
-    # src/app.py and the three model files the push adds; nothing else of the repo.
-    assert r.json()["files_uploaded"] == 4
+    # src/app.py, the three model files the push adds and the README's BESSER block
+    # (this repo had none); nothing else of the repo.
+    assert r.json()["files_uploaded"] == 5
 
 
 def test_a_push_with_nothing_changed_makes_no_commit(github):

@@ -138,6 +138,10 @@ class _FakeGitHubService:
             preserve_existing_files=preserve_existing_files,
             base_commit_sha=base_commit_sha,
         )
+        readme = os.path.join(directory_path, "README.md")
+        if os.path.isfile(readme):
+            with open(readme, encoding="utf-8", newline="") as fh:
+                self.push["readme"] = fh.read()
         return {
             "commit_sha": "d" * 40,
             "total_files": len(files),
@@ -368,3 +372,43 @@ class TestPushSmartToGitHub:
         assert r.json()["detail"] == "repo_missing"
         # Must NOT silently create a repo when the user asked to reuse one.
         assert fake.created is False
+
+    def test_push_links_the_readme_back_to_besser_and_the_model(self, monkeypatch):
+        run_id = "1" * 32
+        tmp = _seed_run(run_id)
+        with open(os.path.join(tmp, "README.md"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("# Library\n\nRun `python main.py`.\n")
+        fake = _FakeGitHubService()
+        _install(monkeypatch, fake)
+
+        body = {
+            "run_id": run_id,
+            "projectExport": _project_export(),
+            "deploy_config": {"repo_name": "my-generated-app"},
+        }
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        readme = fake.push["readme"]
+        assert readme.startswith("# Library\n\nRun `python main.py`.\n\n<!-- besser:begin -->")
+        assert ("https://editor.besser-pearl.org/?buml=https://github.com/test-owner/my-generated-app/"
+                "blob/main/buml/domain_model.py") in readme
+        assert "https://github.com/BESSER-PEARL/Built-with-BESSER" in readme
+        # The stored run keeps the agent's README; only the pushed copy carries the block.
+        with open(os.path.join(tmp, "README.md"), encoding="utf-8") as fh:
+            assert "besser:begin" not in fh.read()
+
+    def test_push_without_a_readme_adds_one_named_after_the_repo(self, monkeypatch):
+        run_id = "2" * 32
+        _seed_run(run_id)
+        fake = _FakeGitHubService()
+        _install(monkeypatch, fake)
+
+        body = {
+            "run_id": run_id,
+            "projectExport": _project_export(),
+            "deploy_config": {"repo_name": "my-generated-app"},
+        }
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        assert fake.push["readme"].startswith("# my-generated-app\n\n<!-- besser:begin -->")
+        assert "README.md" in fake.push["files"]

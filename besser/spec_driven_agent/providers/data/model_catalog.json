@@ -1,0 +1,59 @@
+{
+  "providers": {
+    "anthropic": {
+      "label": "Anthropic (Claude)",
+      "models": [
+        {"id": "claude-fable-5-1", "label": "Claude Fable 5.1 — most capable"},
+        {"id": "claude-opus-5-5", "label": "Claude Opus 5.5 — top tier, lower cost than Opus 5"},
+        {"id": "claude-opus-5", "label": "Claude Opus 5 — top tier"},
+        {"id": "claude-sonnet-5", "label": "Claude Sonnet 5 — balanced"},
+        {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6 — previous generation"},
+        {"id": "claude-opus-4-6", "label": "Claude Opus 4.6 — previous generation"},
+        {"id": "claude-haiku-4-5", "label": "Claude Haiku 4.5 — fast & cheap"}
+      ]
+    },
+    "openai": {
+      "label": "OpenAI (GPT)",
+      "models": [
+        {"id": "gpt-6-sol", "label": "GPT-6 Sol — balanced"},
+        {"id": "gpt-6-luna", "label": "GPT-6 Luna — fast & cheap"},
+        {"id": "gpt-5.6-terra", "label": "GPT-5.6 Terra — balanced (recommended)"},
+        {"id": "gpt-5.6-sol", "label": "GPT-5.6 Sol — most capable"},
+        {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna — fast & cheap"},
+        {"id": "gpt-5.5", "label": "GPT-5.5 — previous flagship"},
+        {"id": "gpt-5.4-mini", "label": "GPT-5.4 mini — fast & cheap"},
+        {"id": "gpt-4o", "label": "GPT-4o — reliable"}
+      ]
+    },
+    "mistral": {
+      "label": "Mistral",
+      "models": [
+        {"id": "mistral-large-latest", "label": "Mistral Large — most capable"},
+        {"id": "mistral-small-latest", "label": "Mistral Small — fast & cheap"}
+      ]
+    },
+    "nebius": {
+      "label": "Nebius Token Factory",
+      "models": [
+        {"id": "Qwen/Qwen3-30B-A3B-Instruct-2507", "label": "Qwen3 30B A3B Instruct — fast MoE (default)", "default": true}
+      ]
+    },
+    "local": {
+      "label": "Local (self-hosted)",
+      "models": [
+        {"id": "qwen2.5-coder:7b", "label": "qwen2.5-coder:7b — code (default)", "default": true},
+        {"id": "llama3.1:8b", "label": "llama3.1:8b — general"},
+        {"id": "qwen2.5-coder:32b", "label": "qwen2.5-coder:32b — stronger code"}
+      ]
+    }
+  },
+  "route_prices": {
+    "api.commandcode.ai": {
+      "_source": "https://commandcode.ai/docs/resources/pricing-limits (USD per 1M tokens, checked 2026-09-30)",
+      "moonshotai/kimi-k3": {"input": 3.0, "output": 15.0, "cache_write": 0.0, "cache_read": 0.30},
+      "qwen/qwen3.8-max-0902": {"input": 2.0, "output": 6.0, "cache_write": 0.0, "cache_read": 0.25},
+      "meta/muse-spark-1.3": {"input": 1.25, "output": 4.25, "cache_write": 0.0, "cache_read": 0.15},
+      "poolside/laguna-s-2.1-free": {"input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0}
+    }
+  }
+}

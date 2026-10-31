@@ -1329,7 +1329,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return None  # fall through to keyword matching
 
         except Exception as e:
-            logger.debug("Phase 1: LLM selection skipped (%s), using keywords", e)
+            logger.warning("Phase 1: LLM generator selection failed (%s); using keyword routing", e)
             return None
 
     def _client_supports_structured_chat(self) -> bool:
@@ -2776,9 +2776,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             raw = self._apply_scenario_evidence(raw)
             # A clean list only counts as OK when a backend was actually booted;
             # "no backend here" must never read as "the app works".
-            self._record_runtime_verdict(
-                _runtime_verdict(raw) if self._probeable_backends() else None
-            )
+            try:
+                probed = bool(self._probeable_backends())
+            except Exception:
+                logger.warning("Backend discovery failed; no runtime verdict", exc_info=True)
+                probed = False
+            self._record_runtime_verdict(_runtime_verdict(raw) if probed else None)
         elif any(os.path.basename(p) == "main_api.py" for p in _python_files(self.output_dir)):
             self._record_runtime_verdict(None)
             raw.append("runtime unverified: backend startup/data-entry checks are disabled; this app has not been runtime verified")
@@ -2871,14 +2874,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return checked
 
     def _probeable_backends(self) -> list[str]:
-        """Generated FastAPI services the constructibility probe can drive."""
-        try:
-            from besser.spec_driven_agent.validation.constructibility import _fastapi_backends
+        """Generated FastAPI services the constructibility probe can drive.
 
-            return _fastapi_backends(self.output_dir)
-        except Exception:
-            logger.debug("Backend discovery failed", exc_info=True)
-            return []
+        Raises when discovery fails: "no backend" would silence the runtime
+        gate, so the caller decides (the gate fails closed).
+        """
+        from besser.spec_driven_agent.validation.constructibility import _fastapi_backends
+
+        return _fastapi_backends(self.output_dir)
 
     def _validate_app(self) -> dict:
         """Model-facing, revision-bound diagnostics with no additional LLM cost."""

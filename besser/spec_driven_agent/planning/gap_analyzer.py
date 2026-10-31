@@ -382,11 +382,11 @@ def _sanitize_tasks(tasks: list, generator_used: str | None) -> list:
     for task in tasks:
         low = task.lower()
         if _DELETE_SCAFFOLD_RE.search(task):
-            logger.info("Gap sanitizer dropped scaffold-demolition task: %r", task[:100])
+            logger.warning("Gap sanitizer dropped scaffold-demolition task: %r", task[:100])
             continue
         rival_hit = next((r for r in rivals if r in low), None)
         if rival_hit:
-            logger.info(
+            logger.warning(
                 "Gap sanitizer dropped rival-framework (%s) task: %r",
                 rival_hit, task[:100],
             )
@@ -432,7 +432,7 @@ def _drop_present_enumerations(tasks: list, domain_model) -> list:
                 None,
             )
             if match:
-                logger.info(
+                logger.warning(
                     "Gap sanitizer dropped enumeration already in the model as %s: %r",
                     match, task[:100],
                 )
@@ -619,7 +619,7 @@ def _drop_present_attributes(tasks: list, domain_model) -> list:
             if decision:
                 break
         if decision == "drop":
-            logger.info("Gap sanitizer dropped already-present attribute task: %r", task[:100])
+            logger.warning("Gap sanitizer dropped already-present attribute task: %r", task[:100])
             continue
         if decision == "annotate":
             noted.append(

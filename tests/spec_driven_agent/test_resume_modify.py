@@ -107,3 +107,36 @@ def test_create_run_checkpoint_carries_no_modify_state(tmp_path):
     orch = _orchestrator(tmp_path)
     orch._save_checkpoint_for_turn(1, [], "Build a library")
     assert load_checkpoint(str(tmp_path)).modify is None
+
+
+def test_model_sync_survives_resume(tmp_path, monkeypatch):
+    """Review of #705: the classes model sync added (an LLM answer) and the
+    updated project export the GitHub push writes were lost on resume."""
+    monkeypatch.setattr(_NoLLM, "_client", object(), raising=False)  # a "real" provider
+    monkeypatch.setattr(LLMOrchestrator, "_request_model_deltas", lambda self, instructions: [
+        {"name": "User", "attributes": [{"name": "email", "type": "str"}]}])
+    export = {"diagrams": {"ClassDiagram": [{"id": "c1", "title": "Library", "model": {}}]}}
+    monkeypatch.setattr(LLMOrchestrator, "_build_updated_project_export",
+                        lambda self, class_json: {"synced": True, "base": self._source_project_export})
+    original_init = LLMOrchestrator.__init__
+
+    def with_export(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self._source_project_export = export
+
+    monkeypatch.setattr(LLMOrchestrator, "__init__", with_export)
+    _crash_a_modify_run(tmp_path, monkeypatch)
+
+    resumed = _orchestrator(tmp_path)
+    for name, stub in {
+        "_run_phase2": lambda instructions, extra_issues=None: None,
+        "_create_snapshot": lambda: None,
+        "_run_phase3_validation": lambda: None,
+        "_save_recipe": lambda instructions, elapsed: None,
+        "_remove_snapshot": lambda: None,
+    }.items():
+        monkeypatch.setattr(resumed, name, stub)
+    resumed.resume(_INSTRUCTIONS)
+
+    assert "User" in {c.name for c in resumed.domain_model.get_classes()}
+    assert resumed._updated_project_export == {"synced": True, "base": export}

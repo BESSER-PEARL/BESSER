@@ -616,6 +616,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # is ``None`` unless at least one new class was actually added.
         self._source_project_export: dict | None = source_project_export
         self._updated_project_export: dict | None = None
+        # The classes model sync added (its LLM answer), so a resume replays them.
+        self._model_sync_classes: list[dict] = []
         # Why the model-sync call failed, for the trace and the recipe.
         self._model_sync_error: str | None = None
 

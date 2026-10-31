@@ -479,6 +479,10 @@ class ModifyRunMixin:
             "previous_target": self._previous_target.to_dict() if self._previous_target else None,
             "model_change": (
                 {**change.to_dict(), "base": change.base, "new": change.new} if change else None),
+            # Model sync is an LLM call: its result is replayed, not asked again.
+            "model_sync_classes": self._model_sync_classes,
+            "updated_project_export": self._updated_project_export,
+            "model_sync_error": self._model_sync_error,
         }
 
     def _restore_modify_state(self, state: dict) -> None:
@@ -496,6 +500,13 @@ class ModifyRunMixin:
         self._is_fix_run = self._fix_target is not None
         self._previous_target = Target.from_payload(state.get("previous_target"))
         self._model_change = model_change_from_dict(state.get("model_change"))
+        classes = state.get("model_sync_classes")
+        if isinstance(classes, list) and classes and self.domain_model is not None:
+            self._model_sync_classes = classes
+            self._apply_new_classes(classes)
+        export = state.get("updated_project_export")
+        self._updated_project_export = export if isinstance(export, dict) else None
+        self._model_sync_error = state.get("model_sync_error")
 
     def _acceptance_seed_issues(self) -> list[str]:
         """Acceptance-matrix findings on the current (seed) workspace."""
@@ -703,6 +714,7 @@ class ModifyRunMixin:
         added = self._apply_new_classes(new_classes)
         if added == 0:
             return
+        self._model_sync_classes = new_classes
 
         logger.info("modify: model-sync added %d new class(es)", added)
 

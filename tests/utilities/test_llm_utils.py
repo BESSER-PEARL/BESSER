@@ -174,3 +174,32 @@ def test_spec_driven_callers_use_the_shared_extractor():
     assert _parse_task_array('["A"]\nOptional items are marked [opt].') == ["A"]
     reply = {"content": [types.SimpleNamespace(type="text", text='{"r": [1]}\nUse {id}.')]}
     assert _tool_input(reply, "record_requirements") == {"r": [1]}
+
+
+# Review of #705: a reply cut off by max_tokens returned an inner fragment of
+# it, and a "[]" or a "[1]" citation in prose won over the real list.
+TRUNCATED = ('{"agentLanguage": "fr", "presentation": {"style": "formal", "avatar": null}, '
+             '"modality": {"voice": tr')
+
+
+@pytest.mark.parametrize("text, kind, expected", [
+    (TRUNCATED, dict, None),
+    ('[{"task": "A"}, {"task": "B"}', list, None),
+    ('Nothing would be [] if complete, but missing:\n```json\n["Add search"]\n```', list, ["Add search"]),
+    ('Per requirement [1], tasks:\n["Add search", "Add export"]', list, ["Add search", "Add export"]),
+    ("No tasks needed, the list is []. Done.", list, None),
+    ("```json\n[]\n```", list, []),
+    ("[]", list, []),
+    ('{"outer": {"inner": 1}} and {"x": 2}', dict, {"outer": {"inner": 1}}),
+])
+def test_extract_json_top_level_values_only(text, kind, expected):
+    from besser.utilities.llm_utils import extract_json
+    assert extract_json(text, kind) == expected
+
+
+def test_a_truncated_recommendation_is_not_presented_as_the_answer():
+    from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_recommendation_utils import (
+        extract_json_object,
+    )
+    with pytest.raises(ValueError):
+        extract_json_object(TRUNCATED)

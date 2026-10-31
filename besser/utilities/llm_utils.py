@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Callable, Optional
 
 import requests
@@ -70,29 +71,67 @@ def parse_json_safely(json_text: str) -> Optional[Any]:
         return None
 
 
-def extract_json(text: str, kind: type = dict) -> Optional[Any]:
-    """The first JSON value of type ``kind`` (``dict`` or ``list``) in an LLM reply.
+_FENCE_RE = re.compile(r"```[A-Za-z0-9_-]*\s*\n(.*?)\n?```", re.DOTALL)
 
-    Handles a bare value, a markdown fence and surrounding prose: each
-    opening bracket is tried with ``JSONDecoder.raw_decode``, which stops at
-    the value's own end, so brackets in the prose around it cannot break the
-    parse. ``None`` when the reply holds no such value.
+
+def _closes(text: str, start: int) -> bool:
+    """Whether the bracket at ``start`` is closed before the text ends
+    (JSON strings respected). An unclosed one is a reply cut off mid-value."""
+    depth, in_string, escaped = 0, False, False
+    for char in text[start:]:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+        elif char in "]}":
+            depth -= 1
+            if depth == 0:
+                return True
+    return False
+
+
+def extract_json(text: str, kind: type = dict) -> Optional[Any]:
+    """The JSON value of type ``kind`` (``dict`` or ``list``) an LLM reply holds.
+
+    The whole reply or a fenced block is the answer when it parses, even an
+    empty one. Otherwise only top-level values in the prose are considered
+    (each is decoded with ``JSONDecoder.raw_decode`` and skipped past, so
+    the values nested inside it are never candidates), empty ones are not an
+    answer, and the longest wins over a citation such as ``[1]``. A value
+    that is still open when the text ends means the reply was truncated:
+    ``None``, never a fragment of it.
     """
     if not isinstance(text, str):
         return None
-    decoder = json.JSONDecoder()
-    opener = "[" if kind is list else "{"
-    index = text.find(opener)
-    while index != -1:
+    for block in [text, *_FENCE_RE.findall(text)]:
         try:
-            value, _ = decoder.raw_decode(text, index)
+            value = json.loads(block)
         except ValueError:
-            pass
-        else:
-            if isinstance(value, kind):
-                return value
-        index = text.find(opener, index + 1)
-    return None
+            continue
+        return value if isinstance(value, kind) else None
+    decoder = json.JSONDecoder()
+    best, best_span, index = None, 0, 0
+    while True:
+        index = min((i for i in (text.find("{", index), text.find("[", index)) if i != -1), default=-1)
+        if index == -1:
+            return best
+        try:
+            value, end = decoder.raw_decode(text, index)
+        except ValueError:
+            if not _closes(text, index):
+                return None
+            index += 1
+            continue
+        if isinstance(value, kind) and value and end - index > best_span:
+            best, best_span = value, end - index
+        index = end
 
 
 def _redact(text: str, secret: str) -> str:

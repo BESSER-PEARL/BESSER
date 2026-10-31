@@ -6,9 +6,9 @@
 # resolves and tests against.
 fastapi>=0.159,<0.160
 starlette>=1.9,<1.10
-uvicorn
+uvicorn>=0.28.0
 pydantic
-python-multipart
+python-multipart>=0.0.17
 PyYAML
 pyflakes>=3.2.0,<4
 # Phase 3 promotes ruff's undefined-name findings (F811/F821/F822/F823) to
@@ -18,10 +18,18 @@ pyflakes>=3.2.0,<4
 # deploys share this one pin and see the same rule semantics.
 ruff==0.16.6
 # The Spec-Driven Agent tells code from comments and strings in every language
-# it generates (citation checks, agent wiring), by lexing each file.
+# it generates (citation checks, the frontend import scan, JSONC config files),
+# by lexing each file.
 pygments==2.19.2
 deep_translator
 bocl == 1.0.4
+# Generators and the Spec-Driven Agent the backend runs; optional extras of the
+# library (setup.cfg), always installed here.
+Django>=5.1.5
+docker>=7.1.0
+tiktoken>=0.7,<1
+# The Spec-Driven Agent's shell can run the pytest suites generated apps carry.
+pytest>=7.4.0
 cryptography
 openpyxl >= 3.1.0
 openai >= 1.40.0

@@ -12,3 +12,16 @@ markers = [
 
 [tool.pylint.'FORMAT']
 max-line-length = 120
+
+[tool.ruff]
+extend-exclude = ["*/BESSERActionLanguageParser.py"]
+
+[tool.ruff.lint]
+# F821 catches undefined names that `from __future__ import annotations`
+# hides from every other rule here.
+select = ["F841", "F401", "F541", "F811", "F821", "E711", "E721", "E731", "E741"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Few-shot prompt snippets, not importable modules.
+"besser/BUML/notations/mockup_to_buml/llm_assistant/**" = ["F821"]

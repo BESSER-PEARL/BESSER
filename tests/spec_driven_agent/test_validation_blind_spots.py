@@ -87,6 +87,20 @@ def test_a_module_in_a_sibling_directory_does_not_count(tmp_path):
                for p in _unresolvable_local_imports(str(tmp_path)))
 
 
+def test_the_model_sources_pushed_with_the_app_are_not_app_code(tmp_path):
+    """Found on production: a run started from a BESSER repository read ``buml/domain_model.py``'s
+    ``import besser`` as "missing module ... this app cannot start", so the agent wrote a
+    stand-in ``besser`` package into the user's repo. BESSER reads ``buml/``; the app never runs it."""
+    _write(tmp_path, "backend/main_api.py", "from fastapi import FastAPI\n")
+    _write(tmp_path, "buml/domain_model.py", "from besser.BUML.metamodel.structural import Class\n")
+    _write(tmp_path, "backend/routers/rooms.py", "from room_service import book\n")
+
+    problems = _unresolvable_local_imports(str(tmp_path))
+
+    assert not any("besser" in p for p in problems)
+    assert any("room_service" in p for p in problems)
+
+
 def test_a_router_importing_from_its_service_root_is_fine(tmp_path):
     """The service runs with backend/ as cwd, so backend/ is importable from
     everything beneath it. Resolving only against the file's own directory

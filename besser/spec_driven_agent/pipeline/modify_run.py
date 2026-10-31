@@ -12,6 +12,7 @@ Mixed into ``LLMOrchestrator``; all run state is reached through ``self``.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -20,7 +21,11 @@ import time
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory, requests_frontend
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
-from besser.spec_driven_agent.planning.model_change import FULL_MODEL, compare_with_base
+from besser.spec_driven_agent.planning.model_change import (
+    FULL_MODEL,
+    compare_with_base,
+    model_change_from_dict,
+)
 from besser.spec_driven_agent.planning.model_rules import (
     is_dropped_by_model_change,
     mark_rules_broken_by_model_change,
@@ -85,6 +90,9 @@ class ModifyRunMixin:
         self._instructions = instructions
 
         self._start_time = time.monotonic()
+        # Before the model-sync below adds classes: a resume re-checks it
+        # against the model in the request.
+        self._project_fingerprint = self._compute_project_fingerprint(instructions)
         self._modify_mode = True
         # Edit-first guardrail: in a modify run, whole-file rewrites of
         # existing files are rejected until targeted edits were tried —
@@ -459,6 +467,47 @@ class ModifyRunMixin:
                 ", ".join(self._fix_target.entities) or "none",
             )
 
+    def _modify_checkpoint_state(self) -> dict | None:
+        """What a resume needs to continue this run as a modify run; ``None`` for a create run."""
+        if not self._modify_mode:
+            return None
+        change = getattr(self, "_model_change", None)
+        return {
+            "seed_generator_used": self._seed_generator_used,
+            "generator_files": sorted(self.executor._generator_files),
+            "fix_target": dataclasses.asdict(self._fix_target) if self._fix_target else None,
+            "previous_target": self._previous_target.to_dict() if self._previous_target else None,
+            "model_change": (
+                {**change.to_dict(), "base": change.base, "new": change.new} if change else None),
+            # Model sync is an LLM call: its result is replayed, not asked again.
+            "model_sync_classes": self._model_sync_classes,
+            "updated_project_export": self._updated_project_export,
+            "model_sync_error": self._model_sync_error,
+        }
+
+    def _restore_modify_state(self, state: dict) -> None:
+        """Continue a checkpointed modify run as one (the inverse of ``_modify_checkpoint_state``)."""
+        from besser.spec_driven_agent.planning.fix_target import ReportedTarget
+        self._modify_mode = True
+        self.executor.enable_modify_guard()
+        self._seed_generator_used = state.get("seed_generator_used")
+        self.executor._generator_files.update(
+            p for p in state.get("generator_files") or [] if isinstance(p, str))
+        fix_target = state.get("fix_target")
+        self._fix_target = (
+            ReportedTarget(**{**fix_target, "entities": tuple(fix_target.get("entities") or ())})
+            if isinstance(fix_target, dict) else None)
+        self._is_fix_run = self._fix_target is not None
+        self._previous_target = Target.from_payload(state.get("previous_target"))
+        self._model_change = model_change_from_dict(state.get("model_change"))
+        classes = state.get("model_sync_classes")
+        if isinstance(classes, list) and classes and self.domain_model is not None:
+            self._model_sync_classes = classes
+            self._apply_new_classes(classes)
+        export = state.get("updated_project_export")
+        self._updated_project_export = export if isinstance(export, dict) else None
+        self._model_sync_error = state.get("model_sync_error")
+
     def _acceptance_seed_issues(self) -> list[str]:
         """Acceptance-matrix findings on the current (seed) workspace."""
         try:
@@ -665,6 +714,7 @@ class ModifyRunMixin:
         added = self._apply_new_classes(new_classes)
         if added == 0:
             return
+        self._model_sync_classes = new_classes
 
         logger.info("modify: model-sync added %d new class(es)", added)
 

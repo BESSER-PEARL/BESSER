@@ -703,8 +703,13 @@ JAZZMIN_SETTINGS = {{
             # startapp imports the new settings module; keep its .pyc files
             # out of the generated tree.
             subprocess_env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
-            subprocess.run(['django-admin', 'startproject', self.project_name],
-                           cwd=base_dir, check=True, env=subprocess_env)
+            try:
+                subprocess.run(['django-admin', 'startproject', self.project_name],
+                               cwd=base_dir, check=True, env=subprocess_env)
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    'The Django generator needs django-admin: pip install "besser[django]"'
+                ) from exc
             subprocess.run([sys.executable, 'manage.py', 'startapp',
                                 self.app_name], cwd=project_dir, check=True,
                            env=subprocess_env)

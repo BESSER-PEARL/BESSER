@@ -20,7 +20,7 @@ Python's backtracking ``re`` that prefix costs ~0.45 s per MB per rule, or
 ~17 s per MB where upstream nests it twice (``okta``, ``sumologic``).
 
 A rule whose redacted span would be a constant is repaired (see
-``without_constant_secret``) or dropped: redacting only the constant would
+``without_constant_span``) or dropped: redacting only the constant would
 leave the token itself in place.
 """
 
@@ -34,6 +34,8 @@ from re import _constants as sre
 from re import _parser as sre_parse
 
 MIN_PREFIX = 2
+# gitleaks' field naming the capture group to redact (0 or absent: the first non-empty one).
+CAPTURE_FIELD = "secretGroup"
 # Appended to a rule that is only a marker literal (``bedrock-api-key-YmVk...``):
 # redacting the marker alone would leave the signed body in place.
 MARKER_BODY = "[A-Za-z0-9+/=%&._-]*"
@@ -171,30 +173,30 @@ def _outer_groups(items) -> list[int]:
     return found
 
 
-def secret_shape(pattern: str, secret_group: int) -> tuple[int, bool]:
+def span_shape(pattern: str, capture: int) -> tuple[int, bool]:
     """Shortest literal prefix of every span the rule could redact, and
     whether every such span is a constant (all literal)."""
     tree = sre_parse.parse(pattern, re.ASCII)
-    groups = [secret_group] if secret_group else _outer_groups(list(tree)) or [0]
+    groups = [capture] if capture else _outer_groups(list(tree)) or [0]
     spans = [list(tree) if g == 0 else _group(list(tree), g) for g in groups]
     shapes = [_literal_prefixes(s) for s in spans]
     return min(min(len(p) for p in prefixes) for prefixes, _ in shapes), all(done for _, done in shapes)
 
 
-def without_constant_secret(pattern: str, secret_group: int) -> str:
+def without_constant_span(pattern: str, capture: int) -> str:
     """``pattern`` changed so that what it redacts is not a constant.
 
     A marker literal (``bedrock-api-key-YmVk...``) gets ``MARKER_BODY``; named
     groups that only label a constant (``jwt-base64``'s ``(?P<alg>...)``) become
     non-capturing, so the whole match is the secret. Otherwise ``ValueError``.
     """
-    if not secret_shape(pattern, secret_group)[1]:
+    if not span_shape(pattern, capture)[1]:
         return pattern
     if not re.compile(pattern).groups:
         return pattern + MARKER_BODY
     unlabelled = re.sub(r"\(\?P<\w+>", "(?:", pattern)
-    if secret_group or re.compile(unlabelled).groups:
-        raise ValueError("the secret span is a constant")
+    if capture or re.compile(unlabelled).groups:
+        raise ValueError("the redacted span is a constant")
     return unlabelled
 
 
@@ -247,8 +249,8 @@ def main(source: str, version: str) -> None:
                 raise ValueError("path-only rule")
             pattern = without_identifier_context(to_python_regex(rule["regex"]))
             _compiles(pattern)
-            pattern = without_constant_secret(pattern, rule.get("secretGroup", 0))
-            prefix = secret_shape(pattern, rule.get("secretGroup", 0))[0]
+            pattern = without_constant_span(pattern, rule.get(CAPTURE_FIELD, 0))
+            prefix = span_shape(pattern, rule.get(CAPTURE_FIELD, 0))[0]
             if prefix < MIN_PREFIX:
                 raise ValueError(f"no literal prefix ({prefix} chars)")
             allowlists = [a for a in (_translated_allowlist(a, rule_id) for a in rule.get("allowlists", [])) if a]
@@ -257,7 +259,7 @@ def main(source: str, version: str) -> None:
             continue
         kept += 1
         body += f"\n[[rules]]\nid = {json.dumps(rule_id)}\nregex = '''{pattern}'''\n"
-        for key in ("secretGroup", "entropy"):
+        for key in (CAPTURE_FIELD, "entropy"):
             if key in rule:
                 body += f"{key} = {rule[key]}\n"
         body += f"keywords = {json.dumps(rule.get('keywords', []))}\n"

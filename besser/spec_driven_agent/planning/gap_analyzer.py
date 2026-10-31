@@ -382,21 +382,27 @@ def _drop_scaffold_conflicts(tasks: list) -> list[str]:
     Flask': a checklist that would fight the Phase-2 HARD CONSTRAINTS and the
     framework-switch blocker for the whole run. The prompt forbids it and the
     planner labels every task (``_TASK_KINDS``), so its own label drops it;
-    "Add a Delete button to each row" is a change. A bare string (a reply
-    parsed from text) has no label and is kept.
+    "Add a Delete button to each row" is a change. The text fallbacks ask for
+    the same objects; a task with no usable label is kept, with a warning.
     """
     kept: list[str] = []
+    unlabelled = 0
     for item in tasks:
         if isinstance(item, dict):
-            text, kind = str(item.get("task") or "").strip(), item.get("kind", "change")
+            text = str(item.get("task") or "").strip()
+            kind = str(item.get("kind") or "").strip().lower().replace("-", "_").replace(" ", "_")
         else:
-            text, kind = (item.strip() if isinstance(item, str) else ""), "change"
+            text, kind = (item.strip() if isinstance(item, str) else ""), ""
         if not text:
             continue
         if kind in ("removes_scaffold", "switches_framework"):
             logger.warning("Gap analyzer dropped a task the planner labelled %s: %r", kind, text[:100])
             continue
+        if kind != "change":
+            unlabelled += 1
         kept.append(text)
+    if unlabelled:
+        logger.warning("Gap analyzer: %d task(s) came back without a valid kind; kept unchecked", unlabelled)
     return kept
 
 
@@ -1216,8 +1222,8 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
     repair_prompt = (
         f"{user_prompt}\n\n"
         "Your previous reply could not be parsed. Reply with ONLY a JSON "
-        "array of task strings (or call the submit_tasks tool). No prose, "
-        "no markdown."
+        'array of {"task": ..., "kind": ...} objects (or call the submit_tasks '
+        "tool). No prose, no markdown."
     )
     try:
         response = _chat(repair_prompt, planning_model)
@@ -1394,8 +1400,9 @@ _SYSTEM_PROMPT = (
     "with no extra features requested. When in doubt, emit tasks.\n"
     f"  * Hard cap: {_MAX_TASKS} tasks. Prioritise correctness over completeness.\n\n"
     "Call the submit_tasks tool with your final list. If tool calling is "
-    "unavailable, return ONLY a JSON array of task strings — no prose, no "
-    "markdown."
+    "unavailable, return ONLY a JSON array of {\"task\": ..., \"kind\": ...} "
+    "objects (kind: change, removes_scaffold or switches_framework) — no prose, "
+    "no markdown."
 )
 
 

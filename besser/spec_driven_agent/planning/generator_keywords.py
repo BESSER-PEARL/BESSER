@@ -1,32 +1,42 @@
 """Keyword routing to a Phase 1 generator: the fallback, never the decision.
 
-The forced ``choose_generator`` call decides the generator. These functions
-serve the cases it leaves open (the call failed, or answered NONE for a
-Python web app or backend with no named stack) and the preview, which runs
-with no LLM call and no key. Both callers pass an object carrying the
-assembled models (``LLMOrchestrator`` or ``AssembledModels``), so the
-preview and the run route a request the same way.
+The ``choose_generator`` call decides the generator. These functions serve
+the cases it leaves open (no usable answer, or a NONE for a Python web app or
+backend with no unsupported stack) and the preview, which runs with no LLM
+call and no key. Both callers pass an object carrying the assembled models
+(``LLMOrchestrator`` or ``AssembledModels``), so the preview and the run route
+a request the same way.
 """
 from __future__ import annotations
 
 import re
 
-# Frameworks with no BESSER generator: a request naming one is built from scratch.
-NO_GENERATOR_FRAMEWORKS = (
-    "nestjs", "next.js", "nextjs", "express", "spring boot", "springboot",
-    "laravel", "rails", "golang", "axum", "actix", "angular", "vue", "svelte", "nuxt",
+# Stacks no BESSER generator builds, for when no routing answer exists. Only
+# names that are rarely ordinary words: "express", "swift", "dart" and "C#"
+# also name deliveries, companies, games and musical keys.
+STACKS_WITHOUT_GENERATOR = (
+    "nestjs", "next.js", "nextjs", "express.js", "expressjs", "spring boot", "springboot",
+    "laravel", "ruby on rails", "golang", "axum", "actix", "ktor", "kotlin", "rust",
+    "flutter", "swiftui", "angular", "vue", "vue.js", "svelte", "nuxt",
 )
 
 
+def _has_word(lower_text: str, word: str) -> bool:
+    return bool(re.search(r"(?<![\w.])" + re.escape(word) + r"(?!\w)", lower_text))
+
+
+def names_stack_without_generator(instructions: str) -> bool:
+    """True when the request names a stack from ``STACKS_WITHOUT_GENERATOR``."""
+    lower = (instructions or "").lower()
+    return any(_has_word(lower, stack) for stack in STACKS_WITHOUT_GENERATOR)
+
+
 def keyword_generator(models, instructions: str) -> str | None:
-    """A generator the request's words name, ``""`` for none, ``None`` if undecided."""
+    """A generator the request's words name, or ``None`` if undecided."""
     lower = (instructions or "").lower()
 
     def _has(word: str) -> bool:
-        return bool(re.search(r"\b" + re.escape(word) + r"\b", lower))
-
-    if any(_has(fw) for fw in NO_GENERATOR_FRAMEWORKS):
-        return ""
+        return _has_word(lower, word)
 
     # Specialist generators for the newer modeling artifacts.
     if models.bpmn_model is not None and (

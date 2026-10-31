@@ -478,8 +478,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # (``_route_modify_request``); None when the call failed.
         self._seed_target: Target | None = None
         self._modify_routing: Routing | None = None
-        # The stack the Phase 1 selector says the user named ('' for none).
-        self._named_stack = ""
+        # The routing call's stack no generator builds ('' for none), and
+        # whether that call answered at all on this create run.
+        self._unsupported_stack = ""
+        self._routed = False
         self._inventory: str = ""
         # True once the client's per-call output-token limit was raised
         # above its default: by ``_apply_adaptive_budget`` for a pure
@@ -1134,18 +1136,25 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 logger.warning("Phase 1: no generator decided for a %s; building from scratch",
                                self.target.description or "non-web target")
             return None
-        # A NONE for a stack the user named is the answer ("a REST API in Go").
-        # A NONE without one contradicts the rules (every Python web app or
-        # backend gets a generator), so the keyword fallback fills the gap.
-        if llm_result == "" and self._named_stack:
+        # A stack no generator builds is written from scratch ("a REST API in
+        # Go"), whether the selector said NONE or failed and the target call named it.
+        if self._unsupported_stack:
             return None
-
+        if llm_result == "":
+            # A NONE from the prose protocol carries no stack field: it stands.
+            if not self._routed:
+                return None
+            # A routed NONE for a web app or backend with no unsupported stack
+            # contradicts the rules (every Python one gets a generator).
+            fallback = default_generator(self, instructions)
+            logger.warning("Phase 1: the selector answered NONE for a %s with no unsupported stack; "
+                           "using %s", self.target.kind if self.target else "request", fallback)
+            return fallback
+        # No routing answer at all (the provider failed): the last-resort keywords.
         keyword_result = keyword_generator(self, instructions)
         if keyword_result:
             logger.warning("Phase 1: keyword fallback decided the generator: %s", keyword_result)
             return keyword_result
-        if keyword_result == "" or llm_result == "":
-            return None
 
         fallback = default_generator(self, instructions)
         if fallback:
@@ -1262,24 +1271,25 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
             registered_names = selectable_names
 
-            # Preferred path: force a choose_generator tool call so the
-            # answer is exact by construction (an enum), routed to the
-            # cheap planning sibling when one exists. Falls back to the
-            # legacy free-text protocol for clients that don't support
-            # tool_choice (older providers, gateways, duck-typed mocks).
-            if self._client_supports_structured_chat():
-                routing = self._select_generator_structured(
-                    f"{prompt}\n{TARGET_RULES}\n{STACK_RULES}", registered_names)
-                if routing is not None:
-                    self._record_target(routing.target)
-                    self._named_stack = routing.named_stack
-                    if routing.generator == "NONE":
-                        logger.info("Phase 1 (LLM): Explicitly no generator")
-                        return ""
-                    if routing.generator in registered_names:
-                        logger.info("Phase 1 (LLM): Selected %s", routing.generator)
-                        return routing.generator
-                # Structured path failed entirely — fall through to text.
+            # Preferred path: the choose_generator answer (a forced tool call,
+            # or the same answer as JSON text on a gateway without one), routed
+            # to the cheap planning sibling when one exists. Falls back to the
+            # legacy one-word protocol when neither gives a usable answer.
+            routing = self._select_generator_structured(
+                f"{prompt}\n{TARGET_RULES}\n{STACK_RULES}", registered_names)
+            if routing is not None:
+                self._record_routing(routing)
+                if routing.generator in registered_names and routing.unsupported_stack:
+                    logger.warning(
+                        "Phase 1 (LLM): %s picked for a %s request, which no generator builds; "
+                        "building from scratch", routing.generator, routing.unsupported_stack)
+                    return ""
+                if routing.generator == "NONE":
+                    logger.info("Phase 1 (LLM): Explicitly no generator")
+                    return ""
+                if routing.generator in registered_names:
+                    logger.info("Phase 1 (LLM): Selected %s", routing.generator)
+                    return routing.generator
 
             response = self.client.chat(
                 system="You select the best code generator. Reply with only the generator name or NONE.",
@@ -1333,8 +1343,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return "force_tool" in params and "model_override" in params
 
     def _can_route(self) -> bool:
-        """True when the client can make the forced ``choose_generator`` call."""
-        return hasattr(self.client, "_client") and self._client_supports_structured_chat()
+        """True when the client is a real provider that can answer ``choose_generator``."""
+        return hasattr(self.client, "_client")
 
     def _select_generator_structured(
         self, prompt: str, registered_names: list[str], *, modify: bool = False,
@@ -1342,8 +1352,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """One forced ``choose_generator`` call: the generator and what is built.
 
         ``modify`` adds the fields only a modify run needs (a target change, a
-        failure report). Returns ``None`` when the call failed or returned no
-        tool call; the caller decides what to record.
+        failure report). A gateway that ignores ``tool_choice``, or a client with
+        no forced tools, is asked for the same answer as JSON text. Returns
+        ``None`` when no usable answer came back; the caller decides what to record.
         """
         modify_properties = MODIFY_TOOL_PROPERTIES if modify else {}
         choose_tool = {
@@ -1369,38 +1380,65 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 ],
             },
         }
-        # A modify run's answer can rebuild the whole app: the primary model decides it.
-        planning_model = None if modify else getattr(self.client, "planning_model", None)
-        for model_override in dict.fromkeys([planning_model, None]):
-            try:
-                response = self.client.chat(
-                    system=(
-                        "You select the best code generator. Call "
-                        "choose_generator with your selection."
-                    ),
-                    messages=[{"role": "user", "content": prompt}],
-                    tools=[choose_tool],
-                    force_tool="choose_generator",
-                    model_override=model_override,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Phase 1 (LLM): the generator selector failed on %s (%s)",
-                    model_override or "primary", exc,
-                )
-                continue
-            for block in response.get("content", []):
-                block_type = getattr(block, "type", None) or (
-                    block.get("type") if isinstance(block, dict) else None
-                )
-                if block_type == "tool_use":
-                    return Routing.from_payload(getattr(block, "input", None) or (
-                        block.get("input") if isinstance(block, dict) else None
-                    ))
-            # No usable tool_use block (gateway ignored tool_choice?) —
-            # don't retry the other model for this; bail to text protocol.
+        if self._client_supports_structured_chat():
+            # A modify run's answer can rebuild the whole app: the primary model decides it.
+            planning_model = None if modify else getattr(self.client, "planning_model", None)
+            for model_override in dict.fromkeys([planning_model, None]):
+                try:
+                    response = self.client.chat(
+                        system="You select the best code generator. Call choose_generator with your selection.",
+                        messages=[{"role": "user", "content": prompt}],
+                        tools=[choose_tool], force_tool="choose_generator",
+                        model_override=model_override,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Phase 1 (LLM): the generator selector failed on %s (%s)",
+                        model_override or "primary", exc,
+                    )
+                    continue
+                routing = self._routing_in(response)
+                if routing is not None:
+                    return routing
+                break  # the gateway ignored tool_choice: ask for the same answer as text
+            else:
+                return None  # every forced call raised: the provider is failing, not the format
+        # A client without forced tools, or a gateway that ignored them: the same
+        # answer as a JSON object in plain text.
+        schema = choose_tool["input_schema"]
+        try:
+            response = self.client.chat(
+                system="You select the best code generator. Reply with a JSON object holding your selection.",
+                messages=[{"role": "user", "content": (
+                    f"{prompt}\n\nReply with ONLY a JSON object with the keys "
+                    f"{', '.join(schema['required'])}; generator is one of "
+                    f"{', '.join(schema['properties']['generator']['enum'])}.")}],
+                tools=[],
+            )
+        except Exception as exc:
+            logger.warning("Phase 1 (LLM): the generator selector failed (%s)", exc)
             return None
-        return None
+        routing = self._routing_in(response)
+        if routing is None:
+            logger.warning("Phase 1 (LLM): the generator selector gave no usable answer")
+        return routing
+
+    @staticmethod
+    def _routing_in(response: dict) -> Routing | None:
+        """The choose_generator answer in a reply: its tool_use block, else a JSON object in its text."""
+        texts = []
+        for block in response.get("content", []):
+            block_type = getattr(block, "type", None) or (
+                block.get("type") if isinstance(block, dict) else None
+            )
+            if block_type == "tool_use":
+                return Routing.from_payload(getattr(block, "input", None) or (
+                    block.get("input") if isinstance(block, dict) else None
+                ))
+            text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
+            if isinstance(text, str):
+                texts.append(text)
+        return Routing.from_text("".join(texts))
 
     def _decide_target(self, instructions: str) -> None:
         """Decide ``self.target`` when the generator is settled without the selector.
@@ -1415,8 +1453,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             [],
         )
         if routing is not None:
-            self._record_target(routing.target)
-            self._named_stack = routing.named_stack
+            self._record_routing(routing)
+
+    def _record_routing(self, routing: Routing) -> None:
+        """A create run's routing answer: the target and the stack no generator builds."""
+        self._record_target(routing.target)
+        if routing.target is not None:
+            self._routed = True
+            self._unsupported_stack = routing.unsupported_stack
 
     def _record_target(self, target: Target | None) -> None:
         if target is None:

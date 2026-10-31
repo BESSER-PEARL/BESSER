@@ -6,8 +6,8 @@ the pre-fix method, ``App.vue``, ``Page.svelte``, ``main.dart``,
 ``Program.cs``, ``App.swift``, ``Dockerfile.backend``, ``Dockerfile.frontend``,
 ``go.mod`` and ``Makefile`` were all invisible, and so was DELETING one.
 
-``_UNSUPPORTED_STACK_RE`` names vue, svelte, flutter, swift, csharp and golang
-as stacks Phase 2 builds from scratch, so those runs wrote files every turn and
+Vue, Svelte, Flutter, Swift, C# and Go have no BESSER generator, so Phase 2
+builds them from scratch: those runs wrote files every turn and
 registered zero source progress: the Phase 2 inspection handoff fired at turn
 20 of 120 claiming the model had only inspected, a Phase 3 attempt repairing
 ``Dockerfile.backend`` counted as no-progress, and ``_validate_app``'s
@@ -72,8 +72,8 @@ def _write(orch: LLMOrchestrator, rel: str, text: str) -> str:
     return path
 
 
-# The stacks _UNSUPPORTED_STACK_RE hands to Phase 2, plus the build files a
-# Phase 3 repair edits.
+# Stacks no BESSER generator builds (Phase 2 writes them), plus the build
+# files a Phase 3 repair edits.
 UNSEEN_BEFORE = [
     "frontend/src/App.vue",
     "frontend/src/Page.svelte",

@@ -23,18 +23,23 @@ The three phases
    only when its output *is* that target, so an ``other`` target is written
    from scratch in the stack the user named, or the standard one for that
    target. Every web-specific rule below applies to a ``web_app`` target only.
-   The call also names the stack the user asked for (``named_stack``), so
-   words of the domain ("express delivery", "Swift Logistics") are never read
-   as one. A NONE for a named stack BESSER has no generator for ("a REST API
-   in Go") stands; a NONE for a web app or a backend that names no stack is
-   filled by the keyword fallback ("a web app with a REST API" gets the
-   FastAPI scaffold); for an ``other`` target, NONE stands. When no selection
-   call runs (an approved generator, a run with no class diagram), or the
-   selection call fails, one small call decides the target alone (a failed
-   selection is logged as a warning). An approved ``generate_web_app`` settles
-   it as a web app and costs no call. The keyword fallback
-   (``planning/generator_keywords.py``) is also the generator the
-   ``/preview`` endpoint predicts, which makes no LLM call.
+   The call also names a stack the user asked for that no BESSER generator
+   builds (``unsupported_stack``); words of the domain ("express delivery",
+   "Swift Logistics") are left to the model, not to a word list. Such a stack
+   is written from scratch ("a REST API in Go"), even when the answer also
+   names a generator. A NONE for a web app or a backend with no unsupported
+   stack contradicts the rules, so it gets the generator the loaded models
+   call for (the FastAPI scaffold for a class diagram); for an ``other``
+   target, NONE stands. A gateway that ignores the forced tool call, or a
+   client without one, is asked for the same answer as a JSON object in plain
+   text. When no selection call runs (an approved generator, a run with no
+   class diagram), or the selection call fails, one small call decides the
+   target alone (a failed selection is logged as a warning). An approved
+   ``generate_web_app`` settles it as a web app and costs no call. Only when no
+   answer comes back at all (the provider is failing) do keywords pick the
+   generator (``planning/generator_keywords.py``). The ``/preview`` endpoint
+   makes no LLM call and needs no key, so its generator is a keyword estimate:
+   the same keywords, plus a short list of stacks no generator builds.
 
    The target is recorded in the trace, the checkpoint and
    ``.besser_recipe.json``, so a resume or a later modify run of the same app
@@ -48,8 +53,9 @@ The three phases
    a failure of the existing app (``is_failure_report``), and which entity it
    is about (``reported_entity``). A changed target is built next to the
    existing project; a failure report makes the run a fix run, gated on that
-   failure. A failed call keeps the recorded target and makes no fix run, with
-   a warning.
+   failure. A call with no usable answer, even as JSON text, keeps the
+   recorded target and makes no fix run, with a warning. This call is one
+   primary-model call more per modify run.
 
    The request is free text. When the user asks for something that is not a
    web app, the BESSER modeling agent adds a ``Target:`` line of its own to the

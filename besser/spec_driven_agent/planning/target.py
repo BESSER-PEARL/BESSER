@@ -10,6 +10,7 @@ request changes the existing app's target (``pipeline/modify_run.py``).
 """
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 
 WEB_APP = "web_app"
@@ -33,7 +34,7 @@ TARGET — decide WHAT the user wants built, from their words:
   a "mobile-friendly" or "responsive" web app. Also a bare "app" or "application"
   with no platform named (the default).
 - backend: API-only / headless: a REST API, a backend, a server, also "an API
-  for my mobile app".
+  for my mobile app", in any language (a REST API in Go or Kotlin is a backend).
 - other: anything that is not a web app or a backend: a native mobile app
   (Android / iOS / "mobile app"), a desktop app (Windows / macOS / Linux,
   "local", Electron, Tauri, WPF), a CLI, a game, a browser or IDE extension,
@@ -45,21 +46,26 @@ target_description names the product in a few words ("native Android/iOS app",
 has_user_interface: true when people use the result through screens (web, mobile,
 desktop, game), false for APIs, CLIs, libraries and classes."""
 
-# A NONE stands only for a named stack: the rules give every Python web app or
-# backend a generator, so a NONE without one keeps the keyword fallback.
+# A stack no generator builds means "write it from scratch", whatever the
+# answer's generator field says; without one, a Python web app or backend
+# always gets a generator (the keyword fallback fills a NONE).
 STACK_TOOL_PROPERTIES = {
-    "named_stack": {
+    "unsupported_stack": {
         "type": "string",
-        "description": ("The programming language or framework the user asks the software to be "
-                        "built with, e.g. 'Rust + Axum', 'Flutter', 'Next.js', 'Django'; '' when "
-                        "the user names none."),
+        "description": ("The language or framework the user asks the software to be built with, "
+                        "when no BESSER generator produces it, e.g. 'Rust + Axum', 'Flutter', "
+                        "'Next.js', 'Spring Boot'; '' when the user names none or names one BESSER "
+                        "generates."),
     },
 }
 
-STACK_RULES = """\
-named_stack: only a language or framework the user asks the software to be built
-with. Words of the domain are not stacks, even when they spell one: "an express
+STACK_RULES = """unsupported_stack: a language or framework the user asks the software to be built with
+that BESSER does not generate. BESSER generates Python (FastAPI, Django, SQLAlchemy,
+Pydantic, plain classes), Java classes, SQL, React frontends on a FastAPI backend,
+Supabase, Qiskit, PyTorch, TensorFlow, BESSER agents (BAF) and BPMN: naming one of
+those is ''. Words of the domain are not stacks, even when they spell one: "an express
 checkout", "a Java coffee shop", "rust-proof paint", "Go-karts", "the key of F#"."""
+
 
 # Asked only on a modify run, which changes an app that already exists.
 MODIFY_TOOL_PROPERTIES = {
@@ -72,9 +78,10 @@ MODIFY_RULES = """\
 EXISTING APP: this request changes an app that already exists (described below).
 - changes_target: true only when the request asks to turn the WHOLE app into another
   kind of software ("turn it into a mobile app", "drop the UI, I only want the API",
-  "make it a CLI") or to rebuild it in another stack ("rewrite it in Vue"). Everything
-  else is false: new features, endpoints, status codes, error handling, logging, fixes,
-  and naming the same target in other words.
+  "make it a CLI") or to rebuild it in another stack ("rewrite it in Vue"). Giving an
+  API-only backend a web UI is one too: it becomes a web_app. Everything else is false:
+  new features, endpoints, status codes, error handling, logging, fixes, and naming the
+  same target in other words.
 - target_kind / target_description: the whole app after this request. Unless
   changes_target is true, answer the existing app's kind and description, even when
   the request is about one part of it (the API, a screen, the database).
@@ -124,7 +131,7 @@ class Routing:
 
     target: Target | None
     generator: str  # a generator name, "NONE", or "" when the answer has none
-    named_stack: str = ""
+    unsupported_stack: str = ""
     changes_target: bool = False
     is_failure_report: bool = False
     reported_entity: str = ""
@@ -143,8 +150,20 @@ class Routing:
         return cls(
             target=Target.from_payload(payload),
             generator=_text("generator"),
-            named_stack=_text("named_stack"),
+            unsupported_stack=_text("unsupported_stack"),
             changes_target=_flag("changes_target"),
             is_failure_report=_flag("is_failure_report"),
             reported_entity=_text("reported_entity"),
         )
+
+    @classmethod
+    def from_text(cls, text: str) -> Routing | None:
+        """The answer as a JSON object in prose (a gateway without forced tools), or ``None``."""
+        start, end = (text or "").find("{"), (text or "").rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            payload = json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            return None
+        return cls.from_payload(payload) if isinstance(payload, dict) and payload else None

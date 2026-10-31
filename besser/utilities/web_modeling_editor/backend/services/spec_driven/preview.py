@@ -34,6 +34,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
 from besser.spec_driven_agent.planning.generator_keywords import (
     default_generator,
     keyword_generator,
+    names_stack_without_generator,
 )
 
 
@@ -183,9 +184,11 @@ def _predict_target_generator(
     expected path for "generate me a NestJS API" or for state-machine-
     only projects.
     """
+    if names_stack_without_generator(instructions):
+        return None, 0.9
     named = keyword_generator(assembled, instructions)
     if named is not None:
-        return named or None, 0.9
+        return named, 0.9
     fallback = default_generator(assembled, instructions)
     if fallback is not None:
         return fallback, 0.5

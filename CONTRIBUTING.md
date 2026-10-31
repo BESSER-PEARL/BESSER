@@ -234,7 +234,7 @@ We use **Ruff** for linting (run automatically in CI):
 
 ```bash
 pip install ruff
-ruff check .
+ruff check besser/   # rules in pyproject.toml, same as CI
 ```
 
 Fix lint warnings before opening a PR. CI will fail on lint errors.
@@ -424,7 +424,7 @@ If you forget, no harm done — just edit the base branch on the existing PR
 
    ```bash
    python -m pytest                # tests
-   ruff check .                    # lint
+   ruff check besser/              # lint
    cd docs && make html && cd ..   # if you touched the docs
    ```
 
@@ -497,7 +497,7 @@ later. Linking a follow-up issue is even better.
 - [ ] Targeted `development` (not `master`)
 - [ ] Tests added or updated
 - [ ] Docs updated (`docs/source/...`) if user-facing behavior changed
-- [ ] Lint passes (`ruff check .`)
+- [ ] Lint passes (`ruff check besser/`)
 - [ ] Frontend submodule pointer updated (if a cross-repo change)
 ```
 

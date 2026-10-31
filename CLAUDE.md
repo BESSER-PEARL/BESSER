@@ -31,13 +31,13 @@ pip install -r docs/requirements.txt   # docs toolchain (optional)
 ### Testing
 ```bash
 python -m pytest tests/                                             # ALWAYS scope to tests/
-python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn -x   # what CI runs (Python 3.11 + 3.12)
+python -m pytest tests/ -q --tb=short                                 # what CI runs (Python 3.11 + 3.12)
 python -m pytest tests/generators -k sqlalchemy                     # targeted
 python tests/BUML/metamodel/structural/library/library.py           # standalone example, verifies the install
 ```
 - Without `openpyxl`, pytest fails at *collection* (`test_spreadsheet_import.py` imports it at module level) —
   an error, not a test failure. It ships in the backend requirements file.
-- `torch` / `tensorflow` are not needed: `tests/generators/nn/` passes without them (CI still ignores it).
+- `torch` / `tensorflow` are not needed: `tests/generators/nn/` skips what needs them (CI installs CPU torch).
 - CI installs `bubblewrap`; without it the shell-sandbox tests skip and shell tests run unconfined.
 - `governancedsl` (backend requirements, pinned `==0.1.1`) parses the Governance DSL of governed BPMN
   gateways; without it the governance tests skip. It depends on `besser`, so install it after `pip install -e .`
@@ -45,10 +45,8 @@ python tests/BUML/metamodel/structural/library/library.py           # standalone
 
 ### Linting
 ```bash
-# Exactly what CI runs. A bare `ruff check .` uses a different rule set and will disagree.
-ruff check besser/ --select F841,F401,F541,F811,F821,E711,E721,E731,E741 \
-  --ignore E501 --exclude "*/BESSERActionLanguageParser.py" \
-  --per-file-ignores "besser/BUML/notations/mockup_to_buml/llm_assistant/**:F821"
+# Exactly what CI runs; the rules live in pyproject.toml ([tool.ruff]).
+ruff check besser/
 ```
 `F821` (undefined names) is on because `from __future__ import annotations` hides them from every other
 rule here. The `mockup_to_buml/llm_assistant` prompt examples are few-shot snippets, not importable

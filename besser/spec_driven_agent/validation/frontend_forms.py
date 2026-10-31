@@ -22,7 +22,7 @@ import os
 import re
 
 from besser.spec_driven_agent.validation.frontend_resolution import (
-    _read, _strip_comments, _walk,
+    _read, _stripped_source, _walk,
 )
 
 _SOURCE_EXT = (".js", ".jsx", ".ts", ".tsx")
@@ -117,7 +117,7 @@ def _frontend_files(workspace: str) -> list[tuple[str, str]]:
                 text = _read(path)
                 if len(text) < 1_000_000:
                     rel = os.path.relpath(path, workspace).replace("\\", "/")
-                    out.append((rel, _strip_comments(text, name)))
+                    out.append((rel, _stripped_source(path)))
     return out
 
 

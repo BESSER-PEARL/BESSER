@@ -37,3 +37,31 @@ def test_real_comments_are_removed_and_lines_kept():
 
 def test_unknown_config_file_is_read_as_javascript():
     assert "plugin-react" not in _strip_comments('{ // "plugin-react"\n}', ".babelrc")
+
+
+@pytest.mark.parametrize("name", ["A.jsx", "A.tsx"])
+def test_a_url_in_jsx_text_is_not_a_comment(name):
+    """Review of #705: the lexer read "https://x.io" in JSX text as a line
+    comment and dropped the rest of the line, a form included."""
+    source = "const A = () => <div><p>See https://x.io</p><form onSubmit={save}></form></div>;\n"
+    assert "onSubmit={save}" in _strip_comments(source, name)
+
+
+def test_each_file_version_is_lexed_once(tmp_path, monkeypatch):
+    import os
+
+    import besser.spec_driven_agent.validation.frontend_resolution as resolution
+
+    calls = []
+    real = resolution._strip_comments
+    monkeypatch.setattr(resolution, "_strip_comments", lambda text, name: calls.append(name) or real(text, name))
+    resolution._stripped_file.cache_clear()
+    source = tmp_path / "App.jsx"
+    source.write_text("import a from './a';\n", encoding="utf-8")
+
+    assert resolution._stripped_source(str(source)) == resolution._stripped_source(str(source))
+    assert calls == ["App.jsx"]
+    source.write_text("import b from './b'; // changed\n", encoding="utf-8")
+    os.utime(source, ns=(1, 2_000_000_000))
+    assert "./b" in resolution._stripped_source(str(source))
+    assert calls == ["App.jsx", "App.jsx"]

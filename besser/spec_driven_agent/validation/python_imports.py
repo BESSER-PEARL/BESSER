@@ -20,6 +20,10 @@ import ast as _ast
 import os
 import re as _re
 import sys
+import tomllib
+
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
@@ -98,7 +102,56 @@ _DIST_TO_IMPORT_ROOT = {
     "attrs": "attr",
 }
 
-_REQUIREMENT_NAME_RE = _re.compile(r"^\s*([A-Za-z0-9._-]+)")
+# A quoted requirement-looking token, for manifests read as text: setup.py,
+# setup.cfg, and a TOML file that does not parse.
+_LOOSE_REQUIREMENT_RE = _re.compile(r"[\"']([A-Za-z0-9._-]{2,})[><=!~\s\"']")
+
+
+def _requirement_name(line: str) -> str | None:
+    """The distribution a requirement line names (PEP 508), or None."""
+    line = line.split(" #", 1)[0].strip()
+    if not line or line.startswith(("#", "-")):
+        return None
+    try:
+        return Requirement(line).name
+    except InvalidRequirement:
+        # A malformed specifier (``fastapi=0.1``) still names the package.
+        match = _re.match(r"[A-Za-z0-9._-]+", line)
+        return match.group(0) if match else None
+
+
+def _toml_dependency_names(data: dict) -> list[str]:
+    """Distribution names a parsed pyproject.toml or Pipfile declares."""
+    names: list[str] = []
+    project = data.get("project") or {}
+    requirement_lists = [project.get("dependencies") or []]
+    requirement_lists += list((project.get("optional-dependencies") or {}).values())
+    requirement_lists += list((data.get("dependency-groups") or {}).values())
+    for requirements in requirement_lists:
+        names += [n for r in requirements if isinstance(r, str) and (n := _requirement_name(r))]
+    poetry = (data.get("tool") or {}).get("poetry") or {}
+    tables = [poetry.get("dependencies"), poetry.get("dev-dependencies"),
+              data.get("packages"), data.get("dev-packages")]
+    tables += [group.get("dependencies") for group in (poetry.get("group") or {}).values()
+               if isinstance(group, dict)]
+    for table in tables:
+        if isinstance(table, dict):
+            names += [name for name in table if name.lower() != "python"]
+    return names
+
+
+def _manifest_dependency_names(name: str, text: str) -> list[str]:
+    """Distribution names one manifest declares; ``name`` is its lowercased file name."""
+    if name.startswith("requirements") and name.endswith(".txt"):
+        return [n for line in text.splitlines() if (n := _requirement_name(line))]
+    if name in ("pyproject.toml", "pipfile"):
+        try:
+            return _toml_dependency_names(tomllib.loads(text))
+        except tomllib.TOMLDecodeError:
+            pass
+    # Deliberately loose: a false extra allowlist entry costs nothing; a
+    # missed one costs a spurious blocker.
+    return _LOOSE_REQUIREMENT_RE.findall(text)
 
 
 def _declared_dependency_roots(output_dir: str) -> set[str]:
@@ -110,13 +163,7 @@ def _declared_dependency_roots(output_dir: str) -> set[str]:
     dependency the app has.
     """
     roots: set[str] = set()
-
-    def _add(dist: str) -> None:
-        dist = dist.strip().strip('"\'').lower()
-        if not dist:
-            return
-        roots.add(_DIST_TO_IMPORT_ROOT.get(dist, dist.replace("-", "_")))
-
+    manifests = ("pyproject.toml", "pipfile", "setup.py", "setup.cfg")
     for root, dirs, files in walk_plain(output_dir):
         dirs[:] = [
             d for d in dirs
@@ -124,28 +171,16 @@ def _declared_dependency_roots(output_dir: str) -> set[str]:
         ]
         for name in files:
             low = name.lower()
-            path = os.path.join(root, name)
+            if not (low in manifests or (low.startswith("requirements") and low.endswith(".txt"))):
+                continue
             try:
-                if low.startswith("requirements") and low.endswith(".txt"):
-                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                        for line in fh:
-                            line = line.split("#", 1)[0].strip()
-                            if not line or line.startswith("-"):
-                                continue
-                            match = _REQUIREMENT_NAME_RE.match(line)
-                            if match:
-                                _add(match.group(1))
-                elif low in ("pyproject.toml", "pipfile", "setup.py", "setup.cfg"):
-                    with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                        text = fh.read()
-                    # Deliberately loose: any quoted requirement-looking
-                    # token. A false extra allowlist entry costs nothing;
-                    # a missed one costs a spurious blocker.
-                    for token in _re.findall(r"[\"']([A-Za-z0-9._-]{2,})"
-                                             r"[><=!~\s\"']", text):
-                        _add(token)
+                with open(os.path.join(root, name), "r", encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
             except OSError:
                 continue
+            for dist in _manifest_dependency_names(low, text):
+                dist = canonicalize_name(dist)
+                roots.add(_DIST_TO_IMPORT_ROOT.get(dist, dist.replace("-", "_")))
     return roots
 
 

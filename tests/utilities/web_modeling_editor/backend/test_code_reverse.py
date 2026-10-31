@@ -510,3 +510,37 @@ def test_two_links_between_the_same_classes_are_two_associations(tmp_path):
     assert ["liked->Article[0..9999]", "liked_by->User[0..9999]"] in ends
     assert ["saved->Article[0..9999]", "saved_by->User[0..9999]"] in ends
     assert len({a.name for a in model.associations}) == len(model.associations) == 2
+
+
+def test_sqlalchemy_typed_columns_without_mapped_column_are_read(tmp_path):
+    """Found on production: a FastAPI repo lost 8 of its 21 fields. In SQLAlchemy 2.0 a bare
+    ``year: Mapped[int]`` is a column, but a class with any ``mapped_column`` kept only those."""
+    root = _repo(tmp_path, {"fleet/models.py": '''
+        from datetime import date
+        from typing import Optional
+        from sqlalchemy import ForeignKey, String
+        from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+        class Base(DeclarativeBase):
+            pass
+
+        class Vehicle(Base):
+            __tablename__ = "vehicle"
+            id: Mapped[int] = mapped_column(primary_key=True)
+            model: Mapped[str] = mapped_column(String(80))
+            year: Mapped[int]
+            retired_on: Mapped[Optional[date]]
+
+        class ServiceRecord(Base):
+            __tablename__ = "service_record"
+            id: Mapped[int] = mapped_column(primary_key=True)
+            cost_eur: Mapped[float]
+            vehicle_id: Mapped[int] = mapped_column(ForeignKey("vehicle.id"))
+            vehicle: Mapped["Vehicle"] = relationship()
+        '''})
+
+    _analysis, model = analyze_repository(root)
+
+    assert _attrs(model, "Vehicle") == {"id": ("int", True, 1), "model": ("str", False, 1),
+                                        "year": ("int", False, 1), "retired_on": ("date", False, 0)}
+    assert _attrs(model, "ServiceRecord") == {"id": ("int", True, 1), "cost_eur": ("float", False, 1)}

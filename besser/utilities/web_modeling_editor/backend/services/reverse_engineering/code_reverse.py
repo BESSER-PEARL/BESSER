@@ -452,6 +452,9 @@ def _read_class(node: ast.ClassDef, source: str, module: _Module) -> tuple[str, 
                 relation = _relation(node.name, name, statement.value)
                 if relation is not None:
                     module.relations.append(relation)
+            elif _is_mapped(statement.annotation):
+                # SQLAlchemy 2.0: a bare ``year: Mapped[int]`` is a column too.
+                orm_fields.append(_annotated_field(name, statement.annotation))
             else:
                 annotated.append(_annotated_field(name, statement.annotation))
 
@@ -469,6 +472,14 @@ def _read_class(node: ast.ClassDef, source: str, module: _Module) -> tuple[str, 
     if annotated and (_derives_from(bases, _SCHEMA_BASES, module) or "dataclass" in decorators):
         return "schema", _Entity(node.name, None, annotated, source, own_bases)
     return "schema", None
+
+
+def _is_mapped(annotation) -> bool:
+    """``Mapped[...]`` or ``orm.Mapped[...]``."""
+    if not isinstance(annotation, ast.Subscript):
+        return False
+    outer = annotation.value
+    return (outer.id if isinstance(outer, ast.Name) else getattr(outer, "attr", "")) == "Mapped"
 
 
 def _is_relationship(value) -> bool:

@@ -10,7 +10,7 @@ from collections.abc import Callable
 
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.validation.issues import required_check_unverified, required_dependency_setup
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 _EXCLUDED = {"node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
              ".next", "target", ".gradle"}

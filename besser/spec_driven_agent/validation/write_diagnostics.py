@@ -22,7 +22,7 @@ from typing import Any
 
 from besser.spec_driven_agent.validation import frontend_source
 from besser.spec_driven_agent.parsed_source import parse_source
-from besser.spec_driven_agent.execution.workspace_fs import is_plain_file, open_plain, walk_plain
+from besser.utilities.workspace_fs import is_plain_file, open_plain, walk_plain
 
 
 logger = logging.getLogger(__name__)

@@ -154,7 +154,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _RUFF_MAX_REPORTED as _RUFF_MAX_REPORTED,
     _TSC_PROBE_NAME,
 )
-from besser.spec_driven_agent.execution.workspace_fs import open_plain, open_plain_write, walk_plain
+from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 # Preserve established imports while lower-level consumers use these leaves.
 from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,

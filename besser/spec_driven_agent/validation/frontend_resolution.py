@@ -96,7 +96,7 @@ def _stripped_source(path: str) -> str:
 
 def _walk(root: str):
     # Imported here so the module stays runnable as a stdlib-only script.
-    from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+    from besser.utilities.workspace_fs import walk_plain
 
     for folder, dirs, files in walk_plain(root):
         dirs[:] = sorted(d for d in dirs
@@ -106,7 +106,7 @@ def _walk(root: str):
 
 def _read(path: str) -> str:
     # Imported here so the module stays runnable as a stdlib-only script.
-    from besser.spec_driven_agent.execution.workspace_fs import open_plain
+    from besser.utilities.workspace_fs import open_plain
 
     try:
         with open_plain(path, encoding="utf-8", errors="replace") as handle:

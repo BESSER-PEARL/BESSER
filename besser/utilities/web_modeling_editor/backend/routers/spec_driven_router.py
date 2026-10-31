@@ -74,7 +74,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview i
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
     scrub_secret_files,
 )
-from besser.spec_driven_agent.execution.workspace_fs import copytree_plain, is_plain_entry
+from besser.utilities.workspace_fs import copytree_plain, is_plain_entry
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
     read_run_json,
     write_run_json,

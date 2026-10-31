@@ -46,7 +46,7 @@ from besser.spec_driven_agent.errors import (
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.spec_driven_agent.execution.shell_session import close_sessions_for
-from besser.spec_driven_agent.execution.workspace_fs import copytree_plain, is_plain_entry
+from besser.utilities.workspace_fs import copytree_plain, is_plain_entry
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,

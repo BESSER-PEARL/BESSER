@@ -30,7 +30,7 @@ from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.validation.issues import _check_did_not_run
 from besser.spec_driven_agent.validation.python_source import _python_files
 from besser.spec_driven_agent.parsed_source import parse_source
-from besser.spec_driven_agent.execution.workspace_fs import open_plain, walk_plain
+from besser.utilities.workspace_fs import open_plain, walk_plain
 
 
 # The stdlib half of the allowlist, taken from the interpreter rather than

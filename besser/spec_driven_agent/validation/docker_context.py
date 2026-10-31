@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 _COMPOSE_NAMES = ("docker-compose.yml", "docker-compose.yaml",
                   "compose.yml", "compose.yaml")

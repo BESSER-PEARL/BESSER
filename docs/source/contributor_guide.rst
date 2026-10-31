@@ -248,11 +248,21 @@ We use **Ruff** for linting (run automatically in CI):
 
 .. code-block:: bash
 
-   pip install ruff
+   pip install ruff import-linter==2.15
    ruff check besser/
+   lint-imports
 
-The rules live in ``pyproject.toml`` (``[tool.ruff]``), so this is exactly what
-CI runs. Lint ``besser/`` rather than ``.``: CI does not lint the tests.
+The rules live in ``pyproject.toml`` (``[tool.ruff]`` and
+``[tool.importlinter]``), so this is exactly what CI runs. Lint ``besser/``
+rather than ``.``: CI does not lint the tests.
+
+``lint-imports`` enforces the package layers. From top to bottom:
+``besser.utilities.web_modeling_editor`` (the editor backend),
+``besser.spec_driven_agent``, ``besser.generators``, ``besser.BUML.notations``
+and ``besser.BUML.metamodel``. A module imports only from the layers below it,
+and ``besser.utilities`` outside the backend never imports the generators, the
+agent or the backend. The few known exceptions are listed in
+``ignore_imports``, each with the change that removes it.
 
 Fix lint warnings before opening a PR. CI will fail on lint errors.
 

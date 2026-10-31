@@ -3,14 +3,14 @@
 A run workspace is written by model-authored code, so a symlink in it (e.g.
 ``ln -s /proc/self/environ leak.txt``) must never be read through. Link-free
 traversal and copying of the whole tree live in
-``besser.spec_driven_agent.execution.workspace_fs``.
+``besser.utilities.workspace_fs``.
 """
 
 import json
 import os
 import stat
 
-from besser.spec_driven_agent.execution.workspace_fs import write_atomic_plain
+from besser.utilities.workspace_fs import write_atomic_plain
 
 
 # A run's own records (recipe, GitHub source) are small; anything larger is not one.

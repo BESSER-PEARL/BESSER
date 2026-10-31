@@ -50,7 +50,7 @@ from besser.spec_driven_agent.state.tracing import (
 )
 from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run
 from besser.spec_driven_agent.validation.model_conformance import model_conformance_issues
-from besser.spec_driven_agent.execution.workspace_fs import open_plain
+from besser.utilities.workspace_fs import open_plain
 
 logger = logging.getLogger(__name__)
 

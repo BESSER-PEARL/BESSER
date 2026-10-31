@@ -25,3 +25,56 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 # Few-shot prompt snippets, not importable modules.
 "besser/BUML/notations/mockup_to_buml/llm_assistant/**" = ["F821"]
+
+[tool.importlinter]
+root_package = "besser"
+
+[[tool.importlinter.contracts]]
+name = "BESSER layers: a layer imports only the layers below it"
+type = "layers"
+layers = [
+    "besser.utilities.web_modeling_editor",
+    "besser.spec_driven_agent",
+    "besser.generators",
+    "besser.BUML.notations",
+    "besser.BUML.metamodel",
+]
+# Known exceptions, each to be removed by the change named next to it.
+ignore_imports = [
+    # The JSON converters and secret redaction live in the editor backend
+    # until the converters move out of it (review B10, B19).
+    "besser.generators.agents.baf_generator -> besser.utilities.web_modeling_editor.backend.services.converters",
+    "besser.spec_driven_agent.pipeline.modify_run -> besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter",
+    "besser.spec_driven_agent.pipeline.orchestrator -> besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction",
+    # The mockup refactoring steps are LLM generators filed under notations.
+    "besser.BUML.notations.mockup_to_buml.refactoring_model.* -> besser.generators",
+    "besser.BUML.notations.mockup_to_structural.refactoring_model.* -> besser.generators",
+]
+
+[[tool.importlinter.contracts]]
+name = "Utilities do not import the generators, the agent or the editor backend"
+type = "forbidden"
+source_modules = [
+    "besser.utilities.buml_code_builder",
+    "besser.utilities.identifiers",
+    "besser.utilities.image_to_buml",
+    "besser.utilities.kg_llm_to_buml",
+    "besser.utilities.kg_to_buml",
+    "besser.utilities.llm_utils",
+    "besser.utilities.path_utils",
+    "besser.utilities.provenance",
+    "besser.utilities.sdmx_to_buml",
+    "besser.utilities.subprocess_env",
+    "besser.utilities.utils",
+    "besser.utilities.workspace_fs",
+]
+forbidden_modules = [
+    "besser.generators",
+    "besser.spec_driven_agent",
+    "besser.utilities.web_modeling_editor",
+]
+ignore_imports = [
+    # Optional (guarded) reference User Modeling Language model, kept with the
+    # editor backend until the converters move out of it (review B10).
+    "besser.utilities.buml_code_builder.project_builder -> besser.utilities.web_modeling_editor.backend.constants.user_buml_model",
+]

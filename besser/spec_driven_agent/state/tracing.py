@@ -33,7 +33,7 @@ import os
 import threading
 import time
 from typing import Any
-from besser.spec_driven_agent.execution.workspace_fs import open_plain, open_plain_write
+from besser.utilities.workspace_fs import open_plain, open_plain_write
 
 logger = logging.getLogger(__name__)
 

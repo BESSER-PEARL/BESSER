@@ -14,7 +14,7 @@ import types
 import pytest
 
 from besser.spec_driven_agent import run_report
-from besser.spec_driven_agent.execution.workspace_fs import is_plain_file, read_plain_text
+from besser.utilities.workspace_fs import is_plain_file, read_plain_text
 from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.repair import scaffold_repair

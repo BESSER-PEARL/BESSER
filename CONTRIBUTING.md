@@ -233,9 +233,13 @@ For a deeper architectural overview, see the
 We use **Ruff** for linting (run automatically in CI):
 
 ```bash
-pip install ruff
+pip install ruff import-linter==2.15
 ruff check besser/   # rules in pyproject.toml, same as CI
+lint-imports         # import layers, contracts in pyproject.toml
 ```
+
+The layers, top to bottom: editor backend, Spec-Driven Agent, generators,
+notations, metamodel. A module imports only from the layers below it.
 
 Fix lint warnings before opening a PR. CI will fail on lint errors.
 

@@ -27,7 +27,7 @@ from besser.spec_driven_agent.model_serializer import (
 from besser.spec_driven_agent.agent.runbook import runbook_section
 from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
 from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 from besser.spec_driven_agent.planning.target import OTHER, Target
 
 logger = logging.getLogger(__name__)

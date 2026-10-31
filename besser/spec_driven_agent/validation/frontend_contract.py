@@ -16,7 +16,7 @@ import re as _re
 from besser.spec_driven_agent.pipeline.constants import FRONTEND_WALK_SKIP_DIRS
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.validation.frontend_bindings import literal_component_props
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 
 def _method_button_source_issues(output_dir: str) -> list[str]:

@@ -45,9 +45,14 @@ python tests/BUML/metamodel/structural/library/library.py           # standalone
 
 ### Linting
 ```bash
-# Exactly what CI runs; the rules live in pyproject.toml ([tool.ruff]).
+# Exactly what CI runs; the rules live in pyproject.toml ([tool.ruff], [tool.importlinter]).
 ruff check besser/
+lint-imports            # pip install import-linter==2.15
 ```
+`lint-imports` enforces the layers: editor backend -> Spec-Driven Agent -> generators -> notations ->
+metamodel, each importing only the layers below it, and `besser.utilities` (outside the backend) never
+importing the generators, the agent or the backend. Known exceptions are listed, with the change that
+removes each, in `ignore_imports`; do not add one to make a new import pass.
 `F821` (undefined names) is on because `from __future__ import annotations` hides them from every other
 rule here. The `mockup_to_buml/llm_assistant` prompt examples are few-shot snippets, not importable
 modules, so they alone are exempt from it.

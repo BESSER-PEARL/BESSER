@@ -5,12 +5,11 @@ not a framework. Every web-specific gate (the React CRUD rule, the
 frontend checklist task, the missing-frontend blocker, the HTTP-write
 contract, the server manifests of Phase 0.5) applies only to a
 ``web_app`` target. ``None`` means the decision failed; callers then keep
-the pre-target behaviour. A modify run keeps its seed's target unless the
-request names another kind (``pipeline/modify_run.py``).
+the pre-target behaviour. A modify run asks the same call whether the
+request changes the existing app's target (``pipeline/modify_run.py``).
 """
 from __future__ import annotations
 
-import re
 from dataclasses import asdict, dataclass
 
 WEB_APP = "web_app"
@@ -46,29 +45,42 @@ target_description names the product in a few words ("native Android/iOS app",
 has_user_interface: true when people use the result through screens (web, mobile,
 desktop, game), false for APIs, CLIs, libraries and classes."""
 
-# The one structured part of the request modeling-agent sends: for a non-web
-# target whose description the instructions lack, a line of its own, anywhere
-# in them (generation_handler._instructions_naming_target). Optional: an
-# oversized spec falls back to the original request without it.
-TARGET_LINE_RE = re.compile(r"^Target: (?P<description>.+?) \(not a web app\)\.", re.MULTILINE)
+# A NONE stands only for a named stack: the rules give every Python web app or
+# backend a generator, so a NONE without one keeps the keyword fallback.
+STACK_TOOL_PROPERTIES = {
+    "named_stack": {
+        "type": "string",
+        "description": ("The programming language or framework the user asks the software to be "
+                        "built with, e.g. 'Rust + Axum', 'Flutter', 'Next.js', 'Django'; '' when "
+                        "the user names none."),
+    },
+}
 
-# Words that may name a non-web target. Only a cue to ask the selector again:
-# "a Windows server" or "cancellation windows" name no target.
-_OTHER_KIND_RE = re.compile(
-    r"\b(?:native|mobile|android|ios|iphone|ipad|desktop|windows|macos|linux|"
-    r"electron|tauri|wpf|cli|command[ -]line|game|extension|embedded|arduino|bot)\b",
-    re.IGNORECASE)
+STACK_RULES = """\
+named_stack: only a language or framework the user asks the software to be built
+with. Words of the domain are not stacks, even when they spell one: "an express
+checkout", "a Java coffee shop", "rust-proof paint", "Go-karts", "the key of F#"."""
 
+# Asked only on a modify run, which changes an app that already exists.
+MODIFY_TOOL_PROPERTIES = {
+    "changes_target": {"type": "boolean"},
+    "is_failure_report": {"type": "boolean"},
+    "reported_entity": {"type": "string"},
+}
 
-def named_target(instructions: str | None) -> str | None:
-    """The description on modeling-agent's ``Target:`` line, or ``None``."""
-    match = TARGET_LINE_RE.search(instructions or "")
-    return match.group("description").strip() if match else None
-
-
-def may_name_other_target(instructions: str | None) -> bool:
-    """True when the request may ask for a non-web target."""
-    return named_target(instructions) is not None or bool(_OTHER_KIND_RE.search(instructions or ""))
+MODIFY_RULES = """\
+EXISTING APP: this request changes an app that already exists.
+- changes_target: true only when the request asks for a different kind of software
+  ("turn it into a mobile app", "I only need the API now", "make it a CLI") or for
+  another stack ("rewrite it in Vue"). New features, screens or fixes keep the target,
+  and so does naming the same target in other words.
+- is_failure_report: true when the newest user message says the existing app
+  misbehaves: an error, a crash, a wrong result, a page or control that does not do
+  what it should. False for a new feature or change, even one that names the errors,
+  exceptions or status codes the app should produce ("return 409 on a duplicate",
+  "log every IntegrityError").
+- reported_entity: for a failure report, the model class it is about (one of the
+  model classes below), else a short noun for the feature; '' otherwise."""
 
 
 @dataclass(frozen=True)
@@ -97,3 +109,35 @@ class Target:
         if not isinstance(has_ui, bool):
             has_ui = kind == WEB_APP
         return cls(kind=kind, description=description[:120], has_user_interface=has_ui)
+
+
+@dataclass(frozen=True)
+class Routing:
+    """One answer of the forced ``choose_generator`` call."""
+
+    target: Target | None
+    generator: str  # a generator name, "NONE", or "" when the answer has none
+    named_stack: str = ""
+    changes_target: bool = False
+    is_failure_report: bool = False
+    reported_entity: str = ""
+
+    @classmethod
+    def from_payload(cls, payload) -> Routing:
+        payload = payload if isinstance(payload, dict) else {}
+
+        def _text(key: str) -> str:
+            return str(payload.get(key) or "").strip()[:120]
+
+        def _flag(key: str) -> bool:
+            # Some providers send a forced tool's boolean as a string.
+            return str(payload.get(key)).lower() == "true"
+
+        return cls(
+            target=Target.from_payload(payload),
+            generator=_text("generator"),
+            named_stack=_text("named_stack"),
+            changes_target=_flag("changes_target"),
+            is_failure_report=_flag("is_failure_report"),
+            reported_entity=_text("reported_entity"),
+        )

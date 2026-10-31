@@ -23,7 +23,7 @@ from besser.spec_driven_agent.agent.tools import (
     GENERATOR_TOOLS, get_available_generator_names,
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.planning.target import Target, named_target
+from besser.spec_driven_agent.planning.target import Target
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.state.checkpoint import (
     CHECKPOINT_SCHEMA_VERSION, Checkpoint, load_checkpoint, save_checkpoint,
@@ -46,6 +46,9 @@ WEB = {"target_kind": "web_app", "target_description": "todo web app",
        "has_user_interface": True}
 API = {"target_kind": "backend", "target_description": "REST API",
        "has_user_interface": False}
+# A modify run's answer: the target changes, or it does not.
+SWITCH = {"changes_target": True, "is_failure_report": False, "reported_entity": ""}
+KEEP = {**SWITCH, "changes_target": False}
 
 
 class _Client:
@@ -141,8 +144,8 @@ def test_web_app_target_still_gets_the_fastapi_scaffold(tmp_path):
 
 
 def test_a_named_language_still_decides_the_target(tmp_path):
-    # The Swift override skips the selector; the target must not fall back to
-    # the "bare app = web frontend" regex.
+    # The selector decides a named language too; the target must not fall
+    # back to the "bare app = web frontend" regex.
     orch = _orch(tmp_path, "Build a Swift iOS app for workouts")
     assert orch._select_generator(orch._instructions) is None
     assert orch.target.kind == "other"
@@ -278,13 +281,14 @@ def _modify(tmp_path, instructions, seed, answer):
     orch = _orch(tmp_path, instructions, answer)
     orch._modify_mode = True
     orch._seed_generator_files_from_recipe()
+    orch._route_modify_request()
     return orch
 
 
 def test_modify_on_a_backend_adds_the_frontend_it_asks_for(tmp_path):
     instructions = "Add a React frontend with pages for every entity"
     orch = _modify(tmp_path, instructions, Target("backend", "REST API", False),
-                   {**WEB, "generator": "NONE"})
+                   {**WEB, **SWITCH, "generator": "NONE"})
     assert orch.target.is_web_app
     assert _frontend_task(orch)
     orch._inventory = "backend/main_api.py (generate_fastapi_backend)"
@@ -297,7 +301,7 @@ def test_modify_on_a_backend_adds_the_frontend_it_asks_for(tmp_path):
 ])
 def test_modify_turns_a_web_app_into_the_target_the_user_now_names(tmp_path, instructions):
     orch = _modify(tmp_path, instructions, Target("web_app", "workouts web app", True),
-                   {**NATIVE, "generator": "NONE"})
+                   {**NATIVE, **SWITCH, "generator": "NONE"})
     assert orch.target.kind == "other"
     assert "The existing app was built as: workouts web app" in orch.client.calls[0]["prompt"]
     assert not _frontend_task(orch)
@@ -316,18 +320,17 @@ def test_modify_turns_a_web_app_into_the_target_the_user_now_names(tmp_path, ins
     ("add a search box to the book list", Target("web_app", "library web app", True)),
     ("add an endpoint that exports loans as CSV", Target("backend", "REST API", False)),
 ])
-def test_modify_keeps_the_seed_target_without_a_call(tmp_path, instructions, seed):
-    orch = _modify(tmp_path, instructions, seed, {**WEB, "generator": "NONE"})
+def test_modify_keeps_the_seed_target_the_call_keeps(tmp_path, instructions, seed):
+    orch = _modify(tmp_path, instructions, seed, {**WEB, **KEEP, "generator": "NONE"})
     assert orch.target == seed
-    assert orch.client.calls == []
+    assert len(orch.client.calls) == 1
     assert orch._previous_target is None
 
 
 def test_a_modify_that_keeps_the_kind_keeps_the_stack(tmp_path):
-    # "desktop" is only a cue; the selector keeps the web app.
     instructions = "Make the dashboard easier to use on desktop screens"
     orch = _modify(tmp_path, instructions, Target("web_app", "library web app", True),
-                   {**WEB, "generator": "NONE"})
+                   {**WEB, **KEEP, "generator": "NONE"})
     assert len(orch.client.calls) == 1
     assert orch.target.is_web_app and orch._previous_target is None
     orch._inventory = "backend/main_api.py, frontend/src/App.tsx (generate_fastapi_backend)"
@@ -343,22 +346,22 @@ def test_a_failed_modify_decision_keeps_the_seed_target(tmp_path):
 
 # -- The cross-repo contract ------------------------------------------------
 
-def test_the_target_line_modeling_agent_writes_is_parsed():
+def test_the_target_line_modeling_agent_writes_reaches_the_selector(tmp_path):
     # modeling-agent's generation_handler._instructions_naming_target writes
     # f"Target: {description} (not a web app)." on a line of its own;
-    # smart_generation_handler then nests it under the assistant's notes.
-    description = "Windows 11 desktop app"
-    line = f"Target: {description} (not a web app)."
-    assert named_target(f"{line}\nBuild the inventory application.") == description
-    assert named_target(f"{line}\r\nArchitecture: MVC.\r\nBuild it.") == description
+    # smart_generation_handler then nests it under the assistant's notes. The
+    # selector reads the request whole, so the line decides with the rest.
+    line = "Target: Windows 11 desktop app (not a web app)."
     payload = (
         "## Assistant's notes (may be inaccurate)\n\nUse these only for ...\n\n"
         f"{line}\nBuild the inventory application.\n\n"
         "## The user's original request, verbatim\n\nThis is the authority.\n\n"
         "una app de windows 11 local para inventario")
-    assert named_target(payload) == description
-    assert named_target("Build the inventory application.") is None
-    assert named_target("Build it. Target: Windows 11 desktop app (not a web app).") is None
+    orch = _orch(tmp_path, payload, {**NATIVE, "target_description": "Windows 11 desktop app",
+                                     "generator": "NONE"})
+    assert orch._select_generator(payload) is None
+    assert line in orch.client.calls[0]["prompt"]
+    assert orch.target.kind == "other"
 
 
 def test_without_a_target_line_the_request_wording_decides(tmp_path):
@@ -366,7 +369,6 @@ def test_without_a_target_line_the_request_wording_decides(tmp_path):
     request = "una app de windows 11 local para inventario"
     orch = _orch(tmp_path, request, {**NATIVE, "target_description": "Windows 11 desktop app",
                                      "generator": "NONE"})
-    assert named_target(request) is None
     assert orch._select_generator(request) is None
     assert orch.target.kind == "other"
     assert not _frontend_task(orch)

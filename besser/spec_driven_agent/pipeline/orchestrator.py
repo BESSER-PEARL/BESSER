@@ -692,18 +692,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._start_time = time.monotonic()
         # Re-compute fingerprint now that we know the instructions — the
         # constructor-time value was hashed with an empty string.
-        self._project_fingerprint = compute_fingerprint(
-            instructions=instructions,
-            primary_kind=self.primary_kind,
-            domain_model=self.domain_model,
-            state_machines=self.state_machines,
-            gui_model=self.gui_model,
-            agent_model=self.agent_model,
-            object_model=self.object_model,
-            quantum_circuit=self.quantum_circuit,
-            bpmn_model=self.bpmn_model,
-            nn_model=self.nn_model,
-        )
+        self._project_fingerprint = self._compute_project_fingerprint(instructions)
         self._trace.write(
             EVENT_RUN_START,
             # bounded: trace display only, never a decision input
@@ -810,6 +799,21 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Resume entry point
     # ==================================================================
 
+    def _compute_project_fingerprint(self, instructions: str) -> str:
+        """The fingerprint a checkpoint is saved with and a resume checks."""
+        return compute_fingerprint(
+            instructions=instructions,
+            primary_kind=self.primary_kind,
+            domain_model=self.domain_model,
+            state_machines=self.state_machines,
+            gui_model=self.gui_model,
+            agent_model=self.agent_model,
+            object_model=self.object_model,
+            quantum_circuit=self.quantum_circuit,
+            bpmn_model=self.bpmn_model,
+            nn_model=self.nn_model,
+        )
+
     @ends_shell_session
     def resume(self, instructions: str) -> str:
         """Resume a previously-crashed run from its checkpoint.
@@ -836,18 +840,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 f"No checkpoint at {self.output_dir}; nothing to resume"
             )
 
-        expected = compute_fingerprint(
-            instructions=instructions,
-            primary_kind=self.primary_kind,
-            domain_model=self.domain_model,
-            state_machines=self.state_machines,
-            gui_model=self.gui_model,
-            agent_model=self.agent_model,
-            object_model=self.object_model,
-            quantum_circuit=self.quantum_circuit,
-            bpmn_model=self.bpmn_model,
-            nn_model=self.nn_model,
-        )
+        expected = self._compute_project_fingerprint(instructions)
         if expected != checkpoint.project_fingerprint:
             raise CheckpointMismatchError(
                 "Checkpoint fingerprint does not match the supplied "
@@ -882,6 +875,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._inventory = checkpoint.inventory
         self._generator_used = checkpoint.generator_used
         self.target = Target.from_payload(checkpoint.target)
+        if checkpoint.modify is not None:
+            self._restore_modify_state(checkpoint.modify)
         self.executor.lock_generators(checkpoint.locked_generators)
         self._compaction_count = checkpoint.compaction_count
         self.tool_calls_log = list(checkpoint.tool_calls_log)
@@ -902,16 +897,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._trace.write(
             EVENT_RUN_START,
             resumed=True,
+            mode="modify" if self._modify_mode else "create",
             resume_from_turn=checkpoint.turn,
             resume_phase=checkpoint.phase,
             saved_at=checkpoint.saved_at,
         )
 
-        # -- Adaptive budget: same rule as a fresh run (``_generator_used``
+        # -- Budget: same rule as the run being resumed (``_generator_used``
         # was just restored from the checkpoint above). Resuming is the
         # common path for a run that previously broke out on a cost_cap /
         # timeout / max_tokens truncation, so this matters here too.
-        self._apply_adaptive_budget()
+        if self._modify_mode:
+            self._apply_modify_budget()
+        else:
+            self._apply_adaptive_budget()
 
         if checkpoint.phase == "phase2":
             self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume")
@@ -938,6 +937,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             EVENT_PHASE_EXIT, phase="phase3",
             exit_reason=self._phase3_exit_reason,
         )
+        self._evaluate_fix_target_gate()
 
         elapsed = time.monotonic() - self._start_time
         self._save_recipe(instructions, elapsed)
@@ -2639,6 +2639,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 phase2_exited_cleanly=self._phase2_exited_cleanly,
                 repair_progress=self._repair_progress if phase == "phase3" else {},
                 locked_generators=sorted(self.executor.locked_generators),
+                modify=self._modify_checkpoint_state(),
             )
             path = save_checkpoint(self.output_dir, ckpt)
             if path:

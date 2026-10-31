@@ -280,6 +280,22 @@ class ModelChange:
         }
 
 
+def model_change_from_dict(data) -> ModelChange | None:
+    """Rebuild a checkpointed change: ``to_dict()`` plus its ``base`` / ``new`` summaries."""
+    if not isinstance(data, dict):
+        return None
+    try:
+        return ModelChange(
+            data["verdict"], data["basis"], float(data["gone"]),
+            tuple(data.get("removed") or ()), tuple(data.get("added") or ()),
+            tuple((r["from"], r["to"]) for r in data.get("renamed") or ()),
+            tuple(data.get("changes") or ()),
+            data.get("base") or {}, data.get("new") or {},
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _elements(classes: dict) -> int:
     return len(classes) + sum(len(_attributes(entry)) for entry in classes.values())
 

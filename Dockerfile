@@ -40,6 +40,11 @@ RUN grep -v '^governancedsl' backend-requirements.txt > backend-requirements-bas
     && grep '^governancedsl' backend-requirements.txt > governance-requirement.txt \
     && pip install --no-cache-dir -r requirements.txt -r backend-requirements-base.txt
 
+# The context-compaction token counter's BPE file. tiktoken otherwise downloads
+# it on first use with no timeout, so a host without internet access stalls.
+ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken-cache
+RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+
 
 FROM python-deps AS backend
 

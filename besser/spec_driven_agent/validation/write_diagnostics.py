@@ -938,7 +938,38 @@ def _python_diagnostics(
     return findings
 
 
-def _json_diagnostics(content: str) -> list[dict[str, Any]]:
+def _is_jsonc(rel_path: str) -> bool:
+    """TypeScript/JavaScript project configs and VS Code settings are JSONC."""
+    parts = rel_path.replace("\\", "/").lower().split("/")
+    return parts[-1].startswith(("tsconfig", "jsconfig")) or ".vscode" in parts[:-1]
+
+
+def _jsonc_to_json(content: str) -> str:
+    """Drop JSONC comments and trailing commas, keeping every line break."""
+    from pygments.lexers import JsonLexer
+    from pygments.token import Comment, Punctuation, Whitespace
+
+    # The lexer emits a punctuation run such as ",]}" as one token.
+    tokens = [(token, char) if token in Punctuation else (token, value)
+              for token, value in JsonLexer(stripnl=False, ensurenl=False).get_tokens(content)
+              for char in (value if token in Punctuation else [value])]
+    out: list[str] = []
+    for index, (token, value) in enumerate(tokens):
+        if token in Comment:
+            out.append("\n" * value.count("\n"))
+            continue
+        if token in Punctuation and value == ",":
+            following = next((v for t, v in tokens[index + 1:]
+                              if t not in Comment and t not in Whitespace and v.strip()), "")
+            if following in ("}", "]"):
+                continue
+        out.append(value)
+    return "".join(out)
+
+
+def _json_diagnostics(content: str, rel_path: str = "") -> list[dict[str, Any]]:
+    if _is_jsonc(rel_path):
+        content = _jsonc_to_json(content)
     try:
         json.loads(content)
     except json.JSONDecodeError as exc:
@@ -1019,7 +1050,7 @@ def diagnose_written_content(
         if extension in {".py", ".pyi"}:
             findings = _python_diagnostics(rel_path, content, workspace)
         elif extension == ".json":
-            findings = _json_diagnostics(content)
+            findings = _json_diagnostics(content, rel_path)
         elif extension in {".yaml", ".yml"}:
             findings = _yaml_diagnostics(content)
         elif extension in _FRONTEND_SOURCE_EXTENSIONS:

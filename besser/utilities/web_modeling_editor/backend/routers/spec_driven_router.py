@@ -74,9 +74,8 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview i
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
     scrub_secret_files,
 )
+from besser.spec_driven_agent.execution.workspace_fs import copytree_plain, is_plain_entry
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
-    copytree_no_links,
-    is_plain_entry,
     read_run_json,
     write_run_json,
 )
@@ -1007,8 +1006,9 @@ async def push_spec_driven_to_github(
             # modify run loses the framework guard and gap analysis
             # falls back to "build from scratch" framing.
             # Symlinks are dropped, never read through.
-            copytree_no_links(
+            copytree_plain(
                 entry.temp_dir, workdir, [*_EXCLUDED_OUTPUT_DIRS, _RUN_INTERNAL_FILES],
+                dirs_exist_ok=True,
             )
             # The same goes for the line attribution state: the next
             # continue-from-GitHub run diffs the repo against it to tell

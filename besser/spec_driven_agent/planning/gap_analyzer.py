@@ -59,6 +59,8 @@ _MAX_INVENTORY_CHARS = 8_000
 _MAX_MODEL_JSON_CHARS = 12_000
 _MAX_ACTION_INVENTORY_CHARS = 8_000
 _MAX_TASKS = 16
+# The planner labels each task; only "change" fits a scaffold whose stack is fixed.
+_TASK_KINDS = ("change", "removes_scaffold", "switches_framework")
 
 
 # Forced-tool schema for the planning reply. Structured-by-construction
@@ -77,7 +79,23 @@ _SUBMIT_TASKS_TOOL = {
         "properties": {
             "tasks": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string"},
+                        "kind": {
+                            "type": "string",
+                            "enum": list(_TASK_KINDS),
+                            "description": (
+                                "change: work on top of the scaffold. removes_scaffold: "
+                                "deletes or replaces generated code wholesale (the "
+                                "frontend, the backend, the scaffold). switches_framework: "
+                                "moves the app to another framework than the scaffold's."
+                            ),
+                        },
+                    },
+                    "required": ["task", "kind"],
+                },
                 "maxItems": _MAX_TASKS,
                 "description": (
                     "One-line imperative tasks, each anchored to a "
@@ -213,8 +231,7 @@ def analyze_gaps_via_llm(
     tasks = _call_planner(llm_client, user_prompt)
     if tasks is None:
         return None
-    cleaned = _dedupe([t.strip() for t in tasks if isinstance(t, str) and t.strip()])[:_MAX_TASKS]
-    cleaned = _sanitize_tasks(cleaned, generator_used)
+    cleaned = _dedupe(_drop_scaffold_conflicts(tasks))[:_MAX_TASKS]
     cleaned = _drop_present_enumerations(cleaned, domain_model)
     cleaned = _drop_present_attributes(cleaned, domain_model)
     cleaned = _note_present_regex_validations(cleaned, domain_model)
@@ -228,6 +245,12 @@ def analyze_gaps_via_llm(
     # since [] can short-circuit Phase 2 entirely (see the module docstring).
     cleaned = _dedupe(_note_derived_enum_initial_state(domain_model, instructions) + cleaned)
     cleaned = _dedupe(_note_rejected_constraints(domain_model, cleaned) + cleaned)
+    if tasks and not cleaned:
+        # Only the planner may say "the scaffold covers it": a list the
+        # sanitizers emptied means no usable checklist, not "skip Phase 2".
+        logger.warning("Gap analyzer: the sanitizers dropped all %d planner task(s); no checklist",
+                       len(tasks))
+        return None
     _emit_phase_details(on_phase_details, cleaned)
     return cleaned
 
@@ -329,22 +352,6 @@ def _note_action_placement(tasks: list[str], endpoints: list[ActionEndpoint]) ->
     return noted
 
 
-# Scaffold families for the task sanitizer (mirrors the orchestrator's
-# framework-switch enforcement).
-_GAP_SCAFFOLD_RIVALS = {
-    "generate_fastapi_backend": ("flask", "django"),
-    "generate_web_app": ("flask", "django"),
-    "generate_rest_api": ("flask", "django"),
-    "generate_django": ("flask", "fastapi"),
-}
-
-_DELETE_SCAFFOLD_RE = re.compile(
-    r"\b(delete|remove|drop|uninstall|replace)\b.{0,60}\b(scaffold|"
-    r"generated|frontend|react|output|backend framework)\b",
-    re.IGNORECASE,
-)
-
-
 def _task_key(text: str) -> str:
     """Identity of a checklist item: case, whitespace and a trailing period aside."""
     return " ".join(text.lower().split()).rstrip(".")
@@ -369,30 +376,34 @@ def _dedupe(tasks: list) -> list:
     return kept
 
 
-def _sanitize_tasks(tasks: list, generator_used: str | None) -> list:
-    """Drop checklist items that would demolish the scaffold.
+def _drop_scaffold_conflicts(tasks: list) -> list[str]:
+    """The task texts, without the ones the planner labelled as fighting the scaffold.
 
     A planner can propose e.g. 'delete react frontend scaffold' and 'install
-    Flask' — a checklist that would fight the Phase-2 HARD CONSTRAINTS and
-    the framework-switch blocker for the whole run. The prompt forbids it;
-    this filter guarantees it. Phase 2 keeps the scaffold's stack even when
-    the user named another, so a rival-framework task is dropped either way.
+    Flask': a checklist that would fight the Phase-2 HARD CONSTRAINTS and the
+    framework-switch blocker for the whole run. The prompt forbids it and the
+    planner labels every task (``_TASK_KINDS``), so its own label drops it;
+    "Add a Delete button to each row" is a change. The text fallbacks ask for
+    the same objects; a task with no usable label is kept, with a warning.
     """
-    rivals = _GAP_SCAFFOLD_RIVALS.get(generator_used or "", ())
-    kept: list = []
-    for task in tasks:
-        low = task.lower()
-        if _DELETE_SCAFFOLD_RE.search(task):
-            logger.warning("Gap sanitizer dropped scaffold-demolition task: %r", task[:100])
+    kept: list[str] = []
+    unlabelled = 0
+    for item in tasks:
+        if isinstance(item, dict):
+            text = str(item.get("task") or "").strip()
+            kind = str(item.get("kind") or "").strip().lower().replace("-", "_").replace(" ", "_")
+        else:
+            text, kind = (item.strip() if isinstance(item, str) else ""), ""
+        if not text:
             continue
-        rival_hit = next((r for r in rivals if r in low), None)
-        if rival_hit:
-            logger.warning(
-                "Gap sanitizer dropped rival-framework (%s) task: %r",
-                rival_hit, task[:100],
-            )
+        if kind in ("removes_scaffold", "switches_framework"):
+            logger.warning("Gap analyzer dropped a task the planner labelled %s: %r", kind, text[:100])
             continue
-        kept.append(task)
+        if kind != "change":
+            unlabelled += 1
+        kept.append(text)
+    if unlabelled:
+        logger.warning("Gap analyzer: %d task(s) came back without a valid kind; kept unchecked", unlabelled)
     return kept
 
 
@@ -1212,8 +1223,8 @@ def _call_planner(llm_client, user_prompt: str) -> list | None:
     repair_prompt = (
         f"{user_prompt}\n\n"
         "Your previous reply could not be parsed. Reply with ONLY a JSON "
-        "array of task strings (or call the submit_tasks tool). No prose, "
-        "no markdown."
+        'array of {"task": ..., "kind": ...} objects (or call the submit_tasks '
+        "tool). No prose, no markdown."
     )
     try:
         response = _chat(repair_prompt, planning_model)
@@ -1354,7 +1365,8 @@ _SYSTEM_PROMPT = (
     "deleting the scaffold, or removing the generated frontend. Every task "
     "EXTENDS the existing stack, even when the user named a different "
     "framework or language: implement the requested behavior in the "
-    "scaffold's stack.\n"
+    "scaffold's stack. Label each task's kind honestly: a task labelled "
+    "removes_scaffold or switches_framework is dropped.\n"
     "  * Skip anything the generator already provided correctly.\n"
     "  * Use the ACTION IMPLEMENTATION INVENTORY to locate actual operation "
     "handlers. A modeled method may still be an HTTP 501 placeholder. Put "
@@ -1389,8 +1401,9 @@ _SYSTEM_PROMPT = (
     "with no extra features requested. When in doubt, emit tasks.\n"
     f"  * Hard cap: {_MAX_TASKS} tasks. Prioritise correctness over completeness.\n\n"
     "Call the submit_tasks tool with your final list. If tool calling is "
-    "unavailable, return ONLY a JSON array of task strings — no prose, no "
-    "markdown."
+    "unavailable, return ONLY a JSON array of {\"task\": ..., \"kind\": ...} "
+    "objects (kind: change, removes_scaffold or switches_framework) — no prose, "
+    "no markdown."
 )
 
 

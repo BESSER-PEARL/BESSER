@@ -70,7 +70,8 @@ def _other_target_rule(target: Target) -> str:
     ui = (
         "    It is used through screens: build a complete, navigable UI for that\n"
         "    platform - every entity reachable, working create / edit / delete -\n"
-        "    and keep the data locally unless the user asked for a server.\n"
+        "    and keep the data locally unless the user asked for a server. Every\n"
+        "    control is visible at the default window size.\n"
         if target.has_user_interface else ""
     )
     return f"""\

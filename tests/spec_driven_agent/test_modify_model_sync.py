@@ -470,6 +470,7 @@ def _neutralise_modify_phases(monkeypatch, orch):
         lambda *a, **k: "",
     )
     monkeypatch.setattr(orch, "_seed_generator_files_from_recipe", lambda: None)
+    monkeypatch.setattr(orch, "_route_modify_request", lambda: None)
     monkeypatch.setattr(orch, "_validate_phase1_output", lambda: [])
     monkeypatch.setattr(orch, "_run_phase2", lambda instr, extra_issues=None: None)
     monkeypatch.setattr(orch, "_create_snapshot", lambda: None)

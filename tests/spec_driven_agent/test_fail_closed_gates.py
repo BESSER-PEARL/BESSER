@@ -15,7 +15,7 @@ import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.planning.gap_analyzer import _sanitize_tasks
+from besser.spec_driven_agent.planning.gap_analyzer import _drop_scaffold_conflicts
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.validation.issues import is_completion_issue
 
@@ -74,16 +74,16 @@ def test_selector_exception_warns(orch, monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         assert orch._select_generator_with_llm("Build a library app") is None
 
-    assert any("keyword routing" in r.message for r in caplog.records if r.levelno == logging.WARNING)
+    assert any("generator selector failed" in r.message for r in caplog.records if r.levelno == logging.WARNING)
 
 
 @pytest.mark.parametrize("task", [
-    "Delete the generated React frontend scaffold",
-    "Install Flask and move the routes to it",
+    {"task": "Delete the generated React frontend scaffold", "kind": "removes_scaffold"},
+    {"task": "Install Flask and move the routes to it", "kind": "switches_framework"},
 ])
 def test_sanitizer_drops_warn(task, caplog):
     with caplog.at_level(logging.WARNING):
-        assert _sanitize_tasks([task], "generate_web_app") == []
+        assert _drop_scaffold_conflicts([task]) == []
 
-    assert any(r.levelno == logging.WARNING and "Gap sanitizer dropped" in r.message
+    assert any(r.levelno == logging.WARNING and "Gap analyzer dropped" in r.message
                for r in caplog.records)

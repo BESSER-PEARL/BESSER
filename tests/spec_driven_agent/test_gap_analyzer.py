@@ -432,35 +432,25 @@ def test_resume_seeds_prior_cost(tmp_path, monkeypatch):
     assert tracker.estimated_cost > 1.25
 
 
-def test_gap_sanitizer_drops_scaffold_demolition_and_rival_framework():
+def test_gap_sanitizer_drops_the_tasks_the_planner_labels_as_fighting_the_scaffold():
     """Devstral A/B live finding: the planner proposed deleting the react
-    scaffold and installing Flask. The sanitizer must drop those, keep
-    honest tasks, and drop a rival even when the user named it: Phase 2 keeps
-    the scaffold's stack, so a checklist item for the rival contradicts it."""
-    from besser.spec_driven_agent.planning.gap_analyzer import _sanitize_tasks
+    scaffold and installing Flask. Phase 2 keeps the scaffold's stack, so the
+    planner labels each task and its own label drops those; honest tasks stay."""
+    from besser.spec_driven_agent.planning.gap_analyzer import _drop_scaffold_conflicts
 
     tasks = [
-        "delete react frontend scaffold as not requested by user",
-        "install Flask backend framework requirements in backend directory",
+        {"task": "delete react frontend scaffold as not requested by user", "kind": "removes_scaffold"},
+        {"task": "install Flask backend framework requirements in backend directory",
+         "kind": "switches_framework"},
+        {"task": "create book model class that implements Book concept", "kind": "change"},
+        {"task": "add login route to the main application", "kind": "change"},
+    ]
+    assert _drop_scaffold_conflicts(tasks) == [
         "create book model class that implements Book concept",
         "add login route to the main application",
     ]
-    kept = _sanitize_tasks(tasks, "generate_web_app")
-    assert kept == [
-        "create book model class that implements Book concept",
-        "add login route to the main application",
-    ]
-
-    # The user asking for flask does not switch a FastAPI scaffold.
-    kept2 = _sanitize_tasks(
-        ["create flask blueprint for API endpoints", "add a borrow endpoint"],
-        "generate_fastapi_backend",
-    )
-    assert kept2 == ["add a borrow endpoint"]
-
-    # From-scratch runs (no scaffold) keep everything non-demolition.
-    kept3 = _sanitize_tasks(["use flask for the app"], None)
-    assert kept3 == ["use flask for the app"]
+    # A reply parsed from text has no labels: nothing is dropped by its wording.
+    assert _drop_scaffold_conflicts([" add a borrow endpoint ", "", 3]) == ["add a borrow endpoint"]
 
 
 def test_planner_prompt_does_not_tell_tasks_to_follow_a_user_named_stack():

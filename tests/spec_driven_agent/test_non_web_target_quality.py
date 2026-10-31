@@ -287,3 +287,16 @@ def test_a_linked_parent_directory_is_never_formatted(tmp_path):
         pytest.skip("symlinks are not available here")
     assert format_python_files(str(workspace), ["pkg/x.py"]) == []
     assert (outside / "x.py").read_text(encoding="utf-8") == _DENSE
+
+
+def test_native_ui_markup_reaches_the_judge(tmp_path):
+    # Live (2026-10-31, WPF run): MainWindow.xaml held the Delete button, the
+    # judge never saw it, and a correct requirement was reported unverified.
+    for rel in ("MainWindow.xaml", "Views/Main.axaml", "qml/Main.qml",
+                "app/src/main/res/layout/activity_main.xml", "app/src/main/res/layout-land/row.xml",
+                "app/src/main/AndroidManifest.xml", "pom.xml"):
+        _write(tmp_path, rel, "<Button Content=\"Delete\"/>\n")
+    seen = set(requirements_ledger._source_files(str(tmp_path)))
+    assert {"MainWindow.xaml", "Views/Main.axaml", "qml/Main.qml",
+            "app/src/main/res/layout/activity_main.xml", "app/src/main/res/layout-land/row.xml"} <= seen
+    assert "app/src/main/AndroidManifest.xml" not in seen and "pom.xml" not in seen

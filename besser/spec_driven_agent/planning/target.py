@@ -33,8 +33,8 @@ TARGET — decide WHAT the user wants built, from their words:
 - web_app: anything used in a browser: web app, website, dashboard, portal, PWA,
   a "mobile-friendly" or "responsive" web app. Also a bare "app" or "application"
   with no platform named (the default).
-- backend: API-only / headless: a REST API, a backend, a server, in any
-  language ("a REST API in Go"), also "an API for my mobile app".
+- backend: API-only / headless: a REST API, a backend, a server, also "an API
+  for my mobile app".
 - other: anything that is not a web app or a backend: a native mobile app
   (Android / iOS / "mobile app"), a desktop app (Windows / macOS / Linux,
   "local", Electron, Tauri, WPF), a CLI, a game, a browser or IDE extension,

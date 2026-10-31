@@ -89,7 +89,8 @@ def _demands_enforcement(kind: str, text: str) -> bool:
 _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
 # A judge abridges a run of code as "a ... b", lists lines as "a; b", and cites
 # two places as "x.py: a and y.py: b". Each part must still be verbatim source.
-_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026)(?=[\s)\]}]|$)|;\s+|\s+and\s+([\w./\\-]+\.\w{1,5}):\s")
+# An ellipsis may carry the comma of the arguments it left out: "f(..., x)".
+_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026),?(?=[\s)\]}]|$)|;\s+|\s+and\s+([\w./\\-]+\.\w{1,5}):\s")
 # A part shorter than this ("pass", "}") identifies no code; it is left out.
 _MIN_PART_QUOTE = 8
 # Evidence longer than this is cut before matching (the judge is asked for one line).
@@ -272,7 +273,16 @@ _SOURCE_SUFFIXES = frozenset({
     ".vue", ".svelte", ".astro",
     # server-rendered templates that carry behaviour
     ".razor", ".cshtml", ".erb", ".blade.php",
+    # native UI markup that holds a desktop app's controls: WPF/WinUI, Avalonia, Qt
+    ".xaml", ".axaml", ".qml",
 })
+
+
+def _is_judged_source(path: Path) -> bool:
+    """Application source, plus Android's screens (``res/layout*/*.xml``); other
+    XML (``pom.xml``, the manifest) carries no behaviour."""
+    suffix = path.suffix.lower()
+    return suffix in _SOURCE_SUFFIXES or (suffix == ".xml" and path.parent.name.startswith("layout"))
 _BEHAVIOURAL_KINDS = frozenset({"computed", "transition", "action"})
 _TEST_SOURCE_NAME = re.compile(r"(?:\.(?:test|spec)\.[^.]+$|^test_.+\.py$|_test\.py$)", re.I)
 
@@ -597,8 +607,7 @@ def _source_files(output_dir: str) -> dict[str, str]:
                    and not (Path(root) == base and d in _ARTIFACT_ROOT_DIRS)]
         for name in names:
             source = Path(root, name)
-            if (name.startswith(".") or source.suffix.lower() not in _SOURCE_SUFFIXES
-                    or _TEST_SOURCE_NAME.search(name)):
+            if name.startswith(".") or not _is_judged_source(source) or _TEST_SOURCE_NAME.search(name):
                 continue
             try:
                 if not source.resolve().is_relative_to(base) or not source.is_file():

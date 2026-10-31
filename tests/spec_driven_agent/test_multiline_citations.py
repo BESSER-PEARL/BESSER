@@ -274,3 +274,31 @@ def test_a_whole_line_holding_an_escaped_newline_verifies(tmp_path):
 def test_an_invented_tail_after_an_escaped_newline_is_refused(tmp_path):
     verdict = _check_joined(tmp_path, 'session.reply("\\n".join(t.title for t in db.query(Task).filter(done=False)))')
     assert verdict["status"] == "unverified"
+
+
+# Live (2026-10-31, Android run): the judge cut a Kotlin data class as
+# "data class TodoItemEntity(..., val listId: Long)" - an ellipsis then a comma.
+_ENTITY_KT = (
+    "data class TodoItemEntity(\n"
+    "    @PrimaryKey(autoGenerate = true) val id: Long = 0,\n"
+    "    val title: String,\n"
+    "    val listId: Long\n"
+    ") {\n"
+    "}\n"
+)
+
+
+def _check_entity_kt(tmp_path, quote):
+    (tmp_path / "Entities.kt").write_text(_ENTITY_KT, encoding="utf-8")
+    return verify_evidence([_verdict(f"Entities.kt: {quote}", text="Organize tasks into lists", kind="")],
+                           str(tmp_path))[0]
+
+
+def test_an_ellipsis_followed_by_a_comma_cuts_the_quote(tmp_path):
+    verdict = _check_entity_kt(tmp_path, "data class TodoItemEntity(..., val listId: Long)")
+    assert verdict["status"] == "implemented", verdict.get("note")
+
+
+def test_an_invented_field_after_an_ellipsis_and_comma_is_refused(tmp_path):
+    verdict = _check_entity_kt(tmp_path, "data class TodoItemEntity(..., val ownerId: Long)")
+    assert verdict["status"] == "unverified"

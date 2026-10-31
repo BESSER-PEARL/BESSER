@@ -22,8 +22,8 @@ The three phases
    app, a CLI, a game, an extension, a library, ...). A generator is picked
    only when its output *is* that target, so an ``other`` target is written
    from scratch in the stack the user named, or the standard one for that
-   target. An app that uses an API is that app, not a backend; an API is a
-   backend in any language; and an architecture pattern such as MVC describes
+   target. An app that uses an API is that app, not a backend, and an
+   architecture pattern such as MVC describes
    the app's structure, not its platform. Every web-specific rule below
    applies to a ``web_app`` target only.
    When the selection call answers NONE for a web app or a backend, the

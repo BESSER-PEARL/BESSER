@@ -69,16 +69,23 @@ MODIFY_TOOL_PROPERTIES = {
 }
 
 MODIFY_RULES = """\
-EXISTING APP: this request changes an app that already exists.
-- changes_target: true only when the request asks for a different kind of software
-  ("turn it into a mobile app", "I only need the API now", "make it a CLI") or for
-  another stack ("rewrite it in Vue"). New features, screens or fixes keep the target,
-  and so does naming the same target in other words.
-- is_failure_report: true when the newest user message says the existing app
-  misbehaves: an error, a crash, a wrong result, a page or control that does not do
-  what it should. False for a new feature or change, even one that names the errors,
-  exceptions or status codes the app should produce ("return 409 on a duplicate",
-  "log every IntegrityError").
+EXISTING APP: this request changes an app that already exists (described below).
+- changes_target: true only when the request asks to turn the WHOLE app into another
+  kind of software ("turn it into a mobile app", "drop the UI, I only want the API",
+  "make it a CLI") or to rebuild it in another stack ("rewrite it in Vue"). Everything
+  else is false: new features, endpoints, status codes, error handling, logging, fixes,
+  and naming the same target in other words.
+- target_kind / target_description: the whole app after this request. Unless
+  changes_target is true, answer the existing app's kind and description, even when
+  the request is about one part of it (the API, a screen, the database).
+- is_failure_report: true only when the newest user message reports something the
+  existing app does wrong today, as the user saw it: an error or crash they got, a
+  wrong value on screen, a page or button that does not do what it should ("I get a
+  500 when I save", "the price shows NaN", "after saving, the new loan is not listed").
+  False for a rule about how the app should behave, even worded in the present tense or
+  naming errors and status codes ("the orders API returns 401 for anonymous users",
+  "convert ValueError into a 422"), for layout wording ("pin the footer to the
+  bottom"), and for general instructions ("make sure the app has no bugs").
 - reported_entity: for a failure report, the model class it is about (one of the
   model classes below), else a short noun for the feature; '' otherwise."""
 

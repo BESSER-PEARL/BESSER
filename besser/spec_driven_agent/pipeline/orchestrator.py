@@ -1354,21 +1354,23 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             ),
             "input_schema": {
                 "type": "object",
+                # A modify run decides the change first, then the target it implies.
                 "properties": {
+                    **modify_properties,
                     **TARGET_TOOL_PROPERTIES,
                     **STACK_TOOL_PROPERTIES,
-                    **modify_properties,
                     "generator": {
                         "type": "string",
                         "enum": registered_names + ["NONE"],
                     },
                 },
                 "required": [
-                    *TARGET_TOOL_PROPERTIES, *STACK_TOOL_PROPERTIES, *modify_properties, "generator",
+                    *modify_properties, *TARGET_TOOL_PROPERTIES, *STACK_TOOL_PROPERTIES, "generator",
                 ],
             },
         }
-        planning_model = getattr(self.client, "planning_model", None)
+        # A modify run's answer can rebuild the whole app: the primary model decides it.
+        planning_model = None if modify else getattr(self.client, "planning_model", None)
         for model_override in dict.fromkeys([planning_model, None]):
             try:
                 response = self.client.chat(

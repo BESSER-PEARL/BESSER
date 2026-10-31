@@ -262,6 +262,33 @@ def test_the_modify_call_names_the_existing_app_and_asks_for_the_new_fields(tmp_
     assert "Author" in call["prompt"] and "Book" in call["prompt"]
 
 
+def test_the_modify_call_runs_on_the_primary_model(tmp_path):
+    # Live eval 2026-10-31: on the cheap planning model, 6 of 222 modify answers
+    # turned a web app into a backend ("Add an API endpoint the mobile team can
+    # call"); on the primary model, none did.
+    seed = Target("web_app", "library web app", True)
+    (tmp_path / ".besser_recipe.json").write_text(json.dumps({"target": seed.to_dict()}), encoding="utf-8")
+    overrides = []
+
+    class _Recording(_Client):
+        planning_model = "cheap-sibling"
+
+        def chat(self, system, messages, tools, force_tool=None, model_override=None):
+            overrides.append(model_override)
+            return super().chat(system, messages, tools, force_tool, model_override)
+
+    orch = LLMOrchestrator(llm_client=_Recording({**WEB, **KEEP, "named_stack": "", "generator": "NONE"}),
+                           domain_model=_model(), output_dir=str(tmp_path))
+    orch._instructions = "add a search box"
+    orch._modify_mode = True
+    orch._seed_generator_files_from_recipe()
+    orch._route_modify_request()
+    assert overrides == [None]
+    orch.target = None
+    orch._select_generator("a library web app")
+    assert overrides[1] == "cheap-sibling"  # the create selector keeps the cheap model
+
+
 def test_a_modify_without_a_seed_target_is_decided_by_the_call(tmp_path):
     # An old recipe with no target used to fall back to the regexes (S6).
     (tmp_path / ".besser_recipe.json").write_text("{}", encoding="utf-8")

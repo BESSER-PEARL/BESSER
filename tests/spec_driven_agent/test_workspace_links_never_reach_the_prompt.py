@@ -14,7 +14,7 @@ import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel
 from besser.spec_driven_agent.agent import compaction, design_system, prompt_builder
-from besser.spec_driven_agent.execution.workspace_fs import copytree_plain, walk_plain
+from besser.utilities.workspace_fs import copytree_plain, walk_plain
 from besser.spec_driven_agent.planning import requirements_ledger
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.providers.llm_client import UsageTracker

@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import os
 import re
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 _FRONTEND_EXTS = (".js", ".jsx", ".ts", ".tsx")
 _SKIP_DIRS = ("node_modules", "dist", "build", "__pycache__")

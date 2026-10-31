@@ -17,7 +17,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
     SmartGenerationRunner,
     _seed_workspace_from_base,
 )
-from besser.spec_driven_agent.execution.workspace_fs import copytree_plain, is_plain_entry
+from besser.utilities.workspace_fs import copytree_plain, is_plain_entry
 from tests.utilities.web_modeling_editor.backend.spec_driven import (
     test_push_smart_to_github as push_tests,
 )

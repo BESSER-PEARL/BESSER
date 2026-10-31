@@ -12,7 +12,7 @@ import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel
 from besser.spec_driven_agent.agent.runbook import PROBE_FILENAME, install_probe
-from besser.spec_driven_agent.execution.workspace_fs import open_plain_write, write_atomic_plain
+from besser.utilities.workspace_fs import open_plain_write, write_atomic_plain
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.stack_metadata import pre_generate_metadata
 from besser.spec_driven_agent.providers.llm_client import UsageTracker

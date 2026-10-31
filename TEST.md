@@ -75,7 +75,7 @@ warning; `test_shell_sandbox.py` sets its own policy either way.
 | Job     | What it runs | Gate |
 | ------- | ------------ | ---- |
 | `tests` | installs `bubblewrap` and CPU `torch`, then `python -m pytest tests/ -q --tb=short` on Python 3.11 and 3.12 | the suite must pass |
-| `lint`  | `ruff check besser/` (rules in `pyproject.toml`) | focused lint set; line length not enforced |
+| `lint`  | `ruff check besser/` and `lint-imports` (rules and contracts in `pyproject.toml`) | focused lint set, line length not enforced; package layers |
 | `docs`  | `python docs/check_docs.py` | Sphinx build fails on any warning |
 | `package` | builds the wheel, installs it outside the checkout, checks the package data ships | the wheel must install and carry its data files |
 

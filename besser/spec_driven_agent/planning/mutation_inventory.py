@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 from urllib.parse import urlsplit
 from besser.spec_driven_agent.parsed_source import parse_source
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 
 _SKIP = {"node_modules", "venv", "env", "dist", "build", "__pycache__", "tests", "test", "fixtures", "verification"}

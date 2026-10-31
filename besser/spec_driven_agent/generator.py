@@ -43,7 +43,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     create_llm_client,
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 logger = logging.getLogger(__name__)
 

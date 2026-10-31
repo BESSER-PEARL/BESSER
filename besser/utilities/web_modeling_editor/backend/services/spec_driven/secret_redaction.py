@@ -23,7 +23,7 @@ from typing import Any, Iterable
 
 import yaml
 
-from besser.spec_driven_agent.execution.workspace_fs import open_plain, open_plain_write, walk_plain
+from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 
 logger = logging.getLogger(__name__)
 

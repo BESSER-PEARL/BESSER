@@ -202,7 +202,7 @@ class OCLConstraint(Constraint):
         # Pretty-print the AST to populate the base's source-text expression.
         # Deferred import to avoid circular dependency on package load.
         try:
-            from besser.BUML.notations.ocl.pretty_printer import pretty_print
+            from besser.BUML.metamodel.ocl.pretty_printer import pretty_print
         except ImportError:
             source_text = repr(expression)
         else:
@@ -228,7 +228,7 @@ class OCLConstraint(Constraint):
             )
         self.__ast = ast
         try:
-            from besser.BUML.notations.ocl.pretty_printer import pretty_print
+            from besser.BUML.metamodel.ocl.pretty_printer import pretty_print
         except ImportError:
             self.expression = repr(ast)
         else:

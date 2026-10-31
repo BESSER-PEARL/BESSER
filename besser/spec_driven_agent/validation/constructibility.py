@@ -198,7 +198,7 @@ def _fastapi_backends(output_dir: str) -> list[str]:
     found: list[str] = []
     try:
         # Imported here: this module also runs as a stdlib-only child script.
-        from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+        from besser.utilities.workspace_fs import walk_plain
 
         for root, dirs, files in walk_plain(output_dir):
             dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".besser_"))
@@ -215,7 +215,7 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
     """Execute the child, sandboxed with no network, on a scratch copy of
     ``folder`` (inside the run ``workspace``); never raises."""
     from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
-    from besser.spec_driven_agent.execution.workspace_fs import copytree_plain
+    from besser.utilities.workspace_fs import copytree_plain
 
     work = tempfile.mkdtemp(prefix="besser_probe_")
     try:

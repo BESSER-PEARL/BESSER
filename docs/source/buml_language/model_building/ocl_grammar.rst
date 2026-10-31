@@ -27,7 +27,8 @@ and ``Class.`` spellings. Note that ``isUnique`` takes exactly one argument
 (``coll->isUnique(body)``) and that B-OCL has **no collection literal** —
 there is no ``Set{...}`` or ``Sequence{...}`` production.
 
-To Evaluate the OCL Constraints you can create the test case using the following code:
+To Evaluate the OCL Constraints you can create the test case using the following code.
+It uses the B-OCL interpreter, installed with ``pip install "besser[ocl]"``:
 
 .. note::
 

@@ -128,6 +128,7 @@ you set this parameter to *True*, you have two options for creating your image:
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Our code generator can create and upload the Docker image to your `DockerHub <https://hub.docker.com>`_ in one step. Provide a configuration file through the ``docker_config_path`` parameter, which 
 enables the generator to automatically create and upload the image in your DockerHub accout using the provided configurations.
+This option uses the Docker SDK for Python: ``pip install "besser[docker]"``.
 
 To create the configuration file, use the following template and save it as a .conf file:
 

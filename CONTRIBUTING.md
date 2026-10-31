@@ -160,8 +160,8 @@ venv\Scripts\activate              # Windows (cmd / PowerShell)
 ### Install dependencies
 
 ```bash
-pip install -r requirements.txt
-pip install -e .                   # editable install of the BESSER package
+pip install -e ".[dev]"            # editable install of the BESSER package, with pytest
+pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt   # backend; most tests need it
 ```
 
 Optional but recommended:

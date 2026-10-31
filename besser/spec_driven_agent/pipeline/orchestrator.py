@@ -208,6 +208,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _REVISION_HASH_CAP,
     _REVISION_IGNORED_DIRS,
     _REVISION_IGNORED_SUFFIXES,
+    _REVISION_PATH_ONLY_SUFFIXES,
     _ROLLBACK_DISCARD_DIR,
     _ROLLBACK_PRESERVED,
     _RUNTIME_FAILED,
@@ -3836,8 +3837,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _workspace_revision(self) -> str:
         """Hash every authored file's path and content.
 
-        Runtime outputs (``_REVISION_IGNORED_SUFFIXES``, tool caches) are
-        skipped entirely; ``_workspace_file_list`` has already dropped
+        Runtime outputs (``_REVISION_IGNORED_SUFFIXES`` / ``_DIRS``) are
+        skipped entirely, and data the app writes counts by path only; ``_workspace_file_list`` has already dropped
         dependency dirs and ``.besser_*``. A file is hashed up to
         ``_REVISION_HASH_CAP`` bytes plus its size, so a large asset cannot
         stall the check.
@@ -3855,6 +3856,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             except ValueError:
                 continue
             fingerprint.update(rel.encode("utf-8"))
+            if rel.lower().endswith(_REVISION_PATH_ONLY_SUFFIXES):
+                fingerprint.update(b"\0")
+                continue
             try:
                 with open(path, "rb") as source:
                     fingerprint.update(source.read(_REVISION_HASH_CAP))

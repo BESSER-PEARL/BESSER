@@ -73,3 +73,28 @@ def test_large_file_edit_past_the_cap_still_counts_by_size(tmp_path, monkeypatch
     before = orch._workspace_revision()
     (tmp_path / "asset.bin").write_bytes(b"0123456789-appended")
     assert orch._workspace_revision() != before
+
+
+# Review of #705: hashing every file made the app's own runtime writes read as
+# source edits (development hashed none of these by content).
+@pytest.mark.parametrize("rel", [
+    ".coverage", "app.db-journal", "app.db-wal", "app.db-shm", "data/items.csv",
+    ".dart_tool/package_config.json", "obj/Debug/net8.0/App.assets.cache",
+    "uploads/photo.png", "htmlcov/index.html", "coverage/lcov.info",
+])
+def test_a_runtime_rewrite_is_not_an_edit(tmp_path, rel):
+    (tmp_path / "main.py").write_text("x = 1", encoding="utf-8")
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel).write_bytes(b"first")
+    orch = _orchestrator(tmp_path)
+    before = orch._workspace_revision()
+    (tmp_path / rel).write_bytes(b"second, longer")
+    assert orch._workspace_revision() == before
+
+
+def test_a_new_data_file_still_counts_by_its_path(tmp_path):
+    (tmp_path / "main.py").write_text("x = 1", encoding="utf-8")
+    orch = _orchestrator(tmp_path)
+    before = orch._workspace_revision()
+    (tmp_path / "seed.csv").write_text("id\n1\n", encoding="utf-8")
+    assert orch._workspace_revision() != before

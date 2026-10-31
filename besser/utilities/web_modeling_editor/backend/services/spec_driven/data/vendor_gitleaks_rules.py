@@ -18,6 +18,10 @@ The leading ``[\\w.-]{0,50}?`` of a keyword rule (the identifier before
 ``mailgun``) is dropped: redaction replaces only the secret, and under
 Python's backtracking ``re`` that prefix costs ~0.45 s per MB per rule, or
 ~17 s per MB where upstream nests it twice (``okta``, ``sumologic``).
+
+A rule whose redacted span would be a constant is repaired (see
+``without_constant_secret``) or dropped: redacting only the constant would
+leave the token itself in place.
 """
 
 import hashlib
@@ -30,6 +34,9 @@ from re import _constants as sre
 from re import _parser as sre_parse
 
 MIN_PREFIX = 2
+# Appended to a rule that is only a marker literal (``bedrock-api-key-YmVk...``):
+# redacting the marker alone would leave the signed body in place.
+MARKER_BODY = "[A-Za-z0-9+/=%&._-]*"
 _POSIX_CLASSES = {"[:alnum:]": "a-zA-Z0-9", "[:alpha:]": "a-zA-Z", "[:digit:]": "0-9",
                   "[:lower:]": "a-z", "[:upper:]": "A-Z", "[:xdigit:]": "0-9A-Fa-f"}
 _LICENSE = """\
@@ -149,15 +156,46 @@ def _group(items, number):
     return None
 
 
-def secret_prefix(pattern: str, secret_group: int) -> int:
-    """Shortest literal prefix of every span the rule could redact."""
+def _outer_groups(items) -> list[int]:
+    """Capture groups not nested in another capture: the ones gitleaks' "first
+    non-empty group" can pick, since an enclosing group wins over its inner ones."""
+    found = []
+    for op, arg in items:
+        if op is sre.SUBPATTERN and arg[0] is not None:
+            found.append(arg[0])
+            continue
+        children = ([arg[3]] if op is sre.SUBPATTERN else arg[1] if op is sre.BRANCH
+                    else [arg[2]] if op in (sre.MAX_REPEAT, sre.MIN_REPEAT) else [])
+        for child in children:
+            found += _outer_groups(list(child))
+    return found
+
+
+def secret_shape(pattern: str, secret_group: int) -> tuple[int, bool]:
+    """Shortest literal prefix of every span the rule could redact, and
+    whether every such span is a constant (all literal)."""
     tree = sre_parse.parse(pattern, re.ASCII)
-    if secret_group:
-        groups = [secret_group]
-    else:  # gitleaks takes the first non-empty group, or the whole match
-        groups = list(range(1, tree.state.groups)) or [0]
+    groups = [secret_group] if secret_group else _outer_groups(list(tree)) or [0]
     spans = [list(tree) if g == 0 else _group(list(tree), g) for g in groups]
-    return min(min(len(p) for p in _literal_prefixes(s)[0]) for s in spans)
+    shapes = [_literal_prefixes(s) for s in spans]
+    return min(min(len(p) for p in prefixes) for prefixes, _ in shapes), all(done for _, done in shapes)
+
+
+def without_constant_secret(pattern: str, secret_group: int) -> str:
+    """``pattern`` changed so that what it redacts is not a constant.
+
+    A marker literal (``bedrock-api-key-YmVk...``) gets ``MARKER_BODY``; named
+    groups that only label a constant (``jwt-base64``'s ``(?P<alg>...)``) become
+    non-capturing, so the whole match is the secret. Otherwise ``ValueError``.
+    """
+    if not secret_shape(pattern, secret_group)[1]:
+        return pattern
+    if not re.compile(pattern).groups:
+        return pattern + MARKER_BODY
+    unlabelled = re.sub(r"\(\?P<\w+>", "(?:", pattern)
+    if secret_group or re.compile(unlabelled).groups:
+        raise ValueError("the secret span is a constant")
+    return unlabelled
 
 
 def _toml_regexes(key: str, patterns: list[str]) -> str:
@@ -209,7 +247,8 @@ def main(source: str, version: str) -> None:
                 raise ValueError("path-only rule")
             pattern = without_identifier_context(to_python_regex(rule["regex"]))
             _compiles(pattern)
-            prefix = secret_prefix(pattern, rule.get("secretGroup", 0))
+            pattern = without_constant_secret(pattern, rule.get("secretGroup", 0))
+            prefix = secret_shape(pattern, rule.get("secretGroup", 0))[0]
             if prefix < MIN_PREFIX:
                 raise ValueError(f"no literal prefix ({prefix} chars)")
             allowlists = [a for a in (_translated_allowlist(a, rule_id) for a in rule.get("allowlists", [])) if a]

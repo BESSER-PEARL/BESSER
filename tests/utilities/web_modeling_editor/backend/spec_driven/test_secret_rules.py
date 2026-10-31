@@ -113,6 +113,11 @@ def test_a_placeholder_shaped_like_a_token_is_left_alone():
     "postgresql+psycopg2://username:password@localhost:5432/db_name",
     "mysql://app:s0me-l0cal-pass@mysql/app",
     "postgresql://app:${DB_PASSWORD}@db.example.org/app",
+    "postgresql://app:Local_pass_42@127.0.0.1:5432/app",
+    "postgresql://app:Local_pass_42@10.0.0.7:5432/app",
+    "postgresql://app:Local_pass_42@host.docker.internal:5432/app",
+    "postgresql://app:Local_pass_42@db.localhost:5432/app",
+    "postgresql://app:Local_pass_42@postgres.local:5432/app",
 ])
 def test_a_database_url_for_a_local_host_or_a_placeholder_is_left_alone(url):
     """A generated docker-compose gives the database container the same
@@ -122,12 +127,104 @@ def test_a_database_url_for_a_local_host_or_a_placeholder_is_left_alone(url):
     assert redact_text(src, env_style=False) == (src, 0)
 
 
-def test_a_database_url_password_for_a_remote_host_is_redacted_alone():
-    out, findings = redact_text('url = "mongodb+srv://svc:Zq9!xT2%23pLm@cluster0.ab1cd.mongodb.net/app"\n',
-                                env_style=False)
+@pytest.mark.parametrize("src", [
+    'url = f"postgresql+psycopg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_SERVER}:5432/x"\n',
+    'url = f"postgresql://{settings.db_user}:{settings.db_password}@{settings.db_host}/{settings.db_name}"\n',
+    'url = "mysql+pymysql://%s:%s@%s/%s" % (user, password, host, name)\n',
+    'url = "postgresql://%(user)s:%(password)s@%(host)s.example.org/x" % config\n',
+    'url = "postgresql://{}:{}@{}.{}".format(user, password, host, domain)\n',
+    'url = "postgresql://app:$DB_PASSWORD@db.example.org/app"\n',
+])
+def test_code_that_builds_a_database_url_is_not_rewritten(src):
+    """``{settings.db_password}`` became ``[REDACTED]``: the app then failed
+    database authentication. A template is not a secret."""
+    assert redact_text(src, env_style=False) == (src, 0)
 
-    assert out == f'url = "mongodb+srv://svc:{REDACTED_SECRET}@cluster0.ab1cd.mongodb.net/app"\n'
+
+def test_an_env_holding_only_a_local_database_url_is_kept(tmp_path):
+    (tmp_path / ".env").write_text("DATABASE_URL=postgresql://app:Local_pass_42@127.0.0.1:5432/app\n",
+                                   encoding="utf-8")
+
+    assert scrub_secret_files(str(tmp_path)).removed_files == ()
+
+
+@pytest.mark.parametrize("url", [
+    "mongodb+srv://svc:Zq9!xT2%23pLm@cluster0.ab1cd.mongodb.net/app",
+    "redis://:Zq9xT2pLmQ@cache.example.net:6379/0",
+])
+def test_a_database_url_password_for_a_remote_host_is_redacted_alone(url):
+    password = url.split("@")[0].rsplit(":", 1)[1]
+    out, findings = redact_text(f'url = "{url}"\n', env_style=False)
+
+    assert out == f'url = "{url.replace(password, REDACTED_SECRET)}"\n'
     assert findings == 1
+
+
+PEM_BODY = "MIIEowIBAAKCAQEA" + A * 3
+
+
+@pytest.mark.parametrize("src", [
+    f"KEY = '''-----BEGIN RSA PRIVATE KEY-----\n{PEM_BODY}\n'''\n",  # cut before END
+    '{"type": "service_account", "private_key": "-----BEGIN PRIVATE KEY-----\\n' + PEM_BODY
+    + '\\n-----END PRIVATE KEY-----\\n"}',
+])
+def test_a_private_key_is_redacted_with_or_without_its_end_line(src):
+    out, findings = redact_text(src, env_style=False)
+
+    assert A not in out
+    assert findings == 1
+
+
+def test_a_marker_only_rule_redacts_the_token_after_the_marker():
+    """Upstream's short-lived Bedrock rule is just its constant prefix:
+    redacting that alone left the signed URL in place."""
+    import base64
+    signed = ("bedrock.amazonaws.com/?Action=CallWithBearerToken&X-Amz-Algorithm=AWS4-HMAC-SHA256"
+              "&X-Amz-Signature=" + "9f" * 32 + "&Version=1")
+    token = "bedrock-api-key-" + base64.b64encode(signed.encode()).decode()
+    out, _ = redact_text(f'AWS_BEARER_TOKEN_BEDROCK = "{token}"\n', env_style=False)
+
+    assert out == f'AWS_BEARER_TOKEN_BEDROCK = "{REDACTED_SECRET}"\n'
+
+
+def test_a_base64_jwt_is_redacted_whole_not_just_its_header_label():
+    """jwt-base64 labels its header with named groups; as the "first non-empty
+    group" only that constant label would have been redacted."""
+    import base64
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0." + A[:43]
+    token = base64.b64encode(jwt.encode()).decode()
+    out, _ = redact_text(f'TOKEN = "{token}"\n', env_style=False)
+
+    assert out == f'TOKEN = "{REDACTED_SECRET}"\n'
+
+
+def test_entropy_at_the_threshold_is_not_a_secret_as_in_gitleaks():
+    """gitleaks skips ``entropy <= threshold`` (detect.go); this alibaba-shaped
+    value has entropy exactly 2.0, the rule's threshold."""
+    src = 'K = "' + "LTAI" * 6 + '"\n'
+
+    assert redact_text(src, env_style=False) == (src, 0)
+
+
+def test_the_one_pass_keyword_scan_finds_exactly_the_keywords_present():
+    """A rule runs only when one of its keywords is found, so a missed keyword is a missed secret."""
+    assert all(rule.keywords for rule in secret_redaction._TOKEN_RULES)
+    text = (open(secret_redaction.__file__, encoding="utf-8").read()
+            + " ".join(CREDENTIALS.values()) + " xoxb- xoxe- glpat- sk_live sk-ant-admin01-").lower()
+
+    expected = {keyword for keyword in secret_redaction._KEYWORDS if keyword in text}
+    assert secret_redaction._keywords_in(text) == expected
+
+
+def test_no_value_rule_can_match_a_string_shorter_than_the_skip_length():
+    from re import _parser as sre_parse
+
+    patterns = [rule.regex.pattern for rule in secret_redaction._TOKEN_RULES] + [
+        secret_redaction._SECRET_VALUE_TOKEN_RE.pattern, secret_redaction._PEM_PRIVATE_KEY_RE.pattern,
+        secret_redaction._DB_URL_PASSWORD_RE.pattern]
+
+    shortest = min(sre_parse.parse(pattern, re.ASCII).getwidth()[0] for pattern in patterns)
+    assert shortest >= secret_redaction._MIN_VALUE_SECRET_LENGTH
 
 
 def _tree_digest(root: str) -> dict:

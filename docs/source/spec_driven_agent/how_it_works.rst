@@ -253,11 +253,15 @@ reading a trace and wondering why a run did what it did.
        Slack webhooks, ``glpat-``, ``hf_``, ``npm_``, ``SG.``, PEM private
        keys, JWTs and more). Rules that match on a variable name or on
        entropy alone are left out: a false hit would rewrite working code.
-       A database URL's password is redacted unless the host is a single
-       label such as ``localhost`` or a compose service (``db``), whose
-       password the generated ``docker-compose.yml`` also sets. Symbolic
-       links, FIFOs and other special files in the workspace are skipped,
-       never opened.
+       A private key is redacted even when it is cut before its ``END``
+       line. A database URL's password is redacted unless the host is local
+       (a single label such as ``db`` or ``localhost``, ``*.localhost``,
+       ``*.local``, ``host.docker.internal``, or a loopback or private
+       address), since the generated ``docker-compose.yml`` sets the same
+       password on the database. Code that builds the URL
+       (``{settings.db_password}``, ``%s``, ``$DB_PASSWORD``) is left alone.
+       Symbolic links, FIFOs and other special files in the workspace are
+       skipped, never opened.
    * - Artifact exclusion
      - The download ZIP leaves out the same runtime and build artifacts as the
        GitHub push: ``*.log``, ``*.db``, ``*.sqlite`` / ``*.sqlite3``,

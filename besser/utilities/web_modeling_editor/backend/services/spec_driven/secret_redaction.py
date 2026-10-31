@@ -10,6 +10,7 @@ credential-shaped text everywhere else with a stable placeholder.
 from __future__ import annotations
 
 import fnmatch
+import ipaddress
 import logging
 import math
 import os
@@ -57,14 +58,28 @@ _SECRET_VALUE_TOKEN_RE = re.compile(
 # redaction rewrites source code, and a false hit breaks the app.
 _GITLEAKS_RULES_PATH = Path(__file__).with_name("data") / "gitleaks_rules.toml"
 
-# A database URL's password: ``scheme://user:password@host``. A single-label
-# host (``localhost``, a compose service such as ``db``) is left alone: that
-# password only opens the user's own container, and the generated
-# docker-compose sets the same value on the database, so redacting it breaks the app.
+# A database URL's password: ``scheme://user:password@host`` (the user may be
+# empty: ``redis://:pw@host``). A password for a local host is left alone: it
+# only opens the user's own container, and the generated docker-compose sets
+# the same value on the database, so redacting it breaks the app.
 _DB_URL_PASSWORD_RE = re.compile(
     r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mssql|oracle|mongodb(?:\+srv)?|rediss?|amqps?)"
-    r"(?:\+[a-z0-9]+)?://[^:/?#@\s'\"]+:(?P<password>[^@/?#\s'\"]+)@(?P<host>[^:/?#,\s'\"]*)"
+    r"(?:\+[a-z0-9]+)?://[^:/?#@\s'\"]*:(?P<password>[^@/?#\s'\"]+)@(?P<host>[^:/?#,\s'\"]*)"
 )
+# Code that builds a URL rather than holding one: ``{settings.db_password}``,
+# ``%s``, ``%(password)s``, ``${DB_PASSWORD}``, ``$DB_PASSWORD``.
+_URL_TEMPLATE_RE = re.compile(r"[{}]|%(?:\(\w+\))?[sdr]|^\$")
+_LOCAL_HOST_SUFFIXES = (".localhost", ".local", ".docker.internal")
+
+# A private key, also one cut before its END line (an excerpt, a streamed
+# tool call), which the gitleaks rule misses: the header and the base64 after it.
+_PEM_PRIVATE_KEY_RE = re.compile(
+    r"-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----(?:\s|\\[nr]|[A-Za-z0-9+/=]){64,}"
+    r"(?:-----END[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----)?"
+)
+# No value rule matches fewer characters (``redis://:x@``), so a shorter
+# string skips them: most strings of an SSE frame are short field values.
+_MIN_VALUE_SECRET_LENGTH = 10
 
 _ENV_PLACEHOLDER_VALUES = {
     "",
@@ -153,6 +168,44 @@ def _load_token_rules(path: Path) -> tuple[_Allowlist, tuple[_TokenRule, ...]]:
 _GLOBAL_ALLOWLIST, _TOKEN_RULES = _load_token_rules(_GITLEAKS_RULES_PATH)
 
 
+def _trie_pattern(words: Iterable[str]) -> str:
+    """An alternation of ``words`` shaped as a trie, so ``re`` tests each
+    character once per position instead of once per word (~7x faster here)."""
+    trie: dict = {}
+    for word in words:
+        node = trie
+        for char in word:
+            node = node.setdefault(char, {})
+        node[""] = {}
+
+    def emit(node: dict) -> str:
+        branches = [re.escape(char) + emit(child) for char, child in sorted(node.items()) if char]
+        if not branches:
+            return ""
+        body = branches[0] if len(branches) == 1 else "(?:" + "|".join(branches) + ")"
+        return f"(?:{body})?" if "" in node else body
+
+    return emit(trie)
+
+
+_KEYWORDS = sorted({keyword for rule in _TOKEN_RULES for keyword in rule.keywords})
+# The lookahead finds the longest keyword at every position; the shorter
+# keywords that are its prefixes occur there too.
+_KEYWORD_RE = re.compile("(?=(" + _trie_pattern(_KEYWORDS) + "))")
+_KEYWORD_PREFIXES = {keyword: {k for k in _KEYWORDS if keyword.startswith(k)} for keyword in _KEYWORDS}
+_RULE_INDEXES_BY_KEYWORD = {
+    keyword: {index for index, rule in enumerate(_TOKEN_RULES) if keyword in rule.keywords}
+    for keyword in _KEYWORDS}
+
+
+def _keywords_in(lowered: str) -> set[str]:
+    """Every rule keyword that occurs in ``lowered``, in one pass."""
+    found: set[str] = set()
+    for match in _KEYWORD_RE.finditer(lowered):
+        found |= _KEYWORD_PREFIXES[match.group(1)]
+    return found
+
+
 def _shannon_entropy(text: str) -> float:
     counts = Counter(text)
     return -sum(n / len(text) * math.log2(n / len(text)) for n in counts.values())
@@ -170,7 +223,7 @@ def _is_rule_secret(rule: _TokenRule, secret: str, match: re.Match[str]) -> bool
     line_end = text.find("\n", match.end())
     line = text[line_start:line_end if line_end >= 0 else len(text)]
     return not (
-        (rule.entropy and _shannon_entropy(secret) < rule.entropy)
+        (rule.entropy and _shannon_entropy(secret) <= rule.entropy)  # as gitleaks skips it
         or _is_placeholder(secret)
         or _GLOBAL_ALLOWLIST.allows(secret, match.group(0), line)
         or any(allowlist.allows(secret, match.group(0), line) for allowlist in rule.allowlists)
@@ -189,12 +242,10 @@ def _redact_rule_matches(rule: _TokenRule, text: str) -> tuple[str, int]:
 
 
 def _redact_vendored_tokens(text: str) -> tuple[str, int]:
-    lowered = text.lower()
+    indexes = set().union(*(_RULE_INDEXES_BY_KEYWORD[keyword] for keyword in _keywords_in(text.lower())))
     findings = 0
-    for rule in _TOKEN_RULES:
-        if rule.keywords and not any(keyword in lowered for keyword in rule.keywords):
-            continue
-        text, count = _redact_rule_matches(rule, text)
+    for index in sorted(indexes):  # in vendored order, as when every rule ran
+        text, count = _redact_rule_matches(_TOKEN_RULES[index], text)
         findings += count
     return text, findings
 
@@ -205,12 +256,27 @@ def _redact_db_url_passwords(text: str) -> tuple[str, int]:
     def _replacement(match: re.Match[str]) -> str:
         nonlocal findings
         password, host = match.group("password"), match.group("host")
-        if "." not in host or password.startswith("$") or _is_placeholder(password):
+        if (_URL_TEMPLATE_RE.search(password) or _URL_TEMPLATE_RE.search(host)
+                or _is_placeholder(password) or _is_local_host(host)):
             return match.group(0)
         findings += 1
         return match.group(0).replace(f":{password}@", f":{REDACTED_SECRET}@")
 
     return _DB_URL_PASSWORD_RE.sub(_replacement, text), findings
+
+
+def _is_local_host(host: str) -> bool:
+    """A host only the user's own machine reaches: a single label (``db``),
+    ``*.localhost``, ``*.local``, ``host.docker.internal``, or a loopback or
+    private address."""
+    host = host.lower()
+    if "." not in host or host.endswith(_LOCAL_HOST_SUFFIXES):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private or address.is_unspecified
 
 
 # The run's own key is matched literally, so a short value would redact
@@ -264,11 +330,14 @@ def redact_text(
     redacted = value
     if env_style:
         redacted = _SECRET_ENV_ASSIGNMENT_RE.sub(_assignment_replacement, redacted)
+    if len(redacted) < _MIN_VALUE_SECRET_LENGTH:
+        return redacted, findings
     # Always safe: these match the secret itself, never the quotes around it.
     redacted, token_count = _SECRET_VALUE_TOKEN_RE.subn(REDACTED_SECRET, redacted)
+    redacted, pem_count = _PEM_PRIVATE_KEY_RE.subn(REDACTED_SECRET, redacted)
     redacted, vendored_count = _redact_vendored_tokens(redacted)
     redacted, url_count = _redact_db_url_passwords(redacted)
-    return redacted, findings + token_count + vendored_count + url_count
+    return redacted, findings + token_count + pem_count + vendored_count + url_count
 
 
 def redact_data(value: Any, secrets: Iterable[str] = ()) -> tuple[Any, int]:

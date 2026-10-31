@@ -11,7 +11,10 @@ from besser.spec_driven_agent.execution.workspace_fs import walk_plain
 
 # Kept only because ``orchestrator`` re-exports them for external callers.
 # The check itself reads the syntax tree, not these text patterns.
-_CREATE_MODEL_RE = _re.compile(r"^class\s+(\w+Create)\s*\(([^)]*)\)\s*:", _re.M)
+# The B-UML sources pushed with the app (``buml/*.py``): BESSER reads them, the app never imports them.
+_MODEL_SOURCE_DIR = "buml"
+
+_CREATE_MODEL_RE =_re.compile(r"^class\s+(\w+Create)\s*\(([^)]*)\)\s*:", _re.M)
 _CREATE_FIELD_RE = _re.compile(r"^\s{4}(\w+)\s*:", _re.M)
 _ROUTER_READ_RE = _re.compile(r"\b(\w+)_data\.(\w+)\b")
 
@@ -287,7 +290,8 @@ def _create_schema_router_mismatches(output_dir: str) -> list[str]:
 
 
 def _python_files(output_dir: str) -> list[str]:
-    """Generated .py files, skipping snapshots and vendored trees."""
+    """The app's .py files, skipping snapshots, vendored trees and BESSER's model sources."""
+    model_dir = os.path.join(output_dir, _MODEL_SOURCE_DIR)
     try:
         return [
             os.path.join(root, name)
@@ -296,6 +300,7 @@ def _python_files(output_dir: str) -> list[str]:
             if name.endswith(".py")
             if not any(part in ("node_modules", _SNAPSHOT_DIR, "__pycache__")
                        for part in root.split(os.sep))
+            if os.path.normpath(root) != os.path.normpath(model_dir)
         ]
     except OSError:
         return []

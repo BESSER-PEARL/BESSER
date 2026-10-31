@@ -19,6 +19,7 @@ from pathlib import Path
 import httpx
 
 from besser.utilities.web_modeling_editor.backend.services.deployment.render_blueprint import RENDER_DEPLOY_URL
+from besser.utilities.web_modeling_editor.backend.services.deployment.repo_model import commit_origin, with_origin
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,13 @@ def git_blob_sha(content: bytes) -> str:
 def content_hash(content: bytes) -> str:
     """The hash a run records of each file it got from a repo (``push_directory_to_repo``'s ``base_hashes``)."""
     return hashlib.sha256(content).hexdigest()
+
+
+def _merge_message(branch: str, commit_message: str) -> str:
+    """The merge commit carries the ``BESSER-Origin`` of the change it merges, so history shows it as BESSER's."""
+    message = f"Merge BESSER changes into {branch}"
+    origin = commit_origin(commit_message)
+    return with_origin(message, origin) if origin else message
 
 
 def _branch_moved(exc: httpx.HTTPStatusError) -> bool:
@@ -603,7 +611,7 @@ class GitHubService:
         await self._update_or_create_ref(owner, repo_name, side_branch, commit_sha, None)
         merge_sha = await self.merge_branch(
             owner, repo_name, base=branch, head=side_branch,
-            commit_message=f"Merge BESSER changes into {branch}",
+            commit_message=_merge_message(branch, commit_message),
         )
         if merge_sha is None:
             return await self._keep_for_pull_request(owner, repo_name, branch, commit_sha)
@@ -671,7 +679,7 @@ class GitHubService:
             if entries:
                 merged_tree = await self._create_tree(owner, repo_name, entries, base_tree=merged_tree)
             merge_sha = await self._create_commit(
-                owner, repo_name, f"Merge BESSER changes into {branch}", merged_tree, head_sha,
+                owner, repo_name, _merge_message(branch, commit_message), merged_tree, head_sha,
                 second_parent=own_sha,
             )
             # A fast-forward: it fails, rather than reverting, if the branch moved again meanwhile.

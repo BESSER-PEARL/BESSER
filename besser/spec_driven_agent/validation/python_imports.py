@@ -169,17 +169,7 @@ def _unresolvable_local_imports(output_dir: str) -> list[str]:
     * The module existing in SOME OTHER directory does not count: a copy under
       ``pydantic/`` is not reachable from ``backend/``.
     """
-    try:
-        py_files = [
-            os.path.join(root, name)
-            for root, dirs, files in walk_plain(output_dir)
-            for name in files
-            if name.endswith(".py")
-            if not any(part in ("node_modules", _SNAPSHOT_DIR, "__pycache__")
-                       for part in root.split(os.sep))
-        ]
-    except OSError:
-        return []
+    py_files = _python_files(output_dir)
 
     provided: dict[str, set[str]] = {}
     for path in py_files:

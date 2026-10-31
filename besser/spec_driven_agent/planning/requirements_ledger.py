@@ -28,6 +28,7 @@ from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
 )
 from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.llm_utils import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -392,14 +393,7 @@ def _tool_input(response: dict, tool_name: str) -> dict | None:
         getattr(b, "text", "") for b in response.get("content", []) or []
         if getattr(b, "type", None) == "text"
     )
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        payload = json.loads(text[start:end + 1])
-    except json.JSONDecodeError:
-        return None
-    return payload if isinstance(payload, dict) else None
+    return extract_json(text, dict)
 
 
 def extract_requirements(instructions: str, llm_client) -> list[dict] | None:

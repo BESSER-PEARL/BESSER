@@ -70,6 +70,31 @@ def parse_json_safely(json_text: str) -> Optional[Any]:
         return None
 
 
+def extract_json(text: str, kind: type = dict) -> Optional[Any]:
+    """The first JSON value of type ``kind`` (``dict`` or ``list``) in an LLM reply.
+
+    Handles a bare value, a markdown fence and surrounding prose: each
+    opening bracket is tried with ``JSONDecoder.raw_decode``, which stops at
+    the value's own end, so brackets in the prose around it cannot break the
+    parse. ``None`` when the reply holds no such value.
+    """
+    if not isinstance(text, str):
+        return None
+    decoder = json.JSONDecoder()
+    opener = "[" if kind is list else "{"
+    index = text.find(opener)
+    while index != -1:
+        try:
+            value, _ = decoder.raw_decode(text, index)
+        except ValueError:
+            pass
+        else:
+            if isinstance(value, kind):
+                return value
+        index = text.find(opener, index + 1)
+    return None
+
+
 def _redact(text: str, secret: str) -> str:
     return text.replace(secret, "***") if secret else text
 

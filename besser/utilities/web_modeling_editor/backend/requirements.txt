@@ -17,6 +17,9 @@ pyflakes>=3.2.0,<4
 # CI tool. The Dockerfile installs it from this file, so Docker and non-Docker
 # deploys share this one pin and see the same rule semantics.
 ruff==0.16.6
+# The Spec-Driven Agent tells code from comments by lexing each file
+# (frontend import scan, JSONC config files).
+pygments==2.19.2
 deep_translator
 bocl == 1.0.4
 # Generators and the Spec-Driven Agent the backend runs; optional extras of the

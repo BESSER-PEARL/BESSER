@@ -213,6 +213,20 @@ would deploy is not defined there or when ``besser-wme-smartgen`` is not on the
 in both containers with the commit it built, then checks that the API answers
 ``200``.
 
+The model catalog (``BESSER_MODEL_CATALOG``) is validated strictly at startup:
+an unknown key, a value of the wrong type or a ``base_url`` without a host
+stops the backend and the worker (see :doc:`models`). A catalog edited by hand
+on the host is not checked by the workflow, so check it against the image you
+are about to deploy before you deploy:
+
+.. code-block:: bash
+
+   docker run --rm -e BESSER_MODEL_CATALOG=/catalog.json \
+     -v /home/ec2-user/model_catalog.json:/catalog.json:ro <backend image> \
+     python -c "from besser.spec_driven_agent.providers.model_catalog import load_model_catalog as l; print(sorted(l().providers))"
+
+It prints the provider ids, or a ``ModelCatalogError`` naming the field.
+
 Verification
 ------------
 

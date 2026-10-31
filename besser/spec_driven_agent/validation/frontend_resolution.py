@@ -28,6 +28,12 @@ from __future__ import annotations
 import json
 import os
 import re
+from functools import lru_cache
+
+from pygments.lexer import Lexer
+from pygments.lexers import JavascriptLexer, get_lexer_for_filename
+from pygments.token import Comment
+from pygments.util import ClassNotFound
 
 _EXCLUDED_DIRS = {"node_modules", ".git", ".venv", "venv", "__pycache__",
                   "dist", "build", ".next", "out", "coverage", "target"}
@@ -51,12 +57,41 @@ _NODE_BUILTINS = {
 # Packages a bundler or framework provides without a package.json entry.
 _IMPLICIT_PACKAGES = {"react/jsx-runtime", "react/jsx-dev-runtime", "vite/client"}
 
-_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
-_LINE_COMMENT = re.compile(r"(?<![:'\"/])//[^\n]*")
+@lru_cache(maxsize=16)
+def _lexer_for(suffix: str) -> Lexer:
+    try:
+        return get_lexer_for_filename(f"x{suffix}", stripnl=False, ensurenl=False)
+    except ClassNotFound:  # .babelrc and other config files: JavaScript syntax
+        return JavascriptLexer(stripnl=False, ensurenl=False)
 
 
-def _strip_comments(text: str) -> str:
-    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", text))
+def _strip_comments(text: str, filename: str) -> str:
+    """``text`` without its comments, keeping every line break.
+
+    Lexed rather than matched: a ``//`` or ``/*`` inside a string, template
+    or regex literal (``"/api/*"``, `` `${base}//v1` ``) is not a comment.
+    """
+    lexer = _lexer_for(os.path.splitext(filename)[1].lower())
+    out: list[str] = []
+    for token, value in lexer.get_tokens(text):
+        # JSX text such as "See https://x.io" lexes as a comment from "//".
+        is_url = token in Comment.Single and out and out[-1].endswith(":")
+        out.append("\n" * value.count("\n") if token in Comment and not is_url else value)
+    return "".join(out)
+
+
+@lru_cache(maxsize=512)
+def _stripped_file(path: str, mtime_ns: int, size: int) -> str:
+    return _strip_comments(_read(path), os.path.basename(path))
+
+
+def _stripped_source(path: str) -> str:
+    """A source file without its comments, lexed once per file version."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return ""
+    return _stripped_file(path, stat.st_mtime_ns, stat.st_size)
 
 
 def _walk(root: str):
@@ -180,7 +215,7 @@ def _automatic_jsx_runtime(project_dir: str, manifest: dict) -> bool:
             if not name.startswith(("vite.config", "babel.config", "webpack.config",
                                     "rsbuild.config", "esbuild")) and name != ".babelrc":
                 continue
-            text = _strip_comments(_read(os.path.join(folder, name)))
+            text = _stripped_source(os.path.join(folder, name))
             if name.startswith("vite.config"):
                 if _registers_vite_react_plugin(text):
                     return True
@@ -248,7 +283,7 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
                 if not name.endswith(_SOURCE_EXT) or name.endswith(".d.ts"):
                     continue
                 path = os.path.join(folder, name)
-                source = _strip_comments(_read(path))
+                source = _stripped_source(path)
                 rel_file = os.path.relpath(path, project_dir).replace("\\", "/")
 
                 for _, spec in _SPEC_RE.findall(source):

@@ -46,6 +46,7 @@ from besser.spec_driven_agent.errors import (
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.spec_driven_agent.execution.shell_session import close_sessions_for
+from besser.spec_driven_agent.execution.workspace_fs import copytree_plain, is_plain_entry
 from besser.spec_driven_agent.providers.llm_client import (
     DEFAULT_MODELS,
     create_llm_client,
@@ -120,10 +121,6 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
     redact_text,
     scrub_secret_files,
-)
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
-    copytree_no_links,
-    is_plain_entry,
 )
 
 logger = logging.getLogger(__name__)
@@ -1050,7 +1047,7 @@ def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
     """
     from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 
-    copytree_no_links(base_dir, dest_dir, _EXCLUDED_OUTPUT_DIRS)
+    copytree_plain(base_dir, dest_dir, _EXCLUDED_OUTPUT_DIRS, dirs_exist_ok=True)
 
     # Drop the copied checkpoint (old run's mid-flight state).
     checkpoint = os.path.join(dest_dir, CHECKPOINT_FILENAME)

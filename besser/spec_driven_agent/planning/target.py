@@ -106,6 +106,10 @@ EXISTING APP: this request changes an app that already exists (described below).
 _MAX_ENTITY_REQUIREMENTS = 20
 
 
+# Caps the judge prompt on a large model; the classes past it stay unlisted.
+_MAX_ENTITY_REQUIREMENTS = 20
+
+
 @dataclass(frozen=True)
 class Target:
     kind: str

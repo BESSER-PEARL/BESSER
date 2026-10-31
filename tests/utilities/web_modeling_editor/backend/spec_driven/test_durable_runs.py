@@ -294,7 +294,7 @@ def test_abandoned_real_runner_shape_keeps_partial_download():
     asyncio.run(exercise())
 
 
-def test_resume_starts_a_fresh_event_sequence():
+def test_resume_drops_old_frames_and_keeps_numbering():
     async def exercise() -> None:
         store = SqliteRunEventStore(":memory:")
         manager = DurableRunManager(store)
@@ -316,7 +316,7 @@ def test_resume_starts_a_fresh_event_sequence():
         await manager.wait(run_id)
         replay = store.events_after(run_id, 0)
 
-        assert [event.sequence for event in replay] == [1, 2]
+        assert [event.sequence for event in replay] == [3, 4]
         assert [event.event_type for event in replay] == ["start", "done"]
         assert manager.get_run(run_id).status == "succeeded"
         store.close()
@@ -611,5 +611,39 @@ def test_a_current_cursor_still_skips_what_the_client_already_saw():
         seen = manager.get_run(run_id).last_sequence
         replay = [f async for f in manager.subscribe(run_id, after_sequence=seen)]
         assert replay == [], "frames at or below a valid cursor must not repeat"
+
+    asyncio.run(exercise())
+
+
+def test_stale_cursor_within_new_attempt_range_replays_from_start():
+    """Review 2026-10-30 (B9, ``probe_stale_cursor.py``): numbering restarted at
+    1 on a resume, so a cursor of 30 from the first attempt fell inside a
+    longer second attempt's range and silently skipped its first 30 frames,
+    the ``start`` and phase frames among them (30 of 60 delivered)."""
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "9" * 32
+
+        def frames(count: int, tag: str):
+            async def source():
+                yield _start(run_id)
+                for i in range(count):
+                    yield format_sse(ErrorEvent(code="COST_CAP", message=f"{tag}-{i}"))
+                yield _done(run_id)
+            return source()
+
+        await manager.start(run_id, frames(28, "first"))
+        await manager.wait(run_id)
+        cursor = manager.get_run(run_id).last_sequence
+        assert cursor == 30
+
+        await manager.start(run_id, frames(58, "second"), resume=True)
+        await manager.wait(run_id)
+        got = [_payload(f) async for f in manager.subscribe(run_id, after_sequence=cursor)]
+
+        assert len(got) == 60
+        assert got[0]["event"] == "start" and got[-1]["event"] == "done"
+        store.close()
 
     asyncio.run(exercise())

@@ -469,6 +469,34 @@ def test_the_model_history_describes_each_commit_against_its_parent(github):
     assert changes["Merge BESSER changes into main"] == ["class Loan added"]
 
 
+def test_a_merge_commit_is_marked_as_besser_s(github):
+    """Found on production: Model history labelled BESSER's merge commit as a person's,
+    because the merge was the one BESSER commit written without the BESSER-Origin trailer."""
+    repo, base = _model_repo(github)
+    _teammate_saves(github, repo, _with_class(CLASS_DIAGRAM_MODEL, "Member"))
+
+    assert _save(_with_class(CLASS_DIAGRAM_MODEL, "Loan"), base).json()["status"] == "merged"
+
+    head = github.out(repo, "log", "-1", "--format=%B", "main")
+    assert head.startswith("Merge BESSER changes into main")
+    assert repo_model.commit_origin(head) == repo_model.ORIGIN_EDITOR
+
+
+def test_a_merged_code_push_is_marked_as_the_agent_s(github):
+    """The same for a Spec-Driven push merged through GitHub's merge API."""
+    files = {**repo_model.model_files(_envelope()), "src/app.py": "print('v1')\n"}
+    repo = github.create_repo("library", files=files)
+    imported = _import("ana", "library")
+    github.commit_files(repo, {"src/util.py": "X = 2\n"}, "Their change", author="ben")
+    run_id = _modify_run(imported["run_id"], lambda workdir: _write(workdir, "src/app.py", "print('v2')\n"))
+
+    assert _push(run_id, "library", base_commit_sha=imported["commit_sha"]).json()["status"] == "merged"
+
+    head = github.out(repo, "log", "-1", "--format=%B", "main")
+    assert head.startswith("Merge BESSER changes into main")
+    assert repo_model.commit_origin(head) == repo_model.ORIGIN_AGENT
+
+
 def test_a_fresh_run_pushed_into_a_repo_deletes_nothing_it_never_saw(github, tmp_path):
     """Found on experimental: a first generation pushed into the project's repo deleted its
     README, because the run was generated from the model, not seeded from the repo."""

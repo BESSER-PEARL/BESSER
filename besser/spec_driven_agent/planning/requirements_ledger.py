@@ -17,17 +17,22 @@ from __future__ import annotations
 import ast
 import json
 import logging
+from functools import lru_cache
 from pathlib import Path
+from typing import NamedTuple
 import re
 import time
 
+from besser.spec_driven_agent.planning.code_text import code_only
 from besser.spec_driven_agent.planning.gap_analyzer import _chat_supports_kwargs, _is_real_provider
 from besser.spec_driven_agent.planning.specification import validate_specification
+from besser.spec_driven_agent.planning.target import ENTITY_CRUD_KIND
 from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
 from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
 )
 from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.llm_utils import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -83,14 +88,32 @@ def _demands_enforcement(kind: str, text: str) -> bool:
 
 
 _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
+# A judge abridges a run of code as "a ... b", lists lines as "a; b", and cites
+# two places as "x.py: a and y.py: b". Each part must still be verbatim source.
+# An ellipsis may carry the comma of the arguments it left out: "f(..., x)".
+_ABRIDGED_RE = re.compile(r"\s?(?:\.\.\.|\u2026),?(?=[\s)\]}]|$)|;\s+|\s+and\s+([\w./\\-]+\.\w{1,5}):\s")
+# A part shorter than this ("pass", "}") identifies no code; it is left out.
+_MIN_PART_QUOTE = 8
+# Evidence longer than this is cut before matching (the judge is asked for one line).
+_MAX_EVIDENCE_CHARS = 2000
+# A formatted statement, or a def followed by its first body line, spans lines;
+# the judge quotes it on one. Lines a quote may span: a Kotlin/Compose call
+# puts one argument per line.
+_MAX_QUOTE_LINES = 25
+# Characters a multi-line quote may leave off its last line: a return
+# annotation and colon ("-> List[Row]:"), not a statement's substance.
+_MAX_UNQUOTED_TAIL = 24
+_BLOCK_PUNCTUATION = frozenset("{(:;,[")
 
 
-def _normalise_quote(text: str) -> str:
+def _normalise_quote(text: str, escapes: bool = True) -> str:
     """The judge's quote, made comparable to file text: literal escape
-    sequences become spaces, single quotes become double quotes (a judge may
+    sequences become spaces (unless ``escapes`` is off, for a quote of code
+    such as ``"\\n".join(...)``), single quotes become double quotes (a judge may
     rewrite ``Mapped_["Booking"]`` as ``Mapped_['Booking']``), and
     only the first quoted line counts - later lines are often abridged."""
-    text = text.replace("\\n", "\n").replace("\\t", " ")
+    if escapes:
+        text = text.replace("\\n", "\n").replace("\\t", " ")
     first = text.strip().split("\n", 1)[0]
     # read_file numbers what the model sees; no real source line starts with
     # "175| ", so such a prefix is always a copied artifact.
@@ -98,25 +121,135 @@ def _normalise_quote(text: str) -> str:
     return _collapse(first.replace("'", '"'))
 
 
-def _evidence_quote(text: str) -> str:
+def _normalise_line(line: str) -> str:
+    """A source line in a quote's form. Its escapes stay as written: turning
+    ``"\\n".join(...)`` into a line break cut the line at that string."""
+    return _collapse(line.replace("'", '"'))
+
+
+def _citation_parts(raw: str, path: str) -> list[tuple[str, str, bool]]:
+    """(path, quote, cut) for each part of an abridged or listed citation.
+
+    ``cut`` when an ellipsis right after the part marks the rest of its line
+    as left out; "and other.py: b" moves the following parts to that file.
+    """
+    parts: list[tuple[str, str, bool]] = []
+    position = 0
+    for match in _ABRIDGED_RE.finditer(raw):
+        quote = _evidence_quote(raw[position:match.start()])
+        if len(quote) >= _MIN_PART_QUOTE:
+            parts.append((path, quote, match.group().strip().startswith(("...", "\u2026"))))
+        path = match.group(1) or path
+        position = match.end()
+    quote = _evidence_quote(raw[position:])
+    if len(quote) >= _MIN_PART_QUOTE:
+        parts.append((path, quote, False))
+    return parts
+
+
+_TRAILING_COMMA_RE = re.compile(r",(?=[)\]}])")
+
+
+@lru_cache(maxsize=65536)
+def _joined_strings(text: str) -> str:
+    """Adjacent string literals ``"a " "b"`` read as the one string ``"a b"``, and
+    a formatter's trailing comma before a closing bracket is dropped."""
+    return _TRAILING_COMMA_RE.sub("", text.replace('""', ""))
+
+
+_CALL_RE = re.compile(r"[\w.$]+\(.*\);?")
+# Shorter than this, a call such as "f(x)" is too generic to identify code.
+_MIN_CALL_QUOTE = 12
+# Shortest visible start of a line the judge cut with an ellipsis.
+_MIN_CUT_QUOTE = 20
+# Shortest run copied from inside one line that identifies it on its own
+# ("onClick = { selected = if (on) a - b else a + b }" quotes the assignment).
+_MIN_INLINE_QUOTE = 30
+
+
+class _Source(NamedTuple):
+    """One cited file, read once per verification."""
+    path: str
+    lines: list[str]
+    normalised: list[str]
+    code: list[str]  # normalised lines without comments and strings (Pygments)
+    tree: ast.AST | None
+    diagnostics: list[dict]
+    comments: set[int]
+
+
+def _in_code(quoted: str, source: _Source, index: int) -> bool:
+    """The quote is verbatim in the line, and not inside its strings or comment.
+
+    Both tests are needed: removing strings alone makes CheckConstraint("a > 0")
+    and CheckConstraint("b > 0") the same text.
+    """
+    return (quoted in source.normalised[index]
+            and _collapse(code_only(quoted, source.path)) in source.code[index])
+
+
+def _is_complete_call(quoted: str) -> bool:
+    """A whole call expression (balanced, closed), whitespace already removed."""
+    return (len(quoted) >= _MIN_CALL_QUOTE and bool(_CALL_RE.fullmatch(quoted))
+            and quoted.count("(") == quoted.count(")") and quoted.count("{") == quoted.count("}"))
+
+
+def _quote_spans(quoted: str, source: _Source, cut: bool = False):
+    """1-based (first, last) source line spans whose text is the quote."""
+    normalised = source.normalised
+    target = _joined_strings(quoted)
+    inline = _is_complete_call(quoted) or len(_collapse(code_only(quoted, source.path))) >= _MIN_INLINE_QUOTE
+    for start, first in enumerate(normalised):
+        # A line may end in the block it opens ("Card(...) {", "def f():"), which
+        # the judge leaves off; nothing else may be missing. A complete call
+        # may also be quoted from inside its line ("onPressed: () => save(x),"),
+        # and a line's start when an ellipsis says the rest was left out.
+        if (first == quoted
+                or (first.startswith(quoted) and set(first[len(quoted):]) <= _BLOCK_PUNCTUATION)
+                or (cut and len(quoted) >= _MIN_CUT_QUOTE and first.startswith(quoted))
+                or (inline and _in_code(quoted, source, start))):
+            yield start + 1, start + 1
+            continue
+        if not first or not target.startswith(_joined_strings(first)):
+            continue
+        joined = first
+        for end in range(start + 1, min(start + _MAX_QUOTE_LINES, len(normalised))):
+            earlier = _joined_strings(joined)
+            joined += normalised[end]
+            span_text = _joined_strings(joined)
+            # The quote may stop inside its last line (a signature quoted without
+            # its "-> T:"), never inside an earlier one.
+            if (span_text.startswith(target) and len(target) > len(earlier.rstrip('",'))
+                    and len(span_text) - len(target) <= _MAX_UNQUOTED_TAIL):
+                yield start + 1, end + 1
+                break
+            # A string piece's closing quote, or a trailing comma, waits for what
+            # follows on the next line (its partner string, the closing bracket).
+            if not target.startswith(span_text.rstrip('",')):
+                break
+
+
+def _evidence_quote(text: str, escapes: bool = True) -> str:
     """Keep a decorated function's identity instead of a shared registration line.
 
     The judge sometimes quotes a block despite the one-line contract. Taking
     only ``@model_validator(mode='after')`` confused a no-op capacity validator
     with a real date validator elsewhere in the same file.
     """
-    lines = text.replace("\\n", "\n").strip().splitlines()
+    lines = (text.replace("\\n", "\n") if escapes else text).strip().splitlines()
     if lines and lines[0].lstrip().startswith("@"):
         for line in lines:
             stripped = line.strip()
             if not stripped or stripped.startswith("@"):
                 continue
-            return _normalise_quote(line) if stripped.startswith(("def ", "async def ")) else ""
+            return _normalise_quote(line, escapes) if stripped.startswith(("def ", "async def ")) else ""
         return ""
-    return _normalise_quote(text)
+    return _normalise_quote(text, escapes)
 
 
-_DIGEST_SKIP_NAMES = frozenset({"bal_stdlib.py", "database.py", "__init__.py"})
+# BESSER's generated BAL runtime library: large and never app behaviour. Listed
+# as omitted, so the judge knows it was not shown.
+_DIGEST_SKIP_NAMES = frozenset({"bal_stdlib.py"})
 _DIGEST_SKIP_DIRS = frozenset({
     "node_modules", "dist", "build", "__pycache__", "venv", "tests", "test",
     "__tests__", "fixtures", "coverage", "verification",
@@ -143,7 +276,16 @@ _SOURCE_SUFFIXES = frozenset({
     ".vue", ".svelte", ".astro",
     # server-rendered templates that carry behaviour
     ".razor", ".cshtml", ".erb", ".blade.php",
+    # native UI markup that holds a desktop app's controls: WPF/WinUI, Avalonia, Qt
+    ".xaml", ".axaml", ".qml",
 })
+
+
+def _is_judged_source(path: Path) -> bool:
+    """Application source, plus Android's screens (``res/layout*/*.xml``); other
+    XML (``pom.xml``, the manifest) carries no behaviour."""
+    suffix = path.suffix.lower()
+    return suffix in _SOURCE_SUFFIXES or (suffix == ".xml" and path.parent.name.startswith("layout"))
 _BEHAVIOURAL_KINDS = frozenset({"computed", "transition", "action"})
 _TEST_SOURCE_NAME = re.compile(r"(?:\.(?:test|spec)\.[^.]+$|^test_.+\.py$|_test\.py$)", re.I)
 
@@ -291,6 +433,7 @@ _SUBMIT_VERDICTS_TOOL = {
                         "status": {"type": "string", "enum": list(_STATUSES)},
                         "evidence": {
                             "type": "string",
+                            "maxLength": _MAX_EVIDENCE_CHARS,
                             "description": (
                                 "The file's relative path, a colon, and one "
                                 "line copied verbatim from it - the line that "
@@ -392,14 +535,7 @@ def _tool_input(response: dict, tool_name: str) -> dict | None:
         getattr(b, "text", "") for b in response.get("content", []) or []
         if getattr(b, "type", None) == "text"
     )
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        payload = json.loads(text[start:end + 1])
-    except json.JSONDecodeError:
-        return None
-    return payload if isinstance(payload, dict) else None
+    return extract_json(text, dict)
 
 
 def extract_requirements(instructions: str, llm_client) -> list[dict] | None:
@@ -467,8 +603,7 @@ def _source_files(output_dir: str) -> dict[str, str]:
                    and not (Path(root) == base and d in _ARTIFACT_ROOT_DIRS)]
         for name in names:
             source = Path(root, name)
-            if (name.startswith(".") or source.suffix.lower() not in _SOURCE_SUFFIXES
-                    or _TEST_SOURCE_NAME.search(name)):
+            if name.startswith(".") or not _is_judged_source(source) or _TEST_SOURCE_NAME.search(name):
                 continue
             try:
                 if not source.resolve().is_relative_to(base) or not source.is_file():
@@ -535,12 +670,15 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     unreadable = []
     for rel, full in files.items():
         if Path(full).name in _DIGEST_SKIP_NAMES:
+            unreadable.append(rel)
             continue
         try:
             with open(full, "r", encoding="utf-8-sig", errors="ignore") as fh:
                 content = _compact(fh.read())
         except OSError:
             unreadable.append(rel)
+            continue
+        if not content:  # an empty __init__.py: nothing to show
             continue
         header = f"### {rel}\n"
         cap = max(0, source_budget - len(header) - 200) if rel in focused else _DIGEST_MAX_FILE_CHARS
@@ -850,18 +988,96 @@ def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) ->
     return statement, ""
 
 
+def _load_source(candidate: str, parsed: dict, sqlite: bool) -> _Source:
+    """One cited file, read and prepared once per verification."""
+    if candidate not in parsed:
+        try:
+            with open(candidate, "r", encoding="utf-8-sig", errors="ignore") as fh:
+                source = fh.read()
+        except OSError:
+            parsed[candidate] = _Source(candidate, [], [], [], None, [], set())
+            return parsed[candidate]
+        tree = None
+        if candidate.endswith(".py"):
+            try:
+                tree = ast.parse(source)
+            except SyntaxError:
+                pass
+        lines = source.splitlines()
+        normalised = [_normalise_line(line) for line in lines]
+        code = [_normalise_line(line) for line in code_only(source, candidate).splitlines()]
+        parsed[candidate] = _Source(
+            candidate, lines, normalised, code if len(code) == len(lines) else normalised, tree,
+            python_structural_diagnostics(tree, sqlite=sqlite) if tree else [],
+            _comment_only_lines(source, Path(candidate).suffix.lower()),
+        )
+    return parsed[candidate]
+
+
+def _resolve_cited_path(path: str, quoted: str, files: dict[str, str], quote_cache: dict) -> list[str]:
+    """The source files a citation's path can name (one, when unambiguous)."""
+    path = path.strip().replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    candidates = [] if not path or path.startswith("/") or ".." in path.split("/") else (
+        [files[path]] if path in files else
+        [full for rel, full in files.items() if rel.endswith("/" + path)]
+    )
+    # The judge is asked for ``<path>:<line>`` and sometimes answers with
+    # the CLASS the line belongs to - ``Person: id: Mapped_[int] =
+    # mapped_column(Integer_, primary_key=True)``. Accept the class as a
+    # locator only when the tree defines exactly one class by that name,
+    # so a placeholder such as the literal word "path" stays unverified.
+    if not candidates and quoted and _IDENTIFIER_RE.match(path):
+        homes = _class_homes(files, quote_cache).get(path, ())
+        if len(homes) == 1:
+            candidates = list(homes)
+    return candidates
+
+
+def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quote: str) -> str:
+    """Why a located span does not implement the requirement; "" when it does.
+
+    A span's checks apply to its last line: the body statement of a
+    def-and-body quote, the same statement for a formatted call.
+    """
+    if first_line in source.comments or lineno in source.comments:
+        return "the cited line is a comment, not an implementation"
+    statement = None
+    if source.path.endswith(".py"):
+        statement, reason = _python_citation(source.tree, lineno, item.get("kind", ""), item.get("text", ""))
+        if reason:
+            return reason
+        invalid = next((d for d in source.diagnostics if (
+            d["line"] <= lineno <= d.get("end_line", d["line"])
+            or statement is not None and _statement_start(statement) <= d["line"]
+            <= d.get("end_line", d["line"]) <= statement.end_lineno
+        )), None)
+        if invalid:
+            return "the cited implementation is invalid: " + invalid["message"]
+    if (_demands_enforcement(item.get("kind", ""), item.get("text", ""))
+            and not isinstance(statement, (ast.If, ast.Raise, ast.Assert))
+            and not source.lines[first_line - 1].lstrip().startswith(("if ", "if(", "if\t", "else if "))
+            and not any(tok in quote.lower() for tok in _ENFORCEMENT_TOKENS)):
+        return "the cited line declares data; it does not demonstrate enforcement"
+    return ""
+
+
 def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
     """Re-check every 'implemented' citation against the output tree.
 
     The cited application source must exist (an unambiguous path suffix is
-    accepted) and contain the quoted executable line. Never search a different
+    accepted) and contain the quoted code. An abridged or listed quote
+    ("a ... b", "a; b", "x.py: a and y.py: b") passes only when every part is
+    found in the file it names, and each part is checked on its own text, so
+    an invented part can never supply the proof. Never search a different
     file or the run's own recipe to rescue a bad citation. A declaration alone
     cannot prove enforcement or behaviour. Failed evidence is ``unverified``:
     it does not prove that no implementation exists elsewhere.
     """
     files = _source_files(output_dir)
     sqlite = workspace_uses_sqlite(output_dir)
-    parsed: dict[str, tuple[list[str], ast.AST | None, list[dict], set[int]]] = {}
+    parsed: dict[str, _Source] = {}
     quote_cache: dict = {}
     checked: list[dict] = []
     for verdict in verdicts:
@@ -874,78 +1090,42 @@ def verify_evidence(verdicts: list[dict], output_dir: str) -> list[dict]:
         if item.get("status") != "implemented":
             checked.append(item)
             continue
-        path, _, quoted = (item.get("evidence") or "").partition(":")
-        path = path.strip().replace("\\", "/")
-        while path.startswith("./"):
-            path = path[2:]
-        quoted = _evidence_quote(quoted)
-        candidates = [] if not path or path.startswith("/") or ".." in path.split("/") else (
-            [files[path]] if path in files else
-            [full for rel, full in files.items() if rel.endswith("/" + path)]
-        )
-        # The judge is asked for ``<path>:<line>`` and sometimes answers with
-        # the CLASS the line belongs to - ``Person: id: Mapped_[int] =
-        # mapped_column(Integer_, primary_key=True)``. Accept the class as a
-        # locator only when the tree defines exactly one class by that name,
-        # so a placeholder such as the literal word "path" stays unverified.
-        # This never widens the search for a citation that does name a file,
-        # and every later test (comment, statement kind, diagnostics,
-        # enforcement) still applies.
-        if not candidates and quoted and _IDENTIFIER_RE.match(path):
-            homes = _class_homes(files, quote_cache).get(path, ())
-            if len(homes) == 1:
-                candidates = list(homes)
+        path, _, raw_quote = (item.get("evidence") or "")[:_MAX_EVIDENCE_CHARS].partition(":")
+        quoted = _evidence_quote(raw_quote)
+        candidates = _resolve_cited_path(path, quoted, files, quote_cache)
         reason = "the cited source path is missing, excluded or ambiguous"
         if not quoted:
             reason = "the citation must identify an implemented statement, not only a decorator"
         if quoted and len(candidates) == 1:
-            candidate = candidates[0]
-            try:
-                if candidate not in parsed:
-                    with open(candidate, "r", encoding="utf-8-sig", errors="ignore") as fh:
-                        source = fh.read()
-                    tree = None
-                    if candidate.endswith(".py"):
-                        try:
-                            tree = ast.parse(source)
-                        except SyntaxError:
-                            pass
-                    diagnostics = python_structural_diagnostics(tree, sqlite=sqlite) if tree else []
-                    parsed[candidate] = (source.splitlines(), tree, diagnostics,
-                                         _comment_only_lines(source, Path(candidate).suffix.lower()))
-            except OSError:
-                parsed[candidate] = ([], None, [], set())
-            lines, tree, diagnostics, comments = parsed[candidate]
+            source = _load_source(candidates[0], parsed, sqlite)
+            spans = list(_quote_spans(quoted, source))
+            literal = _evidence_quote(raw_quote, escapes=False)
+            if not spans and literal and literal != quoted:
+                # The quote may copy a source escape, e.g. "\n".join(...).
+                spans = list(_quote_spans(literal, source))
+                quoted = literal if spans else quoted
+            located = [(source, quoted, spans)]
+            if not located[0][2]:
+                located = []
+                for part_path, part, cut in _citation_parts(raw_quote, path):
+                    homes = _resolve_cited_path(part_path, part, files, quote_cache)
+                    part_source = _load_source(homes[0], parsed, sqlite) if len(homes) == 1 else None
+                    spans = list(_quote_spans(part, part_source, cut)) if part_source else []
+                    # A part need not be a whole statement ("{ save(n); done = true }"
+                    # splits at its ";"), but it must be code in that file.
+                    if not spans and not (part_source and any(
+                            _in_code(part, part_source, i) for i in range(len(part_source.lines)))):
+                        located = []
+                        break
+                    located.append((part_source, part, spans))
             reason = "the quoted executable line was not found in the cited source"
-            for lineno, line in enumerate(lines, 1):
-                if quoted != _normalise_quote(line):
-                    continue
-                if lineno in comments:
-                    reason = "the cited line is a comment, not an implementation"
-                    continue
-                statement = None
-                if candidate.endswith(".py"):
-                    statement, reason = _python_citation(
-                        tree, lineno, item.get("kind", ""), item.get("text", ""),
-                    )
-                    if reason:
-                        continue
-                    invalid = next((d for d in diagnostics if (
-                        d["line"] <= lineno <= d.get("end_line", d["line"])
-                        or statement is not None and _statement_start(statement) <= d["line"]
-                        <= d.get("end_line", d["line"]) <= statement.end_lineno
-                    )), None)
-                    if invalid:
-                        reason = "the cited implementation is invalid: " + invalid["message"]
-                        continue
-                if (_demands_enforcement(item.get("kind", ""), item.get("text", ""))
-                        and not isinstance(statement, (ast.If, ast.Raise, ast.Assert))
-                        and not line.lstrip().startswith(("if ", "if(", "if\t", "else if "))
-                        and not any(tok in quoted.lower() for tok in _ENFORCEMENT_TOKENS)):
-                    reason = "the cited line declares data; it does not demonstrate enforcement"
-                    continue
-                reason = ""
-                break
+            for part_source, part, spans in located:
+                for first_line, lineno in spans:
+                    reason = _span_failure(item, part_source, first_line, lineno, part)
+                    if not reason:
+                        break
+                if not reason:
+                    break
         if reason:
             item["status"] = "unverified"
             item["note"] = " ".join(f"{item.get('note', '')} [{reason}]".split())
@@ -981,6 +1161,11 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
             continue
         if v.get("kind") == "verification":
             issues.append(f"requirement unverified: {label}{note}")
+            continue
+        if v.get("kind") == ENTITY_CRUD_KIND:
+            if status != "implemented":
+                # Unclassified prefix: a warning, like the web acceptance matrix.
+                issues.append(f"entity coverage: {v['text']} ({status}){note}")
             continue
         if status == "missing":
             issues.append(f"requirement: {label} is not implemented{note}")

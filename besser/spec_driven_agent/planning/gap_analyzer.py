@@ -48,6 +48,7 @@ from typing import Any, Callable
 from besser.spec_driven_agent.planning.action_inventory import ActionEndpoint, format_action_inventory
 from besser.spec_driven_agent.model_serializer import ordered_literals, serialize_domain_model
 from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
+from besser.utilities.llm_utils import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -443,7 +444,7 @@ def _drop_present_enumerations(tasks: list, domain_model) -> list:
                 None,
             )
             if match:
-                logger.info(
+                logger.warning(
                     "Gap sanitizer dropped enumeration already in the model as %s: %r",
                     match, task[:100],
                 )
@@ -630,7 +631,7 @@ def _drop_present_attributes(tasks: list, domain_model) -> list:
             if decision:
                 break
         if decision == "drop":
-            logger.info("Gap sanitizer dropped already-present attribute task: %r", task[:100])
+            logger.warning("Gap sanitizer dropped already-present attribute task: %r", task[:100])
             continue
         if decision == "annotate":
             noted.append(
@@ -1579,36 +1580,5 @@ def _extract_text(response: dict[str, Any]) -> str:
 
 
 def _parse_task_array(text: str) -> list | None:
-    """Best-effort parse of a JSON array from a model response.
-
-    Tries the whole (fence-stripped) text as JSON first, then falls
-    back to extracting the first ``[...]`` block for replies with
-    surrounding prose.
-    """
-    if not text:
-        return None
-    cleaned = text
-    if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-    cleaned = cleaned.strip()
-
-    # Whole-text parse first — immune to brackets inside task strings.
-    try:
-        parsed = json.loads(cleaned)
-        if isinstance(parsed, list):
-            return parsed
-    except json.JSONDecodeError:
-        pass
-
-    start = cleaned.find("[")
-    end = cleaned.rfind("]")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    candidate = cleaned[start : end + 1]
-    try:
-        parsed = json.loads(candidate)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, list) else None
+    """The first JSON array in a model response (fenced, bare or in prose)."""
+    return extract_json(text, list)

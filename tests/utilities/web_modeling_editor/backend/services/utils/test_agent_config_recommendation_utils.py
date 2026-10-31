@@ -276,3 +276,8 @@ def test_new_providers_in_recommendation_allowed_values(provider, _model):
     assert provider in RECOMMENDATION_ALLOWED_VALUES["llmProvider"], (
         f"'{provider}' missing from RECOMMENDATION_ALLOWED_VALUES['llmProvider']"
     )
+
+
+def test_extract_json_object_ignores_braces_in_trailing_prose():
+    raw = '{"agentStyle": "formal"}\nKeys you can set: {agentLanguage, font}.'
+    assert extract_json_object(raw) == {"agentStyle": "formal"}

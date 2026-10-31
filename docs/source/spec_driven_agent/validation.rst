@@ -166,7 +166,21 @@ Findings are classified into three severities:
        atomic requirements once and each is judged against the generated
        code, with every "implemented" citation re-checked by the harness;
        only behaviour the request states is listed, so a vague request
-       yields few requirements or none);
+       yields few requirements or none. A citation is code copied from the
+       cited file: a whole line, a statement spread over up to 25 lines, a
+       complete call of at least 12 characters or a run of at least 30 from
+       inside a line (never from its strings or comment), or a line's start
+       of at least 20 characters the judge cut with ``...``. An abridged or
+       listed quote ("a ... b", "a; b", "x.py: a and y.py: b") passes only
+       when every part is code in the file it names, and each part is
+       checked on its own text, so an invented part cannot supply the proof.
+       Prose, a paraphrase or another file's code leaves the requirement
+       unverified. With a class model and an agent model, the list also holds
+       one requirement built from the models: every intent that creates,
+       lists or changes the model's records reads or writes them through the
+       app's code (its models, database, API or a helper), while a greeting
+       or a fixed fact may keep a fixed reply; the citation is the line that
+       reads or writes the records);
        partial requirements and unverified evidence (distinct from proven missing
        behavior); unresolved checklist work and unimplemented action contracts;
        a method button that takes its row id from a table of another
@@ -182,7 +196,14 @@ Findings are classified into three severities:
        variable), ``E501``, whitespace, blank lines, import order.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now), ``form field type:``, the model-derived acceptance matrix, and ``requirement out of
+       now), ``form field type:``, the model-derived acceptance matrix,
+       ``entity coverage:`` (for an ``other`` target used through screens, the
+       judge also checks that every entity can be created, viewed, edited and
+       deleted, since the acceptance matrix only reads web routes and pages;
+       like the matrix it is reported, never a blocker. Abstract classes are
+       left out, at most 20 entities are listed, and the check is skipped
+       when a BESSER generator built the base, such as a BAF chatbot or
+       Python classes), and ``requirement out of
        scope:`` — a UI requirement on a run that neither has nor asked for a
        frontend, which a backend-only output has no files to satisfy.
 

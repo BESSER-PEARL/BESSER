@@ -33,7 +33,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from itertools import chain, zip_longest
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Iterable, Optional
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -63,6 +63,7 @@ from besser.spec_driven_agent.state import agent_trace
 from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
     get_besser_version,
+    inline_code,
     remove_readme_block,
     write_generation_provenance,
 )
@@ -117,6 +118,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     format_sse,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+    redact_text,
     scrub_secret_files,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
@@ -314,6 +316,44 @@ def run_changes(recipe: dict) -> dict:
         "changedFileCount": len(changed),
         "modelChanges": [c for c in model_change.get("changes") or [] if isinstance(c, str)],
     }
+
+
+# Items listed per verification state; the counts give the totals.
+_SUMMARY_ITEMS_PER_STATE = 8
+
+
+def run_summary_markdown(
+    recipe: dict, verification: VerificationReport, secrets: Iterable[str] = (),
+) -> list[str]:
+    """The run section of ``BESSER_GENERATION.md``: target and verification.
+
+    The recipe stays out of the download, so without this a downloaded run
+    says nothing about what was checked. This file also goes into GitHub
+    pushes, public ones included: the request text is left out, and the
+    model-written values (which restate parts of it) are redacted and shown
+    as code, never as links or markup.
+    """
+    def one_line(text: object) -> str:
+        cleaned, _ = redact_text(" ".join(str(text).split()), env_style=False, secrets=secrets)
+        return inline_code(cleaned)
+
+    target = recipe.get("target") if isinstance(recipe.get("target"), dict) else None
+    counts = verification.counts
+    lines = ["## This run", ""]
+    if target:
+        lines.append(f"- Built as: {one_line(target.get('description') or target.get('kind'))}")
+    generator = recipe.get("generator_used")
+    lines.append(f"- Base generator: {one_line(generator) if generator else 'none, written from scratch'}")
+    lines.append(
+        f"- Verification: {counts.verified} checked and working, {counts.notVerified} not checked, "
+        f"{counts.shippedUnenforced} checked and missing in the code")
+    for title, items in (("Missing in the code", verification.shippedUnenforced),
+                         ("Not checked", verification.notVerified)):
+        if items:
+            lines += ["", f"### {title}", ""]
+            lines += [f"- {one_line(item.what)}" + (f": {one_line(item.why)}" if item.why else "")
+                      for item in items[:_SUMMARY_ITEMS_PER_STATE]]
+    return lines
 
 
 def build_verification_report(recipe: dict) -> VerificationReport:
@@ -2377,7 +2417,7 @@ class SmartGenerationRunner:
             verification = VerificationReport(notVerified=[VerificationItem(
                 kind="check", what="everything this run did",
                 why="the run's verification report could not be built",
-            )])
+            )], counts=VerificationCounts(notVerified=1))
         recipe["verification"] = verification.model_dump(mode="json")
         recipe["besser_version"] = get_besser_version()
         recipe_path = os.path.join(result_path, ".besser_recipe.json")
@@ -2393,7 +2433,7 @@ class SmartGenerationRunner:
         provenance_path = write_generation_provenance(result_path, "spec_driven_agent", {
             "base_generator": recipe.get("generator_used"),
             "llm_model": recipe.get("llm_model"),
-        })
+        }, run_summary_markdown(recipe, verification, (self.request.resolved_api_key(),)))
 
         # Collect every user file. Skips internal artefacts
         # (.besser_recipe.json etc.) AND build-output directories —

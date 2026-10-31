@@ -101,6 +101,7 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     requests_frontend,
     _FRONTEND_ASK_RE,
 )
+from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_data_requirement
 from besser.spec_driven_agent.planning.generator_keywords import (
     default_generator,
     keyword_generator,
@@ -108,6 +109,7 @@ from besser.spec_driven_agent.planning.generator_keywords import (
 from besser.spec_driven_agent.planning.target import (
     MODIFY_TOOL_PROPERTIES,
     OTHER,
+    entity_requirements,
     STACK_RULES,
     STACK_TOOL_PROPERTIES,
     TARGET_RULES,
@@ -142,6 +144,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _collect_kotlinc_issues,
     _collect_ruff_issues,
     _collect_uncompiled_source_issues,
+    format_python_files,
     _collect_tsc_issues,
     _demote_tsc_without_deps,
     _is_real_undefined_name,
@@ -212,7 +215,10 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _READONLY_TOOLS,
     _RECIPE_EXCLUDED_DIRS,
     _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY,
+    _REVISION_HASH_CAP,
+    _REVISION_IGNORED_DIRS,
     _REVISION_IGNORED_SUFFIXES,
+    _REVISION_PATH_ONLY_SUFFIXES,
     _ROLLBACK_DISCARD_DIR,
     _ROLLBACK_PRESERVED,
     _RUNTIME_FAILED,
@@ -472,6 +478,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # What the run builds (planning/target.py), decided by the Phase 1
         # selector call; None keeps the pre-target behaviour.
         self.target: Target | None = None
+        # Notes from formatting the LLM's Python (format_python_files), for Phase 3.
+        self._format_notes: list[str] = []
         # The seed's target when this modify run builds another kind.
         self._previous_target: Target | None = None
         # A modify run: the seed recipe's target and the routing call's answer
@@ -625,6 +633,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # is ``None`` unless at least one new class was actually added.
         self._source_project_export: dict | None = source_project_export
         self._updated_project_export: dict | None = None
+        # The classes model sync added (its LLM answer), so a resume replays them.
+        self._model_sync_classes: list[dict] = []
         # Why the model-sync call failed, for the trace and the recipe.
         self._model_sync_error: str | None = None
 
@@ -702,18 +712,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._start_time = time.monotonic()
         # Re-compute fingerprint now that we know the instructions — the
         # constructor-time value was hashed with an empty string.
-        self._project_fingerprint = compute_fingerprint(
-            instructions=instructions,
-            primary_kind=self.primary_kind,
-            domain_model=self.domain_model,
-            state_machines=self.state_machines,
-            gui_model=self.gui_model,
-            agent_model=self.agent_model,
-            object_model=self.object_model,
-            quantum_circuit=self.quantum_circuit,
-            bpmn_model=self.bpmn_model,
-            nn_model=self.nn_model,
-        )
+        self._project_fingerprint = self._compute_project_fingerprint(instructions)
         self._trace.write(
             EVENT_RUN_START,
             # bounded: trace display only, never a decision input
@@ -768,6 +767,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             stop_detail=self._phase2_stop_detail,
         )
 
+        # Before Phase 3, so validation and the recipe describe the shipped layout.
+        self._format_python_output()
+
         # -- Snapshot BEFORE Phase 3 (preserves all Phase 2 work) ---------
         # If Phase 3 fixes make things worse, we roll back here
         # (keeping Phase 2 work intact), not back to Phase 1.
@@ -820,6 +822,21 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Resume entry point
     # ==================================================================
 
+    def _compute_project_fingerprint(self, instructions: str) -> str:
+        """The fingerprint a checkpoint is saved with and a resume checks."""
+        return compute_fingerprint(
+            instructions=instructions,
+            primary_kind=self.primary_kind,
+            domain_model=self.domain_model,
+            state_machines=self.state_machines,
+            gui_model=self.gui_model,
+            agent_model=self.agent_model,
+            object_model=self.object_model,
+            quantum_circuit=self.quantum_circuit,
+            bpmn_model=self.bpmn_model,
+            nn_model=self.nn_model,
+        )
+
     @ends_shell_session
     def resume(self, instructions: str) -> str:
         """Resume a previously-crashed run from its checkpoint.
@@ -846,18 +863,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 f"No checkpoint at {self.output_dir}; nothing to resume"
             )
 
-        expected = compute_fingerprint(
-            instructions=instructions,
-            primary_kind=self.primary_kind,
-            domain_model=self.domain_model,
-            state_machines=self.state_machines,
-            gui_model=self.gui_model,
-            agent_model=self.agent_model,
-            object_model=self.object_model,
-            quantum_circuit=self.quantum_circuit,
-            bpmn_model=self.bpmn_model,
-            nn_model=self.nn_model,
-        )
+        expected = self._compute_project_fingerprint(instructions)
         if expected != checkpoint.project_fingerprint:
             raise CheckpointMismatchError(
                 "Checkpoint fingerprint does not match the supplied "
@@ -892,6 +898,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._inventory = checkpoint.inventory
         self._generator_used = checkpoint.generator_used
         self.target = Target.from_payload(checkpoint.target)
+        if checkpoint.modify is not None:
+            self._restore_modify_state(checkpoint.modify)
         self.executor.lock_generators(checkpoint.locked_generators)
         self._compaction_count = checkpoint.compaction_count
         self.tool_calls_log = list(checkpoint.tool_calls_log)
@@ -912,16 +920,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._trace.write(
             EVENT_RUN_START,
             resumed=True,
+            mode="modify" if self._modify_mode else "create",
             resume_from_turn=checkpoint.turn,
             resume_phase=checkpoint.phase,
             saved_at=checkpoint.saved_at,
         )
 
-        # -- Adaptive budget: same rule as a fresh run (``_generator_used``
+        # -- Budget: same rule as the run being resumed (``_generator_used``
         # was just restored from the checkpoint above). Resuming is the
         # common path for a run that previously broke out on a cost_cap /
         # timeout / max_tokens truncation, so this matters here too.
-        self._apply_adaptive_budget()
+        if self._modify_mode:
+            self._apply_modify_budget()
+        else:
+            self._apply_adaptive_budget()
 
         if checkpoint.phase == "phase2":
             self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume")
@@ -937,6 +949,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self.executor.set_scaffold_family(
                 self._scaffold_family(), self._instructions)
 
+        self._format_python_output()
         self._create_snapshot()
         self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_resume")
         if (checkpoint.phase == "phase3" or self._phase2_exited_cleanly
@@ -948,6 +961,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             EVENT_PHASE_EXIT, phase="phase3",
             exit_reason=self._phase3_exit_reason,
         )
+        self._evaluate_fix_target_gate()
 
         elapsed = time.monotonic() - self._start_time
         self._save_recipe(instructions, elapsed)
@@ -2579,6 +2593,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 phase2_exited_cleanly=self._phase2_exited_cleanly,
                 repair_progress=self._repair_progress if phase == "phase3" else {},
                 locked_generators=sorted(self.executor.locked_generators),
+                modify=self._modify_checkpoint_state(),
             )
             path = save_checkpoint(self.output_dir, ckpt)
             if path:
@@ -2715,9 +2730,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             raw = self._apply_scenario_evidence(raw)
             # A clean list only counts as OK when a backend was actually booted;
             # "no backend here" must never read as "the app works".
-            self._record_runtime_verdict(
-                _runtime_verdict(raw) if self._probeable_backends() else None
-            )
+            try:
+                probed = bool(self._probeable_backends())
+            except Exception:
+                logger.warning("Backend discovery failed; no runtime verdict", exc_info=True)
+                probed = False
+            self._record_runtime_verdict(_runtime_verdict(raw) if probed else None)
         elif any(os.path.basename(p) == "main_api.py" for p in _python_files(self.output_dir)):
             self._record_runtime_verdict(None)
             raw.append("runtime unverified: backend startup/data-entry checks are disabled; this app has not been runtime verified")
@@ -2810,14 +2828,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return checked
 
     def _probeable_backends(self) -> list[str]:
-        """Generated FastAPI services the constructibility probe can drive."""
-        try:
-            from besser.spec_driven_agent.validation.constructibility import _fastapi_backends
+        """Generated FastAPI services the constructibility probe can drive.
 
-            return _fastapi_backends(self.output_dir)
-        except Exception:
-            logger.debug("Backend discovery failed", exc_info=True)
-            return []
+        Raises when discovery fails: "no backend" would silence the runtime
+        gate, so the caller decides (the gate fails closed).
+        """
+        from besser.spec_driven_agent.validation.constructibility import _fastapi_backends
+
+        return _fastapi_backends(self.output_dir)
 
     def _validate_app(self) -> dict:
         """Model-facing, revision-bound diagnostics with no additional LLM cost."""
@@ -3159,6 +3177,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # never enables tooling. Already-authorized dependency setup is an
         # actionable verification prerequisite, not a request for source edits.
         raw_issues.extend(self._collect_tsc_issues())
+        raw_issues.extend(self._format_notes)
         raw_issues.extend(_collect_uncompiled_source_issues(
             self.output_dir,
             frozenset({".rs", ".kt"}) if self.enable_toolchain_validation else frozenset()))
@@ -3393,6 +3412,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # Cheat-proof: done is refused until frontend files exist.
                 "verify": self._has_frontend_files,
             })
+        if not self._modify_mode and agent_data_requirement(self.agent_model, self.domain_model):
+            # The requirements judge checks it in Phase 3 (agent_data); a modify
+            # run's app already has an agent, so only the judge applies there.
+            tasks.append(AGENT_DOMAIN_TASK.format(agent=self.agent_model.name))
         tasks.extend(action_gap_tasks(self.output_dir, self._expected_action_endpoints()))
         tasks.extend(self._unenforced_rule_tasks())
         tasks.extend(item["text"] for item in self._requirements_for_validation()
@@ -3418,7 +3441,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # Only the current source+requirements judgment can discharge it;
             # a stale verdict or a task_list claim cannot.
             verdicts = self._requirement_judgments.get(
-                self._requirement_cache_key(self._requirements_for_validation()), [],
+                self._requirement_cache_key(self._requirements_to_judge()), [],
             )
             verified_ids = {item["id"] for item in _requirements_ledger.verify_evidence(
                 verdicts, self.output_dir,
@@ -3643,6 +3666,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             next_id += 1
         return requirements
 
+    def _requirements_to_judge(self) -> list[dict]:
+        """What Phase 3 judges: the validation list, the agent's use of the
+        model's data, and the per-entity checks of a non-web app (reported,
+        never planned as obligations)."""
+        requirements = self._requirements_for_validation()
+        derived = [item for item in [agent_data_requirement(self.agent_model, self.domain_model)] if item]
+        if not self._generator_used:
+            # A BESSER generator built the base (a BAF chatbot, Python classes):
+            # per-entity screens are not what it delivers.
+            derived += entity_requirements(self.target, self.domain_model)
+        next_id = max((item["id"] for item in requirements), default=0) + 1
+        return requirements + [{"id": next_id + i, **item} for i, item in enumerate(derived)]
+
     def _collect_requirement_issues(self) -> list[str]:
         """``requirement:`` blockers for what the user asked for and the code
         does not do: the check of the app against the request itself, which
@@ -3668,7 +3704,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "treat this as an empty requirement list or verified completion."
                 ]
             return []  # Offline clients cannot run the optional LLM judge.
-        requirements = self._requirements_for_validation()
+        requirements = self._requirements_to_judge()
         if not requirements:
             return []
         digest = _requirements_ledger.build_app_digest(self.output_dir)
@@ -3727,6 +3763,26 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._requirement_verdicts, self._ui_in_scope())
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
 
+    def _format_python_output(self) -> None:
+        """Format the Python files the LLM wrote whole (``write_file``) in this run.
+
+        A file it only edited keeps its author's layout, generator files keep
+        the templates' own, and a modify run leaves the existing app alone. A
+        formatter that could not run is reported by Phase 3.
+        """
+        if self._modify_mode:
+            return
+        generated = {os.path.normcase(os.path.join(self.output_dir, p)) for p in self.executor._generator_files}
+        written = sorted(
+            os.path.relpath(path, self.output_dir).replace("\\", "/")
+            for path in self._llm_edited_paths_by(frozenset({"write_file"}))
+            if path.endswith(".py") and path not in generated
+        )
+        app_files = [rel for rel in written if not rel.startswith(("..", _SNAPSHOT_DIR, ".besser_"))]
+        self._format_notes = format_python_files(self.output_dir, app_files)
+        for note in self._format_notes:
+            logger.warning("Phase 2: %s", note)
+
     def _ui_in_scope(self) -> bool:
         """A UI the user asked for but the tree lacks keeps UI requirements in scope."""
         return bool(
@@ -3770,30 +3826,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
 
     def _workspace_revision(self) -> str:
-        """Hash source/config state, excluding traces, caches and runtime data.
+        """Hash every authored file's path and content.
 
-        Every file's PATH counts, so writing or deleting one is progress
-        whatever its extension. Only the listed kinds are hashed by content;
-        the rest (binaries, sqlite files written by the boot probe) would
-        churn the revision without a source edit. ``_workspace_file_list``
-        has already dropped caches, vendor dirs and ``.besser_*``.
+        Runtime outputs (``_REVISION_IGNORED_SUFFIXES`` / ``_DIRS``) are
+        skipped entirely, and data the app writes counts by path only; ``_workspace_file_list`` has already dropped
+        dependency dirs and ``.besser_*``. A file is hashed up to
+        ``_REVISION_HASH_CAP`` bytes plus its size, so a large asset cannot
+        stall the check.
         """
         fingerprint = hashlib.sha256()
         workspace = os.path.realpath(self.output_dir)
-        extensions = {
-            ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".html", ".css",
-            ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".txt", ".lock",
-            ".sql", ".rs", ".kt", ".java", ".go", ".c", ".cpp", ".h", ".rb", ".php",
-            # Stacks no BESSER generator builds (Phase 2 writes them from
-            # scratch), plus the per-service Dockerfiles / build files a
-            # Phase 3 repair edits.
-            ".vue", ".svelte", ".dart", ".cs", ".swift", ".scala", ".ex",
-            ".mod", ".sum", ".md",
-        }
-        # ``.env`` and ``Dockerfile.backend`` have no usable splitext suffix.
-        basename_prefixes = ("Dockerfile", "Makefile", ".env")
         for rel in sorted(self._workspace_file_list()):
-            if rel.lower().endswith(_REVISION_IGNORED_SUFFIXES):
+            if (rel.lower().endswith(_REVISION_IGNORED_SUFFIXES)
+                    or _REVISION_IGNORED_DIRS.intersection(rel.split("/")[:-1])):
                 continue
             path = os.path.realpath(os.path.join(workspace, rel))
             try:
@@ -3802,15 +3847,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             except ValueError:
                 continue
             fingerprint.update(rel.encode("utf-8"))
-            base = os.path.basename(rel)
-            if (os.path.splitext(rel)[1].lower() not in extensions
-                    and not base.startswith(basename_prefixes)):
+            if rel.lower().endswith(_REVISION_PATH_ONLY_SUFFIXES):
                 fingerprint.update(b"\0")
                 continue
             try:
                 with open(path, "rb") as source:
-                    for chunk in iter(lambda: source.read(65536), b""):
-                        fingerprint.update(chunk)
+                    fingerprint.update(source.read(_REVISION_HASH_CAP))
+                    fingerprint.update(str(os.fstat(source.fileno()).st_size).encode())
             except OSError:
                 fingerprint.update(b"<unreadable>")
             fingerprint.update(b"\0")
@@ -3828,7 +3871,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _llm_edited_paths(self) -> set[str]:
         """Delegate to the toolchain module."""
-        return _llm_edited_paths(self.output_dir, self.tool_calls_log, _WRITE_TOOLS_ON_RECORD)
+        return self._llm_edited_paths_by(_WRITE_TOOLS_ON_RECORD)
+
+    def _llm_edited_paths_by(self, tools: frozenset[str]) -> set[str]:
+        """Absolute, normalised paths the LLM wrote with these tools."""
+        return _llm_edited_paths(self.output_dir, self.tool_calls_log, tools)
 
     @staticmethod
     def _ruff_line_path(line: str) -> str:

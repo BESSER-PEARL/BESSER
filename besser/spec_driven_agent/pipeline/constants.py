@@ -68,8 +68,25 @@ _RECIPE_EXCLUDED_DIRS = {
 # boot probe both compare the revision across their own run, and their own
 # leftovers must not read back as a source edit.
 _REVISION_IGNORED_SUFFIXES = (
-    ".tsbuildinfo", ".log", ".db", ".sqlite", ".sqlite3",
+    ".tsbuildinfo", ".log", ".db", ".sqlite", ".sqlite3", ".pyc", ".coverage",
+    # SQLite's sidecar files next to a database (app.db-journal, -wal, -shm).
+    "-journal", "-wal", "-shm",
 )
+# Caches and build or coverage output a test, lint or build run writes inside
+# the workspace (``obj`` is .NET's, ``.dart_tool`` Flutter's).
+_REVISION_IGNORED_DIRS = frozenset({
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".nox",
+    "htmlcov", "coverage", "obj", ".dart_tool",
+})
+# Data and media a running app writes (a CSV store, an uploaded photo): their
+# path counts, their content does not, so the app's own writes are no edit.
+_REVISION_PATH_ONLY_SUFFIXES = (
+    ".csv", ".tsv", ".jsonl", ".parquet", ".pkl", ".npy",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
+    ".pdf", ".zip", ".gz", ".tar", ".mp3", ".mp4", ".wav",
+)
+# Bytes of each file the revision reads; the size covers the rest.
+_REVISION_HASH_CAP = 1024 * 1024
 
 
 # Tool-call detail shown in progress events.

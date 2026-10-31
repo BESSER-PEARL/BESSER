@@ -1,1 +1,13 @@
+# The Dockerfile copies only besser/, the requirements and the package metadata,
+# and bind-mounts ca-certs-extra; everything else stays out of the build context.
 besser/utilities/web_modeling_editor/frontend
+.git
+.github
+docs
+tests
+examples
+**/__pycache__
+**/*.pyc
+**/node_modules
+**/.pytest_cache
+*.log

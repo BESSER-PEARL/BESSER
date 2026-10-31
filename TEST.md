@@ -70,13 +70,14 @@ warning; `test_shell_sandbox.py` sets its own policy either way.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on pull requests to `master` and `development`:
+`.github/workflows/ci.yml` runs on pull requests to, and pushes on, `master` and `development`:
 
 | Job     | What it runs | Gate |
 | ------- | ------------ | ---- |
-| `tests` | installs `bubblewrap`, then `python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn -x` on Python 3.11 and 3.12 | the suite must pass (fail-fast) |
-| `lint`  | `ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741 --ignore E501` | focused lint set; line length not enforced |
-| `docs`  | `bash docs/check-docs-warnings.sh` | Sphinx build fails on any new, non-allowlisted warning |
+| `tests` | installs `bubblewrap` and CPU `torch`, then `python -m pytest tests/ -q --tb=short` on Python 3.11 and 3.12 | the suite must pass |
+| `lint`  | `ruff check besser/` (rules in `pyproject.toml`) | focused lint set; line length not enforced |
+| `docs`  | `python docs/check_docs.py` | Sphinx build fails on any warning |
+| `package` | builds the wheel, installs it outside the checkout, checks the package data ships | the wheel must install and carry its data files |
 
 ---
 

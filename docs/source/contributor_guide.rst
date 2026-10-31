@@ -249,12 +249,10 @@ We use **Ruff** for linting (run automatically in CI):
 .. code-block:: bash
 
    pip install ruff
-   ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741 \
-     --ignore E501 --exclude "*/BESSERActionLanguageParser.py"
+   ruff check besser/
 
-That is exactly the invocation CI runs, so reproducing it locally gives the
-same verdict. A bare ``ruff check .`` uses Ruff's default rule set over the
-whole tree and will disagree in both directions.
+The rules live in ``pyproject.toml`` (``[tool.ruff]``), so this is exactly what
+CI runs. Lint ``besser/`` rather than ``.``: CI does not lint the tests.
 
 Fix lint warnings before opening a PR. CI will fail on lint errors.
 
@@ -316,7 +314,7 @@ Run the full suite before pushing, scoped to ``tests/``:
 
    python -m pytest tests/
 
-CI runs ``python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn -x``.
+CI runs ``python -m pytest tests/ -q --tb=short``.
 
 While iterating, target the area you are changing:
 
@@ -488,7 +486,7 @@ Step-by-step
    .. code-block:: bash
 
       python -m pytest tests/         # tests
-      ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741         --ignore E501 --exclude "*/BESSERActionLanguageParser.py"   # lint, as CI runs it
+      ruff check besser/              # lint, as CI runs it
       python docs/check_docs.py                                     # if you touched the docs
 
 4. **Push your branch:**

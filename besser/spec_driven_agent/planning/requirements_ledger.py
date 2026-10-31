@@ -117,7 +117,9 @@ def _evidence_quote(text: str) -> str:
     return _normalise_quote(text)
 
 
-_DIGEST_SKIP_NAMES = frozenset({"bal_stdlib.py", "database.py", "__init__.py"})
+# BESSER's generated BAL runtime library: large and never app behaviour. Listed
+# as omitted, so the judge knows it was not shown.
+_DIGEST_SKIP_NAMES = frozenset({"bal_stdlib.py"})
 _DIGEST_SKIP_DIRS = frozenset({
     "node_modules", "dist", "build", "__pycache__", "venv", "tests", "test",
     "__tests__", "fixtures", "coverage", "verification",
@@ -529,12 +531,15 @@ def build_app_digest(output_dir: str, *, focus_paths: list[str] | None = None) -
     unreadable = []
     for rel, full in files.items():
         if Path(full).name in _DIGEST_SKIP_NAMES:
+            unreadable.append(rel)
             continue
         try:
             with open(full, "r", encoding="utf-8-sig", errors="ignore") as fh:
                 content = _compact(fh.read())
         except OSError:
             unreadable.append(rel)
+            continue
+        if not content:  # an empty __init__.py: nothing to show
             continue
         header = f"### {rel}\n"
         cap = max(0, source_budget - len(header) - 200) if rel in focused else _DIGEST_MAX_FILE_CHARS

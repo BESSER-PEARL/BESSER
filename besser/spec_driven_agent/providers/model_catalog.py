@@ -40,22 +40,23 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlparse
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    field_validator,
+)
 
 logger = logging.getLogger(__name__)
 
 CATALOG_ENV_VAR = "BESSER_MODEL_CATALOG"
 DEFAULT_CATALOG_PATH = Path(__file__).with_name("data") / "model_catalog.json"
 
-_PRICE_FIELDS = ("input", "output", "cache_read", "cache_write")
-# A model's request quirks, overriding model_settings' row for its id:
-# field -> accepted types.
-_REQUEST_FIELDS = {
-    "forced_tool_choice": (bool,),
-    "thinking_can_be_disabled": (bool,),
-    "reasoning_effort_for_tools": (str, type(None)),
-}
 
 
 class ModelCatalogError(ValueError):
@@ -69,7 +70,7 @@ class ModelCatalog:
     route_prices: dict[str, dict[str, dict[str, float]]]
     # lower-cased model id -> rates, from providers without a base_url
     listed_prices: dict[str, dict[str, float]]
-    # lower-cased model id -> request quirks (see _REQUEST_FIELDS)
+    # lower-cased model id -> request quirks (see _Request)
     request_overrides: dict[str, dict[str, Any]]
 
     def base_url(self, provider: str) -> str | None:
@@ -151,108 +152,125 @@ def _merge(base: dict, override: dict) -> dict:
     return merged
 
 
-def _price(raw: Any, where: str) -> dict[str, float]:
-    if not isinstance(raw, dict):
-        raise ModelCatalogError(f"{where}: price must be an object")
-    for field in _PRICE_FIELDS:
-        value = raw.get(field)
-        if value is None and field.startswith("cache_"):
-            continue
-        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
-            raise ModelCatalogError(f"{where}: price.{field} must be a number >= 0")
-    unknown = set(raw) - set(_PRICE_FIELDS)
-    if unknown:
-        raise ModelCatalogError(f"{where}: unknown price field(s) {sorted(unknown)}")
-    rate = {field: float(raw[field]) for field in ("input", "output")}
-    for field in ("cache_read", "cache_write"):
-        rate[field] = float(raw[field]) if raw.get(field) is not None else rate["input"]
-    return rate
+_Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-def _request(raw: Any, where: str) -> dict[str, Any]:
-    if not isinstance(raw, dict):
-        raise ModelCatalogError(f"{where}: request must be an object")
-    for key, value in raw.items():
-        if key not in _REQUEST_FIELDS:
-            raise ModelCatalogError(
-                f"{where}: unknown request field {key!r} "
-                f"(known: {', '.join(_REQUEST_FIELDS)})")
-        if not isinstance(value, _REQUEST_FIELDS[key]):
-            raise ModelCatalogError(f"{where}: request.{key} has the wrong type")
-    return dict(raw)
+class _Entry(BaseModel):
+    # A typo such as ``base_ur1`` would otherwise load as a provider with no
+    # gateway, and ``"default": "true"`` as a model that is not the default.
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
-def _optional_str(entry: dict, key: str, where: str) -> str | None:
-    value = entry.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ModelCatalogError(f"{where}: {key} must be a string")
+class _Price(_Entry):
+    """USD per 1M tokens; a missing cache rate bills at the input rate."""
+
+    input: float = Field(ge=0)
+    output: float = Field(ge=0)
+    cache_read: float | None = Field(default=None, ge=0)
+    cache_write: float | None = Field(default=None, ge=0)
+
+    def rate(self) -> dict[str, float]:
+        return {"input": self.input, "output": self.output,
+                "cache_read": self.input if self.cache_read is None else self.cache_read,
+                "cache_write": self.input if self.cache_write is None else self.cache_write}
+
+
+class _Request(_Entry):
+    """A model's request quirks, overriding model_settings' row for its id.
+    Only the fields a catalog sets are applied (``exclude_unset``)."""
+
+    forced_tool_choice: bool = False
+    thinking_can_be_disabled: bool = False
+    reasoning_effort_for_tools: str | None = None
+
+
+class _Model(_Entry):
+    id: _Name
+    label: str | None = None
+    default: bool = False
+    price: _Price | None = None
+    request: _Request | None = None
+
+
+class _Provider(_Entry):
+    label: _Name
+    hint: str | None = None
+    key_prefix: str | None = None
+    base_url: str | None = None
+    models: list[_Model]
+
+    @field_validator("base_url")
+    @classmethod
+    def _http_url_with_host(cls, value: str | None) -> str | None:
+        if value is not None:
+            parsed = urlparse(value)
+            if parsed.scheme not in ("http", "https") or not parsed.hostname:
+                raise ValueError("base_url must be an http(s) URL with a host")
+        return value
+
+    @field_validator("models")
+    @classmethod
+    def _unique_ids(cls, models: list[_Model]) -> list[_Model]:
+        seen: set[str] = set()
+        for model in models:
+            if model.id.lower() in seen:
+                raise ValueError(f"duplicate id {model.id!r}")
+            seen.add(model.id.lower())
+        return models
+
+
+def _without_notes(value: Any) -> Any:
+    """``value`` with every ``_``-prefixed key (a note) removed, at any depth."""
+    if isinstance(value, dict):
+        return {k: _without_notes(v) for k, v in value.items()
+                if not (isinstance(k, str) and k.startswith("_"))}
+    if isinstance(value, list):
+        return [_without_notes(v) for v in value]
     return value
 
 
+def _validated(schema: type[BaseModel], raw: Any, where: str) -> Any:
+    try:
+        return schema.model_validate(raw)
+    except ValidationError as exc:
+        error = exc.errors()[0]
+        loc = "".join(f"[{part}]" if isinstance(part, int) else f".{part}" for part in error["loc"])
+        raise ModelCatalogError(f"{where}{loc}: {error['msg']}") from None
+
+
 def _provider(provider_id: str, raw: Any) -> dict[str, Any]:
-    where = f"providers.{provider_id}"
-    if not isinstance(raw, dict):
-        raise ModelCatalogError(f"{where} must be an object")
-    label = raw.get("label")
-    if not isinstance(label, str) or not label.strip():
-        raise ModelCatalogError(f"{where}: label is required")
-    base_url = _optional_str(raw, "base_url", where)
-    if base_url is not None and urlparse(base_url).scheme not in ("http", "https"):
-        raise ModelCatalogError(f"{where}: base_url must be an http(s) URL")
-    models_raw = raw.get("models")
-    if not isinstance(models_raw, list):
-        raise ModelCatalogError(f"{where}: models must be a list")
-    models, seen = [], set()
-    for index, model in enumerate(models_raw):
-        model_where = f"{where}.models[{index}]"
-        if not isinstance(model, dict):
-            raise ModelCatalogError(f"{model_where} must be an object")
-        model_id = model.get("id")
-        if not isinstance(model_id, str) or not model_id.strip():
-            raise ModelCatalogError(f"{model_where}: id is required")
-        model_id = model_id.strip()
-        if model_id.lower() in seen:
-            raise ModelCatalogError(f"{model_where}: duplicate id {model_id!r}")
-        seen.add(model_id.lower())
-        models.append({
-            "id": model_id,
-            "label": _optional_str(model, "label", model_where) or model_id,
-            "default": model.get("default") is True,
-            "price": (_price(model["price"], model_where)
-                      if model.get("price") is not None else None),
-            "request": (_request(model["request"], model_where)
-                        if model.get("request") is not None else {}),
-        })
+    entry = _validated(_Provider, raw, f"providers.{provider_id}")
     return {
-        "label": label.strip(),
-        "hint": _optional_str(raw, "hint", where),
-        "key_prefix": _optional_str(raw, "key_prefix", where),
-        "base_url": base_url,
-        "models": models,
+        "label": entry.label,
+        "hint": entry.hint,
+        "key_prefix": entry.key_prefix,
+        "base_url": entry.base_url,
+        "models": [{
+            "id": model.id,
+            "label": model.label or model.id,
+            "default": model.default,
+            "price": model.price.rate() if model.price else None,
+            "request": model.request.model_dump(exclude_unset=True) if model.request else {},
+        } for model in entry.models],
     }
 
 
 def _build(data: dict) -> ModelCatalog:
+    data = _without_notes(data)
     providers_raw = data.get("providers")
     if not isinstance(providers_raw, dict):
         raise ModelCatalogError("providers must be an object")
     providers = {
         provider_id: _provider(provider_id, raw)
         for provider_id, raw in providers_raw.items()
-        if not provider_id.startswith("_")
     }
     route_prices: dict[str, dict[str, dict[str, float]]] = {}
     for host, table in (data.get("route_prices") or {}).items():
-        if host.startswith("_"):
-            continue
         if not isinstance(table, dict):
             raise ModelCatalogError(f"route_prices.{host} must be an object")
         route_prices[host.lower()] = {
-            model_id.lower(): _price(rate, f"route_prices.{host}.{model_id}")
+            model_id.lower(): _validated(_Price, rate, f"route_prices.{host}.{model_id}").rate()
             for model_id, rate in table.items()
-            if not model_id.startswith("_")
         }
     listed_prices: dict[str, dict[str, float]] = {}
     request_overrides: dict[str, dict[str, Any]] = {}

@@ -112,6 +112,10 @@ variables are documented in `docs/source/web_editor_backend.rst`. Backend facts 
   declared on the app itself: `GET /health` (no prefix) and `GET /besser_api/`. OpenAPI UI is at `/docs`,
   not `/besser_api/docs`.
 - Unhandled exceptions are deliberately flattened to a generic HTTP 500; the traceback is in the server log.
+- UML diagrams travel in the v4 React Flow shape (`{version: "4.x", nodes, edges}`); the converters read only
+  that. A v3 model (`elements` / `relationships`) is refused with HTTP 400 (`services/validators/legacy_format.py`),
+  never converted to an empty model. GUI and quantum models keep their own formats. The per-type wire contract
+  is `docs/source/migrations/uml-v4-shape.md`; update it with any converter field change.
 - No per-client rate limiting; the only throughput control is `BESSER_LLM_MAX_CONCURRENT_RUNS` on
   spec-driven runs (429 when full, 409 when that run id is already active).
 

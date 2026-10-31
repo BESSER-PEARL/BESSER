@@ -30,9 +30,34 @@ MODEL_IDS = {
 RELATIONSHIP_IDS = {"holds": "ClassBidirectional", "lends": "ClassBidirectional", "inherits": "ClassInheritance"}
 
 
+_NODE_KIND = {"Enumeration": "Enumeration", "Abstract": "AbstractClass", "Interface": "Interface"}
+
+
+def _elements(model_json):
+    """Every element of a v4 class diagram by id: ``(kind, element, owner id)``.
+
+    Class nodes map to Class / AbstractClass / Enumeration, their attribute and
+    method rows to ClassAttribute / ClassMethod, other nodes keep their type."""
+    out = {}
+    for node in model_json["nodes"]:
+        data = node.get("data") or {}
+        if node["type"] == "class":
+            out[node["id"]] = (_NODE_KIND.get(data.get("stereotype"), "Class"), node, None)
+            for key, kind in (("attributes", "ClassAttribute"), ("methods", "ClassMethod")):
+                for row in data.get(key) or []:
+                    out[row["id"]] = (kind, row, node["id"])
+        else:
+            out[node["id"]] = (node["type"], node, None)
+    return out
+
+
 def _ids(model_json):
-    return ({key: e["type"] for key, e in model_json["elements"].items()},
-            {key: r["type"] for key, r in model_json["relationships"].items()})
+    return ({key: kind for key, (kind, _, _) in _elements(model_json).items()},
+            {edge["id"]: edge["type"] for edge in model_json["edges"]})
+
+
+def _edge(model_json, edge_id):
+    return next(edge for edge in model_json["edges"] if edge["id"] == edge_id)
 
 
 def test_json_to_buml_keeps_every_editor_id():
@@ -60,17 +85,17 @@ def test_json_buml_json_reuses_every_id():
     for key, rel_type in RELATIONSHIP_IDS.items():
         assert relationships.get(key) == rel_type, key
     # References use the same ids.
-    assert exported["elements"]["lib-name"]["owner"] == "library"
-    assert exported["elements"]["library"]["attributes"] == ["lib-name"]
-    assert exported["relationships"]["inherits"]["source"]["element"] == "novel"
-    assert exported["relationships"]["inherits"]["target"]["element"] == "book"
+    assert _elements(exported)["lib-name"][2] == "library"
+    assert [row["id"] for row in _elements(exported)["library"][1]["data"]["attributes"]] == ["lib-name"]
+    assert _edge(exported, "inherits")["source"] == "novel"
+    assert _edge(exported, "inherits")["target"] == "book"
 
 
 def test_a_second_round_trip_gives_the_same_ids():
     once = class_buml_to_json(process_class_diagram(_diagram()))
     twice = class_buml_to_json(process_class_diagram({"title": "Lending", "model": once}))
-    # OCL boxes and visual links are not model elements and are re-minted.
-    visual = ("ClassOCLConstraint", "ClassOCLLink", "ClassLinkRel", "Comments", "Link")
+    # OCL boxes, comments and visual links are not model elements and are re-minted.
+    visual = ("ClassOCLConstraint", "ClassOCLLink", "ClassLinkRel", "comment", "CommentLink")
     for side in (0, 1):
         assert ({k: t for k, t in _ids(once)[side].items() if t not in visual}
                 == {k: t for k, t in _ids(twice)[side].items() if t not in visual})
@@ -80,9 +105,9 @@ def test_a_renamed_class_keeps_its_id():
     model = process_class_diagram(_diagram())
     model.get_class_by_name("Library").name = "Branch"
     exported = class_buml_to_json(model)
-    assert exported["elements"]["library"]["name"] == "Branch"
-    holds = exported["relationships"]["holds"]
-    assert {holds["source"]["element"], holds["target"]["element"]} == {"library", "book"}
+    assert _elements(exported)["library"][1]["data"]["name"] == "Branch"
+    holds = _edge(exported, "holds")
+    assert {holds["source"], holds["target"]} == {"library", "book"}
 
 
 def test_buml_code_has_no_ids_unless_enabled(tmp_path):
@@ -113,20 +138,20 @@ def test_a_model_without_ids_gets_fresh_ones_and_unchanged_code(tmp_path):
     path = os.path.join(tmp_path, "model.py")
     domain_model_to_code(model, path)
     assert "id=" not in open(path, encoding="utf-8").read()
-    first, second = class_buml_to_json(model), class_buml_to_json(model)
-    for key in first["elements"]:
+    first, second = _elements(class_buml_to_json(model)), _elements(class_buml_to_json(model))
+    for key in first:
         uuid.UUID(key)
-    assert set(first["elements"]).isdisjoint(second["elements"])
+    assert set(first).isdisjoint(second)
     assert book.id is None  # serialising does not write ids back
 
 
 def test_elements_sharing_an_id_are_both_kept():
     a = Class(name="A", id="dup", attributes={Property(name="x", type=StringType, id="dup")})
     b = Class(name="B", id="dup")
-    exported = class_buml_to_json(DomainModel(name="M", types={a, b}))
-    names = sorted((e["type"], e["name"]) for e in exported["elements"].values())
+    elements = _elements(class_buml_to_json(DomainModel(name="M", types={a, b})))
+    names = sorted((kind, element.get("data", element)["name"]) for kind, element, _ in elements.values())
     assert names == [("Class", "A"), ("Class", "B"), ("ClassAttribute", "x")]
-    assert sum(1 for key in exported["elements"] if key == "dup") == 1
+    assert sum(1 for key in elements if key == "dup") == 1
 
 
 def test_unsafe_ids_are_replaced_with_a_warning(caplog):
@@ -137,7 +162,7 @@ def test_unsafe_ids_are_replaced_with_a_warning(caplog):
     classes = [Class(name=f"C{i}", id=value) for i, value in enumerate(bad + good)]
     with caplog.at_level("WARNING"):
         exported = class_buml_to_json(DomainModel(name="M", types=set(classes)))
-    keys = set(exported["elements"])
+    keys = set(_elements(exported))
     assert keys.isdisjoint(bad)
     assert set(good) <= keys
     for key in keys - set(good):

@@ -48,11 +48,11 @@ def test_exact_multiplicity_collapses_in_converter():
     model = DomainModel(name="M", types={a, b}, associations={assoc})
 
     result = class_buml_to_json(model)
-    relationships = result.get("relationships") or (result.get("model") or {}).get("relationships", {})
-    rels = list(relationships.values())
-    assert len(rels) == 1
+    edges = [e for e in result["edges"] if e.get("type") == "ClassBidirectional"]
+    assert len(edges) == 1
 
-    mults = {rels[0]["source"]["multiplicity"], rels[0]["target"]["multiplicity"]}
+    data = edges[0]["data"]
+    mults = {data["sourceMultiplicity"], data["targetMultiplicity"]}
     assert "1" in mults           # 1..1 collapsed (issue #3)
     assert "1..1" not in mults
     assert "1..*" in mults        # unbounded range untouched

@@ -1,11 +1,12 @@
-"""Deployment diagram conversion: DeploymentModel -> WME JSON.
+"""Deployment diagram conversion: DeploymentModel -> v4 WME JSON (``{nodes, edges}``).
 
 ``deployment_object_to_json`` is a pure metamodel-object -> JSON walk, the
 inverse of ``json_to_buml.deployment_diagram_processor``. The multiplicity of
 an artifact's first ``DeploymentRelation`` goes into the artifact's name
 suffix (``"Coder [3]"``) and a ``DeploymentComponent`` is emitted as the
-editor's ``DeploymentComponent`` element. ``deployment_buml_to_json(content)``
+editor's ``deploymentComponent`` node. ``deployment_buml_to_json(content)``
 loads a BUML file produced by ``deployment_model_to_code``.
+Wire shape: ``docs/source/migrations/uml-v4-shape.md`` (DeploymentDiagram).
 """
 
 import logging
@@ -30,6 +31,21 @@ from besser.BUML.metamodel.uml_deployment import (
     NodeKind,
 )
 from besser.utilities.utils import sort_by_timestamp
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    DEPLOYMENT_REQUIRED_INTERFACE_EDGE_TYPES,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._node_builders import (
+    envelope_size,
+    layout_unplaced_nodes,
+    make_positions_parent_relative,
+    node_from_layout,
+    parents_first,
+    stereotyped_edge,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
+    strip_buml_imports,
+)
 from besser.utilities.web_modeling_editor.backend.services.converters.multiplicity_format import (
     format_to_name,
 )
@@ -37,25 +53,28 @@ from besser.utilities.web_modeling_editor.backend.services.converters.stereotype
     format_artifact_stereotype,
     format_node_stereotype,
 )
-from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
-    safe_load_buml,
-    strip_buml_imports,
-)
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
 )
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_SIZE = {
+    "deploymentNode": (200, 140),
+    "deploymentArtifact": (160, 40),
+    "deploymentComponent": (160, 100),
+    "deploymentInterface": (20, 20),
+}
+
 
 def deployment_object_to_json(model: DeploymentModel) -> dict:
-    """Convert a ``DeploymentModel`` into a WME Deployment diagram (JSON dict).
+    """Convert a ``DeploymentModel`` into a v4 WME Deployment diagram (JSON dict).
 
     Args:
         model: The ``DeploymentModel`` to convert.
 
     Returns:
-        dict: WME ``UMLModel`` envelope with ``elements`` and ``relationships``.
+        dict: v4 ``UMLModel`` envelope with ``nodes`` and ``edges``.
     """
     if not isinstance(model, DeploymentModel):
         raise ConversionError(
@@ -63,8 +82,6 @@ def deployment_object_to_json(model: DeploymentModel) -> dict:
             f"got {type(model).__name__}."
         )
 
-    elements: dict = {}
-    relationships: dict = {}
     id_map: dict = {}
 
     def id_for(obj) -> str:
@@ -77,50 +94,39 @@ def deployment_object_to_json(model: DeploymentModel) -> dict:
     all_artifacts = sort_by_timestamp(model.all_artifacts())
     all_interfaces = sort_by_timestamp(model.interfaces)
     all_relationships = sort_by_timestamp(model.relationships)
+    elements = (*all_nodes, *all_artifacts, *all_interfaces)
+    for element in elements:
+        id_for(element)
 
-    # Pre-mint ids for stable ordering.
-    for n in all_nodes:
-        id_for(n)
-    for a in all_artifacts:
-        id_for(a)
-    for iface in all_interfaces:
-        id_for(iface)
-    for rel in all_relationships:
-        id_for(rel)
-
-    # Index artifact -> deterministic DeploymentRelation for the multiplicity
+    # Artifact -> deterministic DeploymentRelation for the multiplicity
     # round-trip (the first relation by timestamp wins on divergence).
     artifact_to_relation = _index_artifact_to_relation(all_relationships)
 
-    for node in all_nodes:
-        elements[id_for(node)] = _emit_node_entry(node, id_for)
+    nodes = [_node_node(n, id_for) for n in all_nodes]
+    nodes += [_artifact_node(a, id_for, artifact_to_relation) for a in all_artifacts]
+    emitted_ids = {node["id"] for node in nodes}
+    nodes += [_interface_node(i, id_for, emitted_ids) for i in all_interfaces]
+    nodes = parents_first(nodes)
 
-    # Artifacts (including nested ones)
-    for artifact in all_artifacts:
-        elements[id_for(artifact)] = _emit_artifact_entry(
-            artifact, id_for, artifact_to_relation,
-        )
+    placed_ids = {id_for(e) for e in elements if (e.layout or {}).get("bounds")}
+    make_positions_parent_relative(nodes, placed_ids)
+    layout_unplaced_nodes(nodes, placed_ids)
 
-    for interface in all_interfaces:
-        elements[id_for(interface)] = _emit_interface_entry(interface, id_for)
-
-    # Relationships — emit explicit edges; owner-link-only relations are
-    # already encoded via the artifact's `owner` field and are skipped here
-    # to avoid double-encoding (see processor dedup logic).
-    for rel in all_relationships:
-        if (rel.layout or {}).get("wme_origin") == "owner":
-            continue
-        relationships[id_for(rel)] = _emit_relationship_entry(rel, id_for)
-
-    size = _compute_size(elements)
+    # Parent-link-only relations are already encoded by the artifact's
+    # ``parentId`` and are not emitted as edges (see the processor's dedup).
+    edges = [
+        _relationship_edge(rel, id_for) for rel in all_relationships
+        if (rel.layout or {}).get("wme_origin") != "owner"
+    ]
 
     return {
-        "version": "3.0.0",
+        "version": "4.0.0",
         "type": "DeploymentDiagram",
-        "size": size,
+        "title": model.name or "",
+        "size": envelope_size(nodes),
+        "nodes": nodes,
+        "edges": edges,
         "interactive": {"elements": {}, "relationships": {}},
-        "elements": elements,
-        "relationships": relationships,
         "assessments": {},
     }
 
@@ -154,28 +160,20 @@ def _index_artifact_to_relation(relationships: list) -> dict:
     return out
 
 
-def _emit_node_entry(node: Node, id_for) -> dict:
-    """Emit a DeploymentNode entry."""
-    layout = node.layout or {}
-    wme_type = layout.get("wme_type") or "DeploymentNode"
-    bounds = layout.get("bounds") or {"x": 0, "y": 0, "width": 200, "height": 140}
-    entry = {
-        "id": id_for(node),
+def _node_node(node: Node, id_for) -> dict:
+    """Emit a ``deploymentNode`` node."""
+    data = {
         "name": node.name,
-        "type": wme_type,
-        "owner": id_for(node.parent) if node.parent is not None else None,
-        "bounds": bounds,
+        "stereotype": format_node_stereotype(node),
+        "isComponentHeaderShown": bool((node.layout or {}).get("displayStereotype", True)),
     }
-    stereotype = format_node_stereotype(node)
-    if stereotype:
-        entry["stereotype"] = stereotype
-        entry["displayStereotype"] = bool(layout.get("displayStereotype", True))
-    return entry
+    parent_id = id_for(node.parent) if node.parent is not None else None
+    return node_from_layout(node, id_for(node), "deploymentNode", data, parent_id,
+                            _DEFAULT_SIZE["deploymentNode"])
 
 
-def _emit_artifact_entry(artifact: Artifact, id_for,
-                         artifact_to_relation: dict) -> dict:
-    """Emit a DeploymentArtifact or DeploymentComponent entry.
+def _artifact_node(artifact: Artifact, id_for, artifact_to_relation: dict) -> dict:
+    """Emit a ``deploymentArtifact`` or ``deploymentComponent`` node.
 
     Suffixes the artifact's name with the multiplicity of its first
     DeploymentRelation (when non-default). Falls back to
@@ -184,8 +182,7 @@ def _emit_artifact_entry(artifact: Artifact, id_for,
     """
     layout = artifact.layout or {}
     is_component = isinstance(artifact, DeploymentComponent)
-    wme_type = "DeploymentComponent" if is_component else "DeploymentArtifact"
-    bounds = layout.get("bounds") or {"x": 0, "y": 0, "width": 160, "height": 40}
+    node_type = "deploymentComponent" if is_component else "deploymentArtifact"
 
     rel = artifact_to_relation.get(artifact)
     mult = rel.multiplicity if rel is not None else None
@@ -195,111 +192,60 @@ def _emit_artifact_entry(artifact: Artifact, id_for,
     else:
         name = format_to_name(artifact.name, mult)
 
-    # The artifact's WME owner: its parent Node if nested, else None.
-    owner = id_for(artifact.parent) if artifact.parent is not None else None
-
-    entry = {
-        "id": id_for(artifact),
-        "name": name,
-        "type": wme_type,
-        "owner": owner,
-        "bounds": bounds,
-    }
+    data = {"name": name}
     stereotype = format_artifact_stereotype(artifact)
-    if stereotype:
-        entry["stereotype"] = stereotype
-        entry["displayStereotype"] = bool(layout.get("displayStereotype", True))
-    # The editor's DeploymentArtifact always carries ``manifests`` and, for an
-    # agent, ``agentModelRef``; a DeploymentComponent only when set.
+    if is_component:
+        data["stereotype"] = stereotype
+        data["isComponentHeaderShown"] = bool(layout.get("displayStereotype", True))
+    elif stereotype:
+        data["stereotype"] = stereotype
+    # A deploymentArtifact always carries ``manifests`` and, for an agent,
+    # ``agentModelRef``; a deploymentComponent only when set.
     if not is_component or artifact.manifests:
-        entry["manifests"] = list(artifact.manifests)
+        data["manifests"] = list(artifact.manifests)
     if artifact.agent_model_ref is not None:
-        entry["agentModelRef"] = artifact.agent_model_ref
-    return entry
+        data["agentModelRef"] = artifact.agent_model_ref
+
+    parent_id = id_for(artifact.parent) if artifact.parent is not None else None
+    return node_from_layout(artifact, id_for(artifact), node_type, data, parent_id,
+                            _DEFAULT_SIZE[node_type])
 
 
-def _emit_interface_entry(interface: Interface, id_for) -> dict:
-    """Emit a DeploymentInterface entry."""
+def _interface_node(interface: Interface, id_for, emitted_ids: set) -> dict:
+    """Emit a ``deploymentInterface`` node; its drawn parent comes from the layout."""
     layout = interface.layout or {}
-    wme_type = layout.get("wme_type") or "DeploymentInterface"
-    bounds = layout.get("bounds") or {"x": 0, "y": 0, "width": 20, "height": 20}
-    return {
-        "id": id_for(interface),
-        "name": interface.name,
-        "type": wme_type,
-        "owner": layout.get("owner"),
-        "bounds": bounds,
-    }
+    parent_id = layout.get("parentId", layout.get("owner"))
+    return node_from_layout(
+        interface, id_for(interface), "deploymentInterface", {"name": interface.name},
+        parent_id if parent_id in emitted_ids else None, _DEFAULT_SIZE["deploymentInterface"],
+    )
 
 
-def _emit_relationship_entry(rel, id_for) -> dict:
-    """Emit one relationship entry.
+def _relationship_edge(rel, id_for) -> dict:
+    """Emit one edge.
 
     Raises:
         ConversionError: for a relationship class with no editor mapping.
     """
-    layout = rel.layout or {}
-    bounds = layout.get("bounds") or {"x": 0, "y": 0, "width": 1, "height": 1}
-    path = layout.get("path") or [{"x": 0, "y": 0}, {"x": 1, "y": 0}]
-    source = {
-        "element": id_for(rel.source),
-        "direction": layout.get("source_direction") or "Right",
-    }
-    target = {
-        "element": id_for(rel.target),
-        "direction": layout.get("target_direction") or "Left",
-    }
-    is_manually_layouted = bool(layout.get("isManuallyLayouted", False))
-
-    if isinstance(rel, DeploymentRelation):
-        wme_type = "DeploymentAssociation"
-    elif isinstance(rel, CommunicationPath):
-        wme_type = "DeploymentAssociation"
+    if isinstance(rel, (DeploymentRelation, CommunicationPath)):
+        edge_type = "DeploymentAssociation"
     elif isinstance(rel, DeploymentDependency):
-        wme_type = "DeploymentDependency"
+        edge_type = "DeploymentDependency"
     elif isinstance(rel, InterfaceProvided):
-        wme_type = "DeploymentInterfaceProvided"
+        edge_type = "DeploymentProvidedInterface"
     elif isinstance(rel, InterfaceRequired):
-        wme_type = "DeploymentInterfaceRequired"
+        stashed = (rel.layout or {}).get("type")
+        edge_type = (stashed if stashed in DEPLOYMENT_REQUIRED_INTERFACE_EDGE_TYPES
+                     else "DeploymentRequiredInterface")
     else:
         raise ConversionError(
             f"Deployment relationship class {type(rel).__name__} has no editor mapping."
         )
-
-    entry = {
-        "id": id_for(rel),
-        "name": rel.name or "",
-        "type": wme_type,
-        "owner": layout.get("owner"),
-        "bounds": bounds,
-        "path": path,
-        "source": source,
-        "target": target,
-        "isManuallyLayouted": is_manually_layouted,
-    }
-    stereotype_parts = list(rel.stereotypes)
-    if stereotype_parts:
-        entry["stereotype"] = " ".join(stereotype_parts)
-    return entry
-
-
-def _compute_size(elements: dict) -> dict:
-    """Compute the diagram bounding box (min 800x600) from all element bounds."""
-    max_x = 800
-    max_y = 600
-    for entry in elements.values():
-        bounds = entry.get("bounds") or {}
-        right = (bounds.get("x") or 0) + (bounds.get("width") or 0)
-        bottom = (bounds.get("y") or 0) + (bounds.get("height") or 0)
-        if right > max_x:
-            max_x = right
-        if bottom > max_y:
-            max_y = bottom
-    return {"width": int(max_x), "height": int(max_y)}
+    return stereotyped_edge(rel, id_for, edge_type, " ".join(rel.stereotypes))
 
 
 def deployment_buml_to_json(content: str) -> dict:
-    """Convert Deployment BUML source into a WME Deployment diagram (JSON).
+    """Convert Deployment BUML source into a v4 WME Deployment diagram (JSON).
 
     Strip generated imports, then load the source with the restricted BUML
     loader and an explicit allowlist of Deployment metamodel names. Find the

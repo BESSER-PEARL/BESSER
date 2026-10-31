@@ -4,6 +4,7 @@ Converters module for handling JSON to BUML and BUML to JSON conversions.
 
 from .json_to_buml import (
     process_class_diagram,
+    process_bpmn_diagram,
     process_state_machine,
     process_agent_diagram,
     annotate_agent_with_a2a,
@@ -12,7 +13,6 @@ from .json_to_buml import (
     process_gui_diagram,
     process_quantum_diagram,
     process_nn_diagram,
-    process_bpmn_diagram,
     process_kg_diagram,
     process_component_diagram,
     process_deployment_diagram,
@@ -21,6 +21,8 @@ from .json_to_buml import (
 from .buml_to_json import (
     class_buml_to_json,
     parse_buml_content,
+    bpmn_object_to_json,
+    bpmn_buml_to_json,
     state_machine_to_json,
     state_machine_object_to_json,
     agent_buml_to_json,
@@ -32,18 +34,17 @@ from .buml_to_json import (
     empty_model,
     nn_model_to_json,
     nn_buml_to_json,
-    bpmn_object_to_json,
-    bpmn_buml_to_json,
     kg_to_json,
     kg_buml_to_json,
     component_object_to_json,
     component_buml_to_json,
     deployment_object_to_json,
-    deployment_buml_to_json
+    deployment_buml_to_json,
 )
 
 __all__ = [
     "process_class_diagram",
+    "process_bpmn_diagram",
     "process_state_machine",
     "process_agent_diagram",
     "annotate_agent_with_a2a",
@@ -52,13 +53,14 @@ __all__ = [
     "process_gui_diagram",
     "process_quantum_diagram",
     "process_nn_diagram",
-    "process_bpmn_diagram",
     "process_kg_diagram",
     "process_component_diagram",
     "process_deployment_diagram",
     "link_method_neural_networks",
     "class_buml_to_json",
     "parse_buml_content",
+    "bpmn_object_to_json",
+    "bpmn_buml_to_json",
     "state_machine_to_json",
     "state_machine_object_to_json",
     "agent_buml_to_json",
@@ -70,12 +72,10 @@ __all__ = [
     "empty_model",
     "nn_model_to_json",
     "nn_buml_to_json",
-    "bpmn_object_to_json",
-    "bpmn_buml_to_json",
     "kg_to_json",
     "kg_buml_to_json",
     "component_object_to_json",
     "component_buml_to_json",
     "deployment_object_to_json",
-    "deployment_buml_to_json"
+    "deployment_buml_to_json",
 ]

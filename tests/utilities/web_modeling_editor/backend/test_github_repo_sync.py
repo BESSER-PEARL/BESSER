@@ -429,11 +429,10 @@ def test_the_sidebar_saves_the_one_model_file_and_drops_the_legacy_one(monkeypat
 
 def test_the_model_history_says_what_each_commit_changed_and_who_made_it(monkeypatch):
     with_loan = json.loads(json.dumps(CLASS_DIAGRAM_MODEL))
-    loan_id = "loan-class"
-    with_loan["elements"][loan_id] = {
-        "id": loan_id, "name": "Loan", "type": "Class", "owner": None,
-        "bounds": {"x": 0, "y": 0, "width": 160, "height": 100}, "attributes": [], "methods": [],
-    }
+    with_loan["nodes"].append({
+        "id": "loan-class", "type": "class", "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+        "data": {"name": "Loan", "attributes": [], "methods": []},
+    })
     fake = _SidebarGitHub(files_at={
         (repo_model.MODEL_FILE, "2" * 40): json.dumps(_envelope(with_loan)),
         (repo_model.MODEL_FILE, "1" * 40): json.dumps(_envelope()),

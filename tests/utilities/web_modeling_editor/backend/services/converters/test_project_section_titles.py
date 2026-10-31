@@ -31,7 +31,7 @@ def test_each_structural_model_comes_back_once_with_its_title_and_classes(tmp_pa
     diagrams = project_to_json(path.read_text(encoding="utf-8"))["diagrams"]["ClassDiagram"]
 
     assert [
-        (d["title"], sorted(e["name"] for e in d["model"]["elements"].values() if e["type"] == "Class"))
+        (d["title"], sorted(n["data"]["name"] for n in d["model"]["nodes"] if n["type"] == "class"))
         for d in diagrams
     ] == [("Library", ["Book"]), ("Shop", ["Item"])]
 

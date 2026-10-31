@@ -280,7 +280,10 @@ class NNCodeGenerator(GeneratorInterface):
 
             # Update prev_out_var with current module's output
             if module_details:
-                if module_name.endswith('_op'):
+                if isinstance(module_details, dict):
+                    # A sub-NN: its details are a dict of its layers.
+                    prev_out_var = module_details.get("in_out_variable")
+                elif module_name.endswith('_op'):
                     module_obj = (
                         module_details[2]
                         if len(module_details) > 2 else None

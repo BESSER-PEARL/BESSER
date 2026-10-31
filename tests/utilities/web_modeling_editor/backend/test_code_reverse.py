@@ -156,7 +156,7 @@ def test_importing_a_non_besser_repo_proposes_a_model_the_editor_can_load(monkey
     assert body["analysis"]["entities"] == ["Booking", "Room"]
     diagram = body["proposed_diagram"]
     assert diagram["diagramType"] == "ClassDiagram" and diagram["model"]["type"] == "ClassDiagram"
-    names = {e.get("name") for e in diagram["model"]["elements"].values() if e.get("type") == "Class"}
+    names = {n["data"]["name"] for n in diagram["model"]["nodes"] if n["type"] == "class"}
     assert names == {"Booking", "Room"}
 
 

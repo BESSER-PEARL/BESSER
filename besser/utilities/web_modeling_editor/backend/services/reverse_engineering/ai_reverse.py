@@ -537,13 +537,11 @@ def _spec_to_model(spec: dict) -> tuple[Optional[DomainModel], list[str]]:
 def _with_enumerations(spec: dict) -> dict:
     """``convert_spec_json_to_buml``'s diagram plus the spec's enumerations, which that format lacks."""
     diagram = convert_spec_json_to_buml(spec, title=spec["systemName"])
-    elements = diagram["model"]["elements"]
     for n, enum in enumerate(spec["enumerations"], start=1):
-        literal_ids = []
-        for m, literal in enumerate(enum["literals"], start=1):
-            literal_id = f"enum-{n}-literal-{m}"
-            elements[literal_id] = {"id": literal_id, "type": "ClassAttribute", "owner": f"enum-{n}", "name": literal}
-            literal_ids.append(literal_id)
-        elements[f"enum-{n}"] = {"id": f"enum-{n}", "type": "Enumeration", "name": enum["name"],
-                                 "attributes": literal_ids, "methods": []}
+        literals = [{"id": f"enum-{n}-literal-{m}", "name": literal}
+                    for m, literal in enumerate(enum["literals"], start=1)]
+        diagram["model"]["nodes"].append({
+            "id": f"enum-{n}", "type": "class", "position": {"x": 0, "y": 0},
+            "data": {"name": enum["name"], "stereotype": "Enumeration", "attributes": literals, "methods": []},
+        })
     return diagram

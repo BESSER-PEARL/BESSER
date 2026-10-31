@@ -235,9 +235,13 @@ def test_a_branch_past_the_first_page_is_pushed_to(github):
 def _with_class(model: dict, name: str, attribute: str = "id: int") -> dict:
     """``model`` plus class ``name``, as the editor adds one."""
     model = json.loads(json.dumps(model))
-    class_id, attr_id = f"class-{name.lower()}", f"attr-{name.lower()}"
-    model["elements"][class_id] = {"type": "Class", "name": name, "attributes": [attr_id], "methods": []}
-    model["elements"][attr_id] = {"type": "Attribute", "name": f"+ {attribute}"}
+    attr_name, attr_type = (part.strip() for part in attribute.split(":"))
+    model["nodes"].append({
+        "id": f"class-{name.lower()}", "type": "class", "position": {"x": 0, "y": 200}, "width": 160, "height": 100,
+        "data": {"name": name, "methods": [], "attributes": [{
+            "id": f"attr-{name.lower()}", "name": attr_name, "attributeType": attr_type, "visibility": "public",
+        }]},
+    })
     return model
 
 
@@ -265,8 +269,8 @@ def _save(model, base_sha: str) -> httpx.Response:
 
 def _saved_classes(github, repo) -> set[str]:
     saved = json.loads(github.files(repo)[repo_model.MODEL_FILE][1])
-    elements = saved["project"]["diagrams"]["ClassDiagram"][0]["model"]["elements"]
-    return {e["name"] for e in elements.values() if e["type"] == "Class"}
+    nodes = saved["project"]["diagrams"]["ClassDiagram"][0]["model"]["nodes"]
+    return {n["data"]["name"] for n in nodes if n["type"] == "class"}
 
 
 def test_two_people_adding_different_classes_both_keep_theirs(github):
@@ -286,7 +290,7 @@ def test_two_people_adding_different_classes_both_keep_theirs(github):
 
 def _renamed(model: dict, element_id: str, name: str) -> dict:
     model = json.loads(json.dumps(model))
-    model["elements"][element_id]["name"] = name
+    next(n for n in model["nodes"] if n["id"] == element_id)["data"]["name"] = name
     return model
 
 
@@ -301,7 +305,8 @@ def test_two_people_renaming_the_same_class_is_a_conflict_kept_for_a_pull_reques
     assert github.ref(repo, "main") == theirs  # nothing landed on the branch
     side = r.json()["conflict_branch"]
     on_side = json.loads(github.files(repo, side)[repo_model.MODEL_FILE][1])
-    assert on_side["project"]["diagrams"]["ClassDiagram"][0]["model"]["elements"]["class-1"]["name"] == "Creator"
+    side_nodes = on_side["project"]["diagrams"]["ClassDiagram"][0]["model"]["nodes"]
+    assert next(n for n in side_nodes if n["id"] == "class-1")["data"]["name"] == "Creator"
     assert not any(b.startswith("besser/sync-merge-") or b.startswith("besser/sync-code-")
                    for b in github.out(repo, "for-each-ref", "--format=%(refname:lstrip=2)").split())
 
@@ -669,11 +674,9 @@ def test_deploying_an_agent_commits_no_agent_credentials(github, monkeypatch):
     monkeypatch.setattr(github_deploy_api, "get_generator_info", lambda _name: SimpleNamespace(generator_class=_Generator))
     agent = {
         "id": "ag1", "title": "Helper", "model": {
-            "type": "AgentDiagram",
-            "elements": {"init": {"id": "init", "type": "StateInitialNode", "name": ""},
-                         "s1": {"id": "s1", "type": "AgentState", "name": "Greet", "bodies": [], "fallbackBodies": []}},
-            "relationships": {"t": {"type": "AgentStateTransitionInit", "name": "",
-                                    "source": {"element": "init"}, "target": {"element": "s1"}}},
+            "version": "4.0.0", "type": "AgentDiagram", "edges": [], "components": {},
+            "nodes": [{"id": "s1", "type": "AgentState", "position": {"x": 0, "y": 0}, "width": 160, "height": 100,
+                       "data": {"name": "Greet", "initial": True, "bodies": [], "fallbackBodies": []}}],
         },
         "configYaml": f"nlp:\n  openai:\n    api_key: {key}\n",
     }

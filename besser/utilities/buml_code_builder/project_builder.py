@@ -4,8 +4,10 @@ Project Builder
 This module generates Python code for complete BUML projects including all models.
 """
 
+import json
 import logging
 import os
+import re
 import tempfile
 import uuid
 import shutil
@@ -81,6 +83,44 @@ def _suffixed_name(base_name: str, index: int, total: int) -> str:
     return f"{base_name}_{index}"
 
 
+# The fixed "# <KIND> MODEL #" banner a model builder writes, with its borders.
+_BUILDER_BANNER = re.compile(r"^#+\n# [A-Z ]+ MODEL #\n#+\n", re.MULTILINE)
+
+
+def _editor_id_lines(project: Project) -> list:
+    """``# diagram-id`` / ``# diagram-title`` / ``# diagram-references`` /
+    ``# class-ids`` comment lines for the web editor.
+
+    ``json_to_buml_project`` records the diagram each model came from; the
+    importer restores those ids, titles and object diagram references (in
+    section order per diagram type) and the class node ids, which
+    cross-diagram references (object ``classId``, component ``realizes`` /
+    ``processModelRefs``, ...) point at.
+    """
+    diagram_ids = getattr(project, "_diagram_ids", None) or {}
+    diagram_references = getattr(project, "_diagram_references", None) or {}
+    lines = []
+    class_ids = {}
+    for model in project.models:
+        entry = diagram_ids.get(id(model))
+        if entry is None:
+            continue
+        diagram_type, diagram_id, title = entry
+        lines.append(f"# diagram-id {diagram_type}: {json.dumps(diagram_id)}")
+        # One per id, empty when untitled, so the titles line up with the ids.
+        title = title if isinstance(title, str) else ""
+        lines.append(f"# diagram-title {diagram_type}: {json.dumps(title)}")
+        if diagram_type == "ObjectDiagram":
+            references = diagram_references.get(id(model)) or {}
+            lines.append(f"# diagram-references {diagram_type}: {json.dumps(references, sort_keys=True)}")
+        index = getattr(model, "_wme_class_index", None)
+        if diagram_type == "ClassDiagram" and index:
+            class_ids[diagram_id] = {cls.name: wid for wid, cls in index.items()}
+    if class_ids:
+        lines.append(f"# class-ids {json.dumps(class_ids, sort_keys=True)}")
+    return lines
+
+
 def _section_titles(models: Sequence, titles_by_id: Dict[int, str]) -> List[str]:
     """Return the title each model's section banner carries, in order.
 
@@ -105,6 +145,9 @@ def _write_temp_to_output(temp_path: str, out_file, section_header: str = ""):
     # One version header per file: the project writes its own at the top.
     content = content.removeprefix(buml_header())
     if section_header:
+        # The numbered header replaces the builder's banner: with both, the
+        # importer reads each model as two sections.
+        content = _BUILDER_BANNER.sub("", content, count=1)
         out_file.write(section_header)
     out_file.write(content)
     out_file.write("\n\n")
@@ -501,6 +544,31 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                 model_vars.append(var_name)
 
             # ---------------------------------------------------------- #
+            # BPMN MODELS                                                #
+            # ---------------------------------------------------------- #
+            # bpmn_model_to_code() writes its own "# BPMN MODEL #" banner
+            # (mirrors state_machine_builder.py / agent_model_builder.py).
+            # Unlike those, we don't also prepend a numbered project_builder
+            # header here: project_to_json's _extract_all_sections treats
+            # every "# BPMN MODEL ... #" occurrence as a new section
+            # boundary, so stacking our own numbered header directly above
+            # the builder's fixed one would split each model into a bogus
+            # empty section followed by the real one, breaking round-trip
+            # for projects with more than one BPMNModel. See the analogous
+            # NN MODELS handling below for the same reasoning.
+            for idx, bm in enumerate(bpmn_models, start=1):
+                var_name = _suffixed_name("bpmn_model", idx, n_bpmn)
+
+                tmp_path = os.path.join(temp_dir, f"bpmn_model_{idx}.py")
+                bpmn_model_to_code(
+                    model=bm,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
             # NN MODELS                                                  #
             # ---------------------------------------------------------- #
             nn_titles = _section_titles(nn_models, diagram_titles)
@@ -524,34 +592,6 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                 # a project held more than one NN.
                 nn_model_to_code(model=nm, file_path=tmp_path, model_var_name=var_name, title=title)
                 _write_temp_to_output(tmp_path, f)
-                model_vars.append(var_name)
-
-            # ---------------------------------------------------------- #
-            # BPMN MODELS                                                #
-            # ---------------------------------------------------------- #
-            for idx, bpmn in enumerate(bpmn_models, start=1):
-                # Variable prefix matches SECTION_CONFIG['bpmn_model'] in the importer
-                # so the round-trip pairs cleanly.
-                var_name = _suffixed_name("bpmn_model", idx, n_bpmn)
-
-                # For n_bpmn == 1, the builder emits its own `# BPMN MODEL #` banner —
-                # matching state_machine's pattern. For n_bpmn > 1 a labeled header
-                # disambiguates between sections (titles still get lost on round-trip
-                # because of the same banner-vs-labeled-header collision the state-
-                # machine path has — see project_builder.py NN block for the proper
-                # fix; not reproduced here to keep `04-` scope tight).
-                section = ""
-                if n_bpmn > 1:
-                    label = _comment_safe(bpmn.name) or f"BPMN {idx}"
-                    section = f"# BPMN MODEL {idx}: \"{label}\" #\n\n"
-
-                tmp_path = os.path.join(temp_dir, f"bpmn_model_{idx}.py")
-                bpmn_model_to_code(
-                    model=bpmn,
-                    file_path=tmp_path,
-                    model_var_name=var_name,
-                )
-                _write_temp_to_output(tmp_path, f, section_header=section)
                 model_vars.append(var_name)
 
             # ---------------------------------------------------------- #
@@ -613,6 +653,13 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
         f.write("######################\n\n")
         f.write("from besser.BUML.metamodel.project import Project\n")
         f.write("from besser.BUML.metamodel.structural.structural import Metadata\n\n")
+        id_lines = _editor_id_lines(project)
+        display_name = getattr(project, "_display_name", None)
+        if display_name:
+            id_lines.insert(0, f"# project-name {json.dumps(display_name)}")
+        if id_lines:
+            f.write("# Web editor ids, read back on import\n")
+            f.write("\n".join(id_lines) + "\n\n")
 
         # Write metadata and project
         f.write(f'metadata = Metadata(description="{_escape_python_string(project.metadata.description)}")\n')

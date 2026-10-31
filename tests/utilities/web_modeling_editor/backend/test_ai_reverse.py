@@ -396,9 +396,9 @@ def test_import_proposes_an_ai_model_when_the_code_has_no_readable_data_classes(
     assert "an AI model read its code" in body["message"]
     diagram = body["proposed_diagram"]
     assert diagram["diagramType"] == "ClassDiagram" and diagram["model"]["type"] == "ClassDiagram"
-    elements = diagram["model"]["elements"].values()
-    assert {e["name"] for e in elements if e.get("type") == "Class"} == {"Customer", "Order"}
-    assert {e["name"] for e in elements if e.get("type") == "Enumeration"} == {"OrderStatus"}
+    stereotypes = {n["data"]["name"]: n["data"].get("stereotype") for n in diagram["model"]["nodes"]}
+    assert {name for name, kind in stereotypes.items() if kind != "Enumeration"} == {"Customer", "Order"}
+    assert {name for name, kind in stereotypes.items() if kind == "Enumeration"} == {"OrderStatus"}
 
 
 def test_import_succeeds_without_a_proposal_when_the_ai_fails(monkeypatch, tmp_path):

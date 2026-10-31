@@ -139,8 +139,7 @@ def test_class_diagram_with_accept_decision(client):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     # Thing class should be present after attach_to_thing.
-    elements = body["model"]["elements"]
-    class_names = {e["name"] for e in elements.values() if e.get("type") == "Class"}
+    class_names = {n["data"]["name"] for n in body["model"]["nodes"] if n["type"] == "class"}
     assert "Thing" in class_names
 
 
@@ -174,7 +173,7 @@ def test_class_diagram_with_skip_decision(client):
     resp = client.post("/besser_api/kg/to-class-diagram", json=payload2)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    rel_types = {r.get("name") for r in body["model"]["relationships"].values()}
+    rel_types = {e["data"].get("name") for e in body["model"]["edges"]}
     assert "likes" not in rel_types  # property dropped
 
 

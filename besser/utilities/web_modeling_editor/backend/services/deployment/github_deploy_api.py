@@ -45,6 +45,8 @@ from besser.utilities.web_modeling_editor.backend.routers.generation_router impo
     sanitize_config,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+    agent_diagram_without_states,
+    agent_without_states_message,
     collect_agents_from_diagrams,
     extract_openai_api_key,
     normalize_personalization_mapping,
@@ -53,8 +55,12 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
     generate_user_profile_document,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
     GenerationError,
     ValidationError,
+)
+from besser.utilities.web_modeling_editor.backend.services.validators.legacy_format import (
+    ensure_project_not_legacy,
 )
 
 logger = logging.getLogger(__name__)
@@ -146,6 +152,10 @@ async def deploy_webapp_to_github(
                 detail="GitHub session expired. Please sign in again."
             )
 
+        # Refuse legacy v3 diagrams before touching GitHub: the converters read
+        # only the v4 shape, so a v3 project would deploy an empty app.
+        ensure_project_not_legacy(body.get("diagrams") if isinstance(body, dict) else None)
+
         # Create GitHub service
         github = create_github_service(access_token)
 
@@ -200,7 +210,12 @@ async def deploy_webapp_to_github(
                 )
 
             agent_model_payload = agent_diagram_data.get("model")
-            if isinstance(agent_model_payload, dict) and not agent_model_payload.get("elements"):
+            if agent_diagram_without_states(agent_model_payload):
+                raise HTTPException(
+                    status_code=400,
+                    detail=agent_without_states_message(agent_diagram_data.get("title")),
+                )
+            if isinstance(agent_model_payload, dict) and not agent_model_payload.get("nodes"):
                 raise HTTPException(
                     status_code=400,
                     detail="AgentDiagram must contain at least one element for standalone chatbot deployment",
@@ -565,8 +580,9 @@ async def deploy_webapp_to_github(
 
     except HTTPException:
         raise
-    except ValidationError as e:
-        # Service-layer validation failures map to HTTP 400 with the original message.
+    except (ValidationError, ConversionError) as e:
+        # Service-layer validation/conversion failures (including a legacy v3
+        # diagram) map to HTTP 400 with the original message.
         raise HTTPException(status_code=400, detail=str(e)) from e
     except GenerationError as e:
         # Service-layer generation/deployment failures map to HTTP 500 with the

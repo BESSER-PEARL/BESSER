@@ -329,19 +329,22 @@ def test_a1_end_to_end_bracket_n_to_replicas(tmp_path):
     json_data = {
         "title": "A1 swarm test",
         "model": {
-            "elements": {
-                "node-001": {
-                    "type": "DeploymentNode",
-                    "name": "Backend",
-                    "stereotype": "executionEnvironment",
+            "version": "4.0.0",
+            "type": "DeploymentDiagram",
+            "nodes": [
+                {
+                    "id": "node-001",
+                    "type": "deploymentNode",
+                    "data": {"name": "Backend", "stereotype": "executionEnvironment"},
                 },
-                "artifact-001": {
-                    "type": "DeploymentArtifact",
-                    "name": "Foo [3]",
-                    "owner": "node-001",
+                {
+                    "id": "artifact-001",
+                    "type": "deploymentArtifact",
+                    "parentId": "node-001",
+                    "data": {"name": "Foo [3]"},
                 },
-            },
-            "relationships": {},
+            ],
+            "edges": [],
         },
     }
 

@@ -179,9 +179,6 @@ def test_round_trip_of_the_synthetic_model(structure_xml):
     assert round_trip_differences(model) == []
 
 
-@pytest.mark.xfail(strict=True, reason="class_buml_to_json writes a class description as its description and as a "
-                                       "linked comment, and process_class_diagram appends the comment to it: a "
-                                       "converter bug outside this importer, to fix separately")
 def test_class_descriptions_survive_the_editor(structure_xml):
     model, _ = structure_to_buml(parse_structure(structure_xml, "DF_TEST"))
     before = {t.name: t.metadata.description for t in model.types if isinstance(t, Class)}

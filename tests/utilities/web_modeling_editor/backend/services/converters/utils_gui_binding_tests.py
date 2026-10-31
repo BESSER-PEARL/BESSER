@@ -6,27 +6,20 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 
 
 def class_diagram(class_name, attributes):
-    """Apollon class diagram with one class (id ``cls-<name>``) and its ``(name, type)``
-    attributes (ids ``attr-<class>-<name>``)."""
-    class_id = f"cls-{class_name}"
-    elements = {}
-    attribute_ids = []
-    for attr_name, attr_type in attributes:
-        attr_id = f"attr-{class_name}-{attr_name}"
-        attribute_ids.append(attr_id)
-        elements[attr_id] = {
-            "id": attr_id, "name": attr_name, "type": "ClassAttribute", "owner": class_id,
-            "bounds": {"x": 0, "y": 0, "width": 200, "height": 30}, "visibility": "public",
-            "attributeType": attr_type, "isOptional": False, "isDerived": False, "isId": False,
-        }
-    elements[class_id] = {
-        "id": class_id, "name": class_name, "type": "Class", "owner": None,
-        "bounds": {"x": 0, "y": 0, "width": 220, "height": 200},
-        "attributes": attribute_ids, "methods": [],
+    """v4 class diagram with one class (node id ``cls-<name>``) and its ``(name, type)``
+    attributes (row ids ``attr-<class>-<name>``)."""
+    rows = [
+        {"id": f"attr-{class_name}-{attr_name}", "name": attr_name, "visibility": "public",
+         "attributeType": attr_type, "isOptional": False, "isDerived": False, "isId": False}
+        for attr_name, attr_type in attributes
+    ]
+    node = {
+        "id": f"cls-{class_name}", "type": "class", "position": {"x": 0, "y": 0},
+        "width": 220, "height": 200, "measured": {"width": 220, "height": 200},
+        "data": {"name": class_name, "attributes": rows, "methods": []},
     }
-    return {"version": "3.0.0", "type": "ClassDiagram", "size": {"width": 2000, "height": 1000},
-            "interactive": {"elements": {}, "relationships": {}}, "elements": elements,
-            "relationships": {}, "assessments": {}}
+    return {"version": "4.0.0", "type": "ClassDiagram", "title": "Domain",
+            "nodes": [node], "edges": [], "assessments": {}}
 
 
 def import_gui(components, class_json):

@@ -47,7 +47,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any
-from besser.spec_driven_agent.execution.workspace_fs import open_plain, write_atomic_plain
+from besser.utilities.workspace_fs import open_plain, write_atomic_plain
 
 logger = logging.getLogger(__name__)
 

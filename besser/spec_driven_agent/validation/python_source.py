@@ -6,7 +6,7 @@ import re as _re
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.parsed_source import parse_source
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 
 # Kept only because ``orchestrator`` re-exports them for external callers.

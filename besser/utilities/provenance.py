@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Mapping, Optional
 from urllib.parse import quote
 
+from besser.utilities.workspace_fs import open_plain, open_plain_write
+
 PROVENANCE_FILENAME = "BESSER_GENERATION.md"
 BESSER_URL = "https://github.com/BESSER-PEARL/BESSER"
 EDITOR_URL = "https://editor.besser-pearl.org"
@@ -98,8 +100,6 @@ def write_generation_provenance(
     options: Optional[Mapping[str, object]] = None,
 ) -> str:
     """Write ``BESSER_GENERATION.md`` at the root of ``directory``; returns its path."""
-    from besser.spec_driven_agent.execution.workspace_fs import open_plain_write
-
     path = os.path.join(directory, PROVENANCE_FILENAME)
     # A run workspace can hold a link at this name; never write through it.
     with open_plain_write(path, "w", root=directory, encoding="utf-8", newline="\n") as handle:
@@ -174,8 +174,6 @@ def _root_readme(directory: str) -> Optional[str]:
 
 
 def _read_text(path: str, root: str) -> Optional[str]:
-    from besser.spec_driven_agent.execution.workspace_fs import open_plain
-
     try:
         with open_plain(path, "rb", root=root) as handle:
             return handle.read().decode("utf-8")
@@ -184,8 +182,6 @@ def _read_text(path: str, root: str) -> Optional[str]:
 
 
 def _write_text(path: str, root: str, text: str) -> None:
-    from besser.spec_driven_agent.execution.workspace_fs import open_plain_write
-
     with open_plain_write(path, "wb", root=root) as handle:
         handle.write(text.encode("utf-8"))
 

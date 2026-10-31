@@ -31,7 +31,7 @@ from besser.spec_driven_agent.validation.issues import (
     _RUFF_LINE_RE,
     _RUFF_STYLE_CODES,
 )
-from besser.spec_driven_agent.execution.workspace_fs import open_plain_write, walk_plain
+from besser.utilities.workspace_fs import open_plain_write, walk_plain
 from besser.spec_driven_agent.pipeline.constants import WORKSPACE_SKIP_DIRS
 
 logger = logging.getLogger(__name__)

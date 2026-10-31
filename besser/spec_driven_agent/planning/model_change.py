@@ -26,7 +26,7 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from besser.spec_driven_agent.execution.workspace_fs import read_plain_text
+from besser.utilities.workspace_fs import read_plain_text
 
 SMALL, LARGE, UNRELATED = "small", "large", "unrelated"
 # basis: what the base recipe recorded.

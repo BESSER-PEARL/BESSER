@@ -69,7 +69,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _build_toolchain_reminder,
     _toolchain_commands_for,
 )
-from besser.spec_driven_agent.execution.workspace_fs import copytree_plain, is_plain_entry, walk_plain
+from besser.utilities.workspace_fs import copytree_plain, is_plain_entry, walk_plain
 
 logger = logging.getLogger(__name__)
 

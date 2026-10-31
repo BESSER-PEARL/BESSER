@@ -57,7 +57,7 @@ from besser.spec_driven_agent.execution.sandbox import (
     run_confined,
 )
 from besser.spec_driven_agent.execution.shell_session import ShellSession
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 from besser.spec_driven_agent.repair.dependency_pins import pin_requirements_file
 from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,

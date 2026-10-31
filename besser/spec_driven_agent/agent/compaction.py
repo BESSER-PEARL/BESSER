@@ -17,7 +17,7 @@ import logging
 import os
 import urllib.request
 from typing import Any
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 logger = logging.getLogger(__name__)
 

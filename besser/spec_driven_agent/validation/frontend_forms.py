@@ -117,7 +117,7 @@ def _frontend_files(workspace: str) -> list[tuple[str, str]]:
                 text = _read(path)
                 if len(text) < 1_000_000:
                     rel = os.path.relpath(path, workspace).replace("\\", "/")
-                    out.append((rel, _strip_comments(text)))
+                    out.append((rel, _strip_comments(text, name)))
     return out
 
 

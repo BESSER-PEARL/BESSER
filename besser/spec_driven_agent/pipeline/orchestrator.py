@@ -101,8 +101,10 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     requests_frontend,
     _FRONTEND_ASK_RE,
 )
+from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_data_requirement
 from besser.spec_driven_agent.planning.target import (
     OTHER,
+    entity_requirements,
     TARGET_RULES,
     TARGET_TOOL_PROPERTIES,
     WEB_APP,
@@ -134,6 +136,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _collect_kotlinc_issues,
     _collect_ruff_issues,
     _collect_uncompiled_source_issues,
+    format_python_files,
     _collect_tsc_issues,
     _demote_tsc_without_deps,
     _is_real_undefined_name,
@@ -471,6 +474,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # What the run builds (planning/target.py), decided by the Phase 1
         # selector call; None keeps the pre-target behaviour.
         self.target: Target | None = None
+        # Notes from formatting the LLM's Python (format_python_files), for Phase 3.
+        self._format_notes: list[str] = []
         # The seed's target when this modify run builds another kind.
         self._previous_target: Target | None = None
         self._inventory: str = ""
@@ -750,6 +755,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             stop_detail=self._phase2_stop_detail,
         )
 
+        # Before Phase 3, so validation and the recipe describe the shipped layout.
+        self._format_python_output()
+
         # -- Snapshot BEFORE Phase 3 (preserves all Phase 2 work) ---------
         # If Phase 3 fixes make things worse, we roll back here
         # (keeping Phase 2 work intact), not back to Phase 1.
@@ -929,6 +937,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self.executor.set_scaffold_family(
                 self._scaffold_family(), self._instructions)
 
+        self._format_python_output()
         self._create_snapshot()
         self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_resume")
         if (checkpoint.phase == "phase3" or self._phase2_exited_cleanly
@@ -3226,6 +3235,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # never enables tooling. Already-authorized dependency setup is an
         # actionable verification prerequisite, not a request for source edits.
         raw_issues.extend(self._collect_tsc_issues())
+        raw_issues.extend(self._format_notes)
         raw_issues.extend(_collect_uncompiled_source_issues(
             self.output_dir,
             frozenset({".rs", ".kt"}) if self.enable_toolchain_validation else frozenset()))
@@ -3460,6 +3470,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # Cheat-proof: done is refused until frontend files exist.
                 "verify": self._has_frontend_files,
             })
+        if not self._modify_mode and agent_data_requirement(self.agent_model, self.domain_model):
+            # The requirements judge checks it in Phase 3 (agent_data); a modify
+            # run's app already has an agent, so only the judge applies there.
+            tasks.append(AGENT_DOMAIN_TASK.format(agent=self.agent_model.name))
         tasks.extend(action_gap_tasks(self.output_dir, self._expected_action_endpoints()))
         tasks.extend(self._unenforced_rule_tasks())
         tasks.extend(item["text"] for item in self._requirements_for_validation()
@@ -3485,7 +3499,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # Only the current source+requirements judgment can discharge it;
             # a stale verdict or a task_list claim cannot.
             verdicts = self._requirement_judgments.get(
-                self._requirement_cache_key(self._requirements_for_validation()), [],
+                self._requirement_cache_key(self._requirements_to_judge()), [],
             )
             verified_ids = {item["id"] for item in _requirements_ledger.verify_evidence(
                 verdicts, self.output_dir,
@@ -3710,6 +3724,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             next_id += 1
         return requirements
 
+    def _requirements_to_judge(self) -> list[dict]:
+        """What Phase 3 judges: the validation list, the agent's use of the
+        model's data, and the per-entity checks of a non-web app (reported,
+        never planned as obligations)."""
+        requirements = self._requirements_for_validation()
+        derived = [item for item in [agent_data_requirement(self.agent_model, self.domain_model)] if item]
+        if not self._generator_used:
+            # A BESSER generator built the base (a BAF chatbot, Python classes):
+            # per-entity screens are not what it delivers.
+            derived += entity_requirements(self.target, self.domain_model)
+        next_id = max((item["id"] for item in requirements), default=0) + 1
+        return requirements + [{"id": next_id + i, **item} for i, item in enumerate(derived)]
+
     def _collect_requirement_issues(self) -> list[str]:
         """``requirement:`` blockers for what the user asked for and the code
         does not do: the check of the app against the request itself, which
@@ -3735,7 +3762,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "treat this as an empty requirement list or verified completion."
                 ]
             return []  # Offline clients cannot run the optional LLM judge.
-        requirements = self._requirements_for_validation()
+        requirements = self._requirements_to_judge()
         if not requirements:
             return []
         digest = _requirements_ledger.build_app_digest(self.output_dir)
@@ -3793,6 +3820,26 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._requirement_verdicts = _requirements_ledger.scope_to_output(
             self._requirement_verdicts, self._ui_in_scope())
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
+
+    def _format_python_output(self) -> None:
+        """Format the Python files the LLM wrote whole (``write_file``) in this run.
+
+        A file it only edited keeps its author's layout, generator files keep
+        the templates' own, and a modify run leaves the existing app alone. A
+        formatter that could not run is reported by Phase 3.
+        """
+        if self._modify_mode:
+            return
+        generated = {os.path.normcase(os.path.join(self.output_dir, p)) for p in self.executor._generator_files}
+        written = sorted(
+            os.path.relpath(path, self.output_dir).replace("\\", "/")
+            for path in self._llm_edited_paths_by(frozenset({"write_file"}))
+            if path.endswith(".py") and path not in generated
+        )
+        app_files = [rel for rel in written if not rel.startswith(("..", _SNAPSHOT_DIR, ".besser_"))]
+        self._format_notes = format_python_files(self.output_dir, app_files)
+        for note in self._format_notes:
+            logger.warning("Phase 2: %s", note)
 
     def _ui_in_scope(self) -> bool:
         """A UI the user asked for but the tree lacks keeps UI requirements in scope."""
@@ -3882,7 +3929,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _llm_edited_paths(self) -> set[str]:
         """Delegate to the toolchain module."""
-        return _llm_edited_paths(self.output_dir, self.tool_calls_log, _WRITE_TOOLS_ON_RECORD)
+        return self._llm_edited_paths_by(_WRITE_TOOLS_ON_RECORD)
+
+    def _llm_edited_paths_by(self, tools: frozenset[str]) -> set[str]:
+        """Absolute, normalised paths the LLM wrote with these tools."""
+        return _llm_edited_paths(self.output_dir, self.tool_calls_log, tools)
 
     @staticmethod
     def _ruff_line_path(line: str) -> str:

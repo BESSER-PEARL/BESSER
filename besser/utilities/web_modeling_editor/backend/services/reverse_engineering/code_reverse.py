@@ -187,8 +187,9 @@ def analyze_repository(root: str) -> tuple[CodeAnalysis, Optional[DomainModel]]:
 def _python_files(root: str):
     count = 0
     for current, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in _SKIPPED_DIRS and not d.startswith(".")]
-        for name in files:
+        # Sorted: os.walk follows the filesystem's order, and the cap must keep the same files everywhere.
+        dirs[:] = sorted(d for d in dirs if d not in _SKIPPED_DIRS and not d.startswith("."))
+        for name in sorted(files):
             path = os.path.join(current, name)
             if name.endswith(".py") and os.path.getsize(path) <= _MAX_FILE_BYTES:
                 count += 1
@@ -206,8 +207,10 @@ def _detect_stack(root: str) -> list[str]:
             found.append(name)
 
     for current, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in _SKIPPED_DIRS and not d.startswith(".")]
-        depth = os.path.relpath(current, root).count(os.sep)
+        # Sorted: os.walk follows the filesystem's order, which only Windows sorts.
+        dirs[:] = sorted(d for d in dirs if d not in _SKIPPED_DIRS and not d.startswith("."))
+        files.sort()
+        depth =os.path.relpath(current, root).count(os.sep)
         if depth > 3:
             dirs[:] = []
         if "manage.py" in files:

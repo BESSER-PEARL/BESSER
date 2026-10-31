@@ -544,3 +544,25 @@ def test_sqlalchemy_typed_columns_without_mapped_column_are_read(tmp_path):
     assert _attrs(model, "Vehicle") == {"id": ("int", True, 1), "model": ("str", False, 1),
                                         "year": ("int", False, 1), "retired_on": ("date", False, 0)}
     assert _attrs(model, "ServiceRecord") == {"id": ("int", True, 1), "cost_eur": ("float", False, 1)}
+
+
+def test_the_stack_is_listed_in_the_same_order_on_every_filesystem(tmp_path, monkeypatch):
+    """CI on Linux listed ``web/`` before ``app/`` and read the stack as React, FastAPI:
+    os.walk returns folders in the filesystem's order, which only Windows sorts."""
+    from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import code_reverse
+
+    real_walk = os.walk
+
+    def unsorted_walk(top, *args, **kwargs):
+        for current, dirs, files in real_walk(top, *args, **kwargs):
+            dirs.reverse()
+            files.reverse()
+            yield current, dirs, files
+
+    monkeypatch.setattr(code_reverse.os, "walk", unsorted_walk)
+    root = _repo(tmp_path, {
+        "app/main.py": "from fastapi import FastAPI\napp = FastAPI()\n",
+        "web/package.json": '{"dependencies": {"react": "18.3.1"}}',
+    })
+
+    assert code_reverse._detect_stack(root) == ["FastAPI", "React"]

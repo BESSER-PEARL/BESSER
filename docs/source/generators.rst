@@ -144,6 +144,11 @@ Choosing a Generator
      - ZIP (docker-compose.yml)
      - You need Docker Compose output for a Deployment diagram, or a project ZIP
        with baked BAF agents for a multi-agent system runtime
+   * - **Alloy**
+     - Structural + OCL
+     - .als files (ZIP in the editor)
+     - You need an `Alloy <https://alloytools.org/>`_ specification of a class diagram
+       and its OCL constraints, to analyze it in the Alloy Analyzer
 
 None of the above a fit? If you need a customised codebase — extra features
 (auth, JWT, Docker, tests) or a stack with no built-in generator (Rails, Rust,
@@ -180,6 +185,7 @@ Generate code for various frameworks and programming languages:
    generators/java
    generators/flutter
    generators/react
+   generators/alloy
 
 Data & API
 ----------

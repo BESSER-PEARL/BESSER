@@ -314,6 +314,25 @@ class TestGenerateOutput:
         # Should be valid JSON
         json.loads(response.text)
 
+    def test_generate_alloy_from_class_diagram(self, client, class_diagram_input):
+        """Generate the Alloy specification of a class diagram, with the modules it opens."""
+        payload = {**class_diagram_input, "generator": "alloy"}
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 200
+        assert "alloy_specification.zip" in response.headers.get("content-disposition", "")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+        assert "model.als" in names
+        assert "strings.als" in names
+
+    def test_generate_alloy_rejects_an_untranslatable_class_diagram(self, client, class_diagram_input):
+        """An attribute type without an Alloy translation is a client error."""
+        payload = copy.deepcopy({**class_diagram_input, "generator": "alloy"})
+        payload["model"]["elements"]["attr-1"]["name"] = "+ name: time"
+        response = client.post("/besser_api/generate-output", json=payload)
+        assert response.status_code == 400
+        assert "Attributes of type 'time' are not supported" in response.json()["detail"]
+
     def test_generate_with_unsupported_generator(self, client, class_diagram_input):
         """Request with an unsupported generator returns 400."""
         payload = {**class_diagram_input, "generator": "nonexistent_generator"}

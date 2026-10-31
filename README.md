@@ -94,4 +94,4 @@ BESSER is built on [B-UML](https://besser.readthedocs.io/en/latest/buml_language
 - **Cite:** use the "Cite this repository" button (CITATION.cff).
 - **Code of Conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) · **Governance:** [GOVERNANCE.md](GOVERNANCE.md)
 - **Contact:** [info@besser-pearl.org](mailto:info@besser-pearl.org) · [besser-pearl.org](https://besser-pearl.org) · [LinkedIn](https://www.linkedin.com/company/besser-pearl)
-- **License:** [MIT](LICENSE.md)
+- **License:** [MIT](LICENSE.md). Some optional features rely on third-party software; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

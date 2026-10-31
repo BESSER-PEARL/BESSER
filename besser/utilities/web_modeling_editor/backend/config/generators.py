@@ -29,6 +29,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEPLOYMENT_DIAGRAM_TYPE,
 )
 from besser.generators.docker_compose import DockerComposeGenerator
+from besser.generators.alloy import AlloyGenerator
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -277,6 +278,17 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="deployment",
         requires_class_diagram=False,
         required_diagram_type=DEPLOYMENT_DIAGRAM_TYPE,
+    ),
+
+    # Formal methods (class diagram based). A ZIP holding the Alloy
+    # specification model.als plus the library modules it opens.
+    "alloy": GeneratorInfo(
+        generator_class=AlloyGenerator,
+        download_filename="alloy_specification.zip",
+        output_type="zip",
+        file_extension=".zip",
+        category="formal_methods",
+        requires_class_diagram=True,
     ),
 }
 

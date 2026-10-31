@@ -7,6 +7,7 @@ Handles all diagram validation endpoints for the BESSER web modeling editor back
 import logging
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -43,6 +44,10 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 # Backend services - Validators
 from besser.utilities.web_modeling_editor.backend.services.validators import (
     check_ocl_constraint,
+)
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy.semantic_consistency import (
+    check_semantic_consistency,
+    generate_object_diagram,
 )
 
 # Centralized error handling
@@ -286,3 +291,37 @@ async def check_ocl(input_data: DiagramInput):
     """
     logger.warning("/check-ocl is deprecated. Use /validate-diagram instead.")
     return await validate_diagram(input_data)
+
+
+# Headers of the Server-Sent Events streams: no caching, and no buffering by proxies such as nginx
+_SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
+
+
+@router.post("/semantic-consistency-check")
+@handle_endpoint_errors("semantic_consistency_check")
+async def semantic_consistency_check(input_data: DiagramInput) -> StreamingResponse:
+    """Searches for an instance of a class diagram and its OCL invariants with the Alloy Analyzer.
+
+    The search tries increasingly larger scopes (objects per class) and streams its progress as
+    Server-Sent Events. A search that finds nothing says in its ``message`` what it searched and
+    why it stopped: "No instance within N objects per class, integers in [a, b], ...", "Timed out
+    searching within ..." or "Too large to search within ...". While the Alloy Analyzer runs, SSE
+    comment lines are sent as heartbeats. Answers 503, without a stream, while
+    ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` checks are running.
+    """
+    return StreamingResponse(
+        check_semantic_consistency(input_data), media_type="text/event-stream", headers=_SSE_HEADERS
+    )
+
+
+@router.post("/generate-object-diagram")
+@handle_endpoint_errors("generate_object_diagram")
+async def generate_object_diagram_endpoint(input_data: DiagramInput) -> StreamingResponse:
+    """Generates an object diagram of a class diagram that satisfies its OCL invariants.
+
+    Searches as ``/semantic-consistency-check`` does; the event of the instance found carries it
+    as an object diagram, in ``object_model``.
+    """
+    return StreamingResponse(
+        generate_object_diagram(input_data), media_type="text/event-stream", headers=_SSE_HEADERS
+    )

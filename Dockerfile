@@ -1,4 +1,4 @@
-# Two targets:
+# Two targets, both with the Alloy Analyzer and its JRE:
 #   backend          the web editor backend: Python, its requirements and besser.
 #   smartgen-worker  the Spec-Driven Agent worker: backend plus the toolchains
 #                    Phase 3 compiles with and bubblewrap for run_command.
@@ -29,6 +29,22 @@ ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
 
 WORKDIR /app
 
+# The Alloy Analyzer, which the semantic consistency check and the object
+# diagram generation run (services/validators/alloy), and the JRE it needs.
+# Shared by both targets, so the local stack (built from the worker) runs it too,
+# and before any COPY, so that no code change downloads them again.
+# Its MIT license must ship with the redistributed jar (THIRD_PARTY_LICENSES.md).
+# default-java is Debian's link to the default JRE, whatever the architecture.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends default-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
+ADD --checksum=sha256:6b8c1cb5bc93bedfc7c61435c4e1ab6e688a242dc702a394628d9a9801edb78d \
+    https://github.com/AlloyTools/org.alloytools.alloy/releases/download/v6.2.0/org.alloytools.alloy.dist.jar /alloy/alloy.jar
+ADD --checksum=sha256:5e84c60adb66216c83e8f2ffbbcabcef06b55d24cadaf9f93d2d29118c8c6ab6 \
+    https://raw.githubusercontent.com/AlloyTools/org.alloytools.alloy/v6.2.0/LICENSE /alloy/LICENSE
+ENV JAVA_HOME=/usr/lib/jvm/default-java \
+    BESSER_ALLOY_JAR=/alloy/alloy.jar
+
 # Shared by both targets, so the worker reuses these layers. ruff is one of
 # the backend requirements (Phase 3's undefined-name checks run it).
 # governancedsl is left out here: it depends on besser, which is not installed
@@ -50,11 +66,16 @@ RUN pip install --no-cache-dir -e . && pip install --no-cache-dir -r governance-
 # A build-time CA must not become runtime trust. Unconditional; the last lines
 # fail the build if a known TLS-inspection CA is still trusted. They read the
 # decoded subjects: the PEM bundle is base64, so grepping it never matches.
-RUN rm -f /usr/local/share/ca-certificates/*.crt \
+# The JRE keystore was built while the proxy CA was trusted, and --fresh never
+# removes a cert from it: delete it so the jks-keystore hook rebuilds it from
+# the clean store, then check it the same way.
+RUN rm -f /usr/local/share/ca-certificates/*.crt /etc/ssl/certs/java/cacerts \
     && update-ca-certificates --fresh >/dev/null 2>&1 \
     && subjects="$(openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca-certificates.crt \
         | openssl pkcs7 -print_certs -noout)" && [ -n "$subjects" ] \
-    && ! printf '%s\n' "$subjects" | grep -qiE 'netskope|goskope'
+    && ! printf '%s\n' "$subjects" | grep -qiE 'netskope|goskope' \
+    && jks="$(keytool -list -v -cacerts -storepass changeit)" && [ -n "$jks" ] \
+    && ! printf '%s\n' "$jks" | grep -qiE 'netskope|goskope'
 
 ENV PYTHONPATH=/app
 

@@ -23,41 +23,55 @@ The three phases
    only when its output *is* that target, so an ``other`` target is written
    from scratch in the stack the user named, or the standard one for that
    target. An app that uses an API is that app, not a backend, and an
-   architecture pattern such as MVC describes
-   the app's structure, not its platform. Every web-specific rule below
-   applies to a ``web_app`` target only.
-   When the selection call answers NONE for a web app or a backend, the
-   keyword fallback still picks a generator ("a web app with a REST API" gets
-   the FastAPI scaffold); for an ``other`` target, NONE stands. When no
-   selection call runs (an approved generator, a named language BESSER has no
-   generator for, a run with no class diagram), one small call decides the
-   target alone. An approved ``generate_web_app`` settles it as a web app and
-   costs no call.
+   architecture pattern such as MVC describes the app's structure, not its
+   platform. Every web-specific rule below applies to a ``web_app`` target only.
+   The call also names a stack the user asked for that no BESSER generator
+   builds (``unsupported_stack``); words of the domain ("express delivery",
+   "Swift Logistics") are left to the model, not to a word list. Such a stack
+   is written from scratch ("a REST API in Go"), even when the answer also
+   names a generator. A NONE for a web app or a backend with no unsupported
+   stack contradicts the rules, so it gets the generator the loaded models
+   call for (the FastAPI scaffold for a class diagram); for an ``other``
+   target, NONE stands. A gateway that ignores the forced tool call, or a
+   client without one, is asked for the same answer as a JSON object in plain
+   text. When no selection call runs (an approved generator, a run with no
+   class diagram), or the selection call fails, one small call decides the
+   target alone (a failed selection is logged as a warning). An approved
+   ``generate_web_app`` settles it as a web app and costs no call. Only when no
+   answer comes back at all (the provider is failing) do keywords pick the
+   generator (``planning/generator_keywords.py``). The ``/preview`` endpoint
+   makes no LLM call and needs no key, so its generator is a keyword estimate:
+   the same keywords, plus a short list of stacks no generator builds.
 
    The target is recorded in the trace, the checkpoint and
    ``.besser_recipe.json``, so a resume or a later modify run of the same app
-   keeps it. A modify run decides it again only when the request may name
-   another kind of software: "add a React frontend" on a backend, "make it a
-   desktop app" on a web app, or a ``Target:`` line that differs from the
-   recorded target. Any other request keeps the recorded target with no LLM
-   call, as does a failed decision.
+   keeps it. Every modify run makes the same call once, on the primary model
+   rather than the cheap planning one (its answer can rebuild the whole app),
+   with the recorded target and the model's class names, and it answers three
+   more questions:
+   whether the request changes the target (``changes_target``: "turn it into a
+   Flutter app", "I only need the REST API now"; new features and a reworded
+   description of the same target do not), whether the newest message reports
+   a failure of the existing app (``is_failure_report``), and which entity it
+   is about (``reported_entity``). A changed target is built next to the
+   existing project; a failure report makes the run a fix run, gated on that
+   failure. A call with no usable answer, even as JSON text, keeps the
+   recorded target and makes no fix run, with a warning. This call is one
+   primary-model call more per modify run.
 
-   The request is free text; the one structured part of it is a ``Target:``
-   line. When the user asks for something that is not a web app, the BESSER
-   modeling agent adds this line, on a line of its own, to the instructions it
-   sends (under "Assistant's notes" when the original request is attached):
+   The request is free text. When the user asks for something that is not a
+   web app, the BESSER modeling agent adds a ``Target:`` line of its own to the
+   instructions it sends (under "Assistant's notes" when the original request
+   is attached):
 
    .. code-block:: text
 
       Target: Windows 11 desktop app (not a web app).
 
-   The selection call reads it as part of the request, and a modify run
-   compares its description with the recorded target
-   (``planning/target.py``, ``TARGET_LINE_RE``). The line is optional: the
-   modeling agent omits it for a web app or a backend and when the
+   The selection call reads it as part of the request. The line is optional:
+   the modeling agent omits it for a web app or a backend and when the
    instructions already name the target, and an oversized specification falls
-   back to the original request without it. Without the line, the target is
-   decided from the wording of the request, as for any other caller.
+   back to the original request without it.
 
    Two smaller steps bracket it. When no deterministic generator fits the
    target stack (Next.js, Rust, Kotlin/Spring), a *stack-metadata* step writes
@@ -73,7 +87,12 @@ The three phases
    ``task_list`` checklist — making surgical, scoped changes on top of the
    scaffold. Before the loop starts, a cheap *planning* call analyses the gap
    between the scaffold and the request and produces the task list; when it
-   judges the scaffold already sufficient, Phase 2 is skipped entirely.
+   judges the scaffold already sufficient, Phase 2 is skipped entirely (a
+   create run only; a modify run always runs it). The planner labels each task
+   as a change, or as removing the scaffold or switching its framework; the
+   latter two are dropped, since the scaffold's stack is fixed. Only the
+   planner's own empty list skips Phase 2: a list emptied by dropped tasks
+   runs Phase 2 from the request.
 
    A ``web_app`` target (an app, web app, UI, website, dashboard or portal
    with no other platform named) gets a frontend even without a GUI model:

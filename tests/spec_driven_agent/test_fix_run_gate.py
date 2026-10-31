@@ -24,6 +24,7 @@ from besser.BUML.metamodel.structural import (
     Property,
 )
 from besser.spec_driven_agent.planning.fix_target import parse_reported_target
+from besser.spec_driven_agent.planning.target import Routing
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 
 
@@ -89,6 +90,14 @@ _FIX_INSTR = (
     "The stock app crashes: POST /createWatchlist returns a 400 error. "
     "Please fix it."
 )
+
+
+def _routed_as_failure_report(orch, monkeypatch):
+    """The modify routing call's answer for ``_FIX_INSTR``: a failure report."""
+    def route():
+        orch._modify_routing = Routing(target=None, generator="NONE", is_failure_report=True,
+                                       reported_entity="Watchlist")
+    monkeypatch.setattr(orch, "_route_modify_request", route)
 
 
 # ----------------------------------------------------------------------
@@ -231,6 +240,7 @@ def test_modify_feeds_fix_scoped_issues_into_phase2(tmp_path, monkeypatch):
     monkeypatch.setattr(orch, "_remove_snapshot", lambda: None)
     monkeypatch.setattr(orch, "_run_phase3_validation", lambda: None)
     monkeypatch.setattr(orch, "_save_recipe", lambda instr, elapsed: None)
+    _routed_as_failure_report(orch, monkeypatch)
 
     orch.modify(_FIX_INSTR)
 
@@ -250,6 +260,7 @@ def test_modify_gate_reports_unresolved_and_writes_recipe(tmp_path, monkeypatch)
         + "acceptance: entity Watchlist — no frontend POST for it",
     )
     _stub_modify_phases(orch, monkeypatch, [persisting])
+    _routed_as_failure_report(orch, monkeypatch)
 
     orch.modify(_FIX_INSTR)
 

@@ -16,7 +16,7 @@ import pytest
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_change import model_summary
-from besser.spec_driven_agent.planning.target import WEB_APP, Target
+from besser.spec_driven_agent.planning.target import WEB_APP, Routing, Target
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.state.checkpoint import load_checkpoint
 
@@ -59,7 +59,11 @@ def _crash_a_modify_run(tmp_path, monkeypatch) -> None:
         "model": {"user_model": model_summary(_model("title"))},
     }), encoding="utf-8")
     crashed = _orchestrator(tmp_path)
-    monkeypatch.setattr(crashed, "_modify_target", lambda seed: Target(WEB_APP, "web app", True))
+    # The routing call answers: a switch to a web app, and a failure report on Book.
+    monkeypatch.setattr(crashed, "_can_route", lambda: True)
+    monkeypatch.setattr(crashed, "_select_generator_structured", lambda prompt, files, modify=False: Routing(
+        target=Target(WEB_APP, "web app", True), generator="NONE",
+        changes_target=True, is_failure_report=True, reported_entity="Book"))
     monkeypatch.setattr(crashed, "_validate_phase1_output", lambda: [])
 
     def crash_in_phase2(instructions, extra_issues=None):

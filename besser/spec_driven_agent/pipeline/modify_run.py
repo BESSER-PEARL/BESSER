@@ -18,7 +18,7 @@ import logging
 import os
 import time
 
-from besser.spec_driven_agent.agent.prompt_builder import build_inventory, requests_frontend
+from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
 from besser.spec_driven_agent.planning.model_change import (
@@ -30,14 +30,14 @@ from besser.spec_driven_agent.planning.model_rules import (
     is_dropped_by_model_change,
     mark_rules_broken_by_model_change,
 )
+from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import (
-    BACKEND,
-    WEB_APP,
+    MODIFY_RULES,
+    STACK_RULES,
+    TARGET_RULES,
     Target,
-    may_name_other_target,
-    named_target,
 )
 from besser.spec_driven_agent.providers.llm_client import MODIFY_MAX_TOKENS
 from besser.spec_driven_agent.state.tracing import (
@@ -109,6 +109,8 @@ class ModifyRunMixin:
         # the copied recipe BEFORE building the inventory (which needs a
         # generator name for its framing line).
         self._seed_generator_files_from_recipe()
+        # One routing call: does the request change the target, does it report a failure.
+        self._route_modify_request()
         # Frame the run as editing an existing project. When the seed came
         # from a deterministic generator we adopt that name (accurate — the
         # base + prior LLM edits descend from it) so gap analysis, the
@@ -364,14 +366,7 @@ class ModifyRunMixin:
         if not isinstance(recipe, dict):
             return
         self._seed_generator_used = recipe.get("generator_used")
-        seed_target = Target.from_payload(recipe.get("target"))
-        self.target = self._modify_target(seed_target)
-        # A switch: another kind, or the Target line naming another product.
-        # A reworded description of the same kind is not one.
-        if self.target is not seed_target and (
-                self.target.kind != seed_target.kind
-                or named_target(self._instructions) is not None):
-            self._previous_target = seed_target
+        self._seed_target = self.target = Target.from_payload(recipe.get("target"))
         converted = (recipe.get("model") or {}).get("converted_rules")
         if isinstance(converted, list):
             self._seed_converted_rules = set(converted)
@@ -401,29 +396,48 @@ class ModifyRunMixin:
         except Exception:
             logger.debug("Seed recipe output_files malformed", exc_info=True)
 
-    def _modify_target(self, seed: Target | None) -> Target | None:
-        """The seed's target, unless this request names another kind of target.
+    def _route_modify_request(self) -> None:
+        """Decide what this modify run changes with one forced ``choose_generator`` call.
 
-        "Add a settings screen" keeps it with no LLM call. "Add a React
-        frontend" on a backend, or "make it a desktop app" on a web app, asks
-        the selector again; a failed decision keeps the seed's target.
+        The answer says whether the request turns the app into another kind of
+        software (a new target, built next to the existing project) and whether
+        the newest message reports a failure (``_detect_fix_target``). A failed
+        call keeps the seed's target and leaves the run ungated, with a warning.
         """
-        if seed is None or not self._may_change_target(seed):
-            return seed
-        self._decide_target(self._instructions, current=seed)
-        return self.target or seed
+        seed = self._seed_target
+        routing = None
+        if self._can_route():
+            routing = self._select_generator_structured(self._modify_routing_prompt(seed), [], modify=True)
+        if routing is None or routing.target is None:
+            logger.warning(
+                "Modify run: the routing call failed; keeping the existing target (%s) "
+                "and treating the request as a change, not a failure report",
+                seed.description if seed else "none recorded")
+            return
+        self._modify_routing = routing
+        if seed is None:
+            self._record_target(routing.target)
+        elif routing.changes_target:
+            self._previous_target = seed
+            self._record_target(routing.target)
 
-    def _may_change_target(self, seed: Target) -> bool:
+    def _modify_routing_prompt(self, seed: Target | None) -> str:
         instructions = self._instructions
-        named = named_target(instructions)
-        if named is not None:
-            return named.lower() != seed.description.lower()
-        asks_web = requests_frontend(instructions, bare_app=False)
-        if seed.kind == WEB_APP:
-            return may_name_other_target(instructions)
-        if seed.kind == BACKEND:
-            return asks_web or may_name_other_target(instructions)
-        return asks_web
+        existing = (
+            f"The existing app was built as: {seed.description or seed.kind} ({seed.kind}).\n"
+            if seed is not None else "The existing app's target was not recorded.\n"
+        )
+        try:
+            classes = sorted(c.name for c in self.domain_model.get_classes()) if self.domain_model else []
+        except Exception:
+            classes = []
+        return (
+            f"User request: {user_request(instructions)}\n\n"
+            f"Newest user message: {latest_user_message(instructions)}\n\n"
+            f"{TARGET_RULES}\n{STACK_RULES}\n{MODIFY_RULES}\n\n"
+            f"{existing}Model classes: {', '.join(classes) or 'none'}\n"
+            "The generator is already settled: answer generator=NONE."
+        )
 
     def _mark_rules_broken_by_model_change(self) -> None:
         """Mark rejected model rules whose element this model change removed or renamed.
@@ -442,22 +456,19 @@ class ModifyRunMixin:
         )
 
     def _detect_fix_target(self, instructions: str) -> None:
-        """MODIFY-only: parse the user-reported failure into a target.
+        """MODIFY-only: turn a reported failure into the run's success target.
 
-        Sets ``self._fix_target`` and ``self._is_fix_run``. Best-effort — a
-        parse failure, or a newest user message with no evidence of a failure
-        (``fix_target._EVIDENCE_RULES``), leaves the run ungated, so a plain
-        feature-add modify is not gated on a target. NEVER invoked from run()/resume(); from-scratch generation
-        is untouched.
+        Sets ``self._fix_target`` and ``self._is_fix_run`` from the routing
+        call's ``is_failure_report`` / ``reported_entity``. A feature request,
+        or a failed routing call, leaves the run ungated. NEVER invoked from
+        run()/resume(); from-scratch generation is untouched.
         """
-        try:
-            from besser.spec_driven_agent.planning.fix_target import parse_reported_target
-            self._fix_target = parse_reported_target(
-                instructions, self.domain_model,
-            )
-        except Exception:
-            logger.debug("Fix-target parse failed", exc_info=True)
-            self._fix_target = None
+        from besser.spec_driven_agent.planning.fix_target import parse_reported_target
+        routing = self._modify_routing
+        self._fix_target = (
+            parse_reported_target(instructions, self.domain_model, routing.reported_entity)
+            if routing is not None and routing.is_failure_report else None
+        )
         self._is_fix_run = self._fix_target is not None
         if self._is_fix_run:
             logger.info(

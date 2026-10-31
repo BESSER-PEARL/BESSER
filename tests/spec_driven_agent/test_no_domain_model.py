@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.planning.generator_keywords import keyword_generator
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.agent.tools import (
     GENERATOR_TOOLS,
@@ -85,7 +86,7 @@ def test_orchestrator_routes_bpmn_and_nn_models(
     )
 
     assert orch.primary_kind == primary_kind
-    assert orch._select_generator_keyword(instructions) == generator
+    assert keyword_generator(orch, instructions) == generator
 
 
 def test_orchestrator_rejects_empty_project():

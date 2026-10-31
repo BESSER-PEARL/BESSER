@@ -1,5 +1,10 @@
 """Security-boundary tests for generated artifacts and SSE-safe text."""
 
+import os
+import threading
+
+import pytest
+
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
     REDACTED_SECRET,
     looks_like_secret_env,
@@ -39,6 +44,21 @@ def test_scrubber_does_not_follow_symlinks(tmp_path):
     result = scrub_secret_files(str(workspace))
     assert result.findings == 0
     assert outside.read_text(encoding="utf-8") == token
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs POSIX FIFOs")
+def test_scrubber_skips_a_fifo_instead_of_blocking_on_it(tmp_path):
+    """A run's ``mkfifo`` left in the workspace hung packaging forever:
+    ``open()`` on a FIFO blocks until a writer appears."""
+    (tmp_path / "app.py").write_text("KEY = 'ghp_0123456789abcdefghijklmnopqrstuvwxyz'\n", encoding="utf-8")
+    os.mkfifo(tmp_path / "pipe")
+    results = []
+    worker = threading.Thread(target=lambda: results.append(scrub_secret_files(str(tmp_path))), daemon=True)
+    worker.start()
+    worker.join(5)
+
+    assert results, "scrub_secret_files blocked on the FIFO"
+    assert results[0].redacted_files == ("app.py",)
 
 # ----------------------------------------------------------------------
 # Redaction must never corrupt source code

@@ -244,6 +244,24 @@ reading a trace and wondering why a run did what it did.
        run's own API key is also matched literally, so it is redacted from
        every frame and from the packaged workspace whatever its format. The
        count of findings is recorded in the run's recipe.
+
+       In source files only the secret itself is replaced, inside its quotes,
+       so the file still parses. Provider tokens are recognised by the
+       prefix-anchored rules of `gitleaks <https://github.com/gitleaks/gitleaks>`_
+       (MIT), vendored as ``services/spec_driven/data/gitleaks_rules.toml``
+       (``ghp_``/``github_pat_``, ``AKIA``/``ASIA``, ``sk_live_``, ``AIza``,
+       Slack webhooks, ``glpat-``, ``hf_``, ``npm_``, ``SG.``, PEM private
+       keys, JWTs and more). Rules that match on a variable name or on
+       entropy alone are left out: a false hit would rewrite working code.
+       A private key is redacted even when it is cut before its ``END``
+       line. A database URL's password is redacted unless the host is local
+       (a single label such as ``db`` or ``localhost``, ``*.localhost``,
+       ``*.local``, ``host.docker.internal``, or a loopback or private
+       address), since the generated ``docker-compose.yml`` sets the same
+       password on the database. Code that builds the URL
+       (``{settings.db_password}``, ``%s``, ``$DB_PASSWORD``) is left alone.
+       Symbolic links, FIFOs and other special files in the workspace are
+       skipped, never opened.
    * - Artifact exclusion
      - The download ZIP leaves out the same runtime and build artifacts as the
        GitHub push: ``*.log``, ``*.db``, ``*.sqlite`` / ``*.sqlite3``,

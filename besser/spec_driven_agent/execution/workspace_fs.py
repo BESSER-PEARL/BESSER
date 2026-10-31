@@ -6,8 +6,7 @@ snapshot copy or a prompt section puts the worker's keys in front of the
 model, and a write to a planted ``.besser_trace.jsonl -> <outside file>``
 lands outside the run. Only regular files and real directories are visited,
 read or copied; symlinks, devices, sockets and FIFOs are skipped, and a write
-replaces a link rather than following it. Same semantics as the backend's
-``services/spec_driven/workspace_tree.py``.
+replaces a link rather than following it.
 """
 
 import os

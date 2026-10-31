@@ -245,7 +245,8 @@ Storage and lifecycle
 - ``BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS`` (``2.0``) -- Cadence of the
   ``cost`` SSE tick.
 - ``BESSER_INCIDENT_LOG_DIR`` (``/app/incidents``) -- Where provider-incident
-  records (a failed endpoint, a fallback-chain switch) are written. When it is
+  records (a failed endpoint, a fallback-chain switch) are written, with
+  credentials redacted from their message, traceback and instructions. When it is
   set explicitly, every run's trace is also copied to its ``traces/``
   folder; when it is unset, only the traces of research-study runs are kept,
   in ``BESSER_TELEMETRY_DIR``. Study mode is described alongside the

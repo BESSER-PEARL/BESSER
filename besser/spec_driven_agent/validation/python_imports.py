@@ -120,23 +120,29 @@ def _requirement_name(line: str) -> str | None:
         return match.group(0) if match else None
 
 
+def _table(data, key: str) -> dict:
+    value = data.get(key) if isinstance(data, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
 def _toml_dependency_names(data: dict) -> list[str]:
-    """Distribution names a parsed pyproject.toml or Pipfile declares."""
-    names: list[str] = []
-    project = data.get("project") or {}
-    requirement_lists = [project.get("dependencies") or []]
-    requirement_lists += list((project.get("optional-dependencies") or {}).values())
-    requirement_lists += list((data.get("dependency-groups") or {}).values())
+    """Distribution names a parsed pyproject.toml or Pipfile declares in the
+    tables this reader knows; tool tables it does not know are left to the
+    loose scan."""
+    project = _table(data, "project")
+    requirement_lists = [project.get("dependencies")]
+    requirement_lists += list(_table(project, "optional-dependencies").values())
+    requirement_lists += list(_table(data, "dependency-groups").values())
+    names = [project["name"]] if isinstance(project.get("name"), str) else []
     for requirements in requirement_lists:
-        names += [n for r in requirements if isinstance(r, str) and (n := _requirement_name(r))]
-    poetry = (data.get("tool") or {}).get("poetry") or {}
-    tables = [poetry.get("dependencies"), poetry.get("dev-dependencies"),
-              data.get("packages"), data.get("dev-packages")]
-    tables += [group.get("dependencies") for group in (poetry.get("group") or {}).values()
-               if isinstance(group, dict)]
+        if isinstance(requirements, list):
+            names += [n for r in requirements if isinstance(r, str) and (n := _requirement_name(r))]
+    poetry = _table(_table(data, "tool"), "poetry")
+    tables = [_table(poetry, "dependencies"), _table(poetry, "dev-dependencies"),
+              _table(data, "packages"), _table(data, "dev-packages")]
+    tables += [_table(group, "dependencies") for group in _table(poetry, "group").values()]
     for table in tables:
-        if isinstance(table, dict):
-            names += [name for name in table if name.lower() != "python"]
+        names += [name for name in table if name.lower() != "python"]
     return names
 
 
@@ -144,14 +150,16 @@ def _manifest_dependency_names(name: str, text: str) -> list[str]:
     """Distribution names one manifest declares; ``name`` is its lowercased file name."""
     if name.startswith("requirements") and name.endswith(".txt"):
         return [n for line in text.splitlines() if (n := _requirement_name(line))]
+    # Deliberately loose: a false extra allowlist entry costs nothing; a
+    # missed one costs a spurious blocker. The TOML tables add what it cannot
+    # see, such as Poetry's unquoted keys.
+    names = _LOOSE_REQUIREMENT_RE.findall(text)
     if name in ("pyproject.toml", "pipfile"):
         try:
-            return _toml_dependency_names(tomllib.loads(text))
+            names += _toml_dependency_names(tomllib.loads(text))
         except tomllib.TOMLDecodeError:
             pass
-    # Deliberately loose: a false extra allowlist entry costs nothing; a
-    # missed one costs a spurious blocker.
-    return _LOOSE_REQUIREMENT_RE.findall(text)
+    return names
 
 
 def _declared_dependency_roots(output_dir: str) -> set[str]:

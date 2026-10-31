@@ -216,3 +216,19 @@ def test_every_manifest_format_declares_its_packages(tmp_path, manifest, body, e
 def test_unparseable_pyproject_falls_back_to_a_loose_scan(tmp_path):
     (tmp_path / "pyproject.toml").write_text('dependencies = ["fastapi>=0.1"\n', encoding="utf-8")
     assert "fastapi" in _declared_dependency_roots(str(tmp_path))
+
+
+# Review of #705: the TOML reader alone dropped what the loose scan read, and
+# crashed on a ``project`` that is not a table.
+@pytest.mark.parametrize("pyproject,rel,source", [
+    ('[project]\nname = "svc"\n[tool.uv]\ndev-dependencies = ["respx"]\n', "tests/test_api.py", "import respx\n"),
+    ('[project]\nname = "svc"\n[tool.pdm.dev-dependencies]\ntest = ["respx"]\n', "tests/test_api.py", "import respx\n"),
+    ('[project]\nname = "svc"\n[tool.hatch.envs.default]\ndependencies = ["respx"]\n',
+     "tests/test_api.py", "import respx\n"),
+    ('[project]\nname = "inventory-api"\ndependencies = []\n', "tests/test_main.py", "import inventory_api\n"),
+    ('project = "svc"\n', "app/main.py", "x = 1\n"),
+])
+def test_other_pyproject_layouts_stay_clean(tmp_path, pyproject, rel, source):
+    _write(tmp_path, "pyproject.toml", pyproject)
+    _write(tmp_path, rel, source)
+    assert _unresolvable_local_imports(str(tmp_path)) == []

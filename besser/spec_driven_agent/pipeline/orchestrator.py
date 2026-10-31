@@ -205,6 +205,8 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _READONLY_TOOLS,
     _RECIPE_EXCLUDED_DIRS,
     _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY,
+    _REVISION_HASH_CAP,
+    _REVISION_IGNORED_DIRS,
     _REVISION_IGNORED_SUFFIXES,
     _ROLLBACK_DISCARD_DIR,
     _ROLLBACK_PRESERVED,
@@ -3828,30 +3830,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
 
     def _workspace_revision(self) -> str:
-        """Hash source/config state, excluding traces, caches and runtime data.
+        """Hash every authored file's path and content.
 
-        Every file's PATH counts, so writing or deleting one is progress
-        whatever its extension. Only the listed kinds are hashed by content;
-        the rest (binaries, sqlite files written by the boot probe) would
-        churn the revision without a source edit. ``_workspace_file_list``
-        has already dropped caches, vendor dirs and ``.besser_*``.
+        Runtime outputs (``_REVISION_IGNORED_SUFFIXES``, tool caches) are
+        skipped entirely; ``_workspace_file_list`` has already dropped
+        dependency dirs and ``.besser_*``. A file is hashed up to
+        ``_REVISION_HASH_CAP`` bytes plus its size, so a large asset cannot
+        stall the check.
         """
         fingerprint = hashlib.sha256()
         workspace = os.path.realpath(self.output_dir)
-        extensions = {
-            ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".html", ".css",
-            ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".txt", ".lock",
-            ".sql", ".rs", ".kt", ".java", ".go", ".c", ".cpp", ".h", ".rb", ".php",
-            # Stacks _UNSUPPORTED_STACK_RE sends to Phase 2 to build from
-            # scratch, plus the per-service Dockerfiles / build files a
-            # Phase 3 repair edits.
-            ".vue", ".svelte", ".dart", ".cs", ".swift", ".scala", ".ex",
-            ".mod", ".sum", ".md",
-        }
-        # ``.env`` and ``Dockerfile.backend`` have no usable splitext suffix.
-        basename_prefixes = ("Dockerfile", "Makefile", ".env")
         for rel in sorted(self._workspace_file_list()):
-            if rel.lower().endswith(_REVISION_IGNORED_SUFFIXES):
+            if (rel.lower().endswith(_REVISION_IGNORED_SUFFIXES)
+                    or _REVISION_IGNORED_DIRS.intersection(rel.split("/")[:-1])):
                 continue
             path = os.path.realpath(os.path.join(workspace, rel))
             try:
@@ -3860,15 +3851,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             except ValueError:
                 continue
             fingerprint.update(rel.encode("utf-8"))
-            base = os.path.basename(rel)
-            if (os.path.splitext(rel)[1].lower() not in extensions
-                    and not base.startswith(basename_prefixes)):
-                fingerprint.update(b"\0")
-                continue
             try:
                 with open(path, "rb") as source:
-                    for chunk in iter(lambda: source.read(65536), b""):
-                        fingerprint.update(chunk)
+                    fingerprint.update(source.read(_REVISION_HASH_CAP))
+                    fingerprint.update(str(os.fstat(source.fileno()).st_size).encode())
             except OSError:
                 fingerprint.update(b"<unreadable>")
             fingerprint.update(b"\0")

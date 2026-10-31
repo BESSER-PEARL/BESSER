@@ -71,6 +71,10 @@ _RECIPE_EXCLUDED_DIRS = {
 _REVISION_IGNORED_SUFFIXES = (
     ".tsbuildinfo", ".log", ".db", ".sqlite", ".sqlite3",
 )
+# Tool caches a test or lint run writes inside the workspace.
+_REVISION_IGNORED_DIRS = frozenset({".pytest_cache", ".mypy_cache", ".ruff_cache"})
+# Bytes of each file the revision reads; the size covers the rest.
+_REVISION_HASH_CAP = 1024 * 1024
 
 
 # Languages / frameworks BESSER has NO code generator for. An explicitly-named

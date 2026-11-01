@@ -1,0 +1,199 @@
+Version 8.7.0
+=============
+
+Minor release: **the Spec-Driven Agent builds what was asked, and proves it**.
+The model, not a list of keywords, now decides what a run builds and whether a
+modify request is a bug report. A non-web app is checked the way a web app is.
+A chatbot built from an agent model is held to using the class model's data.
+Credentials are redacted from many more formats before an app is packaged or
+pushed. Eleven verified correctness bugs are fixed. There are no metamodel or
+API contract changes.
+
+Routing decided by the model
+----------------------------
+
+* **One call decides what a run builds.** The forced ``choose_generator`` call
+  returns the target and the generator. It also names any stack the user asked
+  for that no BESSER generator builds (``unsupported_stack``), so "a REST API in
+  Go" or "Build it in Rust" is written from scratch, and domain words such as
+  "express delivery" or "Swift Logistics" no longer cost a web app its
+  scaffold. On modify runs the same call decides whether the request changes
+  the target (``changes_target``) and whether it reports a failure
+  (``is_failure_report``, ``reported_entity``). A reworded ``Target:`` line no
+  longer counts as a switch, and URL segments (``api``, ``v1``, ``id``) are no
+  longer read as entities.
+* **Degraded paths keep the same rules.**
+
+  * A gateway that ignores forced tool calls, or a client without them, is
+    asked for the same answer as JSON in plain text.
+  * A failed selection still decides the target, with a warning.
+  * A planner task is dropped only when the planner itself labels it as
+    removing the scaffold or switching framework.
+  * Keywords pick a generator only when no answer comes back at all.
+* **Evaluation.** Over 3 repetitions with claude-sonnet-5-5:
+
+  ============================  ===============  =========
+  Suite                         ``development``  8.7.0
+  ============================  ===============  =========
+  Create routing                210/243          242/243
+  Modify routing                177/222          216/222
+  Trap phrasings                6/30             30/30
+  ============================  ===============  =========
+
+  On a gateway that ignores forced tool calls, create routing scores 162/162
+  and modify routing 145/148. A modify run now makes one call on the primary
+  model, about USD 0.005.
+
+Non-web apps checked like web apps
+----------------------------------
+
+* **Citations of real code verify.** The requirements judge must quote the
+  code that implements a requirement, and the harness checks the quote against
+  the file. These quotes now verify:
+
+  * a statement spread over several lines, or split into joined strings;
+  * a call with a trailing comma;
+  * a cut such as ``a ... b`` or ``f(..., x)``, and a list of lines joined
+    with ``;``;
+  * code after a ``"\n"`` string.
+
+  Prose, a paraphrase, code from another file and text inside comments or
+  strings still fail, in every language: Pygments now separates code from
+  comments and strings. Every part of an abridged quote must be real code, so
+  an invented part cannot ride along with a real one.
+* **Native UI files reach the judge.** It now reads ``.xaml``, ``.axaml``,
+  ``.qml`` and Android's ``res/layout*/*.xml``.
+* **Every entity is checked.** A non-web app with screens is checked that each
+  entity can be created, viewed, edited and deleted, reported as ``entity
+  coverage:`` warnings.
+* **Formatting and run summary.** Python files the model wrote from scratch are
+  formatted with ``ruff format``. ``BESSER_GENERATION.md`` gains a "This run"
+  section: what was built, the base generator, the verification counts, and
+  what was not checked.
+
+A chatbot that uses the model's data
+------------------------------------
+
+* For a project with a class model and an agent model, the judge checks one
+  requirement built from the two models. Every intent that creates, lists or
+  changes the model's records must read or write them through the app's code:
+  its models, database, API or a helper. A greeting or a fixed fact may keep a
+  fixed reply.
+* A new project also gets a checklist item to wire the agent. "build my task
+  assistant chatbot", which used to ship a bot with canned replies, now stores
+  and lists tasks.
+* Live judge probe: 30 of 30 correct, including bots wired through an API or a
+  helper module.
+
+Secret redaction
+----------------
+
+* **Formats.** Before packaging and GitHub pushes, the scrub now applies the
+  prefix-anchored gitleaks rules, vendored with their MIT notice. It also
+  redacts passwords in database URLs pointing at remote hosts. Coverage of 18
+  common credential formats goes from 5 to 18.
+* **Generated code stays intact.** A URL built from settings
+  (``{settings.db_password}``) and a local host such as ``127.0.0.1``,
+  ``host.docker.internal`` or a compose service are left alone. There were 0
+  false rewrites on 3,570 generated files.
+* **FIFOs and the incident log.** The scrub skips FIFOs and device files, which
+  used to hang packaging. The incident log is redacted.
+
+Correctness fixes
+-----------------
+
+* **Resume.** A resumed modify run stays a modify run, keeping its fix target,
+  the classes model sync added and the updated project export. Event numbering
+  carries on across a resume, so a reconnecting client misses no frames.
+* **Phase 3 progress.** The workspace revision hashes every authored file,
+  including non-web sources. Runtime output (sqlite journals, ``.coverage``,
+  ``obj/``, uploads) is ignored, so Phase 3 sees real progress and only real
+  progress.
+* **Runtime gate.** It fails closed when it cannot decide.
+* **False blockers.**
+
+  * Python manifests are read with ``packaging`` and ``tomllib``, so Poetry,
+    Pipfile, uv, pdm and hatch dependencies and src-layout projects no longer
+    raise false "cannot start" blockers.
+  * ``tsconfig`` and ``jsconfig`` files are parsed as JSONC.
+  * JavaScript imports are found with a lexer.
+* **JSON in model replies.** One ``extract_json`` helper reads it and refuses
+  a truncated reply.
+* **Judge digest.** It shows ``__init__.py`` and ``database.py``.
+* **Configuration.**
+
+  * The model catalog is validated strictly. Check a hand-edited deployment
+    catalog with the strict loader before upgrading.
+  * The Docker image pre-fetches tiktoken's tokenizer, so an offline host no
+    longer stalls.
+
+GitHub round trip
+-----------------
+
+* **SQLAlchemy columns.** Starting from a repository now reads SQLAlchemy 2.0
+  columns written as a bare ``year: Mapped[int]``. Before, these were dropped
+  as soon as the class had any ``mapped_column`` column.
+* **Merge commits.** BESSER's merge commits carry the ``BESSER-Origin``
+  trailer, so Model history no longer labels them as a person's.
+* **Model sources.** The ``buml/`` model sources pushed with an app are no
+  longer checked as app code. That check produced a false "missing module"
+  blocker, which the agent answered by writing a stand-in ``besser`` package.
+* **Opening a repository.** The editor opens a GitHub repository from its
+  GitHub menu, not from the assistant drawer.
+
+Repository cleanup
+------------------
+
+* **A slimmer base install.** ``pip install besser`` now installs what the
+  modeling library and its generators import: 22 packages instead of 49.
+  Optional parts are extras:
+
+  * ``ocl``: B-OCL evaluation;
+  * ``django``: ``DjangoGenerator``;
+  * ``docker``: building images from ``BackendGenerator``;
+  * ``db``: database drivers;
+  * ``agents``: the Spec-Driven Agent's clients, ``tiktoken`` and Pygments;
+  * ``dev``: pytest.
+
+  Without the extra it needs, a generator names the ``pip install
+  "besser[...]"`` to run. PyYAML joins the base install, which fixes the
+  Docker Compose generator on a plain install. The editor backend's
+  requirements file still installs everything.
+* **One-way package layers.** Imports run from the editor backend to the
+  Spec-Driven Agent, the generators, the notations and the metamodel, and
+  never back. CI enforces this with import-linter. ``besser.utilities`` loads
+  its names on first use, and ``workspace_fs`` moves to ``besser.utilities``.
+* **CI.**
+
+  * The ruff rules live in ``pyproject.toml``.
+  * CI runs the whole suite, including the neural-network tests.
+  * A ``package`` job installs the built wheel and checks its package data.
+
+  39 unreferenced images (54 MB) and the ANTLR jar are removed from the
+  repository.
+* **Editor.**
+
+  * CI checks lint, the tests, the type-check error count and the build on
+    every pull request, on Node 22 as in the production image.
+  * Features import each other only through their public ``index.ts``, and
+    ``shared/`` imports no feature. ESLint enforces both.
+  * About 13 MB of unused assets and 13 unused dependencies are removed.
+
+Deployment
+----------
+
+Deploy the backend, the frontend and the modeling agent. The modeling agent
+goes out from ``develop`` with:
+
+* a slimmer image, which keeps the TensorFlow intent classifier;
+* retrieval over the UML specification the image ships;
+* its top-level import cycle broken, and its tests run in CI.
+
+.. important::
+   **Upgrading a plain** ``pip install besser``. Install the extras you use.
+   For example, ``pip install "besser[ocl,django]"`` for OCL evaluation and
+   the Django generator, or ``pip install "besser[agents]"`` for the
+   Spec-Driven Agent as a library.
+
+Pull requests: #702, #703, #704, #705, #706, #707, #708, #709. Editor: #240,
+#241. Modeling agent: #48, #49, #50, #51.

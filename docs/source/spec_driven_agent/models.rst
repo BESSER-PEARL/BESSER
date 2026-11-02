@@ -116,7 +116,10 @@ A deployment's file names only what differs from the default:
 ``GET /besser_api/spec-driven/config`` returns the catalog's providers and
 models as ``providers`` (``id``, ``label``, ``hint``, ``key_prefix``,
 ``models``), without endpoints or rates. A broken catalog file stops the
-backend at startup with a message naming the file and the field.
+backend at startup with a message naming the file and the field. Validation
+is strict: a key not listed above (a typo such as ``base_ur1``), a value of the
+wrong type (``"default": "true"``) or a ``base_url`` without a host is an
+error, not ignored.
 
 The fallback chain
 ------------------

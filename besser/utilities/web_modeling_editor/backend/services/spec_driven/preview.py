@@ -10,9 +10,10 @@ spending any LLM tokens:
        whether to commit.
 
 The classifier is deliberately deterministic (keyword + model presence)
-in v1 — no LLM call. That means no API key is needed for the preview and
-it responds instantly. An LLM refinement pass can be layered on later
-behind a flag; the response shape won't change.
+— no LLM call. That means no API key is needed for the preview and it
+responds instantly. It is the run's own keyword fallback
+(``planning/generator_keywords.py``); the run itself lets its
+``choose_generator`` call decide, so the preview is a prediction.
 
 Cost estimation is a heuristic based on the primary model, instruction
 length, and which auxiliaries the LLM would need to weave in. Better to
@@ -21,7 +22,6 @@ under-promise than over-promise — we round up.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,17 +31,10 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     AssembledModels,
 )
-from besser.spec_driven_agent.pipeline.constants import _names_unsupported_stack
-
-
-# Names mirrored from the orchestrator's keyword branch so that the
-# preview and the real Phase 1 always agree on which generator will run
-# for a given instruction. Keep in sync with
-# ``LLMOrchestrator._select_generator_keyword``.
-_EXPLICIT_NO_GENERATOR_FRAMEWORKS: tuple[str, ...] = (
-    "nestjs", "next.js", "nextjs", "express", "spring boot", "springboot",
-    "laravel", "rails", "golang", "axum", "actix", "angular", "vue",
-    "svelte", "nuxt",
+from besser.spec_driven_agent.planning.generator_keywords import (
+    default_generator,
+    keyword_generator,
+    names_stack_without_generator,
 )
 
 
@@ -182,104 +175,23 @@ def _predict_target_generator(
     Returns ``(generator_name, confidence)``; confidence is a rough
     0.0–1.0 band:
 
-    * 0.9+  — user explicitly named the framework in instructions
-    * 0.7   — strong keyword (backend / API / fullstack) + model fit
-    * 0.5   — default based on available models
-    * 0.3   — "no match, LLM writes from scratch"
+    * 0.9  — the request's words name the generator, or a framework with none
+    * 0.5  — default for the loaded models
+    * 0.3  — no domain model: the LLM writes from scratch
 
     A ``None`` generator name means spec-driven generation will skip Phase 1
     and build from scratch in Phase 2. That's not a failure — it's the
     expected path for "generate me a NestJS API" or for state-machine-
     only projects.
     """
-    lower = instructions.lower()
-
-    def _has(word: str) -> bool:
-        return bool(re.search(r"\b" + re.escape(word) + r"\b", lower))
-
-    # Explicit framework request we don't have a generator for
-    for framework in _EXPLICIT_NO_GENERATOR_FRAMEWORKS:
-        if framework in lower:
-            return None, 0.9
-    # The orchestrator's hard override for a named language (Swift, Kotlin, C#, ...).
-    if _names_unsupported_stack(instructions):
+    if names_stack_without_generator(instructions):
         return None, 0.9
-
-    # Specialist generators for non-class modeling artifacts.
-    if assembled.bpmn_model is not None and (
-        assembled.primary_kind == "bpmn"
-        or _has("bpmn")
-        or _has("workflow")
-        or "business process" in lower
-        or "process model" in lower
-    ):
-        return "generate_bpmn", 0.9
-    if assembled.nn_model is not None:
-        if _has("tensorflow") or _has("keras"):
-            return "generate_tensorflow", 0.9
-        if (
-            assembled.primary_kind == "nn"
-            or _has("pytorch")
-            or _has("torch")
-            or "neural network" in lower
-        ):
-            return "generate_pytorch", 0.9
-    if assembled.agent_model is not None and (
-        assembled.primary_kind == "agent"
-        or _has("baf")
-        or _has("chatbot")
-        or "agent framework" in lower
-    ):
-        return "generate_baf", 0.8
-    if assembled.object_model is not None and (
-        assembled.primary_kind == "object"
-        or "json object" in lower
-        or _has("fixture")
-        or _has("fixtures")
-        or "seed data" in lower
-    ):
-        return "generate_json_object", 0.8
-    if assembled.domain_model is not None and _has("supabase"):
-        return "generate_supabase", 0.9
-
-    # Quantum — specialist generator always wins when circuit is present
-    if assembled.quantum_circuit is not None:
-        return "generate_qiskit", 0.9
-
-    # Class diagrams unlock the big BESSER generators
-    if assembled.domain_model is not None:
-        if _has("django"):
-            return "generate_django", 0.9
-        if _has("fastapi") or _has("fast api"):
-            if assembled.gui_model is not None:
-                return "generate_web_app", 0.8
-            return "generate_fastapi_backend", 0.9
-        if _has("backend") or _has("api") or _has("rest"):
-            if assembled.gui_model is not None:
-                return "generate_web_app", 0.7
-            return "generate_fastapi_backend", 0.7
-        if _has("full-stack") or _has("fullstack") or _has("full stack") or _has("web app"):
-            if assembled.gui_model is not None:
-                return "generate_web_app", 0.8
-            return "generate_fastapi_backend", 0.6
-        # Guarded like the orchestrator's keyword branch: "pydantic
-        # models for my API" should predict the backend generator (which
-        # includes pydantic), not bare pydantic classes.
-        if _has("pydantic") and not _has("api") and not _has("backend"):
-            return "generate_pydantic", 0.8
-        if _has("sqlalchemy"):
-            return "generate_sqlalchemy", 0.8
-        # Not in the orchestrator's keyword fallback — models the LLM
-        # vote, which reliably picks generate_sql for plain SQL asks.
-        if _has("sql"):
-            return "generate_sql", 0.7
-        # Defaults based on what's available
-        if assembled.gui_model is not None:
-            return "generate_web_app", 0.5
-        return "generate_fastapi_backend", 0.5
-
-    # No domain model → no BESSER generator will run in Phase 1. The
-    # LLM drives everything from the primary non-class model.
+    named = keyword_generator(assembled, instructions)
+    if named is not None:
+        return named, 0.9
+    fallback = default_generator(assembled, instructions)
+    if fallback is not None:
+        return fallback, 0.5
     return None, 0.3
 
 

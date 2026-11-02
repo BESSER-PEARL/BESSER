@@ -56,7 +56,9 @@ runs survive a dropped connection:
   frame after sequence ``N`` and then follows the live producer. Native
   ``EventSource`` clients can use the ``Last-Event-ID`` header instead; the
   larger of the two cursors wins, so a stale query value can't replay
-  duplicates.
+  duplicates. A resumed run drops the previous attempt's frames but keeps
+  numbering from where it stopped, so a cursor from that attempt replays the
+  whole new attempt.
 
 .. code-block:: bash
 

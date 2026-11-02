@@ -103,13 +103,27 @@ def test_replace_drops_the_default_catalog(use_catalog):
 
 @pytest.mark.parametrize("bad, message", [
     ("{not json", "not valid JSON"),
-    ({"providers": {"pia": {"models": []}}}, "label is required"),
+    ({"providers": {"pia": {"models": []}}}, r"providers\.pia\.label: Field required"),
     ({"providers": {"pia": {"label": "P", "base_url": "gateway", "models": []}}},
      r"base_url must be an http\(s\) URL"),
     ({"providers": {"x": {"label": "X", "models": [{"id": "m", "price": {"input": 1}}]}}},
-     "price.output"),
+     r"models\[0\]\.price\.output"),
     ({"providers": {"x": {"label": "X", "models": [{"id": "m"}, {"id": "M"}]}}},
      "duplicate id"),
+    # Review 2026-10-30 (R8, model_catalog_validation.py): a typo key loaded
+    # silently as a provider with no gateway, a URL with no host crashed with
+    # AttributeError, and "true" (a string) loaded as not-the-default.
+    ({"providers": {"pia": {"label": "P", "base_ur1": "https://gw.example/v1", "models": []}}},
+     r"providers\.pia\.base_ur1: Extra inputs are not permitted"),
+    ({"providers": {"pia": {"label": "P", "base_url": "https:///v1",
+                            "models": [{"id": "m", "price": {"input": 1, "output": 2}}]}}},
+     "with a host"),
+    ({"providers": {"x": {"label": "X", "models": [{"id": "m", "default": "true"}]}}},
+     r"models\[0\]\.default: Input should be a valid boolean"),
+    ({"providers": {"x": {"label": "X", "models": [{"id": "m", "price": {"input": True, "output": 1}}]}}},
+     r"price\.input"),
+    ({"route_prices": {"gw.example": {"m": {"input": 1, "outptu": 2}}}},
+     r"route_prices\.gw\.example\.m\.output: Field required"),
 ])
 def test_a_malformed_override_fails_loudly(use_catalog, bad, message):
     use_catalog(bad)
@@ -298,10 +312,17 @@ def test_the_catalog_can_correct_a_built_in_row(use_catalog):
 
 
 @pytest.mark.parametrize("request_block, message", [
-    ({"forced_tools": False}, "unknown request field 'forced_tools'"),
-    ({"forced_tool_choice": "no"}, "request.forced_tool_choice has the wrong type"),
+    ({"forced_tools": False}, r"request\.forced_tools: Extra inputs are not permitted"),
+    ({"forced_tool_choice": "no"}, r"request\.forced_tool_choice: Input should be a valid boolean"),
+    ({"forced_tool_choice": None}, r"request\.forced_tool_choice: Input should be a valid boolean"),
 ])
 def test_a_malformed_request_block_fails_loudly(use_catalog, request_block, message):
     use_catalog({"providers": {"x": {"label": "X", "models": [{"id": "m", "request": request_block}]}}})
     with pytest.raises(ModelCatalogError, match=message):
         load_model_catalog()
+
+
+def test_notes_are_ignored_at_any_depth(use_catalog):
+    use_catalog({"providers": {"x": {"_note": "ops", "label": "X", "models": [
+        {"id": "m", "_why": "cheap", "price": {"input": 1, "output": 2, "_source": "vendor"}}]}}})
+    assert load_model_catalog().providers["x"]["models"][0]["price"]["cache_read"] == 1.0

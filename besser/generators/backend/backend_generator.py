@@ -1,7 +1,6 @@
 import configparser
 import logging
 import os
-import docker
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.generators.rest_api import RESTAPIGenerator
@@ -180,6 +179,13 @@ class BackendGenerator(GeneratorInterface):
         repository = self.config["docker_repository"]
         tag = self.config["docker_tag"]
         full_image_name = f"{repository}/{image_name}:{tag}"
+
+        try:
+            import docker
+        except ImportError as exc:
+            raise ImportError(
+                'Building the Docker image needs the docker package: pip install "besser[docker]"'
+            ) from exc
 
         # Create docker client
         client = docker.from_env()

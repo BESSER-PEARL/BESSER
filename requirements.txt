@@ -1,32 +1,18 @@
-Arpeggio>=2.0.2
-colorama>=0.4.6
-iniconfig>=2.0.0
+# What `pip install besser` installs (setup.cfg reads this file). Keep it to what
+# the modeling library and its generators import; optional parts are extras in
+# setup.cfg, and the web editor backend has its own requirements file.
 packaging>=24.2
-pluggy>=1.2.0
-pytest>=7.4.0
-python-multipart>=0.0.17
-setuptools>=68.2.2
 jinja2>=3.1.2
 antlr4-python3-runtime>=4.13.1
 requests>=2.31.0
 pydantic>=2.6.3
-uvicorn>=0.28.0
 SQLAlchemy>=2.0.29
+# The Docker Compose generator writes YAML; the BAF generator reads it.
+PyYAML>=6.0
 # Upper bound deliberate: httpx 0.28 removed the `app=` shortcut that
 # starlette's TestClient passes through, so an unbounded install breaks
 # every test written the legacy way with a TypeError at collection.
 httpx>=0.27.0,<0.28
-docker>=7.1.0
-Django>=5.1.5
-oracledb>=3.4.1
-psycopg2-binary>=2.9.10
-pymysql>=1.1.1
-pyodbc>=5.2.0
-bocl==1.0.4
-# Accurate token counting for context compaction. Without it
-# compaction.py falls back to len(text)//4, which OVER-reports code
-# by ~21% (measured 4.83 chars/token), tripping compaction early.
-tiktoken>=0.7,<1
 # RDF graph handling for the Knowledge Graph metamodel and its OWL/TTL
 # importers, which are part of the library surface (besser.BUML.metamodel.kg).
 # pyshacl, which only the KG consistency check needs, is the optional

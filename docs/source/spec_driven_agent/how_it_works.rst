@@ -22,39 +22,56 @@ The three phases
    app, a CLI, a game, an extension, a library, ...). A generator is picked
    only when its output *is* that target, so an ``other`` target is written
    from scratch in the stack the user named, or the standard one for that
-   target. Every web-specific rule below applies to a ``web_app`` target only.
-   When the selection call answers NONE for a web app or a backend, the
-   keyword fallback still picks a generator ("a web app with a REST API" gets
-   the FastAPI scaffold); for an ``other`` target, NONE stands. When no
-   selection call runs (an approved generator, a named language BESSER has no
-   generator for, a run with no class diagram), one small call decides the
-   target alone. An approved ``generate_web_app`` settles it as a web app and
-   costs no call.
+   target. An app that uses an API is that app, not a backend, and an
+   architecture pattern such as MVC describes the app's structure, not its
+   platform. Every web-specific rule below applies to a ``web_app`` target only.
+   The call also names a stack the user asked for that no BESSER generator
+   builds (``unsupported_stack``); words of the domain ("express delivery",
+   "Swift Logistics") are left to the model, not to a word list. Such a stack
+   is written from scratch ("a REST API in Go"), even when the answer also
+   names a generator. A NONE for a web app or a backend with no unsupported
+   stack contradicts the rules, so it gets the generator the loaded models
+   call for (the FastAPI scaffold for a class diagram); for an ``other``
+   target, NONE stands. A gateway that ignores the forced tool call, or a
+   client without one, is asked for the same answer as a JSON object in plain
+   text. When no selection call runs (an approved generator, a run with no
+   class diagram), or the selection call fails, one small call decides the
+   target alone (a failed selection is logged as a warning). An approved
+   ``generate_web_app`` settles it as a web app and costs no call. Only when no
+   answer comes back at all (the provider is failing) do keywords pick the
+   generator (``planning/generator_keywords.py``). The ``/preview`` endpoint
+   makes no LLM call and needs no key, so its generator is a keyword estimate:
+   the same keywords, plus a short list of stacks no generator builds.
 
    The target is recorded in the trace, the checkpoint and
    ``.besser_recipe.json``, so a resume or a later modify run of the same app
-   keeps it. A modify run decides it again only when the request may name
-   another kind of software: "add a React frontend" on a backend, "make it a
-   desktop app" on a web app, or a ``Target:`` line that differs from the
-   recorded target. Any other request keeps the recorded target with no LLM
-   call, as does a failed decision.
+   keeps it. Every modify run makes the same call once, on the primary model
+   rather than the cheap planning one (its answer can rebuild the whole app),
+   with the recorded target and the model's class names, and it answers three
+   more questions:
+   whether the request changes the target (``changes_target``: "turn it into a
+   Flutter app", "I only need the REST API now"; new features and a reworded
+   description of the same target do not), whether the newest message reports
+   a failure of the existing app (``is_failure_report``), and which entity it
+   is about (``reported_entity``). A changed target is built next to the
+   existing project; a failure report makes the run a fix run, gated on that
+   failure. A call with no usable answer, even as JSON text, keeps the
+   recorded target and makes no fix run, with a warning. This call is one
+   primary-model call more per modify run.
 
-   The request is free text; the one structured part of it is a ``Target:``
-   line. When the user asks for something that is not a web app, the BESSER
-   modeling agent adds this line, on a line of its own, to the instructions it
-   sends (under "Assistant's notes" when the original request is attached):
+   The request is free text. When the user asks for something that is not a
+   web app, the BESSER modeling agent adds a ``Target:`` line of its own to the
+   instructions it sends (under "Assistant's notes" when the original request
+   is attached):
 
    .. code-block:: text
 
       Target: Windows 11 desktop app (not a web app).
 
-   The selection call reads it as part of the request, and a modify run
-   compares its description with the recorded target
-   (``planning/target.py``, ``TARGET_LINE_RE``). The line is optional: the
-   modeling agent omits it for a web app or a backend and when the
+   The selection call reads it as part of the request. The line is optional:
+   the modeling agent omits it for a web app or a backend and when the
    instructions already name the target, and an oversized specification falls
-   back to the original request without it. Without the line, the target is
-   decided from the wording of the request, as for any other caller.
+   back to the original request without it.
 
    Two smaller steps bracket it. When no deterministic generator fits the
    target stack (Next.js, Rust, Kotlin/Spring), a *stack-metadata* step writes
@@ -70,7 +87,12 @@ The three phases
    ``task_list`` checklist — making surgical, scoped changes on top of the
    scaffold. Before the loop starts, a cheap *planning* call analyses the gap
    between the scaffold and the request and produces the task list; when it
-   judges the scaffold already sufficient, Phase 2 is skipped entirely.
+   judges the scaffold already sufficient, Phase 2 is skipped entirely (a
+   create run only; a modify run always runs it). The planner labels each task
+   as a change, or as removing the scaffold or switching its framework; the
+   latter two are dropped, since the scaffold's stack is fixed. Only the
+   planner's own empty list skips Phase 2: a list emptied by dropped tasks
+   runs Phase 2 from the request.
 
    A ``web_app`` target (an app, web app, UI, website, dashboard or portal
    with no other platform named) gets a frontend even without a GUI model:
@@ -79,7 +101,13 @@ The three phases
    backend-only, and in a modify run a bare "app" names the existing project
    rather than asking for a UI. Such a request also puts "build the frontend"
    on the checklist, and Phase 3 reports a blocker if the output ends with no
-   frontend files. The
+   frontend files. A new project with both a class model and an agent model
+   gets a checklist item to connect them: the agent's intents about the
+   model's records must read and write them, not answer with canned text.
+   The item also keeps Phase 2 from being skipped, and the agent may drop it
+   with a reason when it has nothing to do with the data. Phase 3 checks the
+   same thing as a judged requirement (see :doc:`validation`), in any language
+   and however the agent reaches the data. The
    system prompt adapts to the run: the rule that asks for a complete CRUD
    frontend applies only when the run has or needs a frontend, and when shell
    tools are on and a FastAPI backend is present it gains a runtime
@@ -244,6 +272,24 @@ reading a trace and wondering why a run did what it did.
        run's own API key is also matched literally, so it is redacted from
        every frame and from the packaged workspace whatever its format. The
        count of findings is recorded in the run's recipe.
+
+       In source files only the secret itself is replaced, inside its quotes,
+       so the file still parses. Provider tokens are recognised by the
+       prefix-anchored rules of `gitleaks <https://github.com/gitleaks/gitleaks>`_
+       (MIT), vendored as ``services/spec_driven/data/gitleaks_rules.toml``
+       (``ghp_``/``github_pat_``, ``AKIA``/``ASIA``, ``sk_live_``, ``AIza``,
+       Slack webhooks, ``glpat-``, ``hf_``, ``npm_``, ``SG.``, PEM private
+       keys, JWTs and more). Rules that match on a variable name or on
+       entropy alone are left out: a false hit would rewrite working code.
+       A private key is redacted even when it is cut before its ``END``
+       line. A database URL's password is redacted unless the host is local
+       (a single label such as ``db`` or ``localhost``, ``*.localhost``,
+       ``*.local``, ``host.docker.internal``, or a loopback or private
+       address), since the generated ``docker-compose.yml`` sets the same
+       password on the database. Code that builds the URL
+       (``{settings.db_password}``, ``%s``, ``$DB_PASSWORD``) is left alone.
+       Symbolic links, FIFOs and other special files in the workspace are
+       skipped, never opened.
    * - Artifact exclusion
      - The download ZIP leaves out the same runtime and build artifacts as the
        GitHub push: ``*.log``, ``*.db``, ``*.sqlite`` / ``*.sqlite3``,
@@ -260,6 +306,18 @@ reading a trace and wondering why a run did what it did.
        probes' scratch copies), and not when it opens or writes a named file
        (the recipe, checkpoint and trace, the ``BESSER_GENERATION.md``
        provenance file, or a generated source file).
+
+Between Phase 2 and Phase 3, the Python files the LLM wrote whole in a create
+run are passed through ``ruff format --isolated``, which changes layout only,
+so Phase 3 validates the layout that ships; a file it only edited, generator
+files and the files of a modify run keep their own layout. A formatter that
+could not run is reported under *Not checked*. The download's
+``BESSER_GENERATION.md`` gains a *This run* section: what was built, the base
+generator and the verification counts, with up to eight items each found missing
+in the code or not checked (a check that could not run, a requirement whose
+evidence did not verify). It leaves out the request itself, because the file
+also goes into GitHub pushes, and shows model-written values as code, never as
+links or markup.
 
 Every ``BESSER_LLM_*`` switch named above is collected in
 :doc:`configuration`.

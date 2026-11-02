@@ -6,6 +6,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from besser.utilities.llm_utils import extract_json
+
 logger = logging.getLogger(__name__)
 
 RECOMMENDATION_ALLOWED_VALUES = {
@@ -135,21 +137,9 @@ def extract_json_object(raw_text: str) -> Dict[str, Any]:
     if not isinstance(raw_text, str) or not raw_text.strip():
         raise ValueError("Empty LLM response")
 
-    text = raw_text.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if len(lines) >= 3:
-            text = "\n".join(lines[1:-1]).strip()
-
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    parsed = extract_json(raw_text, dict)
+    if parsed is None:
         raise ValueError("LLM response does not contain a valid JSON object")
-
-    candidate = text[start : end + 1]
-    parsed = json.loads(candidate)
-    if not isinstance(parsed, dict):
-        raise ValueError("LLM response JSON root must be an object")
     return parsed
 
 

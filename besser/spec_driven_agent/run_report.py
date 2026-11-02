@@ -43,7 +43,7 @@ import sys
 from typing import Any
 
 from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
-from besser.spec_driven_agent.execution.workspace_fs import open_plain
+from besser.utilities.workspace_fs import open_plain
 
 # orchestrator.py defines this alongside ``.besser_recipe.json`` but is a
 # heavy module (provider SDK imports); this report has to stay usable

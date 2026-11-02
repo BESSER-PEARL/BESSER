@@ -26,7 +26,7 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from besser.spec_driven_agent.execution.workspace_fs import read_plain_text
+from besser.utilities.workspace_fs import read_plain_text
 
 SMALL, LARGE, UNRELATED = "small", "large", "unrelated"
 # basis: what the base recipe recorded.
@@ -278,6 +278,22 @@ class ModelChange:
             "renamed": [{"from": old, "to": new} for old, new in self.renamed],
             "changes": list(self.changes),
         }
+
+
+def model_change_from_dict(data) -> ModelChange | None:
+    """Rebuild a checkpointed change: ``to_dict()`` plus its ``base`` / ``new`` summaries."""
+    if not isinstance(data, dict):
+        return None
+    try:
+        return ModelChange(
+            data["verdict"], data["basis"], float(data["gone"]),
+            tuple(data.get("removed") or ()), tuple(data.get("added") or ()),
+            tuple((r["from"], r["to"]) for r in data.get("renamed") or ()),
+            tuple(data.get("changes") or ()),
+            data.get("base") or {}, data.get("new") or {},
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _elements(classes: dict) -> int:

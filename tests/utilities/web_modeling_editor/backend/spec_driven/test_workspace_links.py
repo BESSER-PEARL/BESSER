@@ -17,10 +17,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
     SmartGenerationRunner,
     _seed_workspace_from_base,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
-    copytree_no_links,
-    is_plain_entry,
-)
+from besser.utilities.workspace_fs import copytree_plain, is_plain_entry
 from tests.utilities.web_modeling_editor.backend.spec_driven import (
     test_push_smart_to_github as push_tests,
 )
@@ -87,7 +84,7 @@ def test_copytree_no_links_drops_links_and_applies_patterns(tmp_path):
     dst = tmp_path / "dst"
     dst.mkdir()
 
-    copytree_no_links(str(src), str(dst), ["*.db"])
+    copytree_plain(str(src), str(dst), ["*.db"], dirs_exist_ok=True)
 
     assert _all_files(dst) == ["pkg/mod.py"]
 

@@ -25,7 +25,7 @@ never file content, so it can ride along with the GitHub push (a later
 continue-from-GitHub run reads it back to detect human edits).
 
 The workspace is written by model-authored commands, so every read and write
-here goes through :mod:`~besser.spec_driven_agent.execution.workspace_fs`:
+here goes through :mod:`~besser.utilities.workspace_fs`:
 a link planted at the state file, a source file or ``.agent-trace/`` is never
 followed. Parallel generator calls update the state concurrently; a module lock
 serializes each load-update-save cycle.
@@ -45,7 +45,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
-from besser.spec_driven_agent.execution.workspace_fs import (
+from besser.utilities.workspace_fs import (
     is_plain_entry,
     open_plain,
     walk_plain,

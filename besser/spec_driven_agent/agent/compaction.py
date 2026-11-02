@@ -17,7 +17,7 @@ import logging
 import os
 import urllib.request
 from typing import Any
-from besser.spec_driven_agent.execution.workspace_fs import walk_plain
+from besser.utilities.workspace_fs import walk_plain
 
 logger = logging.getLogger(__name__)
 
@@ -319,7 +319,11 @@ def _get_tokenizer():
     try:
         import tiktoken
         _TOKENIZER = tiktoken.get_encoding("cl100k_base")
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "tiktoken cl100k_base unavailable (%s: %s); estimating tokens as characters/4. "
+            "Pre-fetch it into TIKTOKEN_CACHE_DIR on hosts without internet access.",
+            type(exc).__name__, exc)
         _TOKENIZER = None
     return _TOKENIZER
 

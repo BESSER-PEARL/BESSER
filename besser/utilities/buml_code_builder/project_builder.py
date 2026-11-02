@@ -12,9 +12,13 @@ import shutil
 from collections import Counter
 from typing import Dict, List, Sequence
 from besser.BUML.metamodel.structural.structural import DomainModel
+from besser.BUML.metamodel.bpmn import BPMNModel
+from besser.BUML.metamodel.gui import GUIModel
 from besser.BUML.metamodel.kg import KnowledgeGraph
+from besser.BUML.metamodel.nn import NN
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
+from besser.BUML.metamodel.quantum import QuantumCircuit
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.state_machine.state_machine import StateMachine
 from besser.BUML.metamodel.uml_component import ComponentModel
@@ -155,30 +159,6 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
     component_models = []        # ComponentModel models (UML Component diagrams)
     deployment_models = []       # DeploymentModel models (UML Deployment diagrams)
 
-    # Import GUIModel locally to avoid circular imports
-    try:
-        from besser.BUML.metamodel.gui import GUIModel
-    except ImportError:
-        GUIModel = None
-
-    # Import QuantumCircuit locally
-    try:
-        from besser.BUML.metamodel.quantum import QuantumCircuit
-    except ImportError:
-        QuantumCircuit = None
-
-    # Import NN locally
-    try:
-        from besser.BUML.metamodel.nn import NN
-    except ImportError:
-        NN = None
-
-    # Import BPMNModel locally to avoid potential circular imports
-    try:
-        from besser.BUML.metamodel.bpmn import BPMNModel
-    except ImportError:
-        BPMNModel = None
-
     # A UserDiagram is an ObjectModel over the user reference domain model, so
     # it is recognised by its objects' classes: those of the reference model
     # itself or of a copy of it in the project.
@@ -204,13 +184,13 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
             agent_models.append(model)
         elif isinstance(model, StateMachine):
             state_machine_models.append(model)
-        elif GUIModel and isinstance(model, GUIModel):
+        elif isinstance(model, GUIModel):
             gui_models.append(model)
-        elif QuantumCircuit and isinstance(model, QuantumCircuit):
+        elif isinstance(model, QuantumCircuit):
             quantum_models.append(model)
-        elif NN and isinstance(model, NN):
+        elif isinstance(model, NN):
             nn_models.append(model)
-        elif BPMNModel and isinstance(model, BPMNModel):
+        elif isinstance(model, BPMNModel):
             bpmn_models.append(model)
         elif isinstance(model, KnowledgeGraph):
             kg_models.append(model)

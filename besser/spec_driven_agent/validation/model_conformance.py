@@ -25,7 +25,7 @@ import logging
 import os
 import re
 
-from besser.spec_driven_agent.execution.workspace_fs import read_plain_text, walk_plain
+from besser.utilities.workspace_fs import read_plain_text, walk_plain
 from besser.spec_driven_agent.planning.model_change import match_classes
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 

@@ -131,3 +131,75 @@ def test_image_to_plantuml_reports_and_returns_none_on_an_api_error(tmp_path, mo
     out = capsys.readouterr().out
     assert "An error took place" in out
     assert KEY not in out
+
+
+# ---------------------------------------------------------------------------
+# extract_json: one JSON extractor for LLM replies (review 2026-10-30, R4).
+# The copies it replaced sliced from the first opening bracket to the LAST
+# closing one, so a bracket in the prose around the JSON failed the parse.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text, kind, expected", [
+    ('[{"task": "Add search"}]', list, [{"task": "Add search"}]),
+    ('```json\n[{"task": "Add search"}]\n```', list, [{"task": "Add search"}]),
+    ('[{"task": "Add search"}]\n\nNote: optional items are marked [opt].', list, [{"task": "Add search"}]),
+    ('Tasks [2 total]:\n[{"task": "A"}, {"task": "B"}]', list, [{"task": "A"}, {"task": "B"}]),
+    ('{"requirements": [{"id": 1}]}\nUse {id} to reference one.', dict, {"requirements": [{"id": 1}]}),
+    ('Format {id, text}:\n{"requirements": [{"id": 1}]}', dict, {"requirements": [{"id": 1}]}),
+    ('{"a": "a } in a string"}', dict, {"a": "a } in a string"}),
+])
+def test_extract_json_ignores_brackets_in_surrounding_prose(text, kind, expected):
+    from besser.utilities.llm_utils import extract_json
+    assert extract_json(text, kind) == expected
+
+
+@pytest.mark.parametrize("text, kind", [
+    ("no json here", dict),
+    ('[{"task": "Add search"},]', list),  # trailing comma: not JSON
+    ('{"a": 1}', list),
+    (None, dict),
+])
+def test_extract_json_returns_none_without_a_value_of_that_kind(text, kind):
+    from besser.utilities.llm_utils import extract_json
+    assert extract_json(text, kind) is None
+
+
+def test_spec_driven_callers_use_the_shared_extractor():
+    """The gap analyzer and the requirements ledger read prose replies the same way."""
+    import types
+
+    from besser.spec_driven_agent.planning.gap_analyzer import _parse_task_array
+    from besser.spec_driven_agent.planning.requirements_ledger import _tool_input
+
+    assert _parse_task_array('["A"]\nOptional items are marked [opt].') == ["A"]
+    reply = {"content": [types.SimpleNamespace(type="text", text='{"r": [1]}\nUse {id}.')]}
+    assert _tool_input(reply, "record_requirements") == {"r": [1]}
+
+
+# Review of #705: a reply cut off by max_tokens returned an inner fragment of
+# it, and a "[]" or a "[1]" citation in prose won over the real list.
+TRUNCATED = ('{"agentLanguage": "fr", "presentation": {"style": "formal", "avatar": null}, '
+             '"modality": {"voice": tr')
+
+
+@pytest.mark.parametrize("text, kind, expected", [
+    (TRUNCATED, dict, None),
+    ('[{"task": "A"}, {"task": "B"}', list, None),
+    ('Nothing would be [] if complete, but missing:\n```json\n["Add search"]\n```', list, ["Add search"]),
+    ('Per requirement [1], tasks:\n["Add search", "Add export"]', list, ["Add search", "Add export"]),
+    ("No tasks needed, the list is []. Done.", list, None),
+    ("```json\n[]\n```", list, []),
+    ("[]", list, []),
+    ('{"outer": {"inner": 1}} and {"x": 2}', dict, {"outer": {"inner": 1}}),
+])
+def test_extract_json_top_level_values_only(text, kind, expected):
+    from besser.utilities.llm_utils import extract_json
+    assert extract_json(text, kind) == expected
+
+
+def test_a_truncated_recommendation_is_not_presented_as_the_answer():
+    from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_recommendation_utils import (
+        extract_json_object,
+    )
+    with pytest.raises(ValueError):
+        extract_json_object(TRUNCATED)

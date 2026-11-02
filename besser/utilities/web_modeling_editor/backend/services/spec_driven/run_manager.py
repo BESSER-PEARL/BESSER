@@ -272,7 +272,10 @@ class SqliteRunEventStore:
             else:
                 # A resume is a new attempt under the same capability ID.
                 # Old terminal frames must not be replayed before the resumed
-                # attempt's events, so reset the event stream atomically.
+                # attempt's events, so drop them atomically. Numbering goes on
+                # from the old high-water mark: a cursor a client kept from the
+                # previous attempt is then below every new frame, and a client
+                # that dedupes on ``sequence <= cursor`` drops none of them.
                 self._conn.execute(
                     "DELETE FROM spec_run_events WHERE run_id = ?", (run_id,)
                 )
@@ -283,7 +286,7 @@ class SqliteRunEventStore:
                            terminal_event = NULL, error = NULL,
                            subscriber_count = 0, disconnected_at = NULL,
                            abandonment_requested_at = NULL,
-                           resume_available = 0, last_sequence = 0
+                           resume_available = 0
                      WHERE run_id = ?
                     """,
                     (now, run_id),
@@ -335,6 +338,22 @@ class SqliteRunEventStore:
             created_at=created_at,
             payload=payload,
         )
+
+    def replay_floor(self, run_id: str) -> int:
+        """The highest sequence no longer stored: a resume drops the previous
+        attempt's frames but keeps numbering, so nothing at or below it exists."""
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT (SELECT MIN(sequence) FROM spec_run_events WHERE run_id = ?) AS first,
+                       last_sequence
+                  FROM spec_runs WHERE run_id = ?
+                """,
+                (run_id, run_id),
+            ).fetchone()
+        if row is None:
+            return 0
+        return int(row["last_sequence"]) if row["first"] is None else int(row["first"]) - 1
 
     def set_status(
         self,
@@ -807,16 +826,15 @@ class DurableRunManager:
             return
         cursor = max(0, after_sequence)
 
-        # A resume restarts event numbering at 1, but a client reconnecting
-        # across it still holds the previous attempt's cursor, so every new frame
-        # is at or below it and the stream stays live-looking but blank forever.
-        # Sequences never skip, so a cursor ahead of the high-water mark cannot
-        # belong to this attempt: treat it as stale and replay from the start.
+        # Sequences never skip or restart (a resume keeps numbering), so a
+        # cursor ahead of the high-water mark was never issued for this run,
+        # e.g. after the event store was reset: replay from the start rather
+        # than leave the stream live-looking but blank forever.
         current = self.store.get_run(run_id)
         if current is not None and cursor > current.last_sequence:
             logger.info(
-                "Run %s: cursor %d is ahead of last_sequence %d (stale cursor "
-                "from a previous attempt) - replaying from the beginning",
+                "Run %s: cursor %d is ahead of last_sequence %d (stale cursor) "
+                "- replaying from the beginning",
                 run_id, cursor, current.last_sequence,
             )
             cursor = 0
@@ -829,6 +847,9 @@ class DurableRunManager:
 
         try:
             while True:
+                # Skip a resumed run's dropped range, or the wait below would
+                # see last_sequence above the cursor and spin.
+                cursor = max(cursor, self.store.replay_floor(run_id))
                 events = self.store.events_after(run_id, cursor)
                 for event in events:
                     cursor = event.sequence

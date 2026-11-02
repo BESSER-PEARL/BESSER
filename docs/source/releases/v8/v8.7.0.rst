@@ -153,7 +153,8 @@ Repository cleanup
   * ``docker``: building images from ``BackendGenerator``;
   * ``db``: database drivers;
   * ``agents``: the Spec-Driven Agent's clients, ``tiktoken`` and Pygments;
-  * ``dev``: pytest.
+  * ``dev``: pytest;
+  * ``all``: every extra above except ``dev``.
 
   Without the extra it needs, a generator names the ``pip install
   "besser[...]"`` to run. PyYAML joins the base install, which fixes the
@@ -192,8 +193,9 @@ goes out from ``develop`` with:
 .. important::
    **Upgrading a plain** ``pip install besser``. Install the extras you use.
    For example, ``pip install "besser[ocl,django]"`` for OCL evaluation and
-   the Django generator, or ``pip install "besser[agents]"`` for the
-   Spec-Driven Agent as a library.
+   the Django generator, ``pip install "besser[agents]"`` for the
+   Spec-Driven Agent as a library, or ``pip install "besser[all]"`` for
+   everything, PyTorch included.
 
 Pull requests: #702, #703, #704, #705, #706, #707, #708, #709. Editor: #240,
 #241. Modeling agent: #48, #49, #50, #51.

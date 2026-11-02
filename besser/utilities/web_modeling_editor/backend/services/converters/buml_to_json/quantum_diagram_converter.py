@@ -17,7 +17,6 @@ from besser.BUML.metamodel.quantum.quantum import (
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
-    strip_buml_imports,
 )
 
 
@@ -491,7 +490,7 @@ def quantum_buml_to_json(content: str) -> Dict[str, Any]:
 
     try:
         # Imports are stripped: all required types are in allowed_names already.
-        local_vars = safe_load_buml(strip_buml_imports(content), allowed_names)
+        local_vars = safe_load_buml(content, allowed_names)
     except Exception as exc:
         raise ValueError(f"Failed to execute quantum BUML content: {exc}") from exc
 

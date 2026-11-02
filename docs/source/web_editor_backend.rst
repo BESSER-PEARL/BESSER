@@ -575,7 +575,9 @@ Conversion
 - ``POST /export-buml`` -- Diagram JSON to BUML Python code
 - ``POST /export-project-as-buml`` -- Full project to BUML Python code
 - ``POST /get-json-model`` -- BUML Python file to JSON (auto-detects diagram type)
-- ``POST /get-project-json-model`` -- BUML project file to JSON
+- ``POST /get-project-json-model`` -- BUML project file to JSON. Both import endpoints answer 400 with the
+  reason when a model cannot be read, and list in ``warnings`` (``{code, message}``) what they repaired to
+  load it, e.g. a composition whose owner end was not navigable
 - ``POST /get-json-model-from-image`` -- Image to ClassDiagram JSON (requires OpenAI API key)
 - ``POST /get-json-model-from-kg`` -- **Deprecated.** Knowledge graph (TTL/RDF/JSON) to ClassDiagram JSON through OpenAI (requires an OpenAI API key). Use ``/kg/import-owl`` and ``/kg/to-class-diagram`` instead
 - ``POST /csv-to-domain-model`` -- CSV **or XLSX** files to domain model JSON (both extensions are accepted; XLSX needs ``openpyxl``)

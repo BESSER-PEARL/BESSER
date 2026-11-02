@@ -65,7 +65,6 @@ def test_other_control_flow_is_still_refused():
         "while True:\n    x = 1\n",
         "def f():\n    pass\n",
         "class C:\n    pass\n",
-        "import os\n",
     ):
         with pytest.raises(loader.SafeBumlLoaderError):
             _load(src)

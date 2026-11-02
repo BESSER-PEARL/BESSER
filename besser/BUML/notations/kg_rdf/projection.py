@@ -204,11 +204,14 @@ def _pass_a_raw_edges(g, edges, terms, folded, default_ns, warnings) -> None:
         predicate = str(predicate_for_edge(edge, default_ns))
         if predicate in _INTERNAL_PREDICATES or predicate in _LIST_VALUED_PREDICATES:
             continue
-        if predicate == SH_PROPERTY and _is_owlish(edge.source):
+        if predicate == SH_PROPERTY and isinstance(edge.source, KGNodeConstraint) and _is_owlish(edge.source):
             # The importer reuses `sh:property` to wire an OWL restriction to
             # the wrapper node that owns it. That is internal bookkeeping, not a
             # SHACL shape — pass C turns it into the `rdfs:subClassOf` the source
-            # actually had.
+            # actually had. Only a constraint node can be such a wrapper: a plain
+            # class or blank node that is itself the node shape (`:Person a
+            # sh:NodeShape ; sh:property ...`) carries a real SHACL link, and has
+            # no `source` tag for `_is_owlish` to read.
             continue
         subject = terms.get(edge.source.id)
         if isinstance(subject, Literal):

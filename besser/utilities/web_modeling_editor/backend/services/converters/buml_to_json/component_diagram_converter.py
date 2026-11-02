@@ -37,7 +37,6 @@ from besser.utilities.web_modeling_editor.backend.services.converters.stereotype
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
-    strip_buml_imports,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
@@ -263,7 +262,7 @@ def component_buml_to_json(content: str) -> dict:
     }
     try:
         namespace = safe_load_buml(
-            strip_buml_imports(content),
+            content,
             allowed_names,
         )
     except (SyntaxError, NameError, TypeError, ValueError) as exc:

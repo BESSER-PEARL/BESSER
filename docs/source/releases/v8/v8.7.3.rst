@@ -1,0 +1,18 @@
+Version 8.7.3
+=============
+
+Patch release: **a project saved without the export envelope imports again**.
+Editor only; no backend, metamodel or generator changes.
+
+Highlights
+----------
+
+* **A bare project JSON imports.** "Share as gist" stores the project itself
+  as ``<project-name>.json``, and the old GitHub sidebar committed the same
+  shape, but the editor's JSON import accepted only the export envelope
+  (``{ "project": ... }``), so it refused files the editor had written. A bare
+  project is now imported like an exported one, with the diagram types it
+  lacks (such as the Knowledge Graph) filled in.
+* **"Invalid JSON format" only for invalid JSON.** Every refused file was
+  reported as "Failed to import project: Invalid JSON format", even valid
+  JSON. The message now names the real reason.

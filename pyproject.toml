@@ -54,7 +54,8 @@ ignore_imports = [
 name = "The LLM layer imports no caller of it"
 type = "forbidden"
 # besser.llm sits below everything that calls an LLM, the notations included.
-# Of the utilities it uses only the secret redaction leaf.
+# This forbids the utilities that call an LLM; of the others it uses
+# secret_redaction (and, through it, workspace_fs).
 source_modules = ["besser.llm"]
 forbidden_modules = [
     "besser.BUML",

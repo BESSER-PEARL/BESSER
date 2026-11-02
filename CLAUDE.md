@@ -52,7 +52,7 @@ lint-imports            # pip install import-linter==2.15
 `lint-imports` enforces the layers: editor backend -> Spec-Driven Agent -> generators -> notations ->
 metamodel, each importing only the layers below it, and `besser.utilities` (outside the backend) never
 importing the generators, the agent or the backend. `besser.llm` imports none of its callers (of the
-utilities, only `secret_redaction`), so every layer can use it. Inside the backend, `services/` never imports
+utilities it uses `secret_redaction`, which brings `workspace_fs`), so every layer can use it. Inside the backend, `services/` never imports
 `routers/`. Known exceptions are listed, with the change that
 removes each, in `ignore_imports`; do not add one to make a new import pass.
 `F821` (undefined names) is on because `from __future__ import annotations` hides them from every other
@@ -96,7 +96,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 |------|------|
 | `besser/BUML/metamodel/` | Abstract syntax: `structural/` (DomainModel, Class, Property, associations, generalization), `state_machine/`, `gui/`, `action_language/` (BAL), `bpmn/`, `deployment/`, `feature_model/`, `nn/`, `object/`, `ocl/`, `project/`, `quantum/` |
 | `besser/BUML/notations/` | ANTLR-based parsers (PlantUML class/object, OCL, NN, deployment, BAL), draw.io import, LLM-assisted mockup → model, knowledge graph ↔ OWL/RDF/SHACL: import, export and the projection the conversion reads (`kg_rdf/`), KG → class diagram (`kg_to_buml/`) |
-| `besser/llm/` | The LLM access layer every caller shares: OpenAI chat over HTTP (`openai_chat.py`: timeout, optional SDK-style retries, errors that never echo the provider's body), lazy `openai`/`anthropic` SDK clients (`sdk.py`), JSON-from-reply helpers. `besser.utilities.llm_utils` re-exports it |
+| `besser/llm/` | What every LLM call shares: OpenAI chat over HTTP (`openai_chat.py`: timeout, optional retries, errors that never echo the provider's body), the one retry policy (`retry.py`, also used by the Spec-Driven Agent's clients), lazy `openai`/`anthropic` SDK clients (`sdk.py`), JSON-from-reply helpers. The agent's provider clients, pricing and model catalog are still in `spec_driven_agent/providers/` (they move with the `llm_client` split). `besser.utilities.llm_utils` re-exports the old names |
 | `besser/utilities/image_to_buml.py`, `kg_llm_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram via an LLM (`kg_to_buml.py` is its deprecated alias) |
 | `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/`; `registry.py` is the one list of generators (web editor + agent tools) |
@@ -146,7 +146,7 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
   `task_list` checklist; `agent/edit_apply.py` — the lenient match ladder behind `modify_file`;
   `agent/compaction.py` / `agent/history_eviction.py` — context management.
 - `providers/llm_client.py` — provider clients, keyless `free` and `sponsored` tiers, pricing, planning-model
-  routing, free-tier fallback chain.
+  routing, free-tier fallback chain. Its retry policy is `besser.llm.retry`.
 - `planning/gap_analyzer.py` — produces the Phase 2 checklist. Its return value is load-bearing: `None` =
   analysis failed, `[]` = scaffold already sufficient (Phase 2 may be skipped), a list = the tasks.
 - `validation/` — code checks; `validation/issues.py::_classify_issue` assigns severity.

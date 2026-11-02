@@ -635,6 +635,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._updated_project_export: dict | None = None
         # The classes model sync added (its LLM answer), so a resume replays them.
         self._model_sync_classes: list[dict] = []
+        # The modify run's regeneration of untouched generated files (#659).
+        self._regeneration = None
+        # Generator files earlier runs' LLM edited, from the seed recipe.
+        self._seed_llm_modified: set[str] = set()
         # Why the model-sync call failed, for the trace and the recipe.
         self._model_sync_error: str | None = None
 
@@ -4470,7 +4474,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "size": os.path.getsize(full),
                         "source": "generator" if rel in generator_files else "llm",
                     }
-                    if os.path.normcase(os.path.normpath(full)) in llm_edited:
+                    if os.path.normcase(os.path.normpath(full)) in llm_edited or rel in self._seed_llm_modified:
                         entry["llm_modified"] = True
                     output_files.append(entry)
         except Exception:

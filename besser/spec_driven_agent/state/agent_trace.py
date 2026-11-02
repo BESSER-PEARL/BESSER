@@ -167,6 +167,16 @@ def _read_lines(workspace: str, rel: str) -> Optional[list[str]]:
     return text.splitlines()
 
 
+def read_text_lines(workspace: str, rel: str) -> Optional[list[str]]:
+    """The lines attribution would record for ``rel``, or None (see ``_read_lines``)."""
+    return _read_lines(workspace, rel)
+
+
+def line_hashes(lines: list[str]) -> list[str]:
+    """The hash attribution stores for each line."""
+    return [_line_hash(line) for line in lines]
+
+
 def _content_hash(lines: list[str]) -> str:
     return "sha256:" + hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
 

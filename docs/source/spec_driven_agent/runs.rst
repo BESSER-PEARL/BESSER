@@ -110,6 +110,35 @@ OCL constraints are not compared. Elements are matched as described in
 only names its classes, and those include classes the agent added itself, so
 it gets no change list (logged as a warning).
 
+When the model changed and the app's backend came from ``generate_fastapi_backend``,
+the generated files nobody edited are regenerated before Phase 2:
+
+- A file is untouched when every line is still the generator's, unchanged.
+  The line attribution in ``.besser_attribution.json`` records this, and it
+  survives later runs and a GitHub round trip.
+- An untouched file becomes the generator's output for the new model, byte for
+  byte.
+- A file the new model adds (the router of a new class) is written. A
+  generated file that was deleted since the previous run is not brought back.
+- An untouched file the new model no longer produces is deleted, unless
+  another file of the app still names it.
+- An edited file is kept as it is. The agent gets, per file, where the new
+  generator output differs from the generator lines still in the file, and
+  applies the change by hand. Lines someone else changed are left out: they are
+  that person's choice.
+- Only the backend generator's own lines count. Packaging steps that are also
+  recorded as generator contributors (the secret scrub, the frontend repair)
+  do not make a file look untouched.
+
+The agent sees the result under "Regenerated files" in its inventory and as a
+Phase 2 issue. The trace records it as a ``regeneration`` event. An app with no
+trustworthy attribution, for example a repository pushed before attribution
+existed, is not regenerated; a warning is logged and the run continues as
+before. Other generators are not regenerated yet. On a sample of 44 FastAPI runs
+(one domain, scripted model changes), this alone finished the backend change in
+about 70% of the runs, and each of those apps still started and created records
+(`#659 <https://github.com/BESSER-PEARL/BESSER/issues/659>`_).
+
 After Phase 2 a deterministic check compares the FastAPI backend
 (``sql_alchemy.py`` and the ``<Class>Create`` schemas in
 ``pydantic_classes.py``) with the changed attributes. A removed attribute still

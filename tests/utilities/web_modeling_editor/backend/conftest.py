@@ -8,7 +8,24 @@ from __future__ import annotations
 
 import pytest
 
+from besser.utilities.web_modeling_editor.backend.backend import app
 from tests.utilities.web_modeling_editor.backend._asgi_client import AsgiClient
+from tests.utilities.web_modeling_editor.backend._runtime import make_runtime
+
+
+@pytest.fixture(autouse=True)
+def spec_driven_runtime():
+    """A fresh spec-driven runtime on ``app.state`` per test, as the lifespan would build.
+
+    The client below does not run the lifespan, and a runtime shared across
+    tests would leak runs, slots and cancel events from one test into the next.
+    """
+    runtime = make_runtime()
+    app.state.spec_driven = runtime
+    yield runtime
+    runtime.close()
+    runtime.durable_runs.store.close()
+    del app.state.spec_driven
 
 
 @pytest.fixture(autouse=True)

@@ -100,7 +100,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/` |
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
-| `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks) |
+| `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks; per-app run state on `app.state.spec_driven`) |
 | `…/backend/routers/` | One router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator); `error_handler.py` has `@handle_endpoint_errors` |
 | `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` registry (`GeneratorInfo`, incl. download filenames) + `get_filename_for_generator` |
 | `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins, most `BESSER_LLM_*` caps and flags |

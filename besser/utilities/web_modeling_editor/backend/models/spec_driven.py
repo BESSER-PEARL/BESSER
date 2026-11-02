@@ -302,7 +302,7 @@ class PushSmartToGitHubRequest(BaseModel):
     Pushes the *stored* artifact of a finished spec-driven generation run
     (identified by ``run_id``) plus the re-importable model source, rather
     than re-generating deterministically (which would discard the LLM
-    customizations). The run's code is read from ``SMART_RUN_REGISTRY``;
+    customizations). The run's code is read from the run registry;
     only the model source travels in the request.
 
     Attributes

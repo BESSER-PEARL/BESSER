@@ -33,13 +33,13 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartGenerationRunner,
     SmartRunEntry,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
     CLASS_DIAGRAM_MODEL,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 # ---------------------------------------------------------------------
@@ -131,10 +131,10 @@ def _clear_registry_and_calls():
 async def _clear_registry():
     import shutil
 
-    async with SMART_RUN_REGISTRY._lock:
-        for entry in list(SMART_RUN_REGISTRY._entries.values()):
+    async with current_runtime().registry._lock:
+        for entry in list(current_runtime().registry._entries.values()):
             shutil.rmtree(entry.temp_dir, ignore_errors=True)
-        SMART_RUN_REGISTRY._entries.clear()
+        current_runtime().registry._entries.clear()
 
 
 @pytest.fixture
@@ -213,7 +213,7 @@ class TestSeedArm:
     ):
         base_dir = _make_base_dir(tmp_path)
         base_id = "a" * 32
-        asyncio.run(SMART_RUN_REGISTRY.put(
+        asyncio.run(current_runtime().registry.put(
             base_id,
             SmartRunEntry(
                 file_path=os.path.join(base_dir, "app", "main.py"),
@@ -226,7 +226,7 @@ class TestSeedArm:
 
         request = _build_request(mode="modify", base_run_id=base_id)
         runner = SmartGenerationRunner(
-            request, base_run_id=base_id, mode="modify",
+            request, runtime=current_runtime(), base_run_id=base_id, mode="modify",
         )
         frames = asyncio.run(_collect_frames(runner))
         parsed = [_parse(f) for f in frames]
@@ -263,7 +263,7 @@ class TestSeedArm:
         assert os.path.isfile(os.path.join(base_dir, CHECKPOINT_FILENAME))
         assert os.path.isdir(os.path.join(base_dir, ".besser_snapshot"))
         assert os.path.isdir(os.path.join(base_dir, "node_modules"))
-        base_entry = asyncio.run(SMART_RUN_REGISTRY.get(base_id))
+        base_entry = asyncio.run(current_runtime().registry.get(base_id))
         assert base_entry is not None and os.path.isdir(base_entry.temp_dir)
 
 
@@ -279,7 +279,7 @@ class TestBaseExpiredFallback:
         missing_id = "f" * 32  # never registered
         request = _build_request(mode="modify", base_run_id=missing_id)
         runner = SmartGenerationRunner(
-            request, base_run_id=missing_id, mode="modify",
+            request, runtime=current_runtime(), base_run_id=missing_id, mode="modify",
         )
         frames = asyncio.run(_collect_frames(runner))
         parsed = [_parse(f) for f in frames]

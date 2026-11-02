@@ -35,6 +35,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import SmartGenerationRunner
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _build_request
+from tests.utilities.web_modeling_editor.backend._runtime import make_runtime
 
 _SETUP_CFG = configparser.ConfigParser()
 _SETUP_CFG.read(Path(__file__).resolve().parents[2] / "setup.cfg", encoding="utf-8")
@@ -225,7 +226,7 @@ class TestSpecDriven:
         (result_path / ".besser_recipe.json").write_text(
             json.dumps({"generator_used": "backend", "llm_model": "claude-sonnet-4-5"}), encoding="utf-8"
         )
-        runner = SmartGenerationRunner(_build_request())
+        runner = SmartGenerationRunner(_build_request(), runtime=make_runtime())
         runner.temp_dir = str(tmp_path)
         return result_path, runner._package_result(str(result_path))
 

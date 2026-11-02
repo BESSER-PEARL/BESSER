@@ -916,11 +916,8 @@ class DurableRunManager:
                 logger.info("Swept %d expired durable spec-driven run(s)", removed)
 
 
-DURABLE_RUN_MANAGER = DurableRunManager()
-
 
 __all__ = [
-    "DURABLE_RUN_MANAGER",
     "DurableRunManager",
     "RunRecord",
     "RunStatus",

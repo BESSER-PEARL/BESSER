@@ -55,11 +55,13 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
+from besser.utilities.web_modeling_editor.backend.dependencies import SpecDrivenRuntimeDep
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
-    DURABLE_RUN_MANAGER,
-    SMART_RUN_REGISTRY,
+    DurableRunManager,
     SmartGenerationRunner,
     SmartRunEntry,
+    SmartRunRegistry,
+    SpecDrivenRuntime,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
@@ -81,12 +83,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
     GITHUB_SOURCE_FILENAME,
     _locate_run_temp_dir,
     create_run_workspace,
-    release_active_run,
-    release_run_slot,
-    request_cancellation,
-    reserve_active_run,
     run_changes,
-    try_acquire_run_slot,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
@@ -161,6 +158,7 @@ def _safe_attachment_filename(filename: str, fallback: str) -> str:
 
 async def _stream_with_slot_release(
     inner: AsyncIterator[bytes],
+    runtime: SpecDrivenRuntime,
     run_reservation: Optional[tuple[str, asyncio.Event]] = None,
 ) -> AsyncIterator[bytes]:
     """Yield from an SSE generator and return its concurrency slot
@@ -236,29 +234,27 @@ async def _stream_with_slot_release(
             logger.exception("Could not deliver the terminal error frame")
     finally:
         if run_reservation is not None:
-            await release_active_run(*run_reservation)
-        release_run_slot()
+            await runtime.active_runs.release(*run_reservation)
+        runtime.slots.release()
 
 
 # ---------------------------------------------------------------------
 # POST /besser_api/spec-driven/generate  (SSE stream)
 # ---------------------------------------------------------------------
 
-#: ``Idempotency-Key`` -> ``(run_id, created_at)``. Starting a run is a
-#: non-idempotent POST, and behind a TLS-inspecting proxy that is exactly the
-#: request that fails ("Failed to fetch", no run to reconnect to). A
-#: client-generated key makes the retry attach to the run the first attempt
-#: started. In-process and best-effort on purpose: a missed hit costs one
-#: duplicate run, not corruption, and the durable store stays the source of truth.
+# ``Idempotency-Key`` -> ``(run_id, created_at)`` lives on the runtime. Starting
+# a run is a non-idempotent POST, and behind a TLS-inspecting proxy that is
+# exactly the request that fails ("Failed to fetch", no run to reconnect to). A
+# client-generated key makes the retry attach to the run the first attempt
+# started. In-process and best-effort on purpose: a missed hit costs one
+# duplicate run, not corruption, and the durable store stays the source of truth.
 _IDEMPOTENCY_TTL_SECONDS = 900
-_idempotent_runs: dict[str, tuple[str, float]] = {}
-_idempotency_lock = asyncio.Lock()
 
 
-def _prune_idempotency_keys(now: float) -> None:
-    for key, (_, created_at) in list(_idempotent_runs.items()):
+def _prune_idempotency_keys(keys: dict[str, tuple[str, float]], now: float) -> None:
+    for key, (_, created_at) in list(keys.items()):
         if now - created_at > _IDEMPOTENCY_TTL_SECONDS:
-            _idempotent_runs.pop(key, None)
+            keys.pop(key, None)
 
 
 def _require_demo_token(request: SmartGenerateRequest) -> None:
@@ -292,9 +288,11 @@ def _is_demo_token(supplied: str) -> bool:
     return bool(expected) and hmac.compare_digest(supplied.strip().encode("utf-8"), expected.encode("utf-8"))
 
 
-def _run_stream_response(run_id: str, after_sequence: int = 0) -> StreamingResponse:
+def _run_stream_response(
+    durable_runs: DurableRunManager, run_id: str, after_sequence: int = 0,
+) -> StreamingResponse:
     return StreamingResponse(
-        DURABLE_RUN_MANAGER.subscribe(run_id, after_sequence=after_sequence),
+        durable_runs.subscribe(run_id, after_sequence=after_sequence),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -310,6 +308,7 @@ def _run_stream_response(run_id: str, after_sequence: int = 0) -> StreamingRespo
 @router.post("/spec-driven/generate", response_class=StreamingResponse)
 async def smart_generate(
     request: SmartGenerateRequest,
+    runtime: SpecDrivenRuntimeDep,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ) -> StreamingResponse:
     """Stream an LLM-orchestrated code generation run as SSE events.
@@ -335,26 +334,26 @@ async def smart_generate(
     # the very run it is trying to rejoin.
     idem_key = (idempotency_key or "").strip()[:200]
     if idem_key:
-        async with _idempotency_lock:
-            _prune_idempotency_keys(time.time())
-            known = _idempotent_runs.get(idem_key)
+        async with runtime.idempotency_lock:
+            _prune_idempotency_keys(runtime.idempotent_runs, time.time())
+            known = runtime.idempotent_runs.get(idem_key)
             if known is not None:
                 existing_run_id = known[0]
-                if DURABLE_RUN_MANAGER.get_run(existing_run_id) is not None:
+                if runtime.durable_runs.get_run(existing_run_id) is not None:
                     logger.info(
                         "Idempotent retry for run %s — replaying from sequence 0",
                         existing_run_id,
                     )
-                    return _run_stream_response(existing_run_id)
+                    return _run_stream_response(runtime.durable_runs, existing_run_id)
                 # The run aged out of the store; let this request start a
                 # fresh one under the same key.
-                _idempotent_runs.pop(idem_key, None)
+                runtime.idempotent_runs.pop(idem_key, None)
 
     # Reserve a concurrency slot BEFORE allocating any resources.
-    # ``try_acquire_run_slot`` is non-blocking: the client sees an
+    # ``slots.try_acquire`` is non-blocking: the client sees an
     # immediate 429 when the server is saturated, never a hung SSE
     # stream. The wrapper around the stream returns the slot on exit.
-    if not try_acquire_run_slot():
+    if not runtime.slots.try_acquire():
         raise HTTPException(
             status_code=429,
             detail=(
@@ -372,18 +371,19 @@ async def smart_generate(
         # Claim the key with this run id BEFORE the run starts, so a retry
         # that arrives while startup is still in flight waits for this run
         # rather than opening a second one.
-        async with _idempotency_lock:
-            _idempotent_runs[idem_key] = (run_id, time.time())
-    cancel_event = await reserve_active_run(run_id)
+        async with runtime.idempotency_lock:
+            runtime.idempotent_runs[idem_key] = (run_id, time.time())
+    cancel_event = await runtime.active_runs.reserve(run_id)
     if cancel_event is None:  # UUID collision is fantastically unlikely.
-        release_run_slot()
+        runtime.slots.release()
         if idem_key:
-            async with _idempotency_lock:
-                _idempotent_runs.pop(idem_key, None)
+            async with runtime.idempotency_lock:
+                runtime.idempotent_runs.pop(idem_key, None)
         raise HTTPException(status_code=409, detail="Generated run ID is already active")
 
     runner = SmartGenerationRunner(
         request,
+        runtime=runtime,
         run_id=run_id,
         reserved_cancel_event=cancel_event,
         base_run_id=request.base_run_id,
@@ -391,10 +391,11 @@ async def smart_generate(
     )
     source = _stream_with_slot_release(
         runner.generate_and_stream(),
+        runtime,
         run_reservation=(run_id, cancel_event),
     )
     try:
-        await DURABLE_RUN_MANAGER.start(
+        await runtime.durable_runs.start(
             run_id,
             source,
             on_abandoned=(
@@ -404,13 +405,13 @@ async def smart_generate(
             disconnect_grace_seconds=get_settings().llm_disconnected_grace_seconds,
         )
     except Exception:
-        await release_active_run(run_id, cancel_event)
-        release_run_slot()
+        await runtime.active_runs.release(run_id, cancel_event)
+        runtime.slots.release()
         if idem_key:
-            async with _idempotency_lock:
-                _idempotent_runs.pop(idem_key, None)
+            async with runtime.idempotency_lock:
+                runtime.idempotent_runs.pop(idem_key, None)
         raise
-    return _run_stream_response(run_id)
+    return _run_stream_response(runtime.durable_runs, run_id)
 
 
 # ---------------------------------------------------------------------
@@ -420,10 +421,11 @@ async def smart_generate(
 
 @router.get("/spec-driven/runs/{run_id}")
 async def get_smart_run_status(
+    runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
 ) -> dict:
     """Return durable lifecycle metadata without exposing request secrets."""
-    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    record = runtime.durable_runs.get_run(run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Spec-driven run not found")
     return record.to_api_dict()
@@ -431,6 +433,7 @@ async def get_smart_run_status(
 
 @router.get("/spec-driven/runs/{run_id}/events.json")
 async def poll_smart_run_events(
+    runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
     after: int = Query(default=0, ge=0, le=_MAX_SQLITE_SEQUENCE),
     limit: int = Query(default=250, ge=1, le=1000),
@@ -452,11 +455,11 @@ async def poll_smart_run_events(
     the same reducer it feeds streamed events. ``hasMore`` says to come straight
     back, ``status``/``terminalEvent`` say when to stop.
     """
-    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    record = runtime.durable_runs.get_run(run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Spec-driven run not found")
 
-    stored = DURABLE_RUN_MANAGER.store.events_after(run_id, after, limit=limit)
+    stored = runtime.durable_runs.store.events_after(run_id, after, limit=limit)
     events = [
         {
             "sequence": item.sequence,
@@ -478,6 +481,7 @@ async def poll_smart_run_events(
 
 @router.get("/spec-driven/runs/{run_id}/events", response_class=StreamingResponse)
 async def stream_smart_run_events(
+    runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
     after: int = Query(default=0, ge=0, le=_MAX_SQLITE_SEQUENCE),
     last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
@@ -488,7 +492,7 @@ async def stream_smart_run_events(
     endpoint compatible with native EventSource clients. The larger valid
     cursor wins, preventing a stale query value from replaying duplicates.
     """
-    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    record = runtime.durable_runs.get_run(run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Spec-driven run not found")
 
@@ -503,7 +507,7 @@ async def stream_smart_run_events(
         cursor = max(cursor, parsed_event_id)
 
     return StreamingResponse(
-        DURABLE_RUN_MANAGER.subscribe(run_id, after_sequence=cursor),
+        runtime.durable_runs.subscribe(run_id, after_sequence=cursor),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -621,7 +625,7 @@ async def smart_gen_config() -> dict:
 
 @router.post("/spec-driven/preview")
 @handle_endpoint_errors("smart_preview")
-async def smart_preview(request: SmartPreviewRequest) -> dict:
+async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntimeDep) -> dict:
     """Return the plan spec-driven generate would run, without executing it.
 
     The response lets the UI show a confirmation screen before the user
@@ -664,7 +668,7 @@ async def smart_preview(request: SmartPreviewRequest) -> dict:
     # "update the existing app / start fresh". None = unknown, keep modifying.
     model_change = None
     if request.mode == "modify" and request.base_run_id:
-        base = await SMART_RUN_REGISTRY.get(request.base_run_id)
+        base = await runtime.registry.get(request.base_run_id)
         if base is not None and base.temp_dir:
             change = compare_with_base(base.temp_dir, assembled.domain_model)
             model_change = change.to_dict() if change else None
@@ -681,6 +685,7 @@ async def smart_preview(request: SmartPreviewRequest) -> dict:
 async def resume_smart_gen(
     run_id: str,
     request: SmartGenerateRequest,
+    runtime: SpecDrivenRuntimeDep,
 ) -> StreamingResponse:
     """Resume a spec-driven generate run that crashed before completion.
 
@@ -718,7 +723,7 @@ async def resume_smart_gen(
     # Atomically reserve the checkpoint/run ID before the global slot.
     # This prevents the original run and a resume (or two resumes) from
     # sharing one workspace and checkpoint.
-    cancel_event = await reserve_active_run(run_id)
+    cancel_event = await runtime.active_runs.reserve(run_id)
     if cancel_event is None:
         raise HTTPException(
             status_code=409,
@@ -729,8 +734,8 @@ async def resume_smart_gen(
 
     # Same concurrency gate as /spec-driven/generate - a resumed run consumes
     # the same resources as a fresh one.
-    if not try_acquire_run_slot():
-        await release_active_run(run_id, cancel_event)
+    if not runtime.slots.try_acquire():
+        await runtime.active_runs.release(run_id, cancel_event)
         raise HTTPException(
             status_code=429,
             detail=(
@@ -741,15 +746,17 @@ async def resume_smart_gen(
 
     runner = SmartGenerationRunner(
         request,
+        runtime=runtime,
         resume_run_id=run_id,
         reserved_cancel_event=cancel_event,
     )
     source = _stream_with_slot_release(
         runner.generate_and_stream(),
+        runtime,
         run_reservation=(run_id, cancel_event),
     )
     try:
-        await DURABLE_RUN_MANAGER.start(
+        await runtime.durable_runs.start(
             run_id,
             source,
             resume=True,
@@ -760,11 +767,11 @@ async def resume_smart_gen(
             disconnect_grace_seconds=get_settings().llm_disconnected_grace_seconds,
         )
     except Exception:
-        await release_active_run(run_id, cancel_event)
-        release_run_slot()
+        await runtime.active_runs.release(run_id, cancel_event)
+        runtime.slots.release()
         raise
     return StreamingResponse(
-        DURABLE_RUN_MANAGER.subscribe(run_id),
+        runtime.durable_runs.subscribe(run_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -783,6 +790,7 @@ async def resume_smart_gen(
 @router.post("/spec-driven/cancel/{run_id}")
 @handle_endpoint_errors("cancel_smart_gen")
 async def cancel_smart_gen(
+    runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(
         ...,
         pattern=r"^[a-f0-9]{32}$",
@@ -802,7 +810,7 @@ async def cancel_smart_gen(
     closing so the frontend can show a definite "stopped by user"
     state instead of waiting for ``done``.
     """
-    cancelled = await request_cancellation(run_id)
+    cancelled = await runtime.active_runs.request_cancellation(run_id)
     return {"status": "cancelled" if cancelled else "not_found", "runId": run_id}
 
 
@@ -814,6 +822,7 @@ async def cancel_smart_gen(
 @router.get("/spec-driven/download/{run_id}", response_class=StreamingResponse)
 @handle_endpoint_errors("download_smart")
 async def download_smart(
+    runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(
         ...,
         pattern=r"^[a-f0-9]{32}$",
@@ -829,7 +838,7 @@ async def download_smart(
     entirely by ``SmartRunRegistry.periodic_sweep``; this endpoint no
     longer deletes anything.
     """
-    entry = await SMART_RUN_REGISTRY.get(run_id)
+    entry = await runtime.registry.get(run_id)
     if entry is None:
         raise HTTPException(
             status_code=404,
@@ -933,6 +942,7 @@ def _resolve_target_branch(
 @router.post("/spec-driven/push-to-github", response_model=PushSmartToGitHubResponse)
 async def push_spec_driven_to_github(
     req: PushSmartToGitHubRequest,
+    runtime: SpecDrivenRuntimeDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ) -> PushSmartToGitHubResponse:
     """Push a finished spec-driven generation run to a GitHub repository.
@@ -945,7 +955,7 @@ async def push_spec_driven_to_github(
     Flow:
       1. Gate on the ``X-GitHub-Session`` header (same helper the other
          GitHub endpoints use — the real token never reaches the client).
-      2. Resolve the stored run from ``SMART_RUN_REGISTRY`` (404 when it
+      2. Resolve the stored run from the run registry (404 when it
          has been swept past its TTL — the user must re-generate).
       3. Copy the stored file tree into a fresh temp dir, skipping build/
          dependency dirs, ``.besser_*`` internals, and any ``.env`` that
@@ -970,7 +980,7 @@ async def push_spec_driven_to_github(
         )
 
     # ---- 2. Resolve the stored run (non-destructive; None if swept) ----
-    entry = await SMART_RUN_REGISTRY.get(req.run_id)
+    entry = await runtime.registry.get(req.run_id)
     if entry is None or not entry.temp_dir or not os.path.isdir(entry.temp_dir):
         # Machine-usable code the frontend can branch on, plus a human
         # hint: "This generation has expired — re-generate to push."
@@ -1146,7 +1156,7 @@ async def push_spec_driven_to_github(
             if status == "merged":
                 try:
                     base_run_id, _ = await _import_repo_as_run(
-                        github, owner, repo_name, push_results["commit_sha"]
+                        github, owner, repo_name, push_results["commit_sha"], runtime.registry,
                     )
                 except Exception:
                     logger.warning("Pushed and merged %s/%s, but could not read the merged repo back",
@@ -1286,7 +1296,9 @@ def _plain_file_hashes(root: str) -> dict[str, str]:
     return dict(sorted(found.items()))
 
 
-async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) -> tuple[str, str]:
+async def _import_repo_as_run(
+    github, owner: str, repo: str, commit_sha: str, registry: SmartRunRegistry,
+) -> tuple[str, str]:
     """Register ``owner/repo`` at ``commit_sha`` as a run a modify run can seed from.
 
     The repo is extracted into the shared run workspace, where the Spec-Driven
@@ -1308,7 +1320,7 @@ async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) ->
     except BaseException:
         shutil.rmtree(extract_dir, ignore_errors=True)
         raise
-    await SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
+    await registry.put(run_id, SmartRunEntry(
         file_path=source_path,
         file_name=GITHUB_SOURCE_FILENAME,
         is_zip=False,
@@ -1380,6 +1392,7 @@ async def _read_repo_with_ai(req: ImportGitHubRunRequest, extract_dir, code_anal
 @router.post("/spec-driven/import-github-run", response_model=ImportGitHubRunResponse)
 async def import_github_run(
     req: ImportGitHubRunRequest,
+    runtime: SpecDrivenRuntimeDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ) -> ImportGitHubRunResponse:
     """Import an existing BESSER-created GitHub repo as a modify seed.
@@ -1395,7 +1408,7 @@ async def import_github_run(
       2. Resolve the target branch (repo default when none is requested).
       3. Pin the branch head, then download + extract the repo at that
          commit into the shared run workspace.
-      4. Register that code tree as a run in ``SMART_RUN_REGISTRY`` under a
+      4. Register that code tree as a run in the run registry under a
          fresh ``run_id``. A later ``/spec-driven/generate`` with
          ``mode="modify"`` and ``base_run_id=run_id`` seeds its workspace from
          exactly this tree, in whichever container runs it.
@@ -1431,19 +1444,19 @@ async def import_github_run(
 
     # An import downloads and unpacks up to the archive caps and may call an
     # LLM, so it takes a run slot (BESSER_LLM_MAX_CONCURRENT_RUNS) like a run.
-    if not try_acquire_run_slot():
+    if not runtime.slots.try_acquire():
         raise HTTPException(
             status_code=429,
             detail="Too many imports and generation runs are in flight right now. Retry in a moment.",
         )
     try:
-        return await _import_github_run(req, access_token, owner, repo)
+        return await _import_github_run(req, access_token, owner, repo, runtime.registry)
     finally:
-        release_run_slot()
+        runtime.slots.release()
 
 
 async def _import_github_run(
-    req: ImportGitHubRunRequest, access_token: str, owner: str, repo: str,
+    req: ImportGitHubRunRequest, access_token: str, owner: str, repo: str, registry: SmartRunRegistry,
 ) -> ImportGitHubRunResponse:
     """Steps 2-5 of ``import_github_run``, under its run slot."""
     try:
@@ -1467,7 +1480,7 @@ async def _import_github_run(
         commit_sha = await github.get_branch_head(owner, repo, branch)
         if not commit_sha:
             raise HTTPException(status_code=404, detail="repo_missing")
-        run_id, extract_dir = await _import_repo_as_run(github, owner, repo, commit_sha)
+        run_id, extract_dir = await _import_repo_as_run(github, owner, repo, commit_sha, registry)
 
         # ---- 5. Read the re-importable model (buml/diagrams.json) ----
         project: Optional[dict] = None

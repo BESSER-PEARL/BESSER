@@ -7,6 +7,8 @@ FastAPI SSE endpoint. Exposes:
 - The ``SmartGenerationRunner`` that drives a run and yields SSE bytes.
 - The in-memory ``SmartRunRegistry`` that tracks generated-output paths
   awaiting download.
+- ``SpecDrivenRuntime``: the registry, run store, run slots, cancel events and
+  thread pool of one app, built in the backend's lifespan.
 - ``assemble_models_from_project`` which converts a ``ProjectInput`` into
   the BUML models the LLM orchestrator needs.
 """
@@ -23,13 +25,13 @@ from .sse_events import (
     format_sse,
 )
 from .model_assembly import AssembledModels, assemble_models_from_project
-from .runner import SMART_RUN_REGISTRY, SmartGenerationRunner, SmartRunEntry, SmartRunRegistry
+from .runner import SmartGenerationRunner, SmartRunEntry, SmartRunRegistry
 from .run_manager import (
-    DURABLE_RUN_MANAGER,
     DurableRunManager,
     RunRecord,
     SqliteRunEventStore,
 )
+from .runtime import ActiveRuns, RunSlots, SpecDrivenRuntime
 
 __all__ = [
     # Events
@@ -49,10 +51,12 @@ __all__ = [
     "SmartGenerationRunner",
     "SmartRunRegistry",
     "SmartRunEntry",
-    "SMART_RUN_REGISTRY",
     # Durable lifecycle / replay
-    "DURABLE_RUN_MANAGER",
     "DurableRunManager",
     "RunRecord",
     "SqliteRunEventStore",
+    # Per-app state (``app.state.spec_driven``)
+    "SpecDrivenRuntime",
+    "RunSlots",
+    "ActiveRuns",
 ]

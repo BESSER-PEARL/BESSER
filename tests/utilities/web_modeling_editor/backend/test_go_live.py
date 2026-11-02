@@ -21,11 +21,11 @@ from besser.utilities.web_modeling_editor.backend.routers import spec_driven_rou
 from besser.utilities.web_modeling_editor.backend.services.deployment import github_deploy_api, render_blueprint
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_deploy_api import _add_deployment_configs
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartRunEntry,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _clear_registry
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 HEAD = "b" * 40
@@ -269,7 +269,7 @@ class _PushGitHub:
 def _push_run(monkeypatch, tmp_path, fake):
     run_dir = tmp_path / "run"
     _web_app(str(run_dir))
-    asyncio.run(SMART_RUN_REGISTRY.put("f" * 32, SmartRunEntry(
+    asyncio.run(current_runtime().registry.put("f" * 32, SmartRunEntry(
         file_path=str(run_dir / "buml" / "diagrams.json"), file_name="diagrams.json", is_zip=False,
         temp_dir=str(run_dir), created_at=time.time(),
     )))

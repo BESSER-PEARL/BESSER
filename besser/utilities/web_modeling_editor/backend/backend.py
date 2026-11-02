@@ -75,10 +75,9 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     agent_simulator_router,
 )
 
-# Spec-driven download registry — started/cancelled in the lifespan below
+# Spec-driven runs, slots and thread pool: one per app, built in the lifespan
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
-    DURABLE_RUN_MANAGER,
-    SMART_RUN_REGISTRY,
+    SpecDrivenRuntime,
 )
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
@@ -205,7 +204,7 @@ def _validate_env_vars() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     _validate_env_vars()
     # A broken BESSER_MODEL_CATALOG stops startup here rather than silently
     # dropping a provider from the key dialog.
@@ -216,17 +215,22 @@ async def lifespan(_: FastAPI):
     cleanup_old_temp_files()
     cleanup_task = schedule_cleanup()
 
+    # Routes reach it through dependencies.get_spec_driven_runtime.
+    runtime = SpecDrivenRuntime.create(get_settings())
+    app.state.spec_driven = runtime
+    logger.info("Spec-driven runtime started (%d run slots)", get_settings().llm_max_concurrent_runs)
+
     # Download metadata lives beside artifacts on the persistent run volume,
     # so a backend/container restart does not invalidate a completed result.
-    await SMART_RUN_REGISTRY.restore_persisted()
+    await runtime.registry.restore_persisted()
 
     # Sweep expired spec-driven generation download entries every minute.
     smart_gen_sweeper = asyncio.create_task(
-        SMART_RUN_REGISTRY.periodic_sweep(),
+        runtime.registry.periodic_sweep(),
         name="spec-driven-registry-sweeper",
     )
     durable_run_sweeper = asyncio.create_task(
-        DURABLE_RUN_MANAGER.periodic_sweep(get_settings().llm_download_ttl_seconds),
+        runtime.durable_runs.periodic_sweep(get_settings().llm_download_ttl_seconds),
         name="spec-driven-durable-run-sweeper",
     )
 
@@ -248,6 +252,8 @@ async def lifespan(_: FastAPI):
         await durable_run_sweeper
     except asyncio.CancelledError:
         pass
+    runtime.close()
+    logger.info("Spec-driven runtime stopped")
 
 
 # Initialize FastAPI application

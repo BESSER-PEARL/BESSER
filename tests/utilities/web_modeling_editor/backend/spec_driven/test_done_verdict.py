@@ -23,7 +23,6 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartGenerationRunner,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_modify_seed import (
@@ -33,6 +32,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_modify_seed im
     _collect_frames,
     _parse,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 class _BlockerOrchestrator(_StubOrchestrator):
@@ -49,10 +49,10 @@ class _BlockerOrchestrator(_StubOrchestrator):
 def _cleanup():
     async def _c():
         import shutil
-        async with SMART_RUN_REGISTRY._lock:
-            for e in list(SMART_RUN_REGISTRY._entries.values()):
+        async with current_runtime().registry._lock:
+            for e in list(current_runtime().registry._entries.values()):
                 shutil.rmtree(e.temp_dir, ignore_errors=True)
-            SMART_RUN_REGISTRY._entries.clear()
+            current_runtime().registry._entries.clear()
     asyncio.run(_c())
 
 
@@ -67,7 +67,7 @@ def test_unfixed_phase3_blocker_marks_run_incomplete(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _BlockerOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
-        done = _done_event(SmartGenerationRunner(_build_request()))
+        done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
         assert done["incomplete"] is True
         reason = (done.get("incompleteReason") or "").lower()
         assert "unresolved implementation or verification" in reason
@@ -91,7 +91,7 @@ def test_no_blockers_stays_complete(monkeypatch, required_check):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", SkippedCheck)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
-        done = _done_event(SmartGenerationRunner(_build_request()))
+        done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
         # A check that could not RUN is an unknown, not a defect, and no
         # longer sets the verdict. The unknown still counts in blockerCount
         # and still shows in the ledger's could-not-verify bucket -- it just
@@ -128,7 +128,7 @@ def test_failed_diagram_is_visible_and_bound_missing_inputs_fail_before_client(m
     monkeypatch.setattr(runner_module, "create_llm_client", client)
     monkeypatch.setattr(runner_module, "LLMOrchestrator", CaptureAssembly)
     try:
-        events = [_parse(frame) for frame in asyncio.run(_collect_frames(SmartGenerationRunner(request)))]
+        events = [_parse(frame) for frame in asyncio.run(_collect_frames(SmartGenerationRunner(request, runtime=current_runtime())))]
         assert "NEVER-PUBLISH-THIS" not in repr(events)
         if bound_target == "generate_web_app":
             assert clients == [] and observed == [], "missing required models must stop before paid generation"
@@ -180,7 +180,7 @@ def test_runtime_cap_breach_marks_run_incomplete(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _SlowButCleanOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
-        done = _done_event(SmartGenerationRunner(_build_request()))
+        done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
         assert done["incomplete"] is True, (
             "a run stopped by the time cap must not report itself complete"
         )
@@ -195,7 +195,7 @@ def test_a_run_inside_its_caps_stays_complete(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _StubOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
-        done = _done_event(SmartGenerationRunner(_build_request()))
+        done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
         assert done["incomplete"] is False
         assert done.get("incompleteReason") in (None, "")
     finally:

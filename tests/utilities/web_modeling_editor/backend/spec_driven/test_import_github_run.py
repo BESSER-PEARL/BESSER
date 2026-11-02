@@ -19,13 +19,11 @@ from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
-)
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
 )
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 BASE_URL = "http://testserver"
@@ -153,7 +151,7 @@ class TestImportGitHubRun:
 
         # The run is registered and its temp_dir is the extracted repo tree.
         run_id = data["run_id"]
-        entry = asyncio.run(SMART_RUN_REGISTRY.get(run_id))
+        entry = asyncio.run(current_runtime().registry.get(run_id))
         assert entry is not None
         assert entry.temp_dir == fake.extract_dir
 
@@ -172,7 +170,7 @@ class TestImportGitHubRun:
 
         # A run is still registered so the code can be used as a modify seed.
         run_id = data["run_id"]
-        entry = asyncio.run(SMART_RUN_REGISTRY.get(run_id))
+        entry = asyncio.run(current_runtime().registry.get(run_id))
         assert entry is not None
         assert entry.temp_dir == fake.extract_dir
 

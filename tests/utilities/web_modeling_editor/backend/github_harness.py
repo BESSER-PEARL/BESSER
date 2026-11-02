@@ -61,7 +61,7 @@ httpx.AsyncClient = github_client_class(fake)
 from besser.utilities.web_modeling_editor.backend.backend import app  # noqa: E402
 from besser.utilities.web_modeling_editor.backend.services.deployment import github_oauth, repo_model  # noqa: E402
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (  # noqa: E402
-    SMART_RUN_REGISTRY, SmartRunEntry, _seed_workspace_from_base, create_run_workspace, run_changes,
+    SmartRunEntry, _seed_workspace_from_base, create_run_workspace, run_changes,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (  # noqa: E402
     DoneEvent, PhaseEvent, StartEvent, ToolCallEvent, format_sse,
@@ -228,7 +228,8 @@ class Review(Base):
 async def generate(request: Request):
     """A real modify run without an LLM: seeded from its base, code edited, a class added."""
     body = await request.json()
-    base = await SMART_RUN_REGISTRY.get(body.get("base_run_id") or "")
+    registry = request.app.state.spec_driven.registry
+    base = await registry.get(body.get("base_run_id") or "")
     run_id = uuid.uuid4().hex
     workdir = create_run_workspace(run_id)
     if base is not None:
@@ -249,7 +250,7 @@ async def generate(request: Request):
         diagram["model"] = with_class(diagram["model"], "Review", dx=840)
         entry.updated_project_export = {"project": project, "exportedAt": "2026-10-29T12:00:00Z", "version": "2.0.0"}
         changes = ["class Review added"]
-    await SMART_RUN_REGISTRY.put(run_id, entry)
+    await registry.put(run_id, entry)
     recipe = {"history": [{"mode": "modify"}],
               "tool_calls": [{"tool": "modify_file", "input": {"path": "app/models.py"}},
                              {"tool": "write_file", "input": {"path": "app/reviews.py"}}],

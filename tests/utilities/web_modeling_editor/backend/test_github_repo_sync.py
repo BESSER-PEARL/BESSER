@@ -34,7 +34,6 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.github_ser
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartRunEntry,
     SmartRunRegistry,
 )
@@ -43,6 +42,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _clear_registry
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 BASE = "a" * 40
 HEAD = "b" * 40
@@ -266,7 +266,7 @@ def _seed_run(tmp_path) -> str:
     run_dir.mkdir()
     (run_dir / "main.py").write_text("print('hi')\n", encoding="utf-8")
     run_id = "f" * 32
-    asyncio.run(SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
         file_path=str(run_dir / "main.py"), file_name="main.py", is_zip=False,
         temp_dir=str(run_dir), created_at=time.time(),
     )))

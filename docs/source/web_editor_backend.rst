@@ -34,12 +34,52 @@ Additional infrastructure:
 - **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError`` and ``ConfigurationError``.
   ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
 - **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions), ``llm.py`` (reaching the user's own LLM provider under one request deadline) and ``validation.py`` (the consistency check under its concurrency cap, and the KG findings of ``/validate-diagram``)
-- **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``sse_events.py`` (the typed event schema), ``telemetry.py``, ``incidents.py``. Frames, packaged workspaces and repo writes are redacted by ``besser.utilities.secret_redaction``
+- **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``runtime.py`` (the per-app state of the runs, see `Runtime State`_), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``sse_events.py`` (the typed event schema), ``telemetry.py``, ``incidents.py``. Frames, packaged workspaces and repo writes are redacted by ``besser.utilities.secret_redaction``
 - **``constants/constants.py``** -- API version, temp prefixes, generator defaults and the built-in CORS origins
 - **``settings.py``** -- ``BackendSettings``, every environment variable the backend reads (see `Environment Variables`_)
 - **``models/responses.py``** -- Standardized Pydantic response models
 - **``models/kg.py``** -- Request models of the KG endpoints: ``KGDiagramInput`` (a ``DiagramInput`` plus the refinement fields, with typed ``resolutions`` and ``llmIssues``) and the LLM requests, which share ``KGLLMCredentials`` (``provider``, ``llm_model``, and the key as a ``SecretStr``). Data fields are camelCase; only the credentials keep the snake_case names of the other LLM features
 - **``models/spec_driven.py``** -- Request/response models for the spec-driven endpoints (the API key is a ``SecretStr``; the caps are clamped by field validators)
+- **``dependencies.py``** -- FastAPI dependencies that hand routes the state built in the lifespan
+
+Runtime State
+^^^^^^^^^^^^^
+
+The state the spec-driven runs share lives in one ``SpecDrivenRuntime``
+(``services/spec_driven/runtime.py``) per application, not in module globals:
+
+- ``registry`` -- the ``SmartRunRegistry`` of finished runs awaiting download,
+  push or a modify run;
+- ``durable_runs`` -- the ``DurableRunManager`` and its SQLite event store
+  (``BESSER_LLM_RUN_STORE_PATH``);
+- ``slots`` -- the ``BESSER_LLM_MAX_CONCURRENT_RUNS`` cap on runs and GitHub
+  imports;
+- ``active_runs`` -- the cancel event of each live run;
+- ``executor`` -- the thread pool the runs work on (``smartgen-*`` threads, the
+  cap plus four), kept apart from asyncio's default pool that the quick
+  endpoints use;
+- the ``Idempotency-Key`` map of recent run starts.
+
+The ``lifespan`` in ``backend.py`` builds it from ``BackendSettings``, stores it
+on ``app.state.spec_driven``, restores the persisted downloads and starts the
+two sweepers. On shutdown it cancels the sweepers and shuts the pool down
+without waiting; runs still in a thread finish before the interpreter exits.
+Routes take the runtime through ``Depends(get_spec_driven_runtime)``
+(``SpecDrivenRuntimeDep``) and pass it to each ``SmartGenerationRunner``, so
+two applications in one process (or two tests) never share runs, slots or
+threads. The Spec-Driven worker container serves the same application, so it
+builds its own runtime the same way; the two containers meet through the
+shared run workspace, which ``SmartRunRegistry.get`` rescans on a miss.
+
+Test clients built on ``httpx.ASGITransport`` do not run the lifespan: the
+backend tests' ``spec_driven_runtime`` fixture installs a fresh runtime per test
+instead.
+
+Some process-wide state stays in modules on purpose: caches of facts about the
+host (the sandbox self-test, the tokenizer, the model catalog, the settings),
+per-path file locks, and the agent's shell-session reaper, which belong to the
+process rather than to one app, and which the agent also uses outside the
+backend.
 
 Multi-Diagram Projects
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -1017,9 +1057,9 @@ From a checkout, ``python -m besser.utilities.web_modeling_editor.backend.backen
 start the same server and take the same options. The backend always runs as a
 single process (see the note under `Agent Simulation`_).
 
-Startup and shutdown work (the temp-file cleanup, the spec-driven download
-registry restore and sweepers) runs in the FastAPI ``lifespan`` handler
-declared in ``backend.py``; the agent simulator service declares its own
+Startup and shutdown work (the temp-file cleanup, the spec-driven runtime
+with its download registry restore and sweepers, see `Runtime State`_) runs in
+the FastAPI ``lifespan`` handler declared in ``backend.py``; the agent simulator service declares its own
 ``lifespan`` in ``agent_simulator_api.py``.
 
 To use the Spec-Driven Agent's Local (e.g. Ollama) provider from this local

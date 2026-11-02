@@ -17,11 +17,11 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import ru
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartGenerationRunner,
-    SMART_RUN_REGISTRY,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
     CLASS_DIAGRAM_MODEL,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 # ---------------------------------------------------------------------
@@ -187,11 +187,11 @@ def clear_registry_and_orchestrators():
 
 
 async def _clear_registry():
-    async with SMART_RUN_REGISTRY._lock:
-        for entry in list(SMART_RUN_REGISTRY._entries.values()):
+    async with current_runtime().registry._lock:
+        for entry in list(current_runtime().registry._entries.values()):
             import shutil
             shutil.rmtree(entry.temp_dir, ignore_errors=True)
-        SMART_RUN_REGISTRY._entries.clear()
+        current_runtime().registry._entries.clear()
 
 
 @pytest.fixture
@@ -241,7 +241,7 @@ class TestBaseUrlSsrfGate:
             provider="openai", api_key="sk-test", llm_model="gpt-4o",
             base_url="http://localhost:11434/v1",
         )
-        parsed = [_parse_frame(f) for f in asyncio.run(_collect_frames(SmartGenerationRunner(request)))]
+        parsed = [_parse_frame(f) for f in asyncio.run(_collect_frames(SmartGenerationRunner(request, runtime=current_runtime())))]
         assert any(p.get("event") == "error" and p.get("code") == "BAD_REQUEST" for p in parsed)
         assert "done" not in [p.get("event") for p in parsed]
 
@@ -251,14 +251,14 @@ class TestBaseUrlSsrfGate:
             provider="openai", api_key="sk-test", llm_model="gpt-4o",
             base_url="http://localhost:11434/v1",
         )
-        parsed = [_parse_frame(f) for f in asyncio.run(_collect_frames(SmartGenerationRunner(request)))]
+        parsed = [_parse_frame(f) for f in asyncio.run(_collect_frames(SmartGenerationRunner(request, runtime=current_runtime())))]
         assert not any(p.get("code") == "BAD_REQUEST" for p in parsed)
         assert "done" in [p.get("event") for p in parsed]
 
     def test_no_base_url_unaffected_when_flag_off(self, stub_orchestrator, monkeypatch):
         monkeypatch.setattr(get_settings(), "llm_allow_custom_base_url", False)
         request = _build_request()  # anthropic, no base_url
-        parsed = [_parse_frame(f) for f in asyncio.run(_collect_frames(SmartGenerationRunner(request)))]
+        parsed = [_parse_frame(f) for f in asyncio.run(_collect_frames(SmartGenerationRunner(request, runtime=current_runtime())))]
         assert not any(p.get("code") == "BAD_REQUEST" for p in parsed)
         assert "done" in [p.get("event") for p in parsed]
 
@@ -266,7 +266,7 @@ class TestBaseUrlSsrfGate:
 class TestHappyPath:
     def test_happy_path_event_ordering(self, stub_orchestrator):
         request = _build_request()
-        runner = SmartGenerationRunner(request)
+        runner = SmartGenerationRunner(request, runtime=current_runtime())
 
         frames = asyncio.run(_collect_frames(runner))
         parsed = [_parse_frame(f) for f in frames]
@@ -285,7 +285,7 @@ class TestHappyPath:
 
     def test_start_event_never_contains_api_key(self, stub_orchestrator):
         request = _build_request()
-        runner = SmartGenerationRunner(request)
+        runner = SmartGenerationRunner(request, runtime=current_runtime())
 
         frames = asyncio.run(_collect_frames(runner))
         for frame in frames:
@@ -294,7 +294,7 @@ class TestHappyPath:
 
     def test_done_event_registers_download(self, stub_orchestrator):
         request = _build_request()
-        runner = SmartGenerationRunner(request)
+        runner = SmartGenerationRunner(request, runtime=current_runtime())
 
         frames = asyncio.run(_collect_frames(runner))
         done = _parse_frame(frames[-1])
@@ -321,7 +321,7 @@ class TestFreeTierStartEventModel:
         monkeypatch.delenv("BESSER_FREE_LLM_ALT_MODELS", raising=False)
 
     def _start_event(self, request) -> dict:
-        frames = asyncio.run(_collect_frames(SmartGenerationRunner(request)))
+        frames = asyncio.run(_collect_frames(SmartGenerationRunner(request, runtime=current_runtime())))
         start = _parse_frame(frames[0])
         assert start["event"] == "start"
         return start
@@ -372,7 +372,7 @@ class TestFreeTierStartEventModel:
 class TestErrorPaths:
     def test_invalid_api_key(self, stub_orchestrator):
         request = _build_request(api_key="bad-key")
-        runner = SmartGenerationRunner(request)
+        runner = SmartGenerationRunner(request, runtime=current_runtime())
 
         frames = asyncio.run(_collect_frames(runner))
         parsed = [_parse_frame(f) for f in frames]
@@ -382,7 +382,7 @@ class TestErrorPaths:
 
     def test_upstream_llm_error(self, failing_orchestrator):
         request = _build_request()
-        runner = SmartGenerationRunner(request)
+        runner = SmartGenerationRunner(request, runtime=current_runtime())
 
         frames = asyncio.run(_collect_frames(runner))
         parsed = [_parse_frame(f) for f in frames]
@@ -395,12 +395,12 @@ class TestErrorPaths:
 class TestCleanup:
     def test_request_turn_cap_is_forwarded_to_orchestrator(self, stub_orchestrator):
         request = _build_request(max_turns=7)
-        asyncio.run(_collect_frames(SmartGenerationRunner(request)))
+        asyncio.run(_collect_frames(SmartGenerationRunner(request, runtime=current_runtime())))
         assert _LAST_ORCHESTRATORS[-1].max_turns == 7
 
     def test_temp_dir_cleaned_on_upstream_error(self, failing_orchestrator):
         request = _build_request()
-        runner = SmartGenerationRunner(request)
+        runner = SmartGenerationRunner(request, runtime=current_runtime())
 
         asyncio.run(_collect_frames(runner))
         # Runner cleans up on failure
@@ -408,7 +408,7 @@ class TestCleanup:
 
     def test_temp_dir_preserved_on_success_for_download(self, stub_orchestrator):
         request = _build_request()
-        runner = SmartGenerationRunner(request)
+        runner = SmartGenerationRunner(request, runtime=current_runtime())
 
         asyncio.run(_collect_frames(runner))
         # Temp dir must still exist because the download endpoint will serve it
@@ -423,7 +423,7 @@ class TestMultiFileZip:
         monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
 
         request = _build_request()
-        runner = SmartGenerationRunner(request)
+        runner = SmartGenerationRunner(request, runtime=current_runtime())
 
         frames = asyncio.run(_collect_frames(runner))
         done = [_parse_frame(f) for f in frames if _parse_frame(f)["event"] == "done"]
@@ -436,7 +436,7 @@ class TestMultiFileZip:
         import zipfile
         entry_path = None
         async def _find():
-            return await SMART_RUN_REGISTRY.pop(runner.run_id)
+            return await current_runtime().registry.pop(runner.run_id)
         entry = asyncio.run(_find())
         assert entry is not None
         entry_path = entry.file_path
@@ -463,7 +463,7 @@ class TestMultiFileZip:
             json.dumps({"debug": f"provider rejected {token}"}), encoding="utf-8"
         )
 
-        runner = SmartGenerationRunner(_build_request())
+        runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
         runner.temp_dir = str(tmp_path)
         done, entry = runner._package_result(str(result_path))
 
@@ -486,7 +486,7 @@ class TestEmptyOutput:
         monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
 
         request = _build_request()
-        runner = SmartGenerationRunner(request)
+        runner = SmartGenerationRunner(request, runtime=current_runtime())
 
         frames = asyncio.run(_collect_frames(runner))
         parsed = [_parse_frame(f) for f in frames]

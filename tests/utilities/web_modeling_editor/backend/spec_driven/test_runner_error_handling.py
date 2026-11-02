@@ -4,7 +4,7 @@
   after files were written deleted the paid-for workspace;
 * ``*.log`` / ``*.db`` are skipped by the secret scrub but the zip walker
   filtered only directory names, so those files shipped unscrubbed;
-* ``release_run_slot`` on a plain Semaphore grew capacity past the cap.
+* releasing a run slot on a plain Semaphore grew capacity past the cap.
 """
 
 import asyncio
@@ -18,6 +18,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartGenerationRunner,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.runtime import RunSlots
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _FakeClient,
     _FakeOrchestrator,
@@ -25,7 +26,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import 
     _collect_frames,
     _parse_frame,
 )
-from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 TOKEN = "sk-ant-REALSECRET0123456789abcdef"
 
@@ -46,7 +47,7 @@ class _BareValueError(_FakeOrchestrator):
 def _run(monkeypatch, orchestrator_cls):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", orchestrator_cls)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     parsed = [_parse_frame(f) for f in asyncio.run(_collect_frames(runner))]
     return runner, parsed
 
@@ -75,7 +76,7 @@ def test_scrub_skipped_files_never_reach_the_zip(tmp_path):
     (result / "server.log").write_text(f"auth with {TOKEN}\n", encoding="utf-8")
     (result / "app.db").write_text(TOKEN, encoding="utf-8")
 
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     runner.temp_dir = str(tmp_path)
     done, entry = runner._package_result(str(result))
 
@@ -87,21 +88,17 @@ def test_scrub_skipped_files_never_reach_the_zip(tmp_path):
         assert all(TOKEN not in archive.read(n).decode() for n in names)
 
 
-def test_over_release_does_not_raise_the_cap(monkeypatch):
-    monkeypatch.setattr(get_settings(), "llm_max_concurrent_runs", 1)
-    runner_module._reset_concurrency_semaphore_for_tests()
+def test_over_release_does_not_raise_the_cap():
+    slots = RunSlots(1)
 
     async def _exercise():
-        assert runner_module.try_acquire_run_slot() is True
-        runner_module.release_run_slot()
-        runner_module.release_run_slot()  # double release
-        assert runner_module.try_acquire_run_slot() is True
-        assert runner_module.try_acquire_run_slot() is False
+        assert slots.try_acquire() is True
+        slots.release()
+        slots.release()  # double release
+        assert slots.try_acquire() is True
+        assert slots.try_acquire() is False
 
-    try:
-        asyncio.run(_exercise())
-    finally:
-        runner_module._reset_concurrency_semaphore_for_tests()
+    asyncio.run(_exercise())
 
 
 # A Mistral/Nebius-style key: no known prefix, so the token pattern misses it.
@@ -141,9 +138,9 @@ def test_run_key_never_leaves_in_frames_or_the_zip(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _EchoesTheKey)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     runner = SmartGenerationRunner(_build_request(provider="mistral", api_key=PLAIN_KEY,
-                                                  llm_model="mistral-large-latest"))
+                                                  llm_model="mistral-large-latest"), runtime=current_runtime())
     frames = asyncio.run(_collect_frames(runner))
     assert frames and all(PLAIN_KEY.encode() not in f for f in frames)
-    entry = asyncio.run(runner_module.SMART_RUN_REGISTRY.pop(runner.run_id))
+    entry = asyncio.run(current_runtime().registry.pop(runner.run_id))
     with zipfile.ZipFile(entry.file_path) as archive:
         assert all(PLAIN_KEY not in archive.read(n).decode() for n in archive.namelist())

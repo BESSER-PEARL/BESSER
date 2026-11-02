@@ -25,7 +25,6 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartRunEntry,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
@@ -34,6 +33,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 BASE_URL = "http://testserver"
@@ -134,7 +134,7 @@ def _seed_run(run_id: str, *, updated_export: dict | None) -> str:
         created_at=time.time(),
         updated_project_export=updated_export,
     )
-    asyncio.run(SMART_RUN_REGISTRY.put(run_id, entry))
+    asyncio.run(current_runtime().registry.put(run_id, entry))
     return tmp
 
 

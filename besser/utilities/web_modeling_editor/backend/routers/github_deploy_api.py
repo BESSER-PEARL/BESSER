@@ -1244,11 +1244,7 @@ class SaveProjectRequest(BaseModel):
     @field_validator("legacy_file_path")
     @classmethod
     def _legacy_file_path_in_repo(cls, value: Optional[str]) -> Optional[str]:
-        if value is None:
-            return None
-        parts = value.split("/")
-        if value.startswith("/") or "\\" in value or any(part in ("", ".", "..") for part in parts) \
-                or not value.endswith(".json"):
+        if value is not None and not repo_model.is_repo_json_path(value):
             raise ValueError("legacy_file_path must be a relative repo path to a .json file, without '..'")
         return value
 
@@ -1485,13 +1481,67 @@ def _commit_response(commit: dict) -> "GitHubCommitResponse":
     )
 
 
-async def _read_model(github, owner: str, repo: str, ref: str) -> Optional[dict]:
-    """The repo's model at ``ref``: ``buml/diagrams.json``, else the legacy project file."""
+def _checked_model_path(model_path: Optional[str]) -> Optional[str]:
+    if model_path is not None and not repo_model.is_repo_json_path(model_path):
+        raise HTTPException(status_code=400, detail="model_path must be a relative repo path to a .json file")
+    return model_path
+
+
+async def _read_project_file(github, owner: str, repo: str, path: str, ref: str) -> Optional[dict]:
+    """``path`` at ``ref`` when it holds a BESSER project, else None."""
+    try:
+        file_data = await github.get_file_content(owner, repo, path, ref=ref)
+        document = json.loads(file_data["content"]) if file_data and file_data.get("content") else None
+    except ValueError:
+        return None
+    return document if repo_model.is_besser_project(document) else None
+
+
+async def _find_models(github, owner: str, repo: str, ref: str, *, first_only: bool) -> list[tuple[str, dict]]:
+    """The models in the repo at commit ``ref`` with their paths, the one to use first.
+
+    ``buml/diagrams.json``, then a project an older editor saved:
+    ``besser-project.json`` or the old sidebar's ``<dir>/<project>.json``.
+    """
+    found: list[tuple[str, dict]] = []
     for path in (repo_model.MODEL_FILE, repo_model.LEGACY_PROJECT_FILE):
         file_data = await github.get_file_content(owner, repo, path, ref=ref)
         if file_data and file_data.get("content"):
-            return json.loads(file_data["content"])
-    return None
+            found.append((path, json.loads(file_data["content"])))
+            if first_only:
+                return found
+    try:
+        paths = await github.get_tree_entries(owner, repo, ref)
+    except (RuntimeError, httpx.HTTPStatusError):
+        logger.warning("Could not list %s/%s@%s to look for a saved project", owner, repo, ref[:7], exc_info=True)
+        return found
+    for path in repo_model.saved_project_candidates(paths):
+        document = await _read_project_file(github, owner, repo, path, ref)
+        if document is not None:
+            found.append((path, document))
+            if first_only:
+                return found
+    return found
+
+
+async def _find_model(
+    github, owner: str, repo: str, ref: str, model_path: Optional[str] = None,
+) -> Optional[tuple[str, dict]]:
+    """The repo's model at commit ``ref`` and its path: ``model_path`` when it holds one, else the first found."""
+    if model_path:
+        document = await _read_project_file(github, owner, repo, model_path, ref)
+        if document is not None:
+            return model_path, document
+    found = await _find_models(github, owner, repo, ref, first_only=True)
+    if found and found[0][0] != repo_model.MODEL_FILE:
+        logger.info("Read the model of %s/%s from %s, saved by an older editor", owner, repo, found[0][0])
+    return found[0] if found else None
+
+
+async def _read_model(github, owner: str, repo: str, ref: str, model_path: Optional[str] = None) -> Optional[dict]:
+    """The repo's model at ``ref`` (see ``_find_model``)."""
+    found = await _find_model(github, owner, repo, ref, model_path)
+    return found[1] if found else None
 
 
 async def _holds_besser_project(github, owner: str, repo: str, path: str, branch: str) -> bool:
@@ -1580,6 +1630,7 @@ async def load_project_from_github(
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     branch: str = Query("main", description="Branch name"),
+    model_path: Optional[str] = Query(None, description="The model file to read; the first found when omitted"),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
     """
@@ -1592,7 +1643,7 @@ async def load_project_from_github(
     github = _github_for(github_session)
     try:
         head = await github.get_branch_head(owner, repo, branch)
-        project = await _read_model(github, owner, repo, head) if head else None
+        project = await _read_model(github, owner, repo, head, _checked_model_path(model_path)) if head else None
         if project is None:
             raise HTTPException(status_code=404, detail=f"No BESSER model in {owner}/{repo}@{branch}")
         return LoadProjectResponse(success=True, project=project, sha=head)
@@ -1610,6 +1661,7 @@ async def load_project_from_commit(
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     commit_sha: str = Query(..., description="Commit SHA to load from"),
+    model_path: Optional[str] = Query(None, description="The model file to read; the first found when omitted"),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
     """
@@ -1619,7 +1671,7 @@ async def load_project_from_commit(
     """
     github = _github_for(github_session)
     try:
-        project = await _read_model(github, owner, repo, commit_sha)
+        project = await _read_model(github, owner, repo, commit_sha, _checked_model_path(model_path))
         if project is None:
             raise HTTPException(status_code=404, detail=f"No BESSER model at commit {commit_sha[:7]}")
 
@@ -1722,6 +1774,12 @@ class RepoSummaryResponse(BaseModel):
     class_count: int = 0
     class_names: List[str] = []
     last_commit: Optional[GitHubCommitResponse] = None
+    # Where the model was read: ``buml/diagrams.json``, or a file an older
+    # editor saved, which the next save replaces with ``buml/diagrams.json``.
+    model_path: Optional[str] = None
+    # Every file in the repo holding a BESSER project, ``model_path`` first
+    # when it was found first; more than one lets the user pick.
+    model_paths: List[str] = []
 
 
 @router.get("/repo-summary", response_model=RepoSummaryResponse)
@@ -1729,10 +1787,12 @@ async def get_repo_summary(
     owner: str = Query(...),
     repo: str = Query(...),
     branch: Optional[str] = Query(None, description="Branch; the repo default when omitted"),
+    model_path: Optional[str] = Query(None, description="The model file to summarize; the first found when omitted"),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
-    """The model a repo holds (name, diagrams, classes) and its last commit."""
+    """The model a repo holds (name, diagrams, classes), every model file in it, and its last commit."""
     github = _github_for(github_session)
+    model_path = _checked_model_path(model_path)
     try:
         if not branch:
             branch = await github.get_default_branch(owner, repo)
@@ -1742,15 +1802,17 @@ async def get_repo_summary(
         commits = await github.get_commits(owner, repo, per_page=1, ref=head)
         last_commit = _commit_response(commits[0]) if commits else None
         try:
-            model = await _read_model(github, owner, repo, head)
+            models = await _find_models(github, owner, repo, head, first_only=False)
         except json.JSONDecodeError:
             logger.warning("Unreadable model file in %s/%s@%s", owner, repo, head[:7])
-            model = None
-        if model is None:
+            models = []
+        found = next((m for m in models if m[0] == model_path), None) if model_path else (models[0] if models else None)
+        if found is None:
             return RepoSummaryResponse(has_model=False, branch=branch, head_sha=head, last_commit=last_commit)
         return RepoSummaryResponse(
             has_model=True, branch=branch, head_sha=head, last_commit=last_commit,
-            **repo_model.summarize(model),
+            model_path=found[0], model_paths=[path for path, _ in models],
+            **repo_model.summarize(found[1]),
         )
     except httpx.HTTPStatusError as exc:
         raise _github_http_error(exc) from exc
@@ -1850,23 +1912,33 @@ async def get_model_history(
     owner: str = Query(...),
     repo: str = Query(...),
     branch: str = Query("main"),
+    model_path: Optional[str] = Query(None, description="The model file to follow; the first found when omitted"),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
-    """Recent commits that changed ``buml/diagrams.json``, each with its class-diagram changes.
+    """Recent commits that changed the model file, each with its class-diagram changes.
 
-    Each commit is compared with its first parent, not with the commit listed
-    after it: after a merge, the next commit by date is on the other branch.
+    The model file is ``buml/diagrams.json``, or the file an older editor saved
+    while the repo has no ``buml/diagrams.json`` yet. Each commit is compared
+    with its first parent, not with the commit listed after it: after a merge,
+    the next commit by date is on the other branch.
     """
     github = _github_for(github_session)
+    model_path = _checked_model_path(model_path)
     try:
+        head = await github.get_branch_head(owner, repo, branch)
+        try:
+            found = await _find_model(github, owner, repo, head, model_path) if head else None
+        except json.JSONDecodeError:
+            found = None
+        model_path = found[0] if found else repo_model.MODEL_FILE
         commits = await github.get_commits(
-            owner, repo, repo_model.MODEL_FILE, per_page=_MODEL_HISTORY_LIMIT, ref=branch
+            owner, repo, model_path, per_page=_MODEL_HISTORY_LIMIT, ref=branch
         )
         models: dict[str, Optional[dict]] = {}
 
         async def model_at(sha: str) -> Optional[dict]:
             if sha not in models:
-                file_data = await github.get_file_content(owner, repo, repo_model.MODEL_FILE, ref=sha)
+                file_data = await github.get_file_content(owner, repo, model_path, ref=sha)
                 try:
                     content = file_data.get("content") if file_data else None
                     models[sha] = json.loads(content) if content else None

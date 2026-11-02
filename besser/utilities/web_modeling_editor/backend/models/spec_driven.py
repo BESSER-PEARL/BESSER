@@ -391,6 +391,9 @@ class ImportGitHubRunRequest(BaseModel):
     branch: Optional[str] = Field(default=None, max_length=250)
     demo_token: Optional[SecretStr] = Field(default=None, max_length=200)
     allow_ai_reading: bool = False
+    # The model file the user picked when the repo holds several; the first
+    # found (``buml/diagrams.json``, else an older editor's save) when unset.
+    model_path: Optional[str] = Field(default=None, max_length=500)
 
     def resolved_demo_token(self) -> str:
         """The plaintext demo token, or ``""`` when the request carries none."""
@@ -403,11 +406,14 @@ class ImportGitHubRunResponse(BaseModel):
     # A fresh run id whose stored files are the repo's code tree; usable as
     # the ``base_run_id`` of a subsequent spec-driven generate modify run.
     run_id: str
-    # The repo's re-importable V2 project export (``buml/diagrams.json``),
-    # or ``None`` when the repo carries no BESSER model.
+    # The repo's re-importable V2 project export (``buml/diagrams.json``), the
+    # bare project an older editor saved, or ``None`` when there is no model.
     project: Optional[dict] = None
     # True when the repo carried a re-importable model.
     has_model: bool
+    # Where ``project`` was read; a file other than ``buml/diagrams.json`` is
+    # an older editor's save, which the next model save replaces.
+    model_path: Optional[str] = None
     owner: str
     repo: str
     branch: str

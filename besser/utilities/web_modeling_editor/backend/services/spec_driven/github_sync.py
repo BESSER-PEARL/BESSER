@@ -530,11 +530,19 @@ async def import_run_from_github(
     has_model = False
     message: Optional[str] = None
     diagrams_path = os.path.join(extract_dir, *repo_model.MODEL_FILE.split("/"))
-    if os.path.isfile(diagrams_path):
+    model_path: Optional[str] = None
+    if req.model_path not in (None, repo_model.MODEL_FILE):
+        # The file the user picked; when it is gone, the usual order below.
+        saved = await asyncio.to_thread(repo_model.find_saved_project, extract_dir, req.model_path)
+        if saved is not None:
+            model_path, project = saved
+            has_model = True
+    if not has_model and os.path.isfile(diagrams_path):
         try:
             with open(diagrams_path, "r", encoding="utf-8") as fh:
                 project = json.load(fh)
             has_model = True
+            model_path = repo_model.MODEL_FILE
         except (OSError, ValueError):
             logger.warning(
                 "import-github-run: buml/diagrams.json present but "
@@ -545,6 +553,13 @@ async def import_run_from_github(
                 "This repo's BESSER model (buml/diagrams.json) could not "
                 "be parsed."
             )
+    if not has_model and message is None:
+        saved = await asyncio.to_thread(repo_model.find_saved_project, extract_dir)
+        if saved is not None:
+            model_path, project = saved
+            has_model = True
+            logger.info("import-github-run: read the model of %s/%s from %s, saved by an older editor",
+                        owner, repo, model_path)
     analysis = proposed_diagram = None
     ai_reading_offered = False
     if not has_model:
@@ -604,4 +619,5 @@ async def import_run_from_github(
         analysis=analysis,
         proposed_diagram=proposed_diagram,
         ai_reading_offered=ai_reading_offered,
+        model_path=model_path,
     )

@@ -61,11 +61,14 @@ A project is linked to one repository, and every path that writes it (the
 editor's Save, the agent's push, Go live) uses the same layout, defined once in
 ``repo_model.py``:
 
-- ``buml/diagrams.json``: the model, a V2 project export. The only model file
-  the editor reads back. The legacy ``besser-project.json`` is still read; it,
-  or the ``<dir>/<project>.json`` the old sidebar saved (``legacy_file_path`` on
-  ``/github/project/save``), is removed by the next save when it holds a
-  BESSER project.
+- ``buml/diagrams.json``: the model, a V2 project export, and the file the
+  editor reads back. A repository an older editor saved has no
+  ``buml/diagrams.json``: its ``besser-project.json`` or the old sidebar's
+  ``<dir>/<project>.json`` is read instead, found by looking for a ``.json``
+  file that holds a BESSER project. When a repository holds several, the
+  editor asks which one to use. The next save writes ``buml/diagrams.json``
+  and removes that older file (``legacy_file_path`` on
+  ``/github/project/save``).
 - ``buml/domain_model.py``, ``buml/gui_model.py``, ``buml/agent_model_<agent>.py``:
   the same model as B-UML Python source, for people reading the repository.
   Always written from ``diagrams.json``, never read. Only these names are

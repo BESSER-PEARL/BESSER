@@ -19,7 +19,7 @@ history tells the agent's and the editor's commits from a person's.
 import json
 import logging
 import os
-from typing import NamedTuple, Optional
+from typing import Iterable, NamedTuple, Optional
 
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.spec_driven_agent.planning.model_change import describe_model_change, model_summary
@@ -45,6 +45,11 @@ MODEL_DIR = "buml"
 MODEL_FILE = f"{MODEL_DIR}/diagrams.json"
 LEGACY_PROJECT_FILE = "besser-project.json"
 LINK_FILE = ".besser/project.json"
+# The old editor sidebar saved the project as ``<dir>/<project-name>.json``.
+# Each candidate costs a read, so a repo full of JSON files is capped.
+_MAX_SAVED_PROJECT_CANDIDATES = 10
+_NOT_SAVED_PROJECT_NAMES = frozenset({"package.json", "package-lock.json", "tsconfig.json"})
+_NOT_SAVED_PROJECT_DIRS = frozenset({MODEL_DIR, ".besser", ".git", "node_modules"})
 # The B-UML sources BESSER generates under ``MODEL_DIR``.
 DOMAIN_SOURCE = "domain_model.py"
 GUI_SOURCE = "gui_model.py"
@@ -220,6 +225,54 @@ def is_model_path(path: str) -> bool:
 def is_besser_project(document: object) -> bool:
     """True for a parsed model file: a V2 export envelope or a bare project, both holding ``diagrams``."""
     return isinstance(document, dict) and isinstance(project_of(document).get("diagrams"), dict)
+
+
+def is_repo_json_path(value: str) -> bool:
+    """A relative ``.json`` path inside a repository, without ``.`` or ``..`` segments."""
+    return (
+        value.endswith(".json") and not value.startswith("/") and "\\" not in value
+        and not any(part in ("", ".", "..") for part in value.split("/"))
+    )
+
+
+def saved_project_candidates(paths: Iterable[str]) -> list[str]:
+    """The repo files, other than ``MODEL_FILE`` and ``LEGACY_PROJECT_FILE``, that may hold an older save.
+
+    ``.json`` files outside BESSER's and dependency folders, shallowest first;
+    each must still pass ``is_besser_project``.
+    """
+    candidates = (
+        path for path in paths
+        if path.endswith(".json") and path != LEGACY_PROJECT_FILE
+        and path.rsplit("/", 1)[-1] not in _NOT_SAVED_PROJECT_NAMES
+        and not _NOT_SAVED_PROJECT_DIRS.intersection(path.split("/")[:-1])
+    )
+    return sorted(candidates, key=lambda path: (path.count("/"), path))[:_MAX_SAVED_PROJECT_CANDIDATES]
+
+
+def find_saved_project(root: str, model_path: Optional[str] = None) -> Optional[tuple[str, dict]]:
+    """The repo path and content of a project an older editor saved in the checkout at ``root``.
+
+    ``model_path`` reads that file only (the one the user picked).
+    """
+    if model_path:
+        paths_to_try = [model_path]
+    else:
+        paths = []
+        for directory, dirnames, filenames in os.walk(root):
+            dirnames[:] = [name for name in dirnames if name not in _NOT_SAVED_PROJECT_DIRS]
+            relative = os.path.relpath(directory, root).replace(os.sep, "/")
+            paths += [name if relative == "." else f"{relative}/{name}" for name in filenames]
+        paths_to_try = [LEGACY_PROJECT_FILE, *saved_project_candidates(paths)]
+    for path in paths_to_try:
+        try:
+            with open(os.path.join(root, *path.split("/")), encoding="utf-8") as fh:
+                document = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if is_besser_project(document):
+            return path, document
+    return None
 
 
 def _builds(project_export: dict) -> bool:

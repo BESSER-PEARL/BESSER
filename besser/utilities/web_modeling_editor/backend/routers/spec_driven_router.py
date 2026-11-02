@@ -69,6 +69,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sy
     is_demo_token,
     push_run_to_github,
 )
+from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 from besser.utilities.web_modeling_editor.backend.services.exceptions import UpstreamError
 from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token,
@@ -996,6 +997,8 @@ async def import_github_run(
             raise HTTPException(
                 status_code=400, detail="Invalid GitHub owner or repository name."
             )
+    if req.model_path is not None and not repo_model.is_repo_json_path(req.model_path):
+        raise HTTPException(status_code=400, detail="model_path must be a relative repo path to a .json file")
 
     # An import downloads and unpacks up to the archive caps and may call an
     # LLM, so it takes a run slot (BESSER_LLM_MAX_CONCURRENT_RUNS) like a run.

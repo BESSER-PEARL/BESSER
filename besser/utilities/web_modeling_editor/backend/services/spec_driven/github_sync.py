@@ -10,7 +10,6 @@ GitHub API propagates for the router to map.
 import asyncio
 import dataclasses
 import fnmatch
-import hmac
 import json
 import logging
 import os
@@ -34,6 +33,7 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     PushSmartToGitHubRequest,
     PushSmartToGitHubResponse,
 )
+from besser.utilities.web_modeling_editor.backend.constants.constants import SMART_PUSH_TEMP_DIR_PREFIX
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     class_buml_to_json,
 )
@@ -62,15 +62,9 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace
     read_run_json,
     write_run_json,
 )
-from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
+from besser.utilities.web_modeling_editor.backend.settings import is_demo_token
 
 logger = logging.getLogger(__name__)
-
-
-def is_demo_token(supplied: str) -> bool:
-    """True when ``supplied`` is the demo secret; always False while ``BESSER_DEMO_TOKEN`` is unset."""
-    expected = BackendSettings().demo_token.get_secret_value().strip()
-    return bool(expected) and hmac.compare_digest(supplied.strip().encode("utf-8"), expected.encode("utf-8"))
 
 
 def _scrub_secret_env_files(workdir: str) -> list[str]:
@@ -150,7 +144,7 @@ async def push_run_to_github(
     owner = (deploy_config.use_existing and deploy_config.owner) or login
 
     with tempfile.TemporaryDirectory(
-        prefix=f"besser_smart_push_{uuid.uuid4().hex}_"
+        prefix=f"{SMART_PUSH_TEMP_DIR_PREFIX}{uuid.uuid4().hex}_"
     ) as workdir:
         # ---- 3. Copy the stored tree, dropping build/dep dirs and
         # `.besser_*` internal files (checkpoint / snapshot). The

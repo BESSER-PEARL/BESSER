@@ -47,7 +47,7 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
-from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from besser.utilities.web_modeling_editor.backend.settings import get_settings, is_demo_token
 from besser.utilities.web_modeling_editor.backend.dependencies import SpecDrivenRuntimeDep
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     DurableRunManager,
@@ -66,7 +66,6 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sync import (
     import_run_from_github,
-    is_demo_token,
     push_run_to_github,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
@@ -75,7 +74,7 @@ from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token,
 )
 from besser.utilities.web_modeling_editor.backend.routers.github_deploy_api import (
-    _extract_github_error_message,
+    _github_status_error,
     _sanitize_repo_name,
 )
 from besser.spec_driven_agent.providers.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
@@ -916,28 +915,6 @@ async def push_spec_driven_to_github(
             status_code=500,
             detail="An internal error occurred during GitHub push.",
         )
-
-
-def _github_status_error(
-    exc: httpx.HTTPStatusError, endpoint: str, repo_missing_on_404: bool = False,
-) -> HTTPException:
-    """The HTTP error for a failed GitHub API call, mirroring ``/deploy-webapp``'s mapping."""
-    logger.warning("GitHub API error in %s", endpoint, exc_info=True)
-    upstream_status = exc.response.status_code if exc.response is not None else 502
-    detail = _extract_github_error_message(exc)
-    if upstream_status in (401, 403):
-        return HTTPException(status_code=upstream_status, detail=detail)
-    if repo_missing_on_404 and upstream_status == 404:
-        # Repo missing / no access — machine-usable code.
-        return HTTPException(status_code=404, detail="repo_missing")
-    if upstream_status == 422:
-        # 422 covers both "repository name already exists on this
-        # account" AND a non-fast-forward ref update (a concurrent
-        # change to the branch). Both map cleanly to 409 Conflict.
-        return HTTPException(status_code=409, detail=detail)
-    if 400 <= upstream_status < 500:
-        return HTTPException(status_code=upstream_status, detail=detail)
-    return HTTPException(status_code=502, detail=f"GitHub upstream error: {detail}")
 
 
 # ---------------------------------------------------------------------

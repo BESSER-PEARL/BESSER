@@ -118,3 +118,19 @@ def test_an_import_of_a_branch_without_a_head_is_repo_missing(monkeypatch):
 def test_an_import_github_refuses_maps_its_status(monkeypatch, error, status, detail):
     r = _import(monkeypatch, _RefusedDownload(error))
     assert (r.status_code, r.json()) == (status, {"detail": detail})
+
+
+@pytest.mark.parametrize("github_status, status, detail", [
+    (401, 401, "Nope"),
+    (403, 403, "Nope"),
+    (404, 404, "Nope"),
+    (422, 409, "Nope"),
+    (429, 429, "Nope"),
+    (503, 502, "GitHub upstream error: Nope"),
+])
+def test_deploy_webapp_shares_the_github_status_mapping(github_status, status, detail):
+    # /deploy-webapp mapped GitHub's statuses inline, the same way, before it used the helper.
+    from besser.utilities.web_modeling_editor.backend.routers.github_deploy_api import _github_status_error
+
+    error = _github_status_error(_github_error(github_status), "deploy_webapp_to_github")
+    assert (error.status_code, error.detail) == (status, detail)

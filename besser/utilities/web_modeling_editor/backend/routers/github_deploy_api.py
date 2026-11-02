@@ -40,6 +40,7 @@ from besser.utilities.buml_code_builder import (
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.utilities.buml_code_builder.common import safe_var_name
 from besser.utilities.provenance import write_generation_provenance
+from besser.utilities.web_modeling_editor.backend.services.generation.agents import has_agent_components
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     collect_agents_from_diagrams,
     extract_openai_api_key,
@@ -383,8 +384,7 @@ async def deploy_webapp_to_github(
         agent_models: list = []
         agent_configs: dict = {}
         agent_config_yamls: dict = {}
-        has_agent_components = _has_agent_components(gui_model)
-        if has_agent_components:
+        if has_agent_components(gui_model):
             settings = body.get("settings", {}) or {}
             settings_config = settings.get("config") or {}
             agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
@@ -571,24 +571,8 @@ async def deploy_webapp_to_github(
         raise HTTPException(status_code=500, detail=str(e)) from e
     except httpx.HTTPStatusError as e:
         # GitHub API rejected the request (e.g. 422 "name already exists on
-        # this account", 403 rate limit, 401 expired token). Forward a useful
-        # message to the frontend instead of swallowing it as a generic 500.
-        logger.warning("GitHub API error in deploy_webapp_to_github", exc_info=True)
-        upstream_status = e.response.status_code if e.response is not None else 502
-        detail = _extract_github_error_message(e)
-        if upstream_status == 401:
-            raise HTTPException(status_code=401, detail=detail) from e
-        if upstream_status == 403:
-            raise HTTPException(status_code=403, detail=detail) from e
-        if upstream_status == 422:
-            # 409 Conflict is the most accurate mapping for "repository name
-            # already exists on this account" — the frontend can show a
-            # rename / overwrite popup instead of a generic error.
-            raise HTTPException(status_code=409, detail=detail) from e
-        if 400 <= upstream_status < 500:
-            raise HTTPException(status_code=upstream_status, detail=detail) from e
-        # 5xx from GitHub becomes 502 Bad Gateway.
-        raise HTTPException(status_code=502, detail=f"GitHub upstream error: {detail}") from e
+        # this account", 403 rate limit, 401 expired token).
+        raise _github_status_error(e, "deploy_webapp_to_github") from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
@@ -649,6 +633,28 @@ def _extract_github_error_message(error: httpx.HTTPStatusError) -> str:
             return top_level
 
     return f"GitHub returned HTTP {response.status_code}"
+
+
+def _github_status_error(
+    exc: httpx.HTTPStatusError, endpoint: str, repo_missing_on_404: bool = False,
+) -> HTTPException:
+    """The HTTP error for a failed GitHub API call: 401/403 kept, 422 as 409, other 4xx kept, 5xx as 502."""
+    logger.warning("GitHub API error in %s", endpoint, exc_info=True)
+    upstream_status = exc.response.status_code if exc.response is not None else 502
+    detail = _extract_github_error_message(exc)
+    if upstream_status in (401, 403):
+        return HTTPException(status_code=upstream_status, detail=detail)
+    if repo_missing_on_404 and upstream_status == 404:
+        # Repo missing / no access — machine-usable code.
+        return HTTPException(status_code=404, detail="repo_missing")
+    if upstream_status == 422:
+        # 422 covers both "repository name already exists on this
+        # account" AND a non-fast-forward ref update (a concurrent
+        # change to the branch). Both map cleanly to 409 Conflict.
+        return HTTPException(status_code=409, detail=detail)
+    if 400 <= upstream_status < 500:
+        return HTTPException(status_code=upstream_status, detail=detail)
+    return HTTPException(status_code=502, detail=f"GitHub upstream error: {detail}")
 
 
 def _sanitize_repo_name(name: str) -> str:
@@ -979,29 +985,6 @@ async def _read_existing_chatbot_service_suffix(github, owner: str, repo_name: s
             )
             return suffix
     return None
-
-
-def _has_agent_components(gui_model) -> bool:
-    """Check if the GUI model contains any agent components."""
-    from besser.BUML.metamodel.gui.dashboard import AgentComponent
-    from besser.BUML.metamodel.gui import ViewContainer
-
-    if not gui_model or not gui_model.modules:
-        return False
-
-    def _check_container(container) -> bool:
-        for element in (container.view_elements or []):
-            if isinstance(element, AgentComponent):
-                return True
-            if isinstance(element, ViewContainer) and _check_container(element):
-                return True
-        return False
-
-    for module in gui_model.modules:
-        for screen in (module.screens or []):
-            if _check_container(screen):
-                return True
-    return False
 
 
 def _add_deployment_configs(

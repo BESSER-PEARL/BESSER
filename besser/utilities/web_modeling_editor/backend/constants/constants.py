@@ -16,6 +16,7 @@ API_VERSION = "1.0.0"
 # Temp directory prefixes
 TEMP_DIR_PREFIX = "besser_"
 AGENT_TEMP_DIR_PREFIX = "besser_agent_"
+SMART_PUSH_TEMP_DIR_PREFIX = "besser_smart_push_"
 CSV_TEMP_DIR_PREFIX = "besser_csv_"
 LLM_TEMP_DIR_PREFIX = "besser_llm_"
 USER_PROFILE_TEMP_DIR_PREFIX = "besser_user_profile_"
@@ -23,6 +24,7 @@ USER_PROFILE_TEMP_DIR_PREFIX = "besser_user_profile_"
 TEMP_DIR_PREFIXES = (
     TEMP_DIR_PREFIX,
     AGENT_TEMP_DIR_PREFIX,
+    SMART_PUSH_TEMP_DIR_PREFIX,
     CSV_TEMP_DIR_PREFIX,
     LLM_TEMP_DIR_PREFIX,
     USER_PROFILE_TEMP_DIR_PREFIX,

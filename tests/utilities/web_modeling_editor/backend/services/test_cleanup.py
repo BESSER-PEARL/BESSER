@@ -12,6 +12,7 @@ from besser.utilities.web_modeling_editor.backend.settings import get_settings
 _PREFIX_NAMES = [
     "TEMP_DIR_PREFIX",
     "AGENT_TEMP_DIR_PREFIX",
+    "SMART_PUSH_TEMP_DIR_PREFIX",
     "CSV_TEMP_DIR_PREFIX",
     "LLM_TEMP_DIR_PREFIX",
     "USER_PROFILE_TEMP_DIR_PREFIX",

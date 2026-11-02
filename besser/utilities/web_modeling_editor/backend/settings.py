@@ -16,6 +16,7 @@ its documented parsing says, so one bad variable cannot stop the backend.
 from __future__ import annotations
 
 import functools
+import hmac
 import os
 from typing import Annotated, Optional
 
@@ -333,3 +334,9 @@ class BackendSettings(BaseSettings):
 def get_settings() -> BackendSettings:
     """The process-wide settings, read from the environment on first use."""
     return BackendSettings()
+
+
+def is_demo_token(supplied: str) -> bool:
+    """True when ``supplied`` is the demo secret; always False while ``BESSER_DEMO_TOKEN`` is unset."""
+    expected = BackendSettings().demo_token.get_secret_value().strip()
+    return bool(expected) and hmac.compare_digest(supplied.strip().encode("utf-8"), expected.encode("utf-8"))

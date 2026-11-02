@@ -8,10 +8,6 @@ quantum circuits.
 
 Processor failures preserve successful models and record structured input
 losses. A surviving model is not proof that the entire project was converted.
-
-Lives in its own module (not inside ``generation_router``) so that the
-spec-driven generation router does not import from the generation router and
-vice-versa — no circular deps between routers.
 """
 
 from __future__ import annotations
@@ -48,6 +44,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.state_machine_processor import (
     process_state_machine,
 )
+from besser.utilities.web_modeling_editor.backend.services.generation.agents import has_agent_components
 
 logger = logging.getLogger(__name__)
 
@@ -375,7 +372,7 @@ def _assemble_gui_and_agent(
     """Process GUI and (conditionally) agent diagrams.
 
     Agent processing is only attempted when the GUI contains at least one
-    AgentComponent — matches the existing generation_router behaviour.
+    AgentComponent, as in ``/generate-output``.
     """
     gui_diagram = project.get_active_diagram("GUINoCodeDiagram")
     gui_model: Optional[Any] = None
@@ -392,7 +389,7 @@ def _assemble_gui_and_agent(
         gui_model = _convert_diagram(gui_diagram, "GUINoCodeDiagram", issues,
                                      lambda: process_gui_diagram(gui_diagram.model, class_diagram.model, domain_model))
 
-    if gui_model is not None and _check_for_agent_components(gui_model):
+    if gui_model is not None and has_agent_components(gui_model):
         agent_diagram = project.get_referenced_diagram(gui_diagram, "AgentDiagram")
         if agent_diagram is None:
             # Fall back to the active AgentDiagram if the GUI doesn't
@@ -529,48 +526,3 @@ def _pick_class_diagram(project: ProjectInput) -> Optional[DiagramInput]:
         if referenced is not None:
             return referenced
     return project.get_active_diagram("ClassDiagram")
-
-
-def _check_for_agent_components(gui_model) -> bool:
-    """Return True if the GUI model contains any AgentComponent.
-
-    Copied from ``generation_router._check_for_agent_components`` so that
-    this module does not import from the router (avoiding a
-    router→router dependency).
-    """
-    from besser.BUML.metamodel.gui.dashboard import AgentComponent
-    from besser.BUML.metamodel.gui import ViewContainer
-
-    if not gui_model or not gui_model.modules:
-        return False
-
-    for module in gui_model.modules:
-        if not module.screens:
-            continue
-        for screen in module.screens:
-            if not screen.view_elements:
-                continue
-            for element in screen.view_elements:
-                if isinstance(element, AgentComponent):
-                    return True
-                if isinstance(element, ViewContainer):
-                    if _check_container_for_agent_components(element):
-                        return True
-    return False
-
-
-def _check_container_for_agent_components(container) -> bool:
-    """Recursively check a ViewContainer for AgentComponents."""
-    from besser.BUML.metamodel.gui.dashboard import AgentComponent
-    from besser.BUML.metamodel.gui import ViewContainer
-
-    if not container.view_elements:
-        return False
-
-    for element in container.view_elements:
-        if isinstance(element, AgentComponent):
-            return True
-        if isinstance(element, ViewContainer):
-            if _check_container_for_agent_components(element):
-                return True
-    return False

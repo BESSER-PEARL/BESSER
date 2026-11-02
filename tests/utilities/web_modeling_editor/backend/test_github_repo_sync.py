@@ -397,6 +397,9 @@ class _SidebarGitHub:
                 for sha, message, parents in [("2" * 40, "Add Loan", ["1" * 40]),
                                               ("1" * 40, "First\n\nBESSER-Origin: editor", [])]]
 
+    async def get_branch_head(self, owner, repo, branch):
+        return "2" * 40
+
     async def get_file_content(self, owner, repo, path, branch="main", ref=None):
         if ref is None and self.legacy_exists and path == repo_model.LEGACY_PROJECT_FILE:
             return {"content": json.dumps(_project())}

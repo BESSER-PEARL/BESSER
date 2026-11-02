@@ -612,9 +612,9 @@ testing against a GitHub stand-in) is described in :doc:`web_editor_github`.
 - ``POST /github/deploy-webapp`` -- Deploy generated app to GitHub repository
 - ``GET /github/repos``, ``GET /github/branches``, ``GET /github/commits``, ``GET /github/contents``, ``GET /github/file/exists`` -- Repository browsing for the editor's save/load flow. ``/repos`` lists every repository the user can open (own, collaborator and organization), most recently updated first, across GitHub's pages up to 1,000, with each one's topics and ``can_push``; ``truncated`` says the account has more. ``/branches`` follows the pages too. ``/commits`` marks each commit's ``origin``.
 - ``POST /github/project/save``, ``GET /github/project/load``, ``GET /github/project/load-commit``, ``POST /github/project/create-repo`` -- Store and retrieve a BESSER project in a repository (including loading it back from a specific commit). A save takes an optional ``legacy_file_path`` (a relative ``.json`` path without ``..``; default ``besser-project.json``): the project file the old editor sidebar saved, removed in the same commit when it holds a BESSER project. A merged save lists anything the user should know in ``warnings``
-- ``GET /github/repo-summary`` -- What a repository holds: the model's name, diagrams per type, classes, and the last commit
+- ``GET /github/repo-summary`` -- What a repository holds: the model's name, diagrams per type, classes, and the last commit. ``model_path`` says which file the model was read from and ``model_paths`` lists every file in the repository holding a BESSER project, so the editor can let the user pick one; a ``model_path`` query parameter summarizes that file. ``/project/load``, ``/project/load-commit``, ``/model-history`` and ``/spec-driven/import-github-run`` take the same optional ``model_path`` (the first model found when it is omitted or the file is gone)
 - ``GET /github/sync-status`` -- Commits on a branch since ``base_sha``, the commit the editor last synced. With ``pending_branch`` (a ``besser/…`` branch a conflict or pull-request push left), ``pending`` says whether that branch still exists and the state of its pull request (``open``, ``closed``, ``merged``, or none yet)
-- ``GET /github/model-history`` -- Recent commits that changed the model, each with its class-diagram changes
+- ``GET /github/model-history`` -- Recent commits that changed the model file, each with its class-diagram changes
 - ``POST /github/pull-request`` -- Open a pull request, e.g. for a push GitHub could not merge. Without a ``body`` the description lists the model changes between the two branches. Asking again for a branch that already has an open pull request returns that one
 - ``GET /github/app/capabilities``, ``POST /github/app/go-live`` -- "Go live": commit Render deploy files into the project's own repository, for its real folder layout (see below). Off unless ``BESSER_DEPLOY_FROM_REPO=true``.
 - ``POST /github/gist/create`` -- Share a model as a GitHub gist
@@ -627,7 +627,9 @@ body is), with a warning in the server log.
 
 Every repository BESSER writes has one layout, defined in
 ``services/deployment/repo_model.py``: the model in ``buml/diagrams.json`` (a V2
-project export; the legacy ``besser-project.json`` is still read), the B-UML
+project export; a project an older editor saved, ``besser-project.json`` or the
+old sidebar's ``<dir>/<project>.json``, is still read when there is no
+``buml/diagrams.json``), the B-UML
 sources ``buml/domain_model.py``, ``buml/gui_model.py`` and
 ``buml/agent_model_<agent>.py`` (any other file under ``buml/`` is the
 repository's own), the owning project in ``.besser/project.json``, and the

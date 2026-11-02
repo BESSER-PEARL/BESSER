@@ -361,6 +361,25 @@ def test_editor_authored_node_shape_gets_type_and_target():
     assert (property_shape, URIRef(SH + "minCount"), None) in graph
 
 
+def test_class_acting_as_node_shape_keeps_its_sh_property_edges():
+    """A class that is itself the node shape (no ``KGNodeConstraint`` wrapper) has
+    no ``source`` tag; its ``sh:property`` edges are real SHACL links, not the
+    importer's OWL-restriction bookkeeping, and must survive into the graph."""
+    kg = KnowledgeGraph(name="class_shape")
+    person = KGClass(id="Person", label="Person", iri=EX + "Person")
+    name = KGProperty(id="name", label="name", iri=EX + "name")
+    pc = KGPropertyConstraint(
+        id="pc", metadata={"constraintSpecs": [{"kind": "maxCardinality", "value": 1}], "source": "shacl"}
+    )
+    for node in (person, name, pc):
+        kg.add_node(node)
+    kg.add_edge(KGEdge(id="e1", source=person, target=pc, iri=SH_PROPERTY))
+    kg.add_edge(KGEdge(id="e2", source=pc, target=name, iri=CONSTRAINT_TARGET_PROPERTY))
+
+    graph, _ = kg_to_rdf(kg)
+    assert any(graph.objects(URIRef(EX + "Person"), URIRef(SH + "property")))
+
+
 def test_unresolvable_constraint_target_is_reported():
     kg = KnowledgeGraph(name="orphan")
     literal = KGLiteral(id="lit", value="not-a-class")

@@ -87,4 +87,4 @@ Example test structure:
 
    :doc:`../generators/build_generator`
       Annotated source code example of the Python generator and instructions for
-      registering your generator in the web editor via ``GeneratorInfo``.
+      registering your generator with one entry in ``besser/generators/registry.py``.

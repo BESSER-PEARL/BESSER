@@ -98,11 +98,11 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `besser/llm/` | The LLM access layer every caller shares: OpenAI chat over HTTP (`openai_chat.py`: timeout, optional SDK-style retries, errors that never echo the provider's body), lazy `openai`/`anthropic` SDK clients (`sdk.py`), JSON-from-reply helpers. `besser.utilities.llm_utils` re-exports it |
 | `besser/utilities/image_to_buml.py`, `kg_llm_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram via an LLM (`kg_to_buml.py` is its deprecated alias) |
 | `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
-| `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/` |
+| `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/`; `registry.py` is the one list of generators (web editor + agent tools) |
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
 | `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks; per-app run state on `app.state.spec_driven`) |
 | `…/backend/routers/` | One router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator); `error_handler.py` has `@handle_endpoint_errors` |
-| `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` registry (`GeneratorInfo`, incl. download filenames) + `get_filename_for_generator` |
+| `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` (`GeneratorInfo`, derived from `besser/generators/registry.py`) + `get_filename_for_generator` |
 | `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins, most `BESSER_LLM_*` caps and flags |
 | `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`) |
 | `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
@@ -162,8 +162,9 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
 Invariants and rules:
 - **A new agent tool needs three edits**: `agent/tools.py`, `_TOOL_MODEL_REQUIREMENTS` in the same file, and a
   handler in `ToolExecutor._handlers` (`agent/tool_executor.py`); without the requirements entry it is
-  offered on projects that cannot satisfy it. `tests/spec_driven_agent/test_added_generator_tools.py`
-  asserts every generator tool has an entry.
+  offered on projects that cannot satisfy it. A generator tool is instead the `agent_tool` of its entry in
+  `besser/generators/registry.py` (schema + requirements) plus the handler.
+  `tests/spec_driven_agent/test_added_generator_tools.py` asserts every generator tool has both.
 - **New validator findings need a stable message prefix** classified in `_classify_issue` — the classifier
   keys on prefixes, not on which validator produced them. Severities: `blocker` (drives the auto-fix loop),
   `warning` (recorded), `style` (cosmetic ruff rules, recorded). Full table: `validation.rst`.
@@ -228,17 +229,22 @@ in one response. (Spec-Driven code validation is a separate, fourth layer; see a
 ### Adding a deterministic generator
 1. Package in `besser/generators/<name>/` implementing `GeneratorInterface` (`__init__(model, output_dir=None)`,
    `generate()`; `output_dir=None` means `<cwd>/output`); templates in `generators/<name>/templates/`
-2. Register in `backend/config/generators.py`: `SUPPORTED_GENERATORS` (`GeneratorInfo`: `output_type`
-   `"file"`/`"zip"`, `requires_class_diagram`, `required_diagram_type`, `download_filename`; without a
-   `download_filename` the download falls back to `<key>_output<ext>`; `keep_generated_filename` keeps a
-   single-file generator's own filename). Don't rename an existing `download_filename` — users rely on it
+2. Register with one `GeneratorSpec` in `besser/generators/registry.py` (`GENERATORS`); the editor's
+   `SUPPORTED_GENERATORS` and the agent's generator tools are derived from it. Fields: `class_path`
+   (`"module:Class"`, imported lazily), `output_type` `"file"`/`"zip"`, `requires_class_diagram`,
+   `required_diagram_type`, `download_filename` (without one the download falls back to
+   `<key>_output<ext>`), `keep_generated_filename` (keeps a single-file generator's own filename),
+   `web_editor`, `agent_tool`. Don't rename an existing `download_filename` — users rely on it.
+   `tests/generators/test_generator_registry.py` pins both derived lists (snapshots in
+   `tests/generators/snapshots/`)
 3. Tests in `tests/generators/<name>/`
 4. `docs/source/generators/<name>.rst`, added to a toctree **and** the "Choosing a Generator" table in
    `docs/source/generators.rst`
-5. If the LLM agent should call it: a tool in `besser/spec_driven_agent/agent/tools.py` + `_TOOL_MODEL_REQUIREMENTS`
+5. If the LLM agent should call it: an `agent_tool` on its registry entry + a handler in `ToolExecutor._handlers`
 
 Walkthrough: `docs/source/generators/build_generator.rst` and `docs/source/contributing/create_generator.rst`.
-`PytorchGenerator` / `TFGenerator` are registered only when `torch` / `tensorflow` import. The Spec-Driven
+Entries with `optional_import=True` (the NN generators) are skipped by the editor when their import fails;
+the generator modules do not import `torch` / `tensorflow`, so in practice they always register. The Spec-Driven
 Agent is not in `SUPPORTED_GENERATORS`; it has its own router rather than `/generate-output`.
 
 ### Pitfalls

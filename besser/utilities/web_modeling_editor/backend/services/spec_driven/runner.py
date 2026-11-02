@@ -2644,7 +2644,7 @@ class SmartGenerationRunner:
         # A resumed run locates its workspace from the request's run id: read only inside the run root.
         root = os.path.realpath(_run_workspace_root())
         workspace = os.path.realpath(self.temp_dir)
-        if os.path.commonpath([root, workspace]) != root:
+        if not workspace.startswith(os.path.join(root, "")):
             logger.warning("Run %s: its workspace is outside the run root, so the stored model is not read",
                            self.run_id)
             return None

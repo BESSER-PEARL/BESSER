@@ -75,6 +75,29 @@ def test_saving_moves_an_old_save_to_buml_diagrams_json(github):
     assert _get("repo-summary", github, "ocl_gen").json()["model_path"] == repo_model.MODEL_FILE
 
 
+def test_the_history_reaches_past_the_move_to_buml_diagrams_json(github):
+    # Reported: after the first save moved the model, the old sidebar's versions were gone from the history.
+    repo = github.create_repo("ocl_gen", files=OLD_SIDEBAR_REPO)
+    first = github.ref(repo, "main")
+    github.commit_files(repo, {"ocl_gen.json": json.dumps({**BARE_PROJECT, "name": "OCL_Gen v2"})}, "Update OCL_Gen")
+    head = _get("repo-summary", github, "ocl_gen").json()["head_sha"]
+    saved = _call("POST", "/besser_api/github/project/save", headers=SESSION, json={
+        "owner": github.login, "repo": "ocl_gen", "branch": "main", "commit_message": "Save OCL_Gen",
+        "project_data": BARE_PROJECT, "project_export": {"project": BARE_PROJECT}, "base_commit_sha": head,
+        "legacy_file_path": "ocl_gen.json",
+    })
+    assert saved.status_code == 200, saved.text
+
+    history = _get("model-history", github, "ocl_gen").json()["commits"]
+
+    assert [entry["message"].split("\n")[0] for entry in history] == [
+        "Save OCL_Gen", "Update OCL_Gen", "Initial commit",
+    ]
+    oldest = _call("GET", f"/besser_api/github/project/load-commit?owner={github.login}&repo=ocl_gen"
+                          f"&commit_sha={first}", headers=SESSION)
+    assert oldest.json()["project"]["name"] == "OCL_Gen"
+
+
 def test_a_besser_project_json_repo_loads_and_has_history(github):
     github.create_repo("legacy", files={repo_model.LEGACY_PROJECT_FILE: json.dumps(BARE_PROJECT).encode()})
 

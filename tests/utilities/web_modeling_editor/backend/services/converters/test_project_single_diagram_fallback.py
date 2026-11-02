@@ -8,6 +8,8 @@ Import flow — the converter wraps it into a one-diagram project rather than
 failing with ``No models defined in 'models=[...]'``.
 """
 
+from pathlib import Path
+
 import pytest
 
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.project_converter import (
@@ -158,50 +160,120 @@ def test_project_to_json_handles_missing_section_headers():
     assert len(relationships) == 1
 
 
-# Each is a construct an external Ecore converter wrote into a project file that
-# the editor imported as a blank canvas with no error.
-UNPARSEABLE_CLASS_MODELS = {
-    "set union": (
-        [("types={book, author},", "types={book} | {author},")],
-        "Disallowed binary operator: BitOr",
-    ),
-    "aliased Project import": (
-        [("project = Project(", "project = BUMLProject(")],
-        "Call to unknown function: 'BUMLProject'",
-    ),
-    "non-navigable composition owner": (
-        [
-            ("multiplicity=Multiplicity(1, 1)),", "multiplicity=Multiplicity(1, 1), is_navigable=False),"),
-            ("multiplicity=Multiplicity(1, 9999)),", "multiplicity=Multiplicity(1, 9999), is_composite=True),"),
-        ],
-        "must be navigable",
-    ),
-}
+ECORE_PROJECT = (Path(__file__).parent / "data" / "ecore_algorithme_project.py").read_text(encoding="utf-8")
+
+BOOK_END = 'Property(name="book", type=book, multiplicity=Multiplicity(1, 1)),'
+AUTHOR_END = 'Property(name="author", type=author, multiplicity=Multiplicity(1, 9999)),'
 
 
-@pytest.mark.parametrize("replacements, reason", UNPARSEABLE_CLASS_MODELS.values(),
-                         ids=UNPARSEABLE_CLASS_MODELS.keys())
-def test_project_without_section_headers_reports_why_its_model_cannot_be_read(replacements, reason):
-    content = PROJECT_WITHOUT_SECTION_HEADERS
+def _edit(content, *replacements):
     for original, replacement in replacements:
         assert original in content
         content = content.replace(original, replacement)
+    return content
 
-    with pytest.raises(ValueError, match=reason):
-        project_to_json(content)
+
+# Composition (author end composite) whose owner end, book, is not navigable.
+NON_NAVIGABLE_OWNER = _edit(
+    PROJECT_WITHOUT_SECTION_HEADERS,
+    (BOOK_END, BOOK_END.replace("1, 1)", "1, 1), is_navigable=False")),
+    (AUTHOR_END, AUTHOR_END.replace("1, 9999)", "1, 9999), is_composite=True")),
+)
+
+# Plain association with no navigable end: nothing to repair it into.
+NO_NAVIGABLE_END = _edit(
+    PROJECT_WITHOUT_SECTION_HEADERS,
+    (BOOK_END, BOOK_END.replace("1, 1)", "1, 1), is_navigable=False")),
+    (AUTHOR_END, AUTHOR_END.replace("1, 9999)", "1, 9999), is_navigable=False")),
+)
+
+
+def _class_diagram(project):
+    model = project["diagrams"]["ClassDiagram"][0]["model"]
+    names = {el["name"] for el in model["elements"].values() if el.get("type") in ("Class", "AbstractClass")}
+    return names, model["relationships"]
+
+
+def test_an_ecore_converter_project_imports_with_its_compositions_repaired():
+    """The file that motivated v8.7.1: it set-unions its types, aliases ``Project``
+    and leaves both compositions' owner ends non-navigable."""
+    warnings = []
+
+    project = project_to_json(ECORE_PROJECT, warnings)
+
+    names, relationships = _class_diagram(project)
+    assert names == {"PortSortie", "Port", "Documentation", "AlgorithmeElement", "Algorithme",
+                     "PortEntree", "Ressource"}
+    assert sorted(r["type"] for r in relationships.values()) == [
+        "ClassBidirectional", "ClassComposition", "ClassComposition",
+        "ClassInheritance", "ClassInheritance", "ClassInheritance", "ClassInheritance",
+    ]
+    assert project["name"] == "algorithme"
+    assert len(warnings) == 2
+    assert all("must be navigable" in w and "made it navigable" in w for w in warnings)
+    assert any("inverse_Algorithme_algorithmeElements" in w for w in warnings)
+    assert any("inverse_Ressource_ports" in w for w in warnings)
+
+
+@pytest.mark.parametrize("content", [
+    _edit(PROJECT_WITHOUT_SECTION_HEADERS, ("types={book, author},", "types={book} | {author},")),
+    _edit(PROJECT_WITHOUT_SECTION_HEADERS,
+          ("import Project\n", "import Project as BUMLProject\n"),
+          ("project = Project(", "project = BUMLProject(")),
+], ids=["set union", "aliased Project import"])
+def test_valid_python_from_other_tools_imports_without_warnings(content):
+    warnings = []
+
+    names, relationships = _class_diagram(project_to_json(content, warnings))
+
+    assert names == {"Book", "Author"}
+    assert len(relationships) == 1
+    assert warnings == []
+
+
+def test_a_composition_with_a_non_navigable_owner_end_is_repaired_and_reported():
+    warnings = []
+
+    names, relationships = _class_diagram(project_to_json(NON_NAVIGABLE_OWNER, warnings))
+
+    assert names == {"Book", "Author"}
+    [relationship] = relationships.values()
+    assert relationship["type"] == "ClassComposition"
+    assert warnings == [
+        "Association 'book_author': the non-composite end 'book' (Book) of a composition must be "
+        "navigable; made it navigable."
+    ]
+
+
+def test_project_without_section_headers_reports_why_its_model_cannot_be_read():
+    with pytest.raises(ValueError, match="at least one end must be navigable"):
+        project_to_json(NO_NAVIGABLE_END)
 
 
 @pytest.mark.parametrize("endpoint", ["get-project-json-model", "get-json-model"])
 def test_import_endpoints_return_the_parse_error(client, endpoint):
-    content = PROJECT_WITHOUT_SECTION_HEADERS.replace("types={book, author},", "types={book} | {author},")
-
     response = client.post(
         f"/besser_api/{endpoint}",
-        files={"buml_file": ("library.py", content.encode("utf-8"), "text/plain")},
+        files={"buml_file": ("library.py", NO_NAVIGABLE_END.encode("utf-8"), "text/plain")},
     )
 
     assert response.status_code == 400
-    assert "Disallowed binary operator: BitOr" in response.json()["detail"]
+    assert "at least one end must be navigable" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("endpoint", ["get-project-json-model", "get-json-model"])
+def test_import_endpoints_return_what_was_repaired(client, endpoint):
+    response = client.post(
+        f"/besser_api/{endpoint}",
+        files={"buml_file": ("library.py", NON_NAVIGABLE_OWNER.encode("utf-8"), "text/plain")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["warnings"] == [{
+        "code": "buml-import-repaired",
+        "message": "Association 'book_author': the non-composite end 'book' (Book) of a composition must be "
+                   "navigable; made it navigable.",
+    }]
 
 
 def test_project_to_json_handles_main_guard():

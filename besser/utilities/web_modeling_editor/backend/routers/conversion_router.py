@@ -373,6 +373,11 @@ async def export_buml(input_data: DiagramInput):
             )
 
 
+def _import_repair_warnings(repairs: list[str]) -> list[dict] | None:
+    """What the import changed to load a BUML file, in the response's warning shape."""
+    return [{"code": "buml-import-repaired", "message": message} for message in repairs] or None
+
+
 @router.post("/get-project-json-model", response_model=ProjectExportResponse)
 @handle_endpoint_errors("get_project_json_model")
 async def get_project_json_model(buml_file: UploadFile = File(...)):
@@ -381,12 +386,14 @@ async def get_project_json_model(buml_file: UploadFile = File(...)):
     validate_file_content(content, buml_file.filename or "")
     buml_content = content.decode("utf-8")
 
-    parsed_project = project_to_json(buml_content)
+    repairs: list[str] = []
+    parsed_project = project_to_json(buml_content, repairs)
 
     return {
         "project": parsed_project,
         "exportedAt": datetime.now(timezone.utc).isoformat(),
-        "version": API_VERSION
+        "version": API_VERSION,
+        "warnings": _import_repair_warnings(repairs),
     }
 
 @router.post("/get-json-model", response_model=DiagramExportResponse)
@@ -405,6 +412,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     diagram_data = None
     diagram_type = None
     parse_error = None
+    repairs: list[str] = []
     safe_filename = os.path.basename(buml_file.filename) if buml_file.filename else ""
     diagram_title = safe_filename.rsplit('.', 1)[0] if safe_filename else "Imported Diagram"
 
@@ -457,7 +465,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     # Try to parse based on detected type
     if is_project:
         try:
-            parsed_project = project_to_json(buml_content)
+            parsed_project = project_to_json(buml_content, repairs)
 
             # project_to_json emits the schemaVersion=3 shape:
             #   { diagrams: { ClassDiagram: [ {id,title,model,...}, ... ], ... },
@@ -545,7 +553,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     elif is_domain_model:
         try:
             logger.info("Detected Domain Model (Class diagram), parsing...")
-            domain_model = parse_buml_content(buml_content)
+            domain_model = parse_buml_content(buml_content, repairs)
             if domain_model and len(domain_model.types) > 0:
                 diagram_json = class_buml_to_json(domain_model)
                 diagram_data = {
@@ -646,7 +654,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         },
         "diagramType": diagram_type,
         "exportedAt": datetime.now(timezone.utc).isoformat(),
-        "version": API_VERSION
+        "version": API_VERSION,
+        "warnings": _import_repair_warnings(repairs),
     }
 
 @router.post("/get-svg")

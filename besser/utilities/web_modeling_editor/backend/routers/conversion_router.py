@@ -404,6 +404,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     # First, try to detect what type of file this is by analyzing the content
     diagram_data = None
     diagram_type = None
+    parse_error = None
     safe_filename = os.path.basename(buml_file.filename) if buml_file.filename else ""
     diagram_title = safe_filename.rsplit('.', 1)[0] if safe_filename else "Imported Diagram"
 
@@ -513,6 +514,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
 
         except Exception as project_error:
             logger.error("Project parsing failed: %s", str(project_error))
+            parse_error = project_error
 
     elif is_agent:
         try:
@@ -525,6 +527,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             diagram_type = "AgentDiagram"
         except Exception as agent_error:
             logger.error("Agent diagram parsing failed: %s", str(agent_error))
+            parse_error = agent_error
 
     elif is_state_machine:
         try:
@@ -537,6 +540,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             diagram_type = "StateMachineDiagram"
         except Exception as sm_error:
             logger.error("State machine parsing failed: %s", str(sm_error))
+            parse_error = sm_error
 
     elif is_domain_model:
         try:
@@ -553,6 +557,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 raise ValueError("No types found in domain model")
         except Exception as class_error:
             logger.error("Class diagram parsing failed: %s", str(class_error))
+            parse_error = class_error
 
     elif is_gui_model:
         try:
@@ -565,6 +570,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             diagram_type = "GUINoCodeDiagram"
         except Exception as gui_error:
             logger.error("GUI diagram parsing failed: %s", str(gui_error))
+            parse_error = gui_error
 
     elif is_nn_model:
         try:
@@ -577,6 +583,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             diagram_type = "NNDiagram"
         except Exception as nn_error:
             logger.error("NN diagram parsing failed: %s", str(nn_error))
+            parse_error = nn_error
 
     elif is_bpmn:
         try:
@@ -589,6 +596,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             diagram_type = BPMN_DIAGRAM_TYPE
         except Exception as bpmn_error:
             logger.error("BPMN diagram parsing failed: %s", str(bpmn_error))
+            parse_error = bpmn_error
 
     elif is_kg:
         # A ConversionError from the converter names the actual problem and is
@@ -620,6 +628,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
 
     # Check if we successfully parsed any diagram
     if diagram_data is None or diagram_type is None:
+        if parse_error is not None:
+            raise ValueError(f"Could not import the BUML file: {parse_error}") from parse_error
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
             "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, "

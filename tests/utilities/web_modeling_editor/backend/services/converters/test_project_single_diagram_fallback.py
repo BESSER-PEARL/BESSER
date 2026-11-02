@@ -158,6 +158,52 @@ def test_project_to_json_handles_missing_section_headers():
     assert len(relationships) == 1
 
 
+# Each is a construct an external Ecore converter wrote into a project file that
+# the editor imported as a blank canvas with no error.
+UNPARSEABLE_CLASS_MODELS = {
+    "set union": (
+        [("types={book, author},", "types={book} | {author},")],
+        "Disallowed binary operator: BitOr",
+    ),
+    "aliased Project import": (
+        [("project = Project(", "project = BUMLProject(")],
+        "Call to unknown function: 'BUMLProject'",
+    ),
+    "non-navigable composition owner": (
+        [
+            ("multiplicity=Multiplicity(1, 1)),", "multiplicity=Multiplicity(1, 1), is_navigable=False),"),
+            ("multiplicity=Multiplicity(1, 9999)),", "multiplicity=Multiplicity(1, 9999), is_composite=True),"),
+        ],
+        "must be navigable",
+    ),
+}
+
+
+@pytest.mark.parametrize("replacements, reason", UNPARSEABLE_CLASS_MODELS.values(),
+                         ids=UNPARSEABLE_CLASS_MODELS.keys())
+def test_project_without_section_headers_reports_why_its_model_cannot_be_read(replacements, reason):
+    content = PROJECT_WITHOUT_SECTION_HEADERS
+    for original, replacement in replacements:
+        assert original in content
+        content = content.replace(original, replacement)
+
+    with pytest.raises(ValueError, match=reason):
+        project_to_json(content)
+
+
+@pytest.mark.parametrize("endpoint", ["get-project-json-model", "get-json-model"])
+def test_import_endpoints_return_the_parse_error(client, endpoint):
+    content = PROJECT_WITHOUT_SECTION_HEADERS.replace("types={book, author},", "types={book} | {author},")
+
+    response = client.post(
+        f"/besser_api/{endpoint}",
+        files={"buml_file": ("library.py", content.encode("utf-8"), "text/plain")},
+    )
+
+    assert response.status_code == 400
+    assert "Disallowed binary operator: BitOr" in response.json()["detail"]
+
+
 def test_project_to_json_handles_main_guard():
     """Files with an ``if __name__ == '__main__':`` block should still import.
 

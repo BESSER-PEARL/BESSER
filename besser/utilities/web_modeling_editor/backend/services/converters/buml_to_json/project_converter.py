@@ -650,22 +650,18 @@ def project_to_json(content: str) -> Dict[str, Any]:
     # gets an empty placeholder, which the frontend renders as a blank canvas.
     # Reuse the single-diagram detector to recover the actual model, then
     # restore the project name/description/owner from the Project(...) wrapper.
-    if not diagram_jsons:
+    # A detected model that fails to parse raises: swallowing it here imported
+    # the file as a blank canvas with no error.
+    if not diagram_jsons and _detect_single_diagram_type(content):
         logger.info(
             "Project declares models=%s but no section headers were found; "
             "falling back to single-diagram detection.", model_names,
         )
-        try:
-            result = _build_project_from_single_diagram(content)
-        except ValueError:
-            # No detectable single-diagram type either — fall through to the
-            # all-empty default below so the caller sees a structured project.
-            result = None
-        if result is not None:
-            result["name"] = project_name
-            result["description"] = project_description
-            result["owner"] = project_owner
-            return result
+        result = _build_project_from_single_diagram(content)
+        result["name"] = project_name
+        result["description"] = project_description
+        result["owner"] = project_owner
+        return result
 
     project_id = str(uuid.uuid4())
     created_at = datetime.now(timezone.utc).isoformat()

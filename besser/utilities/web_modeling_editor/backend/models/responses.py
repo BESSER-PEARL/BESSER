@@ -19,6 +19,7 @@ class ProjectExportResponse(BaseModel):
     project: Dict[str, Any]
     exportedAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     version: str = "1.0.0"
+    warnings: Optional[List[Dict[str, Any]]] = None
 
 
 class ValidationResponse(BaseModel):

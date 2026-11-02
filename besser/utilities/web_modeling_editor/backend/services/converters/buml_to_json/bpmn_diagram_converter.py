@@ -73,7 +73,6 @@ from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
-    strip_buml_imports,
 )
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 from besser.utilities.web_modeling_editor.backend.services.utils import (
@@ -596,7 +595,7 @@ def bpmn_buml_to_json(content: str) -> dict:
 
     # A BPMN file may end with a generator run; only the model is loaded.
     cleaned_content = "\n".join(
-        line for line in strip_buml_imports(content).splitlines()
+        line for line in content.splitlines()
         if not any(gen in line for gen in ("Generator(", ".generate("))
     )
 

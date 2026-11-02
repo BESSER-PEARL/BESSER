@@ -2,8 +2,8 @@
 
 The error contract of :func:`post_openai_chat` is pinned in
 ``tests/utilities/test_llm_utils.py``; this file covers what the layer added.
-Retries run against a real local HTTP server, so urllib3's policy is exercised,
-not mocked.
+Retries run against a real local HTTP server, so the shared policy
+(:mod:`besser.llm.retry`) is exercised, not mocked; only the waits are recorded.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import time
 import types
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -21,7 +22,7 @@ from besser.llm import LLMUpstreamError, anthropic_client, openai_client, post_o
 
 
 class _Server:
-    """Answers each POST with the next ``(status, body)`` and records the requests."""
+    """Answers each POST with the next ``(status, body[, headers])`` and records the requests."""
 
     def __init__(self, answers):
         self.answers, self.requests = list(answers), []
@@ -31,9 +32,11 @@ class _Server:
             def do_POST(self):  # noqa: N802 - http.server's naming
                 length = int(self.headers.get("Content-Length", 0))
                 server.requests.append(json.loads(self.rfile.read(length)))
-                status, body = server.answers.pop(0) if server.answers else (500, {})
+                status, body, *headers = server.answers.pop(0) if server.answers else (500, {})
                 data = json.dumps(body).encode()
                 self.send_response(status)
+                for name, value in (headers[0] if headers else {}).items():
+                    self.send_header(name, value)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
@@ -92,6 +95,44 @@ def test_a_client_error_is_not_retried(server):
     assert len(server.requests) == 1
 
 
+@pytest.fixture
+def sleeps(monkeypatch):
+    waits = []
+    monkeypatch.setattr(time, "sleep", waits.append)
+    return waits
+
+
+_SLOW_DOWN = (429, {"error": {"message": "slow down"}}, {"Retry-After": "120"})
+
+
+@pytest.mark.parametrize("server", [[_BUSY, _SLOW_DOWN, _OK]], indirect=True)
+def test_retries_wait_as_the_shared_policy_says(server, sleeps):
+    # The first retry waits too, and a server's Retry-After is capped.
+    assert post_openai_chat("k", {"model": "m"}, endpoint=server.url, max_retries=2) == "hello"
+    assert sleeps == [0.5, 30.0]
+
+
+_NO_QUOTA = (429, {"error": {"message": "You exceeded your current quota.", "code": "insufficient_quota"}})
+
+
+@pytest.mark.parametrize("server", [[_NO_QUOTA, _OK]], indirect=True)
+def test_a_spent_quota_is_not_retried(server, sleeps):
+    with pytest.raises(LLMUpstreamError) as caught:
+        post_openai_chat("k", {"model": "m"}, endpoint=server.url, max_retries=2)
+    assert caught.value.status == 429
+    assert len(server.requests) == 1
+    assert sleeps == []
+
+
+def test_the_agent_client_uses_the_same_policy():
+    from besser.llm import retry
+    from besser.spec_driven_agent.providers import llm_client
+
+    assert llm_client._backoff_seconds is retry.backoff_seconds
+    assert llm_client._is_quota_exhausted is retry.is_quota_exhausted
+    assert llm_client._status_code is retry.status_code
+
+
 def test_a_connection_failure_after_retries_is_an_upstream_error():
     srv = _Server([])
     url = srv.url
@@ -129,9 +170,23 @@ def test_a_missing_sdk_names_the_extra(monkeypatch, build, package):
     assert f"pip install {package}" in str(caught.value)
 
 
+_OLD_NAMES = [
+    "DEFAULT_OPENAI_MODEL",
+    "DEFAULT_REQUEST_TIMEOUT",
+    "LLMUpstreamError",
+    "OPENAI_CHAT_ENDPOINT",
+    "call_openai_chat_json",
+    "clean_json_response",
+    "extract_json",
+    "parse_json_safely",
+    "post_openai_chat",
+]
+
+
 def test_the_old_import_path_re_exports_the_same_objects():
     from besser.utilities import llm_utils
 
-    for name in llm_utils.__all__:
+    assert sorted(llm_utils.__all__) == _OLD_NAMES
+    for name in _OLD_NAMES:
         assert getattr(llm_utils, name) is getattr(llm, name), name
 

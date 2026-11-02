@@ -27,6 +27,13 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from besser.llm import anthropic_client, openai_client
+from besser.llm.retry import (
+    backoff_seconds as _backoff_seconds,
+    is_quota_exhausted as _is_quota_exhausted,
+    is_rate_limit as _is_rate_limit,  # noqa: F401 - imported from here by tests
+    is_retryable_status as _is_retryable_status,
+    status_code as _status_code,
+)
 from besser.spec_driven_agent.errors import InvalidApiKeyError, UpstreamLLMError
 from besser.spec_driven_agent.providers.model_settings import (
     DEFAULT_MAX_OUTPUT_TOKENS,
@@ -646,11 +653,10 @@ class LLMProvider(ABC):
 # Retry logic (inspired by claw-code/claw_provider.rs)
 # ======================================================================
 
-_RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
+# The shared policy (statuses, backoff, Retry-After cap, quota fail-fast) is
+# besser.llm.retry; the retry budget and the transport cap are this client's.
 _MAX_RETRIES = 4  # total 5 attempts, so a brief provider rate-limit
                   # doesn't kill a multi-turn customization run
-_INITIAL_BACKOFF = 0.5  # seconds
-_MAX_BACKOFF = 5.0  # seconds — cap for ordinary (5xx/timeout) retries
 
 
 def _resolve_max_retries(max_retries: int | None) -> int:
@@ -664,30 +670,6 @@ def _resolve_max_retries(max_retries: int | None) -> int:
     if max_retries < 0:
         raise ValueError("max_retries must not be negative")
     return max_retries
-
-
-# Rate limits (429) need a longer ceiling: some providers (notably
-# Mistral) throttle hard and only recover after several seconds. A
-# sub-second backoff just burns the retry budget and aborts the run.
-_RATELIMIT_MAX_BACKOFF = 30.0  # seconds
-
-
-# A status in the text only counts next to a status word: a bare "401" or
-# "500" also occurs inside token counts ("140133 tokens", "205000 tokens").
-_STATUS_IN_TEXT_RE = re.compile(
-    r"\b(?:error code|status(?: code)?|http(?:/[\d.]+)?)\s*[:=]?\s*([1-5]\d\d)\b",
-    re.IGNORECASE,
-)
-
-
-def _status_code(error: Exception) -> int | None:
-    """HTTP status of a provider error: SDK attribute first, then the text."""
-    for source in (error, getattr(error, "response", None)):
-        code = getattr(source, "status_code", None)
-        if isinstance(code, int):
-            return code
-    match = _STATUS_IN_TEXT_RE.search(str(error))
-    return int(match.group(1)) if match else None
 
 
 @lru_cache(maxsize=1)
@@ -737,9 +719,7 @@ def _is_retryable(error: Exception) -> bool:
         return True
     status = _status_code(error)
     if status is not None:
-        # Every 5xx, as the SDKs' own retry did: 529 (overloaded) and the 52x
-        # a Cloudflare tunnel returns are transient too.
-        return status in _RETRYABLE_STATUS_CODES or status >= 500
+        return _is_retryable_status(status)
     error_str = str(error).lower()
     return any(marker in error_str for marker in (
         "rate limit", "rate_limit", "rate-limited", "ratelimited",
@@ -775,42 +755,6 @@ def _is_model_access_denied(error: Exception) -> bool:
     return any(marker in s for marker in _MODEL_ACCESS_DENIED_MARKERS)
 
 
-def _is_rate_limit(error: Exception) -> bool:
-    """True if the error is a provider rate-limit (HTTP 429)."""
-    status = _status_code(error)
-    if status is not None:
-        return status == 429
-    s = str(error).lower()
-    return (
-        "rate limit" in s
-        or "rate_limit" in s
-        or "rate-limited" in s
-        or "ratelimited" in s
-    )
-
-
-def _is_quota_exhausted(error: Exception) -> bool:
-    """True when a 429 is a DAILY/period quota exhaustion, not a transient throttle.
-
-    E.g. Command Code's free LongCat returns ``429 "You've used all 100 free LongCat 2.0 requests for today. Your
-    quota resets at …"``. That will not recover inside a retry window, so the
-    5-attempt backoff (0.5s → 30s cap) just burns ~15-40s per call before the
-    fallback finally engages. Classify it so callers skip retries and fall back
-    (or fail) immediately — and can tell the user *why*.
-    """
-    s = str(error).lower()
-    # An exhausted prepaid balance (Command Code: 400 "insufficient credits").
-    if "insufficient credits" in s or "purchase more credits" in s:
-        return True
-    if "429" not in s and "quota" not in s and "limit" not in s:
-        return False
-    return any(marker in s for marker in (
-        "used all", "requests for today", "quota resets", "daily limit",
-        "daily quota", "per day", "insufficient_quota", "quota exceeded",
-        "exceeded your current quota",
-    ))
-
-
 def _normalize_model_id(name: str | None) -> str:
     """Canonical form of a served-model id for equality checks.
 
@@ -826,48 +770,6 @@ def _normalize_model_id(name: str | None) -> str:
         if s.endswith(suffix):
             s = s[: -len(suffix)]
     return s
-
-
-def _retry_after_seconds(error: Exception) -> float | None:
-    """Extract a server-provided ``Retry-After`` hint (seconds), if any.
-
-    The OpenAI/Mistral and Anthropic SDK error objects carry the HTTP
-    response, whose headers may include ``retry-after`` (delta-seconds).
-    Returns ``None`` when no usable hint is present.
-    """
-    resp = getattr(error, "response", None)
-    headers = getattr(resp, "headers", None)
-    if not headers:
-        return None
-    for key in ("retry-after", "Retry-After", "x-ratelimit-reset-after"):
-        try:
-            val = headers.get(key)
-        except Exception:
-            val = None
-        if not val:
-            continue
-        try:
-            secs = float(val)
-        except (TypeError, ValueError):
-            continue
-        if secs >= 0:
-            return secs
-    return None
-
-
-def _backoff_seconds(error: Exception, attempt: int) -> float:
-    """Seconds to wait before the next retry.
-
-    Honors a server-provided ``Retry-After`` (capped), otherwise uses
-    exponential backoff. Rate-limit (429) responses get a higher ceiling
-    so a throttled provider isn't abandoned after a sub-second wait.
-    """
-    retry_after = _retry_after_seconds(error)
-    rate_limited = _is_rate_limit(error)
-    if retry_after is not None:
-        return min(retry_after, _RATELIMIT_MAX_BACKOFF)
-    cap = _RATELIMIT_MAX_BACKOFF if rate_limited else _MAX_BACKOFF
-    return min(_INITIAL_BACKOFF * (2 ** attempt), cap)
 
 
 def _is_auth_error(error: Exception) -> bool:

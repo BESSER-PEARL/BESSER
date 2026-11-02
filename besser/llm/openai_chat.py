@@ -2,22 +2,21 @@
 
 Every OpenAI chat request outside the Spec-Driven Agent goes through
 :func:`post_openai_chat`: it enforces a timeout, never echoes the upstream
-response body to a caller, and retries (when asked) with the policy of the
-official SDKs, applied by ``urllib3``'s :class:`~urllib3.util.retry.Retry`.
-It uses ``requests`` (a base dependency) rather than the ``openai`` SDK, which
+response body to a caller, and retries (when asked) with the policy every
+LLM call in BESSER shares, :mod:`besser.llm.retry`. It uses ``requests`` (a base dependency) rather than the ``openai`` SDK, which
 is the optional ``agents`` extra.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Callable, Optional
 
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 from besser.llm.errors import LLMUpstreamError
+from besser.llm.retry import backoff_seconds, is_quota_exhausted, is_retryable_status
 from besser.utilities.secret_redaction import redact_literal
 
 logger = logging.getLogger(__name__)
@@ -36,26 +35,6 @@ DEFAULT_REQUEST_TIMEOUT = 120
 
 # How much of an upstream error body is written to the server log.
 _LOGGED_BODY_CHARS = 500
-
-# What the openai SDK retries: connection errors and these statuses, with
-# exponential backoff and Retry-After honoured.
-_RETRY_STATUSES = (408, 409, 429, 500, 502, 503, 504)
-_RETRY_BACKOFF_SECONDS = 0.5
-
-
-def _retrying_session(max_retries: int) -> requests.Session:
-    retry = Retry(
-        total=max_retries,
-        backoff_factor=_RETRY_BACKOFF_SECONDS,
-        status_forcelist=_RETRY_STATUSES,
-        allowed_methods=None,  # POST included, as the SDK does
-        raise_on_status=False,  # the last response is mapped to an error below
-    )
-    session = requests.Session()
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
 
 
 def post_openai_chat(
@@ -80,10 +59,12 @@ def post_openai_chat(
         payload: The complete request body.
         http_post: Transport override for tests. ``None`` looks up
             :func:`requests.post` **at call time**, so monkeypatching it works.
-        timeout: Seconds before the request is abandoned. Always applied.
-        max_retries: Retries after the first attempt, on a connection error or
-            a retryable status (408, 409, 429, 5xx). ``0`` (the default) makes
-            one attempt. Ignored when ``http_post`` is given.
+        timeout: Seconds before each attempt is abandoned. Always applied.
+        max_retries: Retries after the first attempt, on a connection error, a
+            timeout or a retryable status (408, 409, 429, 5xx), waiting as
+            :func:`besser.llm.retry.backoff_seconds` says (``Retry-After``
+            honoured, capped). A spent quota (``insufficient_quota``) is not
+            retried. ``0`` (the default) makes one attempt.
 
     Returns:
         The content string, which may be empty. Deciding whether an empty
@@ -94,23 +75,28 @@ def post_openai_chat(
             is not JSON, or a JSON ``error`` object. See the class docstring
             for what the message does and does not contain.
     """
-    session = _retrying_session(max_retries) if http_post is None and max_retries > 0 else None
-    if http_post is not None:
-        post = http_post
-    else:
-        post = session.post if session is not None else requests.post
+    post = http_post if http_post is not None else requests.post
     key = api_key.strip()
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}
 
-    try:
-        response = post(endpoint, headers=headers, json=payload, timeout=timeout)
-    except requests.RequestException as exc:
-        # The exception text can carry the URL; the class name is enough here.
-        logger.warning("OpenAI request failed: %s", redact_literal(str(exc), key))
-        raise LLMUpstreamError(f"OpenAI request failed ({type(exc).__name__}).") from exc
-    finally:
-        if session is not None:
-            session.close()
+    for attempt in range(max_retries + 1):
+        try:
+            response = post(endpoint, headers=headers, json=payload, timeout=timeout)
+        except requests.RequestException as exc:
+            if attempt < max_retries and isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+                time.sleep(backoff_seconds(exc, attempt))
+                continue
+            # The exception text can carry the URL; the class name is enough here.
+            logger.warning("OpenAI request failed: %s", redact_literal(str(exc), key))
+            raise LLMUpstreamError(f"OpenAI request failed ({type(exc).__name__}).") from exc
+        status = getattr(response, "status_code", None)
+        if getattr(response, "ok", False) or attempt == max_retries or not isinstance(status, int):
+            break
+        # The shared policy reads a provider error: status, headers and message.
+        failure = requests.HTTPError(f"HTTP {status} {getattr(response, 'text', '')}", response=response)
+        if not is_retryable_status(status) or is_quota_exhausted(failure):
+            break
+        time.sleep(backoff_seconds(failure, attempt))
 
     if not getattr(response, "ok", False):
         status = getattr(response, "status_code", None)

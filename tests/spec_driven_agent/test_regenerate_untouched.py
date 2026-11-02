@@ -4,6 +4,10 @@ Measured on 44 FastAPI runs: 70% of the generated files were still untouched at
 the end of a run, and regenerating them from the changed model finished most
 backend changes with no LLM edit, every app still working. Before this, the LLM
 rewrote every model change by hand.
+
+These apps were built before the generator's output was stored, so the line
+attribution tells untouched files apart. With a stored output, edited files are
+merged too (test_merge_generated_files.py).
 """
 import json
 import os
@@ -19,7 +23,7 @@ from besser.BUML.metamodel.structural import (
 )
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
-from besser.spec_driven_agent.pipeline.regeneration import regenerate_untouched
+from besser.spec_driven_agent.pipeline.regeneration import regenerate
 from besser.spec_driven_agent.planning.model_change import ModelChange
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.state.agent_trace import (
@@ -31,6 +35,7 @@ from besser.spec_driven_agent.state.agent_trace import (
     record_generated_files,
     seed_attribution,
 )
+from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME
 
 GENERATOR = "generate_fastapi_backend"
 
@@ -64,17 +69,18 @@ def _generate(workspace, model):
 
 
 def _regenerate(app, model, previous=frozenset()):
-    regeneration, reason = regenerate_untouched(str(app), GENERATOR, model, set(previous))
+    regeneration, reason = regenerate(str(app), GENERATOR, model, set(previous))
     assert regeneration is not None, reason
     return regeneration
 
 
 @pytest.fixture
 def app(tmp_path):
-    """An app built from the base model, as Phase 1 leaves it (attribution included)."""
+    """An app built from the base model before the generator output was stored (attribution only)."""
     workspace = tmp_path / "app"
     workspace.mkdir()
     _generate(workspace, _model())
+    (workspace / GENERATOR_OUTPUT_FILENAME).unlink()
     return workspace
 
 
@@ -343,7 +349,7 @@ def _trace_events(app, name):
 def test_a_modify_run_regenerates_when_the_model_changed(orchestrator, app):
     orchestrator._model_change = _change("Book.isbn added (str)")
 
-    orchestrator._regenerate_untouched_files()
+    orchestrator._regenerate_generated_files()
 
     assert "isbn" in (app / "backend" / "sql_alchemy.py").read_text(encoding="utf-8")
     assert "backend/sql_alchemy.py" in orchestrator._regeneration.replaced
@@ -353,7 +359,7 @@ def test_classes_from_the_model_sync_alone_trigger_it(orchestrator, app):
     orchestrator._model_change = None
     orchestrator._model_sync_classes = [{"name": "Author", "attributes": []}]
 
-    orchestrator._regenerate_untouched_files()
+    orchestrator._regenerate_generated_files()
 
     assert (app / "backend" / "routers" / "author.py").is_file()
 
@@ -362,7 +368,7 @@ def test_a_modify_run_with_the_same_model_leaves_the_files(orchestrator, app):
     """Without a model change, regeneration would only bring in a newer generator's output."""
     orchestrator._model_change = _change()
 
-    orchestrator._regenerate_untouched_files()
+    orchestrator._regenerate_generated_files()
 
     assert "isbn" not in (app / "backend" / "sql_alchemy.py").read_text(encoding="utf-8")
     assert orchestrator._regeneration is None
@@ -372,10 +378,10 @@ def test_a_failed_regeneration_is_recorded_and_the_run_goes_on(orchestrator, app
     def broken(*args):
         raise OSError("disk full")
 
-    monkeypatch.setattr(modify_run, "regenerate_untouched", broken)
+    monkeypatch.setattr(modify_run, "regenerate", broken)
     orchestrator._model_change = _change("Book.isbn added (str)")
 
-    orchestrator._regenerate_untouched_files()
+    orchestrator._regenerate_generated_files()
 
     assert orchestrator._regeneration is None
     assert any("disk full" in str(e.get("skipped")) for e in _trace_events(app, "regeneration"))

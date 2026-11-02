@@ -449,6 +449,35 @@ def record_generated_files(
             _mark_broken(workspace)
 
 
+def record_merged_files(
+    workspace: str,
+    rel_paths: Iterable[str],
+    moves: dict[str, str],
+    generator: str,
+    besser_version: Optional[str] = None,
+) -> None:
+    """Attribute the lines a merge brought into edited generated files to the generator.
+
+    The other lines keep their contributor; a file moved by a class rename
+    (``moves``: old path -> new path) keeps its old path's record. Without a
+    state there is nothing to keep, so nothing is recorded.
+    """
+    with _STATE_LOCK:
+        try:
+            state = AttributionState.load(workspace)
+            if state is None:
+                return
+            for old, new in moves.items():
+                if old in state.files:
+                    state.files[new] = state.files.pop(old)
+            _reconcile(state, workspace, generator_contributor(generator, besser_version), None, rel_paths)
+        except AttributionStateError as exc:
+            logger.warning("Merge attribution skipped: %s", exc)
+        except Exception:
+            logger.warning("Recording merge attribution failed", exc_info=True)
+            _mark_broken(workspace)
+
+
 def reconcile_workspace(
     workspace: str,
     contributor: dict,

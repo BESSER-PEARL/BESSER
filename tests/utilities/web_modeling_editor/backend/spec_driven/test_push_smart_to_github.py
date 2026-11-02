@@ -187,6 +187,9 @@ def _seed_run(run_id: str, *, with_secret_env: bool = True) -> str:
     # Line attribution state: rides along for continue-from-GitHub (#620).
     with open(os.path.join(tmp, ".besser_attribution.json"), "w", encoding="utf-8") as fh:
         fh.write('{"version": 1, "contributors": [], "files": {}}')
+    # The generator's stored output: the base of the next model change's merge (#659).
+    with open(os.path.join(tmp, ".besser_generator_output.json"), "w", encoding="utf-8") as fh:
+        fh.write('{"format": 1, "out_dir": "backend", "files": {}}')
     os.makedirs(os.path.join(tmp, ".agent-trace"), exist_ok=True)
     with open(os.path.join(tmp, ".agent-trace", "run.json"), "w", encoding="utf-8") as fh:
         fh.write("{}")
@@ -306,6 +309,7 @@ class TestPushSmartToGitHub:
         # seed's generator + history; other internals and build dirs stay out.
         assert ".besser_recipe.json" in files
         assert ".besser_attribution.json" in files
+        assert ".besser_generator_output.json" in files
         assert ".agent-trace/run.json" in files
         assert not any(f.startswith(".besser_checkpoint") for f in files)
         assert not any(f.startswith(".besser_snapshot") for f in files)

@@ -301,6 +301,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         target_generator: str | None = None,
         target_generator_bound: bool = False,
         source_project_export: dict | None = None,
+        previous_domain_model=None,
         per_write_diagnostics: bool = True,
         enable_import_smoke_check: bool = True,
         enable_requirements_ledger: bool = True,
@@ -638,6 +639,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._model_sync_classes: list[dict] = []
         # The modify run's regeneration of untouched generated files (#659).
         self._regeneration: Regeneration | None = None
+        # The model the app's stored generator output came from (modify runs), to
+        # rebuild the merge base after a BESSER upgrade (#659).
+        self._previous_domain_model = previous_domain_model
         # Every file the seed run delivered (its recipe); None without a recipe.
         self._seed_output_files: set[str] | None = None
         # Generator files earlier runs' LLM edited, from the seed recipe.

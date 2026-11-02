@@ -105,7 +105,7 @@ def test_download_zip_skips_symlinked_file_and_dir(tmp_path):
     with zipfile.ZipFile(entry.file_path) as archive:
         names = archive.namelist()
         trace = f".agent-trace/{done.runId}.json"
-        assert sorted(names) == [trace, "BESSER_GENERATION.md", "app.py", "main.py"]
+        assert sorted(names) == [trace, ".besser_attribution.json", "BESSER_GENERATION.md", "app.py", "main.py"]
         # Linked files are not attributed either.
         assert {f["path"] for f in json.loads(archive.read(trace))["files"]} == {"app.py", "main.py"}
         assert all(SECRET not in archive.read(n).decode("utf-8") for n in names)

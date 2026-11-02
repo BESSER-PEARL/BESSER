@@ -862,3 +862,67 @@ def test_the_legacy_project_path_must_stay_inside_the_repo(github):
         r = _save_with_legacy(base, bad)
         assert r.status_code == 422, (bad, r.text)
     assert github.ref(repo, "main") == base
+
+
+# ---------------------------------------------------------------------
+# The generator's stored output survives the round trip (#659)
+# ---------------------------------------------------------------------
+
+
+def _generated_app(tmp_path) -> dict:
+    """A Book/Library FastAPI app as Phase 1 writes it, with the generator's stored output."""
+    from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+    from tests.spec_driven_agent.test_merge_generated_files import GENERATOR, _model
+
+    app_dir = tmp_path / "generated"
+    app_dir.mkdir()
+    reply = json.loads(ToolExecutor(str(app_dir), domain_model=_model()).execute(GENERATOR, {}))
+    assert not reply.get("error"), reply
+    return {p.relative_to(app_dir).as_posix(): p.read_bytes().decode("utf-8")
+            for p in app_dir.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
+
+
+def test_an_edited_generated_file_merges_after_an_import_and_the_push_stores_the_new_output(github, tmp_path):
+    pytest.importorskip("pygit2")
+    from besser.spec_driven_agent.pipeline.regeneration import regenerate
+    from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME
+    from tests.spec_driven_agent.test_merge_generated_files import GENERATOR, _model
+
+    repo = github.create_repo("shelf", files=_generated_app(tmp_path))
+    imported = _import("ana", "shelf")
+
+    def edit(workdir):
+        # A teammate's edit, committed to the repo between the runs.
+        with open(os.path.join(workdir, "backend", "pydantic_classes.py"), "ab") as fh:
+            fh.write(b"# validated by hand\n")
+
+    run_id = _modify_run(imported["run_id"], edit)
+    workdir = asyncio.run(SMART_RUN_REGISTRY.get(run_id)).temp_dir
+    regeneration, reason = regenerate(workdir, GENERATOR, _model(isbn=True), set())
+    assert regeneration is not None, reason
+    assert regeneration.method == "merge" and "backend/pydantic_classes.py" in regeneration.merged
+
+    r = _push(run_id, "shelf", base_commit_sha=imported["commit_sha"])
+
+    assert r.status_code == 200, r.text
+    files = github.files(repo)
+    schemas = files["backend/pydantic_classes.py"][1].decode("utf-8")
+    assert "isbn: str" in schemas and "# validated by hand" in schemas
+    stored = json.loads(files[GENERATOR_OUTPUT_FILENAME][1])
+    assert "isbn: str" in stored["files"]["backend/pydantic_classes.py"]
+
+
+def test_a_push_deletes_a_generator_output_the_run_no_longer_has(github):
+    """BESSER's carried files are the run's own: a stale base would mislead the next merge."""
+    repo = github.create_repo("shop", files={**IMPORTED_REPO, ".besser_generator_output.json": "{}"})
+    imported = _import("ana", "shop")
+    run_id = _modify_run(imported["run_id"], lambda workdir: os.remove(
+        os.path.join(workdir, ".besser_generator_output.json")))
+
+    r = _push(run_id, "shop", base_commit_sha=imported["commit_sha"])
+
+    assert r.status_code == 200, r.text
+    files = github.files(repo)
+    assert ".besser_generator_output.json" not in files
+    # Other internal files the run never held stay out of it.
+    assert "README.md" in files

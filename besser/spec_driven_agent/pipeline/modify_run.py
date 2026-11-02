@@ -21,7 +21,7 @@ import time
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
-from besser.spec_driven_agent.pipeline.regeneration import MAX_REASON_CHARS, regenerate_untouched
+from besser.spec_driven_agent.pipeline.regeneration import MAX_REASON_CHARS, regenerate
 from besser.spec_driven_agent.planning.model_change import (
     FULL_MODEL,
     compare_with_base,
@@ -141,7 +141,7 @@ class ModifyRunMixin:
         self._derive_and_apply_model_deltas(instructions)
         self._mark_rules_broken_by_model_change()
         # Before the inventory, so Phase 2 sees the regenerated files.
-        self._regenerate_untouched_files()
+        self._regenerate_generated_files()
 
         self._inventory = build_inventory(
             self.output_dir,
@@ -319,8 +319,8 @@ class ModifyRunMixin:
                 "the app has no FastAPI backend (sql_alchemy.py / pydantic_classes.py)")]
         return issues
 
-    def _regenerate_untouched_files(self) -> None:
-        """Bring the generated files nobody edited up to the new model (#659).
+    def _regenerate_generated_files(self) -> None:
+        """Bring the generated files up to the new model, merging into edited ones (#659).
 
         Only when the model changed: with the same model it would at most bring in a
         newer generator's output, which the modify request did not ask for.
@@ -334,26 +334,34 @@ class ModifyRunMixin:
             logger.info("Model changed; the app has no generator output to regenerate")
             self._trace.write(EVENT_REGENERATION, generator=None, skipped="the app has no generator output")
             return
+        # Class renames only ("Class.attribute" pairs are attribute renames).
+        renamed = tuple((old, new) for old, new in (change.renamed if change else ()) if "." not in old)
         try:
-            regeneration, reason = regenerate_untouched(
-                self.output_dir, generator, self.domain_model, self._seed_output_files)
+            regeneration, reason = regenerate(
+                self.output_dir, generator, self.domain_model, self._seed_output_files, renamed,
+                self._previous_domain_model)
         except Exception as exc:
             # The run goes on as before: the agent applies the whole model change.
-            logger.warning("Regenerating untouched files failed", exc_info=True)
+            logger.warning("Regenerating generated files failed", exc_info=True)
             regeneration, reason = None, f"it failed: {type(exc).__name__}: {exc}"[:MAX_REASON_CHARS]
         if regeneration is None:
             logger.warning("Generated files not regenerated for the model change: %s", reason)
             self._trace.write(EVENT_REGENERATION, generator=generator, skipped=reason)
             return
         self._regeneration = regeneration
-        self.executor.update_generator_files(regeneration.written, regeneration.removed)
-        # Regenerated files hold the generator's text again.
+        moved_from = [old for old, _ in regeneration.moved]
+        self.executor.update_generator_files(
+            regeneration.written + [new for _, new in regeneration.moved], regeneration.removed + moved_from)
+        # Regenerated files hold the generator's text again; a moved file keeps its edits.
         self._seed_llm_modified.difference_update(regeneration.written)
+        self._seed_llm_modified.update(new for old, new in regeneration.moved if old in self._seed_llm_modified)
+        self._seed_llm_modified.difference_update(moved_from)
         self._trace.write(
-            EVENT_REGENERATION, generator=generator, replaced=regeneration.replaced,
-            added=regeneration.added, removed=regeneration.removed,
-            kept_in_use=regeneration.kept_in_use,
-            to_update=[u.path for u in regeneration.to_update])
+            EVENT_REGENERATION, generator=generator, method=regeneration.method,
+            replaced=regeneration.replaced, added=regeneration.added, merged=regeneration.merged,
+            moved=[list(pair) for pair in regeneration.moved], removed=regeneration.removed,
+            kept_in_use=regeneration.kept_in_use, to_update=[u.path for u in regeneration.to_update],
+            upgraded_from=regeneration.upgraded_from, merge_warning=regeneration.merge_warning or None)
 
     def _render_seed_history(self) -> str:
         """Format the seed recipe's session history for the inventory."""

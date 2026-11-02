@@ -72,11 +72,18 @@ from besser.spec_driven_agent.agent.edit_apply import (
     stray_gutter_line,
     _strip_line_numbers,
 )
-from besser.spec_driven_agent.pipeline.constants import _APPLICATION_OUTPUT_DIRS, WORKSPACE_SKIP_DIRS
+from besser.spec_driven_agent.pipeline.constants import (
+    _APPLICATION_OUTPUT_DIRS,
+    REGENERABLE_GENERATORS,
+    WORKSPACE_SKIP_DIRS,
+)
 from besser.spec_driven_agent.state.agent_trace import record_generated_files
+from besser.spec_driven_agent.state.generator_output import store_written_files
 from besser.spec_driven_agent.validation import frontend_source
 
 logger = logging.getLogger(__name__)
+
+_REGENERABLE_OUTPUT_DIRS = frozenset(_APPLICATION_OUTPUT_DIRS[name] for name in REGENERABLE_GENERATORS)
 
 
 # OpenCode edit.ts serializes the complete read/validate/write transaction by
@@ -1593,10 +1600,11 @@ class ToolExecutor:
         written = [path for path, stamp in after.items() if before.get(path) != stamp]
         self._generator_files.update(written)
         # Line-level attribution for the run's Agent Trace record.
-        record_generated_files(
-            self.workspace, written,
-            os.path.basename(os.path.normpath(directory)), get_besser_version(),
-        )
+        out_dir = os.path.basename(os.path.normpath(directory))
+        record_generated_files(self.workspace, written, out_dir, get_besser_version())
+        if out_dir in _REGENERABLE_OUTPUT_DIRS:
+            # The base a later model change is merged against (#659).
+            store_written_files(self.workspace, out_dir, written, get_besser_version())
         return files
 
     @staticmethod

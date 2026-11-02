@@ -84,8 +84,9 @@ Limitations
   run's files forward, but hand-written edits made outside BESSER are not
   re-derivable from the model and are not carried across a from-scratch
   re-generation. When the model changed, a modify run of a FastAPI backend
-  regenerates the generated files nobody edited; the agent updates the edited
-  ones by hand, and an automatic merge is planned.
+  regenerates its generated files and merges the change into the edited ones;
+  where an edit overlaps the change, the agent updates the file by hand
+  (:ref:`spec-driven-regeneration`).
 - **Validation has a defined scope.** :doc:`Phase 3 <validation>` checks
   syntax, imports, contracts and lint. Authorised sandboxed checks can also
   boot a supported backend, create records, compile code, and build a frontend.

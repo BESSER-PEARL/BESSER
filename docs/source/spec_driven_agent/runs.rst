@@ -110,36 +110,82 @@ OCL constraints are not compared. Elements are matched as described in
 only names its classes, and those include classes the agent added itself, so
 it gets no change list (logged as a warning).
 
-When the model changed and the app's backend came from ``generate_fastapi_backend``,
-the generated files nobody edited are regenerated before Phase 2:
+.. _spec-driven-regeneration:
 
-- A file is untouched when every line is still the generator's, unchanged.
-  The line attribution in ``.besser_attribution.json`` records this, and it
-  survives later runs and a GitHub round trip.
-- An untouched file becomes the generator's output for the new model, byte for
-  byte.
+Bringing generated files up to a changed model
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When the model changed and the app's backend came from ``generate_fastapi_backend``,
+the generator runs again on the new model before Phase 2, and its output is
+merged into the app file by file. The base of the merge is the generator's
+output as it was written, stored in ``.besser_generator_output.json`` when
+Phase 1 generates the app and after each regeneration:
+
+- A file still equal to the stored output (untouched) becomes the new output,
+  byte for byte.
+- An edited file gets a three-way merge: base = the stored output, ours = the
+  file now, theirs = the new output. When the edits and the model change do not
+  touch the same lines, the file gets the model change and keeps the edits.
+  Line endings do not count as edits (on Windows the generator writes some files
+  with CRLF, and an editor may convert them); the merged file keeps its own.
+- A file whose edits overlap the model change is kept as it is. The agent gets,
+  per file, the generator's change to apply by hand. A file is never left half
+  merged or with conflict markers.
 - A file the new model adds (the router of a new class) is written. A
-  generated file that was deleted since the previous run (as listed in that
-  run's recipe) is not brought back.
-- An untouched file the new model no longer produces is deleted, unless
+  generated file deleted since stays deleted.
+- A file the new model no longer produces is deleted when untouched, unless
   another file of the app still names it.
-- An edited file is kept as it is. The agent gets, per file, where the new
-  generator output differs from the generator lines still in the file, and
-  applies the change by hand. Lines someone else changed are left out: they are
-  that person's choice.
-- Only the backend generator's own lines count. Packaging steps that are also
-  recorded as generator contributors (the secret scrub, the frontend repair)
-  do not make a file look untouched.
+- A renamed class's files (``routers/tag.py`` for ``Tag`` renamed to ``Label``)
+  move to the new name, edits included. Renames come from the model change
+  list (matched by editor id), not from file similarity: git's rename detection
+  misses a renamed class once its file was edited, and could pair a removed
+  class's file with an added one.
+
+The merge uses `pygit2 <https://www.pygit2.org/>`_ (``pip install
+besser[agents]``; pinned in the backend requirements). Without it, or without
+a usable stored output (an app built before the output was stored, or a store
+that is malformed or names a path outside ``backend/``), the run falls back to
+the line attribution in ``.besser_attribution.json``: only a file whose lines
+are all still the generator's is replaced, every edited file is left to the
+agent, and a warning says why. Packaging steps recorded as generator
+contributors (the secret scrub, the frontend repair) do not make a file look
+untouched.
+
+After a BESSER upgrade, the stored output differs from the new one by the
+generator's own changes, and those conflict with edits near them. Packaging
+stores the run's class diagram, exactly as the run received it, with the
+output. The next modify run generates that diagram again with the new BESSER,
+and merges an edited file against that output instead, so the edited file gets
+the model change but not the newer generator's own changes (untouched files get
+both). Without the stored diagram, edited files are merged against the older
+output, and a warning says so.
+
+Measured offline on 42 FastAPI runs and 7 kinds of model change (adding,
+removing or retyping an attribute, loosening a multiplicity, renaming or adding
+a class): the change needed no hand edit in 78% of the cases, against 31% when
+only untouched files were regenerated, and no cleanly merged app failed to boot,
+create records or pass the conformance check below. A class rename still needs
+the agent when the file's edits touch the renamed lines.
+
+The stored output travels with the app: a modify run's seed, the download ZIP
+and the GitHub push carry it, beside the recipe and the attribution, and a
+continue-from-GitHub run reads it back. A push deletes these files from the
+repository when the run no longer has them, so a stale base never outlives
+its run.
 
 The agent sees the result under "Regenerated files" in its inventory and as a
 Phase 2 issue; lines quoted from files are marked as file content. The trace
-records a ``regeneration`` event, also when regeneration is skipped, with the
-reason. An app with no trustworthy attribution, for example a repository pushed
-before attribution existed, is not regenerated: a warning is logged and the run
-continues as before. Other generators are not regenerated yet.
+records a ``regeneration`` event with the ``method`` (``merge`` or
+``attribution``), the files replaced, added, merged, moved and removed, the
+files left to the agent, the BESSER version an upgrade came from and any
+warning; also when regeneration is skipped, with the reason. An app with
+neither a stored output nor a trustworthy attribution is not regenerated: a
+warning is logged and the run continues as before. Other generators are not
+regenerated yet.
 
 A generator file an earlier run's LLM edited stays marked ``llm_modified`` in
-the recipe of every later modify run, until regeneration replaces it.
+the recipe of every later modify run, until regeneration replaces it with the
+generator's output.
 
 After Phase 2 a deterministic check compares the FastAPI backend
 (``sql_alchemy.py`` and the ``<Class>Create`` schemas in
@@ -203,8 +249,9 @@ writes a file, its lines are recorded (as short hashes) in
 ``.besser_attribution.json``; at packaging time every line that differs from
 that record goes to the LLM. A line keeps its contributor however often the
 file was edited, as long as the line itself is unchanged. The record holds
-hashes only, never content, and is pushed to GitHub beside the recipe, so a
-continue-from-GitHub run can tell a person's edits from the AI's. Binary files
+hashes only, never content, and goes into the GitHub push and the download ZIP
+beside the recipe, so a continue-from-GitHub run can tell a person's edits from
+the AI's. Binary files
 and files over 2 MB are not attributed. In files longer than 5,000 lines only
 the unchanged lines at the start and the end keep their contributor: a change
 in the middle gives every line from the first change to the last one to the

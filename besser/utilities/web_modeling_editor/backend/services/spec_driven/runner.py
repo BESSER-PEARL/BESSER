@@ -60,6 +60,7 @@ from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
+from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state import agent_trace
 from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, attach_model, stored_model
 from besser.utilities.provenance import (
@@ -141,7 +142,7 @@ GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
 # BESSER's own files a later run reads back, so they ride in the ZIP and the
 # GitHub push: the recipe (generator, history), the line attribution, and the
 # generator's stored output (the base a model change is merged against).
-CARRIED_RUN_FILES = (".besser_recipe.json", agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME)
+CARRIED_RUN_FILES = (RECIPE_FILENAME, agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME)
 _MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
 
 # Upper bound on queued SSE events so a runaway worker can't exhaust
@@ -2627,8 +2628,8 @@ class SmartGenerationRunner:
         if not os.path.lexists(os.path.join(result_path, GENERATOR_OUTPUT_FILENAME)):
             return
         try:
-            diagram = generation_class_diagram(
-                self.request.project, getattr(self._t_orchestrator, "_updated_project_export", None))
+            updated = self._t_orchestrator._updated_project_export if self._t_orchestrator is not None else None
+            diagram = generation_class_diagram(self.request.project, updated)
         except Exception:
             logger.warning("Run %s: its class diagram was not stored with the generator output",
                            self.run_id, exc_info=True)

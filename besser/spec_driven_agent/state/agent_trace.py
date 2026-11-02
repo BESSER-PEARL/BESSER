@@ -39,6 +39,7 @@ import hashlib
 import json
 import logging
 import os
+import posixpath
 import stat
 import threading
 import uuid
@@ -148,8 +149,25 @@ def _line_hash(line: str) -> str:
     return hashlib.sha256(line.encode("utf-8")).hexdigest()[:_HASH_LEN]
 
 
-def read_text_lines(workspace: str, rel: str) -> Optional[list[str]]:
-    """The file's lines without line endings, or None when it is not attributable
+def is_text(content: bytes) -> bool:
+    """What attribution reads as text: UTF-8 without NUL bytes."""
+    if b"\x00" in content:
+        return False
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def is_plain_relpath(rel: str) -> bool:
+    """A plain workspace-relative path, as attribution records them (no ``..``, ``\\``, drive, root or NUL)."""
+    return (isinstance(rel, str) and rel == posixpath.normpath(rel) and not rel.startswith(("/", "../"))
+            and not any(c in rel for c in ("\\", ":", "\x00")))
+
+
+def read_text_bytes(workspace: str, rel: str) -> Optional[bytes]:
+    """The file's content, or None when it is not attributable
     (absent, a link or reached through one, special, too large, or not text)."""
     try:
         with open_plain(os.path.join(workspace, rel), "rb", root=workspace) as handle:
@@ -158,13 +176,13 @@ def read_text_lines(workspace: str, rel: str) -> Optional[list[str]]:
             data = handle.read()
     except OSError:
         return None
-    if b"\x00" in data:
-        return None
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
-    return text.splitlines()
+    return data if is_text(data) else None
+
+
+def read_text_lines(workspace: str, rel: str) -> Optional[list[str]]:
+    """The file's lines without line endings, or None when it is not attributable (see :func:`read_text_bytes`)."""
+    data = read_text_bytes(workspace, rel)
+    return None if data is None else data.decode("utf-8").splitlines()
 
 
 def line_hashes(lines: list[str]) -> list[str]:

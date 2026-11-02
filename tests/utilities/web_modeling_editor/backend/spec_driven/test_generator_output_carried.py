@@ -40,6 +40,8 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import 
 class _StoringOrchestrator(_MultiFileOrchestrator):
     """Writes a multi-file app and a stored generator output, as Phase 1 does."""
 
+    _updated_project_export = None  # as LLMOrchestrator: set only by a model sync
+
     def run(self, instructions: str) -> str:
         out = super().run(instructions)
         store_generator_output(out, "backend", {"backend/main_api.py": b"app = 1\n"}, "8.0.0")
@@ -82,7 +84,39 @@ def test_the_stored_class_diagram_generates_what_the_run_generated(tmp_path):
     assert _generate(received, tmp_path / "a") == _generate(rebuilt, tmp_path / "b")
 
 
-def test_a_seeded_modify_run_hands_the_orchestrator_the_previous_model(tmp_path):
+class _SyncingOrchestrator(_StoringOrchestrator):
+    """A modify run whose model sync added classes: its export, not the request's diagram, generated the app."""
+
+    def run(self, instructions: str) -> str:
+        export = _build_request().project.model_dump(mode="json")
+        export["diagrams"]["ClassDiagram"][0]["title"] = "Synced"
+        self._updated_project_export = export
+        return super().run(instructions)
+
+
+def test_a_model_synced_run_stores_the_diagram_it_generated_from(monkeypatch):
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _SyncingOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    runner = SmartGenerationRunner(_build_request())
+
+    asyncio.run(_collect_frames(runner))
+
+    entry = asyncio.run(SMART_RUN_REGISTRY.pop(runner.run_id))
+    with zipfile.ZipFile(entry.file_path) as zf:
+        assert json.loads(zf.read(GENERATOR_OUTPUT_FILENAME))["model"]["title"] == "Synced"
+
+
+def test_a_store_this_run_did_not_write_keeps_the_model_it_came_from(tmp_path):
+    """A run whose regeneration was skipped must not label the older output with its new model."""
+    store_generator_output(str(tmp_path), "backend", {"backend/main_api.py": b"app = 1\n"}, "8.0.0")
+    attach_model(str(tmp_path), {"title": "Before"})
+
+    attach_model(str(tmp_path), {"title": "After"})
+
+    assert stored_model(str(tmp_path)) == {"title": "Before"}
+
+
+def test_a_seeded_modify_run_reads_the_previous_model(tmp_path):
     project = _build_request().project
     store_generator_output(str(tmp_path), "backend", {"backend/main_api.py": b"app = 1\n"}, "8.0.0")
     attach_model(str(tmp_path), generation_class_diagram(project))
@@ -91,9 +125,29 @@ def test_a_seeded_modify_run_hands_the_orchestrator_the_previous_model(tmp_path)
 
     previous = runner._previous_domain_model()
 
-    assert stored_model(str(tmp_path)) is not None
     assert {c.name for c in previous.get_classes()} == {
         c.name for c in assemble_models_from_project(project).domain_model.get_classes()}
+
+
+def test_the_orchestrator_receives_the_previous_model(monkeypatch):
+    sentinel = object()
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _StoringOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    monkeypatch.setattr(SmartGenerationRunner, "_previous_domain_model", lambda self: sentinel)
+    received = {}
+    original = _StoringOrchestrator.__init__
+
+    def capture(self, **kwargs):
+        received.update(kwargs)
+        original(self, **kwargs)
+
+    monkeypatch.setattr(_StoringOrchestrator, "__init__", capture)
+    runner = SmartGenerationRunner(_build_request())
+
+    asyncio.run(_collect_frames(runner))
+
+    asyncio.run(SMART_RUN_REGISTRY.pop(runner.run_id))
+    assert received["previous_domain_model"] is sentinel
 
 
 def test_a_stored_class_diagram_that_does_not_convert_is_reported(tmp_path, caplog):

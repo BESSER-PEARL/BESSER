@@ -334,12 +334,10 @@ class ModifyRunMixin:
             logger.info("Model changed; the app has no generator output to regenerate")
             self._trace.write(EVENT_REGENERATION, generator=None, skipped="the app has no generator output")
             return
-        # Class renames only ("Class.attribute" pairs are attribute renames).
-        renamed = tuple((old, new) for old, new in (change.renamed if change else ()) if "." not in old)
         try:
             regeneration, reason = regenerate(
-                self.output_dir, generator, self.domain_model, self._seed_output_files, renamed,
-                self._previous_domain_model)
+                self.output_dir, generator, self.domain_model, self._seed_output_files,
+                change.class_renames if change else (), self._previous_domain_model)
         except Exception as exc:
             # The run goes on as before: the agent applies the whole model change.
             logger.warning("Regenerating generated files failed", exc_info=True)

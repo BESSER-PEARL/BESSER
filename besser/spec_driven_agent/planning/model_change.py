@@ -271,6 +271,11 @@ class ModelChange:
     base: dict = field(default_factory=dict, repr=False, compare=False)
     new: dict = field(default_factory=dict, repr=False, compare=False)
 
+    @property
+    def class_renames(self) -> tuple[tuple[str, str], ...]:
+        """The ``(old, new)`` class renames (``renamed`` also holds ``Class.attribute`` pairs)."""
+        return tuple((old, new) for old, new in self.renamed if "." not in old)
+
     def to_dict(self) -> dict:
         return {
             "verdict": self.verdict, "basis": self.basis, "gone": round(self.gone, 3),

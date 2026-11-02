@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
+from besser.BUML.metamodel.structural import DomainModel
 from besser.spec_driven_agent.agent.compaction import (
     COMPACT_RESERVE_TOKENS,
     # Re-exported on purpose: callers and tests import the threshold from
@@ -301,7 +302,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         target_generator: str | None = None,
         target_generator_bound: bool = False,
         source_project_export: dict | None = None,
-        previous_domain_model=None,
+        previous_domain_model: DomainModel | None = None,
         per_write_diagnostics: bool = True,
         enable_import_smoke_check: bool = True,
         enable_requirements_ledger: bool = True,
@@ -637,7 +638,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._updated_project_export: dict | None = None
         # The classes model sync added (its LLM answer), so a resume replays them.
         self._model_sync_classes: list[dict] = []
-        # The modify run's regeneration of untouched generated files (#659).
+        # The modify run's regeneration of the generated files (#659).
         self._regeneration: Regeneration | None = None
         # The model the app's stored generator output came from (modify runs), to
         # rebuild the merge base after a BESSER upgrade (#659).

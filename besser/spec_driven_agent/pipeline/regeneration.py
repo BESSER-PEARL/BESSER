@@ -15,12 +15,16 @@ on the new model and its output is applied file by file:
 
 A file that does not merge (or, without a stored output, any edited file) is
 kept as it is. The agent gets, per file, the generator's change to apply by
-hand. The new output is then stored as the next merge's base.
+hand. The new output is then stored as the next merge's base; a file this run
+did not bring up to the model keeps its old base, so a change the agent left
+out is not read as an edit next time.
 
-After a BESSER upgrade, the stored output also differs from the new one by the
-generator's own changes, which conflict with the edits near them. An edited
-file is then merged against the new generator's output for the OLD model
-(stored with the output), so only the model change is merged into it.
+The stored output carries the model it was generated from. With the same BESSER,
+that model must generate exactly the stored files, or the store (edited by hand)
+is not used. After a BESSER upgrade, the stored output also differs from the new
+one by the generator's own changes, which conflict with the edits near them: an
+edited file is then merged against the new generator's output for the OLD
+model, so only the model change is merged into it.
 """
 
 from __future__ import annotations
@@ -46,28 +50,37 @@ from besser.spec_driven_agent.state.agent_trace import (
     KIND_GENERATOR,
     AttributionState,
     AttributionStateError,
+    is_plain_relpath,
+    is_text,
     iter_attributable_files,
     line_hashes,
+    read_text_bytes,
     read_text_lines,
     record_generated_files,
     record_merged_files,
 )
 from besser.spec_driven_agent.state.generator_output import (
     GeneratorOutputError,
-    is_text,
     load_generator_output,
     store_generator_output,
 )
 from besser.utilities.provenance import get_besser_version
-from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
+from besser.utilities.workspace_fs import open_plain_write, walk_plain
 
 try:
     import pygit2
     from pygit2.enums import FileMode, MergeFlag
+
+    # Renames are paired from the model change, never guessed (see _merge_trees).
+    _NO_RENAME_DETECTION = MergeFlag(0)
 except ImportError:  # the ``agents`` extra; without it edited files are left to the agent
     pygit2 = None
 
 logger = logging.getLogger(__name__)
+
+# How a regeneration told edited files apart (``Regeneration.method``, the trace's ``method``).
+METHOD_MERGE = "merge"  # three-way merge against the stored generator output
+METHOD_ATTRIBUTION = "attribution"  # no usable stored output: the line attribution, edited files kept
 
 # A skip or failure reason is one log and trace line, not a traceback.
 MAX_REASON_CHARS = 300
@@ -97,8 +110,7 @@ class Regeneration:
     """What bringing one generator's files up to the new model changed."""
 
     generator: str
-    # "merge" (the stored output is the base) or "attribution" (no stored output).
-    method: str = "merge"
+    method: str = METHOD_MERGE
     replaced: list[str] = field(default_factory=list)
     added: list[str] = field(default_factory=list)
     # Edited files the model change was merged into, edits kept.
@@ -115,6 +127,8 @@ class Regeneration:
     to_update: list[FileUpdate] = field(default_factory=list)
     # The BESSER version that wrote the stored output, when it differs from this one.
     upgraded_from: str | None = None
+    # After an upgrade, edited files were merged against the new generator's output for the old model.
+    base_rebuilt: bool = False
     # Why the merge was skipped or weaker than usual (unusable store, no model to rebuild the base).
     merge_warning: str = ""
 
@@ -145,7 +159,11 @@ class Regeneration:
         if self.upgraded_from:
             lines.append(
                 f"BESSER was upgraded since these files were generated (from {self.upgraded_from}): the "
-                "regenerated files also carry the new generator's own changes.")
+                "regenerated files also carry the new generator's own changes"
+                + ("; the merged files got the model change only and keep the older generator's code."
+                   if self.base_rebuilt and (self.merged or self.moved) else "."))
+        if self.merge_warning:
+            lines.append(f"Note: {self.merge_warning}.")
         if self.to_update:
             lines.append(
                 "These generated files were edited earlier in a way the model change could not be merged "
@@ -167,7 +185,7 @@ class Regeneration:
 
 def regenerate(
     workspace: str, generator: str, domain_model: DomainModel, previous_files: set[str] | None,
-    renamed_classes: tuple[tuple[str, str], ...] = (), previous_model: DomainModel | None = None,
+    renamed_classes: tuple[tuple[str, str], ...] = (), previous_domain_model: DomainModel | None = None,
 ) -> tuple[Regeneration | None, str]:
     """Bring ``generator``'s files in ``workspace`` up to ``domain_model``.
 
@@ -175,20 +193,27 @@ def regenerate(
     generated file deleted since is not brought back when there is no stored
     output; None when there is no recipe. ``renamed_classes`` are the model
     change's ``(old, new)`` class renames, whose files move with their edits.
-    ``previous_model`` is the model the stored output was generated from, to
-    rebuild the merge base after a BESSER upgrade.
+    ``previous_domain_model`` is the model the stored output was generated from:
+    it checks the stored files, and rebuilds the merge base after a BESSER upgrade.
     Returns the regeneration, or None and the reason it did not happen.
     """
     if generator not in REGENERABLE_GENERATORS:
         return None, f"{generator} output is not regenerated"
     out_dir = _APPLICATION_OUTPUT_DIRS[generator]
-    stored, warning = None, ""
+    stored, warnings = None, []
     try:
         stored = load_generator_output(workspace, out_dir)
     except GeneratorOutputError as exc:
-        warning = f"edited files are not merged: the stored generator output cannot be used ({exc})"
+        warnings.append(f"edited files are not merged: the stored generator output cannot be used ({exc})")
     if stored is not None and pygit2 is None:
-        stored, warning = None, "edited files are not merged: pygit2 is not installed (pip install besser[agents])"
+        stored = None
+        warnings.append("edited files are not merged: pygit2 is not installed (pip install besser[agents])")
+    if stored is not None and previous_domain_model is not None and stored.besser_version == get_besser_version():
+        expected, _ = _generate(generator, previous_domain_model, out_dir)
+        if expected is not None and _without(expected, stored.pending) != _without(stored.files, stored.pending):
+            stored = None
+            warnings.append("edited files are not merged: the stored generator output is not what this "
+                            "BESSER generates for its model (edited by hand?)")
     state = None
     if stored is None:
         try:
@@ -203,34 +228,62 @@ def regenerate(
     new_files, error = _generate(generator, domain_model, out_dir)
     if new_files is None:
         return None, error
-    upgraded_from = None
+    upgraded_from, rebuilt = None, None
     if stored is not None:
-        rebuilt = None
         if stored.besser_version != get_besser_version():
             upgraded_from = stored.besser_version or "an unknown version"
-            rebuilt, warning = _rebuild_base(generator, previous_model, out_dir)
+            rebuilt, warning = _rebuild_base(generator, previous_domain_model, out_dir)
+            warnings += [warning] if warning else []
         regenerator: _Apply = _Merger(workspace, out_dir, stored.files, rebuilt, renamed_classes)
     else:
         regenerator = _Regenerator(workspace, out_dir, state, previous_files or set())
-    if warning:
+    for warning in warnings:
         logger.warning("Regeneration: %s", warning)
     result = regenerator.run(generator, new_files)
-    result.merge_warning, result.upgraded_from = warning[:MAX_REASON_CHARS], upgraded_from
-    store_generator_output(workspace, out_dir, new_files, get_besser_version())
+    result.upgraded_from, result.base_rebuilt = upgraded_from, rebuilt is not None
+    next_base, pending = _next_base(stored, new_files, result)
+    if not store_generator_output(workspace, out_dir, next_base, get_besser_version(), pending):
+        warnings.append("the new generator output was not stored, so the next model change is not merged")
+    result.merge_warning = "; ".join(warnings)[:MAX_REASON_CHARS]
     return result, ""
 
 
 def _rebuild_base(
-    generator: str, previous_model: DomainModel | None, out_dir: str
+    generator: str, previous_domain_model: DomainModel | None, out_dir: str
 ) -> tuple[dict[str, bytes] | None, str]:
     """The new generator's output for the model the stored output came from."""
-    if previous_model is None:
+    if previous_domain_model is None:
         return None, ("BESSER was upgraded and the stored output has no model to rebuild the merge base "
                       "with: edited files are merged against the older generator's output")
-    rebuilt, error = _generate(generator, previous_model, out_dir)
+    rebuilt, error = _generate(generator, previous_domain_model, out_dir)
     if rebuilt is None:
         return None, f"BESSER was upgraded and rebuilding the merge base failed ({error})"
     return rebuilt, ""
+
+
+def _next_base(stored, new_files: dict[str, bytes], result: Regeneration) -> tuple[dict[str, bytes], set[str]]:
+    """The base of the next merge and its pending files.
+
+    The base is the new output, except for a file this run did not bring up to
+    the model (left to the agent, not writable, still in use): it keeps its old
+    base, so the change it lacks is not read as an edit next time. Those files
+    are pending: the new output for this run's model differs from their base.
+    Without a stored output there is no old base.
+    """
+    base, pending = dict(new_files), set()
+    if stored is None:
+        return base, pending
+    for rel in {u.path for u in result.to_update} | set(result.not_checked) | set(result.kept_in_use):
+        pending.add(rel)
+        if rel in stored.files:
+            base[rel] = stored.files[rel]
+        else:
+            base.pop(rel, None)
+    return base, pending
+
+
+def _without(files: dict[str, bytes], paths: frozenset[str]) -> dict[str, bytes]:
+    return {rel: content for rel, content in files.items() if rel not in paths}
 
 
 class _Apply:
@@ -249,8 +302,7 @@ class _Apply:
             for rel in self.gone_untouched:
                 if _referenced(rel, self.workspace, skip=set(self.gone_untouched)):
                     self.result.kept_in_use.append(rel)
-                else:
-                    os.remove(os.path.join(self.workspace, rel))
+                elif self._remove(rel):
                     self.result.removed.append(rel)
         finally:
             changed = self.result.written + self.result.removed
@@ -288,11 +340,21 @@ class _Apply:
             done.append(rel)
         return True
 
+    def _remove(self, rel: str) -> bool:
+        """Delete a generated file, or list it as not checked when the delete is refused."""
+        try:
+            os.remove(os.path.join(self.workspace, rel))
+        except OSError as exc:
+            logger.warning("Regeneration did not delete %s: %s", rel, exc)
+            self.result.not_checked.append(rel)
+            return False
+        return True
+
 
 class _Merger(_Apply):
     """Three-way merge of the generator's files: stored output, the files now, the new output."""
 
-    method = "merge"
+    method = METHOD_MERGE
 
     def __init__(self, workspace: str, out_dir: str, base: dict[str, bytes], rebuilt: dict[str, bytes] | None,
                  renamed_classes: tuple[tuple[str, str], ...]) -> None:
@@ -304,7 +366,7 @@ class _Merger(_Apply):
         ours: dict[str, bytes] = {}
         unreadable = set()
         for rel in sorted(set(self.base) | set(new_files)):
-            content = _read_bytes(self.workspace, rel)
+            content = read_text_bytes(self.workspace, rel)
             if content is not None:
                 ours[rel] = content
             elif os.path.lexists(os.path.join(self.workspace, rel)):
@@ -313,7 +375,7 @@ class _Merger(_Apply):
         moves = _moves(self.base, new_files, set(ours) | unreadable, self.renamed_classes)
         unreadable |= {new for old, new in moves.items() if old in unreadable}
         # An untouched file keeps the stored base, so it becomes the new output as is.
-        self.merge_base = {p: d if self.rebuilt is None or ours.get(p) == d else self.rebuilt.get(p, d)
+        self.merge_base = {p: d if self.rebuilt is None or _same(ours.get(p), d) else self.rebuilt.get(p, d)
                            for p, d in self.base.items() if p not in unreadable}
         # Merged with LF endings: on Windows the generator writes CRLF, and an editor may convert.
         base = {moves.get(p, p): _lf(d) for p, d in self.merge_base.items()}
@@ -344,21 +406,23 @@ class _Merger(_Apply):
             if current is not None and path == old:
                 self.gone_untouched.append(old)
             return
-        # An untouched or new file gets the new output byte for byte; an edited one keeps its endings.
+        # A new or byte-identical file gets the new output as is; any other keeps its own line endings.
         if current is None or current == base:
             content = new if new is not None else merged[path]
         else:
-            content = merged[path].replace(b"\n", b"\r\n") if b"\r\n" in current else merged[path]
+            content = _with_endings_of(current, merged[path])
         if path != old:
             if self._write(path, content, None):
-                os.remove(os.path.join(self.workspace, old))
-                self.result.moved.append((old, path))
+                if self._remove(old):
+                    self.result.moved.append((old, path))
+                else:
+                    self.result.added.append(path)
             return
         if current is not None and _lf(current) == merged[path]:
             return
         if current is None:
             self._write(path, content, self.result.added)
-        elif current == base:
+        elif _same(current, base):
             self._write(path, content, self.result.replaced)
         else:
             self._write(path, content, self.result.merged)
@@ -367,7 +431,7 @@ class _Merger(_Apply):
 class _Regenerator(_Apply):
     """Without a stored output: one regeneration's decisions, file by file, against the attribution."""
 
-    method = "attribution"
+    method = METHOD_ATTRIBUTION
 
     def __init__(self, workspace: str, out_dir: str, state: AttributionState, previous: set[str]) -> None:
         super().__init__(workspace, out_dir)
@@ -379,7 +443,7 @@ class _Regenerator(_Apply):
 
     def _apply(self, new_files: dict[str, bytes]) -> None:
         old_generated = {rel for rel, (_, owners) in self.state.files.items()
-                         if _canonical(rel) and rel.startswith(self.out_dir + "/")
+                         if is_plain_relpath(rel) and rel.startswith(self.out_dir + "/")
                          and self.owner.intersection(owners)}
         for rel in sorted(set(new_files) | old_generated):
             self._file(rel, new_files.get(rel))
@@ -432,7 +496,7 @@ def _merge_trees(base: dict[str, bytes], ours: dict[str, bytes],
                 index.add(pygit2.IndexEntry(path, repo.create_blob(content), FileMode.BLOB))
             return index.write_tree(repo)
 
-        index = repo.merge_trees(tree(base), tree(ours), tree(theirs), flags=MergeFlag(0))
+        index = repo.merge_trees(tree(base), tree(ours), tree(theirs), flags=_NO_RENAME_DETECTION)
         conflicted = {entry.path for entries in (index.conflicts or ()) for entry in entries if entry is not None}
         return {e.path: repo[e.id].data for e in index if e.path not in conflicted}, conflicted
     finally:
@@ -443,43 +507,50 @@ def _moves(base: dict[str, bytes], new_files: dict[str, bytes], present: set[str
            renamed_classes: tuple[tuple[str, str], ...]) -> dict[str, str]:
     """Old path -> new path of the files named after a renamed class.
 
-    A file of the old output named after the old class (``routers/tag.py``) moves
-    to the one new file in the same folder named after the new class
-    (``routers/label.py``), unless a file already sits there.
+    A file of the old output named after the old class (``routers/tag.py``, also
+    ``routers/tag_methods.py``) moves to the one new file in the same folder named
+    the same way after the new class (``routers/label.py``,
+    ``routers/label_methods.py``), unless a file already sits there.
     """
     moves: dict[str, str] = {}
     added = [p for p in new_files if p not in base and p not in present]
     for old_class, new_class in renamed_classes:
         for old in base:
-            folder, name = posixpath.split(old)
-            if old in new_files or posixpath.splitext(name)[0].lower() != old_class.lower():
+            suffix = _after_class(_stem(old), old_class)
+            if old in new_files or suffix is None:
                 continue
-            targets = [p for p in added if posixpath.dirname(p) == folder
-                       and posixpath.splitext(posixpath.basename(p))[0].lower() == new_class.lower()]
+            targets = [p for p in added if posixpath.dirname(p) == posixpath.dirname(old)
+                       and _stem(p) == new_class.lower() + suffix]
             if len(targets) == 1:
                 moves[old] = targets[0]
     return moves
 
 
-def _canonical(rel: str) -> bool:
-    """A plain workspace-relative path, as attribution records them (no ``..``, ``\\`` or root)."""
-    return (rel == posixpath.normpath(rel) and not rel.startswith(("/", "../"))
-            and "\\" not in rel and ":" not in rel)
+def _stem(rel: str) -> str:
+    return posixpath.splitext(posixpath.basename(rel))[0].lower()
 
 
-def _read_bytes(workspace: str, rel: str) -> bytes | None:
-    """A file's content when attribution could read it (plain, text); else None."""
-    if read_text_lines(workspace, rel) is None:
-        return None
-    try:
-        with open_plain(os.path.join(workspace, rel), "rb", root=workspace) as handle:
-            return handle.read()
-    except OSError:
-        return None
+def _after_class(stem: str, class_name: str) -> str | None:
+    """What follows the class name in a file stem (``tag_methods`` for Tag: ``_methods``), or None."""
+    name = class_name.lower()
+    if stem == name or stem.startswith(name + "_"):
+        return stem[len(name):]
+    return None
 
 
 def _lf(content: bytes) -> bytes:
     return content.replace(b"\r\n", b"\n")
+
+
+def _same(a: bytes | None, b: bytes | None) -> bool:
+    """The same text, line endings aside."""
+    return a is not None and b is not None and _lf(a) == _lf(b)
+
+
+def _with_endings_of(current: bytes, merged: bytes) -> bytes:
+    """``merged`` (LF) with CRLF endings when every line of ``current`` ends with CRLF."""
+    lines = current.count(b"\n")
+    return merged.replace(b"\n", b"\r\n") if lines and current.count(b"\r\n") == lines else merged
 
 
 def _lines(content: bytes | None) -> list[str]:

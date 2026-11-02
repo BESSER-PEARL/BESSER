@@ -18,10 +18,6 @@ import textwrap
 import pytest
 
 import besser.spec_driven_agent.pipeline.modify_run as modify_run
-from besser.BUML.metamodel.structural import (
-    BinaryAssociation, Class, DomainModel, IntegerType, Multiplicity, Property, StringType,
-)
-from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.pipeline.regeneration import regenerate
 from besser.spec_driven_agent.planning.model_change import ModelChange
@@ -35,37 +31,13 @@ from besser.spec_driven_agent.state.agent_trace import (
     record_generated_files,
     seed_attribution,
 )
-from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME
-
-GENERATOR = "generate_fastapi_backend"
-
-
-def _model(isbn=False, author=False, library=True) -> DomainModel:
-    """Book (+ Library) as Phase 1 sees it; Book.library is 0..1 so the runtime
-    test can create a book without a library."""
-    book = Class(name="Book", attributes={Property(name="title", type=StringType),
-                                          Property(name="pages", type=IntegerType)})
-    if isbn:
-        book.attributes = book.attributes | {Property(name="isbn", type=StringType)}
-    types, associations = {book}, set()
-    if library:
-        lib = Class(name="Library", attributes={Property(name="name", type=StringType)})
-        types.add(lib)
-        associations.add(BinaryAssociation(name="Has", ends={
-            Property(name="books", type=book, multiplicity=Multiplicity(0, "*")),
-            Property(name="library", type=lib, multiplicity=Multiplicity(0, 1))}))
-    if author:
-        writer = Class(name="Author", attributes={Property(name="fullName", type=StringType)})
-        types.add(writer)
-        associations.add(BinaryAssociation(name="Wrote", ends={
-            Property(name="works", type=book, multiplicity=Multiplicity(0, "*")),
-            Property(name="writer", type=writer, multiplicity=Multiplicity(0, 1))}))
-    return DomainModel(name="Shelf", types=types, associations=associations)
+from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, load_generator_output
+from tests.spec_driven_agent.shelf_app import GENERATOR, generate_backend, shelf_model
 
 
-def _generate(workspace, model):
-    reply = json.loads(ToolExecutor(str(workspace), domain_model=model).execute(GENERATOR, {}))
-    assert not reply.get("error"), reply
+
+
+
 
 
 def _regenerate(app, model, previous=frozenset()):
@@ -79,7 +51,7 @@ def app(tmp_path):
     """An app built from the base model before the generator output was stored (attribution only)."""
     workspace = tmp_path / "app"
     workspace.mkdir()
-    _generate(workspace, _model())
+    generate_backend(workspace, shelf_model())
     (workspace / GENERATOR_OUTPUT_FILENAME).unlink()
     return workspace
 
@@ -87,7 +59,7 @@ def app(tmp_path):
 def _fresh(tmp_path, model) -> dict[str, bytes]:
     out = tmp_path / "fresh"
     out.mkdir()
-    _generate(out, model)
+    generate_backend(out, model)
     return {p.relative_to(out).as_posix(): p.read_bytes()
             for p in (out / "backend").rglob("*") if p.is_file() and "__pycache__" not in p.parts}
 
@@ -104,21 +76,27 @@ def _update(regeneration, path):
 
 
 def test_untouched_files_become_the_new_models_output(app, tmp_path):
-    regeneration = _regenerate(app, _model(isbn=True))
+    regeneration = _regenerate(app, shelf_model(isbn=True))
 
     assert "backend/sql_alchemy.py" in regeneration.replaced
     assert "backend/pydantic_classes.py" in regeneration.replaced
     assert not regeneration.to_update
     # Byte for byte: on Windows the generator writes some files with CRLF and some with LF.
-    for rel, content in _fresh(tmp_path, _model(isbn=True)).items():
+    for rel, content in _fresh(tmp_path, shelf_model(isbn=True)).items():
         assert (app / rel).read_bytes() == content, rel
+
+
+def test_after_the_fallback_the_app_has_a_stored_output_so_the_next_change_merges(app):
+    _regenerate(app, shelf_model(isbn=True))
+
+    assert load_generator_output(str(app), "backend") is not None
 
 
 def test_an_edited_file_is_kept_and_the_agent_gets_its_change(app):
     schemas = app / "backend" / "pydantic_classes.py"
     _append(schemas, "# validated by hand")
 
-    regeneration = _regenerate(app, _model(isbn=True))
+    regeneration = _regenerate(app, shelf_model(isbn=True))
 
     assert "# validated by hand" in schemas.read_text(encoding="utf-8")
     assert "isbn" not in schemas.read_text(encoding="utf-8")
@@ -140,7 +118,7 @@ def test_a_line_the_editor_changed_is_not_offered_back(app, seeded):
     if seeded:
         assert seed_attribution(str(app))
 
-    regeneration = _regenerate(app, _model(isbn=True))
+    regeneration = _regenerate(app, shelf_model(isbn=True))
 
     added = [line.strip() for line, _ in _update(regeneration, "backend/pydantic_classes.py").added]
     assert "title: str" not in added
@@ -151,7 +129,7 @@ def test_a_new_class_keeps_its_repeated_template_lines(app):
     """Every mapped class has the same primary-key line; a set diff dropped it."""
     _append(app / "backend" / "sql_alchemy.py", "# indexed by hand")
 
-    regeneration = _regenerate(app, _model(author=True))
+    regeneration = _regenerate(app, shelf_model(author=True))
 
     added = [line.strip() for line, _ in _update(regeneration, "backend/sql_alchemy.py").added]
     start = added.index("class Author(Base):")
@@ -159,7 +137,7 @@ def test_a_new_class_keeps_its_repeated_template_lines(app):
 
 
 def test_a_new_class_gets_its_files(app):
-    regeneration = _regenerate(app, _model(author=True))
+    regeneration = _regenerate(app, shelf_model(author=True))
 
     assert "backend/routers/author.py" in regeneration.added
     assert (app / "backend" / "routers" / "author.py").is_file()
@@ -169,7 +147,7 @@ def test_a_generated_file_deleted_on_purpose_is_not_brought_back(app):
     router = app / "backend" / "routers" / "library.py"
     router.unlink()
 
-    regeneration = _regenerate(app, _model(isbn=True, author=True),
+    regeneration = _regenerate(app, shelf_model(isbn=True, author=True),
                                previous={"backend/routers/library.py", "backend/routers/book.py"})
 
     assert not router.exists()
@@ -178,7 +156,7 @@ def test_a_generated_file_deleted_on_purpose_is_not_brought_back(app):
 
 
 def test_the_router_of_a_removed_class_is_deleted(app):
-    regeneration = _regenerate(app, _model(library=False))
+    regeneration = _regenerate(app, shelf_model(library=None))
 
     assert "backend/routers/library.py" in regeneration.removed
     assert not (app / "backend" / "routers" / "library.py").exists()
@@ -187,7 +165,7 @@ def test_the_router_of_a_removed_class_is_deleted(app):
 def test_a_file_another_file_still_uses_is_kept(app):
     _append(app / "backend" / "main_api.py", "# custom startup")
 
-    regeneration = _regenerate(app, _model(library=False))
+    regeneration = _regenerate(app, shelf_model(library=None))
 
     assert "backend/routers/library.py" in regeneration.kept_in_use
     assert (app / "backend" / "routers" / "library.py").is_file()
@@ -196,7 +174,7 @@ def test_a_file_another_file_still_uses_is_kept(app):
 
 
 def test_attribution_records_the_regenerated_files(app):
-    regeneration = _regenerate(app, _model(isbn=True, library=False))
+    regeneration = _regenerate(app, shelf_model(isbn=True, library=None))
 
     state = AttributionState.load(str(app))
     generator = {i for i, c in enumerate(state.contributors) if c["kind"] == "generator"}
@@ -212,7 +190,7 @@ def test_a_file_that_is_not_text_is_left_alone(app):
     models = app / "backend" / "sql_alchemy.py"
     models.write_bytes(models.read_bytes() + b"\x00")
 
-    regeneration = _regenerate(app, _model(isbn=True))
+    regeneration = _regenerate(app, shelf_model(isbn=True))
 
     assert "backend/sql_alchemy.py" in regeneration.not_checked
     assert models.read_bytes().endswith(b"\x00")
@@ -231,7 +209,7 @@ def test_a_write_through_a_linked_folder_is_refused(app, tmp_path):
     except OSError:
         pytest.skip("this platform cannot create a directory link")
 
-    regeneration = _regenerate(app, _model(author=True))
+    regeneration = _regenerate(app, shelf_model(author=True))
 
     assert "backend/routers/author.py" in regeneration.not_checked
     assert not (outside / "author.py").exists()
@@ -249,7 +227,7 @@ def test_lines_of_a_packaging_step_are_not_the_generators(app):
     keys.write_text("STRIPE_KEY = '[REDACTED]'\n", encoding="utf-8")
     reconcile_workspace(str(app), generator_contributor("secret_redaction"), paths=["backend/keys.py"])
 
-    regeneration = _regenerate(app, _model(isbn=True))
+    regeneration = _regenerate(app, shelf_model(isbn=True))
 
     assert keys.is_file()
     assert "backend/keys.py" not in regeneration.removed
@@ -265,7 +243,7 @@ def test_an_attribution_path_leaving_the_output_folder_is_ignored(app):
     state.files["backend/../victim.txt"] = (line_hashes(["keep me"]), [owner])
     state.save(str(app))
 
-    regeneration = _regenerate(app, _model(isbn=True))
+    regeneration = _regenerate(app, shelf_model(isbn=True))
 
     assert victim.is_file()
     assert not regeneration.removed
@@ -280,7 +258,7 @@ def test_the_note_quotes_file_lines_and_stays_bounded(app):
     _append(schemas, "# edited by hand")  # so the file is kept and the crafted line is reported
     assert seed_attribution(str(app))
 
-    note = _regenerate(app, _model(isbn=True)).note()
+    note = _regenerate(app, shelf_model(isbn=True)).note()
 
     assert len(note) <= 6000
     assert "``` BESSER" not in note
@@ -304,7 +282,7 @@ CLIENT_SCRIPT = textwrap.dedent("""
 def test_the_regenerated_app_serves_the_new_model(app):
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
-    _regenerate(app, _model(isbn=True, author=True))
+    _regenerate(app, shelf_model(isbn=True, author=True))
 
     run = subprocess.run([sys.executable, "-c", CLIENT_SCRIPT], cwd=str(app / "backend"),
                          capture_output=True, text=True, timeout=120)
@@ -328,7 +306,7 @@ class _Client:
 
 @pytest.fixture
 def orchestrator(app):
-    built = LLMOrchestrator(llm_client=_Client(), domain_model=_model(isbn=True, author=True),
+    built = LLMOrchestrator(llm_client=_Client(), domain_model=shelf_model(isbn=True, author=True),
                             output_dir=str(app), enable_checkpointing=False)
     built._seed_generator_used = GENERATOR
     built._seed_output_files = set()
@@ -420,7 +398,7 @@ def test_the_seed_edit_flags_survive_a_resume(orchestrator, app):
     orchestrator._seed_llm_modified = {"backend/main_api.py"}
     state = orchestrator._modify_checkpoint_state()
 
-    resumed = LLMOrchestrator(llm_client=_Client(), domain_model=_model(isbn=True),
+    resumed = LLMOrchestrator(llm_client=_Client(), domain_model=shelf_model(isbn=True),
                               output_dir=str(app), enable_checkpointing=False)
     resumed._restore_modify_state(json.loads(json.dumps(state)))
 

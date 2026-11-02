@@ -124,41 +124,54 @@ Phase 1 generates the app and after each regeneration:
 - A file still equal to the stored output (untouched) becomes the new output,
   byte for byte.
 - An edited file gets a three-way merge: base = the stored output, ours = the
-  file now, theirs = the new output. When the edits and the model change do not
-  touch the same lines, the file gets the model change and keeps the edits.
+  file now, theirs = the new output. When the edits and the model change touch
+  neither the same nor adjacent lines, the file gets the model change and keeps
+  the edits.
   Line endings do not count as edits (on Windows the generator writes some files
   with CRLF, and an editor may convert them); the merged file keeps its own.
 - A file whose edits overlap the model change is kept as it is. The agent gets,
   per file, the generator's change to apply by hand. A file is never left half
-  merged or with conflict markers.
+  merged or with conflict markers. Such a file keeps its old merge base, so if
+  the agent leaves the change out, the next model change brings it back instead
+  of reading its absence as an edit.
 - A file the new model adds (the router of a new class) is written. A
   generated file deleted since stays deleted.
 - A file the new model no longer produces is deleted when untouched, unless
   another file of the app still names it.
-- A renamed class's files (``routers/tag.py`` for ``Tag`` renamed to ``Label``)
-  move to the new name, edits included. Renames come from the model change
+- A renamed class's files (``routers/tag.py`` and ``routers/tag_methods.py``
+  for ``Tag`` renamed to ``Label``) move to the new name, edits included. Renames come from the model change
   list (matched by editor id), not from file similarity: git's rename detection
   misses a renamed class once its file was edited, and could pair a removed
   class's file with an added one.
 
 The merge uses `pygit2 <https://www.pygit2.org/>`_ (``pip install
 besser[agents]``; pinned in the backend requirements). Without it, or without
-a usable stored output (an app built before the output was stored, or a store
-that is malformed or names a path outside ``backend/``), the run falls back to
+a usable stored output (an app built before the output was stored, an output
+over 1.5 MB, which is not stored, or a store that is malformed, larger than
+that, or names a path outside ``backend/``), the run falls back to
 the line attribution in ``.besser_attribution.json``: only a file whose lines
 are all still the generator's is replaced, every edited file is left to the
 agent, and a warning says why. Packaging steps recorded as generator
 contributors (the secret scrub, the frontend repair) do not make a file look
 untouched.
 
-After a BESSER upgrade, the stored output differs from the new one by the
-generator's own changes, and those conflict with edits near them. Packaging
-stores the run's class diagram, exactly as the run received it, with the
-output. The next modify run generates that diagram again with the new BESSER,
-and merges an edited file against that output instead, so the edited file gets
-the model change but not the newer generator's own changes (untouched files get
-both). Without the stored diagram, edited files are merged against the older
-output, and a warning says so.
+The store holds the generated code itself (the app already contains it) and,
+attached at packaging, the class diagram the output was generated from: the
+diagram the run received, or the model-synced one when the run added classes.
+Only a store written in that run gets a diagram. The next modify run generates
+the diagram again:
+
+- With the same BESSER, the result must be the stored files, or the store is
+  not used (it was edited by hand) and the run falls back to the attribution.
+  The check leaves out the files an earlier run left to the agent, whose base is
+  older on purpose.
+- After a BESSER upgrade, the stored output differs from the new one by the
+  generator's own changes, and those conflict with edits near them. An edited
+  file is merged against the new BESSER's output for the stored diagram
+  instead, so it gets the model change but keeps the older generator's code
+  (untouched files get both, and the agent is told). Without the stored
+  diagram, edited files are merged against the older output, and a warning
+  says so.
 
 Measured offline on 42 FastAPI runs and 7 kinds of model change (adding,
 removing or retyping an attribute, loosening a multiplicity, renaming or adding
@@ -169,16 +182,17 @@ the agent when the file's edits touch the renamed lines.
 
 The stored output travels with the app: a modify run's seed, the download ZIP
 and the GitHub push carry it, beside the recipe and the attribution, and a
-continue-from-GitHub run reads it back. A push deletes these files from the
-repository when the run no longer has them, so a stale base never outlives
-its run.
+continue-from-GitHub run reads it back. The ZIP holds the three files at its
+root. A push deletes them from the repository when the run no longer has them,
+so a stale base never outlives its run.
 
 The agent sees the result under "Regenerated files" in its inventory and as a
 Phase 2 issue; lines quoted from files are marked as file content. The trace
 records a ``regeneration`` event with the ``method`` (``merge`` or
 ``attribution``), the files replaced, added, merged, moved and removed, the
 files left to the agent, the BESSER version an upgrade came from and any
-warning; also when regeneration is skipped, with the reason. An app with
+warning, which the agent's note repeats; also when regeneration is skipped,
+with the reason. An app with
 neither a stored output nor a trustworthy attribution is not regenerated: a
 warning is logged and the run continues as before. Other generators are not
 regenerated yet.

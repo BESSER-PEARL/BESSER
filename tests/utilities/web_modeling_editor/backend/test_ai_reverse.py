@@ -15,6 +15,7 @@ from httpx._transports.asgi import ASGITransport
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import ImportGitHubRunRequest
 from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
 from besser.utilities.web_modeling_editor.backend.services import reverse_engineering
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     ai_reverse,
@@ -370,7 +371,7 @@ def _import(monkeypatch, tmp_path, files=None, **body):
     body = {"allow_ai_reading": True, **body}
     monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
     fake = _ImportGitHub(files or {"prisma/schema.prisma": PRISMA, "src/types/order.ts": TS_TYPES})
-    monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: fake)
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
     monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
 
     async def post():
@@ -419,7 +420,7 @@ def test_import_succeeds_without_a_proposal_when_the_ai_fails(monkeypatch, tmp_p
 
 def test_a_slow_ai_reading_times_out_and_the_import_still_succeeds(monkeypatch, tmp_path):
     _free_tier(monkeypatch)
-    monkeypatch.setattr(spec_driven_router, "AI_READ_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(github_sync, "AI_READ_TIMEOUT_SECONDS", 0.05)
 
     def slow(prompt, *_):
         time.sleep(0.5)
@@ -621,7 +622,7 @@ def test_the_ai_reader_refuses_a_request_that_did_not_allow_it(tmp_path):
     request = ImportGitHubRunRequest(owner="me", repo="shop")
 
     with pytest.raises(PermissionError):
-        asyncio.run(spec_driven_router._read_repo_with_ai(request, str(tmp_path), CodeAnalysis(), "me", "shop"))
+        asyncio.run(github_sync._read_repo_with_ai(request, str(tmp_path), CodeAnalysis(), "me", "shop"))
 
 
 def test_the_ai_reader_does_not_import_the_deprecated_kg_module(monkeypatch):

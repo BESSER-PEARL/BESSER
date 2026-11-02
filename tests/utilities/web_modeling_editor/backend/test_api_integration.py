@@ -1353,9 +1353,7 @@ class TestDockerComposeRouting:
 
     def test_single_docker_compose_uses_deploymentuml_handler(self, monkeypatch):
         from besser.utilities.web_modeling_editor.backend.models import DiagramInput
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as router,
-        )
+        from besser.utilities.web_modeling_editor.backend.services.generation import dispatch
 
         async def fake_deployment_handler(*_args, **_kwargs):
             return "docker-compose-handler"
@@ -1364,13 +1362,13 @@ class TestDockerComposeRouting:
             pytest.fail("Docker Compose must not use the core class-diagram handler")
 
         monkeypatch.setattr(
-            router, "_handle_deployment_diagram_generation", fake_deployment_handler
+            dispatch, "_handle_deployment_diagram_generation", fake_deployment_handler
         )
         monkeypatch.setattr(
-            router, "_handle_class_diagram_generation", fake_class_handler
+            dispatch, "_handle_class_diagram_generation", fake_class_handler
         )
 
-        result = _run(router.generate_code_output(DiagramInput(
+        result = _run(dispatch.generate_from_diagram(DiagramInput(
             title="Deployment",
             model={
                 "type": "DeploymentDiagram",
@@ -1386,9 +1384,7 @@ class TestDockerComposeRouting:
         self, monkeypatch, class_diagram_model
     ):
         from besser.utilities.web_modeling_editor.backend.models import DiagramInput
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as router,
-        )
+        from besser.utilities.web_modeling_editor.backend.services.generation import dispatch
 
         async def fake_deployment_handler(*_args, **_kwargs):
             pytest.fail("Terraform must not enter the DeploymentUML handler")
@@ -1397,13 +1393,13 @@ class TestDockerComposeRouting:
             return "master-fallback"
 
         monkeypatch.setattr(
-            router, "_handle_deployment_diagram_generation", fake_deployment_handler
+            dispatch, "_handle_deployment_diagram_generation", fake_deployment_handler
         )
         monkeypatch.setattr(
-            router, "_handle_class_diagram_generation", fake_class_handler
+            dispatch, "_handle_class_diagram_generation", fake_class_handler
         )
 
-        result = _run(router.generate_code_output(DiagramInput(
+        result = _run(dispatch.generate_from_diagram(DiagramInput(
             title="Core deployment",
             model=class_diagram_model,
             generator="terraform",
@@ -1412,15 +1408,13 @@ class TestDockerComposeRouting:
         assert result == "master-fallback"
 
     def test_project_docker_compose_uses_project_handler(self, monkeypatch):
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as router,
-        )
+        from besser.utilities.web_modeling_editor.backend.services.generation import dispatch
 
         async def fake_project_handler(*_args, **_kwargs):
             return "docker-compose-project-handler"
 
         monkeypatch.setattr(
-            router, "_handle_deployment_project_generation", fake_project_handler
+            dispatch, "_handle_deployment_project_generation", fake_project_handler
         )
 
         project = self._project_input(
@@ -1433,15 +1427,14 @@ class TestDockerComposeRouting:
             },
         )
 
-        result = _run(router.generate_code_output_from_project(project))
+        result = _run(dispatch.generate_from_project(project))
 
         assert result == "docker-compose-project-handler"
 
     def test_project_docker_compose_maps_governance_dsl_validation_to_422(self, monkeypatch):
         from fastapi import HTTPException
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as router,
-        )
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router
+        from besser.utilities.web_modeling_editor.backend.services.generation import dispatch
         from besser.utilities.web_modeling_editor.backend.services.exceptions import (
             GovernanceDslValidationError,
         )
@@ -1453,7 +1446,7 @@ class TestDockerComposeRouting:
             )
 
         monkeypatch.setattr(
-            router,
+            dispatch,
             "_handle_deployment_project_generation",
             fake_project_handler,
         )
@@ -1469,7 +1462,7 @@ class TestDockerComposeRouting:
         )
 
         with pytest.raises(HTTPException) as exc_info:
-            _run(router.generate_code_output_from_project(project))
+            _run(generation_router.generate_code_output_from_project(project))
 
         assert exc_info.value.status_code == 422
         assert "merging gateway 'gw1'" in exc_info.value.detail
@@ -1478,9 +1471,7 @@ class TestDockerComposeRouting:
     def test_project_terraform_bypasses_project_handler(
         self, monkeypatch, class_diagram_model
     ):
-        from besser.utilities.web_modeling_editor.backend.routers import (
-            generation_router as router,
-        )
+        from besser.utilities.web_modeling_editor.backend.services.generation import dispatch
 
         async def fake_project_handler(*_args, **_kwargs):
             pytest.fail("Terraform must not enter the Docker Compose project handler")
@@ -1490,9 +1481,9 @@ class TestDockerComposeRouting:
             return "master-fallback"
 
         monkeypatch.setattr(
-            router, "_handle_deployment_project_generation", fake_project_handler
+            dispatch, "_handle_deployment_project_generation", fake_project_handler
         )
-        monkeypatch.setattr(router, "generate_code_output", fake_generate)
+        monkeypatch.setattr(dispatch, "generate_from_diagram", fake_generate)
 
         project = self._project_input(
             "terraform",
@@ -1500,7 +1491,7 @@ class TestDockerComposeRouting:
             class_diagram_model,
         )
 
-        result = _run(router.generate_code_output_from_project(project))
+        result = _run(dispatch.generate_from_project(project))
 
         assert result == "master-fallback"
 
@@ -1986,7 +1977,7 @@ class TestStandaloneChatbotDeploy:
         mocked PyGithub helper must be called with a render.yaml that
         contains ``python -u "<slug>.py"`` (the chatbot startCommand).
         """
-        from besser.utilities.web_modeling_editor.backend.services.deployment import (
+        from besser.utilities.web_modeling_editor.backend.routers import (
             github_deploy_api as deploy_mod,
         )
         from besser.utilities.web_modeling_editor.backend.routers import (

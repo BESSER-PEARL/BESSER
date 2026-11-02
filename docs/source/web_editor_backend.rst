@@ -10,7 +10,9 @@ Architecture
 
 The backend uses a **modular router architecture**. The application factory
 (``backend.py``) registers middleware, includes routers, and starts background
-services. Endpoints are organized by concern:
+services. Routers are thin: a route parses the request, resolves its dependencies,
+calls a service under ``services/`` and turns the result or the service's exception
+into the HTTP response. Endpoints are organized by concern:
 
 - **``routers/generation_router.py``** -- Code generation (single-diagram and project-based) and agent-configuration recommendation
 - **``routers/conversion_router.py``** -- BUML import/export, CSV reverse engineering, image-to-model, SVG rendering
@@ -22,19 +24,18 @@ services. Endpoints are organized by concern:
 - **``routers/agent_simulator_router.py``** -- Live agent simulation (see `Agent Simulation`_)
 - **``routers/error_handler.py``** -- Centralized ``@handle_endpoint_errors`` decorator
 - **``routers/auth.py``** -- Shared GitHub-session gate (``require_github_session``, HTTP 401)
-
-GitHub OAuth and GitHub deployment are registered from
-``services/deployment/`` (``github_oauth.py`` and ``github_deploy_api.py``)
-rather than from ``routers/``.
+- **``routers/github_oauth.py``** -- GitHub sign-in, sign-out and the session store (``get_user_token``)
+- **``routers/github_deploy_api.py``** -- The ``/github/*`` endpoints: save, load, create, repo summary, sync status, model history, pull requests, deploy, go live
 
 Additional infrastructure:
 
 - **``middleware/request_logging.py``** -- Structured request logging with unique IDs and performance timing
 - **``services/cleanup.py``** -- Background temp-file cleanup (removes stale directories every hour)
-- **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError`` and ``ConfigurationError``.
+- **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError``, ``ConfigurationError`` and ``UpstreamError`` (an external service such as GitHub refused or failed; carries the HTTP status).
   ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
+- **``services/generation/``** -- Generator dispatch behind ``/generate-output`` and ``/generate-output-from-project``: ``dispatch.py`` picks the path from the generator's registry entry (``category``, ``required_diagram_type``, ``output_type``; generators with request options have a builder in ``_CLASS_DIAGRAM_BUILDERS``) and runs it, ``agents.py`` generates agents (BAF), ``downloads.py`` packs the output as a ``GeneratedOutput`` (a ZIP with its provenance file, or one file with its version comment), which the router sends as the download
 - **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions), ``llm.py`` (reaching the user's own LLM provider under one request deadline) and ``validation.py`` (the consistency check under its concurrency cap, and the KG findings of ``/validate-diagram``)
-- **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``runtime.py`` (the per-app state of the runs, see `Runtime State`_), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``sse_events.py`` (the typed event schema), ``telemetry.py``, ``incidents.py``. Frames, packaged workspaces and repo writes are redacted by ``besser.utilities.secret_redaction``
+- **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``runtime.py`` (the per-app state of the runs, see `Runtime State`_), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``github_sync.py`` (a run pushed to GitHub, a GitHub repo imported as a run), ``sse_events.py`` (the typed event schema), ``telemetry.py``, ``incidents.py``. Frames, packaged workspaces and repo writes are redacted by ``besser.utilities.secret_redaction``
 - **``constants/constants.py``** -- API version, temp prefixes, generator defaults and the built-in CORS origins
 - **``settings.py``** -- ``BackendSettings``, every environment variable the backend reads (see `Environment Variables`_)
 - **``models/responses.py``** -- Standardized Pydantic response models

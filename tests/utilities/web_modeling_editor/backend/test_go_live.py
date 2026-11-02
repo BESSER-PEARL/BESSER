@@ -18,8 +18,10 @@ from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
-from besser.utilities.web_modeling_editor.backend.services.deployment import github_deploy_api, render_blueprint
-from besser.utilities.web_modeling_editor.backend.services.deployment.github_deploy_api import _add_deployment_configs
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
+from besser.utilities.web_modeling_editor.backend.routers import github_deploy_api
+from besser.utilities.web_modeling_editor.backend.routers.github_deploy_api import _add_deployment_configs
+from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartRunEntry,
 )
@@ -273,7 +275,7 @@ def _push_run(monkeypatch, tmp_path, fake):
         file_path=str(run_dir / "buml" / "diagrams.json"), file_name="diagrams.json", is_zip=False,
         temp_dir=str(run_dir), created_at=time.time(),
     )))
-    monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: fake)
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
     monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
     return _call("POST", "/besser_api/spec-driven/push-to-github", headers=SESSION, json={
         "run_id": "f" * 32, "deploy_config": {"repo_name": "room-booking", "use_existing": True}})

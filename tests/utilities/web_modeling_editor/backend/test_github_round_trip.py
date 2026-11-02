@@ -18,7 +18,9 @@ from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
-from besser.utilities.web_modeling_editor.backend.services.deployment import github_deploy_api, repo_model
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
+from besser.utilities.web_modeling_editor.backend.routers import github_deploy_api
+from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartRunEntry,
@@ -409,7 +411,7 @@ def test_the_sync_status_follows_a_pending_branch_until_its_pull_request_is_merg
 
 
 def test_sign_in_then_out_revokes_the_token(github, monkeypatch):
-    from besser.utilities.web_modeling_editor.backend.services.deployment import github_oauth
+    from besser.utilities.web_modeling_editor.backend.routers import github_oauth
 
     monkeypatch.setattr(get_settings(), "github_client_id", "client")
     monkeypatch.setattr(get_settings(), "github_client_secret", SecretStr("secret"))
@@ -443,7 +445,7 @@ def test_a_merged_push_is_reported_as_done_even_if_reading_it_back_fails(github,
 
     async def unreadable(*args, **kwargs):
         raise ValueError("Repository archive exceeds the 100 MB size cap")
-    monkeypatch.setattr(spec_driven_router, "_import_repo_as_run", unreadable)
+    monkeypatch.setattr(github_sync, "_import_repo_as_run", unreadable)
     r = _push(run_id, "library", base_commit_sha=imported["commit_sha"])
 
     assert r.status_code == 200, r.text
@@ -650,7 +652,7 @@ def test_a_run_record_without_hashes_is_still_read(github, tmp_path):
     (run_dir / runner_module.GITHUB_SOURCE_FILENAME).write_text(json.dumps(
         {"owner": "ana", "repo": "shop", "commitSha": "a" * 40, "paths": ["src/app.py"]}), encoding="utf-8")
 
-    assert spec_driven_router._run_seed(str(run_dir), "ana", "shop") == ("a" * 40, {"src/app.py": None})
+    assert github_sync._run_seed(str(run_dir), "ana", "shop") == ("a" * 40, {"src/app.py": None})
 
 
 def test_a_teammates_buml_helper_survives_a_model_merge(github):
@@ -751,7 +753,7 @@ def test_an_import_is_refused_while_every_run_slot_is_taken(github, monkeypatch)
 
     def no_download(*_args, **_kwargs):
         raise AssertionError("the repo was downloaded")
-    monkeypatch.setattr(spec_driven_router, "_import_repo_as_run", no_download)
+    monkeypatch.setattr(github_sync, "_import_repo_as_run", no_download)
 
     r = _call("POST", "/besser_api/spec-driven/import-github-run", json={"owner": "ana", "repo": "shop"},
               headers=SESSION)

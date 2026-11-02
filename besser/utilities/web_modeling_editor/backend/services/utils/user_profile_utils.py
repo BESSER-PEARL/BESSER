@@ -1,8 +1,7 @@
 """Utilities for rendering a UserDiagram into a normalized user-profile JSON document.
 
-These helpers were previously colocated in ``generation_router.py`` but are
-needed from both the router and ``services/deployment/github_deploy_api.py``.
-Keeping them here avoids the circular import between router and deployment.
+Used by the generation service (``services/generation``) and the GitHub
+deploy endpoints (``routers/github_deploy_api.py``).
 
 This module is service-layer code: it raises BESSER's custom exceptions
 (``ValidationError``, ``GenerationError``) rather than ``HTTPException`` so

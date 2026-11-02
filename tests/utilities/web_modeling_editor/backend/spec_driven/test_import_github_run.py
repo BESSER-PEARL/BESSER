@@ -19,6 +19,7 @@ from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
 )
@@ -114,7 +115,7 @@ class _FakeGitHubService:
 
 def _install(monkeypatch, fake):
     """Patch the GitHub factory + token lookup in the router namespace."""
-    monkeypatch.setattr(router_module, "create_github_service", lambda token: fake)
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
     monkeypatch.setattr(router_module, "get_user_token", lambda sid: "fake-token")
 
 

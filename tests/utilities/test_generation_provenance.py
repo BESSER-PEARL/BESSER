@@ -25,7 +25,7 @@ from besser.utilities.buml_code_builder import domain_model_to_code
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.provenance import PROVENANCE_FILENAME
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.routers.generation_router import _streaming_zip
+from besser.utilities.web_modeling_editor.backend.services.generation.downloads import agent_zip_output
 from besser.utilities.web_modeling_editor.backend.services.converters import process_class_diagram
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
     parse_buml_content,
@@ -170,7 +170,7 @@ class TestGeneratedZip:
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.writestr("agent.py", "print('hi')\n")
-        _streaming_zip(buffer, "agent_output.zip")
+        agent_zip_output(buffer, "agent_output.zip")
         entries = _zip_entries(buffer.getvalue())
         assert set(entries) == {"agent.py", PROVENANCE_FILENAME}
         assert "Generator: `agent`" in entries[PROVENANCE_FILENAME].decode("utf-8")

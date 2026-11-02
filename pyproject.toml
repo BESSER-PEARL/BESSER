@@ -67,6 +67,13 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "Editor backend services do not import its routers"
+type = "forbidden"
+# Routers call services and map their results to HTTP, never the other way round.
+source_modules = ["besser.utilities.web_modeling_editor.backend.services"]
+forbidden_modules = ["besser.utilities.web_modeling_editor.backend.routers"]
+
+[[tool.importlinter.contracts]]
 name = "Utilities do not import the generators, the agent or the editor backend"
 type = "forbidden"
 source_modules = [

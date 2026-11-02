@@ -23,11 +23,9 @@ import yaml
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
-from besser.utilities.web_modeling_editor.backend.services.deployment import (
-    github_deploy_api,
-    repo_model,
-)
+from besser.utilities.web_modeling_editor.backend.routers import github_deploy_api, spec_driven_router
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
+from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     SYNC_BRANCH_PREFIX,
     GitHubService,
@@ -204,7 +202,7 @@ class _ImportGitHub:
 
 
 def test_a_repo_imported_by_the_backend_is_found_by_the_worker(monkeypatch, shared_workspace):
-    monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: _ImportGitHub())
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: _ImportGitHub())
     monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
 
     r = _call("POST", "/besser_api/spec-driven/import-github-run",
@@ -274,7 +272,7 @@ def _seed_run(tmp_path) -> str:
 
 
 def _push(monkeypatch, fake, run_id, **deploy):
-    monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: fake)
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
     monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
     body = {"run_id": run_id, "projectExport": _envelope(),
             "deploy_config": {"repo_name": "app", "use_existing": True, **deploy}}

@@ -17,7 +17,7 @@ The pieces
 
    * - Where
      - What it owns
-   * - ``backend/services/deployment/github_oauth.py``
+   * - ``backend/routers/github_oauth.py``
      - OAuth sign-in, the server-side session store, sign-out with token
        revocation. The browser only ever holds an opaque session id.
    * - ``backend/services/deployment/github_service.py``
@@ -29,12 +29,13 @@ The pieces
        credential redaction, ``ModelMerge``.
    * - ``backend/services/deployment/model_merge.py``
      - The three-way merge of ``diagrams.json`` as data.
-   * - ``backend/services/deployment/github_deploy_api.py``
+   * - ``backend/routers/github_deploy_api.py``
      - The ``/github/*`` endpoints: save, load, create, repo summary, sync
        status, model history, pull requests, go live.
-   * - ``backend/routers/spec_driven_router.py``
+   * - ``backend/services/spec_driven/github_sync.py``
      - ``/spec-driven/import-github-run`` (a repository becomes a run) and
-       ``/spec-driven/push-to-github`` (a run goes back to the repository).
+       ``/spec-driven/push-to-github`` (a run goes back to the repository);
+       the routes are in ``backend/routers/spec_driven_router.py``.
    * - ``backend/services/reverse_engineering/``
      - Reads a repository BESSER did not create: ``code_reverse.py`` (exact,
        Python ``ast`` only, nothing is executed) and ``ai_reverse.py`` (a

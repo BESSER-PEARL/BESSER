@@ -93,19 +93,18 @@ def test_safe_path_no_prefix_sibling_false_positive():
 
 
 def test_routers_use_the_canonical_safe_path():
-    """Routers must not carry their own (weaker) copy of ``safe_path``.
+    """Routers (and the generation service) must not carry their own (weaker) copy of ``safe_path``.
 
     ``deployment_router`` used to define a local ``_safe_path`` whose
     ``startswith`` containment check accepts sibling directories that share
     a prefix with the base directory.
     """
-    from besser.utilities.web_modeling_editor.backend.routers import (
-        deployment_router,
-        generation_router,
-    )
+    from besser.utilities.web_modeling_editor.backend.routers import deployment_router
+    from besser.utilities.web_modeling_editor.backend.services.generation import dispatch, downloads
 
     assert deployment_router._safe_path is safe_path
-    assert generation_router._safe_path is safe_path
+    assert dispatch._safe_path is safe_path
+    assert downloads._safe_path is safe_path
 
 
 # ---------------------------------------------------------------------------

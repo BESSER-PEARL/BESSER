@@ -9,6 +9,7 @@ from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import analyze_repository
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import run_changes
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
@@ -141,7 +142,7 @@ class _ImportGitHub:
 def test_importing_a_non_besser_repo_proposes_a_model_the_editor_can_load(monkeypatch, tmp_path):
     monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
     fake = _ImportGitHub({"app/main.py": "from fastapi import FastAPI\napp = FastAPI()\n", "app/models.py": SQLALCHEMY_MODELS})
-    monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: fake)
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
     monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
 
     async def post():

@@ -59,7 +59,8 @@ fake = FakeGitHub(login="ana", token="gho_fake_token", root=os.path.join(WORKDIR
 httpx.AsyncClient = github_client_class(fake)
 
 from besser.utilities.web_modeling_editor.backend.backend import app  # noqa: E402
-from besser.utilities.web_modeling_editor.backend.services.deployment import github_oauth, repo_model  # noqa: E402
+from besser.utilities.web_modeling_editor.backend.routers import github_oauth  # noqa: E402
+from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model  # noqa: E402
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (  # noqa: E402
     SmartRunEntry, _seed_workspace_from_base, create_run_workspace, run_changes,
 )

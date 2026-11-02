@@ -9,7 +9,7 @@ from typing import Callable, Optional
 
 from fastapi import HTTPException
 
-from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import (
+from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token,
 )
 

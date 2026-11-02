@@ -22,7 +22,7 @@ from besser.utilities.web_modeling_editor.backend.services.deployment import ren
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service
 )
-from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import (
+from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token
 )
 from besser.utilities.web_modeling_editor.backend.services.converters import (
@@ -40,9 +40,7 @@ from besser.utilities.buml_code_builder import (
 from besser.generators.web_app.web_app_generator import agent_slug
 from besser.utilities.buml_code_builder.common import safe_var_name
 from besser.utilities.provenance import write_generation_provenance
-from besser.utilities.web_modeling_editor.backend.routers.generation_router import (
-    sanitize_config,
-)
+from besser.utilities.web_modeling_editor.backend.services.generation import sanitize_config
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     collect_agents_from_diagrams,
     extract_openai_api_key,

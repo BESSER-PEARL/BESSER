@@ -52,7 +52,8 @@ lint-imports            # pip install import-linter==2.15
 `lint-imports` enforces the layers: editor backend -> Spec-Driven Agent -> generators -> notations ->
 metamodel, each importing only the layers below it, and `besser.utilities` (outside the backend) never
 importing the generators, the agent or the backend. `besser.llm` imports none of its callers (of the
-utilities, only `secret_redaction`), so every layer can use it. Known exceptions are listed, with the change that
+utilities, only `secret_redaction`), so every layer can use it. Inside the backend, `services/` never imports
+`routers/`. Known exceptions are listed, with the change that
 removes each, in `ignore_imports`; do not add one to make a new import pass.
 `F821` (undefined names) is on because `from __future__ import annotations` hides them from every other
 rule here. The `mockup_to_buml/llm_assistant` prompt examples are few-shot snippets, not importable
@@ -101,13 +102,14 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/`; `registry.py` is the one list of generators (web editor + agent tools) |
 | `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
 | `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks; per-app run state on `app.state.spec_driven`) |
-| `…/backend/routers/` | One router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator); `error_handler.py` has `@handle_endpoint_errors` |
+| `…/backend/routers/` | One thin router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator, github_oauth, github_deploy_api): parse the request, call a service, map the result/exception to HTTP; `error_handler.py` has `@handle_endpoint_errors` |
 | `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` (`GeneratorInfo`, derived from `besser/generators/registry.py`) + `get_filename_for_generator` |
 | `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins, most `BESSER_LLM_*` caps and flags |
 | `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`) |
 | `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
 | `…/backend/services/validators/ocl_checker.py` | Metamodel + OCL validation behind `/validate-diagram` |
-| `…/backend/services/deployment/` | Docker Compose deploy, GitHub OAuth / deploy (these routers are registered from here, not `routers/`) |
+| `…/backend/services/generation/` | Generator dispatch behind `/generate-output*`: `dispatch.py` (path from the registry entry, per-generator option builders), `agents.py` (BAF), `downloads.py` (`GeneratedOutput`: ZIP + provenance, or one file + version comment) |
+| `…/backend/services/deployment/` | Docker Compose deploy, the GitHub API client (`github_service.py`), repo model files, model merge, Render blueprints |
 | `…/backend/services/kg/` | Knowledge Graph service layer behind `routers/kg_router.py` (endpoints under `/besser_api/kg`): request parsing, Refine-KG decisions, the user's-own-LLM adapter, the consistency check under its concurrency cap |
 | `…/backend/services/spec_driven/` | Spec-Driven service layer (see below) |
 | `…/backend/services/exceptions.py` | `BesserError` → `ConversionError`, `ValidationError` (incl. `CodeValidationError` → 400), `GenerationError`, `ConfigurationError` |
@@ -152,7 +154,8 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
 - `state/agent_trace.py` — line-level attribution (`.besser_attribution.json`: line hashes per contributor,
   updated on generator writes, on seeding and at packaging) and the run's Agent Trace record
   (`.agent-trace/<run id>.json`, shipped in the ZIP and the GitHub push).
-- Service layer `backend/services/spec_driven/`: `runner.py` (drives a run, emits SSE), `run_manager.py`
+- Service layer `backend/services/spec_driven/`: `runner.py` (drives a run, emits SSE), `github_sync.py` (push a run
+  to GitHub, import a repo as a run), `run_manager.py`
   (durable runs: SQLite event store, sequence numbers assigned *before* any subscriber sees a frame, replay
   via `?after=` / `Last-Event-ID`, `interrupted` marking on restart), `sse_events.py` (typed event schema).
 - Secret redaction: one module, `besser/utilities/secret_redaction.py` (every SSE frame, the workspace before

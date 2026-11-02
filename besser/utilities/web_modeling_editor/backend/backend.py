@@ -57,14 +57,10 @@ from besser.utilities.web_modeling_editor.backend.services.cleanup import (
     schedule_cleanup,
 )
 
-# Deployment routers (already separate files)
-from besser.utilities.web_modeling_editor.backend.services.deployment import (
-    github_oauth_router,
-    github_deploy_router,
-)
-
 # Application routers
 from besser.utilities.web_modeling_editor.backend.routers import (
+    github_oauth,
+    github_deploy_api,
     generation_router,
     conversion_router,
     kg_router,
@@ -288,8 +284,8 @@ setup_middleware(app)
 
 
 # Include GitHub OAuth and deployment routers
-app.include_router(github_oauth_router, prefix="/besser_api")
-app.include_router(github_deploy_router, prefix="/besser_api")
+app.include_router(github_oauth.router, prefix="/besser_api")
+app.include_router(github_deploy_api.router, prefix="/besser_api")
 
 # Include application routers
 app.include_router(generation_router.router)

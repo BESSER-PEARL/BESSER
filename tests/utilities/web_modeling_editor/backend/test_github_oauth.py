@@ -9,7 +9,7 @@ from pydantic import SecretStr
 from fastapi.testclient import TestClient
 
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.services.deployment import github_oauth
+from besser.utilities.web_modeling_editor.backend.routers import github_oauth
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import SessionStore
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
 

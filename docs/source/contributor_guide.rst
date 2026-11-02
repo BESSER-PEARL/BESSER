@@ -261,7 +261,8 @@ rather than ``.``: CI does not lint the tests.
 ``besser.spec_driven_agent``, ``besser.generators``, ``besser.BUML.notations``
 and ``besser.BUML.metamodel``. A module imports only from the layers below it,
 and ``besser.utilities`` outside the backend never imports the generators, the
-agent or the backend. The few known exceptions are listed in
+agent or the backend. Inside the backend, ``services/`` never imports
+``routers/``. The few known exceptions are listed in
 ``ignore_imports``, each with the change that removes it.
 
 Fix lint warnings before opening a PR. CI will fail on lint errors.

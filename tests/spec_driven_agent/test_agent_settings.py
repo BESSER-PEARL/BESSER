@@ -117,7 +117,7 @@ ROWS = [
 
 EDGE_VALUES = [
     "", " ", "0", "-1", "1", " 1", "5", " 7 ", "2.5", "1e3", "1_000", "nan", "abc", "true", "TRUE",
-    " yes ", "on", "no", "false", "off", "primary", "Private", " shared ", "a, b,,c ", "/srv/catalog.json",
+    " yes ", "on", "no", " no ", " 0 ", "False", "false", "off", "primary", "Private", " shared ", "a, b,,c ", "/srv/catalog.json",
 ]
 
 ALL_VARIABLES = [row[1] for row in ROWS]

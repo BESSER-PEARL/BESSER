@@ -100,7 +100,7 @@ class BackendSettings(BaseSettings):
     # Defaults are final values, not raw text: validating them would parse
     # them again (and loop on a default the parser rejects, such as None).
     model_config = SettingsConfigDict(
-        case_sensitive=True, populate_by_name=True, extra="ignore", validate_default=False)
+        case_sensitive=True, extra="ignore", validate_default=False)
 
     # -- B-UML export and GitHub deploys ----------------------------------
     buml_emit_ids: _Flag = Field(

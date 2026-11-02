@@ -321,7 +321,9 @@ def test_a_malformed_value_never_stops_the_backend(clean_env):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows environment names ignore case")
 def test_names_are_case_sensitive(clean_env):
+    # Neither the lower-cased variable nor the bare field name is read.
     clean_env.setenv("besser_llm_max_concurrent_runs", "3")
+    clean_env.setenv("llm_max_concurrent_runs", "3")
     assert BackendSettings().llm_max_concurrent_runs == 10
 
 

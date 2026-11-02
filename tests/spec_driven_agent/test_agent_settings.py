@@ -175,7 +175,9 @@ def test_a_malformed_value_never_stops_the_other_settings(clean_env):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows environment names ignore case")
 def test_names_are_case_sensitive(clean_env):
+    # Neither the lower-cased variable nor the bare field name is read.
     clean_env.setenv("besser_free_llm_model", "x")
+    clean_env.setenv("free_llm_model", "x")
     assert AgentSettings().free_llm_model == ""
 
 

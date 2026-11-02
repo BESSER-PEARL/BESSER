@@ -105,7 +105,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     VerificationReport,
     format_sse,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+from besser.utilities.secret_redaction import (
     redact_text,
     scrub_secret_files,
 )

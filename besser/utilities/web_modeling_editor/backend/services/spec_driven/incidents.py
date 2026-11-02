@@ -18,7 +18,7 @@ import re
 import shutil
 import threading
 
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_text
+from besser.utilities.secret_redaction import redact_text
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 logger = logging.getLogger(__name__)

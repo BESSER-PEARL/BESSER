@@ -17,7 +17,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
 from pydantic import BaseModel, Field, field_validator
 
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_credentials
+from besser.utilities.secret_redaction import redact_credentials
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service

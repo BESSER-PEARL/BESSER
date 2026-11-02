@@ -276,7 +276,7 @@ reading a trace and wondering why a run did what it did.
        In source files only the secret itself is replaced, inside its quotes,
        so the file still parses. Provider tokens are recognised by the
        prefix-anchored rules of `gitleaks <https://github.com/gitleaks/gitleaks>`_
-       (MIT), vendored as ``services/spec_driven/data/gitleaks_rules.toml``
+       (MIT), vendored as ``besser/utilities/data/gitleaks_rules.toml``
        (``ghp_``/``github_pat_``, ``AKIA``/``ASIA``, ``sk_live_``, ``AIza``,
        Slack webhooks, ``glpat-``, ``hf_``, ``npm_``, ``SG.``, PEM private
        keys, JWTs and more). Rules that match on a variable name or on
@@ -290,6 +290,9 @@ reading a trace and wondering why a run did what it did.
        (``{settings.db_password}``, ``%s``, ``$DB_PASSWORD``) is left alone.
        Symbolic links, FIFOs and other special files in the workspace are
        skipped, never opened.
+
+       The rules live in one module, ``besser.utilities.secret_redaction``,
+       which the trace (above) and the LLM clients' error logs use as well.
    * - Artifact exclusion
      - The download ZIP leaves out the same runtime and build artifacts as the
        GitHub push: ``*.log``, ``*.db``, ``*.sqlite`` / ``*.sqlite3``,

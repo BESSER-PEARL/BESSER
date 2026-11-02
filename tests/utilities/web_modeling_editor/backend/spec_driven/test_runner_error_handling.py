@@ -109,7 +109,7 @@ PLAIN_KEY = "Zq8mV3xK9pLr2Tw7Yb4Nc6Hd1Fg5Js0A"
 
 
 def test_own_key_without_a_prefix_is_redacted_everywhere():
-    from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+    from besser.utilities.secret_redaction import (
         redact_text,
     )
 
@@ -119,7 +119,7 @@ def test_own_key_without_a_prefix_is_redacted_everywhere():
 
 
 def test_short_values_are_not_treated_as_secrets():
-    from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+    from besser.utilities.secret_redaction import (
         redact_text,
     )
 

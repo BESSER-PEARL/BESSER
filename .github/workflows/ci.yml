@@ -96,6 +96,7 @@ jobs:
               "spec_driven_agent/providers/data/model_catalog.json",
               "spec_driven_agent/providers/data/model_prices.json",
               "generators/spring/resources/mvnw",
+              "utilities/data/gitleaks_rules.toml",
           ):
               assert root.joinpath(path).is_file(), f"missing from the wheel: {path}"
           templates = list(root.joinpath("generators/django/templates").iterdir())

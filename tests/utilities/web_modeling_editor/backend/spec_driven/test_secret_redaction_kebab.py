@@ -11,7 +11,7 @@ the run reported zero blockers.
 
 import pytest
 
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+from besser.utilities.secret_redaction import (
     _SECRET_VALUE_TOKEN_RE,
 )
 

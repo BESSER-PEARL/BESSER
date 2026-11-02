@@ -37,7 +37,7 @@ from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.c
     SCHEMA_MODEL_SOURCE,
     CodeAnalysis,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_text
+from besser.utilities.secret_redaction import redact_text
 
 logger = logging.getLogger(__name__)
 

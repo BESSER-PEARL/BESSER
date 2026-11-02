@@ -36,7 +36,7 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.model_merg
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_credentials
+from besser.utilities.secret_redaction import redact_credentials
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 logger = logging.getLogger(__name__)

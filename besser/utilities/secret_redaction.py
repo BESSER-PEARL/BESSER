@@ -1,10 +1,13 @@
-"""Credential redaction for generated artifacts and streamed run events.
+"""Credential redaction: BESSER's one place for it.
 
 The user's BYOK credential is never intentionally passed to the model, but a
 generated project can still contain a credential copied from imported content
 or invented/pasted in an instruction.  Treat the artifact and SSE serializers
 as the final trust boundary: remove populated ``.env`` files and replace
 credential-shaped text everywhere else with a stable placeholder.
+
+The Spec-Driven agent's trace (:func:`redact_trace_text`) and the LLM clients'
+error logs (:func:`mask_secret`) use this module too.
 """
 
 from __future__ import annotations
@@ -364,6 +367,33 @@ def redact_data(value: Any, secrets: Iterable[str] = ()) -> tuple[Any, int]:
             findings += item_findings
         return output, findings
     return value, 0
+
+
+# Credentials a tool call can carry that the provider-token patterns miss: a
+# bearer token in a probe command or request log, a login response's token
+# field (also inside JSON-escaped output), a bare JWT. Trace-only: on source
+# code they would rewrite ordinary headers and fixtures.
+_TRACE_CREDENTIAL_PATTERNS = (
+    (re.compile(r"(?i)(authorization\\?[\"']?\s*[:=]\s*\\?[\"']?\s*(?:(?:bearer|basic|token)\s+)?)[^\s\"'\\,}]+"),
+     r"\1[REDACTED]"),
+    (re.compile(r'(?i)(\\?"(?:access_|refresh_|id_)?token\\?"\s*:\s*\\?")[^"\\]+'), r"\1[REDACTED]"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"), "[REDACTED]"),
+)
+
+
+def redact_trace_text(text: str) -> str:
+    """``text`` as the agent's trace records it: the value rules of
+    :func:`redact_text`, then bearer tokens, token fields and JWTs."""
+    text = redact_text(text, env_style=False)[0]
+    for pattern, replacement in _TRACE_CREDENTIAL_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def mask_secret(text: str, secret: str, placeholder: str = "***") -> str:
+    """``text`` with every occurrence of the literal ``secret`` replaced, for
+    a provider error logged next to the key that was sent."""
+    return text.replace(secret, placeholder) if secret else text
 
 
 # A field or YAML key that holds a credential: ``openai_api_key``, ``personal_token``,

@@ -16,6 +16,8 @@ from typing import Any, Callable, Optional
 
 import requests
 
+from besser.utilities.secret_redaction import mask_secret
+
 logger = logging.getLogger(__name__)
 
 #: OpenAI chat-completions endpoint used by the helpers below.
@@ -134,10 +136,6 @@ def extract_json(text: str, kind: type = dict) -> Optional[Any]:
         index = end
 
 
-def _redact(text: str, secret: str) -> str:
-    return text.replace(secret, "***") if secret else text
-
-
 def post_openai_chat(
     api_key: str,
     payload: dict,
@@ -178,12 +176,12 @@ def post_openai_chat(
         response = post(endpoint, headers=headers, json=payload, timeout=timeout)
     except requests.RequestException as exc:
         # The exception text can carry the URL; the class name is enough here.
-        logger.warning("OpenAI request failed: %s", _redact(str(exc), key))
+        logger.warning("OpenAI request failed: %s", mask_secret(str(exc), key))
         raise LLMUpstreamError(f"OpenAI request failed ({type(exc).__name__}).") from exc
 
     if not getattr(response, "ok", False):
         status = getattr(response, "status_code", None)
-        body = _redact(str(getattr(response, "text", "")), key)[:_LOGGED_BODY_CHARS]
+        body = mask_secret(str(getattr(response, "text", "")), key)[:_LOGGED_BODY_CHARS]
         logger.warning("OpenAI API call failed: HTTP %s %s", status, body)
         raise LLMUpstreamError(f"OpenAI API call failed: HTTP {status}", status=status)
 
@@ -195,7 +193,7 @@ def post_openai_chat(
     if isinstance(response_json, dict) and "error" in response_json:
         error = response_json.get("error")
         message = error.get("message") if isinstance(error, dict) else error
-        logger.warning("OpenAI API error: %s", _redact(str(message), key)[:_LOGGED_BODY_CHARS])
+        logger.warning("OpenAI API error: %s", mask_secret(str(message), key)[:_LOGGED_BODY_CHARS])
         raise LLMUpstreamError("OpenAI API error.")
 
     choices = response_json.get("choices") if isinstance(response_json, dict) else None

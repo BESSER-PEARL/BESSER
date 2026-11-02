@@ -33,6 +33,7 @@ from typing import Any, Callable, List, TypeVar
 
 from besser.BUML.notations.kg_to_buml import Completer
 from besser.utilities.llm_utils import LLMUpstreamError, call_openai_chat_json
+from besser.utilities.secret_redaction import mask_secret
 from besser.utilities.web_modeling_editor.backend.models import KGLLMRequest
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     UpstreamError,
@@ -146,7 +147,8 @@ def _provider_completer(provider: str, api_key: str, model: str, deadline: Reque
             logger.warning("%s client unavailable: %s", name, exc)
             raise LLMUpstreamError(f"{name} is not available on this server.") from exc
         except ValueError as exc:
-            logger.warning("%s client could not be created: %s", name, _redact(str(exc), api_key))
+            logger.warning("%s client could not be created: %s",
+                           name, mask_secret(str(exc), api_key)[:_LOGGED_CHARS])
             raise LLMUpstreamError(f"{name} could not be reached with this key.") from exc
 
     def complete(system_msg: str, user_msg: str) -> str:
@@ -159,7 +161,8 @@ def _provider_completer(provider: str, api_key: str, model: str, deadline: Reque
             )
         except Exception as exc:  # noqa: BLE001 - every provider failure maps to the same 502
             logger.warning(
-                "%s call failed (%s): %s", name, type(exc).__name__, _redact(str(exc), api_key),
+                "%s call failed (%s): %s", name, type(exc).__name__,
+                mask_secret(str(exc), api_key)[:_LOGGED_CHARS],
             )
             raise LLMUpstreamError(f"{name} API call failed.") from exc
         return _text_of(result.get("content") or [])
@@ -173,7 +176,3 @@ def _text_of(blocks: List[object]) -> str:
         block.text for block in blocks
         if getattr(block, "type", None) == "text" and isinstance(getattr(block, "text", None), str)
     )
-
-
-def _redact(text: str, secret: str) -> str:
-    return (text.replace(secret, "***") if secret else text)[:_LOGGED_CHARS]

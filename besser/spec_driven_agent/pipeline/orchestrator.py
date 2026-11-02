@@ -154,6 +154,7 @@ from besser.spec_driven_agent.validation.toolchain import (
     _RUFF_MAX_REPORTED as _RUFF_MAX_REPORTED,
     _TSC_PROBE_NAME,
 )
+from besser.utilities.secret_redaction import redact_trace_text
 from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 # Preserve established imports while lower-level consumers use these leaves.
 from besser.spec_driven_agent.validation.issues import (
@@ -4641,42 +4642,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
 
 
-# Credentials a tool call can carry that the provider-token patterns miss: a
-# bearer token in a probe command or request log, a login response's token
-# field (also inside JSON-escaped output), a bare JWT.
-_TRACE_CREDENTIAL_PATTERNS = (
-    (_re.compile(r"(?i)(authorization\\?[\"']?\s*[:=]\s*\\?[\"']?\s*(?:(?:bearer|basic|token)\s+)?)[^\s\"'\\,}]+"),
-     r"\1[REDACTED]"),
-    (_re.compile(r'(?i)(\\?"(?:access_|refresh_|id_)?token\\?"\s*:\s*\\?")[^"\\]+'), r"\1[REDACTED]"),
-    (_re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"), "[REDACTED]"),
-)
-
-
-_secret_redactor: Any = None
-
-
-def _redact_text_for_trace(text: str) -> str:
-    global _secret_redactor
-    if _secret_redactor is None:
-        # The artifact/SSE redaction. Loaded lazily: it lives in the web backend
-        # package, which the engine must not require.
-        try:
-            from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_text
-            _secret_redactor = redact_text
-        except Exception:
-            logger.debug("secret redaction unavailable for the trace", exc_info=True)
-            _secret_redactor = False
-    if _secret_redactor:
-        text = _secret_redactor(text, env_style=False)[0]
-    for pattern, replacement in _TRACE_CREDENTIAL_PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
-
-
 def _redact_for_trace(value: Any) -> Any:
     """``value`` with credential-shaped strings replaced, recursively."""
     if isinstance(value, str):
-        return _redact_text_for_trace(value)
+        return redact_trace_text(value)
     if isinstance(value, list):
         return [_redact_for_trace(item) for item in value]
     if isinstance(value, dict):
@@ -4696,7 +4665,7 @@ def _trace_safe_input(tool_name: str, data: Any) -> Any:
 def _trace_result_excerpt(result: Any) -> dict:
     """The start of a tool result for the trace, redacted before it is cut."""
     text = result if isinstance(result, str) else json.dumps(result, default=str)
-    return {"chars": len(text), **_sanitize_for_log({"excerpt": _redact_text_for_trace(text)})}
+    return {"chars": len(text), **_sanitize_for_log({"excerpt": redact_trace_text(text)})}
 
 
 def _sanitize_for_log(data: Any) -> Any:

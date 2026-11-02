@@ -152,8 +152,10 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
   (`.agent-trace/<run id>.json`, shipped in the ZIP and the GitHub push).
 - Service layer `backend/services/spec_driven/`: `runner.py` (drives a run, emits SSE), `run_manager.py`
   (durable runs: SQLite event store, sequence numbers assigned *before* any subscriber sees a frame, replay
-  via `?after=` / `Last-Event-ID`, `interrupted` marking on restart), `sse_events.py` (typed event schema),
-  `secret_redaction.py` (every SSE frame + the workspace before packaging).
+  via `?after=` / `Last-Event-ID`, `interrupted` marking on restart), `sse_events.py` (typed event schema).
+- Secret redaction: one module, `besser/utilities/secret_redaction.py` (every SSE frame, the workspace before
+  packaging, repo writes, the agent's trace, LLM error logs). Imported eagerly; never add a fallback that
+  turns it off.
 
 Invariants and rules:
 - **A new agent tool needs three edits**: `agent/tools.py`, `_TOOL_MODEL_REQUIREMENTS` in the same file, and a

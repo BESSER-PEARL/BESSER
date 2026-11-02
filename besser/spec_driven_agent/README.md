@@ -44,10 +44,10 @@ paths so a test's descriptive name is not mistaken for exercising those paths.
 
 `run_command` / `install_dependencies` are off by default on every path
 (`LLMOrchestrator`, `LLMGenerator`, the web runner). The web runner takes its
-value from `BESSER_LLM_ENABLE_SHELL_TOOLS`, read once at import into
-`backend/constants/constants.py`; no request field, header or query parameter
-reaches `allow_shell_tools`, and the Pydantic request model drops an unknown
-key in the body. That is the property that makes the hosted default a gate rather
+value from `BESSER_LLM_ENABLE_SHELL_TOOLS`, read once per process as
+`get_settings().llm_enable_shell_tools` (`backend/settings.py`); no request
+field, header or query parameter reaches `allow_shell_tools`, and the Pydantic
+request model drops an unknown key in the body. That is the property that makes the hosted default a gate rather
 than a suggestion, so keep the decision at process scope. The gate is enforced
 in `ToolExecutor.execute_typed`, not only by filtering the advertised tool list.
 

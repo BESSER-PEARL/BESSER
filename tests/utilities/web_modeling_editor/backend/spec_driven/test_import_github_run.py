@@ -16,9 +16,11 @@ import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import ImportGitHubRunRequest
 from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ValidationError
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
@@ -236,7 +238,7 @@ class TestImportGitHubRun:
         _install(monkeypatch, fake)
 
         r = _post({"owner": owner, "repo": repo}, headers={"X-GitHub-Session": "sess"})
-        assert r.status_code == 400
+        assert (r.status_code, r.json()) == (400, {"detail": "Invalid GitHub owner or repository name."})
         assert fake.tarball_ref is None
 
     def test_dotted_repo_name_is_accepted(self, monkeypatch):
@@ -245,3 +247,25 @@ class TestImportGitHubRun:
 
         r = _post({"owner": "test_owner-1", "repo": "my.app_v2"}, headers={"X-GitHub-Session": "sess"})
         assert r.status_code == 200
+
+
+class TestImportGitHubRunRequest:
+    """The service reads ``owner``, ``repo`` and ``model_path`` straight from the
+    request, so a request that holds an unchecked one cannot be built."""
+
+    @pytest.mark.parametrize("fields", [
+        {"owner": "../orgs"},
+        {"repo": "my-app/../../user"},
+        {"repo": ".."},
+        {"model_path": "../secrets.json"},
+        {"model_path": "buml/../../secrets.json"},
+        {"model_path": "/etc/passwd.json"},
+        {"model_path": "notes.txt"},
+    ])
+    def test_an_unsafe_name_or_path_is_refused(self, fields):
+        with pytest.raises(ValidationError):
+            ImportGitHubRunRequest(**{"owner": "ana", "repo": "shop", **fields})
+
+    def test_names_are_stripped_and_a_repo_json_path_is_kept(self):
+        req = ImportGitHubRunRequest(owner=" ana ", repo=" my.app_v2 ", model_path="models/library.json")
+        assert (req.owner, req.repo, req.model_path) == ("ana", "my.app_v2", "models/library.json")

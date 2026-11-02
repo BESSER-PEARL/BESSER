@@ -68,7 +68,6 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sy
     import_run_from_github,
     push_run_to_github,
 )
-from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 from besser.utilities.web_modeling_editor.backend.services.exceptions import UpstreamError
 from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token,
@@ -100,9 +99,6 @@ _DOWNLOAD_CHUNK_SIZE = 65536
 # replaced with a single underscore. Since file names come from
 # LLM-generated output directories, we cannot trust them.
 _UNSAFE_FILENAME_RE = re.compile(r"[^\w\-. ()\[\]]+")
-
-# GitHub login / repository name charset.
-_GITHUB_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+")
 
 
 def _safe_attachment_filename(filename: str, fallback: str) -> str:
@@ -966,17 +962,6 @@ async def import_github_run(
             detail="GitHub session expired. Please sign in again.",
         )
 
-    owner = req.owner.strip()
-    repo = req.repo.strip()
-    # Both are interpolated into GitHub API URL paths.
-    for value in (owner, repo):
-        if not _GITHUB_NAME_RE.fullmatch(value) or not value.strip("."):
-            raise HTTPException(
-                status_code=400, detail="Invalid GitHub owner or repository name."
-            )
-    if req.model_path is not None and not repo_model.is_repo_json_path(req.model_path):
-        raise HTTPException(status_code=400, detail="model_path must be a relative repo path to a .json file")
-
     # An import downloads and unpacks up to the archive caps and may call an
     # LLM, so it takes a run slot (BESSER_LLM_MAX_CONCURRENT_RUNS) like a run.
     if not runtime.slots.try_acquire():
@@ -985,7 +970,7 @@ async def import_github_run(
             detail="Too many imports and generation runs are in flight right now. Retry in a moment.",
         )
     try:
-        return await import_run_from_github(req, access_token, owner, repo, runtime.registry)
+        return await import_run_from_github(req, access_token, runtime.registry)
     except UpstreamError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPStatusError as exc:

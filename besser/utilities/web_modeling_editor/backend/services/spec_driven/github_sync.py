@@ -494,9 +494,14 @@ async def _read_repo_with_ai(req: ImportGitHubRunRequest, extract_dir, code_anal
 
 
 async def import_run_from_github(
-    req: ImportGitHubRunRequest, access_token: str, owner: str, repo: str, registry: SmartRunRegistry,
+    req: ImportGitHubRunRequest, access_token: str, registry: SmartRunRegistry,
 ) -> ImportGitHubRunResponse:
-    """Steps 2-5 of ``import_github_run``, under its run slot."""
+    """Steps 2-5 of ``import_github_run``, under its run slot.
+
+    ``req.owner``, ``req.repo`` and ``req.model_path`` were checked when the
+    request was parsed (see ``ImportGitHubRunRequest``).
+    """
+    owner, repo = req.owner, req.repo
     github = create_github_service(access_token)
 
     # ---- 2. Resolve the target branch (repo default when unset) ----

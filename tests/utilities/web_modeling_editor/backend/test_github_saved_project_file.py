@@ -132,10 +132,12 @@ def test_a_model_path_outside_the_repo_is_refused(github):
     github.create_repo("ocl_gen", files=OLD_SIDEBAR_REPO)
 
     assert _get("project/load", github, "ocl_gen&model_path=../secrets.json").status_code == 400
-    response = _call("POST", "/besser_api/spec-driven/import-github-run", headers=SESSION, json={
-        "owner": github.login, "repo": "ocl_gen", "model_path": "/etc/passwd.json",
-    })
-    assert response.status_code == 400
+    for model_path in ("/etc/passwd.json", "../secrets.json", "buml/../../secrets.json"):
+        response = _call("POST", "/besser_api/spec-driven/import-github-run", headers=SESSION, json={
+            "owner": github.login, "repo": "ocl_gen", "model_path": model_path,
+        })
+        assert (response.status_code, response.json()) == (
+            400, {"detail": "model_path must be a relative repo path to a .json file"})
 
 
 def test_saved_project_candidates_skip_besser_and_dependency_files_shallowest_first():

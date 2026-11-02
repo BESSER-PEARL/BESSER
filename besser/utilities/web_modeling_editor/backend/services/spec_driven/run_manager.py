@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator, Callable, Literal, Optional
 
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
+
 from .sse_events import ErrorEvent, format_sse
 
 logger = logging.getLogger(__name__)
@@ -110,10 +112,7 @@ class _AbandonmentPolicy:
 
 def _default_store_path() -> str:
     """``BESSER_LLM_RUN_STORE_PATH`` if set, else a DB file in the system temp dir."""
-    configured = os.environ.get("BESSER_LLM_RUN_STORE_PATH", "").strip()
-    if configured:
-        return os.path.abspath(os.path.expanduser(configured))
-    return os.path.join(tempfile.gettempdir(), _DEFAULT_DB_NAME)
+    return BackendSettings().llm_run_store_path or os.path.join(tempfile.gettempdir(), _DEFAULT_DB_NAME)
 
 
 def _parse_frame(frame: bytes) -> tuple[str, dict]:

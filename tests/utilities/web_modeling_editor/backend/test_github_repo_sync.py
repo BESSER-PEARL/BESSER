@@ -42,6 +42,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly
     CLASS_DIAGRAM_MODEL,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _clear_registry
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 BASE = "a" * 40
 HEAD = "b" * 40
@@ -52,7 +53,7 @@ SESSION = {"X-GitHub-Session": "sess"}
 
 @pytest.fixture(autouse=True)
 def shared_workspace(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
     asyncio.run(_clear_registry())
     yield tmp_path
     asyncio.run(_clear_registry())

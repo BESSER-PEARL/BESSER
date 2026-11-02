@@ -7,6 +7,7 @@ import pytest
 
 from besser.utilities.web_modeling_editor.backend.constants import constants
 from besser.utilities.web_modeling_editor.backend.services import cleanup
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 _PREFIX_NAMES = [
     "TEMP_DIR_PREFIX",
@@ -27,7 +28,7 @@ def test_every_temp_prefix_constant_is_swept(name):
 
 def test_cleanup_removes_stale_current_and_legacy_dirs_only(tmp_path, monkeypatch):
     monkeypatch.setattr(cleanup.tempfile, "gettempdir", lambda: str(tmp_path))
-    monkeypatch.setattr(cleanup, "LLM_RUN_WORKSPACE_ROOT", None)
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", None)
 
     old = time.time() - 2 * 3600
     stale = [

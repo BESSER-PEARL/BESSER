@@ -9,7 +9,6 @@ installed starlette/httpx TestClient compatibility.
 """
 
 import asyncio
-import importlib.util
 import json
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -19,14 +18,13 @@ import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    AGENT_SIMULATOR_TOKEN_ENV_VAR,
-    AGENT_SIMULATOR_TOKEN_HEADER,
-)
+from besser.utilities.web_modeling_editor.backend.constants.constants import AGENT_SIMULATOR_TOKEN_HEADER
 from besser.utilities.web_modeling_editor.backend.routers import agent_simulator_router as asr
 from besser.utilities.web_modeling_editor.backend.routers import auth as auth_module
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 
 BASE = "/besser_api/simulation"
+SIM_TOKEN_ENV = "AGENT_SIMULATOR_API_TOKEN"
 SIM_TOKEN = "test-simulator-token"
 ALICE = "alice-session"
 BOB = "bob-session"
@@ -108,12 +106,12 @@ class _FakeSimulator:
 def simulator(monkeypatch):
     """Fresh in-process state, a mocked simulator, sign-in on, custom code restricted."""
     fake = _FakeSimulator()
-    monkeypatch.setenv(AGENT_SIMULATOR_TOKEN_ENV_VAR, SIM_TOKEN)
+    monkeypatch.setenv(SIM_TOKEN_ENV, SIM_TOKEN)
     monkeypatch.setattr(asr, "_http_transport", httpx.MockTransport(fake.handler))
     monkeypatch.setattr(asr, "_rate_limiter", asr._SlidingWindowRateLimiter(60, 100, 1000))
     monkeypatch.setattr(asr, "_session_registry", asr._SimulationSessionRegistry(1, 900))
-    monkeypatch.setattr(asr, "AGENT_SIMULATOR_REQUIRE_AUTH", True)
-    monkeypatch.setattr(asr, "AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE", True)
+    monkeypatch.setattr(get_settings(), "agent_simulator_require_auth", True)
+    monkeypatch.setattr(get_settings(), "agent_simulator_restrict_custom_code", True)
     monkeypatch.setattr(auth_module, "get_user_token", lambda s: "gh-token" if s in {ALICE, BOB} else None)
     return fake
 
@@ -162,9 +160,9 @@ def test_limits_rejects_expired_session(simulator):
 
 
 def test_limits_returns_configured_values(simulator, monkeypatch):
-    monkeypatch.setattr(asr, "AGENT_SIMULATOR_MEMORY_MB", 512)
-    monkeypatch.setattr(asr, "AGENT_SIMULATOR_CPU_CORES", 0.5)
-    monkeypatch.setattr(asr, "AGENT_SIMULATOR_QUOTA_ENABLED", True)
+    monkeypatch.setattr(get_settings(), "agent_simulator_memory_mb", 512)
+    monkeypatch.setattr(get_settings(), "agent_simulator_cpu_cores", 0.5)
+    monkeypatch.setattr(get_settings(), "agent_simulator_quota_enabled", True)
     resp = _request("GET", f"{BASE}/limits", ALICE)
     assert resp.status_code == 200
     body = resp.json()
@@ -174,7 +172,7 @@ def test_limits_returns_configured_values(simulator, monkeypatch):
 
 
 def test_auth_can_be_disabled(simulator, monkeypatch):
-    monkeypatch.setattr(asr, "AGENT_SIMULATOR_REQUIRE_AUTH", False)
+    monkeypatch.setattr(get_settings(), "agent_simulator_require_auth", False)
     assert _request("GET", f"{BASE}/limits").status_code == 200
 
 
@@ -193,30 +191,20 @@ def test_validate_generates_agent_code(simulator):
     assert simulator.requests == []
 
 
-def _load_fresh_constants():
-    """Import a private copy of constants.py so env defaults are re-evaluated."""
-    from besser.utilities.web_modeling_editor.backend.constants import constants
-
-    spec = importlib.util.spec_from_file_location("_fresh_simulator_constants", constants.__file__)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 @pytest.mark.parametrize("env_value, expected", [(None, True), ("false", False), ("1", True)])
 def test_restrict_custom_code_defaults_to_true(monkeypatch, env_value, expected):
     if env_value is None:
         monkeypatch.delenv("AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE", raising=False)
     else:
         monkeypatch.setenv("AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE", env_value)
-    assert _load_fresh_constants().AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE is expected
+    assert BackendSettings().agent_simulator_restrict_custom_code is expected
 
 
 def test_simulator_url_default_and_override(monkeypatch):
     monkeypatch.delenv("AGENT_SIMULATOR_URL", raising=False)
-    assert _load_fresh_constants().AGENT_SIMULATOR_URL == "http://besser-wme-agent-simulator:8001"
+    assert BackendSettings().agent_simulator_url == "http://besser-wme-agent-simulator:8001"
     monkeypatch.setenv("AGENT_SIMULATOR_URL", "http://sim.internal:9001/")
-    assert _load_fresh_constants().AGENT_SIMULATOR_URL == "http://sim.internal:9001"
+    assert BackendSettings().agent_simulator_url == "http://sim.internal:9001"
 
 
 def test_validate_reports_restricted_custom_code(simulator):
@@ -229,7 +217,7 @@ def test_validate_reports_restricted_custom_code(simulator):
 
 
 def test_validate_reports_custom_code_lint_errors_when_unrestricted(simulator, monkeypatch):
-    monkeypatch.setattr(asr, "AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE", False)
+    monkeypatch.setattr(get_settings(), "agent_simulator_restrict_custom_code", False)
     model = _custom_code_model("def act(session):\n    import subprocess\n")
     resp = _request("POST", f"{BASE}/validate", ALICE, json=_session_payload(model))
     assert resp.status_code == 200
@@ -272,12 +260,12 @@ def test_create_session_forwards_credentials_as_env_vars(simulator, fast_generat
 
 
 def test_create_session_without_simulator_token_is_503(simulator, fast_generation, monkeypatch):
-    monkeypatch.delenv(AGENT_SIMULATOR_TOKEN_ENV_VAR)
+    monkeypatch.delenv(SIM_TOKEN_ENV)
     resp = _create_session()
     assert resp.status_code == 503
     assert simulator.requests == []
     # The failed attempt does not hold the actor's session slot.
-    monkeypatch.setenv(AGENT_SIMULATOR_TOKEN_ENV_VAR, SIM_TOKEN)
+    monkeypatch.setenv(SIM_TOKEN_ENV, SIM_TOKEN)
     assert _create_session().status_code == 200
 
 
@@ -294,7 +282,7 @@ def test_create_session_rejects_restricted_custom_code(simulator):
 
 
 def test_create_session_maps_code_validation_error_to_400(simulator, monkeypatch):
-    monkeypatch.setattr(asr, "AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE", False)
+    monkeypatch.setattr(get_settings(), "agent_simulator_restrict_custom_code", False)
     model = _custom_code_model("def act(ctx):\n    pass\n")
     resp = _request("POST", f"{BASE}/sessions", ALICE, json=_session_payload(model))
     assert resp.status_code == 400
@@ -394,7 +382,7 @@ def test_other_actor_gets_404_on_files_and_delete(simulator, fast_generation):
 
 
 def test_other_ip_gets_404_when_auth_is_off(simulator, fast_generation, monkeypatch):
-    monkeypatch.setattr(asr, "AGENT_SIMULATOR_REQUIRE_AUTH", False)
+    monkeypatch.setattr(get_settings(), "agent_simulator_require_auth", False)
     session_id = _create_session(None, client=("10.0.0.1", 1)).json()["sessionId"]
     url = f"{BASE}/sessions/{session_id}/files"
     assert _request("GET", url, client=("10.0.0.2", 1)).status_code == 404

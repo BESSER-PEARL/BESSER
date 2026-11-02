@@ -26,7 +26,7 @@ from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.a
     build_repo_digest,
 )
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.code_reverse import CodeAnalysis
-from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 PRISMA = '''
 model Customer {
@@ -368,7 +368,7 @@ class _ImportGitHub:
 def _import(monkeypatch, tmp_path, files=None, **body):
     """Import a repo; the user allowed the AI reading unless ``allow_ai_reading=False`` says otherwise."""
     body = {"allow_ai_reading": True, **body}
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
     fake = _ImportGitHub(files or {"prisma/schema.prisma": PRISMA, "src/types/order.ts": TS_TYPES})
     monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: fake)
     monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")

@@ -80,9 +80,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     DURABLE_RUN_MANAGER,
     SMART_RUN_REGISTRY,
 )
-from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    LLM_DOWNLOAD_TTL_SECONDS,
-)
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +226,7 @@ async def lifespan(_: FastAPI):
         name="spec-driven-registry-sweeper",
     )
     durable_run_sweeper = asyncio.create_task(
-        DURABLE_RUN_MANAGER.periodic_sweep(LLM_DOWNLOAD_TTL_SECONDS),
+        DURABLE_RUN_MANAGER.periodic_sweep(get_settings().llm_download_ttl_seconds),
         name="spec-driven-durable-run-sweeper",
     )
 
@@ -265,7 +263,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
 
 # Configure CORS middleware
-_cors_env = os.environ.get("CORS_ORIGINS", "")
+_cors_env = get_settings().cors_origins
 ALLOWED_ORIGINS = [origin.strip() for origin in _cors_env.split(",") if origin.strip()] if _cors_env else DEFAULT_CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,

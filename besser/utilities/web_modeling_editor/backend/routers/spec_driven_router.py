@@ -43,11 +43,6 @@ from fastapi.responses import StreamingResponse
 from besser.spec_driven_agent.planning.model_change import compare_with_base
 from besser.spec_driven_agent.state.agent_trace import ATTRIBUTION_FILENAME
 from besser.utilities.provenance import PROVENANCE_FILENAME, add_readme_block, readme_besser_block
-from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
-from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    LLM_CANCEL_ABANDONED_RUNS,
-    LLM_DISCONNECTED_GRACE_SECONDS,
-)
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     ImportGitHubRunRequest,
     ImportGitHubRunResponse,
@@ -59,6 +54,7 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     DURABLE_RUN_MANAGER,
     SMART_RUN_REGISTRY,
@@ -292,7 +288,7 @@ def _require_demo_token(request: SmartGenerateRequest) -> None:
 
 def _is_demo_token(supplied: str) -> bool:
     """True when ``supplied`` is the demo secret; always False while ``BESSER_DEMO_TOKEN`` is unset."""
-    expected = os.environ.get("BESSER_DEMO_TOKEN", "").strip()
+    expected = BackendSettings().demo_token.get_secret_value().strip()
     return bool(expected) and hmac.compare_digest(supplied.strip().encode("utf-8"), expected.encode("utf-8"))
 
 
@@ -402,10 +398,10 @@ async def smart_generate(
             run_id,
             source,
             on_abandoned=(
-                cancel_event.set if LLM_CANCEL_ABANDONED_RUNS else None
+                cancel_event.set if get_settings().llm_cancel_abandoned_runs else None
             ),
             resume_available=lambda: _locate_run_temp_dir(run_id) is not None,
-            disconnect_grace_seconds=LLM_DISCONNECTED_GRACE_SECONDS,
+            disconnect_grace_seconds=get_settings().llm_disconnected_grace_seconds,
         )
     except Exception:
         await release_active_run(run_id, cancel_event)
@@ -562,35 +558,35 @@ async def smart_gen_config() -> dict:
     Nothing here is a secret — everything exposed is either a public
     cap or a feature flag. API keys and run IDs are never returned.
     """
-    # Attribute lookups at call time, so monkeypatched constants show up.
+    settings = get_settings()
     return {
         "caps": {
-            "max_cost_usd_hard_cap": backend_constants.LLM_MAX_COST_USD_HARD_CAP,
-            "max_runtime_seconds_hard_cap": backend_constants.LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
-            "max_turns_hard_cap": backend_constants.LLM_MAX_TURNS_HARD_CAP,
-            "default_max_cost_usd": backend_constants.LLM_DEFAULT_MAX_COST_USD,
-            "default_max_runtime_seconds": backend_constants.LLM_DEFAULT_MAX_RUNTIME_SECONDS,
-            "default_max_turns": backend_constants.LLM_DEFAULT_MAX_TURNS,
+            "max_cost_usd_hard_cap": settings.llm_max_cost_usd_hard_cap,
+            "max_runtime_seconds_hard_cap": settings.llm_max_runtime_seconds_hard_cap,
+            "max_turns_hard_cap": settings.llm_max_turns_hard_cap,
+            "default_max_cost_usd": settings.llm_default_max_cost_usd,
+            "default_max_runtime_seconds": settings.llm_default_max_runtime_seconds,
+            "default_max_turns": settings.llm_default_max_turns,
         },
-        "download_ttl_seconds": backend_constants.LLM_DOWNLOAD_TTL_SECONDS,
-        "cost_emitter_interval_seconds": backend_constants.LLM_COST_EMITTER_INTERVAL_SECONDS,
+        "download_ttl_seconds": settings.llm_download_ttl_seconds,
+        "cost_emitter_interval_seconds": settings.llm_cost_emitter_interval_seconds,
         "concurrency": {
-            "max_concurrent_runs": backend_constants.LLM_MAX_CONCURRENT_RUNS,
+            "max_concurrent_runs": settings.llm_max_concurrent_runs,
         },
         "features": {
-            "tracing_enabled": backend_constants.LLM_ENABLE_TRACING,
-            "checkpointing_enabled": backend_constants.LLM_ENABLE_CHECKPOINTING,
-            "resume_enabled": backend_constants.LLM_ENABLE_CHECKPOINTING,
-            "toolchain_validation_enabled": backend_constants.LLM_ENABLE_TOOLCHAIN_VALIDATION,
+            "tracing_enabled": settings.llm_enable_tracing,
+            "checkpointing_enabled": settings.llm_enable_checkpointing,
+            "resume_enabled": settings.llm_enable_checkpointing,
+            "toolchain_validation_enabled": settings.llm_enable_toolchain_validation,
             # False on any deploy that has not opted in. Reported so a local/on-prem operator can confirm from outside
             # the process that BESSER_LLM_ENABLE_SHELL_TOOLS actually took
             # effect - it is a process-start env var, never a request field.
-            "shell_tools_enabled": backend_constants.LLM_ENABLE_SHELL_TOOLS,
-            "per_write_diagnostics_enabled": backend_constants.LLM_PER_WRITE_DIAGNOSTICS,
+            "shell_tools_enabled": settings.llm_enable_shell_tools,
+            "per_write_diagnostics_enabled": settings.llm_per_write_diagnostics,
             "durable_runs_enabled": True,
             "event_replay_enabled": True,
-            "cancel_abandoned_runs": backend_constants.LLM_CANCEL_ABANDONED_RUNS,
-            "disconnected_grace_seconds": backend_constants.LLM_DISCONNECTED_GRACE_SECONDS,
+            "cancel_abandoned_runs": settings.llm_cancel_abandoned_runs,
+            "disconnected_grace_seconds": settings.llm_disconnected_grace_seconds,
         },
         "supported_providers": ["anthropic", "openai", "mistral", "nebius"],
         # The key dialog's providers and models, from the model catalog
@@ -758,10 +754,10 @@ async def resume_smart_gen(
             source,
             resume=True,
             on_abandoned=(
-                cancel_event.set if LLM_CANCEL_ABANDONED_RUNS else None
+                cancel_event.set if get_settings().llm_cancel_abandoned_runs else None
             ),
             resume_available=lambda: _locate_run_temp_dir(run_id) is not None,
-            disconnect_grace_seconds=LLM_DISCONNECTED_GRACE_SECONDS,
+            disconnect_grace_seconds=get_settings().llm_disconnected_grace_seconds,
         )
     except Exception:
         await release_active_run(run_id, cancel_event)

@@ -21,15 +21,8 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
-from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    LLM_DEFAULT_MAX_COST_USD,
-    LLM_DEFAULT_MAX_RUNTIME_SECONDS,
-    LLM_DEFAULT_MAX_TURNS,
-    LLM_MAX_COST_USD_HARD_CAP,
-    LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
-    LLM_MAX_TURNS_HARD_CAP,
-)
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 # Model IDs are provider-specific but all follow a conservative
 # identifier grammar: letters, digits, dashes, dots, underscores,
@@ -83,9 +76,9 @@ class SmartGenerateRequest(BaseModel):
     # the deploy opts in via BESSER_LLM_ALLOW_CUSTOM_BASE_URL (see the runner) —
     # these providers are meant for local / single-tenant use.
     base_url: Optional[str] = Field(default=None, max_length=500)
-    max_cost_usd: float = Field(default=LLM_DEFAULT_MAX_COST_USD, gt=0.0)
-    max_runtime_seconds: int = Field(default=LLM_DEFAULT_MAX_RUNTIME_SECONDS, gt=0)
-    max_turns: int = Field(default=LLM_DEFAULT_MAX_TURNS, gt=0)
+    max_cost_usd: float = Field(default=get_settings().llm_default_max_cost_usd, gt=0.0)
+    max_runtime_seconds: int = Field(default=get_settings().llm_default_max_runtime_seconds, gt=0)
+    max_turns: int = Field(default=get_settings().llm_default_max_turns, gt=0)
     # Optional plan override from the preview screen. When the user
     # clicks "Adjust" and picks a different primary model or target
     # generator, those overrides travel here. Unset values fall back to
@@ -241,18 +234,18 @@ class SmartGenerateRequest(BaseModel):
     def _validate_and_clamp_cost(cls, value: float) -> float:
         if math.isnan(value) or math.isinf(value):
             raise ValueError("max_cost_usd must be a finite positive number")
-        return min(value, LLM_MAX_COST_USD_HARD_CAP)
+        return min(value, get_settings().llm_max_cost_usd_hard_cap)
 
     @field_validator("max_runtime_seconds")
     @classmethod
     def _validate_and_clamp_runtime(cls, value: int) -> int:
         # Pydantic already rejects non-int values, so `gt=0` is enough.
-        return min(value, LLM_MAX_RUNTIME_SECONDS_HARD_CAP)
+        return min(value, get_settings().llm_max_runtime_seconds_hard_cap)
 
     @field_validator("max_turns")
     @classmethod
     def _validate_and_clamp_turns(cls, value: int) -> int:
-        return min(value, LLM_MAX_TURNS_HARD_CAP)
+        return min(value, get_settings().llm_max_turns_hard_cap)
 
     def resolved_api_key(self) -> str:
         """Return the plaintext API key, or ``""`` for the keyless free tier.
@@ -445,8 +438,8 @@ class SmartPreviewRequest(BaseModel):
 
     project: ProjectInput
     instructions: str = Field(..., min_length=1, max_length=MAX_SPECIFICATION_CHARS)
-    max_cost_usd: float = Field(default=LLM_DEFAULT_MAX_COST_USD, gt=0.0)
-    max_runtime_seconds: int = Field(default=LLM_DEFAULT_MAX_RUNTIME_SECONDS, gt=0)
+    max_cost_usd: float = Field(default=get_settings().llm_default_max_cost_usd, gt=0.0)
+    max_runtime_seconds: int = Field(default=get_settings().llm_default_max_runtime_seconds, gt=0)
     mode: Literal["generate", "modify"] = "generate"
     base_run_id: Optional[str] = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     primary_kind_override: Optional[
@@ -468,12 +461,12 @@ class SmartPreviewRequest(BaseModel):
     def _validate_and_clamp_cost(cls, value: float) -> float:
         if math.isnan(value) or math.isinf(value):
             raise ValueError("max_cost_usd must be a finite positive number")
-        return min(value, LLM_MAX_COST_USD_HARD_CAP)
+        return min(value, get_settings().llm_max_cost_usd_hard_cap)
 
     @field_validator("max_runtime_seconds")
     @classmethod
     def _validate_and_clamp_runtime(cls, value: int) -> int:
-        return min(value, LLM_MAX_RUNTIME_SECONDS_HARD_CAP)
+        return min(value, get_settings().llm_max_runtime_seconds_hard_cap)
 
     @model_validator(mode="after")
     def _validate_preview_mode(self) -> "SmartPreviewRequest":

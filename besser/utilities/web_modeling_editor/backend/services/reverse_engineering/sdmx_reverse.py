@@ -2,8 +2,8 @@
 
 The editor's "From Data" import offers this next to CSV/XLSX files. The backend fetches the
 structure on the user's behalf, so it always uses the client's ``safe`` mode (https, public hosts
-only, pinned connections) and bounds every import: see the ``SDMX_*`` settings in
-``constants/constants.py`` (``BESSER_SDMX_TIMEOUT``, ``BESSER_SDMX_MAX_MB``, ``BESSER_SDMX_MAX_TOTAL_MB``,
+only, pinned connections) and bounds every import: see the ``sdmx_*`` fields of ``BackendSettings``
+in ``settings.py`` (``BESSER_SDMX_TIMEOUT``, ``BESSER_SDMX_MAX_MB``, ``BESSER_SDMX_MAX_TOTAL_MB``,
 ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS``, ``BESSER_SDMX_ALLOW_CUSTOM_URL``).
 """
 
@@ -24,8 +24,8 @@ from besser.utilities.sdmx_to_buml import (
 )
 from besser.utilities.sdmx_to_buml.builder import pascal
 from besser.utilities.sdmx_to_buml.client import MB, parse_dataflow, resolve_provider
-from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError, UpstreamError
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def _slots() -> threading.BoundedSemaphore:
     global _import_slots
     with _slots_lock:
         if _import_slots is None:
-            _import_slots = threading.BoundedSemaphore(backend_constants.SDMX_MAX_CONCURRENT_IMPORTS)
+            _import_slots = threading.BoundedSemaphore(get_settings().sdmx_max_concurrent_imports)
         return _import_slots
 
 
@@ -49,7 +49,7 @@ def sdmx_providers() -> list[dict]:
 
 def custom_urls_allowed() -> bool:
     """Whether the editor may import from an SDMX API that is not a preset."""
-    return backend_constants.SDMX_ALLOW_CUSTOM_URL
+    return get_settings().sdmx_allow_custom_url
 
 
 def _upstream_error(exc: SDMXFetchError) -> UpstreamError:
@@ -87,15 +87,16 @@ def sdmx_to_domain_model(
     if base_url and not base_url.lower().startswith("https://"):
         raise ValueError("Only https SDMX endpoints are allowed")
     ref = parse_dataflow(dataflow, agency=agency or None, version=version or None)
+    settings = get_settings()
     slots = _slots()
     if not slots.acquire(blocking=False):
         logger.warning("SDMX import of %s refused: %d imports already running", ref.id,
-                       backend_constants.SDMX_MAX_CONCURRENT_IMPORTS)
+                       settings.sdmx_max_concurrent_imports)
         raise UpstreamError("Too many SDMX imports are running on this server; try again in a minute", 503)
     try:
-        client = SDMXClient(resolve_provider(provider or base_url), timeout=backend_constants.SDMX_TIMEOUT_SECONDS,
-                            max_bytes=int(backend_constants.SDMX_MAX_MB * MB),
-                            max_total_bytes=int(backend_constants.SDMX_MAX_TOTAL_MB * MB), safe=True, retries=1)
+        client = SDMXClient(resolve_provider(provider or base_url), timeout=settings.sdmx_timeout_seconds,
+                            max_bytes=int(settings.sdmx_max_mb * MB),
+                            max_total_bytes=int(settings.sdmx_max_total_mb * MB), safe=True, retries=1)
         dsd = client.fetch_structure(ref)
     except SDMXFetchError as exc:
         raise _upstream_error(exc) from exc

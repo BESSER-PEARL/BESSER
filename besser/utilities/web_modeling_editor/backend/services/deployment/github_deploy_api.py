@@ -31,8 +31,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
-from besser.utilities.web_modeling_editor.backend.constants.constants import BUML_EMIT_IDS
-from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 from besser.utilities.buml_code_builder import (
     domain_model_to_code,
     gui_model_to_code,
@@ -480,7 +479,7 @@ async def deploy_webapp_to_github(
             os.makedirs(buml_dir, exist_ok=True)
             try:
                 domain_model_to_code(
-                    model=buml_model, file_path=os.path.join(buml_dir, "domain_model.py"), emit_ids=BUML_EMIT_IDS,
+                    model=buml_model, file_path=os.path.join(buml_dir, "domain_model.py"), emit_ids=get_settings().buml_emit_ids,
                 )
                 gui_model_to_code(model=gui_model, file_path=os.path.join(buml_dir, "gui_model.py"), domain_model=buml_model)
                 for ag in agent_models:
@@ -1951,7 +1950,7 @@ class AppCapabilitiesResponse(BaseModel):
 
 @router.get("/app/capabilities", response_model=AppCapabilitiesResponse)
 async def get_app_capabilities():
-    return AppCapabilitiesResponse(go_live=backend_constants.DEPLOY_FROM_REPO)
+    return AppCapabilitiesResponse(go_live=get_settings().deploy_from_repo)
 
 
 class GoLiveRequest(BaseModel):
@@ -1986,7 +1985,7 @@ async def go_live(
     redeploys; saves that only change the model do not. Answers 422 with the
     reason when the repo holds no app BESSER can deploy.
     """
-    if not backend_constants.DEPLOY_FROM_REPO:
+    if not get_settings().deploy_from_repo:
         raise HTTPException(status_code=404, detail="go_live_disabled")
     github = _github_for(github_session)
     try:

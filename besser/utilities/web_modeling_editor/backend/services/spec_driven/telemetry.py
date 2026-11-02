@@ -39,6 +39,7 @@ from typing import Any, Iterable, Optional
 
 from besser.spec_driven_agent.state.agent_trace import TRACE_DIRNAME
 from besser.utilities.provenance import PROVENANCE_FILENAME
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,8 @@ MAX_PAYLOAD_BYTES = 8 * 1024
 # the store or stall the append under the lock.
 _MAX_INTERNAL_PAYLOAD_BYTES = 64 * 1024
 
+_DEFAULT_TELEMETRY_DIR = "/app/telemetry"
+
 
 def telemetry_enabled() -> bool:
     """True when the server master switch is on.
@@ -69,13 +72,18 @@ def telemetry_enabled() -> bool:
     facilitator can flip the flag without a code change and tests can
     monkeypatch it.
     """
-    value = os.environ.get("BESSER_TELEMETRY_ENABLED", "").strip().lower()
-    return value in ("1", "true")
+    return BackendSettings().telemetry_enabled
+
+
+def _configured_dir() -> str:
+    """``BESSER_TELEMETRY_DIR``, else ``/app/telemetry`` (a set but blank value is kept)."""
+    configured = BackendSettings().telemetry_dir
+    return _DEFAULT_TELEMETRY_DIR if configured is None else configured
 
 
 def _telemetry_dir() -> str:
     """The store directory, created on demand. ``""`` when unusable."""
-    directory = os.environ.get("BESSER_TELEMETRY_DIR", "/app/telemetry")
+    directory = _configured_dir()
     try:
         os.makedirs(directory, exist_ok=True)
     except Exception:
@@ -261,7 +269,7 @@ def read_events(participant: Optional[str] = None) -> list[dict]:
     """All stored events (optionally filtered by participant), oldest first
     within each session file. Malformed lines are skipped."""
     events: list[dict] = []
-    directory = os.environ.get("BESSER_TELEMETRY_DIR", "/app/telemetry")
+    directory = _configured_dir()
     if not os.path.isdir(directory):
         return events
     for path in sorted(glob.glob(os.path.join(directory, "*.jsonl"))):

@@ -8,7 +8,7 @@ event loop, then drains the queue from the async generator body and
 yields SSE-framed bytes to the FastAPI ``StreamingResponse``.
 
 A sibling task emits periodic ``CostEvent``s by reading
-``client.usage.estimated_cost`` every ``LLM_COST_EMITTER_INTERVAL_SECONDS``.
+``client.usage.estimated_cost`` every ``BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS``.
 
 On successful completion the output directory is walked, zipped if it
 contains more than one user file, and registered with
@@ -74,20 +74,7 @@ from besser.spec_driven_agent.validation.issues import (
     unresolved_defects,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    LLM_COST_EMITTER_INTERVAL_SECONDS,
-    LLM_DOWNLOAD_TTL_SECONDS,
-    LLM_ALLOW_CUSTOM_BASE_URL,
-    LLM_ENABLE_AUTO_FIX,
-    LLM_ENABLE_SHELL_TOOLS,
-    LLM_ENABLE_CHECKPOINTING,
-    LLM_ENABLE_IMPORT_SMOKE_CHECK,
-    LLM_ENABLE_REQUIREMENTS_LEDGER,
-    LLM_ENABLE_TOOLCHAIN_VALIDATION,
-    LLM_ENABLE_TRACING,
-    LLM_PER_WRITE_DIAGNOSTICS,
-    LLM_RUN_WORKSPACE_ROOT,
     LLM_TEMP_DIR_PREFIX,
-    LLM_WATCHDOG_GRACE_SECONDS,
 )
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartGenerateRequest,
@@ -122,6 +109,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_re
     redact_text,
     scrub_secret_files,
 )
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -585,7 +573,7 @@ class SmartRunRegistry:
     The sibling ``GET /spec-driven/download/{run_id}`` endpoint reads entries
     non-destructively (``get``) so a failed blob fetch can be retried.
     Cleanup is owned by the periodic sweep: anything older than
-    ``LLM_DOWNLOAD_TTL_SECONDS`` is removed (entry + temp dir) by the
+    ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` is removed (entry + temp dir) by the
     task started from the backend's lifespan.
     """
 
@@ -636,9 +624,11 @@ class SmartRunRegistry:
 
     async def restore_persisted(
         self,
-        ttl_seconds: int = LLM_DOWNLOAD_TTL_SECONDS,
+        ttl_seconds: Optional[int] = None,
     ) -> int:
         """Rehydrate downloadable artifacts from persistent run workspaces."""
+        if ttl_seconds is None:
+            ttl_seconds = get_settings().llm_download_ttl_seconds
         root = _run_workspace_root()
         now = time.time()
         restored: dict[str, SmartRunEntry] = {}
@@ -754,7 +744,7 @@ class SmartRunRegistry:
 
         for name in names:
             found = self._entry_from_workspace(
-                root, name, now, LLM_DOWNLOAD_TTL_SECONDS
+                root, name, now, get_settings().llm_download_ttl_seconds
             )
             if found is None:
                 continue
@@ -767,7 +757,7 @@ class SmartRunRegistry:
 
     async def periodic_sweep(
         self,
-        ttl_seconds: int = LLM_DOWNLOAD_TTL_SECONDS,
+        ttl_seconds: Optional[int] = None,
         interval_seconds: int = _REGISTRY_SWEEP_INTERVAL_SECONDS,
     ) -> None:
         """Loop forever, sweeping expired entries every ``interval_seconds``.
@@ -775,6 +765,8 @@ class SmartRunRegistry:
         Caller is expected to start this as an ``asyncio.Task`` in the
         FastAPI lifespan and cancel it on shutdown.
         """
+        if ttl_seconds is None:
+            ttl_seconds = get_settings().llm_download_ttl_seconds
         while True:
             try:
                 await asyncio.sleep(interval_seconds)
@@ -835,10 +827,7 @@ def _get_concurrency_semaphore() -> asyncio.Semaphore:
     """
     global _CONCURRENCY_SEMAPHORE
     if _CONCURRENCY_SEMAPHORE is None:
-        from besser.utilities.web_modeling_editor.backend.constants.constants import (
-            LLM_MAX_CONCURRENT_RUNS,
-        )
-        _CONCURRENCY_SEMAPHORE = asyncio.BoundedSemaphore(LLM_MAX_CONCURRENT_RUNS)
+        _CONCURRENCY_SEMAPHORE = asyncio.BoundedSemaphore(get_settings().llm_max_concurrent_runs)
     return _CONCURRENCY_SEMAPHORE
 
 
@@ -871,11 +860,8 @@ def _get_smart_gen_executor() -> ThreadPoolExecutor:
     """Lazily build the dedicated spec-driven thread pool (see try_acquire_run_slot)."""
     global _SMART_GEN_EXECUTOR
     if _SMART_GEN_EXECUTOR is None:
-        from besser.utilities.web_modeling_editor.backend.constants.constants import (
-            LLM_MAX_CONCURRENT_RUNS,
-        )
         _SMART_GEN_EXECUTOR = ThreadPoolExecutor(
-            max_workers=LLM_MAX_CONCURRENT_RUNS + 4,
+            max_workers=get_settings().llm_max_concurrent_runs + 4,
             thread_name_prefix="smartgen",
         )
     return _SMART_GEN_EXECUTOR
@@ -928,7 +914,7 @@ def release_run_slot() -> None:
 
 
 def _run_workspace_root() -> str:
-    root = LLM_RUN_WORKSPACE_ROOT or tempfile.gettempdir()
+    root = get_settings().llm_run_workspace_root or tempfile.gettempdir()
     os.makedirs(root, exist_ok=True)
     return root
 
@@ -1262,7 +1248,7 @@ class SmartGenerationRunner:
         # open an arbitrary user URL is an SSRF surface on a shared box, so it
         # is opt-in per deploy (local / on-prem set the flag). Fail fast
         # with a clear, actionable message.
-        if self.request.base_url and not LLM_ALLOW_CUSTOM_BASE_URL:
+        if self.request.base_url and not get_settings().llm_allow_custom_base_url:
             yield self._sse(ErrorEvent(
                 code="BAD_REQUEST",
                 message=(
@@ -1704,6 +1690,7 @@ class SmartGenerationRunner:
             # LLM-only run.
             skip_deterministic_generator = False
 
+        settings = get_settings()
         orchestrator = LLMOrchestrator(
             llm_client=client,
             domain_model=assembled.domain_model,
@@ -1734,27 +1721,27 @@ class SmartGenerationRunner:
             # Honour the deploy-wide feature flags. The orchestrator
             # defaults to both on; ops can disable per deploy via the
             # BESSER_LLM_ENABLE_* env vars without a code change.
-            enable_tracing=LLM_ENABLE_TRACING,
-            enable_checkpointing=LLM_ENABLE_CHECKPOINTING,
+            enable_tracing=settings.llm_enable_tracing,
+            enable_checkpointing=settings.llm_enable_checkpointing,
             # Heavy per-project compilers (tsc / cargo / kotlinc) are
             # opt-in for the web deployment — they were the main driver
             # of the duration/cost regression on non-Python stacks.
-            enable_toolchain_validation=LLM_ENABLE_TOOLCHAIN_VALIDATION,
+            enable_toolchain_validation=settings.llm_enable_toolchain_validation,
             # Close the agent's feedback loop: when Phase 3 finds BLOCKER
             # issues (syntax errors, broken Dockerfile refs, dep conflicts)
             # run the bounded fix loop instead of shipping the broken app
             # as a green success. Bounded 3x5 turns with snapshot/rollback;
             # honours the run's cancel/cost/runtime budget per fix turn.
-            auto_fix_issues=LLM_ENABLE_AUTO_FIX,
+            auto_fix_issues=settings.llm_enable_auto_fix,
             # Disable the arbitrary-shell tools by default — they are
             # user-steerable RCE / secret-exfil on a shared BYOK host. OFF by
             # default (BESSER_LLM_ENABLE_SHELL_TOOLS). The agent keeps every
             # static tool; only arbitrary `run_command`/`install_dependencies`
             # are withheld.
-            allow_shell_tools=LLM_ENABLE_SHELL_TOOLS,
-            per_write_diagnostics=LLM_PER_WRITE_DIAGNOSTICS,
-            enable_import_smoke_check=LLM_ENABLE_IMPORT_SMOKE_CHECK,
-            enable_requirements_ledger=LLM_ENABLE_REQUIREMENTS_LEDGER,
+            allow_shell_tools=settings.llm_enable_shell_tools,
+            per_write_diagnostics=settings.llm_per_write_diagnostics,
+            enable_import_smoke_check=settings.llm_enable_import_smoke_check,
+            enable_requirements_ledger=settings.llm_enable_requirements_ledger,
             # Binding generator choice from an approved preview plan. A
             # bound None explicitly skips Phase 1; an unbound None auto-selects.
             target_generator=target_generator,
@@ -1774,7 +1761,7 @@ class SmartGenerationRunner:
         async def cost_emitter() -> None:
             while True:
                 try:
-                    await asyncio.sleep(LLM_COST_EMITTER_INTERVAL_SECONDS)
+                    await asyncio.sleep(get_settings().llm_cost_emitter_interval_seconds)
                 except asyncio.CancelledError:
                     raise
                 elapsed = time.monotonic() - (self._started_at or time.monotonic())
@@ -1882,9 +1869,10 @@ class SmartGenerationRunner:
             # up-front (the old behaviour) would kill a legitimately-longer
             # from-scratch run at the original limit. Fall back to the request
             # cap until/unless the orchestrator raises its own.
+            grace_seconds = get_settings().llm_watchdog_grace_seconds
             try:
                 while True:
-                    await asyncio.sleep(min(10.0, LLM_WATCHDOG_GRACE_SECONDS))
+                    await asyncio.sleep(min(10.0, grace_seconds))
                     if cancel_event.is_set():
                         return
                     effective_cap = getattr(
@@ -1892,7 +1880,7 @@ class SmartGenerationRunner:
                         self.request.max_runtime_seconds,
                     )
                     elapsed = time.monotonic() - (self._started_at or time.monotonic())
-                    if elapsed > effective_cap + LLM_WATCHDOG_GRACE_SECONDS:
+                    if elapsed > effective_cap + grace_seconds:
                         break
             except asyncio.CancelledError:
                 raise
@@ -1905,7 +1893,7 @@ class SmartGenerationRunner:
                     "spec-driven watchdog fired for run %s (cap %ds + %ds grace)",
                     self.run_id,
                     effective_cap,
-                    LLM_WATCHDOG_GRACE_SECONDS,
+                    grace_seconds,
                 )
                 watchdog_fired["value"] = True
                 cancel_event.set()

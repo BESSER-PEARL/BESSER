@@ -17,16 +17,15 @@ import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.constants import constants
 from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
 from besser.utilities.web_modeling_editor.backend.services.deployment import github_deploy_api, render_blueprint
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_deploy_api import _add_deployment_configs
-from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SMART_RUN_REGISTRY,
     SmartRunEntry,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _clear_registry
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures")
 HEAD = "b" * 40
@@ -54,8 +53,8 @@ def _web_app(root, prefix="web_app/", out_dir='outDir: "build",', app_var="app",
 
 @pytest.fixture(autouse=True)
 def clean(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path / "workspace"))
-    monkeypatch.setattr(constants, "DEPLOY_FROM_REPO", True)
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path / "workspace"))
+    monkeypatch.setattr(get_settings(), "deploy_from_repo", True)
     asyncio.run(_clear_registry())
     yield
     asyncio.run(_clear_registry())
@@ -221,7 +220,7 @@ def test_a_repo_without_a_deployable_app_says_why(monkeypatch, tmp_path):
 
 
 def test_go_live_stays_off_until_the_server_turns_it_on(monkeypatch, tmp_path):
-    monkeypatch.setattr(constants, "DEPLOY_FROM_REPO", False)
+    monkeypatch.setattr(get_settings(), "deploy_from_repo", False)
 
     r = _go_live(monkeypatch, _RepoGitHub(str(tmp_path)))
 

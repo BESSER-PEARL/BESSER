@@ -25,6 +25,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import 
     _collect_frames,
     _parse_frame,
 )
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 TOKEN = "sk-ant-REALSECRET0123456789abcdef"
 
@@ -87,9 +88,7 @@ def test_scrub_skipped_files_never_reach_the_zip(tmp_path):
 
 
 def test_over_release_does_not_raise_the_cap(monkeypatch):
-    from besser.utilities.web_modeling_editor.backend.constants import constants as C
-
-    monkeypatch.setattr(C, "LLM_MAX_CONCURRENT_RUNS", 1)
+    monkeypatch.setattr(get_settings(), "llm_max_concurrent_runs", 1)
     runner_module._reset_concurrency_semaphore_for_tests()
 
     async def _exercise():

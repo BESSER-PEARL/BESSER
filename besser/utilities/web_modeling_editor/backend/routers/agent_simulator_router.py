@@ -42,23 +42,10 @@ from besser.generators.agents.baf_generator import GenerationMode
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_SIMULATOR_CREATE_TIMEOUT_SECONDS,
-    AGENT_SIMULATOR_CPU_CORES,
     AGENT_SIMULATOR_DELETE_TIMEOUT_SECONDS,
-    AGENT_SIMULATOR_DISK_MB,
     AGENT_SIMULATOR_FALLBACK_WS_PORT,
     AGENT_SIMULATOR_FILES_TIMEOUT_SECONDS,
-    AGENT_SIMULATOR_MAX_SESSIONS_PER_ACTOR,
-    AGENT_SIMULATOR_MEMORY_MB,
-    AGENT_SIMULATOR_QUOTA_ENABLED,
-    AGENT_SIMULATOR_RATE_LIMIT_MAX_KEYS,
-    AGENT_SIMULATOR_RATE_LIMIT_MAX_REQUESTS,
-    AGENT_SIMULATOR_RATE_LIMIT_WINDOW_SECONDS,
-    AGENT_SIMULATOR_REQUIRE_AUTH,
-    AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE,
-    AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS,
-    AGENT_SIMULATOR_TOKEN_ENV_VAR,
     AGENT_SIMULATOR_TOKEN_HEADER,
-    AGENT_SIMULATOR_URL,
     AGENT_SIMULATOR_WS_AUTH_TIMEOUT_SECONDS,
     AGENT_SIMULATOR_WS_OPEN_TIMEOUT_SECONDS,
     AGENT_TEMP_DIR_PREFIX,
@@ -69,6 +56,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     WS_CLOSE_RATE_LIMITED,
     WS_CLOSE_UNAUTHORIZED,
 )
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 from besser.utilities.web_modeling_editor.backend.models import (
     SimulationLimitsResponse,
     SimulationSessionFilesResponse,
@@ -224,14 +212,15 @@ class _SimulationSessionRegistry:
 
 
 _rate_limiter = _SlidingWindowRateLimiter(
-    window_seconds=AGENT_SIMULATOR_RATE_LIMIT_WINDOW_SECONDS,
-    max_requests=AGENT_SIMULATOR_RATE_LIMIT_MAX_REQUESTS,
-    max_keys=AGENT_SIMULATOR_RATE_LIMIT_MAX_KEYS,
+    window_seconds=get_settings().agent_simulator_rate_limit_window_seconds,
+    max_requests=get_settings().agent_simulator_rate_limit_max_requests,
+    max_keys=get_settings().agent_simulator_rate_limit_max_keys,
 )
 
 _session_registry = _SimulationSessionRegistry(
-    max_sessions_per_actor=AGENT_SIMULATOR_MAX_SESSIONS_PER_ACTOR,
-    ttl_seconds=AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS or DEFAULT_AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS,
+    max_sessions_per_actor=get_settings().agent_simulator_max_sessions_per_actor,
+    ttl_seconds=(get_settings().agent_simulator_session_lifetime_seconds
+                 or DEFAULT_AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS),
 )
 
 
@@ -245,7 +234,7 @@ def _authenticate(github_session: Optional[str], client: Optional[Address]) -> s
     The actor is the GitHub session when sign-in is required (hashed, so the
     bearer value is never kept as a key or logged) and the client IP otherwise.
     """
-    if AGENT_SIMULATOR_REQUIRE_AUTH:
+    if get_settings().agent_simulator_require_auth:
         require_github_session(github_session)
         return "github:" + hashlib.sha256(github_session.encode("utf-8")).hexdigest()
     if client and client.host:
@@ -262,7 +251,7 @@ def _require_valid_session_id(session_id: str) -> None:
 
 def _simulator_headers() -> Dict[str, str]:
     """Return the auth header for the simulator; HTTP 503 when the token is not configured."""
-    token = os.environ.get(AGENT_SIMULATOR_TOKEN_ENV_VAR, "").strip()
+    token = BackendSettings().agent_simulator_api_token.get_secret_value().strip()
     if not token:
         logger.error("AGENT_SIMULATOR_API_TOKEN is not set; agent simulation is disabled.")
         raise HTTPException(
@@ -275,7 +264,7 @@ def _simulator_headers() -> Dict[str, str]:
 def _simulator_client(timeout: float) -> httpx.AsyncClient:
     """Build an HTTP client for the simulator that sends the auth header."""
     return httpx.AsyncClient(
-        base_url=AGENT_SIMULATOR_URL,
+        base_url=get_settings().agent_simulator_url,
         timeout=timeout,
         headers=_simulator_headers(),
         transport=_http_transport,
@@ -447,12 +436,13 @@ async def get_simulation_limits(
 ):
     """Return the configured resource limits and quota settings for agent simulation."""
     _authenticate(github_session, request.client)
+    settings = get_settings()
     return SimulationLimitsResponse(
-        memoryMb=AGENT_SIMULATOR_MEMORY_MB,
-        cpuCores=AGENT_SIMULATOR_CPU_CORES,
-        diskMb=AGENT_SIMULATOR_DISK_MB,
-        sessionLifetimeSeconds=AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS,
-        editorQuotaEnabled=AGENT_SIMULATOR_QUOTA_ENABLED,
+        memoryMb=settings.agent_simulator_memory_mb,
+        cpuCores=settings.agent_simulator_cpu_cores,
+        diskMb=settings.agent_simulator_disk_mb,
+        sessionLifetimeSeconds=settings.agent_simulator_session_lifetime_seconds,
+        editorQuotaEnabled=settings.agent_simulator_quota_enabled,
     )
 
 
@@ -472,7 +462,7 @@ async def validate_agent(
     actor = _authenticate(github_session, request.client)
     _rate_limiter.check(actor)
 
-    if AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE and _model_has_custom_code_action(input_data.model):
+    if get_settings().agent_simulator_restrict_custom_code and _model_has_custom_code_action(input_data.model):
         return SimulationValidationResponse(
             valid=False, agentCode="", eventList=[], errors=[_CUSTOM_CODE_RESTRICTED_MESSAGE],
         )
@@ -501,7 +491,7 @@ async def start_simulation_session(
     actor = _authenticate(github_session, request.client)
     _rate_limiter.check(actor)
 
-    if AGENT_SIMULATOR_RESTRICT_CUSTOM_CODE and _model_has_custom_code_action(input_data.model):
+    if get_settings().agent_simulator_restrict_custom_code and _model_has_custom_code_action(input_data.model):
         raise HTTPException(status_code=403, detail=_CUSTOM_CODE_RESTRICTED_MESSAGE)
 
     session_id = _session_registry.reserve(actor)
@@ -524,7 +514,7 @@ async def start_simulation_session(
             async with _simulator_client(AGENT_SIMULATOR_CREATE_TIMEOUT_SECONDS) as client:
                 resp = await client.post("/sessions", json=payload)
         except httpx.RequestError as exc:
-            logger.error("Cannot reach agent simulator service at %s: %s", AGENT_SIMULATOR_URL, exc)
+            logger.error("Cannot reach agent simulator service at %s: %s", get_settings().agent_simulator_url, exc)
             raise HTTPException(status_code=503, detail=_SIMULATOR_UNAVAILABLE_MESSAGE) from exc
 
         if resp.status_code == 429:
@@ -558,7 +548,7 @@ async def get_session_files(
         async with _simulator_client(AGENT_SIMULATOR_FILES_TIMEOUT_SECONDS) as client:
             resp = await client.get(f"/sessions/{session_id}/files")
     except httpx.RequestError as exc:
-        logger.error("Cannot reach agent simulator service at %s: %s", AGENT_SIMULATOR_URL, exc)
+        logger.error("Cannot reach agent simulator service at %s: %s", get_settings().agent_simulator_url, exc)
         raise HTTPException(status_code=503, detail=_SIMULATOR_UNAVAILABLE_MESSAGE) from exc
 
     if resp.status_code == 404:
@@ -670,7 +660,7 @@ async def simulator_session_ws(websocket: WebSocket, session_id: str):
 
     await websocket.send_text(json.dumps({"type": "auth_ok"}))
 
-    ws_base = AGENT_SIMULATOR_URL.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+    ws_base = get_settings().agent_simulator_url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
     try:
         simulator_ws = await _ws_connect(
             f"{ws_base}/sessions/{session_id}/ws",

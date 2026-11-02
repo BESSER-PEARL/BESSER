@@ -19,13 +19,13 @@ from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SMART_RUN_REGISTRY,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
 )
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 
 BASE_URL = "http://testserver"
@@ -34,7 +34,7 @@ IMPORT_URL = "/besser_api/spec-driven/import-github-run"
 
 @pytest.fixture(autouse=True)
 def reset_registry(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
     asyncio.run(_clear_registry())
     yield
     asyncio.run(_clear_registry())

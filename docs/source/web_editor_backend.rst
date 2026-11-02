@@ -35,7 +35,8 @@ Additional infrastructure:
   ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
 - **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions), ``llm.py`` (reaching the user's own LLM provider under one request deadline) and ``validation.py`` (the consistency check under its concurrency cap, and the KG findings of ``/validate-diagram``)
 - **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``sse_events.py`` (the typed event schema), ``secret_redaction.py``, ``telemetry.py``, ``incidents.py``
-- **``constants/constants.py``** -- API version, temp prefixes, generator defaults, CORS origins, and the ``BESSER_LLM_*`` caps and feature flags
+- **``constants/constants.py``** -- API version, temp prefixes, generator defaults and the built-in CORS origins
+- **``settings.py``** -- ``BackendSettings``, every environment variable the backend reads (see `Environment Variables`_)
 - **``models/responses.py``** -- Standardized Pydantic response models
 - **``models/kg.py``** -- Request models of the KG endpoints: ``KGDiagramInput`` (a ``DiagramInput`` plus the refinement fields, with typed ``resolutions`` and ``llmIssues``) and the LLM requests, which share ``KGLLMCredentials`` (``provider``, ``llm_model``, and the key as a ``SecretStr``). Data fields are camelCase; only the credentials keep the snake_case names of the other LLM features
 - **``models/spec_driven.py``** -- Request/response models for the spec-driven endpoints (the API key is a ``SecretStr``; the caps are clamped by field validators)
@@ -810,8 +811,18 @@ mistaken for a declaration. Turtle, N-Triples and N3 have no DTD and are not
 scanned.
 
 
+.. _web-editor-backend-env:
+
 Environment Variables
 ---------------------
+
+Each variable below is declared once, with its type, default and a one-line
+description, on ``BackendSettings`` in ``settings.py``. The backend reads most
+of them once per process (``get_settings()``, built on first use); the
+variables marked *read per call* in their description there are read again at
+each use. A malformed value never stops the backend: numbers that do not parse
+fall back to their default, and a flag is on only for ``1``, ``true``, ``yes``
+or ``on``.
 
 **Required for GitHub integration:**
 

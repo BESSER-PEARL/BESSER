@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -54,8 +56,9 @@ class SessionStore:
             default_path = os.path.join(
                 tempfile.gettempdir(), "besser_sessions.enc"
             )
+            configured = BackendSettings().session_store_path
             self._store_path = Path(
-                store_path or os.environ.get("SESSION_STORE_PATH", default_path)
+                store_path or (default_path if configured is None else configured)
             )
             self._key = self._get_or_create_key()
             self._fernet = Fernet(self._key)

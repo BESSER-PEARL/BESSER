@@ -22,6 +22,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_spec_driven_router import (
     _build_project_body,
 )
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 
 BASE_URL = "http://testserver"
@@ -144,16 +145,14 @@ def test_config_endpoint_free_models_empty_when_unconfigured(monkeypatch):
 
 
 def test_config_endpoint_reflects_monkeypatched_caps(monkeypatch):
-    """Patching the module-level constants must be visible to the
-    config endpoint. This matters because env-var overrides are applied
-    at import time — ops changing the env and restarting the process
-    expects the config endpoint to reflect the new values.
+    """Patching the process settings must be visible to the config
+    endpoint. This matters because env-var overrides are read once per
+    process — ops changing the env and restarting the process expects the
+    config endpoint to reflect the new values.
     """
-    from besser.utilities.web_modeling_editor.backend.constants import constants as C
-
-    monkeypatch.setattr(C, "LLM_MAX_COST_USD_HARD_CAP", 7.5, raising=True)
-    monkeypatch.setattr(C, "LLM_MAX_CONCURRENT_RUNS", 42, raising=True)
-    monkeypatch.setattr(C, "LLM_ENABLE_TRACING", False, raising=True)
+    monkeypatch.setattr(get_settings(), "llm_max_cost_usd_hard_cap", 7.5, raising=True)
+    monkeypatch.setattr(get_settings(), "llm_max_concurrent_runs", 42, raising=True)
+    monkeypatch.setattr(get_settings(), "llm_enable_tracing", False, raising=True)
 
     resp = _get_config()
     payload = resp.json()
@@ -174,11 +173,10 @@ def test_try_acquire_and_release_round_trips():
     runner_module._reset_concurrency_semaphore_for_tests()
 
     async def _exercise() -> None:
-        from besser.utilities.web_modeling_editor.backend.constants import constants as C
-
-        original = C.LLM_MAX_CONCURRENT_RUNS
+        settings = get_settings()
+        original = settings.llm_max_concurrent_runs
         try:
-            C.LLM_MAX_CONCURRENT_RUNS = 2
+            settings.llm_max_concurrent_runs = 2
             runner_module._reset_concurrency_semaphore_for_tests()
 
             assert runner_module.try_acquire_run_slot() is True
@@ -190,7 +188,7 @@ def test_try_acquire_and_release_round_trips():
             # A slot came back — next acquire succeeds.
             assert runner_module.try_acquire_run_slot() is True
         finally:
-            C.LLM_MAX_CONCURRENT_RUNS = original
+            settings.llm_max_concurrent_runs = original
             runner_module._reset_concurrency_semaphore_for_tests()
 
     asyncio.run(_exercise())
@@ -263,9 +261,7 @@ def test_smart_generate_returns_429_when_saturated(monkeypatch):
     """When the semaphore is exhausted, POST /spec-driven/generate must
     return 429 immediately — not open an SSE stream that hangs.
     """
-    from besser.utilities.web_modeling_editor.backend.constants import constants as C
-
-    monkeypatch.setattr(C, "LLM_MAX_CONCURRENT_RUNS", 1, raising=True)
+    monkeypatch.setattr(get_settings(), "llm_max_concurrent_runs", 1, raising=True)
     runner_module._reset_concurrency_semaphore_for_tests()
 
     # Pre-acquire the one available slot so the endpoint sees a full cap.
@@ -322,12 +318,10 @@ def test_smart_generate_returns_429_when_saturated(monkeypatch):
 def test_smart_gen_executor_is_dedicated_and_sized_to_cap():
     from concurrent.futures import ThreadPoolExecutor
 
-    from besser.utilities.web_modeling_editor.backend.constants import constants as C
-
     runner_module._SMART_GEN_EXECUTOR = None  # rebuild at the current cap
     ex = runner_module._get_smart_gen_executor()
     assert isinstance(ex, ThreadPoolExecutor)
-    assert ex._max_workers == C.LLM_MAX_CONCURRENT_RUNS + 4
+    assert ex._max_workers == get_settings().llm_max_concurrent_runs + 4
 
 
 def test_run_blocking_runs_on_the_dedicated_pool_not_the_default():

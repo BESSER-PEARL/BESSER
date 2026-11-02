@@ -7,7 +7,6 @@ fallback to in-memory storage when the cryptography package is absent).
 """
 
 import logging
-import os
 import secrets
 from typing import Optional
 import httpx
@@ -20,24 +19,18 @@ from pydantic import BaseModel
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import (
     SessionStore,
 )
-
-
-# GitHub OAuth configuration
-GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
-GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
-GITHUB_REDIRECT_URI = os.getenv("GITHUB_REDIRECT_URI", "http://localhost:9000/besser_api/github/auth/callback")
-DEPLOYMENT_URL = os.getenv("DEPLOYMENT_URL", "http://localhost:8080")
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 
 # Encrypted session stores
 # - _oauth_sessions: short-lived CSRF state tokens (10 min TTL)
 # - _user_tokens: authenticated user sessions (24 hour TTL)
 _oauth_sessions = SessionStore(
-    store_path=os.environ.get("OAUTH_SESSIONS_PATH"),
+    store_path=get_settings().oauth_sessions_path,
     ttl=600,
 )
 _user_tokens = SessionStore(
-    store_path=os.environ.get("USER_TOKENS_PATH"),
+    store_path=get_settings().user_tokens_path,
     ttl=86400,
 )
 
@@ -81,7 +74,8 @@ async def github_login(request: Request):
 
     Returns redirect URL to GitHub authorization page.
     """
-    if not GITHUB_CLIENT_ID:
+    settings = get_settings()
+    if not settings.github_client_id:
         raise HTTPException(
             status_code=500,
             detail="GitHub OAuth not configured. Set GITHUB_CLIENT_ID environment variable."
@@ -100,8 +94,8 @@ async def github_login(request: Request):
     scopes = "repo,gist,user"
     auth_url = (
         f"https://github.com/login/oauth/authorize"
-        f"?client_id={GITHUB_CLIENT_ID}"
-        f"&redirect_uri={GITHUB_REDIRECT_URI}"
+        f"?client_id={settings.github_client_id}"
+        f"&redirect_uri={settings.github_redirect_uri}"
         f"&scope={scopes}"
         f"&state={state}"
     )
@@ -116,10 +110,11 @@ async def github_callback(code: str, state: str):
 
     Exchange authorization code for access token.
     """
+    settings = get_settings()
     # Verify state parameter
     if _oauth_sessions.get(state) is None:
         return RedirectResponse(
-            url=f"{DEPLOYMENT_URL}?error=invalid_state",
+            url=f"{settings.deployment_url}?error=invalid_state",
             status_code=302
         )
 
@@ -133,10 +128,10 @@ async def github_callback(code: str, state: str):
                 "https://github.com/login/oauth/access_token",
                 headers={"Accept": "application/json"},
                 data={
-                    "client_id": GITHUB_CLIENT_ID,
-                    "client_secret": GITHUB_CLIENT_SECRET,
+                    "client_id": settings.github_client_id,
+                    "client_secret": settings.github_client_secret.get_secret_value(),
                     "code": code,
-                    "redirect_uri": GITHUB_REDIRECT_URI
+                    "redirect_uri": settings.github_redirect_uri
                 },
                 timeout=10
             )
@@ -145,14 +140,14 @@ async def github_callback(code: str, state: str):
 
             if "error" in token_data:
                 return RedirectResponse(
-                    url=f"{DEPLOYMENT_URL}?error={token_data['error']}",
+                    url=f"{settings.deployment_url}?error={token_data['error']}",
                     status_code=302
                 )
 
             access_token = token_data.get("access_token")
             if not access_token:
                 return RedirectResponse(
-                    url=f"{DEPLOYMENT_URL}?error=no_access_token",
+                    url=f"{settings.deployment_url}?error=no_access_token",
                     status_code=302
                 )
 
@@ -180,13 +175,13 @@ async def github_callback(code: str, state: str):
 
         # The session id rides in the fragment, which browsers never send to a server or proxy log.
         return RedirectResponse(
-            url=f"{DEPLOYMENT_URL}#github_session={session_id}&username={username}",
+            url=f"{settings.deployment_url}#github_session={session_id}&username={username}",
             status_code=302
         )
 
     except httpx.HTTPError:
         return RedirectResponse(
-            url=f"{DEPLOYMENT_URL}?error=github_api_error",
+            url=f"{settings.deployment_url}?error=github_api_error",
             status_code=302
         )
 
@@ -250,12 +245,13 @@ async def github_logout(
 
 async def _revoke_github_token(access_token: str) -> None:
     """Revoke the OAuth token at GitHub, so a copy of it stops working too."""
+    settings = get_settings()
     try:
         async with httpx.AsyncClient() as client:
             response = await client.request(
                 "DELETE",
-                f"https://api.github.com/applications/{GITHUB_CLIENT_ID}/token",
-                auth=(GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET),
+                f"https://api.github.com/applications/{settings.github_client_id}/token",
+                auth=(settings.github_client_id, settings.github_client_secret.get_secret_value()),
                 headers={"Accept": "application/vnd.github+json"},
                 json={"access_token": access_token},
                 timeout=10,

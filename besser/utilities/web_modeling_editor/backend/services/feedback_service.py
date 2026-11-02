@@ -6,7 +6,6 @@ Supports multiple recipient emails and graceful error handling.
 """
 
 import logging
-import os
 import json
 import smtplib
 from pathlib import Path
@@ -15,6 +14,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from besser.utilities.web_modeling_editor.backend.models import FeedbackSubmission
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +45,16 @@ def submit_feedback(feedback: FeedbackSubmission) -> dict:
     try:
         # Get email configuration from environment variables
         # Support multiple emails separated by comma (e.g., "email1@example.com,email2@example.com")
-        feedback_emails_str = os.getenv("FEEDBACK_EMAIL", "").strip()
+        settings = BackendSettings()
+        feedback_emails_str = settings.feedback_email.strip()
         feedback_emails = [email.strip() for email in feedback_emails_str.split(",") if email.strip()]
 
-        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-        smtp_port = int(os.getenv("SMTP_PORT", "587"))
-        smtp_username = os.getenv("SMTP_USERNAME", feedback_emails[0] if feedback_emails else "")
-        smtp_password = os.getenv("SMTP_PASSWORD")
+        smtp_host = settings.smtp_host
+        smtp_port = int(settings.smtp_port)
+        smtp_username = settings.smtp_username
+        if smtp_username is None:
+            smtp_username = feedback_emails[0] if feedback_emails else ""
+        smtp_password = settings.smtp_password.get_secret_value()
 
         if not feedback_emails:
             logger.warning("FEEDBACK_EMAIL not configured. Feedback will only be stored locally.")

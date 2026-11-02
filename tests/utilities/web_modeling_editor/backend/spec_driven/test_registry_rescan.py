@@ -23,6 +23,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartRunRegistry,
 )
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 RUN_ID = "a" * 32
 
@@ -50,7 +51,7 @@ def _write_run(root, run_id=RUN_ID, age_seconds=0.0):
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
     return tmp_path
 
 
@@ -118,7 +119,7 @@ def test_a_malformed_run_id_is_rejected_without_scanning(workspace, monkeypatch)
 
 def test_an_expired_run_is_not_resurrected(workspace):
     reg = SmartRunRegistry()
-    _write_run(str(workspace), age_seconds=runner_module.LLM_DOWNLOAD_TTL_SECONDS + 60)
+    _write_run(str(workspace), age_seconds=get_settings().llm_download_ttl_seconds + 60)
 
     async def exercise():
         assert await reg.get(RUN_ID) is None, "a run past its TTL must stay gone"

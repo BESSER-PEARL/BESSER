@@ -22,6 +22,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     StartEvent,
     format_sse,
 )
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 
 def _payload(frame: bytes) -> dict:
@@ -397,11 +398,7 @@ def test_internal_producer_exception_is_redacted_from_status():
 
 def test_download_registry_restores_artifact_after_restart(tmp_path, monkeypatch):
     async def exercise() -> None:
-        from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
-            runner,
-        )
-
-        monkeypatch.setattr(runner, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path))
+        monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
         run_id = "5" * 32
         workspace = tmp_path / f"besser_llm_{run_id}_test"
         workspace.mkdir()
@@ -450,7 +447,7 @@ def test_cleanup_sweeps_only_stale_smart_runs_from_persistent_root(
     os.utime(unrelated, (old, old))
 
     monkeypatch.setattr(cleanup.tempfile, "gettempdir", lambda: str(system_root))
-    monkeypatch.setattr(cleanup, "LLM_RUN_WORKSPACE_ROOT", str(persistent_root))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(persistent_root))
     cleanup.cleanup_old_temp_files(max_age_hours=1)
 
     assert stale_run.exists() is False

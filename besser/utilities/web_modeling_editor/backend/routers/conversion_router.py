@@ -119,8 +119,8 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     ALLOWED_SPREADSHEET_EXTENSIONS,
     ALLOWED_IMAGE_EXTENSIONS,
     ALLOWED_BUML_EXTENSIONS,
-    BUML_EMIT_IDS,
 )
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 
 # Upload validation and async file I/O, shared with kg_router
 from besser.utilities.web_modeling_editor.backend.services.utils.upload_validation import (
@@ -203,7 +203,7 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
 
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         output_file_path = os.path.join(temp_dir, "project.py")
-        project_to_code(project=buml_project, file_path=output_file_path, emit_ids=BUML_EMIT_IDS)
+        project_to_code(project=buml_project, file_path=output_file_path, emit_ids=get_settings().buml_emit_ids)
         file_content = await read_file_async(output_file_path, "r", encoding="utf-8")
         return Response(
             content=file_content,
@@ -235,7 +235,7 @@ async def export_buml(input_data: DiagramInput):
         elif elements_data.get("type") == "ClassDiagram":
             buml_model = process_class_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "domain_model.py")
-            domain_model_to_code(model=buml_model, file_path=output_file_path, emit_ids=BUML_EMIT_IDS)
+            domain_model_to_code(model=buml_model, file_path=output_file_path, emit_ids=get_settings().buml_emit_ids)
             file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
@@ -258,7 +258,7 @@ async def export_buml(input_data: DiagramInput):
             # Generate a single file with both domain model and object model
             output_file_path = os.path.join(temp_dir, "complete_model.py")
             domain_model_to_code(
-                model=buml_model, file_path=output_file_path, objectmodel=object_model, emit_ids=BUML_EMIT_IDS,
+                model=buml_model, file_path=output_file_path, objectmodel=object_model, emit_ids=get_settings().buml_emit_ids,
             )
             file_content = await read_file_async(output_file_path, "rb")
             return Response(
@@ -661,7 +661,7 @@ async def get_svg(buml_file: UploadFile = File(...)):
 
     diagram_json = class_buml_to_json(domain_model)
 
-    node_server_url = os.environ.get("WME_NODE_SERVER_URL", "http://localhost:8080").rstrip("/")
+    node_server_url = BackendSettings().wme_node_server_url.rstrip("/")
     try:
         render_response = requests.post(
             f"{node_server_url}/api/svg",

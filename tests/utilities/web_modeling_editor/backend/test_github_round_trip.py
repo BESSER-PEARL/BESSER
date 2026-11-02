@@ -13,6 +13,7 @@ import uuid
 
 import httpx
 import pytest
+from pydantic import SecretStr
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
@@ -28,13 +29,14 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
 from tests.utilities.web_modeling_editor.backend.fake_github import FakeGitHub, use_fake_github
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import CLASS_DIAGRAM_MODEL
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _clear_registry
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 SESSION = {"X-GitHub-Session": "sess"}
 
 
 @pytest.fixture
 def github(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path / "runs"))
     asyncio.run(_clear_registry())
     fake = FakeGitHub(root=str(tmp_path / "github"))
     use_fake_github(monkeypatch, fake)
@@ -409,9 +411,9 @@ def test_the_sync_status_follows_a_pending_branch_until_its_pull_request_is_merg
 def test_sign_in_then_out_revokes_the_token(github, monkeypatch):
     from besser.utilities.web_modeling_editor.backend.services.deployment import github_oauth
 
-    monkeypatch.setattr(github_oauth, "GITHUB_CLIENT_ID", "client")
-    monkeypatch.setattr(github_oauth, "GITHUB_CLIENT_SECRET", "secret")
-    monkeypatch.setattr(github_oauth, "DEPLOYMENT_URL", "http://editor")
+    monkeypatch.setattr(get_settings(), "github_client_id", "client")
+    monkeypatch.setattr(get_settings(), "github_client_secret", SecretStr("secret"))
+    monkeypatch.setattr(get_settings(), "deployment_url", "http://editor")
     for module in (spec_driven_router, github_deploy_api):
         monkeypatch.setattr(module, "get_user_token", github_oauth.get_user_token)
     state = "s" * 32

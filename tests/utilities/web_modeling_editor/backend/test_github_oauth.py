@@ -5,11 +5,13 @@ import json
 import logging
 
 import httpx
+from pydantic import SecretStr
 from fastapi.testclient import TestClient
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.services.deployment import github_oauth
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import SessionStore
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 
 def test_logout_with_the_editors_json_body_ends_the_session_and_revokes_the_token(monkeypatch, tmp_path):
@@ -17,8 +19,8 @@ def test_logout_with_the_editors_json_body_ends_the_session_and_revokes_the_toke
     store = SessionStore(store_path=str(tmp_path / "tokens.enc"), ttl=600)
     store.set("sess-1", {"access_token": "gho_user_token", "username": "octocat"})
     monkeypatch.setattr(github_oauth, "_user_tokens", store)
-    monkeypatch.setattr(github_oauth, "GITHUB_CLIENT_ID", "client-id")
-    monkeypatch.setattr(github_oauth, "GITHUB_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(get_settings(), "github_client_id", "client-id")
+    monkeypatch.setattr(get_settings(), "github_client_secret", SecretStr("client-secret"))
 
     revoked = []
 

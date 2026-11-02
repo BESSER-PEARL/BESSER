@@ -8,8 +8,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import httpx
+import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
@@ -22,6 +24,8 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     SpecDrivenRuntime,
     SqliteRunEventStore,
 )
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _FakeClient, _FakeOrchestrator
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_spec_driven_router import (
     _build_project_body,
 )
@@ -195,6 +199,58 @@ def test_runtime_slots_are_sized_from_the_settings(monkeypatch):
     finally:
         runtime.close()
         runtime.durable_runs.store.close()
+
+
+def test_runtime_opens_the_run_store_its_settings_name(tmp_path, monkeypatch):
+    monkeypatch.delenv("BESSER_LLM_RUN_STORE_PATH", raising=False)
+    path = str(tmp_path / "runs.sqlite3")
+    runtime = SpecDrivenRuntime.create(get_settings().model_copy(update={"llm_run_store_path": path}))
+    try:
+        assert runtime.durable_runs.store.path == path
+    finally:
+        runtime.close()
+        runtime.durable_runs.store.close()
+
+
+def _free_slots(runtime: SpecDrivenRuntime) -> int:
+    taken = 0
+    while runtime.slots.try_acquire():
+        taken += 1
+    for _ in range(taken):
+        runtime.slots.release()
+    return taken
+
+
+@pytest.mark.parametrize("disconnect_early", [False, True], ids=["read to the end", "client disconnects"])
+def test_a_finished_run_returns_its_slot_and_cancel_event(monkeypatch, spec_driven_runtime, disconnect_early):
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _FakeOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **kw: _FakeClient())
+    runtime = spec_driven_runtime
+    free_before = _free_slots(runtime)
+
+    async def scenario() -> None:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+            async with ac.stream("POST", "/besser_api/spec-driven/generate", json=_build_project_body()) as r:
+                assert r.status_code == 200
+                async for _ in r.aiter_bytes():
+                    if disconnect_early:
+                        break
+        # The run goes on detached from the client; wait for it to finish.
+        for _ in range(200):
+            if all(task.done() for task in runtime.durable_runs._tasks.values()):
+                return
+            await asyncio.sleep(0.05)
+
+    asyncio.run(scenario())
+    assert _free_slots(runtime) == free_before
+    assert runtime.active_runs._events == {}
+
+
+def test_an_over_release_is_logged(caplog):
+    with caplog.at_level(logging.WARNING):
+        RunSlots(1).release()
+    assert "RunSlots.release called with no slot held; ignored" in caplog.text
 
 
 def test_run_id_reservation_is_single_flight():

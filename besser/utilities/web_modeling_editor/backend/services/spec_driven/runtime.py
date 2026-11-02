@@ -19,6 +19,7 @@ from typing import Optional
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.run_manager import (
     DurableRunManager,
     SqliteRunEventStore,
+    default_store_path,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     SmartRunRegistry,
@@ -36,23 +37,23 @@ class RunSlots:
     """
 
     def __init__(self, limit: int) -> None:
-        self._sem = asyncio.BoundedSemaphore(limit)
+        self._limit = limit
+        self._held = 0
 
     def try_acquire(self) -> bool:
         """Take a slot if one is free; the caller must ``release`` it later."""
-        # asyncio.Semaphore has no non-blocking acquire. Check and decrement
-        # happen on the event loop thread with no await between them.
-        if self._sem.locked() or self._sem._value <= 0:
+        # Called on the event loop thread only, with no await in between.
+        if self._held >= self._limit:
             return False
-        self._sem._value -= 1
+        self._held += 1
         return True
 
     def release(self) -> None:
         """Return a slot; a release with none held is logged and ignored."""
-        try:
-            self._sem.release()
-        except ValueError:
-            logger.warning("release_run_slot called with no slot held; ignored")
+        if self._held <= 0:
+            logger.warning("RunSlots.release called with no slot held; ignored")
+            return
+        self._held -= 1
 
 
 class ActiveRuns:
@@ -115,12 +116,12 @@ class SpecDrivenRuntime:
         *,
         store: Optional[SqliteRunEventStore] = None,
     ) -> "SpecDrivenRuntime":
-        """Build the runtime; ``store`` defaults to the configured SQLite run store."""
+        """Build the runtime; ``store`` defaults to the SQLite run store ``settings`` names."""
         settings = settings or get_settings()
         cap = settings.llm_max_concurrent_runs
         return cls(
             registry=SmartRunRegistry(),
-            durable_runs=DurableRunManager(store),
+            durable_runs=DurableRunManager(store or SqliteRunEventStore(default_store_path(settings))),
             slots=RunSlots(cap),
             active_runs=ActiveRuns(),
             # A little above the cap, so every admitted run gets its own thread.

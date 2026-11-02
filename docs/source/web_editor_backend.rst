@@ -67,8 +67,8 @@ two sweepers. On shutdown it cancels the sweepers and shuts the pool down
 without waiting; runs still in a thread finish before the interpreter exits.
 Routes take the runtime through ``Depends(get_spec_driven_runtime)``
 (``SpecDrivenRuntimeDep``) and pass it to each ``SmartGenerationRunner``, so
-two applications in one process (or two tests) never share runs, slots or
-threads. The Spec-Driven worker container serves the same application, so it
+two applications in one process (or two tests) never share spec-driven runs,
+slots or threads. The Spec-Driven worker container serves the same application, so it
 builds its own runtime the same way; the two containers meet through the
 shared run workspace, which ``SmartRunRegistry.get`` rescans on a miss.
 
@@ -80,7 +80,11 @@ Some process-wide state stays in modules on purpose: caches of facts about the
 host (the sandbox self-test, the tokenizer, the model catalog, the settings),
 per-path file locks, and the agent's shell-session reaper, which belong to the
 process rather than to one app, and which the agent also uses outside the
-backend.
+backend. Two apps in one process also share the GitHub sign-in stores
+(``github_oauth._oauth_sessions`` and ``_user_tokens``), the agent simulator's
+rate limiter and session registry, and the concurrency slots of the knowledge
+graph consistency check (``kg/validation.py``) and of the SDMX import
+(``sdmx_reverse.py``).
 
 Multi-Diagram Projects
 ^^^^^^^^^^^^^^^^^^^^^^

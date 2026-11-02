@@ -110,9 +110,10 @@ class _AbandonmentPolicy:
     resume_available: Optional[Callable[[], bool]] = None
 
 
-def _default_store_path() -> str:
-    """``BESSER_LLM_RUN_STORE_PATH`` if set, else a DB file in the system temp dir."""
-    return BackendSettings().llm_run_store_path or os.path.join(tempfile.gettempdir(), _DEFAULT_DB_NAME)
+def default_store_path(settings: Optional[BackendSettings] = None) -> str:
+    """``BESSER_LLM_RUN_STORE_PATH`` (from ``settings``, else read now) or a DB file in the system temp dir."""
+    configured = (settings or BackendSettings()).llm_run_store_path
+    return configured or os.path.join(tempfile.gettempdir(), _DEFAULT_DB_NAME)
 
 
 def _parse_frame(frame: bytes) -> tuple[str, dict]:
@@ -163,7 +164,7 @@ class SqliteRunEventStore:
 
     def __init__(self, path: Optional[str] = None) -> None:
         """Open (creating if needed) the SQLite store at ``path`` or the default path."""
-        self.path = path or _default_store_path()
+        self.path = path or default_store_path()
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()

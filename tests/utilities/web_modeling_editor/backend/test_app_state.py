@@ -28,7 +28,7 @@ def quiet_lifespan(tmp_path, monkeypatch):
     monkeypatch.setattr(backend, "cleanup_old_temp_files", lambda: None)
     monkeypatch.setattr(backend, "schedule_cleanup", lambda: asyncio.create_task(asyncio.sleep(3600)))
     monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path / "runs"))
-    monkeypatch.setenv("BESSER_LLM_RUN_STORE_PATH", str(tmp_path / "runs.sqlite3"))
+    monkeypatch.setattr(get_settings(), "llm_run_store_path", str(tmp_path / "runs.sqlite3"))
 
 
 def _spec_driven_app() -> FastAPI:

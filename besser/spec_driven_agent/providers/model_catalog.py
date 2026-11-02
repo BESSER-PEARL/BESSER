@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -51,6 +50,8 @@ from pydantic import (
     ValidationError,
     field_validator,
 )
+
+from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +298,7 @@ def load_model_catalog() -> ModelCatalog:
     provider.
     """
     data = _read(DEFAULT_CATALOG_PATH)
-    override_path = os.environ.get(CATALOG_ENV_VAR, "").strip()
+    override_path = AgentSettings().model_catalog.strip()
     if override_path:
         data = _merge(data, _read(Path(override_path)))
         logger.info("Model catalog: %s merged over the default", override_path)

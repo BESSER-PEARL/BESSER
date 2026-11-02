@@ -38,6 +38,7 @@ from besser.spec_driven_agent.providers.model_settings import (
 from besser.spec_driven_agent.agent.tools import INVALID_ARGUMENTS_KEY
 from besser.spec_driven_agent.providers.model_catalog import load_model_catalog
 from besser.spec_driven_agent.providers.tool_input import normalize_tool_blocks
+from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,7 @@ logger = logging.getLogger(__name__)
 # provider call can stall a turn for that long with no signal. 300s is
 # generous enough for a full 16k-token streaming turn while still
 # bounding the worst case.
-_DEFAULT_SDK_TIMEOUT_SECONDS = float(
-    os.environ.get("BESSER_LLM_CALL_TIMEOUT_SECONDS", "300")
-)
+_DEFAULT_SDK_TIMEOUT_SECONDS = float(AgentSettings().llm_call_timeout_seconds)
 
 # Output-token ceiling used for from-scratch generation (no deterministic
 # Phase-1 scaffold to build on -- see LLMOrchestrator._apply_adaptive_budget).
@@ -68,9 +67,7 @@ _DEFAULT_SDK_TIMEOUT_SECONDS = float(
 # silently writing partial content -- see the ``stop_reason in
 # ("max_tokens", "length")`` handling in ``orchestrator.py``.  Env-tunable
 # since the safe ceiling depends on the model/provider in use.
-FROM_SCRATCH_MAX_TOKENS = int(
-    os.environ.get("BESSER_LLM_FROM_SCRATCH_MAX_TOKENS", "32768")
-)
+FROM_SCRATCH_MAX_TOKENS = int(AgentSettings().llm_from_scratch_max_tokens)
 
 # Output-token ceiling used for modify/fix runs (LLMOrchestrator.modify()).
 # A modify/fix run routinely rewrites a whole existing file in a single
@@ -85,8 +82,9 @@ FROM_SCRATCH_MAX_TOKENS = int(
 # free tier it is $0 and on paid tiers it only costs when the extra output
 # is actually generated. Defaults to the from-scratch value; env-tunable
 # since the safe ceiling depends on the model/provider in use.
+_MODIFY_MAX_TOKENS_SETTING = AgentSettings().llm_modify_max_tokens
 MODIFY_MAX_TOKENS = int(
-    os.environ.get("BESSER_LLM_MODIFY_MAX_TOKENS", str(FROM_SCRATCH_MAX_TOKENS))
+    str(FROM_SCRATCH_MAX_TOKENS) if _MODIFY_MAX_TOKENS_SETTING is None else _MODIFY_MAX_TOKENS_SETTING
 )
 
 
@@ -977,7 +975,7 @@ class ClaudeLLMClient(LLMProvider):
 
     @property
     def planning_model(self) -> str | None:
-        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        env = AgentSettings().llm_planning_model
         if env:
             return None if env.lower() == "primary" else env
         if "haiku" in self._model.lower():
@@ -1275,7 +1273,7 @@ def _with_tool_cache(tools: list[dict]) -> list[dict]:
 # per-turn input stays flat instead of growing with the transcript.
 # Anthropic path only (the OpenAI/free path caches automatically by prefix).
 # Set BESSER_LLM_ROLLING_CACHE=0 to opt out.
-_ROLLING_MESSAGE_CACHE = os.environ.get("BESSER_LLM_ROLLING_CACHE", "1") == "1"
+_ROLLING_MESSAGE_CACHE = AgentSettings().llm_rolling_cache
 
 
 def _with_message_cache(messages: list[dict]) -> list[dict]:
@@ -1774,7 +1772,7 @@ class OpenAIProvider(LLMProvider):
 
     @property
     def planning_model(self) -> str | None:
-        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        env = AgentSettings().llm_planning_model
         if env:
             return None if env.lower() == "primary" else env
         if any(tier in self._model.lower() for tier in ("mini", "nano", "luna")):
@@ -2126,7 +2124,7 @@ class MistralProvider(OpenAIProvider):
 
     @property
     def planning_model(self) -> str | None:
-        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        env = AgentSettings().llm_planning_model
         if env:
             return None if env.lower() == "primary" else env
         if "small" in self._model.lower():
@@ -2209,7 +2207,7 @@ class NebiusProvider(OpenAIProvider):
 
     @property
     def planning_model(self) -> str | None:
-        env = os.environ.get("BESSER_LLM_PLANNING_MODEL")
+        env = AgentSettings().llm_planning_model
         if env:
             return None if env.lower() == "primary" else env
         # None => use the primary model. Inheriting OpenAIProvider's
@@ -2321,22 +2319,24 @@ SPONSORED_PROVIDER = "sponsored"
 
 def sponsored_tier_model() -> str:
     """Default model for the sponsored tier (from server env), or ``""``."""
-    return os.environ.get("BESSER_SPONSORED_LLM_MODEL", "").strip()
+    return AgentSettings().sponsored_llm_model.strip()
 
 
 def sponsored_tier_available() -> bool:
     """True when the server is configured with the sponsored (demo) tier."""
+    settings = AgentSettings()
     return bool(
-        os.environ.get("BESSER_SPONSORED_LLM_BASE_URL", "").strip()
-        and os.environ.get("BESSER_SPONSORED_LLM_TOKEN", "").strip()
+        settings.sponsored_llm_base_url.strip()
+        and settings.sponsored_llm_token.get_secret_value().strip()
         and sponsored_tier_model()
     )
 
 
 def _resolve_sponsored_tier_config() -> tuple[str, str, str]:
     """Return ``(base_url, token, default_model)`` for the sponsored tier."""
-    base_url = os.environ.get("BESSER_SPONSORED_LLM_BASE_URL", "").strip()
-    token = os.environ.get("BESSER_SPONSORED_LLM_TOKEN", "").strip()
+    settings = AgentSettings()
+    base_url = settings.sponsored_llm_base_url.strip()
+    token = settings.sponsored_llm_token.get_secret_value().strip()
     if not base_url or not token:
         raise ValueError(
             "The sponsored tier is not available on this server "
@@ -2348,13 +2348,13 @@ def _resolve_sponsored_tier_config() -> tuple[str, str, str]:
 
 def free_tier_model() -> str:
     """The model served by the free tier (from server env), or ``""``."""
-    return os.environ.get("BESSER_FREE_LLM_MODEL", "").strip()
+    return AgentSettings().free_llm_model.strip()
 
 
 def free_tier_available() -> bool:
     """True when the server is configured to offer the keyless free tier."""
     return bool(
-        os.environ.get("BESSER_FREE_LLM_BASE_URL", "").strip()
+        AgentSettings().free_llm_base_url.strip()
         and free_tier_model()
     )
 
@@ -2366,14 +2366,15 @@ def _resolve_free_tier_config() -> tuple[str, str, str]:
     against an unconfigured server fails fast with a clear message rather than
     silently falling back to a paid provider.
     """
-    base_url = os.environ.get("BESSER_FREE_LLM_BASE_URL", "").strip()
+    settings = AgentSettings()
+    base_url = settings.free_llm_base_url.strip()
     model = free_tier_model()
     if not base_url or not model:
         raise ValueError(
             "The free tier is not available on this server "
             "(BESSER_FREE_LLM_BASE_URL / BESSER_FREE_LLM_MODEL are unset)."
         )
-    token = os.environ.get("BESSER_FREE_LLM_TOKEN", "").strip()
+    token = settings.free_llm_token.get_secret_value().strip()
     return base_url, token, model
 
 
@@ -2387,11 +2388,12 @@ def _resolve_free_fallback_config() -> tuple[str, str, str] | None:
     the provider switches to this endpoint for the rest of the run.
     Typically points at a self-hosted qwen endpoint.
     """
-    base_url = os.environ.get("BESSER_FREE_LLM_FALLBACK_BASE_URL", "").strip()
-    model = os.environ.get("BESSER_FREE_LLM_FALLBACK_MODEL", "").strip()
+    settings = AgentSettings()
+    base_url = settings.free_llm_fallback_base_url.strip()
+    model = settings.free_llm_fallback_model.strip()
     if not base_url or not model:
         return None
-    token = os.environ.get("BESSER_FREE_LLM_FALLBACK_TOKEN", "").strip()
+    token = settings.free_llm_fallback_token.get_secret_value().strip()
     return base_url, token, model
 
 
@@ -2444,7 +2446,7 @@ def free_pilot_model() -> str:
     the configured id is not one the server actually offers -- advertising a
     default we would refuse to honour is worse than having none.
     """
-    model = os.environ.get("BESSER_PILOT_LLM_MODEL", "").strip()
+    model = AgentSettings().pilot_llm_model.strip()
     if not model:
         return ""
     offered = {free_tier_model(), free_fallback_model(), *free_alt_models()}
@@ -2465,7 +2467,7 @@ def free_alt_models() -> list[str]:
     per model rather than per account, so an alt model adds capacity when the
     primary's daily quota runs out. Empty by default.
     """
-    raw = os.environ.get("BESSER_FREE_LLM_ALT_MODELS", "")
+    raw = AgentSettings().free_llm_alt_models
     if not raw.strip():
         return []
     # Ids already owned by another endpoint/token pair must not be re-served

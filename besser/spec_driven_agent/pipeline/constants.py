@@ -11,7 +11,6 @@ number without its derivation is an invitation to "tune" it blindly.
 
 from __future__ import annotations
 
-import os
 
 from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
 from besser.spec_driven_agent.state.checkpoint import (
@@ -262,13 +261,6 @@ _RUNTIME_UNVERIFIED_PREFIXES = (
     "runtime unverified:", "create unverified:", "action unverified:",
     "api scenario:",
 )
-
-# Checkpoint history eviction (see history_eviction.py). When enabled, stale
-# file bodies in older messages are stubbed at the compaction checkpoint to cut
-# the re-sent context. OFF by default: it rewrites history the provider
-# re-serializes and is not yet verified end to end. Enable with
-# BESSER_LLM_HISTORY_EVICTION=1.
-_HISTORY_EVICTION_ENABLED = os.environ.get("BESSER_LLM_HISTORY_EVICTION", "0") == "1"
 
 # Generators that produce a WHOLE application, and the workspace folder each
 # writes. Once one of them has built the scaffold, none of them may run again:

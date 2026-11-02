@@ -71,6 +71,7 @@ from besser.spec_driven_agent.execution.sandbox import (
     start_pasta,
     stop_process,
 )
+from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
 
@@ -328,11 +329,11 @@ def _real(path: str) -> str:
     return real[4:] if real.startswith("\\\\?\\") and not real.startswith("\\\\?\\UNC\\") else real
 
 
-def _env_int(name: str, default: int) -> int:
+def _int_setting(name: str, raw: str | None, default: int) -> int:
     try:
-        return max(0, int(os.environ.get(name, default)))
+        return max(0, int(default if raw is None else raw))
     except ValueError:
-        logger.warning("%s=%r is not an integer; using %d", name, os.environ.get(name), default)
+        logger.warning("%s=%r is not an integer; using %d", name, raw, default)
         return default
 
 
@@ -528,7 +529,7 @@ _reaper: threading.Thread | None = None
 def _acquire_slot(session: "ShellSession") -> bool:
     global _reaper
     with _registry_lock:
-        if len(_live) >= _env_int(MAX_ENV, _MAX_DEFAULT):
+        if len(_live) >= _int_setting(MAX_ENV, AgentSettings().llm_shell_session_max, _MAX_DEFAULT):
             return False
         _live.add(session)
         if _reaper is None or not _reaper.is_alive():
@@ -545,7 +546,7 @@ def _release_slot(session: "ShellSession") -> None:
 def _reap_loop() -> None:
     while True:
         time.sleep(1.0)
-        idle = _env_int(IDLE_ENV, _IDLE_DEFAULT)
+        idle = _int_setting(IDLE_ENV, AgentSettings().llm_shell_session_idle_seconds, _IDLE_DEFAULT)
         with _registry_lock:
             sessions = list(_live)
         for session in sessions:

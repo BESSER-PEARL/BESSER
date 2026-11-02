@@ -47,6 +47,7 @@ import time
 from dataclasses import dataclass
 
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env, run_bounded
+from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +162,7 @@ class SandboxedCommand:
 
 
 def _policy() -> str:
-    raw = (os.environ.get(SANDBOX_POLICY_ENV) or "auto").strip().lower()
+    raw = (AgentSettings().llm_shell_sandbox or "auto").strip().lower()
     if raw not in {"auto", "off"}:
         logger.warning(
             "%s=%r is not a known policy; using 'auto'", SANDBOX_POLICY_ENV, raw,
@@ -318,7 +319,7 @@ def sandbox_selftest_error() -> str | None:
 
 
 def _network_mode() -> str:
-    raw = (os.environ.get(SHELL_NETWORK_ENV) or "auto").strip().lower()
+    raw = (AgentSettings().llm_shell_network or "auto").strip().lower()
     if raw not in {"auto", "private", "shared"}:
         logger.warning("%s=%r is not a known mode; using 'auto'", SHELL_NETWORK_ENV, raw)
         return "auto"

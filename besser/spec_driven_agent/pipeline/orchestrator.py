@@ -205,7 +205,6 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _APPLICATION_PRIMARY_TOOLS,
     _EDIT_STREAK_TOOLS,
     _EDIT_TOOLS,
-    _HISTORY_EVICTION_ENABLED,
     _MAX_PARALLEL_WORKERS,
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
     _PHASE3_FIX_TURNS,
@@ -241,6 +240,14 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
 from besser.spec_driven_agent.pipeline.edit_loop_guards import EditLoopGuardsMixin
 from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
 from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin
+from besser.spec_driven_agent.settings import AgentSettings
+
+# Checkpoint history eviction (see history_eviction.py). When enabled, stale
+# file bodies in older messages are stubbed at the compaction checkpoint to cut
+# the re-sent context. OFF by default: it rewrites history the provider
+# re-serializes and is not yet verified end to end. Enable with
+# BESSER_LLM_HISTORY_EVICTION=1.
+_HISTORY_EVICTION_ENABLED = AgentSettings().llm_history_eviction
 
 
 class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
@@ -4079,8 +4086,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # reads batch four to a turn.
         scaffold_snapshot = ""
         if (
-            os.environ.get("BESSER_LLM_INLINE_SCAFFOLD", "0").lower()
-            in ("1", "true")
+            AgentSettings().llm_inline_scaffold
             and (self._generator_used or self._phase0_5_files)
         ):
             try:

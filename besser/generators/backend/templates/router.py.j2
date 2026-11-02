@@ -1028,7 +1028,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: {{ pk_typ
         if len({{ class.name | lower }}_data.{{x[3]}}) < {{x[5]}}:
             raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
         {% endif %}
-        existing_{{x[1] | lower}}_ids = [assoc.{{x[3]}} for assoc in database.execute(
+        existing_{{x[1] | lower}}_ids = [assoc._mapping["{{x[3]}}"] for assoc in database.execute(
             {{x[4]}}.select().where({{x[4]}}.c["{{x[2]}}"] == db_{{ class.name | lower }}.{{ pk }}))]
 
         {{x[1]|lower}}s_to_remove = set(existing_{{x[1]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[3]}})

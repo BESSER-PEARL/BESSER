@@ -1901,9 +1901,10 @@ async def get_model_history(
     """Recent commits that changed the model file, each with its class-diagram changes.
 
     The model file is ``buml/diagrams.json``, or the file an older editor saved
-    while the repo has no ``buml/diagrams.json`` yet. Each commit is compared
-    with its first parent, not with the commit listed after it: after a merge,
-    the next commit by date is on the other branch.
+    while the repo has no ``buml/diagrams.json`` yet. When a save moved the
+    model into ``buml/diagrams.json``, the history goes on with the older file.
+    Each commit is compared with its first parent, not with the commit listed
+    after it: after a merge, the next commit by date is on the other branch.
     """
     github = _github_for(github_session)
     model_path = _checked_model_path(model_path)
@@ -1917,11 +1918,26 @@ async def get_model_history(
         commits = await github.get_commits(
             owner, repo, model_path, per_page=_MODEL_HISTORY_LIMIT, ref=branch
         )
+        # The file the model was read from at each commit listed (and at the move's parent).
+        paths = {commit["sha"]: model_path for commit in commits}
+        moved_from = (commits[-1].get("parents") or [None])[0] if commits else None
+        if moved_from and len(commits) < _MODEL_HISTORY_LIMIT:
+            try:
+                before = await _find_model(github, owner, repo, moved_from)
+            except json.JSONDecodeError:
+                before = None
+            if before is not None and before[0] != model_path:
+                paths[moved_from] = before[0]
+                older = await github.get_commits(
+                    owner, repo, before[0], per_page=_MODEL_HISTORY_LIMIT - len(commits), ref=moved_from
+                )
+                paths.update({commit["sha"]: before[0] for commit in older})
+                commits += older
         models: dict[str, Optional[dict]] = {}
 
         async def model_at(sha: str) -> Optional[dict]:
             if sha not in models:
-                file_data = await github.get_file_content(owner, repo, model_path, ref=sha)
+                file_data = await github.get_file_content(owner, repo, paths.get(sha, model_path), ref=sha)
                 try:
                     content = file_data.get("content") if file_data else None
                     models[sha] = json.loads(content) if content else None

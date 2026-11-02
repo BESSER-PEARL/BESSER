@@ -1,4 +1,4 @@
-"""Agent (BAF) generation behind ``/generate-output``, and the config masking it logs with."""
+"""Agent (BAF) generation behind ``/generate-output``."""
 
 import ast
 import asyncio
@@ -10,9 +10,10 @@ import os
 import tempfile
 import uuid
 import zipfile
-from typing import Any, Optional
+from typing import Optional
 
 from besser.generators.agents.baf_generator import GenerationMode
+from besser.utilities.secret_redaction import sanitize_config
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
@@ -40,51 +41,6 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 )
 
 logger = logging.getLogger(__name__)
-
-# Key-name fragments that mark a value as sensitive. Substring match
-# (case-insensitive) so this catches camelCase, kebab-case, snake_case,
-# screaming-snake, and weird vendor names alike: ``openaiApiKey``,
-# ``OPENAI_API_KEY``, ``api-key``, ``X-Auth-Token`` all hit one of these.
-SENSITIVE_KEYS = frozenset({
-    "api_key", "apikey", "api-key",
-    "secret", "password", "passwd",
-    "token",                              # access_token, id_token, refresh_token
-    "credential",
-    "private",                            # private_key, private-key
-    "auth",                               # bearer_auth, basic_auth, x-auth-*
-    "cert",                               # cert, certificate
-    "session",                            # session_id, session_token
-    "key",                                # catch-all (last so longer matches dominate)
-})
-
-
-def _key_is_sensitive(key: str) -> bool:
-    """True if a config key name looks like it holds a secret."""
-    if not isinstance(key, str):
-        return False
-    lowered = key.lower()
-    return any(token in lowered for token in SENSITIVE_KEYS)
-
-
-def sanitize_config(config: Any) -> Any:
-    """Return a deep-copied structure with sensitive values masked.
-
-    Walks nested dicts, lists, and tuples so a credential nested under
-    ``config["llm"]["openai"]["api_key"]`` is still masked. Non-dict
-    leaves are returned untouched (we only redact when the *key name*
-    looks sensitive — value-level heuristics are too prone to false
-    positives for now).
-    """
-    if isinstance(config, dict):
-        return {
-            k: ("***" if _key_is_sensitive(k) else sanitize_config(v))
-            for k, v in config.items()
-        }
-    if isinstance(config, list):
-        return [sanitize_config(item) for item in config]
-    if isinstance(config, tuple):
-        return tuple(sanitize_config(item) for item in config)
-    return config
 
 
 def generate_agent_files(

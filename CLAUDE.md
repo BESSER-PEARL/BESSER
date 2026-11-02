@@ -159,8 +159,9 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
   (durable runs: SQLite event store, sequence numbers assigned *before* any subscriber sees a frame, replay
   via `?after=` / `Last-Event-ID`, `interrupted` marking on restart), `sse_events.py` (typed event schema).
 - Secret redaction: one module, `besser/utilities/secret_redaction.py` (every SSE frame, the workspace before
-  packaging, repo writes, the agent's trace, LLM error logs). Imported eagerly; never add a fallback that
-  turns it off.
+  packaging, repo writes, the agent's trace, LLM error logs, generator-config logs). Imported eagerly; never
+  add a fallback that turns it off. The one exception is `api_probe._scrub`: that probe's child process
+  imports no BESSER package.
 
 Invariants and rules:
 - **A new agent tool needs three edits**: `agent/tools.py`, `_TOOL_MODEL_REQUIREMENTS` in the same file, and a

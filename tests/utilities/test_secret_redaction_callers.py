@@ -2,15 +2,16 @@
 
 It replaced the agent trace's own patterns, which loaded the backend's
 redactor lazily and set it to ``False`` (logged at debug) when that import
-failed, and the ``_redact`` helpers of ``llm_utils`` and the KG LLM service.
-The expected outputs below are what those copies produced.
+failed, the ``_redact`` helpers of ``llm_utils`` and the KG LLM service, and
+the generation router's key-name-only ``sanitize_config``. The expected
+outputs below are what those copies produced, plus what the last one missed.
 """
 import subprocess
 import sys
 
 import pytest
 
-from besser.utilities.secret_redaction import redact_literal, redact_trace_text
+from besser.utilities.secret_redaction import redact_literal, redact_trace_text, sanitize_config
 
 JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbm4ifQ.c2lnbmF0dXJlLXZhbHVl"
 KEY = "sk-proj-" + "A" * 40
@@ -42,6 +43,40 @@ def test_trace_redaction_matches_the_agents_former_copy(text, expected):
 ])
 def test_redact_literal_matches_the_llm_clients_former_copies(text, secret, expected):
     assert redact_literal(text, secret) == expected
+
+
+def test_sanitize_config_masks_credential_named_keys_as_before():
+    config = {
+        "openaiApiKey": KEY, "X-Auth-Token": "t", "nested": {"llm": {"api_key": KEY, "model": "gpt-5"}},
+        "items": [{"password": "pw"}, ("plain", {"session_id": 7})], "temperature": 0.2, "name": "Greeter",
+    }
+
+    assert sanitize_config(config) == {
+        "openaiApiKey": "***", "X-Auth-Token": "***", "nested": {"llm": {"api_key": "***", "model": "gpt-5"}},
+        "items": [{"password": "***"}, ("plain", {"session_id": "***"})], "temperature": 0.2, "name": "Greeter",
+    }
+
+
+def test_sanitize_config_redacts_credentials_under_ordinary_keys():
+    # The review's repro: the key-name-only copy logged both values in clear.
+    config = {
+        "database_url": "postgresql://admin:S3cr3tPassw0rd@db.example.com:5432/app",
+        "llm": {"provider": "openai", "value": KEY},
+        "notes": [f"use {KEY} here"],
+    }
+
+    assert sanitize_config(config) == {
+        "database_url": "postgresql://admin:[REDACTED]@db.example.com:5432/app",
+        "llm": {"provider": "openai", "value": "[REDACTED]"},
+        "notes": ["use [REDACTED] here"],
+    }
+
+
+def test_sanitize_config_leaves_ordinary_values_and_the_input_alone():
+    config = {"url": "postgresql://user:pw@db:5432/app", "retries": 3, "label": "task-list-item"}
+
+    assert sanitize_config(config) == config
+    assert sanitize_config(config) is not config
 
 
 def _run(code: str) -> str:

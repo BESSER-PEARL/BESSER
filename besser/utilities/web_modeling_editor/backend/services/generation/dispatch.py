@@ -19,6 +19,7 @@ import tempfile
 import uuid
 from typing import Optional
 
+from besser.utilities.secret_redaction import sanitize_config
 from besser.utilities.web_modeling_editor.backend.config import (
     SUPPORTED_GENERATORS,
     get_generator_info,
@@ -66,7 +67,6 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 from besser.utilities.web_modeling_editor.backend.services.generation.agents import (
     generate_agent_output,
     has_agent_components,
-    sanitize_config,
 )
 from besser.utilities.web_modeling_editor.backend.services.generation.downloads import (
     GeneratedOutput,

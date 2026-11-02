@@ -6,8 +6,11 @@ or invented/pasted in an instruction.  Treat the artifact and SSE serializers
 as the final trust boundary: remove populated ``.env`` files and replace
 credential-shaped text everywhere else with a stable placeholder.
 
-The Spec-Driven agent's trace (:func:`redact_trace_text`) and the LLM clients'
-error logs (:func:`redact_literal`) use this module too.
+The Spec-Driven agent's trace (:func:`redact_trace_text`), the LLM clients'
+error logs (:func:`redact_literal`) and the editor backend's generator-config
+logs (:func:`sanitize_config`) use this module too. The one other redactor is
+``spec_driven_agent/validation/api_probe.py``'s ``_scrub``: its child process
+imports no BESSER package.
 """
 
 from __future__ import annotations
@@ -375,9 +378,9 @@ def redact_data(value: Any, secrets: Iterable[str] = ()) -> tuple[Any, int]:
 # code they would rewrite ordinary headers and fixtures.
 _TRACE_CREDENTIAL_PATTERNS = (
     (re.compile(r"(?i)(authorization\\?[\"']?\s*[:=]\s*\\?[\"']?\s*(?:(?:bearer|basic|token)\s+)?)[^\s\"'\\,}]+"),
-     r"\1[REDACTED]"),
-    (re.compile(r'(?i)(\\?"(?:access_|refresh_|id_)?token\\?"\s*:\s*\\?")[^"\\]+'), r"\1[REDACTED]"),
-    (re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"), "[REDACTED]"),
+     r"\1" + REDACTED_SECRET),
+    (re.compile(r'(?i)(\\?"(?:access_|refresh_|id_)?token\\?"\s*:\s*\\?")[^"\\]+'), r"\1" + REDACTED_SECRET),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"), REDACTED_SECRET),
 )
 
 
@@ -390,10 +393,10 @@ def redact_trace_text(text: str) -> str:
     return text
 
 
-def redact_literal(text: str, secret: str, placeholder: str = "***") -> str:
-    """``text`` with every occurrence of the literal ``secret`` replaced, for
-    a provider error logged next to the key that was sent."""
-    return text.replace(secret, placeholder) if secret else text
+def redact_literal(text: str, secret: str) -> str:
+    """``text`` with every occurrence of the literal ``secret`` replaced by ``***``,
+    for a provider error logged next to the key that was sent."""
+    return text.replace(secret, "***") if secret else text
 
 
 # A field or YAML key that holds a credential: ``openai_api_key``, ``personal_token``,
@@ -488,6 +491,37 @@ def redact_credentials(value: Any, yaml_fields: Iterable[str] = ()) -> tuple[Any
         output[key], item_findings = redact_credentials(item, yaml_fields)
         findings += item_findings
     return output, findings
+
+
+# Key-name fragments that mark a config value as a credential in a log line,
+# matched as case-insensitive substrings (``openaiApiKey``, ``X-Auth-Token``).
+# Broader than _CREDENTIAL_KEY_RE: masking a logged value costs nothing.
+_LOG_SENSITIVE_KEY_FRAGMENTS = (
+    "api_key", "apikey", "api-key", "secret", "password", "passwd", "token",
+    "credential", "private", "auth", "cert", "session", "key",
+)
+
+
+def _is_log_sensitive_key(key: Any) -> bool:
+    return isinstance(key, str) and any(fragment in key.lower() for fragment in _LOG_SENSITIVE_KEY_FRAGMENTS)
+
+
+def sanitize_config(config: Any) -> Any:
+    """A deep copy of ``config`` safe to log.
+
+    A value under a credential-looking key becomes ``***``; every other string
+    goes through the value rules of :func:`redact_text` (provider tokens, the
+    vendored gitleaks rules, a database URL's password).
+    """
+    if isinstance(config, dict):
+        return {k: ("***" if _is_log_sensitive_key(k) else sanitize_config(v)) for k, v in config.items()}
+    if isinstance(config, list):
+        return [sanitize_config(item) for item in config]
+    if isinstance(config, tuple):
+        return tuple(sanitize_config(item) for item in config)
+    if isinstance(config, str):
+        return redact_text(config, env_style=False)[0]
+    return config
 
 
 def looks_like_secret_env(content: str) -> bool:

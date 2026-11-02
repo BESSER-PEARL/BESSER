@@ -169,3 +169,18 @@ def test_a_run_owns_the_files_it_carries_but_not_its_other_records():
     assert not _hidden_from_run(".besser_attribution.json", [])
     assert _hidden_from_run(".besser_checkpoint.json", [])
     assert _hidden_from_run(os.path.join(".besser_snapshot", "x.py").replace(os.sep, "/"), [])
+
+
+def test_a_workspace_outside_the_run_root_is_not_read(tmp_path, monkeypatch, caplog):
+    """A resumed run finds its workspace from the request's run id; a path that resolves
+    outside the shared run root is never read."""
+    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path / "runs"))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    store_generator_output(str(elsewhere), "backend", {"backend/main_api.py": b"app = 1\n"}, "8.0.0")
+    attach_model(str(elsewhere), generation_class_diagram(_build_request().project))
+    runner = SmartGenerationRunner(_build_request(), mode="modify")
+    runner.temp_dir, runner._seeded = str(elsewhere), True
+
+    assert runner._previous_domain_model() is None
+    assert "outside the run root" in caplog.text

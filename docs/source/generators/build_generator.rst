@@ -61,9 +61,15 @@ A single-file generator whose own output filename is meaningful (the Supabase ge
 ``<timestamp>_<slug>.sql`` migration name, for example) can set ``keep_generated_filename=True`` instead,
 so the download keeps that name.
 
-Each entry also says where the generator is offered. ``web_editor`` (default ``True``) puts it in
-the editor; ``agent_tool`` (default ``None``) makes it a Spec-Driven Agent tool, with the tool's
-name, description, input parameters and the models it needs (``requires``). An agent tool also
-needs a handler in ``ToolExecutor._handlers`` (``besser/spec_driven_agent/agent/tool_executor.py``).
-``tests/generators/test_generator_registry.py`` pins both lists, so a change to either shows up
-in review.
+Every entry is offered in the editor. ``agent_tool`` (default ``None``) also makes it a
+Spec-Driven Agent tool, with the tool's name, the short ``label`` the run preview shows, its
+description, input parameters and the models it needs (``requires``). An agent tool then needs:
+
+* its generator ``id`` in ``AGENT_TOOL_ORDER`` (same file), the order the tools appear in the
+  agent's prompt; ``agent_tools()`` raises on a tool missing from it;
+* a handler in ``ToolExecutor._handlers`` (``besser/spec_driven_agent/agent/tool_executor.py``);
+* a row in the generator-tools table of ``docs/source/spec_driven_agent/tools.rst``.
+
+``tests/generators/test_generator_registry.py`` pins both lists (the tool names, and snapshots of
+the two derived payloads under ``tests/generators/snapshots/``), so a change to either shows up in
+review: update them with the new entry.

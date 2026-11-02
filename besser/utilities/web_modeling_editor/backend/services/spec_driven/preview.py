@@ -29,11 +29,15 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
     AssembledModels,
 )
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from besser.generators.registry import agent_tools
 from besser.spec_driven_agent.planning.generator_keywords import (
     default_generator,
     keyword_generator,
     names_stack_without_generator,
 )
+
+
+_TOOL_LABELS = {tool.name: tool.label for tool in agent_tools()}
 
 
 @dataclass(frozen=True)
@@ -298,27 +302,7 @@ def _build_summary(
     if modify_mode:
         base = f"Modify the previous generated app using {primary}"
     elif target_generator:
-        gen_friendly = {
-            "generate_fastapi_backend": "FastAPI backend (CRUD + ORM + schemas)",
-            "generate_django": "Django project (models + views + admin)",
-            "generate_web_app": "full-stack web app (FastAPI + React + Docker)",
-            "generate_react": "React frontend",
-            "generate_pydantic": "Pydantic models",
-            "generate_sqlalchemy": "SQLAlchemy ORM models",
-            "generate_sql": "SQL CREATE TABLE statements",
-            "generate_python_classes": "plain Python classes",
-            "generate_java_classes": "Java classes",
-            "generate_json_schema": "JSON Schema",
-            "generate_qiskit": "Qiskit circuit code",
-            "generate_supabase": "Supabase schema and client configuration",
-            "generate_json_object": "JSON object seed data",
-            "generate_baf": "BESSER Agent Framework chatbot",
-            "generate_bpmn": "BPMN process XML",
-            "generate_pytorch": "PyTorch neural network",
-            "generate_tensorflow": "TensorFlow neural network",
-            "generate_rest_api": "FastAPI REST endpoints",
-            "generate_rdf": "RDF / OWL vocabulary",
-        }.get(target_generator, target_generator)
+        gen_friendly = _TOOL_LABELS.get(target_generator, target_generator)
         base = f"Generate {gen_friendly} from {primary}"
     else:
         base = f"Generate code from {primary} (no deterministic generator — LLM writes from scratch)"

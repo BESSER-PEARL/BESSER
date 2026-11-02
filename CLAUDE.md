@@ -166,7 +166,7 @@ Invariants and rules:
 - **A new agent tool needs three edits**: `agent/tools.py`, `_TOOL_MODEL_REQUIREMENTS` in the same file, and a
   handler in `ToolExecutor._handlers` (`agent/tool_executor.py`); without the requirements entry it is
   offered on projects that cannot satisfy it. A generator tool is instead the `agent_tool` of its entry in
-  `besser/generators/registry.py` (schema + requirements) plus the handler.
+  `besser/generators/registry.py` (schema + requirements), its id in `AGENT_TOOL_ORDER`, plus the handler.
   `tests/spec_driven_agent/test_added_generator_tools.py` asserts every generator tool has both.
 - **New validator findings need a stable message prefix** classified in `_classify_issue` — the classifier
   keys on prefixes, not on which validator produced them. Severities: `blocker` (drives the auto-fix loop),
@@ -237,17 +237,19 @@ in one response. (Spec-Driven code validation is a separate, fourth layer; see a
    (`"module:Class"`, imported lazily), `output_type` `"file"`/`"zip"`, `requires_class_diagram`,
    `required_diagram_type`, `download_filename` (without one the download falls back to
    `<key>_output<ext>`), `keep_generated_filename` (keeps a single-file generator's own filename),
-   `web_editor`, `agent_tool`. Don't rename an existing `download_filename` — users rely on it.
+   `agent_tool`. Don't rename an existing `download_filename` — users rely on it.
    `tests/generators/test_generator_registry.py` pins both derived lists (snapshots in
    `tests/generators/snapshots/`)
 3. Tests in `tests/generators/<name>/`
 4. `docs/source/generators/<name>.rst`, added to a toctree **and** the "Choosing a Generator" table in
    `docs/source/generators.rst`
-5. If the LLM agent should call it: an `agent_tool` on its registry entry + a handler in `ToolExecutor._handlers`
+5. If the LLM agent should call it: an `agent_tool` (with its preview `label`) on its registry entry, its id in
+   `AGENT_TOOL_ORDER` (the prompt order; `agent_tools()` raises on a tool missing from it), a handler in
+   `ToolExecutor._handlers`, a row in `docs/source/spec_driven_agent/tools.rst`, and the tool in the pinned lists and
+   snapshots of `test_generator_registry.py`
 
 Walkthrough: `docs/source/generators/build_generator.rst` and `docs/source/contributing/create_generator.rst`.
-Entries with `optional_import=True` (the NN generators) are skipped by the editor when their import fails;
-the generator modules do not import `torch` / `tensorflow`, so in practice they always register. The Spec-Driven
+The NN generators register like any other: their modules do not import `torch` / `tensorflow`. The Spec-Driven
 Agent is not in `SUPPORTED_GENERATORS`; it has its own router rather than `/generate-output`.
 
 ### Pitfalls

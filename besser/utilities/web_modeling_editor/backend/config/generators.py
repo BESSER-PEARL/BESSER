@@ -4,7 +4,7 @@ Generator configuration and metadata for the BESSER backend.
 
 from typing import Dict, Any, NamedTuple, Optional
 
-from besser.generators.registry import web_editor_generators
+from besser.generators.registry import GENERATORS
 
 
 class GeneratorInfo(NamedTuple):
@@ -33,15 +33,9 @@ class GeneratorInfo(NamedTuple):
 def _supported_generators() -> Dict[str, GeneratorInfo]:
     """The web editor's generators, from ``besser.generators.registry``."""
     supported: Dict[str, GeneratorInfo] = {}
-    for spec in web_editor_generators():
-        try:
-            generator_class = spec.load_class()
-        except ImportError:
-            if spec.optional_import:
-                continue
-            raise
+    for spec in GENERATORS:
         supported[spec.id] = GeneratorInfo(
-            generator_class=generator_class,
+            generator_class=spec.load_class(),
             output_type=spec.output_type,
             file_extension=spec.file_extension,
             category=spec.category,

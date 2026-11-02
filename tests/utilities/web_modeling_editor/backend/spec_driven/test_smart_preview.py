@@ -18,7 +18,9 @@ from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     AssembledModels,
 )
+from besser.generators.registry import agent_tools
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview import (
+    _build_summary,
     _predict_target_generator,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
@@ -246,3 +248,38 @@ def test_preview_supports_new_registered_generators(
     generator, confidence = _predict_target_generator(assembled, instructions)
     assert generator == expected
     assert confidence >= 0.8
+
+
+# The summary wording per generator tool, as preview.py spelled it before the
+# labels moved onto the registry's AgentTool entries.
+SUMMARY_LABELS = {
+    "generate_fastapi_backend": "FastAPI backend (CRUD + ORM + schemas)",
+    "generate_django": "Django project (models + views + admin)",
+    "generate_web_app": "full-stack web app (FastAPI + React + Docker)",
+    "generate_react": "React frontend",
+    "generate_pydantic": "Pydantic models",
+    "generate_sqlalchemy": "SQLAlchemy ORM models",
+    "generate_sql": "SQL CREATE TABLE statements",
+    "generate_python_classes": "plain Python classes",
+    "generate_java_classes": "Java classes",
+    "generate_json_schema": "JSON Schema",
+    "generate_qiskit": "Qiskit circuit code",
+    "generate_supabase": "Supabase schema and client configuration",
+    "generate_json_object": "JSON object seed data",
+    "generate_baf": "BESSER Agent Framework chatbot",
+    "generate_bpmn": "BPMN process XML",
+    "generate_pytorch": "PyTorch neural network",
+    "generate_tensorflow": "TensorFlow neural network",
+    "generate_rest_api": "FastAPI REST endpoints",
+    "generate_rdf": "RDF / OWL vocabulary",
+}
+
+
+def test_summary_names_every_generator_tool_by_its_label():
+    assert {tool.name for tool in agent_tools()} == set(SUMMARY_LABELS)
+    assembled = AssembledModels(primary_kind="class", domain_model=object())
+    for name, label in SUMMARY_LABELS.items():
+        assert _build_summary(assembled, name, []) == f"Generate {label} from Class Diagram"
+    assert _build_summary(assembled, "generate_unknown", []) == (
+        "Generate generate_unknown from Class Diagram"
+    )

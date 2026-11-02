@@ -164,22 +164,12 @@ def test_agent_tool_schemas_match_the_snapshot():
 
 # -- Derivation rules ------------------------------------------------------------
 
-def test_optional_import_failure_skips_only_optional_generators(monkeypatch):
-    python = GENERATORS[0]
-    broken = replace(python, id="broken", class_path="besser.generators.no_such_module:Nope")
-    monkeypatch.setattr(backend_config, "web_editor_generators",
-                        lambda: (python, replace(broken, optional_import=True)))
-    assert list(backend_config._supported_generators()) == ["python"]
-    monkeypatch.setattr(backend_config, "web_editor_generators", lambda: (python, broken))
-    with pytest.raises(ImportError):
-        backend_config._supported_generators()
-
-
-def test_an_agent_tool_missing_from_the_order_comes_last(monkeypatch):
+def test_an_agent_tool_missing_from_the_order_raises(monkeypatch):
     extra = replace(GENERATORS[0], id="extra",
                     agent_tool=replace(GENERATORS[0].agent_tool, name="generate_extra"))
     monkeypatch.setattr(registry, "GENERATORS", (extra,) + GENERATORS)
-    assert [tool.name for tool in registry.agent_tools()][-1] == "generate_extra"
+    with pytest.raises(ValueError, match="extra"):
+        registry.agent_tools()
 
 
 # -- Docs --------------------------------------------------------------------------

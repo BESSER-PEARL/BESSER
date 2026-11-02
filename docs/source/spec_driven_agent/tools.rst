@@ -393,5 +393,5 @@ only there so a runaway command cannot fill the disk.
    when the models it needs are present), and a handler in
    ``ToolExecutor._handlers`` (``agent/tool_executor.py``). A generator tool is
    the ``agent_tool`` of the generator's entry in
-   ``besser/generators/registry.py`` (declaration and requirements in one), plus
-   the handler. See :doc:`../contributor_guide`.
+   ``besser/generators/registry.py`` (declaration and requirements in one), its
+   id in ``AGENT_TOOL_ORDER``, plus the handler. See :doc:`../contributor_guide`.

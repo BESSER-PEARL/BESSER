@@ -299,7 +299,7 @@ Working in core packages
   (so it is only offered when the models it needs are present), and a handler
   in ``ToolExecutor._handlers``. A generator tool is declared instead by the
   ``agent_tool`` of its entry in ``besser/generators/registry.py`` (which
-  carries its requirements) plus the handler. See
+  carries its requirements), its id in ``AGENT_TOOL_ORDER`` and the handler. See
   :doc:`spec_driven_agent/index`.
 * **Bidirectional converters** — if you support a feature in
   ``json_to_buml/``, add the symmetric path in ``buml_to_json/``. Round-trips

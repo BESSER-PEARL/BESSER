@@ -20,6 +20,8 @@ class AgentTool:
     """How the Spec-Driven Agent offers a generator as an LLM tool."""
 
     name: str
+    # Shown in the run preview's summary ("Generate <label> from ..."); not sent to the LLM.
+    label: str
     description: str
     # Models the tool needs loaded: domain, gui, quantum, object, agent, bpmn, nn.
     requires: frozenset[str]
@@ -51,9 +53,6 @@ class GeneratorSpec:
     download_filename: str | None = None
     # Single-file generators: download under the name the generator chose.
     keep_generated_filename: bool = False
-    # The web editor skips the generator when its import fails.
-    optional_import: bool = False
-    web_editor: bool = True
     agent_tool: AgentTool | None = None
 
     def load_class(self) -> type:
@@ -79,6 +78,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="classes.py",
         agent_tool=AgentTool(
             name="generate_python_classes",
+            label="plain Python classes",
             description=(
                 "Generate plain Python classes with __init__, getters/setters, relationships. "
                 "Output: classes.py"
@@ -95,6 +95,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="java_classes.zip",
         agent_tool=AgentTool(
             name="generate_java_classes",
+            label="Java classes",
             description="Generate Java classes from the domain model. Output: .java files zipped.",
             requires=_DOMAIN,
         ),
@@ -108,6 +109,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="pydantic_classes.py",
         agent_tool=AgentTool(
             name="generate_pydantic",
+            label="Pydantic models",
             description=(
                 "Generate Pydantic BaseModel classes from the domain model. "
                 "Produces validated data models with type hints and field validators. "
@@ -147,6 +149,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="django_project.zip",
         agent_tool=AgentTool(
             name="generate_django",
+            label="Django project (models + views + admin)",
             description=(
                 "Generate a full Django project with models, views, templates, URL routing, "
                 "and admin panel. Output: full Django project directory"
@@ -177,6 +180,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="fastapi_backend.zip",
         agent_tool=AgentTool(
             name="generate_fastapi_backend",
+            label="FastAPI backend (CRUD + ORM + schemas)",
             description=(
                 "Generate a complete, MODULAR FastAPI backend with CRUD endpoints, SQLAlchemy ORM, "
                 "and Pydantic models. This is the most complete backend generator. "
@@ -203,6 +207,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="web_app.zip",
         agent_tool=AgentTool(
             name="generate_web_app",
+            label="full-stack web app (FastAPI + React + Docker)",
             description=(
                 "Generate a complete full-stack web app: React frontend + FastAPI backend "
                 "+ Docker deployment. REQUIRES a GUI model. "
@@ -221,6 +226,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="sql_alchemy.py",
         agent_tool=AgentTool(
             name="generate_sqlalchemy",
+            label="SQLAlchemy ORM models",
             description=(
                 "Generate SQLAlchemy ORM models from the domain model. "
                 "Produces table definitions with relationships, foreign keys, and inheritance. "
@@ -246,6 +252,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="tables.sql",
         agent_tool=AgentTool(
             name="generate_sql",
+            label="SQL CREATE TABLE statements",
             description="Generate raw SQL CREATE TABLE statements. Output: tables.sql",
             requires=_DOMAIN,
         ),
@@ -259,6 +266,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         keep_generated_filename=True,
         agent_tool=AgentTool(
             name="generate_supabase",
+            label="Supabase schema and client configuration",
             description=(
                 "Generate Supabase-flavoured PostgreSQL DDL from the domain model — "
                 "UUID primary keys, auth.users mirroring, and Row-Level-Security (RLS) "
@@ -284,6 +292,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="json_schema.json",
         agent_tool=AgentTool(
             name="generate_json_schema",
+            label="JSON Schema",
             description="Generate JSON Schema from the domain model. Output: json_schema.json",
             requires=_DOMAIN,
             parameters={
@@ -305,6 +314,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="object_model.json",
         agent_tool=AgentTool(
             name="generate_json_object",
+            label="JSON object seed data",
             description=(
                 "Generate a JSON document of the object (instance) model — the concrete "
                 "instances and their attribute/relationship values (useful as seed data / "
@@ -324,6 +334,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="agent_output.zip",
         agent_tool=AgentTool(
             name="generate_baf",
+            label="BESSER Agent Framework chatbot",
             description=(
                 "Generate a BESSER Agent Framework (BAF) chatbot/agent project from the "
                 "agent model. REQUIRES an agent model. Output: a Python BAF agent project."
@@ -342,6 +353,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="qiskit_circuit.py",
         agent_tool=AgentTool(
             name="generate_qiskit",
+            label="Qiskit circuit code",
             description=(
                 "Generate a Qiskit Python script from the Quantum Circuit model. "
                 "REQUIRES a quantum circuit. Output: qiskit_circuit.py"
@@ -368,6 +380,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="vocabulary.ttl",
         agent_tool=AgentTool(
             name="generate_rdf",
+            label="RDF / OWL vocabulary",
             description="Generate RDF/OWL vocabulary (Turtle format). Output: vocabulary.ttl",
             requires=_DOMAIN,
         ),
@@ -381,6 +394,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="rest_api.zip",
         agent_tool=AgentTool(
             name="generate_rest_api",
+            label="FastAPI REST endpoints",
             description=(
                 "Generate FastAPI REST endpoints + Pydantic models. "
                 "Lighter than generate_fastapi_backend (no ORM). "
@@ -406,6 +420,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="react_app.zip",
         agent_tool=AgentTool(
             name="generate_react",
+            label="React frontend",
             description=(
                 "Generate a React TypeScript frontend from the domain model + GUI model. "
                 "REQUIRES a GUI model — fails without one. Output: full React app directory"
@@ -445,6 +460,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         download_filename="bpmn_diagram.bpmn",
         agent_tool=AgentTool(
             name="generate_bpmn",
+            label="BPMN process XML",
             description=(
                 "Generate vendor-neutral BPMN 2.0 XML from the BPMN process model. "
                 "REQUIRES a BPMN model. Output: bpmn_diagram.bpmn"
@@ -463,7 +479,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         required_diagram_type="DeploymentDiagram",
         download_filename="docker_compose.zip",
     ),
-    # Neural network generators, skipped by the web editor if their import fails.
+    # Neural network generators
     GeneratorSpec(
         id="pytorch",
         class_path="besser.generators.nn.pytorch.pytorch_code_generator:PytorchGenerator",
@@ -473,9 +489,9 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         requires_class_diagram=False,
         required_diagram_type="NNDiagram",
         download_filename="pytorch_nn.py",
-        optional_import=True,
         agent_tool=AgentTool(
             name="generate_pytorch",
+            label="PyTorch neural network",
             description=(
                 "Generate PyTorch neural-network training/eval code from the NN model. "
                 "REQUIRES a neural-network model (and PyTorch installed). Output: pytorch_nn.py"
@@ -499,9 +515,9 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         requires_class_diagram=False,
         required_diagram_type="NNDiagram",
         download_filename="tf_nn.py",
-        optional_import=True,
         agent_tool=AgentTool(
             name="generate_tensorflow",
+            label="TensorFlow neural network",
             description=(
                 "Generate TensorFlow/Keras neural-network training/eval code from the NN "
                 "model. REQUIRES a neural-network model (and TensorFlow installed). "
@@ -528,12 +544,11 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         requires_class_diagram=False,
         required_diagram_type="NNDiagram",
         keep_generated_filename=True,
-        optional_import=True,
     ),
 )
 
-# The agent's tool order, which is part of its prompt. A tool missing here is
-# offered after these, in registry order.
+# The agent's tool order, which is part of its prompt. Every generator with an
+# ``agent_tool`` must be listed; ``agent_tools()`` raises otherwise.
 AGENT_TOOL_ORDER: tuple[str, ...] = (
     "pydantic", "sqlalchemy", "backend", "django", "python", "java", "sql", "jsonschema",
     "rest_api", "react", "web_app", "rdf", "qiskit", "supabase", "jsonobject", "agent",
@@ -541,16 +556,12 @@ AGENT_TOOL_ORDER: tuple[str, ...] = (
 )
 
 
-def web_editor_generators() -> tuple[GeneratorSpec, ...]:
-    """The generators the web editor backend registers, in its order."""
-    return tuple(spec for spec in GENERATORS if spec.web_editor)
-
-
 def agent_tools() -> tuple[AgentTool, ...]:
     """The Spec-Driven Agent's generator tools, in prompt order."""
     rank = {gid: i for i, gid in enumerate(AGENT_TOOL_ORDER)}
-    specs = sorted(
-        (spec for spec in GENERATORS if spec.agent_tool is not None),
-        key=lambda spec: rank.get(spec.id, len(rank)),
-    )
+    specs = [spec for spec in GENERATORS if spec.agent_tool is not None]
+    unranked = [spec.id for spec in specs if spec.id not in rank]
+    if unranked:
+        raise ValueError(f"Agent tools missing from AGENT_TOOL_ORDER: {unranked}")
+    specs.sort(key=lambda spec: rank[spec.id])
     return tuple(spec.agent_tool for spec in specs)

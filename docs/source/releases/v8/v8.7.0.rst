@@ -154,7 +154,8 @@ Repository cleanup
   * ``db``: database drivers;
   * ``agents``: the Spec-Driven Agent's clients, ``tiktoken`` and Pygments;
   * ``dev``: pytest;
-  * ``all``: every extra above except ``dev``.
+  * ``all``: every extra except ``dev``, including ``nn`` (PyTorch) and
+    ``kg``.
 
   Without the extra it needs, a generator names the ``pip install
   "besser[...]"`` to run. PyYAML joins the base install, which fixes the

@@ -242,6 +242,10 @@ model_prices_and_context_window.json
     then keep rows whose ``litellm_provider`` is anthropic/openai/mistral/
     nebius/bedrock and the ``*_cost_per_token`` fields.
 
+    The modeling-agent prices its calls from a byte-identical copy
+    (``src/resources/model_prices.json`` there): copy the refreshed file
+    over it in the same change.
+
     Returns ``{}`` if the file is missing (a wheel built without it), which
     falls the caller through to ``_MODEL_PRICING`` rather than to $0 — an
     absent price must never read as free, or the cost cap stops existing.

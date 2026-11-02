@@ -31,7 +31,7 @@ from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
 from besser.spec_driven_agent.validation.write_diagnostics import (
     python_structural_diagnostics, workspace_uses_sqlite,
 )
-from besser.utilities.llm_utils import extract_json
+from besser.llm import extract_json
 from besser.utilities.workspace_fs import walk_plain
 
 logger = logging.getLogger(__name__)

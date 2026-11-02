@@ -4,7 +4,7 @@
 callable (its ``Completer``). This module builds it for the provider the user's
 key belongs to.
 
-* **OpenAI** keeps the dedicated chat transport in ``besser.utilities.llm_utils``
+* **OpenAI** keeps the dedicated chat transport in ``besser.llm.openai_chat``
   (timeout, every failure raised as ``LLMUpstreamError``).
 * **Anthropic, Mistral and Nebius** go through the Spec-Driven Agent's provider
   clients (``create_llm_client``), so their SDK handling and model quirks are
@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, List, TypeVar
 
 from besser.BUML.notations.kg_to_buml import Completer
-from besser.utilities.llm_utils import LLMUpstreamError, call_openai_chat_json
+from besser.llm import LLMUpstreamError, call_openai_chat_json
 from besser.utilities.secret_redaction import mask_secret
 from besser.utilities.web_modeling_editor.backend.models import KGLLMRequest
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (

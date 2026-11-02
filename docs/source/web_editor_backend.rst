@@ -238,7 +238,7 @@ optional ``llm_model`` (the provider's default otherwise) and the caller's own
 ``maxOrphanClassifyNodes`` per request (80 by default; the editor reads the
 limit from ``/kg/config`` and sends larger sets in batches). The key is a
 ``SecretStr`` and is never logged. OpenAI is reached
-through the transport in ``besser.utilities.llm_utils``; the other providers go
+through the transport in ``besser.llm.openai_chat``; the other providers go
 through the Spec-Driven Agent's provider clients, with their retry loop off:
 each model call is one attempt bounded by what is left of the request's
 deadline (``llmRequestTimeoutSeconds``). The server-paid tiers and the

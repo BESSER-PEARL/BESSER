@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
+from besser.llm import anthropic_client, openai_client
 from besser.spec_driven_agent.errors import InvalidApiKeyError, UpstreamLLMError
 from besser.spec_driven_agent.providers.model_settings import (
     DEFAULT_MAX_OUTPUT_TOKENS,
@@ -941,14 +942,6 @@ class ClaudeLLMClient(LLMProvider):
         timeout: float | None = None,
         max_retries: int | None = None,
     ):
-        try:
-            import anthropic
-        except ImportError:
-            raise ImportError(
-                "The 'anthropic' package is required for LLM generation. "
-                "Install it with: pip install besser[agents]"
-            ) from None
-
         client_kwargs: dict[str, Any] = {
             "api_key": api_key,
             "timeout": timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS,
@@ -959,7 +952,7 @@ class ClaudeLLMClient(LLMProvider):
         if resolved_base:
             client_kwargs["base_url"] = resolved_base
 
-        self._client = anthropic.Anthropic(**client_kwargs)
+        self._client = anthropic_client(**client_kwargs)
         self._max_retries = _resolve_max_retries(max_retries)
         self._model = model or self.DEFAULT_MODEL
         self._max_tokens = max_tokens or max_output_tokens(self._model)
@@ -1650,14 +1643,6 @@ class OpenAIProvider(LLMProvider):
         free_route: bool = False,
         max_retries: int | None = None,
     ):
-        try:
-            from openai import OpenAI
-        except ImportError:
-            raise ImportError(
-                "The 'openai' package is required for the OpenAI provider. "
-                "Install it with: pip install openai"
-            ) from None
-
         client_kwargs: dict[str, Any] = {
             "api_key": api_key,
             "timeout": timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS,
@@ -1670,7 +1655,7 @@ class OpenAIProvider(LLMProvider):
         if default_headers:
             client_kwargs["default_headers"] = default_headers
 
-        self._client = OpenAI(**client_kwargs)
+        self._client = openai_client(**client_kwargs)
         self._max_retries = _resolve_max_retries(max_retries)
         # Kept because reasoning_effort support is endpoint-specific, not just
         # model-specific — see _needs_reasoning_none_for_tools.
@@ -1729,8 +1714,6 @@ class OpenAIProvider(LLMProvider):
                 self._fallback_step += 1
         if self._fallback_step >= len(self._fallback_chain):
             return False
-        from openai import OpenAI
-
         base_url, token, fb_model = self._fallback_chain[self._fallback_step]
         self._fallback_step += 1
         client_kwargs: dict[str, Any] = {
@@ -1747,7 +1730,7 @@ class OpenAIProvider(LLMProvider):
             self._model, error, self._fallback_step,
             len(self._fallback_chain), fb_model,
         )
-        self._client = OpenAI(**client_kwargs)
+        self._client = openai_client(**client_kwargs)
         self._base_url = base_url
         self._model = fb_model
         self._usage.reprice(fb_model, self._is_billed_route(base_url), base_url)

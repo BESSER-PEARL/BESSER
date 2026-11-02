@@ -51,6 +51,22 @@ ignore_imports = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "The LLM layer imports no caller of it"
+type = "forbidden"
+# besser.llm sits below everything that calls an LLM, the notations included.
+# Of the utilities it uses only the secret redaction leaf.
+source_modules = ["besser.llm"]
+forbidden_modules = [
+    "besser.BUML",
+    "besser.generators",
+    "besser.spec_driven_agent",
+    "besser.utilities.image_to_buml",
+    "besser.utilities.kg_llm_to_buml",
+    "besser.utilities.llm_utils",
+    "besser.utilities.web_modeling_editor",
+]
+
+[[tool.importlinter.contracts]]
 name = "Utilities do not import the generators, the agent or the editor backend"
 type = "forbidden"
 source_modules = [

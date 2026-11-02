@@ -51,7 +51,8 @@ lint-imports            # pip install import-linter==2.15
 ```
 `lint-imports` enforces the layers: editor backend -> Spec-Driven Agent -> generators -> notations ->
 metamodel, each importing only the layers below it, and `besser.utilities` (outside the backend) never
-importing the generators, the agent or the backend. Known exceptions are listed, with the change that
+importing the generators, the agent or the backend. `besser.llm` imports none of its callers (of the
+utilities, only `secret_redaction`), so every layer can use it. Known exceptions are listed, with the change that
 removes each, in `ignore_imports`; do not add one to make a new import pass.
 `F821` (undefined names) is on because `from __future__ import annotations` hides them from every other
 rule here. The `mockup_to_buml/llm_assistant` prompt examples are few-shot snippets, not importable
@@ -94,6 +95,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 |------|------|
 | `besser/BUML/metamodel/` | Abstract syntax: `structural/` (DomainModel, Class, Property, associations, generalization), `state_machine/`, `gui/`, `action_language/` (BAL), `bpmn/`, `deployment/`, `feature_model/`, `nn/`, `object/`, `ocl/`, `project/`, `quantum/` |
 | `besser/BUML/notations/` | ANTLR-based parsers (PlantUML class/object, OCL, NN, deployment, BAL), draw.io import, LLM-assisted mockup → model, knowledge graph ↔ OWL/RDF/SHACL: import, export and the projection the conversion reads (`kg_rdf/`), KG → class diagram (`kg_to_buml/`) |
+| `besser/llm/` | The LLM access layer every caller shares: OpenAI chat over HTTP (`openai_chat.py`: timeout, optional SDK-style retries, errors that never echo the provider's body), lazy `openai`/`anthropic` SDK clients (`sdk.py`), JSON-from-reply helpers. `besser.utilities.llm_utils` re-exports it |
 | `besser/utilities/image_to_buml.py`, `kg_llm_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram via an LLM (`kg_to_buml.py` is its deprecated alias) |
 | `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/` |

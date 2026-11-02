@@ -3,6 +3,7 @@ import logging
 import os
 
 from besser.BUML.metamodel.state_machine.agent import AgentReply
+from besser.llm import openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +103,7 @@ def call_openai_chat(system_prompt, user_prompt, model=DEFAULT_OPENAI_MODEL, ope
             f"OpenAI API key not found. Set '{OPENAI_API_KEY_ENV_VAR}' or pass it via generator config."
         )
 
-    try:
-        from openai import OpenAI  # lazy import – optional dependency
-    except ImportError as exc:
-        raise ImportError(
-            "OpenAI personalization requires the 'agents' extra: pip install besser[agents]"
-        ) from exc
-    client = OpenAI(api_key=resolved_api_key)
+    client = openai_client(api_key=resolved_api_key)
     response = client.chat.completions.create(
         model=model,
         messages=[

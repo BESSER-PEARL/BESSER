@@ -1,7 +1,7 @@
 from besser.BUML.metamodel.uml_component import AgentCategory, AgenticEdgeKind
 from besser.BUML.metamodel.uml_component import Locality as ComponentLocality
 from besser.BUML.metamodel.uml_deployment import NodeKind
-from besser.utilities.llm_utils import DEFAULT_OPENAI_MODEL
+from besser.llm import DEFAULT_OPENAI_MODEL
 from besser.BUML.notations.kg_to_buml.consistency import DEFAULT_CONSISTENCY_TIMEOUT_SECONDS
 from besser.generators.spring.spring_backend_generator import (
     DEFAULT_JAVA_VERSION as _SPRING_DEFAULT_JAVA_VERSION,

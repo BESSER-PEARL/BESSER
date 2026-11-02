@@ -50,7 +50,7 @@ from besser.BUML.notations.kg_to_buml import (
     kg_to_class_diagram as kg_to_class_diagram_buml,
 )
 from besser.BUML.notations.kg_to_buml.consistency import ConsistencyCheckError
-from besser.utilities.llm_utils import LLMUpstreamError
+from besser.llm import LLMUpstreamError
 
 # Custom exception types translated to HTTP codes by @handle_endpoint_errors.
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (

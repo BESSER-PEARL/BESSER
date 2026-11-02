@@ -285,7 +285,9 @@ and note the merge order.
 
 ## CI/CD
 - `.github/workflows/ci.yml` — on PRs to `master`/`development`: tests (3.11, 3.12), the ruff command above,
-  and the docs gate. It does **not** build the frontend.
+  and the docs gate. It does **not** build the frontend, but `.github/scripts/check_openapi.py` fails when the
+  editor's committed `packages/webapp/openapi/besser-openapi.json` (frontend submodule) differs from
+  `app.openapi()`: a backend change to a route, model or docstring then needs the editor's `npm run api:generate`.
 - `security.yml` — CodeQL. `python-publish.yml` — PyPI release.
 - `deploy-wme.yml` — manual (`workflow_dispatch`) build + push of backend, `smartgen_worker`, frontend and
   agent-simulator images, then EC2 deploy. A backend deploy recreates `besser-wme-backend` and

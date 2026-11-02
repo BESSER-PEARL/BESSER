@@ -624,6 +624,11 @@ class ToolExecutor:
         """Turn on the edit-first guardrail (modify runs only)."""
         self._modify_guard = True
 
+    def update_generator_files(self, written: list[str], removed: list[str]) -> None:
+        """Follow a regeneration: the scaffold guard protects what it wrote, not what it deleted."""
+        self._generator_files.update(written)
+        self._generator_files.difference_update(removed)
+
     def lock_generators(self, names) -> None:
         """Refuse these generators from now on (added to any already locked):
         re-running one would regenerate the app over every edit made since."""

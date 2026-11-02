@@ -148,7 +148,7 @@ def _line_hash(line: str) -> str:
     return hashlib.sha256(line.encode("utf-8")).hexdigest()[:_HASH_LEN]
 
 
-def _read_lines(workspace: str, rel: str) -> Optional[list[str]]:
+def read_text_lines(workspace: str, rel: str) -> Optional[list[str]]:
     """The file's lines without line endings, or None when it is not attributable
     (absent, a link or reached through one, special, too large, or not text)."""
     try:
@@ -165,11 +165,6 @@ def _read_lines(workspace: str, rel: str) -> Optional[list[str]]:
     except UnicodeDecodeError:
         return None
     return text.splitlines()
-
-
-def read_text_lines(workspace: str, rel: str) -> Optional[list[str]]:
-    """The lines attribution would record for ``rel``, or None (see ``_read_lines``)."""
-    return _read_lines(workspace, rel)
 
 
 def line_hashes(lines: list[str]) -> list[str]:
@@ -304,20 +299,37 @@ class AttributionState:
         old_hashes, old_owners = old
         if old_hashes == new_hashes:
             return 0
-        owners = [index] * len(new_hashes)
-        kept = 0
-        if max(len(old_hashes), len(new_hashes)) > _MAX_DIFF_LINES:
-            blocks = _head_and_tail(old_hashes, new_hashes)
-        else:
-            blocks = difflib.SequenceMatcher(
-                None, old_hashes, new_hashes, autojunk=False
-            ).get_matching_blocks()
-        for a, b, size in blocks:
-            for offset in range(size):
-                owners[b + offset] = old_owners[a + offset]
-            kept += size
+        owners, kept = _carry_owners(old_hashes, old_owners, new_hashes, index)
         self.files[rel] = (new_hashes, owners)
         return len(new_hashes) - kept
+
+    def owners_of(self, rel: str, lines: list[str]) -> list[int]:
+        """The contributor index of each of ``lines``, ``rel`` as it is now; ``-1`` for a
+        line changed since the state was recorded. The state itself is not updated."""
+        new_hashes = [_line_hash(line) for line in lines]
+        if rel not in self.files:
+            return [-1] * len(new_hashes)
+        old_hashes, old_owners = self.files[rel]
+        return _carry_owners(old_hashes, old_owners, new_hashes, -1)[0]
+
+
+def _carry_owners(
+    old_hashes: list[str], old_owners: list[int], new_hashes: list[str], fill: int
+) -> tuple[list[int], int]:
+    """New lines' owners: unchanged lines keep theirs, the rest get ``fill``; also the count kept."""
+    owners = [fill] * len(new_hashes)
+    kept = 0
+    if max(len(old_hashes), len(new_hashes)) > _MAX_DIFF_LINES:
+        blocks = _head_and_tail(old_hashes, new_hashes)
+    else:
+        blocks = difflib.SequenceMatcher(
+            None, old_hashes, new_hashes, autojunk=False
+        ).get_matching_blocks()
+    for a, b, size in blocks:
+        for offset in range(size):
+            owners[b + offset] = old_owners[a + offset]
+        kept += size
+    return owners, kept
 
 
 def _head_and_tail(old: list[str], new: list[str]) -> list[tuple[int, int, int]]:
@@ -424,7 +436,7 @@ def record_generated_files(
                 rel = str(rel).replace("\\", "/")
                 if rel.split("/", 1)[0] in _ALWAYS_SKIPPED_DIRS:
                     continue
-                lines = _read_lines(workspace, rel)
+                lines = read_text_lines(workspace, rel)
                 if lines is None:
                     state.files.pop(rel, None)
                 else:
@@ -470,7 +482,7 @@ def _reconcile(
     else:
         targets = sorted({str(p).replace("\\", "/") for p in paths})
     for rel in targets:
-        lines = _read_lines(workspace, rel)
+        lines = read_text_lines(workspace, rel)
         if lines is None:
             state.files.pop(rel, None)
             continue
@@ -557,7 +569,7 @@ def build_trace_record(
     files: list[dict] = []
     totals = {KIND_GENERATOR: 0, KIND_AI: 0, KIND_HUMAN: 0, KIND_UNKNOWN: 0}
     for rel in sorted(state.files):
-        lines = _read_lines(workspace, rel)
+        lines = read_text_lines(workspace, rel)
         hashes, owners = state.files[rel]
         if lines is None or len(lines) != len(owners) or not owners:
             continue

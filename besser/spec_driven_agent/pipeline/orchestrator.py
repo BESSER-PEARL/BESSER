@@ -241,6 +241,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
 from besser.spec_driven_agent.pipeline.edit_loop_guards import EditLoopGuardsMixin
 from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
 from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin
+from besser.spec_driven_agent.pipeline.regeneration import Regeneration
 
 
 class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
@@ -636,7 +637,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # The classes model sync added (its LLM answer), so a resume replays them.
         self._model_sync_classes: list[dict] = []
         # The modify run's regeneration of untouched generated files (#659).
-        self._regeneration = None
+        self._regeneration: Regeneration | None = None
+        # Every file the seed run delivered (its recipe); None without a recipe.
+        self._seed_output_files: set[str] | None = None
         # Generator files earlier runs' LLM edited, from the seed recipe.
         self._seed_llm_modified: set[str] = set()
         # Why the model-sync call failed, for the trace and the recipe.

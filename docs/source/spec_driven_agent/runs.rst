@@ -119,7 +119,8 @@ the generated files nobody edited are regenerated before Phase 2:
 - An untouched file becomes the generator's output for the new model, byte for
   byte.
 - A file the new model adds (the router of a new class) is written. A
-  generated file that was deleted since the previous run is not brought back.
+  generated file that was deleted since the previous run (as listed in that
+  run's recipe) is not brought back.
 - An untouched file the new model no longer produces is deleted, unless
   another file of the app still names it.
 - An edited file is kept as it is. The agent gets, per file, where the new
@@ -131,13 +132,14 @@ the generated files nobody edited are regenerated before Phase 2:
   do not make a file look untouched.
 
 The agent sees the result under "Regenerated files" in its inventory and as a
-Phase 2 issue. The trace records it as a ``regeneration`` event. An app with no
-trustworthy attribution, for example a repository pushed before attribution
-existed, is not regenerated; a warning is logged and the run continues as
-before. Other generators are not regenerated yet. On a sample of 44 FastAPI runs
-(one domain, scripted model changes), this alone finished the backend change in
-about 70% of the runs, and each of those apps still started and created records
-(`#659 <https://github.com/BESSER-PEARL/BESSER/issues/659>`_).
+Phase 2 issue; lines quoted from files are marked as file content. The trace
+records a ``regeneration`` event, also when regeneration is skipped, with the
+reason. An app with no trustworthy attribution, for example a repository pushed
+before attribution existed, is not regenerated: a warning is logged and the run
+continues as before. Other generators are not regenerated yet.
+
+A generator file an earlier run's LLM edited stays marked ``llm_modified`` in
+the recipe of every later modify run, until regeneration replaces it.
 
 After Phase 2 a deterministic check compares the FastAPI backend
 (``sql_alchemy.py`` and the ``<Class>Create`` schemas in

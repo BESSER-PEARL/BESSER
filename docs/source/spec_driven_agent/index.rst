@@ -83,8 +83,9 @@ Limitations
   instructions. :ref:`Modify mode <spec-driven-modify-mode>` carries a previous
   run's files forward, but hand-written edits made outside BESSER are not
   re-derivable from the model and are not carried across a from-scratch
-  re-generation. A modify run regenerates only the generated files nobody
-  edited; merging a model change into edited files is planned.
+  re-generation. When the model changed, a modify run of a FastAPI backend
+  regenerates the generated files nobody edited; the agent updates the edited
+  ones by hand, and an automatic merge is planned.
 - **Validation has a defined scope.** :doc:`Phase 3 <validation>` checks
   syntax, imports, contracts and lint. Authorised sandboxed checks can also
   boot a supported backend, create records, compile code, and build a frontend.

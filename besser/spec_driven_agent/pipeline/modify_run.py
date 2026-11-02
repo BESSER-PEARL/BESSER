@@ -21,6 +21,7 @@ import time
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
+from besser.spec_driven_agent.pipeline.regeneration import MAX_REASON_CHARS, regenerate_untouched
 from besser.spec_driven_agent.planning.model_change import (
     FULL_MODEL,
     compare_with_base,
@@ -33,7 +34,6 @@ from besser.spec_driven_agent.planning.model_rules import (
 from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
-from besser.spec_driven_agent.pipeline.regeneration import regenerate_untouched
 from besser.spec_driven_agent.planning.target import (
     MODIFY_RULES,
     STACK_RULES,
@@ -330,20 +330,23 @@ class ModifyRunMixin:
             return
         generator = self._seed_generator_used
         if not generator:
+            # Nothing to regenerate: the app was written without a BESSER generator.
+            logger.info("Model changed; the app has no generator output to regenerate")
+            self._trace.write(EVENT_REGENERATION, generator=None, skipped="the app has no generator output")
             return
         try:
-            regeneration, reason = regenerate_untouched(self.output_dir, generator, self.domain_model)
+            regeneration, reason = regenerate_untouched(
+                self.output_dir, generator, self.domain_model, self._seed_output_files)
         except Exception as exc:
             # The run goes on as before: the agent applies the whole model change.
             logger.warning("Regenerating untouched files failed", exc_info=True)
-            regeneration, reason = None, f"it failed: {type(exc).__name__}: {exc}"[:300]
+            regeneration, reason = None, f"it failed: {type(exc).__name__}: {exc}"[:MAX_REASON_CHARS]
         if regeneration is None:
             logger.warning("Generated files not regenerated for the model change: %s", reason)
             self._trace.write(EVENT_REGENERATION, generator=generator, skipped=reason)
             return
         self._regeneration = regeneration
-        self.executor._generator_files.update(regeneration.written)
-        self.executor._generator_files.difference_update(regeneration.removed)
+        self.executor.update_generator_files(regeneration.written, regeneration.removed)
         # Regenerated files hold the generator's text again.
         self._seed_llm_modified.difference_update(regeneration.written)
         self._trace.write(
@@ -426,6 +429,9 @@ class ModifyRunMixin:
         except Exception:
             logger.debug("Seed recipe validation_issues malformed", exc_info=True)
         try:
+            self._seed_output_files = {
+                entry["path"] for entry in recipe.get("output_files", [])
+                if isinstance(entry, dict) and isinstance(entry.get("path"), str)}
             for entry in recipe.get("output_files", []):
                 if (
                     isinstance(entry, dict)

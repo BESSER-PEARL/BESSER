@@ -47,8 +47,8 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
-from besser.utilities.web_modeling_editor.backend.settings import get_settings, is_demo_token
-from besser.utilities.web_modeling_editor.backend.dependencies import SpecDrivenRuntimeDep
+from besser.utilities.web_modeling_editor.backend.settings import is_demo_token
+from besser.utilities.web_modeling_editor.backend.dependencies import SettingsDep, SpecDrivenRuntimeDep
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     DurableRunManager,
     SmartGenerationRunner,
@@ -267,6 +267,7 @@ def _run_stream_response(
 async def smart_generate(
     request: SmartGenerateRequest,
     runtime: SpecDrivenRuntimeDep,
+    settings: SettingsDep,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ) -> StreamingResponse:
     """Stream an LLM-orchestrated code generation run as SSE events.
@@ -357,10 +358,10 @@ async def smart_generate(
             run_id,
             source,
             on_abandoned=(
-                cancel_event.set if get_settings().llm_cancel_abandoned_runs else None
+                cancel_event.set if settings.llm_cancel_abandoned_runs else None
             ),
             resume_available=lambda: _locate_run_temp_dir(run_id) is not None,
-            disconnect_grace_seconds=get_settings().llm_disconnected_grace_seconds,
+            disconnect_grace_seconds=settings.llm_disconnected_grace_seconds,
         )
     except Exception:
         await runtime.active_runs.release(run_id, cancel_event)
@@ -509,7 +510,7 @@ def _free_tier_model_choices() -> list[dict]:
 
 
 @router.get("/spec-driven/config")
-async def smart_gen_config() -> dict:
+async def smart_gen_config(settings: SettingsDep) -> dict:
     """Expose the server's current spec-driven generation configuration.
 
     The frontend reads this once at app startup (or before rendering
@@ -520,7 +521,6 @@ async def smart_gen_config() -> dict:
     Nothing here is a secret — everything exposed is either a public
     cap or a feature flag. API keys and run IDs are never returned.
     """
-    settings = get_settings()
     return {
         "caps": {
             "max_cost_usd_hard_cap": settings.llm_max_cost_usd_hard_cap,
@@ -644,6 +644,7 @@ async def resume_smart_gen(
     run_id: str,
     request: SmartGenerateRequest,
     runtime: SpecDrivenRuntimeDep,
+    settings: SettingsDep,
 ) -> StreamingResponse:
     """Resume a spec-driven generate run that crashed before completion.
 
@@ -719,10 +720,10 @@ async def resume_smart_gen(
             source,
             resume=True,
             on_abandoned=(
-                cancel_event.set if get_settings().llm_cancel_abandoned_runs else None
+                cancel_event.set if settings.llm_cancel_abandoned_runs else None
             ),
             resume_available=lambda: _locate_run_temp_dir(run_id) is not None,
-            disconnect_grace_seconds=get_settings().llm_disconnected_grace_seconds,
+            disconnect_grace_seconds=settings.llm_disconnected_grace_seconds,
         )
     except Exception:
         await runtime.active_runs.release(run_id, cancel_event)
@@ -790,7 +791,7 @@ async def download_smart(
     """Download the output produced by a completed run.
 
     Re-downloadable until the TTL sweep expires the entry
-    (``LLM_DOWNLOAD_TTL_SECONDS``, default 30 min) — a transient network
+    (``BESSER_LLM_DOWNLOAD_TTL_SECONDS``, default 30 min) — a transient network
     failure during the blob fetch must not permanently lose an artifact
     the user paid minutes and dollars to produce. Cleanup is owned
     entirely by ``SmartRunRegistry.periodic_sweep``; this endpoint no

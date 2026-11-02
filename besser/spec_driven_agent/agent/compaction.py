@@ -30,14 +30,12 @@ logger = logging.getLogger(__name__)
 # too low therefore does not "save context" - it produces a read/compact/
 # re-read spiral that can run until the runtime cap.
 _COMPACT_THRESHOLD_SETTING = AgentSettings().llm_compact_threshold
-COMPACT_TOKEN_THRESHOLD = max(8_000, int(_COMPACT_THRESHOLD_SETTING or 80_000))
+COMPACT_TOKEN_THRESHOLD = _COMPACT_THRESHOLD_SETTING or 80_000
 # Set explicitly, the same variable is also a hard cap on the adaptive
 # threshold of every known-window model (see ``effective_threshold``): an
 # operator lowering it to cut cost gets exactly that, not silence. Unset,
 # the adaptive value stands, up to MAX_COMPACT_THRESHOLD.
-_OPERATOR_CAP: int | None = (
-    COMPACT_TOKEN_THRESHOLD if _COMPACT_THRESHOLD_SETTING else None
-)
+_OPERATOR_CAP: int | None = _COMPACT_THRESHOLD_SETTING
 # The preserved tail is sized in TOKENS, not messages: six write_file turns
 # and six one-line turns differ by two orders of magnitude, so a fixed count
 # either frees nothing or leaves the model without its working set.
@@ -156,7 +154,7 @@ _USABLE_WINDOW_FRACTION = 0.8
 # paid plan, and prefill latency the runtime cap cannot absorb. 200k is 2.5x
 # the flat default and bounds the per-turn prompt at ~threshold + reserve
 # whatever the window says.
-MAX_COMPACT_THRESHOLD = int(AgentSettings().llm_max_compact_threshold or 200_000)
+MAX_COMPACT_THRESHOLD = AgentSettings().llm_max_compact_threshold
 
 
 def _fetch_models(base_url: str, token: str) -> dict[str, int]:

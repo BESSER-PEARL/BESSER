@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 # provider call can stall a turn for that long with no signal. 300s is
 # generous enough for a full 16k-token streaming turn while still
 # bounding the worst case.
-_DEFAULT_SDK_TIMEOUT_SECONDS = float(AgentSettings().llm_call_timeout_seconds)
+_DEFAULT_SDK_TIMEOUT_SECONDS = AgentSettings().llm_call_timeout_seconds
 
 # Output-token ceiling used for from-scratch generation (no deterministic
 # Phase-1 scaffold to build on -- see LLMOrchestrator._apply_adaptive_budget).
@@ -75,7 +75,7 @@ _DEFAULT_SDK_TIMEOUT_SECONDS = float(AgentSettings().llm_call_timeout_seconds)
 # silently writing partial content -- see the ``stop_reason in
 # ("max_tokens", "length")`` handling in ``orchestrator.py``.  Env-tunable
 # since the safe ceiling depends on the model/provider in use.
-FROM_SCRATCH_MAX_TOKENS = int(AgentSettings().llm_from_scratch_max_tokens)
+FROM_SCRATCH_MAX_TOKENS = AgentSettings().llm_from_scratch_max_tokens
 
 # Output-token ceiling used for modify/fix runs (LLMOrchestrator.modify()).
 # A modify/fix run routinely rewrites a whole existing file in a single
@@ -91,8 +91,8 @@ FROM_SCRATCH_MAX_TOKENS = int(AgentSettings().llm_from_scratch_max_tokens)
 # is actually generated. Defaults to the from-scratch value; env-tunable
 # since the safe ceiling depends on the model/provider in use.
 _MODIFY_MAX_TOKENS_SETTING = AgentSettings().llm_modify_max_tokens
-MODIFY_MAX_TOKENS = int(
-    str(FROM_SCRATCH_MAX_TOKENS) if _MODIFY_MAX_TOKENS_SETTING is None else _MODIFY_MAX_TOKENS_SETTING
+MODIFY_MAX_TOKENS = (
+    FROM_SCRATCH_MAX_TOKENS if _MODIFY_MAX_TOKENS_SETTING is None else _MODIFY_MAX_TOKENS_SETTING
 )
 
 
@@ -2206,9 +2206,9 @@ FREE_TIER_PROVIDER = "free"
 SPONSORED_PROVIDER = "sponsored"
 
 
-def sponsored_tier_model() -> str:
+def sponsored_tier_model(settings: AgentSettings | None = None) -> str:
     """Default model for the sponsored tier (from server env), or ``""``."""
-    return AgentSettings().sponsored_llm_model.strip()
+    return (settings or AgentSettings()).sponsored_llm_model.strip()
 
 
 def sponsored_tier_available() -> bool:
@@ -2217,7 +2217,7 @@ def sponsored_tier_available() -> bool:
     return bool(
         settings.sponsored_llm_base_url.strip()
         and settings.sponsored_llm_token.get_secret_value().strip()
-        and sponsored_tier_model()
+        and sponsored_tier_model(settings)
     )
 
 
@@ -2232,32 +2232,33 @@ def _resolve_sponsored_tier_config() -> tuple[str, str, str]:
             "(BESSER_SPONSORED_LLM_BASE_URL / BESSER_SPONSORED_LLM_TOKEN "
             "are unset)."
         )
-    return base_url, token, sponsored_tier_model()
+    return base_url, token, sponsored_tier_model(settings)
 
 
-def free_tier_model() -> str:
+def free_tier_model(settings: AgentSettings | None = None) -> str:
     """The model served by the free tier (from server env), or ``""``."""
-    return AgentSettings().free_llm_model.strip()
+    return (settings or AgentSettings()).free_llm_model.strip()
 
 
 def free_tier_available() -> bool:
     """True when the server is configured to offer the keyless free tier."""
+    settings = AgentSettings()
     return bool(
-        AgentSettings().free_llm_base_url.strip()
-        and free_tier_model()
+        settings.free_llm_base_url.strip()
+        and free_tier_model(settings)
     )
 
 
-def _resolve_free_tier_config() -> tuple[str, str, str]:
+def _resolve_free_tier_config(settings: AgentSettings | None = None) -> tuple[str, str, str]:
     """Return ``(base_url, token, model)`` for the free tier from server env.
 
     Raises ``ValueError`` if the free tier is not configured, so a run started
     against an unconfigured server fails fast with a clear message rather than
     silently falling back to a paid provider.
     """
-    settings = AgentSettings()
+    settings = settings or AgentSettings()
     base_url = settings.free_llm_base_url.strip()
-    model = free_tier_model()
+    model = free_tier_model(settings)
     if not base_url or not model:
         raise ValueError(
             "The free tier is not available on this server "
@@ -2267,7 +2268,7 @@ def _resolve_free_tier_config() -> tuple[str, str, str]:
     return base_url, token, model
 
 
-def _resolve_free_fallback_config() -> tuple[str, str, str] | None:
+def _resolve_free_fallback_config(settings: AgentSettings | None = None) -> tuple[str, str, str] | None:
     """Return ``(base_url, token, model)`` for the keyless-tier fallback
     endpoint, or ``None`` when no fallback is configured.
 
@@ -2277,7 +2278,7 @@ def _resolve_free_fallback_config() -> tuple[str, str, str] | None:
     the provider switches to this endpoint for the rest of the run.
     Typically points at a self-hosted qwen endpoint.
     """
-    settings = AgentSettings()
+    settings = settings or AgentSettings()
     base_url = settings.free_llm_fallback_base_url.strip()
     model = settings.free_llm_fallback_model.strip()
     if not base_url or not model:
@@ -2286,9 +2287,9 @@ def _resolve_free_fallback_config() -> tuple[str, str, str] | None:
     return base_url, token, model
 
 
-def free_fallback_model() -> str:
+def free_fallback_model(settings: AgentSettings | None = None) -> str:
     """The model served by the keyless-tier fallback endpoint, or ``""``."""
-    config = _resolve_free_fallback_config()
+    config = _resolve_free_fallback_config(settings)
     return config[2] if config else ""
 
 
@@ -2308,16 +2309,17 @@ def _resolve_free_fallback_chain(chosen: str) -> list[tuple[str, str, str]]:
     ``chosen`` is skipped wherever it appears: a run already pinned to a model
     must never "fall back" to the model it is already using.
     """
+    settings = AgentSettings()
     chain: list[tuple[str, str, str]] = []
     try:
-        primary_base_url, primary_token, _ = _resolve_free_tier_config()
+        primary_base_url, primary_token, _ = _resolve_free_tier_config(settings)
     except ValueError:
         primary_base_url, primary_token = "", ""
     if primary_base_url:
-        for alt in free_alt_models():
+        for alt in free_alt_models(settings):
             if alt and alt != chosen:
                 chain.append((primary_base_url, primary_token, alt))
-    self_hosted = _resolve_free_fallback_config()
+    self_hosted = _resolve_free_fallback_config(settings)
     if self_hosted and self_hosted[2] != chosen:
         chain.append(self_hosted)
     return chain
@@ -2335,14 +2337,15 @@ def free_pilot_model() -> str:
     the configured id is not one the server actually offers -- advertising a
     default we would refuse to honour is worse than having none.
     """
-    model = AgentSettings().pilot_llm_model.strip()
+    settings = AgentSettings()
+    model = settings.pilot_llm_model.strip()
     if not model:
         return ""
-    offered = {free_tier_model(), free_fallback_model(), *free_alt_models()}
+    offered = {free_tier_model(settings), free_fallback_model(settings), *free_alt_models(settings)}
     return model if model in offered else ""
 
 
-def free_alt_models() -> list[str]:
+def free_alt_models(settings: AgentSettings | None = None) -> list[str]:
     """Extra keyless models served by the PRIMARY free endpoint, in order.
 
     Read from ``BESSER_FREE_LLM_ALT_MODELS`` (comma-separated model ids). These
@@ -2356,12 +2359,13 @@ def free_alt_models() -> list[str]:
     per model rather than per account, so an alt model adds capacity when the
     primary's daily quota runs out. Empty by default.
     """
-    raw = AgentSettings().free_llm_alt_models
+    settings = settings or AgentSettings()
+    raw = settings.free_llm_alt_models
     if not raw.strip():
         return []
     # Ids already owned by another endpoint/token pair must not be re-served
     # from the primary's credentials.
-    taken = {m for m in (free_tier_model(), free_fallback_model()) if m}
+    taken = {m for m in (free_tier_model(settings), free_fallback_model(settings)) if m}
     models: list[str] = []
     for part in raw.split(","):
         model = part.strip()
@@ -2398,9 +2402,10 @@ def is_free_fallback_choice(requested: str | None) -> bool:
     start-event model name matches what the factory builds.
     """
     req = (requested or "").strip()
-    if not req or req == free_tier_model():
+    settings = AgentSettings()
+    if not req or req == free_tier_model(settings):
         return False
-    return req == free_fallback_model()
+    return req == free_fallback_model(settings)
 
 
 # ======================================================================

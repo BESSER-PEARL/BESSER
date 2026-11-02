@@ -17,8 +17,9 @@ telemetry and incidents) on ``BackendSettings`` in
 :ref:`the backend's environment variables <web-editor-backend-env>`). Values
 the agent keeps in module constants (the context budgets, history eviction, the output-token
 ceilings, the SDK timeout, the rolling cache) are read when the module is
-imported; a malformed number there fails the import, as before. The others
-are read at each use.
+imported; a malformed number there fails the import with an error naming the
+variable. The others are read at each use; a shell-session number that is not
+an integer logs a warning and uses its default.
 
 Models
 ------

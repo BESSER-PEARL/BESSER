@@ -56,6 +56,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     WS_CLOSE_RATE_LIMITED,
     WS_CLOSE_UNAUTHORIZED,
 )
+from besser.utilities.web_modeling_editor.backend.dependencies import SettingsDep
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 from besser.utilities.web_modeling_editor.backend.models import (
     SimulationLimitsResponse,
@@ -228,13 +229,13 @@ _session_registry = _SimulationSessionRegistry(
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _authenticate(github_session: Optional[str], client: Optional[Address]) -> str:
+def _authenticate(settings: BackendSettings, github_session: Optional[str], client: Optional[Address]) -> str:
     """Apply the sign-in gate and return the actor key the caller is tracked by.
 
     The actor is the GitHub session when sign-in is required (hashed, so the
     bearer value is never kept as a key or logged) and the client IP otherwise.
     """
-    if get_settings().agent_simulator_require_auth:
+    if settings.agent_simulator_require_auth:
         require_github_session(github_session)
         return "github:" + hashlib.sha256(github_session.encode("utf-8")).hexdigest()
     if client and client.host:
@@ -261,10 +262,10 @@ def _simulator_headers() -> Dict[str, str]:
     return {AGENT_SIMULATOR_TOKEN_HEADER: token}
 
 
-def _simulator_client(timeout: float) -> httpx.AsyncClient:
+def _simulator_client(settings: BackendSettings, timeout: float) -> httpx.AsyncClient:
     """Build an HTTP client for the simulator that sends the auth header."""
     return httpx.AsyncClient(
-        base_url=get_settings().agent_simulator_url,
+        base_url=settings.agent_simulator_url,
         timeout=timeout,
         headers=_simulator_headers(),
         transport=_http_transport,
@@ -411,10 +412,10 @@ def _credentials_to_env(credentials: Optional[Dict[str, str]]) -> Dict[str, str]
     return {env: credentials[key] for key, env in mapping.items() if credentials and credentials.get(key)}
 
 
-async def _delete_simulator_session(session_id: str) -> None:
+async def _delete_simulator_session(settings: BackendSettings, session_id: str) -> None:
     """Best-effort DELETE of a simulator session; failures are logged, not raised."""
     try:
-        async with _simulator_client(AGENT_SIMULATOR_DELETE_TIMEOUT_SECONDS) as client:
+        async with _simulator_client(settings, AGENT_SIMULATOR_DELETE_TIMEOUT_SECONDS) as client:
             resp = await client.delete(f"/sessions/{session_id}")
         if resp.status_code not in (200, 204, 404):
             logger.warning("Simulator refused to delete session %s (HTTP %s)", session_id, resp.status_code)
@@ -432,11 +433,11 @@ async def _delete_simulator_session(session_id: str) -> None:
 @handle_endpoint_errors("get_simulation_limits")
 async def get_simulation_limits(
     request: Request,
+    settings: SettingsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Return the configured resource limits and quota settings for agent simulation."""
-    _authenticate(github_session, request.client)
-    settings = get_settings()
+    _authenticate(settings, github_session, request.client)
     return SimulationLimitsResponse(
         memoryMb=settings.agent_simulator_memory_mb,
         cpuCores=settings.agent_simulator_cpu_cores,
@@ -451,6 +452,7 @@ async def get_simulation_limits(
 async def validate_agent(
     input_data: SimulationSessionInput,
     request: Request,
+    settings: SettingsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Check that an agent diagram can be simulated, without creating a session.
@@ -459,10 +461,10 @@ async def validate_agent(
     returned as ``valid=False`` with their messages; unexpected failures
     surface as HTTP errors through ``@handle_endpoint_errors``.
     """
-    actor = _authenticate(github_session, request.client)
+    actor = _authenticate(settings, github_session, request.client)
     _rate_limiter.check(actor)
 
-    if get_settings().agent_simulator_restrict_custom_code and _model_has_custom_code_action(input_data.model):
+    if settings.agent_simulator_restrict_custom_code and _model_has_custom_code_action(input_data.model):
         return SimulationValidationResponse(
             valid=False, agentCode="", eventList=[], errors=[_CUSTOM_CODE_RESTRICTED_MESSAGE],
         )
@@ -485,13 +487,14 @@ async def validate_agent(
 async def start_simulation_session(
     input_data: SimulationSessionInput,
     request: Request,
+    settings: SettingsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Generate agent code and start a simulator session owned by the caller."""
-    actor = _authenticate(github_session, request.client)
+    actor = _authenticate(settings, github_session, request.client)
     _rate_limiter.check(actor)
 
-    if get_settings().agent_simulator_restrict_custom_code and _model_has_custom_code_action(input_data.model):
+    if settings.agent_simulator_restrict_custom_code and _model_has_custom_code_action(input_data.model):
         raise HTTPException(status_code=403, detail=_CUSTOM_CODE_RESTRICTED_MESSAGE)
 
     session_id = _session_registry.reserve(actor)
@@ -511,10 +514,10 @@ async def start_simulation_session(
             "workspace_paths": workspace_paths,
         }
         try:
-            async with _simulator_client(AGENT_SIMULATOR_CREATE_TIMEOUT_SECONDS) as client:
+            async with _simulator_client(settings, AGENT_SIMULATOR_CREATE_TIMEOUT_SECONDS) as client:
                 resp = await client.post("/sessions", json=payload)
         except httpx.RequestError as exc:
-            logger.error("Cannot reach agent simulator service at %s: %s", get_settings().agent_simulator_url, exc)
+            logger.error("Cannot reach agent simulator service at %s: %s", settings.agent_simulator_url, exc)
             raise HTTPException(status_code=503, detail=_SIMULATOR_UNAVAILABLE_MESSAGE) from exc
 
         if resp.status_code == 429:
@@ -537,18 +540,19 @@ async def start_simulation_session(
 async def get_session_files(
     session_id: str,
     request: Request,
+    settings: SettingsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Return the files the caller's running agent produced in its workspace."""
-    actor = _authenticate(github_session, request.client)
+    actor = _authenticate(settings, github_session, request.client)
     _require_valid_session_id(session_id)
     _session_registry.require_owner(session_id, actor)
 
     try:
-        async with _simulator_client(AGENT_SIMULATOR_FILES_TIMEOUT_SECONDS) as client:
+        async with _simulator_client(settings, AGENT_SIMULATOR_FILES_TIMEOUT_SECONDS) as client:
             resp = await client.get(f"/sessions/{session_id}/files")
     except httpx.RequestError as exc:
-        logger.error("Cannot reach agent simulator service at %s: %s", get_settings().agent_simulator_url, exc)
+        logger.error("Cannot reach agent simulator service at %s: %s", settings.agent_simulator_url, exc)
         raise HTTPException(status_code=503, detail=_SIMULATOR_UNAVAILABLE_MESSAGE) from exc
 
     if resp.status_code == 404:
@@ -569,14 +573,15 @@ async def get_session_files(
 async def stop_simulation_session(
     session_id: str,
     request: Request,
+    settings: SettingsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Stop one of the caller's simulation sessions."""
-    actor = _authenticate(github_session, request.client)
+    actor = _authenticate(settings, github_session, request.client)
     _require_valid_session_id(session_id)
     _session_registry.require_owner(session_id, actor)
     _session_registry.release(session_id)
-    await _delete_simulator_session(session_id)
+    await _delete_simulator_session(settings, session_id)
     return SimulationSessionStopResponse(ok=True)
 
 
@@ -614,7 +619,7 @@ async def _receive_auth_frame(websocket: WebSocket) -> str:
 
 
 @router.websocket("/{session_id}/ws")
-async def simulator_session_ws(websocket: WebSocket, session_id: str):
+async def simulator_session_ws(websocket: WebSocket, session_id: str, settings: SettingsDep):
     """
     Relay WebSocket messages between the frontend and the agent simulator service.
 
@@ -645,7 +650,7 @@ async def simulator_session_ws(websocket: WebSocket, session_id: str):
         return
 
     try:
-        actor = _authenticate(github_session, websocket.client)
+        actor = _authenticate(settings, github_session, websocket.client)
     except HTTPException as exc:
         await _close_with_error(websocket, WS_CLOSE_UNAUTHORIZED, str(exc.detail))
         return
@@ -660,7 +665,7 @@ async def simulator_session_ws(websocket: WebSocket, session_id: str):
 
     await websocket.send_text(json.dumps({"type": "auth_ok"}))
 
-    ws_base = get_settings().agent_simulator_url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+    ws_base = settings.agent_simulator_url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
     try:
         simulator_ws = await _ws_connect(
             f"{ws_base}/sessions/{session_id}/ws",
@@ -713,4 +718,4 @@ async def simulator_session_ws(websocket: WebSocket, session_id: str):
     finally:
         await _close_simulator_ws()
         _session_registry.release(session_id)
-        _spawn_background(_delete_simulator_session(session_id))
+        _spawn_background(_delete_simulator_session(settings, session_id))

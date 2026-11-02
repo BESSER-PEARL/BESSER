@@ -148,15 +148,13 @@ def test_config_endpoint_free_models_empty_when_unconfigured(monkeypatch):
     assert free_tier["models"] == []
 
 
-def test_config_endpoint_reflects_monkeypatched_caps(monkeypatch):
-    """Patching the process settings must be visible to the config
-    endpoint. This matters because env-var overrides are read once per
-    process — ops changing the env and restarting the process expects the
-    config endpoint to reflect the new values.
+def test_config_endpoint_reports_the_settings_it_is_given(route_settings):
+    """The config endpoint reports the settings the app hands it
+    (``SettingsDep``), read once per process from the environment.
     """
-    monkeypatch.setattr(get_settings(), "llm_max_cost_usd_hard_cap", 7.5, raising=True)
-    monkeypatch.setattr(get_settings(), "llm_max_concurrent_runs", 42, raising=True)
-    monkeypatch.setattr(get_settings(), "llm_enable_tracing", False, raising=True)
+    route_settings.llm_max_cost_usd_hard_cap = 7.5
+    route_settings.llm_max_concurrent_runs = 42
+    route_settings.llm_enable_tracing = False
 
     resp = _get_config()
     payload = resp.json()

@@ -862,12 +862,17 @@ Environment Variables
 ---------------------
 
 Each variable below is declared once, with its type, default and a one-line
-description, on ``BackendSettings`` in ``settings.py``. The backend reads most
-of them once per process (``get_settings()``, built on first use); the
-variables marked *read per call* in their description there are read again at
-each use. A malformed value never stops the backend: numbers that do not parse
-fall back to their default, and a flag is on only for ``1``, ``true``, ``yes``
-or ``on``.
+description, on ``BackendSettings`` in ``settings.py``, except
+``OPENAI_API_KEY`` (read by the code that uses it) and
+``BESSER_PILOT_LLM_MODEL`` (on the agent's ``AgentSettings``, see
+:doc:`spec_driven_agent/configuration`). The backend reads most of them once
+per process (``get_settings()``, built on first use; routes take it as
+``SettingsDep``); the variables marked *read per call* in their description
+there are read again at each use. A malformed value never stops the backend:
+numbers that do not parse fall back to their default (``SMTP_PORT`` stays
+text, so a bad port fails only the feedback mail), and a flag is on only for
+``1``, ``true``, ``yes`` or ``on`` (``BESSER_TELEMETRY_ENABLED`` only for
+``1`` or ``true``).
 
 **Required for GitHub integration:**
 

@@ -31,7 +31,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
-from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from besser.utilities.web_modeling_editor.backend.dependencies import SettingsDep
 from besser.utilities.buml_code_builder import (
     domain_model_to_code,
     gui_model_to_code,
@@ -113,6 +113,7 @@ class DeployToGitHubResponse(BaseModel):
 @router.post("/deploy-webapp", response_model=DeployToGitHubResponse)
 async def deploy_webapp_to_github(
     request: Request,
+    backend_settings: SettingsDep,
     body: dict = Body(...),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
@@ -476,7 +477,7 @@ async def deploy_webapp_to_github(
             os.makedirs(buml_dir, exist_ok=True)
             try:
                 domain_model_to_code(
-                    model=buml_model, file_path=os.path.join(buml_dir, "domain_model.py"), emit_ids=get_settings().buml_emit_ids,
+                    model=buml_model, file_path=os.path.join(buml_dir, "domain_model.py"), emit_ids=backend_settings.buml_emit_ids,
                 )
                 gui_model_to_code(model=gui_model, file_path=os.path.join(buml_dir, "gui_model.py"), domain_model=buml_model)
                 for ag in agent_models:
@@ -2001,8 +2002,8 @@ class AppCapabilitiesResponse(BaseModel):
 
 
 @router.get("/app/capabilities", response_model=AppCapabilitiesResponse)
-async def get_app_capabilities():
-    return AppCapabilitiesResponse(go_live=get_settings().deploy_from_repo)
+async def get_app_capabilities(settings: SettingsDep):
+    return AppCapabilitiesResponse(go_live=settings.deploy_from_repo)
 
 
 class GoLiveRequest(BaseModel):
@@ -2027,6 +2028,7 @@ class GoLiveResponse(BaseModel):
 @router.post("/app/go-live", response_model=GoLiveResponse)
 async def go_live(
     request: GoLiveRequest,
+    settings: SettingsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
     """Commit Render deploy files for the app in ``owner/repo`` into that repo.
@@ -2037,7 +2039,7 @@ async def go_live(
     redeploys; saves that only change the model do not. Answers 422 with the
     reason when the repo holds no app BESSER can deploy.
     """
-    if not get_settings().deploy_from_repo:
+    if not settings.deploy_from_repo:
         raise HTTPException(status_code=404, detail="go_live_disabled")
     github = _github_for(github_session)
     try:

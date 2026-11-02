@@ -15,7 +15,6 @@ import httpx
 import pytest
 from httpx._transports.asgi import ASGITransport
 
-from besser.spec_driven_agent.providers import model_catalog
 from besser.spec_driven_agent.providers.llm_client import (
     OpenAIProvider,
     _get_pricing,
@@ -71,7 +70,7 @@ def use_catalog(tmp_path, monkeypatch):
         path = tmp_path / "catalog.json"
         path.write_text(json.dumps(data) if not isinstance(data, str) else data,
                         encoding="utf-8")
-        monkeypatch.setenv(model_catalog.CATALOG_ENV_VAR, str(path))
+        monkeypatch.setenv("BESSER_MODEL_CATALOG", str(path))
         load_model_catalog.cache_clear()
     return _use
 
@@ -132,7 +131,7 @@ def test_a_malformed_override_fails_loudly(use_catalog, bad, message):
 
 
 def test_a_missing_override_file_fails_loudly(monkeypatch, tmp_path):
-    monkeypatch.setenv(model_catalog.CATALOG_ENV_VAR, str(tmp_path / "absent.json"))
+    monkeypatch.setenv("BESSER_MODEL_CATALOG", str(tmp_path / "absent.json"))
     with pytest.raises(ModelCatalogError, match="cannot be read"):
         load_model_catalog()
 

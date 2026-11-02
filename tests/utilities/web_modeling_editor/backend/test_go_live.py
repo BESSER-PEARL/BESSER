@@ -54,9 +54,9 @@ def _web_app(root, prefix="web_app/", out_dir='outDir: "build",', app_var="app",
 
 
 @pytest.fixture(autouse=True)
-def clean(tmp_path, monkeypatch):
+def clean(tmp_path, monkeypatch, route_settings):
     monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path / "workspace"))
-    monkeypatch.setattr(get_settings(), "deploy_from_repo", True)
+    route_settings.deploy_from_repo = True
     asyncio.run(_clear_registry())
     yield
     asyncio.run(_clear_registry())
@@ -221,8 +221,8 @@ def test_a_repo_without_a_deployable_app_says_why(monkeypatch, tmp_path):
     assert r.status_code == 422 and "Django" in r.json()["detail"]
 
 
-def test_go_live_stays_off_until_the_server_turns_it_on(monkeypatch, tmp_path):
-    monkeypatch.setattr(get_settings(), "deploy_from_repo", False)
+def test_go_live_stays_off_until_the_server_turns_it_on(monkeypatch, tmp_path, route_settings):
+    route_settings.deploy_from_repo = False
 
     r = _go_live(monkeypatch, _RepoGitHub(str(tmp_path)))
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from besser.utilities.web_modeling_editor.backend.backend import app
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 from tests.utilities.web_modeling_editor.backend._asgi_client import AsgiClient
 from tests.utilities.web_modeling_editor.backend._runtime import make_runtime
 
@@ -26,6 +27,15 @@ def spec_driven_runtime():
     runtime.close()
     runtime.durable_runs.store.close()
     del app.state.spec_driven
+
+
+@pytest.fixture
+def route_settings():
+    """A copy of the process settings that the routes receive (``SettingsDep``); set fields on it."""
+    settings = get_settings().model_copy()
+    app.dependency_overrides[get_settings] = lambda: settings
+    yield settings
+    app.dependency_overrides.pop(get_settings, None)
 
 
 @pytest.fixture(autouse=True)

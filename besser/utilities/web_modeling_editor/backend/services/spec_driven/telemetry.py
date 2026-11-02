@@ -75,15 +75,15 @@ def telemetry_enabled() -> bool:
     return BackendSettings().telemetry_enabled
 
 
-def _configured_dir() -> str:
+def _configured_dir(settings: Optional[BackendSettings] = None) -> str:
     """``BESSER_TELEMETRY_DIR``, else ``/app/telemetry`` (a set but blank value is kept)."""
-    configured = BackendSettings().telemetry_dir
+    configured = (settings or BackendSettings()).telemetry_dir
     return _DEFAULT_TELEMETRY_DIR if configured is None else configured
 
 
-def _telemetry_dir() -> str:
+def _telemetry_dir(settings: BackendSettings) -> str:
     """The store directory, created on demand. ``""`` when unusable."""
-    directory = _configured_dir()
+    directory = _configured_dir(settings)
     try:
         os.makedirs(directory, exist_ok=True)
     except Exception:
@@ -117,7 +117,8 @@ def record_event(session: str, participant: str, kind: str, payload: Any) -> Non
     must be JSON-serializable (``default=str`` covers stragglers).
     """
     try:
-        if not telemetry_enabled():
+        settings = BackendSettings()
+        if not settings.telemetry_enabled:
             return
         session = sanitize_session(session)
         participant = sanitize_participant(participant)
@@ -125,7 +126,7 @@ def record_event(session: str, participant: str, kind: str, payload: Any) -> Non
             return
         if kind not in EVENT_KINDS and kind != RUN_SUMMARY_KIND:
             return
-        directory = _telemetry_dir()
+        directory = _telemetry_dir(settings)
         if not directory:
             return
 

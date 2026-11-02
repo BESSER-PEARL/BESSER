@@ -120,7 +120,8 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     ALLOWED_IMAGE_EXTENSIONS,
     ALLOWED_BUML_EXTENSIONS,
 )
-from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
+from besser.utilities.web_modeling_editor.backend.dependencies import SettingsDep
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 # Upload validation and async file I/O, shared with kg_router
 from besser.utilities.web_modeling_editor.backend.services.utils.upload_validation import (
@@ -194,7 +195,7 @@ router = APIRouter(prefix="/besser_api", tags=["conversion"])
 
 @router.post("/export-project-as-buml")
 @handle_endpoint_errors("export_project_as_buml")
-async def export_project_as_buml(input_data: ProjectInput = Body(...)):
+async def export_project_as_buml(settings: SettingsDep, input_data: ProjectInput = Body(...)):
     buml_project = json_to_buml_project(input_data)
 
     errors = buml_project._cross_diagram_errors["errors"]
@@ -203,7 +204,7 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
 
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         output_file_path = os.path.join(temp_dir, "project.py")
-        project_to_code(project=buml_project, file_path=output_file_path, emit_ids=get_settings().buml_emit_ids)
+        project_to_code(project=buml_project, file_path=output_file_path, emit_ids=settings.buml_emit_ids)
         file_content = await read_file_async(output_file_path, "r", encoding="utf-8")
         return Response(
             content=file_content,
@@ -214,7 +215,7 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
 
 @router.post("/export-buml")
 @handle_endpoint_errors("export_buml")
-async def export_buml(input_data: DiagramInput):
+async def export_buml(input_data: DiagramInput, settings: SettingsDep):
     # Create unique temporary directory for this request
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         json_data = input_data.model_dump()
@@ -235,7 +236,7 @@ async def export_buml(input_data: DiagramInput):
         elif elements_data.get("type") == "ClassDiagram":
             buml_model = process_class_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "domain_model.py")
-            domain_model_to_code(model=buml_model, file_path=output_file_path, emit_ids=get_settings().buml_emit_ids)
+            domain_model_to_code(model=buml_model, file_path=output_file_path, emit_ids=settings.buml_emit_ids)
             file_content = await read_file_async(output_file_path, "rb")
             return Response(
                 content=file_content,
@@ -258,7 +259,7 @@ async def export_buml(input_data: DiagramInput):
             # Generate a single file with both domain model and object model
             output_file_path = os.path.join(temp_dir, "complete_model.py")
             domain_model_to_code(
-                model=buml_model, file_path=output_file_path, objectmodel=object_model, emit_ids=get_settings().buml_emit_ids,
+                model=buml_model, file_path=output_file_path, objectmodel=object_model, emit_ids=settings.buml_emit_ids,
             )
             file_content = await read_file_async(output_file_path, "rb")
             return Response(

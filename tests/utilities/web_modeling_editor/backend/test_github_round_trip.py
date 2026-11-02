@@ -410,12 +410,12 @@ def test_the_sync_status_follows_a_pending_branch_until_its_pull_request_is_merg
 # ---------------------------------------------------------------------
 
 
-def test_sign_in_then_out_revokes_the_token(github, monkeypatch):
+def test_sign_in_then_out_revokes_the_token(github, monkeypatch, route_settings):
     from besser.utilities.web_modeling_editor.backend.routers import github_oauth
 
-    monkeypatch.setattr(get_settings(), "github_client_id", "client")
-    monkeypatch.setattr(get_settings(), "github_client_secret", SecretStr("secret"))
-    monkeypatch.setattr(get_settings(), "deployment_url", "http://editor")
+    route_settings.github_client_id = "client"
+    route_settings.github_client_secret = SecretStr("secret")
+    route_settings.deployment_url = "http://editor"
     for module in (spec_driven_router, github_deploy_api):
         monkeypatch.setattr(module, "get_user_token", github_oauth.get_user_token)
     state = "s" * 32

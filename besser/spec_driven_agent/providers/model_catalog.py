@@ -55,7 +55,6 @@ from besser.spec_driven_agent.settings import AgentSettings
 
 logger = logging.getLogger(__name__)
 
-CATALOG_ENV_VAR = "BESSER_MODEL_CATALOG"
 DEFAULT_CATALOG_PATH = Path(__file__).with_name("data") / "model_catalog.json"
 
 

@@ -169,9 +169,9 @@ def _export_buml(diagram):
     return response.text
 
 
-def test_the_editor_export_writes_ids_only_when_the_deployment_turns_it_on(monkeypatch):
+def test_the_editor_export_writes_ids_only_when_the_deployment_turns_it_on(route_settings):
     assert 'id="' not in _export_buml(_diagram())
-    monkeypatch.setattr(get_settings(), "buml_emit_ids", True)
+    route_settings.buml_emit_ids = True
     assert 'id="library"' in _export_buml(_diagram())
 
 

@@ -338,3 +338,25 @@ def test_get_settings_is_read_once_and_per_call_fields_follow_the_environment(cl
         assert telemetry.telemetry_enabled() is True
     finally:
         get_settings.cache_clear()
+
+
+_STARTUP_OPTIONAL = ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "SMTP_PASSWORD", "OPENAI_API_KEY",
+                     "AGENT_SIMULATOR_API_TOKEN"]
+
+
+@pytest.mark.parametrize("value", [None, "", " ", "x"], ids=repr)
+def test_startup_warns_for_each_optional_variable_unset_or_empty(monkeypatch, caplog, value):
+    """The same rule as the old ``not os.environ.get(name)``: unset or empty warns."""
+    import logging
+
+    from besser.utilities.web_modeling_editor.backend.backend import _validate_env_vars
+
+    for name in _STARTUP_OPTIONAL:
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    with caplog.at_level(logging.WARNING):
+        _validate_env_vars()
+    warned = [name for name in _STARTUP_OPTIONAL if f"variable {name} is not set" in caplog.text]
+    assert warned == (_STARTUP_OPTIONAL if not value else [])

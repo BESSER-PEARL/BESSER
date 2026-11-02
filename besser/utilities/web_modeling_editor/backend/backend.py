@@ -75,7 +75,7 @@ from besser.utilities.web_modeling_editor.backend.routers import (
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     SpecDrivenRuntime,
 )
-from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -175,15 +175,6 @@ class RequestSizeLimitMiddleware:
 # Startup: environment variable validation
 # ---------------------------------------------------------------------------
 
-_OPTIONAL_ENV_VARS = [
-    "GITHUB_CLIENT_ID",  # GitHub sign-in, push and deploy; drawing and generation work without them
-    "GITHUB_CLIENT_SECRET",
-    "SMTP_PASSWORD",
-    "OPENAI_API_KEY",
-    "AGENT_SIMULATOR_API_TOKEN",  # live agent simulation returns 503 without it
-]
-
-
 def _validate_env_vars() -> None:
     """Log a warning for each optional environment variable that is not set.
 
@@ -191,8 +182,19 @@ def _validate_env_vars() -> None:
     application is **not** terminated: services which do not depend on the
     missing variables keep working (graceful degradation).
     """
-    for var in _OPTIONAL_ENV_VARS:
-        if not os.environ.get(var):
+    settings = BackendSettings()
+    optional = {
+        # GitHub sign-in, push and deploy; drawing and generation work without them
+        "GITHUB_CLIENT_ID": settings.github_client_id,
+        "GITHUB_CLIENT_SECRET": settings.github_client_secret.get_secret_value(),
+        "SMTP_PASSWORD": settings.smtp_password.get_secret_value(),
+        # Not a backend setting: the code that uses it reads it.
+        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+        # Live agent simulation returns 503 without it
+        "AGENT_SIMULATOR_API_TOKEN": settings.agent_simulator_api_token.get_secret_value(),
+    }
+    for var, value in optional.items():
+        if not value:
             logger.warning(
                 "Optional environment variable %s is not set. "
                 "Related functionality will be unavailable.", var,

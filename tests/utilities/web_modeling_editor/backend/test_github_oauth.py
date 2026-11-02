@@ -11,16 +11,16 @@ from fastapi.testclient import TestClient
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import github_oauth
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import SessionStore
-from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 
-def test_logout_with_the_editors_json_body_ends_the_session_and_revokes_the_token(monkeypatch, tmp_path):
+def test_logout_with_the_editors_json_body_ends_the_session_and_revokes_the_token(monkeypatch, tmp_path,
+                                                                                  route_settings):
     """The editor posts ``{"session_id": ...}``; the endpoint read a query parameter and answered 422."""
     store = SessionStore(store_path=str(tmp_path / "tokens.enc"), ttl=600)
     store.set("sess-1", {"access_token": "gho_user_token", "username": "octocat"})
     monkeypatch.setattr(github_oauth, "_user_tokens", store)
-    monkeypatch.setattr(get_settings(), "github_client_id", "client-id")
-    monkeypatch.setattr(get_settings(), "github_client_secret", SecretStr("client-secret"))
+    route_settings.github_client_id = "client-id"
+    route_settings.github_client_secret = SecretStr("client-secret")
 
     revoked = []
 

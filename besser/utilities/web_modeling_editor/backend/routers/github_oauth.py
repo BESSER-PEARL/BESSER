@@ -19,7 +19,8 @@ from pydantic import BaseModel
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import (
     SessionStore,
 )
-from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from besser.utilities.web_modeling_editor.backend.dependencies import SettingsDep
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 
 
 # Encrypted session stores
@@ -68,13 +69,12 @@ def github_session_id(
 
 
 @router.get("/auth/login")
-async def github_login(request: Request):
+async def github_login(request: Request, settings: SettingsDep):
     """
     Initiate GitHub OAuth flow.
 
     Returns redirect URL to GitHub authorization page.
     """
-    settings = get_settings()
     if not settings.github_client_id:
         raise HTTPException(
             status_code=500,
@@ -104,13 +104,12 @@ async def github_login(request: Request):
 
 
 @router.get("/auth/callback")
-async def github_callback(code: str, state: str):
+async def github_callback(code: str, state: str, settings: SettingsDep):
     """
     Handle GitHub OAuth callback.
 
     Exchange authorization code for access token.
     """
-    settings = get_settings()
     # Verify state parameter
     if _oauth_sessions.get(state) is None:
         return RedirectResponse(
@@ -222,6 +221,7 @@ class LogoutRequest(BaseModel):
 
 @router.post("/auth/logout")
 async def github_logout(
+    settings: SettingsDep,
     body: Optional[LogoutRequest] = None,
     session_id: Optional[str] = Query(None, deprecated=True),
 ):
@@ -238,14 +238,13 @@ async def github_logout(
     session_data = _user_tokens.get(session_id)
     _user_tokens.delete(session_id)
     if session_data:
-        await _revoke_github_token(session_data["access_token"])
+        await _revoke_github_token(settings, session_data["access_token"])
 
     return {"success": True, "message": "Logged out successfully"}
 
 
-async def _revoke_github_token(access_token: str) -> None:
+async def _revoke_github_token(settings: BackendSettings, access_token: str) -> None:
     """Revoke the OAuth token at GitHub, so a copy of it stops working too."""
-    settings = get_settings()
     try:
         async with httpx.AsyncClient() as client:
             response = await client.request(

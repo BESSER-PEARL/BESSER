@@ -1,0 +1,22 @@
+Version 8.7.1
+=============
+
+Patch release: **a BUML file that cannot be read says why**. Backend only; no
+metamodel, API contract or frontend changes.
+
+Highlights
+----------
+
+* **Import Project no longer opens a blank canvas for an unreadable file.** A
+  project file that declares ``models=[...]`` without the
+  ``# STRUCTURAL MODEL #`` section headers (as files from other tools, such as
+  an Ecore converter, often do) falls back to single-diagram detection. When
+  the detected model failed to parse, that failure was caught as if no model
+  had been found, so ``POST /besser_api/get-project-json-model`` answered 200
+  with an empty project. It now answers 400 with the reason, for example
+  ``Disallowed binary operator: BitOr`` for ``types={...} | {...}``, and the
+  editor shows it in the import error.
+* **The single-diagram import names the cause too.**
+  ``POST /besser_api/get-json-model`` logged the converter's error and
+  answered with a generic "format not recognized" message; the message now
+  carries that error.

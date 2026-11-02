@@ -8,6 +8,7 @@ failed to import).
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,7 +25,7 @@ def test_no_notation_module_talks_http_itself():
     offenders = []
     for path in Path(buml.__file__).parent.rglob("*.py"):
         source = path.read_text(encoding="utf-8")
-        if "api.openai.com" in source:
+        if re.search(r"api\.openai\.com", source):
             offenders.append(f"{path}: api.openai.com")
         for node in ast.walk(ast.parse(source)):
             names = (

@@ -43,17 +43,10 @@ def safe_path(base_dir: str, user_filename: str) -> str:
     safe_name = os.path.basename(user_filename)
     full_path = os.path.realpath(os.path.join(base_dir, safe_name))
     real_base = os.path.realpath(base_dir)
-    try:
-        if os.path.commonpath([full_path, real_base]) != real_base:
-            raise ValueError("Invalid path")
-    except ValueError as exc:
-        # commonpath raises ValueError when paths are on different drives
-        # (Windows) or otherwise incomparable — treat as not contained.
-        # Re-raise the explicit traversal-rejection with its real cause; only
-        # the cross-drive fallback should swallow the original exception.
-        if "Invalid path" in str(exc):
-            raise
-        raise ValueError("Invalid path") from None
+    # A prefix check on the resolved paths (the form CodeQL recognises as a
+    # path-injection guard); a path on another drive never matches.
+    if full_path != real_base and not full_path.startswith(real_base.rstrip(os.sep) + os.sep):
+        raise ValueError("Invalid path")
     return full_path
 
 

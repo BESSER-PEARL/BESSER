@@ -288,3 +288,17 @@ def test_generate_user_profile_document_raises_generation_error_when_generator_n
         # router boundary translates it to HTTP 500.
         with pytest.raises(GenerationError):
             generate_user_profile_document(user_profile_payload)
+
+
+def test_safe_path_rejects_a_symlink_that_leaves_the_base():
+    """The prefix check runs on the resolved path, so a link inside base_dir
+    pointing outside it is refused."""
+    with tempfile.TemporaryDirectory() as base, tempfile.TemporaryDirectory() as outside:
+        link = os.path.join(base, "escape")
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks are not available here")
+        with pytest.raises(ValueError, match="Invalid path"):
+            safe_path(base, "escape")
+

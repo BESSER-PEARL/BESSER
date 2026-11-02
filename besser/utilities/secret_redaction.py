@@ -7,7 +7,7 @@ as the final trust boundary: remove populated ``.env`` files and replace
 credential-shaped text everywhere else with a stable placeholder.
 
 The Spec-Driven agent's trace (:func:`redact_trace_text`) and the LLM clients'
-error logs (:func:`mask_secret`) use this module too.
+error logs (:func:`redact_literal`) use this module too.
 """
 
 from __future__ import annotations
@@ -390,7 +390,7 @@ def redact_trace_text(text: str) -> str:
     return text
 
 
-def mask_secret(text: str, secret: str, placeholder: str = "***") -> str:
+def redact_literal(text: str, secret: str, placeholder: str = "***") -> str:
     """``text`` with every occurrence of the literal ``secret`` replaced, for
     a provider error logged next to the key that was sent."""
     return text.replace(secret, placeholder) if secret else text

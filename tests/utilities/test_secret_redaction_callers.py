@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from besser.utilities.secret_redaction import mask_secret, redact_trace_text
+from besser.utilities.secret_redaction import redact_literal, redact_trace_text
 
 JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbm4ifQ.c2lnbmF0dXJlLXZhbHVl"
 KEY = "sk-proj-" + "A" * 40
@@ -40,8 +40,8 @@ def test_trace_redaction_matches_the_agents_former_copy(text, expected):
     ("no key here", KEY, "no key here"),
     ("an empty key masks nothing", "", "an empty key masks nothing"),
 ])
-def test_mask_secret_matches_the_llm_clients_former_copies(text, secret, expected):
-    assert mask_secret(text, secret) == expected
+def test_redact_literal_matches_the_llm_clients_former_copies(text, secret, expected):
+    assert redact_literal(text, secret) == expected
 
 
 def _run(code: str) -> str:

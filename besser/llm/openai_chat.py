@@ -18,7 +18,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from besser.llm.errors import LLMUpstreamError
-from besser.utilities.secret_redaction import mask_secret
+from besser.utilities.secret_redaction import redact_literal
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ def post_openai_chat(
         response = post(endpoint, headers=headers, json=payload, timeout=timeout)
     except requests.RequestException as exc:
         # The exception text can carry the URL; the class name is enough here.
-        logger.warning("OpenAI request failed: %s", mask_secret(str(exc), key))
+        logger.warning("OpenAI request failed: %s", redact_literal(str(exc), key))
         raise LLMUpstreamError(f"OpenAI request failed ({type(exc).__name__}).") from exc
     finally:
         if session is not None:
@@ -114,7 +114,7 @@ def post_openai_chat(
 
     if not getattr(response, "ok", False):
         status = getattr(response, "status_code", None)
-        body = mask_secret(str(getattr(response, "text", "")), key)[:_LOGGED_BODY_CHARS]
+        body = redact_literal(str(getattr(response, "text", "")), key)[:_LOGGED_BODY_CHARS]
         logger.warning("OpenAI API call failed: HTTP %s %s", status, body)
         raise LLMUpstreamError(f"OpenAI API call failed: HTTP {status}", status=status)
 
@@ -126,7 +126,7 @@ def post_openai_chat(
     if isinstance(response_json, dict) and "error" in response_json:
         error = response_json.get("error")
         message = error.get("message") if isinstance(error, dict) else error
-        logger.warning("OpenAI API error: %s", mask_secret(str(message), key)[:_LOGGED_BODY_CHARS])
+        logger.warning("OpenAI API error: %s", redact_literal(str(message), key)[:_LOGGED_BODY_CHARS])
         raise LLMUpstreamError("OpenAI API error.")
 
     choices = response_json.get("choices") if isinstance(response_json, dict) else None

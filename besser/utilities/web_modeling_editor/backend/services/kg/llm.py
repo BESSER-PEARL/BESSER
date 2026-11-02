@@ -33,7 +33,7 @@ from typing import Any, Callable, List, TypeVar
 
 from besser.BUML.notations.kg_to_buml import Completer
 from besser.llm import LLMUpstreamError, call_openai_chat_json
-from besser.utilities.secret_redaction import mask_secret
+from besser.utilities.secret_redaction import redact_literal
 from besser.utilities.web_modeling_editor.backend.models import KGLLMRequest
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     UpstreamError,
@@ -148,7 +148,7 @@ def _provider_completer(provider: str, api_key: str, model: str, deadline: Reque
             raise LLMUpstreamError(f"{name} is not available on this server.") from exc
         except ValueError as exc:
             logger.warning("%s client could not be created: %s",
-                           name, mask_secret(str(exc), api_key)[:_LOGGED_CHARS])
+                           name, redact_literal(str(exc), api_key)[:_LOGGED_CHARS])
             raise LLMUpstreamError(f"{name} could not be reached with this key.") from exc
 
     def complete(system_msg: str, user_msg: str) -> str:
@@ -162,7 +162,7 @@ def _provider_completer(provider: str, api_key: str, model: str, deadline: Reque
         except Exception as exc:  # noqa: BLE001 - every provider failure maps to the same 502
             logger.warning(
                 "%s call failed (%s): %s", name, type(exc).__name__,
-                mask_secret(str(exc), api_key)[:_LOGGED_CHARS],
+                redact_literal(str(exc), api_key)[:_LOGGED_CHARS],
             )
             raise LLMUpstreamError(f"{name} API call failed.") from exc
         return _text_of(result.get("content") or [])

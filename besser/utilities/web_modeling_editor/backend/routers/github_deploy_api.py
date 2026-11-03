@@ -16,7 +16,6 @@ from typing import Literal, Optional, List
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
 from pydantic import BaseModel, Field, field_validator
-from typing_extensions import NotRequired, TypedDict
 
 from besser.utilities.path_utils import is_repo_json_path
 from besser.utilities.secret_redaction import redact_credentials, sanitize_config
@@ -56,7 +55,11 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     GenerationError,
     ValidationError,
 )
-from besser.utilities.web_modeling_editor.backend.models.responses import CommitStatus, ResponseModel
+from besser.utilities.web_modeling_editor.backend.models.responses import (
+    CommitStatus,
+    DeployToGitHubResponse,
+    ResponseModel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,35 +98,6 @@ class DeployToGitHubRequest(BaseModel):
         default=True,
         description="Make repository private"
     )
-
-
-class DeploymentUrls(TypedDict):
-    """Links for a deployed repo; the live and dashboard ones only on a redeploy."""
-    github: str
-    render: str
-    live_frontend: NotRequired[str]  # web app
-    live_backend: NotRequired[str]  # web app
-    live_chatbot: NotRequired[str]  # chatbot
-    render_dashboard: NotRequired[str]
-
-
-# Not a ResponseModel: under its schema setting pydantic would list the
-# NotRequired links of DeploymentUrls as required. Every field is required instead.
-class DeployToGitHubResponse(BaseModel):
-    """Response model for GitHub deployment."""
-    success: bool
-    repo_url: str
-    repo_name: str
-    owner: str
-    deployment_urls: DeploymentUrls
-    files_uploaded: int
-    message: str
-    # True on the very first deploy to a repo (no previous ``render.yaml`` found),
-    # False on every subsequent deploy. The frontend uses this to pick the right
-    # "next action" button — create-blueprint vs. open-live-site.
-    is_first_deploy: bool
-    # Deployment flavor: ``webapp`` (Class+GUI) or ``chatbot`` (Agent-only).
-    deployment_type: Literal["webapp", "chatbot"]
 
 
 @router.post("/deploy-webapp", response_model=DeployToGitHubResponse)

@@ -18,6 +18,8 @@ from pydantic import TypeAdapter, ValidationError
 
 from besser.BUML.notations.kg_to_buml import consistency
 from besser.utilities.web_modeling_editor.backend.models.responses import (
+    DeploymentUrls,
+    DeployToGitHubResponse,
     KGConsistencyIssueResponse,
     KGConsistencyReportResponse,
     KGSeverityCountsResponse,
@@ -28,8 +30,6 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     PushSmartToGitHubResponse,
 )
 from besser.utilities.web_modeling_editor.backend.routers.github_deploy_api import (
-    DeploymentUrls,
-    DeployToGitHubResponse,
     PendingChangeStatus,
     SaveProjectResponse,
     _pending_status,

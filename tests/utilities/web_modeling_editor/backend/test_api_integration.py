@@ -264,6 +264,18 @@ class TestGenerateOutput:
         assert "Author" in body
         assert "Book" in body
 
+    @pytest.mark.parametrize("generator, missing", [
+        ("web_app", "GUINoCodeDiagram"),
+        ("react", "GUINoCodeDiagram"),
+        ("flutter", "GUINoCodeDiagram"),
+        ("terraform", "deployment model"),
+    ])
+    def test_generators_needing_a_second_model_answer_400(self, client, class_diagram_input, generator, missing):
+        """A class diagram alone crashed these generators' constructors: a bare 500."""
+        response = client.post("/besser_api/generate-output", json={**class_diagram_input, "generator": generator})
+        assert response.status_code == 400, response.text
+        assert missing in response.json()["detail"]
+
     def test_generate_python_single_class(self, client, single_class_input):
         """Generate Python from a single-class diagram."""
         response = client.post("/besser_api/generate-output", json=single_class_input)
@@ -1386,26 +1398,23 @@ class TestDockerComposeRouting:
         from besser.utilities.web_modeling_editor.backend.models import DiagramInput
         from besser.utilities.web_modeling_editor.backend.services.generation import dispatch
 
+        from besser.utilities.web_modeling_editor.backend.services.exceptions import ValidationError
+
         async def fake_deployment_handler(*_args, **_kwargs):
             pytest.fail("Terraform must not enter the DeploymentUML handler")
-
-        async def fake_class_handler(*_args, **_kwargs):
-            return "master-fallback"
 
         monkeypatch.setattr(
             dispatch, "_handle_deployment_diagram_generation", fake_deployment_handler
         )
-        monkeypatch.setattr(
-            dispatch, "_handle_class_diagram_generation", fake_class_handler
-        )
 
-        result = _run(dispatch.generate_from_diagram(DiagramInput(
-            title="Core deployment",
-            model=class_diagram_model,
-            generator="terraform",
-        )))
-
-        assert result == "master-fallback"
+        # No diagram carries its deployment model: refused up front (it reached
+        # the class-diagram handler and crashed there).
+        with pytest.raises(ValidationError, match="deployment model"):
+            _run(dispatch.generate_from_diagram(DiagramInput(
+                title="Core deployment",
+                model=class_diagram_model,
+                generator="terraform",
+            )))
 
     def test_project_docker_compose_uses_project_handler(self, monkeypatch):
         from besser.utilities.web_modeling_editor.backend.services.generation import dispatch

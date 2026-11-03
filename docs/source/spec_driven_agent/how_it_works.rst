@@ -93,8 +93,12 @@ The three phases
    latter two are dropped, since the scaffold's stack is fixed. Only the
    planner's own empty list skips Phase 2: a list emptied by dropped tasks
    runs Phase 2 from the request. An HTTP path the request names (``GET
-   /stats``, "a /health/live endpoint") that no route decorator of a FastAPI
-   scaffold declares becomes a checklist item, so a scaffold serving
+   /stats``, "a /health/live endpoint") that the FastAPI scaffold does not
+   serve becomes a checklist item. Routes are read from the source: method
+   decorators and ``add_api_route``, under their router prefixes, the
+   ``include_router`` chain and a mounted sub-application, plus FastAPI's own
+   ``/docs``, ``/redoc`` and ``/openapi.json`` unless the app turns them off.
+   A scaffold serving
    ``/statistics`` never counts as covering ``/stats``; the item closes only
    once the route exists.
 

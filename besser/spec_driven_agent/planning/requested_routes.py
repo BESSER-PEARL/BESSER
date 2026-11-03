@@ -1,4 +1,4 @@
-"""HTTP routes the user named verbatim, checked against the app's route decorators.
+"""HTTP routes the user named verbatim, checked against the routes the app declares.
 
 The gap planner and the requirements judge both read ``GET /stats`` as covered
 by the scaffold's ``GET /statistics``. A client calling ``/stats`` still gets a
@@ -11,15 +11,16 @@ import ast
 import re
 from pathlib import Path
 
-from besser.spec_driven_agent.parsed_source import parse_source
-from besser.utilities.workspace_fs import walk_plain
+from besser.spec_driven_agent.planning.mutation_inventory import (
+    include_prefixes,
+    router_bindings,
+    source_files,
+)
 
-_SKIP_DIRS = {
-    "node_modules", "__pycache__", "venv", ".venv", "env", "dist", "build",
-    "tests", "test", "fixtures", "verification",
-}
 _VERBS = {"get", "post", "put", "patch", "delete"}
 _ANY_VERB = {"api_route", "route"}
+# FastAPI's defaults: served unless the app sets the keyword to None.
+_BUILTIN_PAGES = {"openapi_url": "/openapi.json", "docs_url": "/docs", "redoc_url": "/redoc"}
 
 _PATH = r"(/[A-Za-z0-9_\-./{}:]*[A-Za-z0-9_}/])"
 # "GET /stats", "`POST /orders/{id}/cancel`", or "a /stats endpoint".
@@ -54,56 +55,81 @@ def _literal(node: ast.AST | None) -> str | None:
     return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
 
 
-def declared_routes(workspace: str | Path) -> tuple[list[tuple[frozenset[str] | None, str]], set[str]]:
-    """Every decorator route and every literal router/mount prefix in the app's Python."""
-    workspace = Path(workspace)
-    routes: list[tuple[frozenset[str] | None, str]] = []
+def _methods(call: ast.Call, verb: str) -> frozenset[str] | None:
+    """The methods a route call serves; ``None`` (any) when not listed."""
+    if verb in _VERBS:
+        return frozenset({verb.upper()})
+    listed = next((kw.value for kw in call.keywords if kw.arg == "methods"), None)
+    names = [_literal(item) for item in getattr(listed, "elts", [])]
+    return frozenset(n.upper() for n in names if n) or None
+
+
+def _builtin_pages(app: ast.Call) -> list[str]:
+    """The docs pages a ``FastAPI(...)`` serves: ``docs_url=None`` turns one off,
+    ``openapi_url=None`` all three."""
+    if any(kw.arg is None for kw in app.keywords):
+        return []
+    pages = [_literal(node) if (node := next((kw.value for kw in app.keywords if kw.arg == name), None))
+             else default for name, default in _BUILTIN_PAGES.items()]
+    return [page for page in pages if page] if pages[0] else []
+
+
+def declared_routes(workspace: str | Path) -> list[tuple[frozenset[str] | None, frozenset[str]]]:
+    """Every route the app's Python declares: its methods (``None``: any) and
+    the normalised paths it may be served at.
+
+    Routes come from method decorators, ``add_api_route`` and FastAPI's own
+    docs pages. Their path is resolved through the router's prefix, the
+    ``include_router`` chain and an app's ``mount`` (``mutation_inventory``'s
+    resolution). A route also matches alone or under any literal ``prefix=`` in
+    the app, which covers a chain that is not literal.
+    """
+    root = Path(workspace).resolve()
+    parsed, unknown = source_files(root)
+    bindings = {path: router_bindings(tree) for path, tree in parsed.items()}
+    served = include_prefixes(parsed, bindings, unknown)
+    found: list[tuple[frozenset[str] | None, tuple[Path, str] | None, str]] = []
     prefixes: set[str] = set()
-    for root, dirs, files in walk_plain(workspace):
-        dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS and not d.startswith("."))
-        for name in sorted(files):
-            if not name.endswith(".py") or name.startswith("."):
-                continue
-            try:
-                tree = parse_source((Path(root) / name).read_text(encoding="utf-8-sig"))
-            except (OSError, UnicodeError, ValueError, SyntaxError):
-                continue
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Call):
-                    prefix = _literal(next((kw.value for kw in node.keywords if kw.arg == "prefix"), None))
-                    if prefix:
-                        prefixes.add(prefix)
-                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    continue
-                for decorator in node.decorator_list:
-                    if not (isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute)):
-                        continue
-                    verb = decorator.func.attr
-                    if verb not in _VERBS | _ANY_VERB:
-                        continue
-                    path = _literal(decorator.args[0] if decorator.args else next(
-                        (kw.value for kw in decorator.keywords if kw.arg == "path"), None))
-                    if path is None:
-                        continue
-                    methods: frozenset[str] | None = frozenset({verb.upper()})
-                    if verb in _ANY_VERB:
-                        listed = next((kw.value for kw in decorator.keywords if kw.arg == "methods"), None)
-                        names = [_literal(item) for item in getattr(listed, "elts", [])]
-                        methods = frozenset(n.upper() for n in names if n) or None
-                    routes.append((methods, path))
-    return routes, prefixes
+    for path, tree in parsed.items():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                prefix = _literal(next((kw.value for kw in node.keywords if kw.arg == "prefix"), None))
+                if prefix:
+                    prefixes.add(prefix)
+            calls = []
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                calls = [d for d in node.decorator_list if isinstance(d, ast.Call)
+                         and isinstance(d.func, ast.Attribute) and d.func.attr in _VERBS | _ANY_VERB]
+            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                  and node.func.attr == "add_api_route"):
+                calls = [node]
+            for call in calls:
+                route = _literal(call.args[0] if call.args else next(
+                    (kw.value for kw in call.keywords if kw.arg == "path"), None))
+                if route is not None:
+                    receiver = getattr(call.func.value, "id", None)
+                    key = (path, receiver) if receiver in bindings[path] else None
+                    found.append((_methods(call, call.func.attr), key, route))
+        for name, (kind, _prefix, app) in bindings[path].items():
+            if kind == "FastAPI":
+                found.extend((frozenset({"GET"}), (path, name), page) for page in _builtin_pages(app))
+
+    routes = []
+    for methods, key, route in found:
+        paths = {_normalise(route), *(_normalise(prefix + "/" + route) for prefix in prefixes)}
+        if key is not None:
+            own = bindings[key[0]][key[1]][1]
+            paths |= {_normalise(f"{base}/{own}/{route}") for base in served[key]
+                      if base is not None and own is not None}
+        routes.append((methods, frozenset(paths)))
+    return routes
 
 
 def route_declared(workspace: str | Path, method: str | None, path: str) -> bool:
-    """A decorator serves ``path`` (alone or under a literal prefix) for ``method``."""
-    routes, prefixes = declared_routes(workspace)
+    """A route serves ``path`` for ``method`` (see :func:`declared_routes`)."""
     wanted = _normalise(path)
-    for methods, route in routes:
-        if method and methods is not None and method not in methods:
-            continue
-        if wanted in {_normalise(route), *(_normalise(prefix + "/" + route) for prefix in prefixes)}:
-            return True
-    return False
+    return any(wanted in paths and not (method and methods is not None and method not in methods)
+               for methods, paths in declared_routes(workspace))
 
 
 def requested_route_tasks(workspace: str | Path, request: str) -> list[dict]:

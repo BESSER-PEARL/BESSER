@@ -126,6 +126,84 @@ class TestRouteDeclared:
         assert route_declared(tmp_path, "GET", "/ping")
         assert not route_declared(tmp_path, "POST", "/ping")
 
+    def test_fastapi_serves_its_docs_pages_unless_turned_off(self, tmp_path):
+        (tmp_path / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
+        for page in ("/docs", "/redoc", "/openapi.json"):
+            assert route_declared(tmp_path, "GET", page)
+        assert not route_declared(tmp_path, "POST", "/docs")
+        assert requested_route_tasks(tmp_path, "Make sure the /docs endpoint lists everything") == []
+        (tmp_path / "main.py").write_text(
+            "from fastapi import FastAPI\napp = FastAPI(docs_url=None, redoc_url='/api-docs')\n", encoding="utf-8")
+        assert not route_declared(tmp_path, "GET", "/docs")
+        assert route_declared(tmp_path, "GET", "/api-docs")
+        assert not route_declared(tmp_path, "GET", "/redoc")
+        (tmp_path / "main.py").write_text(
+            "from fastapi import FastAPI\napp = FastAPI(openapi_url=None)\n", encoding="utf-8")
+        assert not any(route_declared(tmp_path, "GET", page) for page in ("/docs", "/redoc", "/openapi.json"))
+
+    def test_nested_router_prefixes_in_one_file(self, tmp_path):
+        (tmp_path / "main.py").write_text(
+            "from fastapi import APIRouter, FastAPI\n"
+            "app = FastAPI()\n"
+            "api = APIRouter(prefix='/api')\n"
+            "users = APIRouter(prefix='/users')\n"
+            "@users.get('/{uid}')\ndef get_user(uid): pass\n"
+            "@users.get('/statistics')\ndef stats(): pass\n"
+            "api.include_router(users)\n"
+            "app.include_router(api)\n",
+            encoding="utf-8")
+        assert route_declared(tmp_path, "GET", "/api/users/{id}")
+        assert route_declared(tmp_path, "GET", "/api/users/statistics")
+        assert not route_declared(tmp_path, "GET", "/api/users/stats")
+        assert not route_declared(tmp_path, "DELETE", "/api/users/{id}")
+
+    def test_include_router_prefixes_across_files(self, tmp_path):
+        routers = tmp_path / "routers"
+        routers.mkdir()
+        (tmp_path / "main.py").write_text(
+            "from fastapi import FastAPI\n"
+            "from routers.api import router as api_router\n"
+            "app = FastAPI()\n"
+            "app.include_router(api_router, prefix='/v1')\n",
+            encoding="utf-8")
+        (routers / "api.py").write_text(
+            "from fastapi import APIRouter\n"
+            "from routers.users import router as users_router\n"
+            "router = APIRouter(prefix='/api')\n"
+            "router.include_router(users_router, prefix='/people')\n",
+            encoding="utf-8")
+        (routers / "users.py").write_text(
+            "from fastapi import APIRouter\n"
+            "router = APIRouter(prefix='/users')\n"
+            "@router.post('/{uid}/tags')\ndef tag(uid): pass\n",
+            encoding="utf-8")
+        assert route_declared(tmp_path, "POST", "/v1/api/people/users/{id}/tags")
+        assert not route_declared(tmp_path, "POST", "/v1/api/users/{id}/tags")
+
+    def test_add_api_route_and_a_mounted_sub_application(self, tmp_path):
+        (tmp_path / "main.py").write_text(
+            "from fastapi import FastAPI\n"
+            "from fastapi.staticfiles import StaticFiles\n"
+            "app = FastAPI()\n"
+            "sub = FastAPI()\n"
+            "def stats(): return {}\n"
+            "app.add_api_route('/stats', stats, methods=['GET'])\n"
+            "@sub.get('/statistics')\ndef sub_stats(): pass\n"
+            "app.mount('/v2', sub)\n"
+            "app.mount('/static', StaticFiles(directory='static'))\n",
+            encoding="utf-8")
+        assert route_declared(tmp_path, "GET", "/stats")
+        assert not route_declared(tmp_path, "POST", "/stats")
+        assert route_declared(tmp_path, "GET", "/v2/statistics")
+        assert route_declared(tmp_path, "GET", "/v2/docs")
+        assert not route_declared(tmp_path, "GET", "/v2/stats")
+
+    def test_a_source_with_a_nul_byte_is_skipped(self, tmp_path):
+        _scaffold(tmp_path)
+        (tmp_path / "backend" / "nul.py").write_bytes(b"x = 1\x00\n")
+        assert route_declared(tmp_path, "GET", "/statistics")
+        assert requested_route_tasks(tmp_path, LIVE_REQUEST)
+
     def test_task_verifies_once_the_route_exists(self, tmp_path):
         backend = _scaffold(tmp_path)
         [task] = requested_route_tasks(tmp_path, LIVE_REQUEST)

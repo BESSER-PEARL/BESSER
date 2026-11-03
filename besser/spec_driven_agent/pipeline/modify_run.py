@@ -359,7 +359,9 @@ class ModifyRunMixin:
             replaced=regeneration.replaced, added=regeneration.added, merged=regeneration.merged,
             moved=[list(pair) for pair in regeneration.moved], removed=regeneration.removed,
             kept_in_use=regeneration.kept_in_use, to_update=[u.path for u in regeneration.to_update],
-            upgraded_from=regeneration.upgraded_from, merge_warning=regeneration.merge_warning or None)
+            not_restored=regeneration.not_restored, not_checked=regeneration.not_checked,
+            upgraded_from=regeneration.upgraded_from, base_rebuilt=regeneration.base_rebuilt,
+            merge_warning=regeneration.merge_warning or None)
 
     def _render_seed_history(self) -> str:
         """Format the seed recipe's session history for the inventory."""

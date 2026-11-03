@@ -160,9 +160,12 @@ endpoint, editing ``pydantic_classes.py``, ``sql_alchemy.py`` and
    rename and not a removal plus an addition.
 #. **Generate the new output.** The same generator call as Phase 1 runs on the
    new model, in a scratch folder. This is "theirs".
-#. **Check the base.** With the same BESSER, the stored files must be what the
-   generator writes for the stored diagram. A store edited by hand fails the
-   check and is not used (see :ref:`spec-driven-regeneration-fallback`).
+#. **Check the base.** When the store comes from the same BESSER and carries
+   its diagram, its files must be what the generator writes for that diagram;
+   files an earlier run left to the agent (``pending``) are exempt, since they
+   keep an older base. A store edited by hand fails the check and is not used
+   (see :ref:`spec-driven-regeneration-fallback`). After a BESSER upgrade the
+   check cannot run, and the store is taken as it is.
 #. **Merge each file.** Each generated file is merged three ways with
    `pygit2 <https://www.pygit2.org/>`_, the library behind libgit2:
 
@@ -205,7 +208,8 @@ What happens to each file
    * - The file
      - What BESSER does
    * - Untouched (the file is the stored output)
-     - Becomes the new output, byte for byte.
+     - Becomes the new output. A file that differs from the stored output only
+       in line endings keeps its own.
    * - Edited, but not near the model change
      - Merged: the edits and the model change are both kept. Line endings do
        not count as edits; the merged file keeps its own.
@@ -214,8 +218,10 @@ What happens to each file
        and remove. A file is never left half merged or with conflict markers.
    * - New for the model (the router of a new class)
      - Written.
-   * - Generated before, deleted since (as the previous run's recipe lists)
-     - Stays deleted.
+   * - Generated before, deleted since (the store holds it; in the fallback,
+       the previous run's recipe lists it)
+     - Stays deleted. When the new model changes that file, the agent is told
+       it was not restored.
    * - No longer produced by the model (the router of a removed class)
      - Deleted when untouched, unless another file of the app still names it.
        Kept and reported otherwise.
@@ -370,13 +376,20 @@ the live library run above::
      "removed": [],
      "kept_in_use": [],
      "to_update": ["backend/pydantic_classes.py"],
+     "not_restored": [],
+     "not_checked": [],
      "upgraded_from": null,
+     "base_rebuilt": false,
      "merge_warning": null
    }
 
-``method`` is ``merge`` or ``attribution``, the fallback.
-``upgraded_from`` names the BESSER version of the stored output after an
-upgrade. A skipped regeneration records the event too, with the reason.
+``method`` is ``merge`` or ``attribution``, the fallback. ``not_restored``
+lists files deleted since the last run that the new model changes;
+``not_checked``, files left alone because they could not be read or written
+(a link, a refused write). ``upgraded_from`` names the BESSER version of the
+stored output after an upgrade, and ``base_rebuilt`` says whether the merge
+base was rebuilt from its model. A skipped regeneration records the event too,
+with ``generator`` and the reason in ``skipped``.
 
 The recipe keeps an earlier run's ``llm_modified`` flag on a generated file
 until regeneration replaces that file with the generator's output.
@@ -392,21 +405,31 @@ Safety
   boot.
 - **An imported repository is untrusted.**
 
-  - The store is checked against the generator before use.
   - Paths outside ``backend/`` and paths that are not plain workspace paths
     are ignored.
   - Files are never written through a linked folder.
   - The stored model is read only inside the shared run folder.
-  - The version string and the quoted lines in the agent's note are bounded.
-- **A push keeps the records current.** It deletes a carried ``.besser_*``
-  file from the repository when the run no longer has it, so a stale base never
-  outlives its run.
+  - A store too large or nested too deeply is not used.
+  - The version string, the paths and the quoted lines in the agent's note
+    are bounded or quoted.
+  - The work is linear in the size of the app and of the store, which is capped.
+- **The records are trusted like the code beside them.** The base check above
+  catches a store that was edited by accident. It does not stop a forged one:
+  a store crafted by someone who can push to the repository (for example, one
+  claiming another BESSER version) can make an edited file look untouched, so
+  the next run replaces it. Review changes to the ``.besser_*`` files like any
+  other change; GitHub folds their diffs, but lists them.
+- **A push keeps the records current.** A run seeded from the repository
+  deletes a carried ``.besser_*`` file the run no longer has, so a stale base
+  does not outlive it. A run that did not start from the repository only adds
+  and updates files, so an older record it does not hold stays.
 
 Measured results
 ----------------
 
-Offline, on 42 recorded FastAPI runs of one domain (a todo app) and seven
-scripted model changes, each resulting app was booted in-process, created and
+Offline, on 44 recorded FastAPI runs of one domain (a todo app; 42 of the apps
+passed the smoke test before any change) and seven scripted model changes, each
+resulting app was booted in-process, created and
 listed one record per collection, and passed the conformance check. "No hand
 edit" means every file the change touches was applied without the agent.
 
@@ -458,6 +481,11 @@ Limits
   generators are not regenerated yet.
 - Measured on one domain with scripted changes.
 - A class rename still needs the agent where its edits sit on the renamed
-  lines.
+  lines. When a class takes the old name of another renamed class (``Book`` to
+  ``Novel`` and ``Library`` to ``Book``), the files cannot be told apart, so
+  regeneration is skipped and the agent applies the change.
+- Only what the model comparison sees starts a regeneration: classes,
+  attributes, enumerations and associations. A change to methods, ``is_id`` or
+  OCL constraints alone does not.
 - The fallback trusts the line attribution the way the merge checks its base;
   an edited ``.besser_attribution.json`` is not detected yet.

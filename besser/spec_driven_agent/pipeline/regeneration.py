@@ -29,7 +29,6 @@ model, so only the model change is merged into it.
 
 from __future__ import annotations
 
-import difflib
 import json
 import logging
 import os
@@ -54,6 +53,7 @@ from besser.spec_driven_agent.state.agent_trace import (
     is_text,
     iter_attributable_files,
     line_hashes,
+    matching_lines,
     read_text_bytes,
     read_text_lines,
     record_generated_files,
@@ -91,6 +91,10 @@ _MAX_NOTE_LINES = 24
 _MAX_NOTE_LINE_CHARS = 200
 # The whole note stays a small part of the Phase 2 prompt (it is shown twice).
 _MAX_NOTE_CHARS = 6000
+# A Python name: a dropped file whose module name another file holds is still in use.
+_WORD = re.compile(r"\w+")
+# Paths a generator writes; any other path comes from an imported repo and is quoted in the note.
+_PLAIN_PATH = re.compile(r"[\w./-]+")
 
 
 @dataclass
@@ -151,7 +155,7 @@ class Regeneration:
                 "BESSER regenerated the generated files nobody had edited from the new model: "
                 + "; ".join(done) + ". They already follow the model change: do not edit them for it.")
         if self.merged or self.moved:
-            moved = [f"`{old}` to `{new}`" for old, new in self.moved]
+            moved = [f"{_path(old)} to {_path(new)}" for old, new in self.moved]
             lines.append(
                 "BESSER merged the model change into these edited generated files and kept the edits: "
                 + "; ".join(filter(None, [_paths(self.merged), ("moved " + ", ".join(moved)) if moved else ""]))
@@ -199,6 +203,10 @@ def regenerate(
     """
     if generator not in REGENERABLE_GENERATORS:
         return None, f"{generator} output is not regenerated"
+    old_names = {old.lower() for old, _ in renamed_classes}
+    if any(new.lower() in old_names for _, new in renamed_classes):
+        # Book -> Novel with Library -> Book: book.py would take Book's edits into Library's new file.
+        return None, "a class was renamed to the old name of another renamed class, so its files cannot be told apart"
     out_dir = _APPLICATION_OUTPUT_DIRS[generator]
     stored, warnings = None, []
     try:
@@ -209,8 +217,10 @@ def regenerate(
         stored = None
         warnings.append("edited files are not merged: pygit2 is not installed (pip install besser[agents])")
     if stored is not None and previous_domain_model is not None and stored.besser_version == get_besser_version():
-        expected, _ = _generate(generator, previous_domain_model, out_dir)
-        if expected is not None and _without(expected, stored.pending) != _without(stored.files, stored.pending):
+        expected, error = _generate(generator, previous_domain_model, out_dir)
+        if expected is None:
+            warnings.append(f"the stored generator output was not checked: generating its model failed ({error})")
+        elif _without(expected, stored.pending) != _without(stored.files, stored.pending):
             stored = None
             warnings.append("edited files are not merged: the stored generator output is not what this "
                             "BESSER generates for its model (edited by hand?)")
@@ -299,8 +309,9 @@ class _Apply:
         self.result = Regeneration(generator=generator, method=self.method)
         try:
             self._apply(new_files)
+            names = _names_used(self.workspace, skip=set(self.gone_untouched)) if self.gone_untouched else set()
             for rel in self.gone_untouched:
-                if _referenced(rel, self.workspace, skip=set(self.gone_untouched)):
+                if os.path.splitext(posixpath.basename(rel))[0] in names:
                     self.result.kept_in_use.append(rel)
                 elif self._remove(rel):
                     self.result.removed.append(rel)
@@ -373,7 +384,10 @@ class _Merger(_Apply):
                 unreadable.add(rel)
                 self.result.not_checked.append(rel)
         moves = _moves(self.base, new_files, set(ours) | unreadable, self.renamed_classes)
-        unreadable |= {new for old, new in moves.items() if old in unreadable}
+        for old, new in moves.items():
+            if old in unreadable:  # not written either: the next run must not read it as deleted on purpose
+                unreadable.add(new)
+                self.result.not_checked.append(new)
         # An untouched file keeps the stored base, so it becomes the new output as is.
         self.merge_base = {p: d if self.rebuilt is None or _same(ours.get(p), d) else self.rebuilt.get(p, d)
                            for p, d in self.base.items() if p not in unreadable}
@@ -412,11 +426,10 @@ class _Merger(_Apply):
         else:
             content = _with_endings_of(current, merged[path])
         if path != old:
+            # Moved even when the old file cannot be deleted (it is then not checked): the edits came along.
             if self._write(path, content, None):
-                if self._remove(old):
-                    self.result.moved.append((old, path))
-                else:
-                    self.result.added.append(path)
+                self._remove(old)
+                self.result.moved.append((old, path))
             return
         if current is not None and _lf(current) == merged[path]:
             return
@@ -568,16 +581,18 @@ def _file_update(rel: str, current: list[str], generated: list[bool] | None, new
     """
     update = FileUpdate(path=rel)
     generated = generated if generated is not None else [True] * len(current)
-    matcher = difflib.SequenceMatcher(None, line_hashes(current), line_hashes(new), autojunk=False)
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
+    i1 = j1 = 0
+    for a, b, size in [*matching_lines(line_hashes(current), line_hashes(new)), (len(current), len(new), 0)]:
+        i2, j2 = a, b
+        if i1 == i2 and j1 == j2:
+            i1, j1 = a + size, b + size
             continue
         ours = [line for line, g in zip(current[i1:i2], generated[i1:i2]) if g and line.strip()]
-        if i2 > i1 and not ours:
-            continue
-        update.removed.extend(ours)
-        anchor = next((line for line in reversed(new[:j1]) if line.strip()), "")
-        update.added.extend((line, anchor) for line in new[j1:j2] if line.strip())
+        if i2 == i1 or ours:
+            update.removed.extend(ours)
+            anchor = next((line for line in reversed(new[:j1]) if line.strip()), "")
+            update.added.extend((line, anchor) for line in new[j1:j2] if line.strip())
+        i1, j1 = a + size, b + size
     return update
 
 
@@ -602,20 +617,26 @@ def _generate(generator: str, domain_model: DomainModel, out_dir: str) -> tuple[
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _referenced(rel: str, workspace: str, skip: set[str]) -> bool:
-    """Whether another file of the app names ``rel``'s module."""
-    pattern = re.compile(rf"\b{re.escape(os.path.splitext(os.path.basename(rel))[0])}\b")
-    for other in iter_attributable_files(workspace, WORKSPACE_SKIP_DIRS):
-        if other == rel or other in skip:
-            continue
-        lines = read_text_lines(workspace, other) or []
-        if any(pattern.search(line) for line in lines):
-            return True
-    return False
+def _names_used(workspace: str, skip: set[str]) -> set[str]:
+    """Every word in the app's files outside ``skip``: a module named there is still in use.
+
+    One pass over the workspace, however many files the new model drops.
+    """
+    names: set[str] = set()
+    for rel in iter_attributable_files(workspace, WORKSPACE_SKIP_DIRS):
+        if rel not in skip:
+            for line in read_text_lines(workspace, rel) or []:
+                names.update(_WORD.findall(line))
+    return names
+
+
+def _path(path: str) -> str:
+    """A path as inline code in the note; one with other characters is quoted, so it cannot break out."""
+    return f"`{path}`" if _PLAIN_PATH.fullmatch(path) else repr(path)
 
 
 def _paths(paths: list[str]) -> str:
-    return ", ".join(f"`{p}`" for p in paths)
+    return ", ".join(_path(p) for p in paths)
 
 
 def _quoted(line: str) -> str:
@@ -626,15 +647,15 @@ def _quoted(line: str) -> str:
 
 def _render_update(update: FileUpdate, detailed: bool) -> str:
     if update.renamed_to:
-        return (f"- `{update.path}`: its class was renamed and the new model writes `{update.renamed_to}` "
+        return (f"- {_path(update.path)}: its class was renamed and the new model writes {_path(update.renamed_to)} "
                 "instead (already added). Move this file's edits there, then delete this file.")
     if update.no_longer_generated:
-        return (f"- `{update.path}`: the new model no longer produces this file. Move what it still "
+        return (f"- {_path(update.path)}: the new model no longer produces this file. Move what it still "
                 "needs elsewhere, then delete it.")
     if not detailed or len(update.added) + len(update.removed) > _MAX_NOTE_LINES:
-        return (f"- `{update.path}`: {len(update.added)} lines added and {len(update.removed)} removed "
+        return (f"- {_path(update.path)}: {len(update.added)} lines added and {len(update.removed)} removed "
                 "in the generator's version; apply the model change above to this file.")
-    parts = [f"- `{update.path}` (+ the generator now writes, - it no longer writes):", "  ```diff"]
+    parts = [f"- {_path(update.path)} (+ the generator now writes, - it no longer writes):", "  ```diff"]
     anchor = None
     for line, after in update.added:
         if after != anchor:

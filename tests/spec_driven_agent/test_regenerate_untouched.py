@@ -221,17 +221,18 @@ def test_a_write_through_a_linked_folder_is_refused(app, tmp_path):
 def test_lines_of_a_packaging_step_are_not_the_generators(app):
     """The secret scrub is recorded as a generator contributor too. An AI file whose
     only line it rewrote looked untouched and no longer generated, so it was deleted."""
-    keys = app / "backend" / "keys.py"
+    # A name no other file uses, so it cannot be kept as still in use instead.
+    keys = app / "backend" / "zq_vault.py"
     keys.write_text("STRIPE_KEY = 'sk_live_x'\n", encoding="utf-8")
-    reconcile_workspace(str(app), ai_contributor("openai/gpt"), paths=["backend/keys.py"])
+    reconcile_workspace(str(app), ai_contributor("openai/gpt"), paths=["backend/zq_vault.py"])
     keys.write_text("STRIPE_KEY = '[REDACTED]'\n", encoding="utf-8")
-    reconcile_workspace(str(app), generator_contributor("secret_redaction"), paths=["backend/keys.py"])
+    reconcile_workspace(str(app), generator_contributor("secret_redaction"), paths=["backend/zq_vault.py"])
 
     regeneration = _regenerate(app, shelf_model(isbn=True))
 
     assert keys.is_file()
-    assert "backend/keys.py" not in regeneration.removed
-    assert all(u.path != "backend/keys.py" for u in regeneration.to_update)
+    assert "backend/zq_vault.py" not in regeneration.removed + regeneration.kept_in_use
+    assert all(u.path != "backend/zq_vault.py" for u in regeneration.to_update)
 
 
 def test_an_attribution_path_leaving_the_output_folder_is_ignored(app):

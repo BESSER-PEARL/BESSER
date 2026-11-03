@@ -324,7 +324,7 @@ class AttributionState:
     def owners_of(self, rel: str, lines: list[str]) -> list[int]:
         """The contributor index of each of ``lines``, ``rel`` as it is now; ``-1`` for a
         line changed since the state was recorded. The state itself is not updated."""
-        new_hashes = [_line_hash(line) for line in lines]
+        new_hashes = line_hashes(lines)
         if rel not in self.files:
             return [-1] * len(new_hashes)
         old_hashes, old_owners = self.files[rel]
@@ -337,17 +337,22 @@ def _carry_owners(
     """New lines' owners: unchanged lines keep theirs, the rest get ``fill``; also the count kept."""
     owners = [fill] * len(new_hashes)
     kept = 0
-    if max(len(old_hashes), len(new_hashes)) > _MAX_DIFF_LINES:
-        blocks = _head_and_tail(old_hashes, new_hashes)
-    else:
-        blocks = difflib.SequenceMatcher(
-            None, old_hashes, new_hashes, autojunk=False
-        ).get_matching_blocks()
-    for a, b, size in blocks:
+    for a, b, size in matching_lines(old_hashes, new_hashes):
         for offset in range(size):
             owners[b + offset] = old_owners[a + offset]
         kept += size
     return owners, kept
+
+
+def matching_lines(old: list[str], new: list[str]) -> list[tuple[int, int, int]]:
+    """The unchanged lines of ``old`` in ``new`` as ``(a, b, size)`` blocks, in order.
+
+    A line diff of files over ``_MAX_DIFF_LINES`` is too slow, so for those only
+    the unchanged first and last lines match.
+    """
+    if max(len(old), len(new)) > _MAX_DIFF_LINES:
+        return _head_and_tail(old, new)
+    return difflib.SequenceMatcher(None, old, new, autojunk=False).get_matching_blocks()
 
 
 def _head_and_tail(old: list[str], new: list[str]) -> list[tuple[int, int, int]]:

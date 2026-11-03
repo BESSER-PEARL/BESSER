@@ -116,7 +116,8 @@ def test_a_store_this_run_did_not_write_keeps_the_model_it_came_from(tmp_path):
     assert stored_model(str(tmp_path)) == {"title": "Before"}
 
 
-def test_a_seeded_modify_run_reads_the_previous_model(tmp_path):
+def test_a_seeded_modify_run_reads_the_previous_model(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path.parent))
     project = _build_request().project
     store_generator_output(str(tmp_path), "backend", {"backend/main_api.py": b"app = 1\n"}, "8.0.0")
     attach_model(str(tmp_path), generation_class_diagram(project))
@@ -150,7 +151,8 @@ def test_the_orchestrator_receives_the_previous_model(monkeypatch):
     assert received["previous_domain_model"] is sentinel
 
 
-def test_a_stored_class_diagram_that_does_not_convert_is_reported(tmp_path, caplog):
+def test_a_stored_class_diagram_that_does_not_convert_is_reported(tmp_path, caplog, monkeypatch):
+    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path.parent))
     store_generator_output(str(tmp_path), "backend", {"backend/main_api.py": b"app = 1\n"}, "8.0.0")
     store = json.loads((tmp_path / GENERATOR_OUTPUT_FILENAME).read_text(encoding="utf-8"))
     store["model"] = {"model": "not a diagram"}

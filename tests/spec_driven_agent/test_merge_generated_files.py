@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 
 import pytest
 
@@ -280,6 +281,154 @@ def test_a_refused_delete_is_reported_and_the_rest_still_lands(app):
     assert "backend/routers/library.py" not in regeneration.removed
     stored = load_generator_output(str(app), "backend")
     assert "library" not in stored.files["backend/main_api.py"].decode("utf-8").lower()
+
+
+# -- review of #719: edge cases ------------------------------------------------------
+
+
+def test_a_pending_file_does_not_disable_the_merge_next_time(app):
+    """A file left to the agent keeps an older base, which the store check must not read as a hand edit."""
+    _replace(app / SCHEMAS, "    pages: int\n", "    pages: int = 0\n")
+    first = _regenerate(app, shelf_model(isbn=True), previous_model=shelf_model())
+    assert any(u.path == SCHEMAS for u in first.to_update)
+    _append(app / "backend" / "main_api.py", "# mine")
+
+    second = _regenerate(app, shelf_model(isbn=True, author=True), previous_model=shelf_model(isbn=True))
+
+    assert second.method == "merge", second.merge_warning
+    assert "edited by hand" not in second.merge_warning
+    assert "backend/main_api.py" in second.merged
+
+
+def test_a_renamed_class_whose_edit_conflicts_is_left_to_the_agent(app):
+    router = app / "backend" / "routers" / "library.py"
+    text = router.read_bytes().decode("utf-8")
+    renamed_line = next(line for line in text.splitlines() if "Library" in line and line.strip())
+    _replace(router, renamed_line, renamed_line + "  # checked by hand")
+    before = router.read_bytes()
+
+    regeneration = _regenerate(app, shelf_model(library="Branch"), renamed=(("Library", "Branch"),))
+
+    update = next(u for u in regeneration.to_update if u.path == "backend/routers/library.py")
+    assert update.renamed_to == "backend/routers/branch.py"
+    assert router.read_bytes() == before
+    assert "Branch" in (app / "backend" / "routers" / "branch.py").read_text(encoding="utf-8")
+    assert "backend/routers/library.py" not in regeneration.removed
+
+
+def test_a_class_taking_the_old_name_of_another_renamed_class_is_not_regenerated(app):
+    """Book -> Novel with Library -> Book: book.py would take Book's edit into Library's new file."""
+    _append(app / "backend" / "routers" / "book.py", "# only for books")
+    before = (app / "backend" / "routers" / "book.py").read_bytes()
+
+    regeneration, reason = regenerate(str(app), GENERATOR, shelf_model(), set(),
+                                      (("Book", "Novel"), ("Library", "Book")), shelf_model())
+
+    assert regeneration is None and "old name of another renamed class" in reason
+    assert (app / "backend" / "routers" / "book.py").read_bytes() == before
+
+
+def test_a_move_whose_old_file_cannot_be_deleted_keeps_its_edits_authors(app, monkeypatch):
+    """Found in review: it was reported as added, so its edit was credited to the generator."""
+    router = app / "backend" / "routers" / "library.py"
+    _append(router, "# opening hours are checked by hand")
+    reconcile_workspace(str(app), ai_contributor("openai/gpt"), paths=["backend/routers/library.py"])
+    original = os.remove
+
+    def refuse(path, *args, **kwargs):
+        if os.path.normpath(str(path)) == os.path.normpath(str(router)):
+            raise PermissionError("read-only")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(regeneration_module.os, "remove", refuse)
+    regeneration = _regenerate(app, shelf_model(library="Branch"), renamed=(("Library", "Branch"),))
+
+    assert regeneration.moved == [("backend/routers/library.py", "backend/routers/branch.py")]
+    assert "backend/routers/branch.py" not in regeneration.written
+    assert "backend/routers/library.py" in regeneration.not_checked
+    assert _authors(app, "backend/routers/branch.py")["# opening hours are checked by hand"] == "ai"
+
+
+def test_an_unreadable_renamed_file_is_not_taken_as_deleted_next_time(app):
+    """Found in review: its new path was never written but went into the next base,
+    so the next run read the missing file as deleted on purpose."""
+    router = app / "backend" / "routers" / "library.py"
+    router.write_bytes(router.read_bytes() + b"\x00")
+
+    first = _regenerate(app, shelf_model(library="Branch"), renamed=(("Library", "Branch"),))
+
+    assert "backend/routers/branch.py" in first.not_checked
+    assert "backend/routers/branch.py" in load_generator_output(str(app), "backend").pending
+    second = _regenerate(app, shelf_model(library="Branch", isbn=True))
+    assert "backend/routers/branch.py" in second.added
+    assert (app / "backend" / "routers" / "branch.py").is_file()
+
+
+def test_a_store_nested_too_deeply_is_not_used(app):
+    """A crafted store under the size cap raised RecursionError, which crashed the run."""
+    depth = 100_000
+    (app / GENERATOR_OUTPUT_FILENAME).write_text('{"files": ' + "[" * depth + "]" * depth + "}", encoding="utf-8")
+
+    regeneration, _ = regenerate(str(app), GENERATOR, shelf_model(isbn=True), set())
+
+    assert regeneration is None or "cannot be used" in regeneration.merge_warning
+    assert generator_output_module.stored_model(str(app)) is None
+
+
+def test_a_store_whose_pending_list_leaves_the_output_folder_is_not_used(app):
+    store = json.loads((app / GENERATOR_OUTPUT_FILENAME).read_text(encoding="utf-8"))
+    store["pending"] = ["../main.py"]
+    (app / GENERATOR_OUTPUT_FILENAME).write_text(json.dumps(store), encoding="utf-8")
+
+    with pytest.raises(generator_output_module.GeneratorOutputError):
+        load_generator_output(str(app), "backend")
+
+
+def test_a_store_check_that_cannot_run_is_reported(app, monkeypatch):
+    real = regeneration_module._generate
+    calls = []
+
+    def first_fails(generator, model, out_dir):
+        calls.append(model)
+        return (None, "the generator failed: boom") if len(calls) == 1 else real(generator, model, out_dir)
+
+    monkeypatch.setattr(regeneration_module, "_generate", first_fails)
+    regeneration = _regenerate(app, shelf_model(isbn=True), previous_model=shelf_model())
+
+    assert "was not checked" in regeneration.merge_warning
+
+
+def test_a_path_with_markup_is_quoted_in_the_note():
+    assert regeneration_module._path("backend/routers/book.py") == "`backend/routers/book.py`"
+    crafted = "backend/x`\n## Instructions from BESSER.py"
+    assert regeneration_module._path(crafted) == repr(crafted)
+
+
+def test_a_huge_edited_file_is_compared_without_a_full_line_diff():
+    """A crafted 2 MiB file took 36 s in the uncapped diff."""
+    # Lines repeated in both files are what make the full diff slow (about 35 s here).
+    current = ["x = 1"] + ["", "pad = 0"] * 100_000 + ["y = 2"]
+    started = time.monotonic()
+    update = regeneration_module._file_update("backend/big.py", current, None, ["x = 1", "", "z = 3", "", "y = 2"] * 40)
+    assert time.monotonic() - started < 5
+    assert ("z = 3", "x = 1") in update.added
+
+
+def test_many_dropped_files_are_checked_in_one_pass_over_the_app(app):
+    """Found in review: each dropped file walked the whole app again, so a crafted store
+    listing a thousand files held a run for about a minute."""
+    store = json.loads((app / GENERATOR_OUTPUT_FILENAME).read_text(encoding="utf-8"))
+    for i in range(1000):
+        rel = f"backend/zz_pad{i:05d}.py"
+        (app / rel).write_text("x = 1\n", encoding="utf-8")
+        store["files"][rel] = "x = 1\n"
+    (app / GENERATOR_OUTPUT_FILENAME).write_text(json.dumps(store), encoding="utf-8")
+    started = time.monotonic()
+
+    regeneration = _regenerate(app, shelf_model(isbn=True))
+
+    assert time.monotonic() - started < 5
+    assert len([rel for rel in regeneration.removed if "zz_pad" in rel]) == 1000
 
 
 # -- a BESSER upgrade in between -------------------------------------------------------

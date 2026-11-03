@@ -126,8 +126,14 @@ def load_generator_output(workspace: str, out_dir: str) -> Optional[GeneratorOut
     pending = data.get("pending", [])
     if not isinstance(pending, list) or not all(isinstance(rel, str) for rel in pending):
         raise GeneratorOutputError("its pending list is malformed")
+    if any(not (is_plain_relpath(rel) and rel.startswith(out_dir + "/")) for rel in pending):
+        raise GeneratorOutputError(f"its pending list names paths outside {out_dir}/")
     version, model = data.get("besser_version"), data.get("model")
-    return GeneratorOutput(out_dir, version if isinstance(version, str) and _VERSION.fullmatch(version) else None,
+    if version is not None and not (isinstance(version, str) and _VERSION.fullmatch(version)):
+        logger.warning("The stored generator output gives no usable BESSER version, so it is treated as "
+                       "written by another BESSER version")
+        version = None
+    return GeneratorOutput(out_dir, version,
                            {rel: content.encode("utf-8") for rel, content in files.items()},
                            model if isinstance(model, dict) else None, frozenset(pending))
 
@@ -185,8 +191,8 @@ def _read_store(workspace: str) -> Optional[dict]:
             if size > MAX_STORED_BYTES:
                 raise GeneratorOutputError(f"it is {size} bytes, over {MAX_STORED_BYTES}")
             data = json.loads(handle.read().decode("utf-8"))
-    except (OSError, ValueError) as exc:
-        raise GeneratorOutputError(f"unreadable ({exc})") from exc
+    except (OSError, ValueError, RecursionError) as exc:  # RecursionError: deeply nested JSON
+        raise GeneratorOutputError(f"unreadable ({type(exc).__name__})") from exc
     if not isinstance(data, dict):
         raise GeneratorOutputError("not a stored generator output")
     return data

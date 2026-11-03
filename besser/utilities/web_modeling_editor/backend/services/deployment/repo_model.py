@@ -16,6 +16,7 @@ Commits BESSER makes carry a ``BESSER-Origin`` trailer, which is how the
 history tells the agent's and the editor's commits from a person's.
 """
 
+import fnmatch
 import json
 import logging
 import os
@@ -175,26 +176,48 @@ def write_model_files(workdir: str, project_export: Optional[dict]) -> None:
 def mark_generated(workdir: str, repo_paths: Iterable[str], repo_text: Optional[str] = None) -> None:
     """Mark ``repo_paths`` ``linguist-generated`` in ``workdir``'s ``.gitattributes``, so GitHub folds their diffs.
 
-    Only paths present in ``workdir`` are marked, and a path the file already
-    names (with any attributes) is left as it is. Every existing line is kept:
-    the run's own file, or ``repo_text`` (the repo's file) when the run holds none.
+    ``repo_paths`` are root-level files. Only paths present in ``workdir`` are
+    marked, and a path a line already gives a ``linguist-generated`` setting is
+    left as it is. Every existing line is kept: the run's own file, or ``repo_text`` (the
+    repo's file) when the run holds none. The repo's file is written even when
+    nothing is added, since the push would otherwise delete it as a file the run dropped.
     """
     target = os.path.join(workdir, GITATTRIBUTES_FILE)
     if os.path.lexists(target) and not is_plain_file(target, root=workdir):
         logger.warning("%s in the pushed tree is not a plain file; its attributes are left alone", GITATTRIBUTES_FILE)
         return
-    text = read_plain_text(target, root=workdir)
+    # Read and written byte for byte (newline=""): the push compares the file with the repo's.
+    text = read_plain_text(target, root=workdir, newline="")
+    from_repo = text is None and repo_text is not None
     if text is None:
         text = repo_text or ""
-    named = {line.split()[0].lstrip("/") for line in text.splitlines()
-             if line.strip() and not line.lstrip().startswith("#")}
+    patterns = [fields[0] for fields in map(str.split, text.splitlines())
+                if fields and not fields[0].startswith("#") and any(_sets_generated(a) for a in fields[1:])]
     missing = [path for path in repo_paths
-               if path not in named and is_plain_file(os.path.join(workdir, path), root=workdir)]
+               if not any(_matches_root_file(pattern, path) for pattern in patterns)
+               and is_plain_file(os.path.join(workdir, path), root=workdir)]
     if not missing:
+        if from_repo:
+            write_atomic_plain(target, text, root=workdir, newline="")
         return
-    lines = [text.rstrip("\n")] if text.strip() else []
-    lines += [f"/{path} linguist-generated=true" for path in missing]
-    write_atomic_plain(target, "\n".join(lines) + "\n", root=workdir)
+    eol = "\r\n" if "\r\n" in text else "\n"
+    head = (text if text.endswith("\n") else text + eol) if text.strip() else ""
+    added = "".join(f"/{path} linguist-generated=true{eol}" for path in missing)
+    write_atomic_plain(target, head + added, root=workdir, newline="")
+
+
+def _sets_generated(attribute: str) -> bool:
+    """Whether a ``.gitattributes`` attribute sets, unsets or clears ``linguist-generated``."""
+    return attribute.lstrip("-!").split("=", 1)[0] == "linguist-generated"
+
+
+def _matches_root_file(pattern: str, name: str) -> bool:
+    """Whether a ``.gitattributes`` pattern applies to ``name`` at the repo root (gitignore rules)."""
+    if pattern.startswith("**/"):
+        pattern = pattern[3:]
+    elif pattern.startswith("/"):
+        pattern = pattern[1:]
+    return "/" not in pattern and fnmatch.fnmatchcase(name, pattern)
 
 
 def summarize(project_export: dict) -> dict:

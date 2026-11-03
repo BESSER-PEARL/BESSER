@@ -447,7 +447,9 @@ class TestPushSmartToGitHub:
         # fresh one would replace the repo's.
         run_id = "e" * 32
         _seed_run(run_id)
-        fake = _FakeGitHubService(repo_files={".gitattributes": "*.png binary\n/.besser_recipe.json -diff\n"})
+        # The owner's own setting for one record is kept; a line that does not set it does not count.
+        fake = _FakeGitHubService(repo_files={".gitattributes": (
+            "*.png binary\n/.besser_recipe.json -linguist-generated\n/.besser_attribution.json -diff\n")})
         _install(monkeypatch, fake)
 
         body = {"run_id": run_id, "projectExport": _project_export(),
@@ -456,7 +458,8 @@ class TestPushSmartToGitHub:
         assert r.status_code == 200, r.text
         assert fake.push["gitattributes"] == (
             "*.png binary\n"
-            "/.besser_recipe.json -diff\n"
+            "/.besser_recipe.json -linguist-generated\n"
+            "/.besser_attribution.json -diff\n"
             "/.besser_attribution.json linguist-generated=true\n"
             "/.besser_generator_output.json linguist-generated=true\n"
         )
@@ -495,9 +498,25 @@ class TestMarkGenerated:
             "/.besser_generator_output.json linguist-generated=true\n"
         )
 
-    def test_without_records_no_file_is_written(self, tmp_path):
-        repo_model.mark_generated(str(tmp_path), CARRIED_RUN_FILES, repo_text="*.zip binary\n")
+    def test_without_records_or_a_repo_file_no_file_is_written(self, tmp_path):
+        repo_model.mark_generated(str(tmp_path), CARRIED_RUN_FILES)
         assert not (tmp_path / ".gitattributes").exists()
+
+    def test_the_repos_file_is_kept_even_when_nothing_is_added(self, tmp_path):
+        # The push would otherwise delete it as a file the run dropped.
+        repo_model.mark_generated(str(tmp_path), CARRIED_RUN_FILES, repo_text="*.zip binary\r\n")
+        assert (tmp_path / ".gitattributes").read_bytes() == b"*.zip binary\r\n"
+
+    def test_a_glob_line_setting_the_attribute_is_respected(self, tmp_path):
+        workdir = self._workdir(tmp_path, *CARRIED_RUN_FILES)
+        repo_model.mark_generated(workdir, CARRIED_RUN_FILES, repo_text="* text=auto\n.besser_* -linguist-generated\n")
+        assert self._gitattributes(tmp_path) == "* text=auto\n.besser_* -linguist-generated\n"
+
+    def test_lines_added_to_a_crlf_file_use_crlf(self, tmp_path):
+        workdir = self._workdir(tmp_path, ".besser_recipe.json")
+        repo_model.mark_generated(workdir, CARRIED_RUN_FILES, repo_text="*.png binary\r\n")
+        assert (tmp_path / ".gitattributes").read_bytes() == (
+            b"*.png binary\r\n/.besser_recipe.json linguist-generated=true\r\n")
 
     def test_a_linked_gitattributes_is_left_alone(self, tmp_path):
         workdir = self._workdir(tmp_path, *CARRIED_RUN_FILES)

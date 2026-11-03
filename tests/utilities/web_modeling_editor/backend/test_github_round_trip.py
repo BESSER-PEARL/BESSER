@@ -925,3 +925,45 @@ def test_a_push_deletes_a_generator_output_the_run_no_longer_has(github):
     assert ".besser_generator_output.json" not in files
     # A record the run never carries is not the run's to delete.
     assert ".besser_checkpoint.json" in files
+
+
+def _fresh_run_with_records() -> str:
+    run_id = uuid.uuid4().hex
+    workdir = create_run_workspace(run_id)
+    _write(workdir, "backend/main_api.py", "app = None\n")
+    _write(workdir, ".besser_recipe.json", '{"generator_used": "backend"}\n')
+    asyncio.run(SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "backend", "main_api.py"), file_name="app.zip", is_zip=True,
+        temp_dir=workdir, created_at=time.time(),
+    )))
+    return run_id
+
+
+def test_a_modify_push_keeps_the_gitattributes_the_first_push_wrote(github):
+    """Found in review: the first push writes .gitattributes into the pushed tree only, so a
+    modify run seeded from it lacks the file and its push deleted it from the repo."""
+    repo = github.create_repo("flip", files={"README.md": "# flip\n"})
+    first = _fresh_run_with_records()
+    assert _push(first, "flip", base_commit_sha=github.ref(repo, "main")).status_code == 200
+    written = github.files(repo)[".gitattributes"][1]
+    assert written == b"/.besser_recipe.json linguist-generated=true\n"
+
+    r = _push(_modify_run(first, lambda workdir: _write(workdir, "backend/main_api.py", "app = 1\n")), "flip")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "pushed"
+    assert github.files(repo)[".gitattributes"][1] == written
+
+
+def test_a_teammates_gitattributes_line_survives_the_next_push(github):
+    repo = github.create_repo("flip", files={"README.md": "# flip\n"})
+    first = _fresh_run_with_records()
+    assert _push(first, "flip", base_commit_sha=github.ref(repo, "main")).status_code == 200
+    teammate = github.files(repo)[".gitattributes"][1].decode() + "*.png binary\n"
+    github.commit_files(repo, {".gitattributes": teammate}, "Mark images binary", author="ben")
+
+    r = _push(_modify_run(first, lambda workdir: _write(workdir, "backend/main_api.py", "app = 1\n")), "flip")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] in ("pushed", "merged")
+    assert github.files(repo)[".gitattributes"][1].decode() == teammate

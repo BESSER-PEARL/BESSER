@@ -1298,7 +1298,7 @@ async def get_user_repositories(
             truncated=listing["truncated"],
         )
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "get_user_repositories") from exc
     except Exception:
         logger.exception("Unexpected error fetching GitHub repositories")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching repositories.")
@@ -1324,7 +1324,7 @@ async def get_repository_branches(
         branches = await github.get_branches(owner, repo)
         return GitHubBranchesListResponse(branches=branches)
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "get_repository_branches") from exc
     except Exception:
         logger.exception("Unexpected error fetching GitHub branches")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching branches.")
@@ -1552,11 +1552,6 @@ async def _model_tree_entries(github, owner: str, repo: str, files: dict[str, by
     return entries
 
 
-def _github_http_error(exc: httpx.HTTPStatusError) -> HTTPException:
-    status = exc.response.status_code if exc.response is not None else 502
-    return HTTPException(status_code=status if 400 <= status < 500 else 502, detail=_extract_github_error_message(exc))
-
-
 @router.post("/project/save", response_model=SaveProjectResponse)
 async def save_project_to_github(
     github_sessions: GitHubSessionsDep,
@@ -1609,8 +1604,7 @@ async def save_project_to_github(
             warnings=outcome.get("warnings", []),
         )
     except httpx.HTTPStatusError as exc:
-        logger.warning("GitHub API error saving project", exc_info=True)
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "save_project_to_github") from exc
     except Exception:
         logger.exception("Unexpected error saving project to GitHub")
         raise HTTPException(status_code=500, detail="An internal error occurred while saving the project.")
@@ -1810,7 +1804,7 @@ async def get_repo_summary(
             **repo_model.summarize(found[1]),
         )
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "get_repo_summary") from exc
     except Exception:
         logger.exception("Unexpected error summarizing a GitHub repository")
         raise HTTPException(status_code=500, detail="An internal error occurred while reading the repository.")
@@ -1884,7 +1878,7 @@ async def get_sync_status(
     except HTTPException:
         raise
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "get_sync_status") from exc
     except Exception:
         logger.exception("Unexpected error reading GitHub sync status")
         raise HTTPException(status_code=500, detail="An internal error occurred while reading the sync status.")
@@ -1968,7 +1962,7 @@ async def get_model_history(
             entries.append(ModelHistoryEntry(**_commit_response(commit).model_dump(), changes=changes))
         return ModelHistoryResponse(commits=entries)
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "get_model_history") from exc
     except Exception:
         logger.exception("Unexpected error reading the model history")
         raise HTTPException(status_code=500, detail="An internal error occurred while reading the model history.")
@@ -2009,7 +2003,7 @@ async def create_pull_request(
         )
         return CreatePullRequestResponse(**result)
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "create_pull_request") from exc
 
 
 async def _pull_request_body(github, owner: str, repo: str, base: str, head: str) -> str:
@@ -2125,7 +2119,7 @@ async def go_live(
     except HTTPException:
         raise
     except httpx.HTTPStatusError as exc:
-        raise _github_http_error(exc) from exc
+        raise _github_status_error(exc, "go_live") from exc
     except ValueError as exc:
         # download_repo_tarball's size / member-count refusals.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2210,13 +2204,13 @@ async def create_gist_from_project(
             message="Gist created successfully"
         )
     except httpx.HTTPStatusError as e:
-        status_code = e.response.status_code if e.response is not None else 500
         # GitHub returns 404/403 when the token lacks the "gist" scope or gists are disabled
-        if status_code in (403, 404):
-            detail = "GitHub token is missing access to gists. Please reconnect GitHub and grant the 'gist' scope."
-        else:
-            detail = f"GitHub API error while creating Gist: {str(e)}"
-        raise HTTPException(status_code=status_code, detail=detail)
+        if e.response is not None and e.response.status_code in (403, 404):
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="GitHub token is missing access to gists. Please reconnect GitHub and grant the 'gist' scope.",
+            ) from e
+        raise _github_status_error(e, "create_gist_from_project") from e
     except Exception:
         logger.exception("Unexpected error creating GitHub Gist")
         raise HTTPException(status_code=500, detail="An internal error occurred while creating the Gist.")

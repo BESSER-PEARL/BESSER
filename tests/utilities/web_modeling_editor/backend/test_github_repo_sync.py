@@ -532,3 +532,35 @@ def test_a_new_project_repo_is_private_unless_the_user_asks_for_public(monkeypat
         r = _call("POST", "/besser_api/github/project/create-repo", headers=SESSION, json={**body, **extra})
         assert r.status_code == 200, r.text
     assert fake.created == [True, False]
+
+
+class _FailingGitHub:
+    """Every GitHub call answers ``status``."""
+
+    def __init__(self, status: int):
+        self.status = status
+
+    def __getattr__(self, name):
+        async def fail(*args, **kwargs):
+            request = httpx.Request("GET", "https://api.github.com/x")
+            raise httpx.HTTPStatusError(
+                "failed", request=request,
+                response=httpx.Response(self.status, json={"message": "GitHub said no"}, request=request))
+        return fail
+
+
+@pytest.mark.parametrize("upstream, expected", [(401, 401), (404, 404), (422, 409), (503, 502)])
+def test_the_sidebar_endpoints_map_github_errors_like_the_spec_driven_ones(monkeypatch, upstream, expected):
+    """``/project/save`` and the rest answered GitHub's 422 as 422; the push endpoints answer 409."""
+    _sidebar(monkeypatch, _FailingGitHub(upstream))
+
+    save = _call("POST", "/besser_api/github/project/save", headers=SESSION, json={
+        "owner": "me", "repo": "app", "commit_message": "Save", "project_data": _project(),
+        "project_export": _envelope(), "base_commit_sha": BASE,
+    })
+    pull = _call("POST", "/besser_api/github/pull-request", headers=SESSION, json={
+        "owner": "me", "repo": "app", "head": "besser/sync-1", "base": "main", "title": "Sync", "body": "b",
+    })
+
+    assert (save.status_code, pull.status_code) == (expected, expected), (save.text, pull.text)
+    assert "GitHub said no" in save.json()["detail"]

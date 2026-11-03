@@ -111,6 +111,14 @@ remembered username without a session also reads as expired, so a linked
 project offers *Reconnect* after a reload; signing out forgets the username and
 revokes the token at GitHub.
 
+A GitHub API error reaches the editor with one mapping on every endpoint
+(``_github_status_error`` in ``routers/github_deploy_api.py``): 401, 403 and
+other 4xx keep their status, 422 (a name already taken, a branch that moved)
+becomes 409, and a 5xx becomes 502, each with GitHub's own message. Two
+exceptions: ``/spec-driven/import-github-run`` answers a missing repository
+with 404 ``repo_missing``, and ``/github/gist/create`` answers 403/404 with how
+to grant the ``gist`` scope.
+
 Sync state
 ----------
 

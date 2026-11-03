@@ -11,8 +11,7 @@ re-exports the names it used to define.
 The model catalog (:mod:`besser.llm.catalog`, ``BESSER_MODEL_CATALOG`` merged
 over ``besser/llm/data/model_catalog.json``) and the prices
 (:mod:`besser.llm.pricing`, from the catalog and the vendored public list in
-``besser/llm/data/model_prices.json``) live here; the old import paths in
-``besser.spec_driven_agent.providers`` still work. The Spec-Driven Agent's
+``besser/llm/data/model_prices.json``) live here. The Spec-Driven Agent's
 provider clients themselves are still in
 ``besser.spec_driven_agent.providers.llm_client`` (they use ``besser.llm.retry``
 and the prices); they move here with its split.
@@ -36,6 +35,7 @@ and the prices); they move here with its split.
    :members: ModelCatalog, ModelCatalogError, load_model_catalog
 
 .. automodule:: besser.llm.pricing
+   :members: get_pricing, is_free_local_model, vendored_prices
 
 .. automodule:: besser.llm.settings
    :members:

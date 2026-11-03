@@ -15,9 +15,9 @@ import httpx
 import pytest
 from httpx._transports.asgi import ASGITransport
 
+from besser.llm.pricing import get_pricing
 from besser.spec_driven_agent.providers.llm_client import (
     OpenAIProvider,
-    _get_pricing,
     create_llm_client,
 )
 from besser.llm.catalog import (
@@ -158,26 +158,26 @@ def test_gateway_runs_are_priced_at_the_catalog_rates(use_catalog, model, expect
 
 def test_a_missing_cache_rate_bills_at_the_input_rate(use_catalog):
     use_catalog(GATEWAY_CATALOG)
-    rate = _get_pricing("claude-sonnet-5-5", route=GATEWAY_URL)
+    rate = get_pricing("claude-sonnet-5-5", route=GATEWAY_URL)
     assert rate["cache_read"] == rate["cache_write"] == 2.5
-    assert _get_pricing("gpt-6-luna", route=GATEWAY_URL)["cache_read"] == 0.03
+    assert get_pricing("gpt-6-luna", route=GATEWAY_URL)["cache_read"] == 0.03
 
 
 def test_the_same_id_off_the_gateway_keeps_its_vendor_price(use_catalog):
     use_catalog(GATEWAY_CATALOG)
-    assert _get_pricing("gpt-6-luna", billed=True)["input"] == 0.1
+    assert get_pricing("gpt-6-luna", billed=True)["input"] == 0.1
 
 
 def test_a_catalog_price_on_a_vendor_model_beats_the_fallback(use_catalog):
-    assert _get_pricing("gpt-9-nova", billed=True)["input"] == 2.5  # gpt-4o fallback
+    assert get_pricing("gpt-9-nova", billed=True)["input"] == 2.5  # gpt-4o fallback
     use_catalog(GATEWAY_CATALOG)
-    assert _get_pricing("gpt-9-nova", billed=True) == {
+    assert get_pricing("gpt-9-nova", billed=True) == {
         "input": 7.0, "output": 21.0, "cache_read": 7.0, "cache_write": 7.0,
     }
 
 
 def test_route_prices_from_the_default_still_price_the_sponsored_gateway():
-    rate = _get_pricing("moonshotai/Kimi-K3", route="https://api.commandcode.ai/provider/v1")
+    rate = get_pricing("moonshotai/Kimi-K3", route="https://api.commandcode.ai/provider/v1")
     assert (rate["input"], rate["cache_read"]) == (3.0, 0.30)
 
 

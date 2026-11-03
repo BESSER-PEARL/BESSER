@@ -26,15 +26,7 @@ from urllib.parse import urlparse
 
 from besser.llm import anthropic_client, openai_client
 from besser.llm.catalog import load_model_catalog
-# The price tables and lookup moved to besser.llm.pricing; tests and the
-# orchestrator still import these names from here.
-from besser.llm.pricing import (  # noqa: F401
-    _MODEL_PRICING,
-    _ZERO_PRICING,
-    _get_pricing,
-    _is_free_local_model,
-    _vendored_prices,
-)
+from besser.llm.pricing import get_pricing, is_free_local_model
 from besser.llm.retry import (
     backoff_seconds as _backoff_seconds,
     is_quota_exhausted as _is_quota_exhausted,
@@ -118,7 +110,7 @@ class UsageTracker:
         # the cost cap (it spends org credits) but is not the user's cost.
         self.billed_to_user = billed_to_user
         self.route = route
-        self.pricing = _get_pricing(model, billed, route)
+        self.pricing = get_pricing(model, billed, route)
         self.input_tokens = 0
         self.output_tokens = 0
         self.cache_creation_tokens = 0
@@ -182,7 +174,7 @@ class UsageTracker:
         self.cache_creation_tokens += cw
         self.cache_read_tokens += cr
         if model and model != self.model:
-            override = _get_pricing(model, self.billed, self.route)
+            override = get_pricing(model, self.billed, self.route)
             primary = self.pricing
             delta = (
                 inp * (override["input"] - primary["input"])
@@ -213,7 +205,7 @@ class UsageTracker:
         before = self.estimated_cost
         self.billed = billed
         self.route = route
-        self.pricing = _get_pricing(model, billed, route)
+        self.pricing = get_pricing(model, billed, route)
         self._extra_cost_usd += before - self.estimated_cost
 
     @property
@@ -1410,7 +1402,7 @@ class OpenAIProvider(LLMProvider):
         # route (not in its catalog): the OpenAI cheap sibling doesn't exist
         # there — a cheap-sibling override just burns two failing round-trips
         # per gap analysis before the primary-model retry kicks in.
-        if self._free_route or _is_free_local_model(self._model.lower()):
+        if self._free_route or is_free_local_model(self._model.lower()):
             return None
         return self.PLANNING_MODEL
 

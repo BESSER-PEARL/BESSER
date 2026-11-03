@@ -1,10 +1,10 @@
 """Per-model token prices, for cost tracking and the per-run cost cap.
 
-:func:`_get_pricing` answers USD per 1M tokens (``input``, ``output``,
+:func:`get_pricing` answers USD per 1M tokens (``input``, ``output``,
 ``cache_write``, ``cache_read``) from, in order: the rate a gateway bills
 (model catalog ``route_prices``), $0 for self-hosted and free models, a rate
 the deployment's catalog sets, the vendored public list prices
-(``data/model_prices.json``) and the hand-typed :data:`_MODEL_PRICING`.
+(``data/model_prices.json``) and the hand-typed :data:`MODEL_PRICING`.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # ``cache_read`` is OpenAI's prompt-caching discount (~10% of input);
 # ``cache_write`` is 0 for OpenAI since they don't charge a write
 # premium like Anthropic does.
-_MODEL_PRICING: dict[str, dict[str, float]] = {
+MODEL_PRICING: dict[str, dict[str, float]] = {
     # Anthropic Claude
     "haiku":  {"input": 1.0,  "output": 5.0,  "cache_write": 1.25,  "cache_read": 0.1},
     "sonnet": {"input": 3.0,  "output": 15.0, "cache_write": 3.75,  "cache_read": 0.3},
@@ -72,7 +72,7 @@ _MODEL_PRICING: dict[str, dict[str, float]] = {
 # run mid-generation with ``stop_reason="cost_cap"``. Matched case-insensitively
 # as substrings. Kept conservative (clearly open families only) so a genuinely
 # unknown *paid* cloud model still gets the protective fallback rate.
-_ZERO_PRICING: dict[str, float] = {
+ZERO_PRICING: dict[str, float] = {
     "input": 0.0, "output": 0.0, "cache_write": 0.0, "cache_read": 0.0,
 }
 _FREE_LOCAL_MODEL_MARKERS = (
@@ -85,7 +85,7 @@ _FREE_LOCAL_MODEL_MARKERS = (
 )
 
 
-def _is_free_local_model(model_lower: str) -> bool:
+def is_free_local_model(model_lower: str) -> bool:
     """True for models that cost the platform $0 — self-hosted, or free tiers.
 
     Getting this wrong is expensive in both directions: a false positive prices
@@ -143,18 +143,18 @@ def _route_pricing(model_id: str, route: "str | None") -> "dict[str, float] | No
 
 @lru_cache(maxsize=1)
 def _vendored_price_index() -> dict[str, dict[str, float]]:
-    """``_vendored_prices`` re-keyed lower-case for case-insensitive lookup.
+    """``vendored_prices`` re-keyed lower-case for case-insensitive lookup.
 
     Model ids reach us in whatever case the caller typed, and the published
     keys are mixed case themselves (``nebius/Qwen/Qwen3-30B-A3B-Instruct-2507``).
     An exact-case ``dict.get`` would silently miss and fall through to the
     coarse tier table.
     """
-    return {key.lower(): value for key, value in _vendored_prices().items()}
+    return {key.lower(): value for key, value in vendored_prices().items()}
 
 
 @lru_cache(maxsize=1)
-def _vendored_prices() -> dict[str, dict[str, float]]:
+def vendored_prices() -> dict[str, dict[str, float]]:
     """Published per-model rates, keyed by exact model id.
 
     Vendored from litellm's ``model_prices_and_context_window.json`` (MIT),
@@ -173,7 +173,7 @@ model_prices_and_context_window.json
     file over it in the same change.
 
     Returns ``{}`` if the file is missing (a wheel built without it), which
-    falls the caller through to ``_MODEL_PRICING`` rather than to $0 — an
+    falls the caller through to ``MODEL_PRICING`` rather than to $0 — an
     absent price must never read as free, or the cost cap stops existing.
     """
     try:
@@ -214,11 +214,11 @@ def _published_pricing(model_id: str) -> dict[str, float] | None:
     return None
 
 
-def _get_pricing(model_id: str, billed: bool = False, route: "str | None" = None) -> dict[str, float]:
+def get_pricing(model_id: str, billed: bool = False, route: "str | None" = None) -> dict[str, float]:
     """Get the per-1M-token rates for a model ID.
 
     Published per-model rates come first, from the vendored table. The
-    hand-typed ``_MODEL_PRICING`` below it is a fallback for ids nobody
+    hand-typed ``MODEL_PRICING`` below it is a fallback for ids nobody
     publishes, and its Anthropic rows are coarse *tiers*: they cannot tell
     ``claude-sonnet-4-6`` ($3/$15) from ``claude-sonnet-5`` ($2/$10), and the
     ``opus`` row still carries Claude-3-era $15/$75 — 3x over every current
@@ -242,8 +242,8 @@ def _get_pricing(model_id: str, billed: bool = False, route: "str | None" = None
         return routed
     model_lower = model_id.lower()
     # Self-hosted / free local models — never bill, never trip the cost cap.
-    if not billed and _is_free_local_model(model_lower):
-        return _ZERO_PRICING
+    if not billed and is_free_local_model(model_lower):
+        return ZERO_PRICING
     # A rate the deployment's catalog sets beats the vendored list price.
     listed = load_model_catalog().listed_price(model_id)
     if listed is not None:
@@ -254,24 +254,24 @@ def _get_pricing(model_id: str, billed: bool = False, route: "str | None" = None
     # Exact Anthropic ids first: each is also inside a coarse tier below.
     for key in ("claude-opus-5-5",):
         if key in model_lower:
-            return _MODEL_PRICING[key]
+            return MODEL_PRICING[key]
     # Anthropic tiers — unambiguous identifiers so order doesn't matter.
     for tier in ("haiku", "sonnet", "opus"):
         if tier in model_lower:
-            return _MODEL_PRICING[tier]
+            return MODEL_PRICING[tier]
     # Mistral tiers — match before the OpenAI fallback so a Mistral
     # model never silently bills at the ``gpt-4o`` default rate.
     for key in ("mistral-large",):
         if key in model_lower:
-            return _MODEL_PRICING[key]
+            return MODEL_PRICING[key]
     # Nebius Token Factory tiers. These ids are vendor-namespaced
-    # (``Qwen/Qwen3-30B-A3B-Instruct-2507``), so ``_is_free_local_model``
+    # (``Qwen/Qwen3-30B-A3B-Instruct-2507``), so ``is_free_local_model``
     # correctly classifies them as billed rather than $0 — but without a row
     # here they would then land on the ``gpt-4o`` fallback and be billed ~8x
     # over, tripping ``max_cost_usd`` long before the user's real budget.
     for key in ("qwen3-30b-a3b",):
         if key in model_lower:
-            return _MODEL_PRICING[key]
+            return MODEL_PRICING[key]
     # OpenAI: variant-specific GPT-5.6 / GPT-5.5 keys must precede the
     # generic ``gpt-5`` substring or their spend would be under-counted.
     for key in (
@@ -281,5 +281,5 @@ def _get_pricing(model_id: str, billed: bool = False, route: "str | None" = None
         "gpt-5.5", "gpt-5", "o3-mini", "o3",
     ):
         if key in model_lower:
-            return _MODEL_PRICING[key]
-    return _MODEL_PRICING["gpt-4o"]  # default
+            return MODEL_PRICING[key]
+    return MODEL_PRICING["gpt-4o"]  # default

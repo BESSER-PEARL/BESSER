@@ -140,7 +140,7 @@ _CLAUDE_ALWAYS_THINKING_NO_FORCED_TOOL = ModelSettings(
 
 # Ordered longest-marker-first at import so a specific id always beats a
 # shorter family prefix. Matched as a lowercased substring, the same way
-# _get_pricing and compaction's window tables match.
+# get_pricing and compaction's window tables match.
 #
 # Markers are chosen not to overlap: "qwen3-30b-a3b-instruct-2507" and
 # "qwen3-coder" cannot both match one id. The Claude markers do overlap

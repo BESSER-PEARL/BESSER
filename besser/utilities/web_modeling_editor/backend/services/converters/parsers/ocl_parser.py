@@ -162,10 +162,13 @@ def _extract_inline_description(block: str) -> tuple[str, str]:
     description_parts: list[str] = []
     cleaned_lines: list[str] = []
     for raw_line in block.split('\n'):
-        match = re.search(r'--\s*(.*?)\s*$', raw_line)
-        if match and match.group(1):
-            description_parts.append(match.group(1))
-            raw_line = raw_line[:match.start()].rstrip()
+        # str.find + strip, not a regex: ``--\s*(.*?)\s*$`` backtracks
+        # polynomially on long runs of spaces (CodeQL py/polynomial-redos).
+        start = raw_line.find('--')
+        comment = raw_line[start + 2:].strip() if start != -1 else ''
+        if comment:
+            description_parts.append(comment)
+            raw_line = raw_line[:start].rstrip()
         cleaned_lines.append(raw_line)
     return '\n'.join(cleaned_lines), ' '.join(description_parts).strip()
 

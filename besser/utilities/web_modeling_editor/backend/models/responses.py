@@ -1,10 +1,55 @@
 """Standardized API response models."""
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Literal, Optional
+from pydantic import BaseModel, ConfigDict, Field
+from typing_extensions import NotRequired, TypedDict
 
 
-class DiagramExportResponse(BaseModel):
+class ResponseModel(BaseModel):
+    """Base of the API's response models.
+
+    Every field is sent, defaults included (no ``exclude_none``), so the OpenAPI
+    schema marks them all as required. Not for a model that is also part of a
+    request body: its schema would split into ``-Input`` / ``-Output``.
+    """
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+
+# What ``GitHubService.commit_tree`` reports for a commit it made.
+CommitStatus = Literal["pushed", "merged", "conflict"]
+
+
+# typing_extensions' TypedDict: pydantic needs it below Python 3.12.
+class DeploymentUrls(TypedDict):
+    """Links for a deployed repo; the live and dashboard ones only on a redeploy."""
+    github: str
+    render: str
+    live_frontend: NotRequired[str]  # web app
+    live_backend: NotRequired[str]  # web app
+    live_chatbot: NotRequired[str]  # chatbot
+    render_dashboard: NotRequired[str]
+
+
+# Not a ResponseModel: under its schema setting pydantic would list the
+# NotRequired links of DeploymentUrls as required. Every field is required instead.
+class DeployToGitHubResponse(BaseModel):
+    """Response model for GitHub deployment."""
+    success: bool
+    repo_url: str
+    repo_name: str
+    owner: str
+    deployment_urls: DeploymentUrls
+    files_uploaded: int
+    message: str
+    # True on the very first deploy to a repo (no previous ``render.yaml`` found),
+    # False on every subsequent deploy. The frontend uses this to pick the right
+    # "next action" button — create-blueprint vs. open-live-site.
+    is_first_deploy: bool
+    # Deployment flavor: ``webapp`` (Class+GUI) or ``chatbot`` (Agent-only).
+    deployment_type: Literal["webapp", "chatbot"]
+
+
+class DiagramExportResponse(ResponseModel):
     """Response for diagram export/conversion endpoints."""
     title: str
     model: Dict[str, Any]
@@ -14,7 +59,7 @@ class DiagramExportResponse(BaseModel):
     warnings: Optional[List[Dict[str, Any]]] = None
 
 
-class ProjectExportResponse(BaseModel):
+class ProjectExportResponse(ResponseModel):
     """Response for project export/conversion endpoints."""
     project: Dict[str, Any]
     exportedAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -22,7 +67,7 @@ class ProjectExportResponse(BaseModel):
     warnings: Optional[List[Dict[str, Any]]] = None
 
 
-class ValidationResponse(BaseModel):
+class ValidationResponse(ResponseModel):
     """Response for validation endpoints."""
     isValid: bool
     errors: List[str] = []
@@ -33,7 +78,7 @@ class ValidationResponse(BaseModel):
     ocl_message: str = ""
 
 
-class ApiInfoResponse(BaseModel):
+class ApiInfoResponse(ResponseModel):
     """Response for the API root endpoint."""
     message: str
     version: str
@@ -43,19 +88,19 @@ class ApiInfoResponse(BaseModel):
     endpoints: Dict[str, str]
 
 
-class FeedbackResponse(BaseModel):
+class FeedbackResponse(ResponseModel):
     """Response for feedback submission."""
+    status: Literal["success"]
     message: str
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
-class SimulationSessionResponse(BaseModel):
+class SimulationSessionResponse(ResponseModel):
     """Response for creating a live agent simulation session."""
     sessionId: str
     eventList: List[str]
 
 
-class SimulationValidationResponse(BaseModel):
+class SimulationValidationResponse(ResponseModel):
     """Response for validating that an agent can be simulated."""
     valid: bool
     agentCode: str
@@ -63,24 +108,24 @@ class SimulationValidationResponse(BaseModel):
     errors: List[str]
 
 
-class SimulationSessionFile(BaseModel):
+class SimulationSessionFile(ResponseModel):
     """One file produced inside a simulation session's workspace."""
     path: str
     content: str
 
 
-class SimulationSessionFilesResponse(BaseModel):
+class SimulationSessionFilesResponse(ResponseModel):
     """Files and directories produced inside a simulation session's workspace."""
     files: List[SimulationSessionFile]
     directories: List[str] = Field(default_factory=list)
 
 
-class SimulationSessionStopResponse(BaseModel):
+class SimulationSessionStopResponse(ResponseModel):
     """Response for stopping a simulation session."""
     ok: bool
 
 
-class SimulationLimitsResponse(BaseModel):
+class SimulationLimitsResponse(ResponseModel):
     """Resource limits and quota settings that apply to a simulation session."""
     memoryMb: Optional[int] = None
     cpuCores: Optional[float] = None
@@ -100,6 +145,8 @@ class SimulationLimitsResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# KGActionResponse and KGIssueResponse are also part of the KGResolutionInput
+# request body, so they stay plain BaseModels (see ResponseModel).
 class KGActionResponse(BaseModel):
     """A pre-filled action attached to a preflight issue."""
     key: str
@@ -118,7 +165,7 @@ class KGIssueResponse(BaseModel):
     skipAction: Optional[KGActionResponse] = None
 
 
-class KGPreflightReportResponse(BaseModel):
+class KGPreflightReportResponse(ResponseModel):
     """Response of ``/kg/preflight``, ``/kg/llm-clean`` and
     ``/kg/classify-orphans``."""
     kgSignature: str
@@ -127,11 +174,12 @@ class KGPreflightReportResponse(BaseModel):
     issues: List[KGIssueResponse] = Field(default_factory=list)
 
 
-class KGConsistencyIssueResponse(BaseModel):
+class KGConsistencyIssueResponse(ResponseModel):
     """One OWL/SHACL finding."""
     id: str
     code: str
-    severity: str
+    # The severities of ``check_kg_consistency`` (its ``_SEVERITY_MAP``).
+    severity: Literal["info", "warning", "violation"]
     message: str
     affectedNodeIds: List[str] = Field(default_factory=list)
     affectedEdgeIds: List[str] = Field(default_factory=list)
@@ -141,18 +189,26 @@ class KGConsistencyIssueResponse(BaseModel):
     constraintLabel: Optional[str] = None
 
 
-class KGConsistencyReportResponse(BaseModel):
+class KGSeverityCountsResponse(ResponseModel):
+    """How many issues of each severity a consistency report holds."""
+    info: int
+    warning: int
+    violation: int
+
+
+class KGConsistencyReportResponse(ResponseModel):
     """Response of ``/kg/consistency``."""
     issues: List[KGConsistencyIssueResponse] = Field(default_factory=list)
     issueCount: int
-    severityCounts: Dict[str, int]
+    severityCounts: KGSeverityCountsResponse
     kgSignature: str
-    inferenceUsed: str
+    # The ``inference`` of ``check_kg_consistency``.
+    inferenceUsed: Literal["rdfs", "owlrl"]
     exportedAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     version: str = "1.0.0"
 
 
-class KGConfigResponse(BaseModel):
+class KGConfigResponse(ResponseModel):
     """Response of ``GET /kg/config``: server-owned limits the KG editor must respect."""
     llmRequestTimeoutSeconds: int = Field(
         description="Overall server deadline, in seconds, for one KG LLM request.",
@@ -162,13 +218,13 @@ class KGConfigResponse(BaseModel):
     )
 
 
-class KGPendingOrphanClassification(BaseModel):
+class KGPendingOrphanClassification(ResponseModel):
     """Orphan nodes the user deferred to the per-node LLM classifier."""
     nodeIds: List[str]
     kgSignature: str
 
 
-class KGRefinementResponse(BaseModel):
+class KGRefinementResponse(ResponseModel):
     """Response of ``/kg/apply-refinement``: the cleaned KG plus its new signature."""
     title: str
     model: Dict[str, Any]

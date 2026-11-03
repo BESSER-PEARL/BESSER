@@ -24,7 +24,6 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartGenerationRunner,
     build_verification_report,
 )
@@ -35,6 +34,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_modify_seed im
     _collect_frames,
     _parse,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 # The two rules the hotel run shipped without.
@@ -357,10 +357,10 @@ class _RecipeOrchestrator(_StubOrchestrator):
 def _cleanup():
     async def _c():
         import shutil
-        async with SMART_RUN_REGISTRY._lock:
-            for entry in list(SMART_RUN_REGISTRY._entries.values()):
+        async with current_runtime().registry._lock:
+            for entry in list(current_runtime().registry._entries.values()):
                 shutil.rmtree(entry.temp_dir, ignore_errors=True)
-            SMART_RUN_REGISTRY._entries.clear()
+            current_runtime().registry._entries.clear()
     asyncio.run(_c())
 
 
@@ -368,7 +368,7 @@ def test_done_event_and_recipe_both_carry_the_three_lists(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _RecipeOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
-        frames = asyncio.run(_collect_frames(SmartGenerationRunner(_build_request())))
+        frames = asyncio.run(_collect_frames(SmartGenerationRunner(_build_request(), runtime=current_runtime())))
         done = [_parse(f) for f in frames if _parse(f).get("event") == "done"][-1]
 
         event_report = done["verification"]

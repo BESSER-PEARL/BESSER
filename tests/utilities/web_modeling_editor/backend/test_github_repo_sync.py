@@ -23,18 +23,15 @@ import yaml
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
-from besser.utilities.web_modeling_editor.backend.services.deployment import (
-    github_deploy_api,
-    repo_model,
-)
+from besser.utilities.web_modeling_editor.backend.routers import github_deploy_api, spec_driven_router
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
+from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     SYNC_BRANCH_PREFIX,
     GitHubService,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartRunEntry,
     SmartRunRegistry,
 )
@@ -42,6 +39,8 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly
     CLASS_DIAGRAM_MODEL,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _clear_registry
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 BASE = "a" * 40
 HEAD = "b" * 40
@@ -52,7 +51,7 @@ SESSION = {"X-GitHub-Session": "sess"}
 
 @pytest.fixture(autouse=True)
 def shared_workspace(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
     asyncio.run(_clear_registry())
     yield tmp_path
     asyncio.run(_clear_registry())
@@ -203,8 +202,8 @@ class _ImportGitHub:
 
 
 def test_a_repo_imported_by_the_backend_is_found_by_the_worker(monkeypatch, shared_workspace):
-    monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: _ImportGitHub())
-    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: _ImportGitHub())
+    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda _sessions, sid: "token")
 
     r = _call("POST", "/besser_api/spec-driven/import-github-run",
               json={"owner": "me", "repo": "app"}, headers=SESSION)
@@ -265,7 +264,7 @@ def _seed_run(tmp_path) -> str:
     run_dir.mkdir()
     (run_dir / "main.py").write_text("print('hi')\n", encoding="utf-8")
     run_id = "f" * 32
-    asyncio.run(SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
         file_path=str(run_dir / "main.py"), file_name="main.py", is_zip=False,
         temp_dir=str(run_dir), created_at=time.time(),
     )))
@@ -273,8 +272,8 @@ def _seed_run(tmp_path) -> str:
 
 
 def _push(monkeypatch, fake, run_id, **deploy):
-    monkeypatch.setattr(spec_driven_router, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
+    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda _sessions, sid: "token")
     body = {"run_id": run_id, "projectExport": _envelope(),
             "deploy_config": {"repo_name": "app", "use_existing": True, **deploy}}
     return _call("POST", "/besser_api/spec-driven/push-to-github", json=body, headers=SESSION)
@@ -409,7 +408,7 @@ class _SidebarGitHub:
 
 def _sidebar(monkeypatch, fake):
     monkeypatch.setattr(github_deploy_api, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(github_deploy_api, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(github_deploy_api, "get_user_token", lambda _sessions, sid: "token")
 
 
 def test_the_sidebar_saves_the_one_model_file_and_drops_the_legacy_one(monkeypatch):
@@ -533,3 +532,91 @@ def test_a_new_project_repo_is_private_unless_the_user_asks_for_public(monkeypat
         r = _call("POST", "/besser_api/github/project/create-repo", headers=SESSION, json={**body, **extra})
         assert r.status_code == 200, r.text
     assert fake.created == [True, False]
+
+
+class _FailingGitHub:
+    """Every GitHub call answers ``status``."""
+
+    def __init__(self, status: int):
+        self.status = status
+
+    def __getattr__(self, name):
+        async def fail(*args, **kwargs):
+            request = httpx.Request("GET", "https://api.github.com/x")
+            raise httpx.HTTPStatusError(
+                "failed", request=request,
+                response=httpx.Response(self.status, json={"message": "GitHub said no"}, request=request))
+        return fail
+
+
+@pytest.mark.parametrize("upstream, expected", [(401, 401), (404, 404), (422, 409), (503, 502)])
+def test_the_sidebar_endpoints_map_github_errors_like_the_spec_driven_ones(monkeypatch, upstream, expected):
+    """``/project/save`` and the rest answered GitHub's 422 as 422; the push endpoints answer 409."""
+    _sidebar(monkeypatch, _FailingGitHub(upstream))
+
+    save = _call("POST", "/besser_api/github/project/save", headers=SESSION, json={
+        "owner": "me", "repo": "app", "commit_message": "Save", "project_data": _project(),
+        "project_export": _envelope(), "base_commit_sha": BASE,
+    })
+    pull = _call("POST", "/besser_api/github/pull-request", headers=SESSION, json={
+        "owner": "me", "repo": "app", "head": "besser/sync-1", "base": "main", "title": "Sync", "body": "b",
+    })
+
+    assert (save.status_code, pull.status_code) == (expected, expected), (save.text, pull.text)
+    assert "GitHub said no" in save.json()["detail"]
+
+
+@pytest.mark.parametrize("upstream, expected", [(401, 401), (422, 409), (503, 502)])
+@pytest.mark.parametrize("method, url, body", [
+    ("GET", "/besser_api/github/contents?owner=me&repo=app", None),
+    ("GET", "/besser_api/github/commits?owner=me&repo=app", None),
+    ("GET", "/besser_api/github/project/load?owner=me&repo=app", None),
+    ("GET", f"/besser_api/github/project/load-commit?owner=me&repo=app&commit_sha={BASE}", None),
+    ("POST", "/besser_api/github/project/create-repo", {"repo_name": "app", "project_data": _project()}),
+])
+def test_the_browse_load_and_create_endpoints_map_github_errors_too(monkeypatch, method, url, body, upstream, expected):
+    """These answered every GitHub error with 500, so a revoked token never offered Reconnect."""
+    _sidebar(monkeypatch, _FailingGitHub(upstream))
+
+    r = _call(method, url, headers=SESSION, json=body)
+
+    assert r.status_code == expected, r.text
+    assert "GitHub said no" in r.json()["detail"]
+
+
+def test_a_taken_repo_name_answers_409_with_githubs_reason(monkeypatch):
+    class _NameTaken(_FailingGitHub):
+        async def get_authenticated_user(self):
+            return {"login": "me"}
+
+    _sidebar(monkeypatch, _NameTaken(422))
+
+    r = _call("POST", "/besser_api/github/project/create-repo", headers=SESSION,
+              json={"repo_name": "app", "project_data": _project()})
+
+    assert r.status_code == 409, r.text
+
+
+def _github_answers(monkeypatch, status: int, body=None):
+    """GitHubService's requests all get ``status``; the test client keeps its own transport."""
+    real_client = httpx.AsyncClient
+    github = httpx.MockTransport(lambda request: httpx.Response(status, json=body))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(**{"transport": github, **kw}))
+
+
+@pytest.mark.parametrize("upstream, expected", [(401, 401), (503, 502)])
+def test_file_exists_reports_a_github_error_instead_of_a_missing_file(monkeypatch, upstream, expected):
+    """``file_exists`` read any non-200 as "missing": a revoked token answered 200 ``exists: false``."""
+    _github_answers(monkeypatch, upstream, {"message": "Bad credentials"})
+    monkeypatch.setattr(github_deploy_api, "get_user_token", lambda _sessions, sid: "token")
+
+    r = _call("GET", "/besser_api/github/file/exists?owner=me&repo=app&file_path=a.json", headers=SESSION)
+
+    assert r.status_code == expected, r.text
+    assert "Bad credentials" in r.json()["detail"]
+
+
+def test_file_exists_still_reads_404_as_missing(monkeypatch):
+    _github_answers(monkeypatch, 404)
+
+    assert asyncio.run(GitHubService("token").file_exists("me", "app", "a.json")) is False

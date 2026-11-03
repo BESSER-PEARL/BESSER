@@ -53,7 +53,8 @@ def _type_names(annotation, depth=0):
     return result
 
 
-def _source_files(root):
+def source_files(root):
+    """The workspace's parsed Python under ``root`` (a resolved path), and what was skipped."""
     parsed, unknown = {}, []
     for directory, dirs, files in walk_plain(root):
         dirs[:] = sorted(name for name in dirs if name not in _SKIP and not name.startswith("."))
@@ -75,29 +76,48 @@ def _source_files(root):
                     unknown.append(f"excluded/outsize source: {relative}")
                     continue
                 parsed[path] = parse_source(path.read_text(encoding="utf-8-sig"))
-            except (OSError, UnicodeError, SyntaxError) as exc:
+            except (OSError, UnicodeError, SyntaxError, ValueError) as exc:  # ValueError: NUL byte, older 3.11
                 unknown.append(f"unreadable source: {relative} ({type(exc).__name__})")
     return parsed, unknown
 
 
-def _bindings(tree):
+def router_bindings(tree):
+    """Each module-level ``FastAPI()`` / ``APIRouter()``: name -> (kind, own prefix, call).
+
+    The prefix is ``""`` when absent and ``None`` when not a literal.
+    """
     result = {}
     for statement in tree.body:
         value = _value(statement)
         if not isinstance(value, ast.Call) or _name(value.func) not in {"FastAPI", "APIRouter"}:
             continue
-        prefix_node = _keyword(value, "prefix")
-        prefix = "" if prefix_node is None else _string(prefix_node)
-        if any(keyword.arg is None for keyword in value.keywords):
-            prefix = None
+        prefix = _literal_prefix(value, _keyword(value, "prefix"))
         for target in _targets(statement):
             if isinstance(target, ast.Name):
-                result[target.id] = (_name(value.func), prefix)
+                result[target.id] = (_name(value.func), prefix, value)
     return result
 
 
-def _mounts(parsed, bindings, unknown):
-    mounts = {}
+def _literal_prefix(call, node):
+    if any(keyword.arg is None for keyword in call.keywords):
+        return None
+    return "" if node is None else _string(node)
+
+
+def _join(*parts):
+    kept = [part.strip("/") for part in parts if part.strip("/")]
+    return "/" + "/".join(kept) if kept else ""
+
+
+def include_prefixes(parsed, bindings, unknown):
+    """Where each binding of :func:`router_bindings` is served: per (file, name),
+    the prefixes its ``include_router`` chain (any depth, with each call's
+    ``prefix=``) or an app's ``mount`` puts before its own prefix.
+
+    An app included nowhere is served at the root (``[""]``); a router included
+    nowhere, or through a non-literal prefix, gets ``None`` (unknown).
+    """
+    parents = {}
     for path, tree in parsed.items():
         aliases = {}
         for statement in tree.body:
@@ -112,23 +132,45 @@ def _mounts(parsed, bindings, unknown):
                     aliases[alias.asname or alias.name.split(".")[0]] = (alias.name.split(".")[-1], False)
         for statement in tree.body:
             call = statement.value if isinstance(statement, ast.Expr) else None
-            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute) or call.func.attr != "include_router":
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
                 continue
             receiver = _name(call.func.value)
+            if call.func.attr == "mount":  # a sub-application; StaticFiles and the like serve no route
+                target = call.args[1] if len(call.args) > 1 else _keyword(call, "app")
+                if (isinstance(target, ast.Name) and bindings[path].get(target.id, ("",))[0] == "FastAPI"
+                        and receiver in bindings[path]):
+                    mount = call.args[0] if call.args else _keyword(call, "path")
+                    prefix = None if any(keyword.arg is None for keyword in call.keywords) else _string(mount)
+                    parents.setdefault((path, target.id), []).append(((path, receiver), prefix))
+                continue
+            if call.func.attr != "include_router":
+                continue
             target = call.args[0] if call.args else _keyword(call, "router")
-            base = _name(target.value) if isinstance(target, ast.Attribute) else _name(target)
-            module, direct = aliases.get(base, (None, False))
-            candidates = [candidate for candidate in parsed if candidate.stem == module and candidate.is_relative_to(path.parent)]
-            if len(candidates) != 1 or bindings[path].get(receiver, (None,))[0] != "FastAPI":
+            if isinstance(target, ast.Name) and target.id in bindings[path]:
+                child = (path, target.id)
+            else:
+                base = _name(target.value) if isinstance(target, ast.Attribute) else _name(target)
+                module, direct = aliases.get(base, (None, False))
+                candidates = [candidate for candidate in parsed if candidate.stem == module and candidate.is_relative_to(path.parent)]
+                child = (candidates[0], "router" if direct else _name(target)) if len(candidates) == 1 else None
+            if child is None or receiver not in bindings[path]:
                 unknown.append(f"unresolved router mount: {path.name}:{statement.lineno}")
                 continue
-            binding = "router" if direct else _name(target)
-            prefix_node = _keyword(call, "prefix")
-            prefix = "" if prefix_node is None else _string(prefix_node)
-            if any(keyword.arg is None for keyword in call.keywords):
-                prefix = None
-            mounts.setdefault((candidates[0], binding), []).append(prefix)
-    return mounts
+            parents.setdefault(child, []).append(((path, receiver), _literal_prefix(call, _keyword(call, "prefix"))))
+
+    def served(key, seen):
+        if key not in parents:
+            return [""] if bindings.get(key[0], {}).get(key[1], ("",))[0] == "FastAPI" else [None]
+        result = []
+        for parent, prefix in parents[key]:
+            parent_prefix = bindings[parent[0]][parent[1]][1]
+            bases = [None] if parent in seen else served(parent, seen | {key})
+            result.extend(None if None in (base, parent_prefix, prefix) else _join(base, parent_prefix, prefix)
+                          for base in bases)
+        return result
+
+    keys = {(path, name) for path, names in bindings.items() for name in names} | set(parents)
+    return {key: served(key, frozenset({key})) for key in keys}
 
 
 def _input_shape(value, previous):
@@ -302,7 +344,7 @@ def build_mutation_manifest(output_dir: str, *, max_chars: int = 14_000,
     if max_chars < 500:
         return "Mutation coverage OMITTED: character budget too small; no coverage verified."[:max(0, max_chars)]
     root = Path(output_dir).resolve()
-    parsed, unknown = _source_files(root)
+    parsed, unknown = source_files(root)
     classes, orm, relations = {}, {}, []
     for path, tree in parsed.items():
         for statement in tree.body:
@@ -363,8 +405,8 @@ def build_mutation_manifest(output_dir: str, *, max_chars: int = 14_000,
             break
         schema_names |= added
 
-    bindings = {path: _bindings(tree) for path, tree in parsed.items()}
-    mounts = _mounts(parsed, bindings, unknown)
+    bindings = {path: router_bindings(tree) for path, tree in parsed.items()}
+    served = include_prefixes(parsed, bindings, unknown)
     routes, used_schemas = [], set()
     for path, tree in parsed.items():
         for function in tree.body:
@@ -393,13 +435,13 @@ def build_mutation_manifest(output_dir: str, *, max_chars: int = 14_000,
                 if not methods:
                     continue
                 binding = _name(decorator.func.value)
-                kind, router_prefix = bindings[path].get(binding, (None, None))
+                router_prefix = bindings[path].get(binding, (None, None))[1]
                 route_node = decorator.args[0] if decorator.args else _keyword(decorator, "path")
                 route = _string(route_node)
                 if route is None:
                     unknown.append(f"dynamic write route: {path.relative_to(root).as_posix()}:{function.lineno}")
                     continue
-                includes = [""] if kind == "FastAPI" else mounts.get((path, binding), [None])
+                includes = served.get((path, binding), [None])
                 for include in includes:
                     resolved = router_prefix is not None and include is not None
                     full = "/" + "/".join(part.strip("/") for part in (include or "", router_prefix or "", route) if part.strip("/"))

@@ -26,7 +26,6 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartGenerationRunner,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_modify_seed import (
@@ -36,16 +35,17 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_modify_seed im
     _collect_frames,
     _parse,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 def _cleanup():
     async def _c():
         import shutil
 
-        async with SMART_RUN_REGISTRY._lock:
-            for e in list(SMART_RUN_REGISTRY._entries.values()):
+        async with current_runtime().registry._lock:
+            for e in list(current_runtime().registry._entries.values()):
                 shutil.rmtree(e.temp_dir, ignore_errors=True)
-            SMART_RUN_REGISTRY._entries.clear()
+            current_runtime().registry._entries.clear()
 
     asyncio.run(_c())
 
@@ -78,7 +78,7 @@ def test_model_switch_sentinel_becomes_model_update_event(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _SwitchingOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
-        events = _events(SmartGenerationRunner(_build_request()))
+        events = _events(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
         updates = [e for e in events if e.get("event") == "model_update"]
         assert len(updates) == 1
         update = updates[0]
@@ -99,7 +99,7 @@ def test_quota_fallback_reason_is_preserved(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _SwitchingOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: client)
     try:
-        events = _events(SmartGenerationRunner(_build_request()))
+        events = _events(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
         update = next(e for e in events if e.get("event") == "model_update")
         assert update["reason"] == "quota_exhausted"
     finally:
@@ -110,7 +110,7 @@ def test_no_switch_means_no_model_update_event(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _StubOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
-        events = _events(SmartGenerationRunner(_build_request()))
+        events = _events(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
         assert not any(e.get("event") == "model_update" for e in events)
     finally:
         _cleanup()
@@ -158,7 +158,7 @@ def test_completed_with_blockers_sets_blocker_count(monkeypatch):
     )
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
-        done = _done_event(_events(SmartGenerationRunner(_build_request())))
+        done = _done_event(_events(SmartGenerationRunner(_build_request(), runtime=current_runtime())))
         assert done["incomplete"] is True
         assert done["blockerCount"] == 2
     finally:
@@ -169,7 +169,7 @@ def test_cut_short_run_reports_zero_blocker_count(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _CutShortOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
-        done = _done_event(_events(SmartGenerationRunner(_build_request())))
+        done = _done_event(_events(SmartGenerationRunner(_build_request(), runtime=current_runtime())))
         assert done["incomplete"] is True
         assert done["blockerCount"] == 0
     finally:
@@ -180,7 +180,7 @@ def test_clean_run_reports_zero_blocker_count(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _StubOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
-        done = _done_event(_events(SmartGenerationRunner(_build_request())))
+        done = _done_event(_events(SmartGenerationRunner(_build_request(), runtime=current_runtime())))
         assert done["incomplete"] is False
         assert done["blockerCount"] == 0
     finally:

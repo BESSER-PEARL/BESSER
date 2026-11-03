@@ -25,6 +25,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import 
     _build_request,
     _clear_registry,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 SECRET = "TOP-SECRET-OUTSIDE-THE-TREE"
 
@@ -97,7 +98,7 @@ def test_download_zip_skips_symlinked_file_and_dir(tmp_path):
     (result_path / "app.py").write_text("app = 1\n", encoding="utf-8")
     _add_links(result_path, outside)
 
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     runner.temp_dir = str(tmp_path)
     done, entry = runner._package_result(str(result_path))
 
@@ -122,7 +123,7 @@ def test_attribution_writes_never_follow_a_planted_link(tmp_path):
     _symlink(outside / "secret.txt", result_path / ".besser_attribution.json.tmp")
     _symlink(outside, result_path / ".agent-trace", is_dir=True)
 
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     runner.temp_dir = str(tmp_path)
     done, entry = runner._package_result(str(result_path))
 
@@ -159,7 +160,7 @@ def test_single_file_download_is_never_a_symlink(tmp_path):
     (result_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
     _symlink(outside / "secret.txt", result_path / "leak.txt")
 
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     runner.temp_dir = str(tmp_path)
     _done, entry = runner._package_result(str(result_path))
 
@@ -219,7 +220,7 @@ def test_a_linked_carried_file_never_reaches_the_zip(tmp_path):
     (result_path / "app.py").write_text("app = 1\n", encoding="utf-8")
     _symlink(outside / "secret.txt", result_path / ".besser_generator_output.json")
 
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     runner.temp_dir = str(tmp_path)
     _, entry = runner._package_result(str(result_path))
 

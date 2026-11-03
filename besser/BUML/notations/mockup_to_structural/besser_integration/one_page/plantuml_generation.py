@@ -1,17 +1,10 @@
-import retrying
-import requests
+from besser.BUML.notations.mockup_to_structural.utilities.openai_request import request_completion
 from besser.BUML.notations.mockup_to_structural.utilities import encode_image
 from besser.BUML.notations.mockup_to_structural.utilities import read_file_contents
 from besser.BUML.notations.mockup_to_structural.config import *
 
 
-@retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def gpt4_self_improvement_plantuml_code(api_key, plantuml_code_content):
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
 
     ## revision_prompt
     revision_prompt = ""
@@ -48,31 +41,17 @@ def gpt4_self_improvement_plantuml_code(api_key, plantuml_code_content):
         "temperature": 0.0
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-
-    response_json = response.json()
-
-    try:
-        improved_plantuml_code = response_json['choices'][0]['message']['content']
-        return improved_plantuml_code
-    except KeyError:
-        return None
+    return request_completion(api_key, payload)
 
 
 
 # Function to call GPT-4o with the direct prompt method
-@retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def gpt4o_call_plantuml(api_key, prompt, mockup_image_path, first_gui_model_path, plantuml_code_example_path):
 
 
     base64_mockup_image = encode_image(mockup_image_path)
     plantuml_code_example = read_file_contents(plantuml_code_example_path)
 
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
 
     messages = [
        {
@@ -126,20 +105,7 @@ def gpt4o_call_plantuml(api_key, prompt, mockup_image_path, first_gui_model_path
         "temperature": 0.0
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-
-    response_json = response.json()
-
-
-    # Print the response JSON
-    #print("Response JSON:")
-    #print(json.dumps(response_json, indent=4))  # Print with indentation for better readability
-
-    try:
-        plantuml_code = response_json['choices'][0]['message']['content']
-        return plantuml_code
-    except KeyError:
-        return None
+    return request_completion(api_key, payload)
 
 
 def direct_prompting_image_to_plantuml(api_key, mockup_image_path, first_gui_model_path, plantuml_code_example_path):

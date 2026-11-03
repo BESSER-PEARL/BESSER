@@ -20,6 +20,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_spec_driven_router import (
     _build_project_body,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 PILOT_MODEL = "gpt-5.6-luna"
 PUBLIC_DEFAULT = "meituan/LongCat-2.0:free"
@@ -43,7 +44,7 @@ def _requested(**overrides) -> str | None:
     # ships a BYOK model, which is not what a free-tier request looks like.
     body["llm_model"] = None
     body.update(overrides)
-    runner = SmartGenerationRunner(SmartGenerateRequest(**body), run_id="a" * 32)
+    runner = SmartGenerationRunner(SmartGenerateRequest(**body), runtime=current_runtime(), run_id="a" * 32)
     return runner._requested_llm_model()
 
 
@@ -96,7 +97,7 @@ def test_a_byok_pilot_is_not_pushed_onto_a_free_model():
         provider="anthropic", api_key="sk-ant-test", llm_model=None,
         telemetry_participant="P11",
     )
-    runner = SmartGenerationRunner(SmartGenerateRequest(**body), run_id="b" * 32)
+    runner = SmartGenerationRunner(SmartGenerateRequest(**body), runtime=current_runtime(), run_id="b" * 32)
     assert runner._requested_llm_model() is None
 
 

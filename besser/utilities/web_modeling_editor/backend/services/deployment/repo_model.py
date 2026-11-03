@@ -29,7 +29,6 @@ from besser.utilities.buml_code_builder import (
     domain_model_to_code,
     gui_model_to_code,
 )
-from besser.utilities.web_modeling_editor.backend.constants.constants import BUML_EMIT_IDS
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.services.deployment.model_merge import (
     MergeConflict,
@@ -38,7 +37,8 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.model_merg
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_credentials
+from besser.utilities.secret_redaction import redact_credentials
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
 from besser.utilities.workspace_fs import is_plain_file, read_plain_text, write_atomic_plain
 
 logger = logging.getLogger(__name__)
@@ -146,7 +146,7 @@ def _buml_sources(project_export: dict) -> dict[str, bytes]:
     writers = []
     if assembled.domain_model is not None:
         writers.append((DOMAIN_SOURCE, lambda path: domain_model_to_code(
-            model=assembled.domain_model, file_path=path, emit_ids=BUML_EMIT_IDS)))
+            model=assembled.domain_model, file_path=path, emit_ids=get_settings().buml_emit_ids)))
     if assembled.gui_model is not None:
         writers.append((GUI_SOURCE, lambda path: gui_model_to_code(
             model=assembled.gui_model, file_path=path, domain_model=assembled.domain_model)))
@@ -275,14 +275,6 @@ def is_model_path(path: str) -> bool:
 def is_besser_project(document: object) -> bool:
     """True for a parsed model file: a V2 export envelope or a bare project, both holding ``diagrams``."""
     return isinstance(document, dict) and isinstance(project_of(document).get("diagrams"), dict)
-
-
-def is_repo_json_path(value: str) -> bool:
-    """A relative ``.json`` path inside a repository, without ``.`` or ``..`` segments."""
-    return (
-        value.endswith(".json") and not value.startswith("/") and "\\" not in value
-        and not any(part in ("", ".", "..") for part in value.split("/"))
-    )
 
 
 def saved_project_candidates(paths: Iterable[str]) -> list[str]:

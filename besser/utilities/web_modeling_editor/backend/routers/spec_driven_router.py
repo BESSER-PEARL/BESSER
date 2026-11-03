@@ -22,16 +22,11 @@ events, and never stored on disk.
 # annotations against a decorated endpoint's ``__globals__``, which
 # ``handle_endpoint_errors``' wrapper points at the decorator module.
 import asyncio
-import dataclasses
-import fnmatch
-import hmac
 import json
 import logging
 import mimetypes
 import os
 import re
-import shutil
-import tempfile
 import time
 import uuid
 from typing import AsyncIterator, Optional
@@ -41,12 +36,6 @@ from fastapi import APIRouter, Header, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 
 from besser.spec_driven_agent.planning.model_change import compare_with_base
-from besser.utilities.provenance import PROVENANCE_FILENAME, add_readme_block, readme_besser_block
-from besser.utilities.web_modeling_editor.backend.constants import constants as backend_constants
-from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    LLM_CANCEL_ABANDONED_RUNS,
-    LLM_DISCONNECTED_GRACE_SECONDS,
-)
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     ImportGitHubRunRequest,
     ImportGitHubRunResponse,
@@ -54,15 +43,22 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     PushSmartToGitHubResponse,
     SmartGenerateRequest,
     SmartPreviewRequest,
+    SmartPreviewResponse,
+    SpecDrivenConfigResponse,
 )
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
+from besser.utilities.web_modeling_editor.backend.settings import is_demo_token
+from besser.utilities.web_modeling_editor.backend.dependencies import (
+    GitHubSessionsDep,
+    SettingsDep,
+    SpecDrivenRuntimeDep,
+)
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
-    DURABLE_RUN_MANAGER,
-    SMART_RUN_REGISTRY,
+    DurableRunManager,
     SmartGenerationRunner,
-    SmartRunEntry,
+    SpecDrivenRuntime,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
@@ -70,56 +66,26 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview import (
     build_preview,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
-    scrub_secret_files,
-)
-from besser.utilities.workspace_fs import copytree_plain, is_plain_entry
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
-    read_run_json,
-    write_run_json,
-)
 # Underscored names below are shared on purpose; tests patch them by name.
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    _EXCLUDED_OUTPUT_DIRS,
-    CARRIED_RUN_FILES,
-    GITHUB_SOURCE_FILENAME,
     _locate_run_temp_dir,
-    create_run_workspace,
-    release_active_run,
-    release_run_slot,
-    request_cancellation,
-    reserve_active_run,
-    run_changes,
-    try_acquire_run_slot,
 )
-from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
-from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
-    AI_READ_TIMEOUT_SECONDS,
-    ai_reading_available,
-    analyze_repository,
-    propose_model_with_ai,
-    should_read_with_ai,
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sync import (
+    import_run_from_github,
+    push_run_to_github,
 )
-from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
-    class_buml_to_json,
-)
-from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
-    content_hash,
-    create_github_service,
-)
-from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import (
+from besser.utilities.web_modeling_editor.backend.services.exceptions import UpstreamError
+from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
     get_user_token,
 )
-from besser.utilities.web_modeling_editor.backend.services.deployment.github_deploy_api import (
-    _extract_github_error_message,
+from besser.utilities.web_modeling_editor.backend.routers.github_deploy_api import (
+    _github_status_error,
     _sanitize_repo_name,
 )
 from besser.spec_driven_agent.providers.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
 from besser.spec_driven_agent.providers.llm_client import default_model as _llm_default_model
-from besser.spec_driven_agent.providers.model_catalog import load_model_catalog
+from besser.llm.catalog import load_model_catalog
 from besser.spec_driven_agent.providers.llm_client import (
-    FREE_TIER_PROVIDER,
-    SPONSORED_PROVIDER,
     free_alt_models,
     free_fallback_model,
     free_pilot_model,
@@ -139,9 +105,6 @@ _DOWNLOAD_CHUNK_SIZE = 65536
 # replaced with a single underscore. Since file names come from
 # LLM-generated output directories, we cannot trust them.
 _UNSAFE_FILENAME_RE = re.compile(r"[^\w\-. ()\[\]]+")
-
-# GitHub login / repository name charset.
-_GITHUB_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+")
 
 
 def _safe_attachment_filename(filename: str, fallback: str) -> str:
@@ -165,6 +128,7 @@ def _safe_attachment_filename(filename: str, fallback: str) -> str:
 
 async def _stream_with_slot_release(
     inner: AsyncIterator[bytes],
+    runtime: SpecDrivenRuntime,
     run_reservation: Optional[tuple[str, asyncio.Event]] = None,
 ) -> AsyncIterator[bytes]:
     """Yield from an SSE generator and return its concurrency slot
@@ -240,29 +204,27 @@ async def _stream_with_slot_release(
             logger.exception("Could not deliver the terminal error frame")
     finally:
         if run_reservation is not None:
-            await release_active_run(*run_reservation)
-        release_run_slot()
+            await runtime.active_runs.release(*run_reservation)
+        runtime.slots.release()
 
 
 # ---------------------------------------------------------------------
 # POST /besser_api/spec-driven/generate  (SSE stream)
 # ---------------------------------------------------------------------
 
-#: ``Idempotency-Key`` -> ``(run_id, created_at)``. Starting a run is a
-#: non-idempotent POST, and behind a TLS-inspecting proxy that is exactly the
-#: request that fails ("Failed to fetch", no run to reconnect to). A
-#: client-generated key makes the retry attach to the run the first attempt
-#: started. In-process and best-effort on purpose: a missed hit costs one
-#: duplicate run, not corruption, and the durable store stays the source of truth.
+# ``Idempotency-Key`` -> ``(run_id, created_at)`` lives on the runtime. Starting
+# a run is a non-idempotent POST, and behind a TLS-inspecting proxy that is
+# exactly the request that fails ("Failed to fetch", no run to reconnect to). A
+# client-generated key makes the retry attach to the run the first attempt
+# started. In-process and best-effort on purpose: a missed hit costs one
+# duplicate run, not corruption, and the durable store stays the source of truth.
 _IDEMPOTENCY_TTL_SECONDS = 900
-_idempotent_runs: dict[str, tuple[str, float]] = {}
-_idempotency_lock = asyncio.Lock()
 
 
-def _prune_idempotency_keys(now: float) -> None:
-    for key, (_, created_at) in list(_idempotent_runs.items()):
+def _prune_idempotency_keys(keys: dict[str, tuple[str, float]], now: float) -> None:
+    for key, (_, created_at) in list(keys.items()):
         if now - created_at > _IDEMPOTENCY_TTL_SECONDS:
-            _idempotent_runs.pop(key, None)
+            keys.pop(key, None)
 
 
 def _require_demo_token(request: SmartGenerateRequest) -> None:
@@ -282,7 +244,7 @@ def _require_demo_token(request: SmartGenerateRequest) -> None:
     """
     if request.provider != "sponsored":
         return
-    if not _is_demo_token(request.resolved_demo_token()):
+    if not is_demo_token(request.resolved_demo_token()):
         logger.warning("Rejected a sponsored-tier run without a valid demo token")
         raise HTTPException(
             status_code=403,
@@ -290,15 +252,11 @@ def _require_demo_token(request: SmartGenerateRequest) -> None:
         )
 
 
-def _is_demo_token(supplied: str) -> bool:
-    """True when ``supplied`` is the demo secret; always False while ``BESSER_DEMO_TOKEN`` is unset."""
-    expected = os.environ.get("BESSER_DEMO_TOKEN", "").strip()
-    return bool(expected) and hmac.compare_digest(supplied.strip().encode("utf-8"), expected.encode("utf-8"))
-
-
-def _run_stream_response(run_id: str, after_sequence: int = 0) -> StreamingResponse:
+def _run_stream_response(
+    durable_runs: DurableRunManager, run_id: str, after_sequence: int = 0,
+) -> StreamingResponse:
     return StreamingResponse(
-        DURABLE_RUN_MANAGER.subscribe(run_id, after_sequence=after_sequence),
+        durable_runs.subscribe(run_id, after_sequence=after_sequence),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -314,6 +272,8 @@ def _run_stream_response(run_id: str, after_sequence: int = 0) -> StreamingRespo
 @router.post("/spec-driven/generate", response_class=StreamingResponse)
 async def smart_generate(
     request: SmartGenerateRequest,
+    runtime: SpecDrivenRuntimeDep,
+    settings: SettingsDep,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ) -> StreamingResponse:
     """Stream an LLM-orchestrated code generation run as SSE events.
@@ -339,26 +299,26 @@ async def smart_generate(
     # the very run it is trying to rejoin.
     idem_key = (idempotency_key or "").strip()[:200]
     if idem_key:
-        async with _idempotency_lock:
-            _prune_idempotency_keys(time.time())
-            known = _idempotent_runs.get(idem_key)
+        async with runtime.idempotency_lock:
+            _prune_idempotency_keys(runtime.idempotent_runs, time.time())
+            known = runtime.idempotent_runs.get(idem_key)
             if known is not None:
                 existing_run_id = known[0]
-                if DURABLE_RUN_MANAGER.get_run(existing_run_id) is not None:
+                if runtime.durable_runs.get_run(existing_run_id) is not None:
                     logger.info(
                         "Idempotent retry for run %s — replaying from sequence 0",
                         existing_run_id,
                     )
-                    return _run_stream_response(existing_run_id)
+                    return _run_stream_response(runtime.durable_runs, existing_run_id)
                 # The run aged out of the store; let this request start a
                 # fresh one under the same key.
-                _idempotent_runs.pop(idem_key, None)
+                runtime.idempotent_runs.pop(idem_key, None)
 
     # Reserve a concurrency slot BEFORE allocating any resources.
-    # ``try_acquire_run_slot`` is non-blocking: the client sees an
+    # ``slots.try_acquire`` is non-blocking: the client sees an
     # immediate 429 when the server is saturated, never a hung SSE
     # stream. The wrapper around the stream returns the slot on exit.
-    if not try_acquire_run_slot():
+    if not runtime.slots.try_acquire():
         raise HTTPException(
             status_code=429,
             detail=(
@@ -376,18 +336,19 @@ async def smart_generate(
         # Claim the key with this run id BEFORE the run starts, so a retry
         # that arrives while startup is still in flight waits for this run
         # rather than opening a second one.
-        async with _idempotency_lock:
-            _idempotent_runs[idem_key] = (run_id, time.time())
-    cancel_event = await reserve_active_run(run_id)
+        async with runtime.idempotency_lock:
+            runtime.idempotent_runs[idem_key] = (run_id, time.time())
+    cancel_event = await runtime.active_runs.reserve(run_id)
     if cancel_event is None:  # UUID collision is fantastically unlikely.
-        release_run_slot()
+        runtime.slots.release()
         if idem_key:
-            async with _idempotency_lock:
-                _idempotent_runs.pop(idem_key, None)
+            async with runtime.idempotency_lock:
+                runtime.idempotent_runs.pop(idem_key, None)
         raise HTTPException(status_code=409, detail="Generated run ID is already active")
 
     runner = SmartGenerationRunner(
         request,
+        runtime=runtime,
         run_id=run_id,
         reserved_cancel_event=cancel_event,
         base_run_id=request.base_run_id,
@@ -395,26 +356,27 @@ async def smart_generate(
     )
     source = _stream_with_slot_release(
         runner.generate_and_stream(),
+        runtime,
         run_reservation=(run_id, cancel_event),
     )
     try:
-        await DURABLE_RUN_MANAGER.start(
+        await runtime.durable_runs.start(
             run_id,
             source,
             on_abandoned=(
-                cancel_event.set if LLM_CANCEL_ABANDONED_RUNS else None
+                cancel_event.set if settings.llm_cancel_abandoned_runs else None
             ),
             resume_available=lambda: _locate_run_temp_dir(run_id) is not None,
-            disconnect_grace_seconds=LLM_DISCONNECTED_GRACE_SECONDS,
+            disconnect_grace_seconds=settings.llm_disconnected_grace_seconds,
         )
     except Exception:
-        await release_active_run(run_id, cancel_event)
-        release_run_slot()
+        await runtime.active_runs.release(run_id, cancel_event)
+        runtime.slots.release()
         if idem_key:
-            async with _idempotency_lock:
-                _idempotent_runs.pop(idem_key, None)
+            async with runtime.idempotency_lock:
+                runtime.idempotent_runs.pop(idem_key, None)
         raise
-    return _run_stream_response(run_id)
+    return _run_stream_response(runtime.durable_runs, run_id)
 
 
 # ---------------------------------------------------------------------
@@ -424,10 +386,11 @@ async def smart_generate(
 
 @router.get("/spec-driven/runs/{run_id}")
 async def get_smart_run_status(
+    runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
 ) -> dict:
     """Return durable lifecycle metadata without exposing request secrets."""
-    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    record = runtime.durable_runs.get_run(run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Spec-driven run not found")
     return record.to_api_dict()
@@ -435,6 +398,7 @@ async def get_smart_run_status(
 
 @router.get("/spec-driven/runs/{run_id}/events.json")
 async def poll_smart_run_events(
+    runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
     after: int = Query(default=0, ge=0, le=_MAX_SQLITE_SEQUENCE),
     limit: int = Query(default=250, ge=1, le=1000),
@@ -456,11 +420,11 @@ async def poll_smart_run_events(
     the same reducer it feeds streamed events. ``hasMore`` says to come straight
     back, ``status``/``terminalEvent`` say when to stop.
     """
-    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    record = runtime.durable_runs.get_run(run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Spec-driven run not found")
 
-    stored = DURABLE_RUN_MANAGER.store.events_after(run_id, after, limit=limit)
+    stored = runtime.durable_runs.store.events_after(run_id, after, limit=limit)
     events = [
         {
             "sequence": item.sequence,
@@ -482,6 +446,7 @@ async def poll_smart_run_events(
 
 @router.get("/spec-driven/runs/{run_id}/events", response_class=StreamingResponse)
 async def stream_smart_run_events(
+    runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(..., pattern=r"^[a-f0-9]{32}$"),
     after: int = Query(default=0, ge=0, le=_MAX_SQLITE_SEQUENCE),
     last_event_id: Optional[str] = Header(default=None, alias="Last-Event-ID"),
@@ -492,7 +457,7 @@ async def stream_smart_run_events(
     endpoint compatible with native EventSource clients. The larger valid
     cursor wins, preventing a stale query value from replaying duplicates.
     """
-    record = DURABLE_RUN_MANAGER.get_run(run_id)
+    record = runtime.durable_runs.get_run(run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Spec-driven run not found")
 
@@ -507,7 +472,7 @@ async def stream_smart_run_events(
         cursor = max(cursor, parsed_event_id)
 
     return StreamingResponse(
-        DURABLE_RUN_MANAGER.subscribe(run_id, after_sequence=cursor),
+        runtime.durable_runs.subscribe(run_id, after_sequence=cursor),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -550,8 +515,8 @@ def _free_tier_model_choices() -> list[dict]:
     return choices
 
 
-@router.get("/spec-driven/config")
-async def smart_gen_config() -> dict:
+@router.get("/spec-driven/config", response_model=SpecDrivenConfigResponse)
+async def smart_gen_config(settings: SettingsDep) -> dict:
     """Expose the server's current spec-driven generation configuration.
 
     The frontend reads this once at app startup (or before rendering
@@ -562,35 +527,34 @@ async def smart_gen_config() -> dict:
     Nothing here is a secret — everything exposed is either a public
     cap or a feature flag. API keys and run IDs are never returned.
     """
-    # Attribute lookups at call time, so monkeypatched constants show up.
     return {
         "caps": {
-            "max_cost_usd_hard_cap": backend_constants.LLM_MAX_COST_USD_HARD_CAP,
-            "max_runtime_seconds_hard_cap": backend_constants.LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
-            "max_turns_hard_cap": backend_constants.LLM_MAX_TURNS_HARD_CAP,
-            "default_max_cost_usd": backend_constants.LLM_DEFAULT_MAX_COST_USD,
-            "default_max_runtime_seconds": backend_constants.LLM_DEFAULT_MAX_RUNTIME_SECONDS,
-            "default_max_turns": backend_constants.LLM_DEFAULT_MAX_TURNS,
+            "max_cost_usd_hard_cap": settings.llm_max_cost_usd_hard_cap,
+            "max_runtime_seconds_hard_cap": settings.llm_max_runtime_seconds_hard_cap,
+            "max_turns_hard_cap": settings.llm_max_turns_hard_cap,
+            "default_max_cost_usd": settings.llm_default_max_cost_usd,
+            "default_max_runtime_seconds": settings.llm_default_max_runtime_seconds,
+            "default_max_turns": settings.llm_default_max_turns,
         },
-        "download_ttl_seconds": backend_constants.LLM_DOWNLOAD_TTL_SECONDS,
-        "cost_emitter_interval_seconds": backend_constants.LLM_COST_EMITTER_INTERVAL_SECONDS,
+        "download_ttl_seconds": settings.llm_download_ttl_seconds,
+        "cost_emitter_interval_seconds": settings.llm_cost_emitter_interval_seconds,
         "concurrency": {
-            "max_concurrent_runs": backend_constants.LLM_MAX_CONCURRENT_RUNS,
+            "max_concurrent_runs": settings.llm_max_concurrent_runs,
         },
         "features": {
-            "tracing_enabled": backend_constants.LLM_ENABLE_TRACING,
-            "checkpointing_enabled": backend_constants.LLM_ENABLE_CHECKPOINTING,
-            "resume_enabled": backend_constants.LLM_ENABLE_CHECKPOINTING,
-            "toolchain_validation_enabled": backend_constants.LLM_ENABLE_TOOLCHAIN_VALIDATION,
+            "tracing_enabled": settings.llm_enable_tracing,
+            "checkpointing_enabled": settings.llm_enable_checkpointing,
+            "resume_enabled": settings.llm_enable_checkpointing,
+            "toolchain_validation_enabled": settings.llm_enable_toolchain_validation,
             # False on any deploy that has not opted in. Reported so a local/on-prem operator can confirm from outside
             # the process that BESSER_LLM_ENABLE_SHELL_TOOLS actually took
             # effect - it is a process-start env var, never a request field.
-            "shell_tools_enabled": backend_constants.LLM_ENABLE_SHELL_TOOLS,
-            "per_write_diagnostics_enabled": backend_constants.LLM_PER_WRITE_DIAGNOSTICS,
+            "shell_tools_enabled": settings.llm_enable_shell_tools,
+            "per_write_diagnostics_enabled": settings.llm_per_write_diagnostics,
             "durable_runs_enabled": True,
             "event_replay_enabled": True,
-            "cancel_abandoned_runs": backend_constants.LLM_CANCEL_ABANDONED_RUNS,
-            "disconnected_grace_seconds": backend_constants.LLM_DISCONNECTED_GRACE_SECONDS,
+            "cancel_abandoned_runs": settings.llm_cancel_abandoned_runs,
+            "disconnected_grace_seconds": settings.llm_disconnected_grace_seconds,
         },
         "supported_providers": ["anthropic", "openai", "mistral", "nebius"],
         # The key dialog's providers and models, from the model catalog
@@ -623,9 +587,9 @@ async def smart_gen_config() -> dict:
 # ---------------------------------------------------------------------
 
 
-@router.post("/spec-driven/preview")
+@router.post("/spec-driven/preview", response_model=SmartPreviewResponse)
 @handle_endpoint_errors("smart_preview")
-async def smart_preview(request: SmartPreviewRequest) -> dict:
+async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntimeDep) -> dict:
     """Return the plan spec-driven generate would run, without executing it.
 
     The response lets the UI show a confirmation screen before the user
@@ -668,7 +632,7 @@ async def smart_preview(request: SmartPreviewRequest) -> dict:
     # "update the existing app / start fresh". None = unknown, keep modifying.
     model_change = None
     if request.mode == "modify" and request.base_run_id:
-        base = await SMART_RUN_REGISTRY.get(request.base_run_id)
+        base = await runtime.registry.get(request.base_run_id)
         if base is not None and base.temp_dir:
             change = compare_with_base(base.temp_dir, assembled.domain_model)
             model_change = change.to_dict() if change else None
@@ -685,6 +649,8 @@ async def smart_preview(request: SmartPreviewRequest) -> dict:
 async def resume_smart_gen(
     run_id: str,
     request: SmartGenerateRequest,
+    runtime: SpecDrivenRuntimeDep,
+    settings: SettingsDep,
 ) -> StreamingResponse:
     """Resume a spec-driven generate run that crashed before completion.
 
@@ -722,7 +688,7 @@ async def resume_smart_gen(
     # Atomically reserve the checkpoint/run ID before the global slot.
     # This prevents the original run and a resume (or two resumes) from
     # sharing one workspace and checkpoint.
-    cancel_event = await reserve_active_run(run_id)
+    cancel_event = await runtime.active_runs.reserve(run_id)
     if cancel_event is None:
         raise HTTPException(
             status_code=409,
@@ -733,8 +699,8 @@ async def resume_smart_gen(
 
     # Same concurrency gate as /spec-driven/generate - a resumed run consumes
     # the same resources as a fresh one.
-    if not try_acquire_run_slot():
-        await release_active_run(run_id, cancel_event)
+    if not runtime.slots.try_acquire():
+        await runtime.active_runs.release(run_id, cancel_event)
         raise HTTPException(
             status_code=429,
             detail=(
@@ -745,30 +711,32 @@ async def resume_smart_gen(
 
     runner = SmartGenerationRunner(
         request,
+        runtime=runtime,
         resume_run_id=run_id,
         reserved_cancel_event=cancel_event,
     )
     source = _stream_with_slot_release(
         runner.generate_and_stream(),
+        runtime,
         run_reservation=(run_id, cancel_event),
     )
     try:
-        await DURABLE_RUN_MANAGER.start(
+        await runtime.durable_runs.start(
             run_id,
             source,
             resume=True,
             on_abandoned=(
-                cancel_event.set if LLM_CANCEL_ABANDONED_RUNS else None
+                cancel_event.set if settings.llm_cancel_abandoned_runs else None
             ),
             resume_available=lambda: _locate_run_temp_dir(run_id) is not None,
-            disconnect_grace_seconds=LLM_DISCONNECTED_GRACE_SECONDS,
+            disconnect_grace_seconds=settings.llm_disconnected_grace_seconds,
         )
     except Exception:
-        await release_active_run(run_id, cancel_event)
-        release_run_slot()
+        await runtime.active_runs.release(run_id, cancel_event)
+        runtime.slots.release()
         raise
     return StreamingResponse(
-        DURABLE_RUN_MANAGER.subscribe(run_id),
+        runtime.durable_runs.subscribe(run_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -787,6 +755,7 @@ async def resume_smart_gen(
 @router.post("/spec-driven/cancel/{run_id}")
 @handle_endpoint_errors("cancel_smart_gen")
 async def cancel_smart_gen(
+    runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(
         ...,
         pattern=r"^[a-f0-9]{32}$",
@@ -806,7 +775,7 @@ async def cancel_smart_gen(
     closing so the frontend can show a definite "stopped by user"
     state instead of waiting for ``done``.
     """
-    cancelled = await request_cancellation(run_id)
+    cancelled = await runtime.active_runs.request_cancellation(run_id)
     return {"status": "cancelled" if cancelled else "not_found", "runId": run_id}
 
 
@@ -818,6 +787,7 @@ async def cancel_smart_gen(
 @router.get("/spec-driven/download/{run_id}", response_class=StreamingResponse)
 @handle_endpoint_errors("download_smart")
 async def download_smart(
+    runtime: SpecDrivenRuntimeDep,
     run_id: str = Path(
         ...,
         pattern=r"^[a-f0-9]{32}$",
@@ -827,13 +797,13 @@ async def download_smart(
     """Download the output produced by a completed run.
 
     Re-downloadable until the TTL sweep expires the entry
-    (``LLM_DOWNLOAD_TTL_SECONDS``, default 30 min) — a transient network
+    (``BESSER_LLM_DOWNLOAD_TTL_SECONDS``, default 30 min) — a transient network
     failure during the blob fetch must not permanently lose an artifact
     the user paid minutes and dollars to produce. Cleanup is owned
     entirely by ``SmartRunRegistry.periodic_sweep``; this endpoint no
     longer deletes anything.
     """
-    entry = await SMART_RUN_REGISTRY.get(run_id)
+    entry = await runtime.registry.get(run_id)
     if entry is None:
         raise HTTPException(
             status_code=404,
@@ -885,61 +855,12 @@ async def download_smart(
 # POST /besser_api/spec-driven/push-to-github
 # ---------------------------------------------------------------------
 
-def _scrub_secret_env_files(workdir: str) -> list[str]:
-    """Compatibility wrapper for the GitHub-push security boundary."""
-    return list(scrub_secret_files(workdir).removed_files)
-
-
-# The run's own files the push never sends; the import and the seed skip build
-# output too, so a repo path under one of these was never in the run.
-_RUN_INTERNAL_FILES = ".besser_*"
-
-
-def _hidden_from_run(path: str, scrubbed: list[str]) -> bool:
-    """True for a repo path the pushed run could not hold, so its absence is no deletion.
-
-    The seed and the push copy skip ``_EXCLUDED_OUTPUT_DIRS`` and BESSER's
-    internal files, and the push removes secret ``.env`` files (``scrubbed``).
-    The internal files a run carries are its own: a stale copy is deleted.
-    """
-    if path in scrubbed:
-        return True
-    if path in CARRIED_RUN_FILES:
-        return False
-    return any(
-        fnmatch.fnmatch(part, pattern)
-        for part in path.split("/")
-        for pattern in (*_EXCLUDED_OUTPUT_DIRS, _RUN_INTERNAL_FILES)
-    )
-
-
-def _resolve_target_branch(
-    requested: Optional[str],
-    available: Optional[list[str]],
-    default_branch: str,
-) -> str:
-    """Pick the push target branch.
-
-    Honours ``requested`` when it is present in ``available`` (``available
-    is None`` means the branch set is not materialised yet — e.g. a
-    freshly created repo — so the explicit request is honoured there).
-    Falls back to ``default_branch`` otherwise.
-    """
-    if requested:
-        requested = requested.strip()
-    if requested:
-        if available is None or requested in available:
-            return requested
-        logger.warning(
-            "spec-driven push-to-github: requested branch %r not present; using %r",
-            requested, default_branch,
-        )
-    return default_branch
-
 
 @router.post("/spec-driven/push-to-github", response_model=PushSmartToGitHubResponse)
 async def push_spec_driven_to_github(
+    github_sessions: GitHubSessionsDep,
     req: PushSmartToGitHubRequest,
+    runtime: SpecDrivenRuntimeDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ) -> PushSmartToGitHubResponse:
     """Push a finished spec-driven generation run to a GitHub repository.
@@ -952,7 +873,7 @@ async def push_spec_driven_to_github(
     Flow:
       1. Gate on the ``X-GitHub-Session`` header (same helper the other
          GitHub endpoints use — the real token never reaches the client).
-      2. Resolve the stored run from ``SMART_RUN_REGISTRY`` (404 when it
+      2. Resolve the stored run from the run registry (404 when it
          has been swept past its TTL — the user must re-generate).
       3. Copy the stored file tree into a fresh temp dir, skipping build/
          dependency dirs, ``.besser_*`` internals, and any ``.env`` that
@@ -969,7 +890,7 @@ async def push_spec_driven_to_github(
             status_code=401,
             detail="GitHub authentication required. Please sign in with GitHub first.",
         )
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(
             status_code=401,
@@ -977,7 +898,7 @@ async def push_spec_driven_to_github(
         )
 
     # ---- 2. Resolve the stored run (non-destructive; None if swept) ----
-    entry = await SMART_RUN_REGISTRY.get(req.run_id)
+    entry = await runtime.registry.get(req.run_id)
     if entry is None or not entry.temp_dir or not os.path.isdir(entry.temp_dir):
         # Machine-usable code the frontend can branch on, plus a human
         # hint: "This generation has expired — re-generate to push."
@@ -987,404 +908,17 @@ async def push_spec_driven_to_github(
     repo_name = _sanitize_repo_name(deploy_config.repo_name)
 
     try:
-        github = create_github_service(access_token)
-
-        user_info = await github.get_authenticated_user()
-        login = user_info.get("login")
-        if not login:
-            raise HTTPException(
-                status_code=401,
-                detail="Could not resolve GitHub user from session.",
-            )
-        owner = (deploy_config.use_existing and deploy_config.owner) or login
-
-        with tempfile.TemporaryDirectory(
-            prefix=f"besser_smart_push_{uuid.uuid4().hex}_"
-        ) as workdir:
-            # ---- 3. Copy the stored tree, dropping build/dep dirs and
-            # `.besser_*` internal files (checkpoint / snapshot), except
-            # those a continue-from-GitHub run reads back: the recipe (the
-            # seed's generator and run history; without it the modify run
-            # loses the framework guard), the line attribution (lines a
-            # person edited in between) and the generator's stored output
-            # (the base a model change is merged against).
-            # Symlinks are dropped, never read through.
-            copytree_plain(
-                entry.temp_dir, workdir, [*_EXCLUDED_OUTPUT_DIRS, _RUN_INTERNAL_FILES],
-                dirs_exist_ok=True,
-            )
-            for _internal in CARRIED_RUN_FILES:
-                _src = os.path.join(entry.temp_dir, _internal)
-                if os.path.isfile(_src) and is_plain_entry(_src):
-                    shutil.copy2(_src, os.path.join(workdir, _internal))
-            scrubbed = _scrub_secret_env_files(workdir)
-            if scrubbed:
-                logger.info(
-                    "spec-driven push-to-github: scrubbed %d secret env file(s): %s",
-                    len(scrubbed), scrubbed,
-                )
-
-            # ---- 4. Inject the model source into buml/ ----
-            # Prefer the run's model-synced export (a MODIFY run whose
-            # instruction added domain entities stores it on the registry
-            # entry) so the pushed buml/ matches the code. Fall back to the
-            # request's projectExport for every other run.
-            run_export = getattr(entry, "updated_project_export", None)
-            effective_export = run_export or req.projectExport
-            repo_model.write_model_files(workdir, effective_export)
-
-            # ---- 5. Resolve the repo + target branch ----
-            is_first_push = not deploy_config.use_existing
-            if deploy_config.use_existing:
-                try:
-                    branches = await github.get_branches(owner, repo_name)
-                except httpx.HTTPStatusError as exc:
-                    if exc.response is not None and exc.response.status_code == 404:
-                        # Requested an existing repo that isn't there — surface
-                        # a machine-usable code rather than silently creating.
-                        raise HTTPException(
-                            status_code=404, detail="repo_missing"
-                        ) from exc
-                    raise
-                repo_default = await github.get_default_branch(owner, repo_name)
-                target_branch = _resolve_target_branch(
-                    deploy_config.branch, branches, repo_default
-                )
-            else:
-                description = (
-                    deploy_config.description
-                    or "Spec-driven app + model — Generated by BESSER"
-                )
-                repo_info = await github.create_repository(
-                    repo_name=repo_name,
-                    description=description,
-                    is_private=deploy_config.is_private,
-                    auto_init=True,
-                )
-                repo_default = repo_info.get("default_branch", "main")
-                target_branch = _resolve_target_branch(
-                    deploy_config.branch, None, repo_default
-                )
-
-            # ---- 5b. Keep the app's deploy files current ----
-            deploy_warnings = (
-                [] if is_first_push
-                else await _refresh_deploy_files(github, owner, repo_name, target_branch, workdir)
-            )
-
-            # ---- 5c. Link the README back to BESSER and the model ----
-            # Only a new repo gets a README the run lacks; an existing one keeps its own.
-            model_source = f"{repo_model.MODEL_DIR}/{repo_model.DOMAIN_SOURCE}"
-            add_readme_block(workdir, readme_besser_block(
-                owner, repo_name, target_branch,
-                model_source=model_source if os.path.isfile(os.path.join(workdir, *model_source.split("/"))) else None,
-                has_provenance=os.path.isfile(os.path.join(workdir, PROVENANCE_FILENAME)),
-            ), title=repo_name if is_first_push else None)
-
-            # ---- 5d. Fold BESSER's run records in GitHub diffs ----
-            # A run that did not start from this repo lacks the repo's own file, which the push would replace.
-            repo_gitattributes = None
-            if not is_first_push and not os.path.lexists(os.path.join(workdir, repo_model.GITATTRIBUTES_FILE)):
-                current = await github.get_file_content(
-                    owner, repo_name, repo_model.GITATTRIBUTES_FILE, ref=target_branch,
-                )
-                repo_gitattributes = current.get("content") if current else None
-            repo_model.mark_generated(workdir, CARRIED_RUN_FILES, repo_gitattributes)
-
-            # ---- 6. Push what the run changed ----
-            # The tree is compared with the commit the run started from;
-            # commits made on the branch since are merged in, never reverted.
-            # The run records that commit itself: the editor's link may have
-            # moved on (a pull after the run started), and pushing over the
-            # link's newer base would revert what was pulled.
-            seed_sha, held_files = _run_seed(entry.temp_dir, owner, repo_name)
-            commit_message = repo_model.with_origin(
-                deploy_config.commit_message or "Spec-driven app + model — BESSER",
-                repo_model.ORIGIN_AGENT,
-            )
-            pull_request_url = None
-            if deploy_config.push_mode == "pull_request" and not is_first_push:
-                push_branch = f"besser/update-{uuid.uuid4().hex[:8]}"
-                base_sha = (
-                    seed_sha
-                    or deploy_config.base_commit_sha
-                    or await github.get_branch_head(owner, repo_name, target_branch)
-                )
-            else:
-                push_branch = target_branch
-                base_sha = seed_sha or deploy_config.base_commit_sha
-            push_results = await github.push_directory_to_repo(
-                owner=owner,
-                repo_name=repo_name,
-                directory_path=workdir,
-                commit_message=commit_message,
-                branch=push_branch,
-                # Only a run that started from this repo held its files, so only
-                # such a run can have deleted one; any other run adds and updates.
-                preserve_existing_files=seed_sha is None,
-                base_commit_sha=base_sha,
-                keep_path=lambda path: (_hidden_from_run(path, scrubbed)
-                                        or (held_files is not None and path not in held_files)),
-                model_merge=repo_model.ModelMerge(effective_export) if effective_export else None,
-                base_hashes={path: digest for path, digest in (held_files or {}).items() if digest},
-            )
-            if not push_results.get("commit_sha"):
-                raise HTTPException(
-                    status_code=500,
-                    detail="Failed to create GitHub commit for pushed files.",
-                )
-            status = push_results.get("status") or "pushed"
-            deploy_warnings += push_results.get("warnings", [])
-            if push_branch != target_branch:
-                pull_request = await github.create_pull_request(
-                    owner, repo_name, head=push_branch, base=target_branch,
-                    title=deploy_config.commit_message or "Update from the BESSER Spec-Driven Agent",
-                    body=repo_model.pull_request_body(
-                        _model_changes(entry), push_results["uploaded_files"] + push_results["deleted_files"],
-                    ),
-                )
-                pull_request_url = pull_request["html_url"]
-                status = "pull_request"
-            await github.add_topic(owner, repo_name, repo_model.BESSER_TOPIC)
-            if status in ("pushed", "merged"):
-                # Runs seeded from this one start from the commit holding its tree.
-                _record_run_seed(entry.temp_dir, owner, repo_name, push_results["own_commit_sha"],
-                                 _plain_file_hashes(workdir))
-
-            # After a merge the run's files no longer match the branch: hand
-            # back the merged repo as the next modify run's base.
-            # The push has landed: a failure from here on is reported, not raised,
-            # or the user would see a failed push and push again.
-            base_run_id = None
-            if status == "merged":
-                try:
-                    base_run_id, _ = await _import_repo_as_run(
-                        github, owner, repo_name, push_results["commit_sha"]
-                    )
-                except Exception:
-                    logger.warning("Pushed and merged %s/%s, but could not read the merged repo back",
-                                   owner, repo_name, exc_info=True)
-                    deploy_warnings.append(
-                        "Your changes were merged on GitHub, but BESSER could not read the merged code back. "
-                        "Use Get latest before the next change, so it starts from the merged code."
-                    )
-
-            return PushSmartToGitHubResponse(
-                success=True,
-                repo_url=f"https://github.com/{owner}/{repo_name}",
-                owner=owner,
-                repo_name=repo_name,
-                is_first_push=is_first_push,
-                files_uploaded=push_results.get("total_files", 0),
-                branch=target_branch,
-                commit_sha=push_results["commit_sha"],
-                status=status,
-                conflict_branch=push_results.get("conflict_branch"),
-                pull_request_url=pull_request_url,
-                pull_request_branch=push_branch if pull_request_url else None,
-                base_run_id=base_run_id,
-                warnings=deploy_warnings,
-                project_export=run_export,
-            )
-
-    except HTTPException:
-        raise
+        return await push_run_to_github(entry, req, access_token, repo_name, runtime.registry)
+    except UpstreamError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPStatusError as exc:
-        # Mirror /deploy-webapp's GitHub error mapping.
-        logger.warning("GitHub API error in push_spec_driven_to_github", exc_info=True)
-        upstream_status = exc.response.status_code if exc.response is not None else 502
-        detail = _extract_github_error_message(exc)
-        if upstream_status == 401:
-            raise HTTPException(status_code=401, detail=detail) from exc
-        if upstream_status == 403:
-            raise HTTPException(status_code=403, detail=detail) from exc
-        if upstream_status == 422:
-            # 422 covers both "repository name already exists on this
-            # account" AND a non-fast-forward ref update (a concurrent
-            # change to the branch). Both map cleanly to 409 Conflict.
-            raise HTTPException(status_code=409, detail=detail) from exc
-        if 400 <= upstream_status < 500:
-            raise HTTPException(status_code=upstream_status, detail=detail) from exc
-        raise HTTPException(
-            status_code=502, detail=f"GitHub upstream error: {detail}"
-        ) from exc
+        raise _github_status_error(exc, "push_spec_driven_to_github") from exc
     except Exception:
         logger.exception("Unexpected error in push_spec_driven_to_github")
         raise HTTPException(
             status_code=500,
             detail="An internal error occurred during GitHub push.",
         )
-
-
-def _model_changes(entry) -> list[str]:
-    """What the run changed in the model, from its recipe (empty when it changed none)."""
-    recipe = read_run_json(os.path.join(entry.temp_dir, ".besser_recipe.json"))
-    return run_changes(recipe)["modelChanges"] if isinstance(recipe, dict) else []
-
-
-async def _refresh_deploy_files(github, owner: str, repo: str, branch: str, workdir: str) -> list[str]:
-    """Rewrite the Render files "Go live" put in the repo, for the pushed tree's layout.
-
-    The run does not hold them, so without this the push would delete them;
-    with it, the next deploy also follows a layout change the agent made. A
-    render.yaml BESSER did not write is left alone (it is in the pushed tree or
-    not, as the run left it). Returns warnings for the user.
-    """
-    current = await github.get_file_content(owner, repo, "render.yaml", ref=branch)
-    text = current.get("content") if current else None
-    if not render_blueprint.is_managed(text):
-        return []
-    try:
-        layout = render_blueprint.detect_layout(workdir)
-        files, _ = render_blueprint.deploy_files(layout, repo, render_blueprint.existing_suffix(text))
-        warnings = list(layout.warnings)
-    except render_blueprint.LayoutRefused as refused:
-        logger.warning("Pushed app in %s/%s no longer deploys as before: %s", owner, repo, refused)
-        files = {"render.yaml": text}
-        warnings = [f"This app can no longer be deployed as before ({refused}). The previous deploy settings were kept."]
-    for path, content in files.items():
-        target = os.path.join(workdir, *path.split("/"))
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "w", encoding="utf-8") as fh:
-            fh.write(content)
-    return warnings
-
-
-def _run_seed(run_dir: str, owner: str, repo: str) -> tuple[Optional[str], Optional[dict[str, Optional[str]]]]:
-    """The commit of ``owner/repo`` the run's files were derived from, and the files it held then.
-
-    Import writes them (``GITHUB_SOURCE_FILENAME``), a push updates them, and
-    seeding copies them into every modify run that starts from that run. The
-    files are ``repo path -> content_hash`` of the bytes the run held; the hash
-    is None in a record written before hashes were kept (a list of paths).
-    ``(None, None)`` for a run that did not start from this repo; the files are
-    None for a record written before they were kept.
-    """
-    source = read_run_json(os.path.join(run_dir, GITHUB_SOURCE_FILENAME))
-    if not isinstance(source, dict):
-        return None, None
-    # GitHub names are case-insensitive: "Ana/Shop" and "ana/shop" are one repo.
-    if str(source.get("owner")).lower() != owner.lower() or str(source.get("repo")).lower() != repo.lower():
-        return None, None
-    sha = source.get("commitSha")
-    if not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha)):
-        return None, None
-    paths = source.get("paths")
-    if isinstance(paths, dict) and all(isinstance(p, str) and isinstance(h, str) for p, h in paths.items()):
-        return sha, dict(paths)
-    if isinstance(paths, list) and all(isinstance(p, str) for p in paths):
-        return sha, dict.fromkeys(paths)
-    return sha, None
-
-
-def _record_run_seed(run_dir: str, owner: str, repo: str, commit_sha: str, files: dict[str, str]) -> None:
-    """Record that the run's files now match ``commit_sha``, as ``repo path -> content_hash`` (best effort)."""
-    try:
-        write_run_json(os.path.join(run_dir, GITHUB_SOURCE_FILENAME),
-                       {"owner": owner, "repo": repo, "commitSha": commit_sha, "paths": files})
-    except OSError:
-        logger.warning("Could not record the pushed commit in run %s", run_dir, exc_info=True)
-
-
-def _plain_file_hashes(root: str) -> dict[str, str]:
-    """``repo path -> content_hash`` of the regular files under ``root``, BESSER's own records left
-    out except those a run carries (so a push can tell when one changed or is gone)."""
-    found = {}
-    for directory, dirs, names in os.walk(root):
-        dirs[:] = [d for d in dirs if is_plain_entry(os.path.join(directory, d))]
-        for name in names:
-            full = os.path.join(directory, name)
-            rel = os.path.relpath(full, root).replace(os.sep, "/")
-            if is_plain_entry(full) and (rel in CARRIED_RUN_FILES or not fnmatch.fnmatch(name, _RUN_INTERNAL_FILES)):
-                with open(full, "rb") as fh:
-                    found[rel] = content_hash(fh.read())
-    return dict(sorted(found.items()))
-
-
-async def _import_repo_as_run(github, owner: str, repo: str, commit_sha: str) -> tuple[str, str]:
-    """Register ``owner/repo`` at ``commit_sha`` as a run a modify run can seed from.
-
-    The repo is extracted into the shared run workspace, where the Spec-Driven
-    worker (a separate container) finds it by run id. Returns the run id and
-    its directory.
-    """
-    run_id = uuid.uuid4().hex
-    extract_dir = create_run_workspace(run_id)
-    try:
-        await github.download_repo_tarball(owner, repo, commit_sha, dest_dir=extract_dir)
-        # The registry persists a manifest pointing at one file of the run;
-        # this one also records where the run came from and which files it
-        # holds: an archive leaves out export-ignore paths, links and
-        # submodules, and a later push must not read their absence as deletions.
-        # It hashes each file too: the archive's bytes can differ from the blob
-        # (.gitattributes, LFS), so only a changed hash means the run changed it.
-        source_path = os.path.join(extract_dir, GITHUB_SOURCE_FILENAME)
-        _record_run_seed(extract_dir, owner, repo, commit_sha, _plain_file_hashes(extract_dir))
-    except BaseException:
-        shutil.rmtree(extract_dir, ignore_errors=True)
-        raise
-    await SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
-        file_path=source_path,
-        file_name=GITHUB_SOURCE_FILENAME,
-        is_zip=False,
-        temp_dir=extract_dir,
-        created_at=time.time(),
-    ))
-    return run_id, extract_dir
-
-
-_AI_READING_UNAVAILABLE = (
-    "This repo has no BESSER model and no data classes BESSER can read, and "
-    "AI reading is not available on this server; you can still work on its code.")
-_AI_READING_OFFER = (
-    "BESSER could not read this repo's data classes directly. It can read the code with an "
-    "AI model and propose a class diagram, if you allow it to send the code to that model.")
-
-
-def _ai_reading_provider(req: ImportGitHubRunRequest) -> str:
-    """The server-paid tier that reads a repo: ``sponsored`` for a demo tab, else ``free``.
-
-    A wrong demo secret just means the keyless model: it opens nothing up, so
-    it is not worth failing the import.
-    """
-    demo = req.demo_token is not None and _is_demo_token(req.resolved_demo_token())
-    if req.demo_token is not None and not demo:
-        logger.warning("import-github-run: invalid demo token, reading with the keyless model")
-    return SPONSORED_PROVIDER if demo else FREE_TIER_PROVIDER
-
-
-async def _read_repo_with_ai(req: ImportGitHubRunRequest, extract_dir, code_analysis, owner, repo):
-    """``(model, analysis, message)`` from the AI fallback reader; the message explains a missing model.
-
-    The repo's code goes to the server's model chain, whose first provider may
-    be a third party, so only a request that allowed it (``allow_ai_reading``) is read.
-    """
-    if not req.allow_ai_reading:
-        raise PermissionError("AI reading of a repository needs allow_ai_reading")
-    provider = _ai_reading_provider(req)
-    if not ai_reading_available(provider):
-        logger.warning("import-github-run: no readable data classes in %s/%s and no %s model "
-                       "for an AI reading", owner, repo, provider)
-        return None, code_analysis, _AI_READING_UNAVAILABLE
-    # A copy: a timed-out reading keeps running in its thread and must not mark this response.
-    ai_analysis = dataclasses.replace(code_analysis)
-    try:
-        model = await asyncio.wait_for(
-            asyncio.to_thread(propose_model_with_ai, extract_dir, ai_analysis, provider),
-            timeout=AI_READ_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError:
-        logger.warning("import-github-run: AI reading of %s/%s timed out after %ss",
-                       owner, repo, AI_READ_TIMEOUT_SECONDS)
-        model = None
-    except Exception:
-        logger.warning("import-github-run: AI reading of %s/%s failed", owner, repo, exc_info=True)
-        model = None
-    if model is None:
-        return None, code_analysis, (
-            "This repo has no data classes BESSER can read directly, and the AI model "
-            "could not read a model from its code; you can still work on its code.")
-    return model, ai_analysis, None
 
 
 # ---------------------------------------------------------------------
@@ -1394,7 +928,9 @@ async def _read_repo_with_ai(req: ImportGitHubRunRequest, extract_dir, code_anal
 
 @router.post("/spec-driven/import-github-run", response_model=ImportGitHubRunResponse)
 async def import_github_run(
+    github_sessions: GitHubSessionsDep,
     req: ImportGitHubRunRequest,
+    runtime: SpecDrivenRuntimeDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ) -> ImportGitHubRunResponse:
     """Import an existing BESSER-created GitHub repo as a modify seed.
@@ -1410,7 +946,7 @@ async def import_github_run(
       2. Resolve the target branch (repo default when none is requested).
       3. Pin the branch head, then download + extract the repo at that
          commit into the shared run workspace.
-      4. Register that code tree as a run in ``SMART_RUN_REGISTRY`` under a
+      4. Register that code tree as a run in the run registry under a
          fresh ``run_id``. A later ``/spec-driven/generate`` with
          ``mode="modify"`` and ``base_run_id=run_id`` seeds its workspace from
          exactly this tree, in whichever container runs it.
@@ -1428,182 +964,26 @@ async def import_github_run(
             status_code=401,
             detail="GitHub authentication required. Please sign in with GitHub first.",
         )
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(
             status_code=401,
             detail="GitHub session expired. Please sign in again.",
         )
 
-    owner = req.owner.strip()
-    repo = req.repo.strip()
-    # Both are interpolated into GitHub API URL paths.
-    for value in (owner, repo):
-        if not _GITHUB_NAME_RE.fullmatch(value) or not value.strip("."):
-            raise HTTPException(
-                status_code=400, detail="Invalid GitHub owner or repository name."
-            )
-    if req.model_path is not None and not repo_model.is_repo_json_path(req.model_path):
-        raise HTTPException(status_code=400, detail="model_path must be a relative repo path to a .json file")
-
     # An import downloads and unpacks up to the archive caps and may call an
     # LLM, so it takes a run slot (BESSER_LLM_MAX_CONCURRENT_RUNS) like a run.
-    if not try_acquire_run_slot():
+    if not runtime.slots.try_acquire():
         raise HTTPException(
             status_code=429,
             detail="Too many imports and generation runs are in flight right now. Retry in a moment.",
         )
     try:
-        return await _import_github_run(req, access_token, owner, repo)
-    finally:
-        release_run_slot()
-
-
-async def _import_github_run(
-    req: ImportGitHubRunRequest, access_token: str, owner: str, repo: str,
-) -> ImportGitHubRunResponse:
-    """Steps 2-5 of ``import_github_run``, under its run slot."""
-    try:
-        github = create_github_service(access_token)
-
-        # ---- 2. Resolve the target branch (repo default when unset) ----
-        try:
-            branches = await github.get_branches(owner, repo)
-        except httpx.HTTPStatusError as exc:
-            if exc.response is not None and exc.response.status_code == 404:
-                # The repo (or the caller's access to it) doesn't exist —
-                # surface a machine-usable code the frontend can branch on.
-                raise HTTPException(status_code=404, detail="repo_missing") from exc
-            raise
-        branch = _resolve_target_branch(
-            req.branch, branches, await github.get_default_branch(owner, repo)
-        )
-
-        # ---- 3-4. Pin the branch head and register it as a run ----
-        # The commit is pinned so the next push knows what it was based on.
-        commit_sha = await github.get_branch_head(owner, repo, branch)
-        if not commit_sha:
-            raise HTTPException(status_code=404, detail="repo_missing")
-        run_id, extract_dir = await _import_repo_as_run(github, owner, repo, commit_sha)
-
-        # ---- 5. Read the re-importable model (buml/diagrams.json) ----
-        project: Optional[dict] = None
-        has_model = False
-        message: Optional[str] = None
-        diagrams_path = os.path.join(extract_dir, *repo_model.MODEL_FILE.split("/"))
-        model_path: Optional[str] = None
-        if req.model_path not in (None, repo_model.MODEL_FILE):
-            # The file the user picked; when it is gone, the usual order below.
-            saved = await asyncio.to_thread(repo_model.find_saved_project, extract_dir, req.model_path)
-            if saved is not None:
-                model_path, project = saved
-                has_model = True
-        if not has_model and os.path.isfile(diagrams_path):
-            try:
-                with open(diagrams_path, "r", encoding="utf-8") as fh:
-                    project = json.load(fh)
-                has_model = True
-                model_path = repo_model.MODEL_FILE
-            except (OSError, ValueError):
-                logger.warning(
-                    "import-github-run: buml/diagrams.json present but "
-                    "unreadable for %s/%s@%s",
-                    owner, repo, branch, exc_info=True,
-                )
-                message = (
-                    "This repo's BESSER model (buml/diagrams.json) could not "
-                    "be parsed."
-                )
-        if not has_model and message is None:
-            saved = await asyncio.to_thread(repo_model.find_saved_project, extract_dir)
-            if saved is not None:
-                model_path, project = saved
-                has_model = True
-                logger.info("import-github-run: read the model of %s/%s from %s, saved by an older editor",
-                            owner, repo, model_path)
-        analysis = proposed_diagram = None
-        ai_reading_offered = False
-        if not has_model:
-            # Not a BESSER repo: read its code for a model the user can accept.
-            code_analysis, domain_model = await asyncio.to_thread(analyze_repository, extract_dir)
-            ai_message = None
-            if should_read_with_ai(code_analysis, domain_model) and not req.allow_ai_reading:
-                # The code would leave the server: the user decides, then imports again.
-                ai_reading_offered = ai_reading_available(_ai_reading_provider(req))
-                ai_message = _AI_READING_OFFER if ai_reading_offered else _AI_READING_UNAVAILABLE
-                logger.info("import-github-run: %s/%s needs an AI reading; %s", owner, repo,
-                            "offered it" if ai_reading_offered else "none available")
-            elif should_read_with_ai(code_analysis, domain_model):
-                ai_model, ai_analysis, ai_message = await _read_repo_with_ai(
-                    req, extract_dir, code_analysis, owner, repo)
-                if ai_model is not None:
-                    domain_model, code_analysis = ai_model, ai_analysis
-                elif domain_model is not None:
-                    logger.warning("import-github-run: proposing the %s of %s/%s, as the AI reading gave no model",
-                                   code_analysis.model_source, owner, repo)
-            analysis = code_analysis.to_dict()
-            if domain_model is not None:
-                proposed_diagram = {
-                    "title": f"{repo} model",
-                    "model": {**class_buml_to_json(domain_model), "type": "ClassDiagram"},
-                    "diagramType": "ClassDiagram",
-                }
-                message = (
-                    "This repo has no data classes BESSER can read directly, so an AI "
-                    "model read its code and proposes one. Check it before accepting."
-                ) if code_analysis.ai else (
-                    f"This repo has no BESSER model. BESSER read its "
-                    f"{code_analysis.model_source} and proposes one."
-                )
-                if code_analysis.skipped_relationships:
-                    message += (
-                        f" {len(code_analysis.skipped_relationships)} relationship(s) could not be "
-                        f"read and are not in it: {', '.join(code_analysis.skipped_relationships)}."
-                    )
-                if ai_reading_offered:
-                    message += f" {_AI_READING_OFFER}"
-            elif message is None:
-                message = ai_message or (
-                    "This repo has no BESSER model and no data classes BESSER "
-                    "can read; you can still work on its code."
-                )
-
-        return ImportGitHubRunResponse(
-            run_id=run_id,
-            project=project,
-            has_model=has_model,
-            owner=owner,
-            repo=repo,
-            branch=branch,
-            commit_sha=commit_sha,
-            message=message,
-            analysis=analysis,
-            proposed_diagram=proposed_diagram,
-            ai_reading_offered=ai_reading_offered,
-            model_path=model_path,
-        )
-
-    except HTTPException:
-        raise
+        return await import_run_from_github(req, access_token, runtime.registry)
+    except UpstreamError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except httpx.HTTPStatusError as exc:
-        # Mirror spec-driven push-to-github's GitHub error mapping.
-        logger.warning("GitHub API error in import_github_run", exc_info=True)
-        upstream_status = exc.response.status_code if exc.response is not None else 502
-        detail = _extract_github_error_message(exc)
-        if upstream_status == 401:
-            raise HTTPException(status_code=401, detail=detail) from exc
-        if upstream_status == 403:
-            raise HTTPException(status_code=403, detail=detail) from exc
-        if upstream_status == 404:
-            # Repo missing / no access — machine-usable code.
-            raise HTTPException(status_code=404, detail="repo_missing") from exc
-        if upstream_status == 422:
-            raise HTTPException(status_code=409, detail=detail) from exc
-        if 400 <= upstream_status < 500:
-            raise HTTPException(status_code=upstream_status, detail=detail) from exc
-        raise HTTPException(
-            status_code=502, detail=f"GitHub upstream error: {detail}"
-        ) from exc
+        raise _github_status_error(exc, "import_github_run", repo_missing_on_404=True) from exc
     except ValueError as exc:
         # download_repo_tarball's size / member-count / unsafe-path refusals.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1613,3 +993,5 @@ async def _import_github_run(
             status_code=500,
             detail="An internal error occurred during GitHub import.",
         )
+    finally:
+        runtime.slots.release()

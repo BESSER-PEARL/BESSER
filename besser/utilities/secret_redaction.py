@@ -1,10 +1,16 @@
-"""Credential redaction for generated artifacts and streamed run events.
+"""Credential redaction: BESSER's one place for it.
 
 The user's BYOK credential is never intentionally passed to the model, but a
 generated project can still contain a credential copied from imported content
 or invented/pasted in an instruction.  Treat the artifact and SSE serializers
 as the final trust boundary: remove populated ``.env`` files and replace
 credential-shaped text everywhere else with a stable placeholder.
+
+The Spec-Driven agent's trace (:func:`redact_trace_text`), the LLM clients'
+error logs (:func:`redact_literal`) and the editor backend's generator-config
+logs (:func:`sanitize_config`) use this module too. The one other redactor is
+``spec_driven_agent/validation/api_probe.py``'s ``_scrub``: its child process
+imports no BESSER package.
 """
 
 from __future__ import annotations
@@ -250,14 +256,14 @@ def _redact_vendored_tokens(text: str) -> tuple[str, int]:
     return text, findings
 
 
-def _redact_db_url_passwords(text: str) -> tuple[str, int]:
+def _redact_db_url_passwords(text: str, *, keep_local: bool = True) -> tuple[str, int]:
     findings = 0
 
     def _replacement(match: re.Match[str]) -> str:
         nonlocal findings
         password, host = match.group("password"), match.group("host")
         if (_URL_TEMPLATE_RE.search(password) or _URL_TEMPLATE_RE.search(host)
-                or _is_placeholder(password) or _is_local_host(host)):
+                or _is_placeholder(password) or (keep_local and _is_local_host(host))):
             return match.group(0)
         findings += 1
         return match.group(0).replace(f":{password}@", f":{REDACTED_SECRET}@")
@@ -366,6 +372,33 @@ def redact_data(value: Any, secrets: Iterable[str] = ()) -> tuple[Any, int]:
     return value, 0
 
 
+# Credentials a tool call can carry that the provider-token patterns miss: a
+# bearer token in a probe command or request log, a login response's token
+# field (also inside JSON-escaped output), a bare JWT. Trace-only: on source
+# code they would rewrite ordinary headers and fixtures.
+_TRACE_CREDENTIAL_PATTERNS = (
+    (re.compile(r"(?i)(authorization\\?[\"']?\s*[:=]\s*\\?[\"']?\s*(?:(?:bearer|basic|token)\s+)?)[^\s\"'\\,}]+"),
+     r"\1" + REDACTED_SECRET),
+    (re.compile(r'(?i)(\\?"(?:access_|refresh_|id_)?token\\?"\s*:\s*\\?")[^"\\]+'), r"\1" + REDACTED_SECRET),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}"), REDACTED_SECRET),
+)
+
+
+def redact_trace_text(text: str) -> str:
+    """``text`` as the agent's trace records it: the value rules of
+    :func:`redact_text`, then bearer tokens, token fields and JWTs."""
+    text = redact_text(text, env_style=False)[0]
+    for pattern, replacement in _TRACE_CREDENTIAL_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def redact_literal(text: str, secret: str) -> str:
+    """``text`` with every occurrence of the literal ``secret`` replaced by ``***``,
+    for a provider error logged next to the key that was sent."""
+    return text.replace(secret, "***") if secret else text
+
+
 # A field or YAML key that holds a credential: ``openai_api_key``, ``personal_token``,
 # ``password``. Anchored at the end so ``max_tokens`` is not one.
 _CREDENTIAL_KEY_RE = re.compile(
@@ -458,6 +491,38 @@ def redact_credentials(value: Any, yaml_fields: Iterable[str] = ()) -> tuple[Any
         output[key], item_findings = redact_credentials(item, yaml_fields)
         findings += item_findings
     return output, findings
+
+
+# Key-name fragments that mark a config value as a credential in a log line,
+# matched as case-insensitive substrings (``openaiApiKey``, ``X-Auth-Token``).
+# Broader than _CREDENTIAL_KEY_RE: masking a logged value costs nothing.
+_LOG_SENSITIVE_KEY_FRAGMENTS = (
+    "api_key", "apikey", "api-key", "secret", "password", "passwd", "token",
+    "credential", "private", "auth", "cert", "session", "key",
+)
+
+
+def _is_log_sensitive_key(key: Any) -> bool:
+    return isinstance(key, str) and any(fragment in key.lower() for fragment in _LOG_SENSITIVE_KEY_FRAGMENTS)
+
+
+def sanitize_config(config: Any) -> Any:
+    """A deep copy of ``config`` safe to log.
+
+    A value under a credential-looking key becomes ``***``; every other string
+    goes through the value rules of :func:`redact_text` (provider tokens, the
+    vendored gitleaks rules, a database URL's password), and a local host's
+    database URL password is masked too: only a generated app needs it.
+    """
+    if isinstance(config, dict):
+        return {k: ("***" if _is_log_sensitive_key(k) else sanitize_config(v)) for k, v in config.items()}
+    if isinstance(config, list):
+        return [sanitize_config(item) for item in config]
+    if isinstance(config, tuple):
+        return tuple(sanitize_config(item) for item in config)
+    if isinstance(config, str):
+        return _redact_db_url_passwords(redact_text(config, env_style=False)[0], keep_local=False)[0]
+    return config
 
 
 def looks_like_secret_env(content: str) -> bool:

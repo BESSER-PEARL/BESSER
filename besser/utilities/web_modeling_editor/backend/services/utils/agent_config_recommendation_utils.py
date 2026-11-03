@@ -6,7 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from besser.utilities.llm_utils import extract_json
+from besser.llm import extract_json
 
 logger = logging.getLogger(__name__)
 

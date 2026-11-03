@@ -8,6 +8,8 @@ fastapi>=0.159,<0.160
 starlette>=1.9,<1.10
 uvicorn>=0.28.0
 pydantic
+# NotRequired/TypedDict in the GitHub router (routers/github_deploy_api.py).
+typing-extensions>=4.12
 python-multipart>=0.0.17
 PyYAML
 pyflakes>=3.2.0,<4

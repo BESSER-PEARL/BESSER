@@ -13,14 +13,16 @@ import uuid
 
 import httpx
 import pytest
+from pydantic import SecretStr
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import spec_driven_router
-from besser.utilities.web_modeling_editor.backend.services.deployment import github_deploy_api, repo_model
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
+from besser.utilities.web_modeling_editor.backend.routers import github_deploy_api
+from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartRunEntry,
     _seed_workspace_from_base,
     create_run_workspace,
@@ -28,18 +30,20 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
 from tests.utilities.web_modeling_editor.backend.fake_github import FakeGitHub, use_fake_github
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import CLASS_DIAGRAM_MODEL
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import _clear_registry
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 SESSION = {"X-GitHub-Session": "sess"}
 
 
 @pytest.fixture
 def github(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path / "runs"))
     asyncio.run(_clear_registry())
     fake = FakeGitHub(root=str(tmp_path / "github"))
     use_fake_github(monkeypatch, fake)
     for module in (spec_driven_router, github_deploy_api):
-        monkeypatch.setattr(module, "get_user_token", lambda sid: fake.token if sid == "sess" else None)
+        monkeypatch.setattr(module, "get_user_token", lambda _sessions, sid: fake.token if sid == "sess" else None)
     yield fake
     asyncio.run(_clear_registry())
 
@@ -71,13 +75,13 @@ def _import(owner: str, repo: str) -> dict:
 
 def _modify_run(base_run_id: str, edit) -> str:
     """A finished modify run seeded from ``base_run_id`` (as the runner seeds it), after ``edit(workdir)``."""
-    base = asyncio.run(SMART_RUN_REGISTRY.get(base_run_id))
+    base = asyncio.run(current_runtime().registry.get(base_run_id))
     run_id = uuid.uuid4().hex
     workdir = create_run_workspace(run_id)
     _seed_workspace_from_base(base.temp_dir, workdir)
     edit(workdir)
     marker = os.path.join(workdir, "README.md")
-    asyncio.run(SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
         file_path=marker, file_name="README.md", is_zip=False, temp_dir=workdir, created_at=time.time(),
     )))
     return run_id
@@ -406,16 +410,16 @@ def test_the_sync_status_follows_a_pending_branch_until_its_pull_request_is_merg
 # ---------------------------------------------------------------------
 
 
-def test_sign_in_then_out_revokes_the_token(github, monkeypatch):
-    from besser.utilities.web_modeling_editor.backend.services.deployment import github_oauth
+def test_sign_in_then_out_revokes_the_token(github, monkeypatch, route_settings):
+    from besser.utilities.web_modeling_editor.backend.routers import github_oauth
 
-    monkeypatch.setattr(github_oauth, "GITHUB_CLIENT_ID", "client")
-    monkeypatch.setattr(github_oauth, "GITHUB_CLIENT_SECRET", "secret")
-    monkeypatch.setattr(github_oauth, "DEPLOYMENT_URL", "http://editor")
+    route_settings.github_client_id = "client"
+    route_settings.github_client_secret = SecretStr("secret")
+    route_settings.deployment_url = "http://editor"
     for module in (spec_driven_router, github_deploy_api):
         monkeypatch.setattr(module, "get_user_token", github_oauth.get_user_token)
     state = "s" * 32
-    github_oauth._oauth_sessions.set(state, {"client_ip": "test"})
+    app.state.github_sessions.oauth_states.set(state, {"client_ip": "test"})
 
     callback = _call("GET", "/besser_api/github/auth/callback", params={"code": "c", "state": state})
     assert callback.status_code == 302, callback.text
@@ -441,7 +445,7 @@ def test_a_merged_push_is_reported_as_done_even_if_reading_it_back_fails(github,
 
     async def unreadable(*args, **kwargs):
         raise ValueError("Repository archive exceeds the 100 MB size cap")
-    monkeypatch.setattr(spec_driven_router, "_import_repo_as_run", unreadable)
+    monkeypatch.setattr(github_sync, "_import_repo_as_run", unreadable)
     r = _push(run_id, "library", base_commit_sha=imported["commit_sha"])
 
     assert r.status_code == 200, r.text
@@ -504,7 +508,7 @@ def test_a_fresh_run_pushed_into_a_repo_deletes_nothing_it_never_saw(github, tmp
     run_id = uuid.uuid4().hex
     workdir = create_run_workspace(run_id)
     _write(workdir, "backend/main_api.py", "app = None\n")
-    asyncio.run(SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
         file_path=os.path.join(workdir, "backend", "main_api.py"), file_name="app.zip", is_zip=True,
         temp_dir=workdir, created_at=time.time(),
     )))
@@ -648,7 +652,7 @@ def test_a_run_record_without_hashes_is_still_read(github, tmp_path):
     (run_dir / runner_module.GITHUB_SOURCE_FILENAME).write_text(json.dumps(
         {"owner": "ana", "repo": "shop", "commitSha": "a" * 40, "paths": ["src/app.py"]}), encoding="utf-8")
 
-    assert spec_driven_router._run_seed(str(run_dir), "ana", "shop") == ("a" * 40, {"src/app.py": None})
+    assert github_sync._run_seed(str(run_dir), "ana", "shop") == ("a" * 40, {"src/app.py": None})
 
 
 def test_a_teammates_buml_helper_survives_a_model_merge(github):
@@ -732,8 +736,8 @@ def test_an_import_takes_a_run_slot_and_gives_it_back(github, monkeypatch):
     def give_back():
         slots["returned"] += 1
 
-    monkeypatch.setattr(spec_driven_router, "try_acquire_run_slot", take)
-    monkeypatch.setattr(spec_driven_router, "release_run_slot", give_back)
+    monkeypatch.setattr(current_runtime().slots, "try_acquire", take)
+    monkeypatch.setattr(current_runtime().slots, "release", give_back)
 
     assert _import("ana", "shop")["run_id"]
     missing = _call("POST", "/besser_api/spec-driven/import-github-run", json={"owner": "ana", "repo": "nope"},
@@ -745,11 +749,11 @@ def test_an_import_takes_a_run_slot_and_gives_it_back(github, monkeypatch):
 
 def test_an_import_is_refused_while_every_run_slot_is_taken(github, monkeypatch):
     github.create_repo("shop", files={"src/app.py": "print('v1')\n"})
-    monkeypatch.setattr(spec_driven_router, "try_acquire_run_slot", lambda: False)
+    monkeypatch.setattr(current_runtime().slots, "try_acquire", lambda: False)
 
     def no_download(*_args, **_kwargs):
         raise AssertionError("the repo was downloaded")
-    monkeypatch.setattr(spec_driven_router, "_import_repo_as_run", no_download)
+    monkeypatch.setattr(github_sync, "_import_repo_as_run", no_download)
 
     r = _call("POST", "/besser_api/spec-driven/import-github-run", json={"owner": "ana", "repo": "shop"},
               headers=SESSION)
@@ -774,7 +778,7 @@ def test_pushing_a_run_into_an_empty_repository_makes_its_first_commit(github):
     run_id = uuid.uuid4().hex
     workdir = create_run_workspace(run_id)
     _write(workdir, "backend/main_api.py", "app = None\n")
-    asyncio.run(SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
         file_path=os.path.join(workdir, "backend", "main_api.py"), file_name="app.zip", is_zip=True,
         temp_dir=workdir, created_at=time.time(),
     )))
@@ -895,7 +899,7 @@ def test_an_edited_generated_file_merges_after_an_import_and_the_push_stores_the
             fh.write(b"# validated by hand\n")
 
     run_id = _modify_run(imported["run_id"], edit)
-    workdir = asyncio.run(SMART_RUN_REGISTRY.get(run_id)).temp_dir
+    workdir = asyncio.run(current_runtime().registry.get(run_id)).temp_dir
     regeneration, reason = regenerate(workdir, GENERATOR, shelf_model(isbn=True), set())
     assert regeneration is not None, reason
     assert regeneration.method == "merge" and "backend/pydantic_classes.py" in regeneration.merged
@@ -932,7 +936,7 @@ def _fresh_run_with_records() -> str:
     workdir = create_run_workspace(run_id)
     _write(workdir, "backend/main_api.py", "app = None\n")
     _write(workdir, ".besser_recipe.json", '{"generator_used": "backend"}\n')
-    asyncio.run(SMART_RUN_REGISTRY.put(run_id, SmartRunEntry(
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
         file_path=os.path.join(workdir, "backend", "main_api.py"), file_name="app.zip", is_zip=True,
         temp_dir=workdir, created_at=time.time(),
     )))

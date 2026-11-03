@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import secrets
 from typing import Any, Literal, Optional
 
@@ -37,6 +36,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.telemetry
     build_report,
     record_event,
 )
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ async def telemetry_report(
     indistinguishable from absent on deployments without telemetry) and 403 for a
     missing or wrong token.
     """
-    admin_token = os.environ.get("BESSER_TELEMETRY_ADMIN_TOKEN", "").strip()
+    admin_token = BackendSettings().telemetry_admin_token.get_secret_value().strip()
     if not admin_token:
         raise HTTPException(status_code=404, detail="Not Found")
     # Bytes: compare_digest raises TypeError on a non-ASCII str (a 500).

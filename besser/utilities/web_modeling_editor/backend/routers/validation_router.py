@@ -46,6 +46,7 @@ from besser.utilities.web_modeling_editor.backend.services.validators import (
 )
 
 # Centralized error handling
+from besser.utilities.web_modeling_editor.backend.dependencies import KgConsistencySlotsDep
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
@@ -60,7 +61,7 @@ router = APIRouter(prefix="/besser_api", tags=["validation"])
 
 @router.post("/validate-diagram", response_model=ValidationResponse)
 @handle_endpoint_errors("validate_diagram")
-async def validate_diagram(input_data: DiagramInput):
+async def validate_diagram(input_data: DiagramInput, kg_slots: KgConsistencySlotsDep):
     """
     Validate diagram by converting to BUML and running metamodel validation.
 
@@ -166,7 +167,7 @@ async def validate_diagram(input_data: DiagramInput):
             kg = parse_kg_diagram(input_data.model_dump())
             # The preflight and the OWL/SHACL consistency check, as in the
             # editor's Refine KG modal (see services/kg/validation.py).
-            kg_errors, kg_warnings = await validate_knowledge_graph(kg)
+            kg_errors, kg_warnings = await validate_knowledge_graph(kg, kg_slots)
             validation_errors.extend(kg_errors)
             validation_warnings.extend(kg_warnings)
 
@@ -279,10 +280,10 @@ async def validate_diagram(input_data: DiagramInput):
 
 @router.post("/check-ocl", response_model=ValidationResponse)
 @handle_endpoint_errors("check_ocl")
-async def check_ocl(input_data: DiagramInput):
+async def check_ocl(input_data: DiagramInput, kg_slots: KgConsistencySlotsDep):
     """
     Deprecated: Use /validate-diagram instead.
     This endpoint is kept for backwards compatibility and redirects to the new unified validation.
     """
     logger.warning("/check-ocl is deprecated. Use /validate-diagram instead.")
-    return await validate_diagram(input_data)
+    return await validate_diagram(input_data, kg_slots)

@@ -18,15 +18,16 @@ from besser.spec_driven_agent.state.generator_output import (
     store_generator_output,
     stored_model,
 )
-from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import _hidden_from_run
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sync import _hidden_from_run
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
     class_diagram_model,
     generation_class_diagram,
 )
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
-    SMART_RUN_REGISTRY,
     SmartGenerationRunner,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
@@ -57,11 +58,11 @@ def test_the_zip_carries_the_stored_output_with_the_runs_class_diagram(monkeypat
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _StoringOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     request = _build_request()
-    runner = SmartGenerationRunner(request)
+    runner = SmartGenerationRunner(request, runtime=current_runtime())
 
     asyncio.run(_collect_frames(runner))
 
-    entry = asyncio.run(SMART_RUN_REGISTRY.pop(runner.run_id))
+    entry = asyncio.run(current_runtime().registry.pop(runner.run_id))
     with zipfile.ZipFile(entry.file_path) as zf:
         names = set(zf.namelist())
         stored = json.loads(zf.read(GENERATOR_OUTPUT_FILENAME))
@@ -97,11 +98,11 @@ class _SyncingOrchestrator(_StoringOrchestrator):
 def test_a_model_synced_run_stores_the_diagram_it_generated_from(monkeypatch):
     monkeypatch.setattr(runner_module, "LLMOrchestrator", _SyncingOrchestrator)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
 
     asyncio.run(_collect_frames(runner))
 
-    entry = asyncio.run(SMART_RUN_REGISTRY.pop(runner.run_id))
+    entry = asyncio.run(current_runtime().registry.pop(runner.run_id))
     with zipfile.ZipFile(entry.file_path) as zf:
         assert json.loads(zf.read(GENERATOR_OUTPUT_FILENAME))["model"]["title"] == "Synced"
 
@@ -117,11 +118,11 @@ def test_a_store_this_run_did_not_write_keeps_the_model_it_came_from(tmp_path):
 
 
 def test_a_seeded_modify_run_reads_the_previous_model(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path.parent))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path.parent))
     project = _build_request().project
     store_generator_output(str(tmp_path), "backend", {"backend/main_api.py": b"app = 1\n"}, "8.0.0")
     attach_model(str(tmp_path), generation_class_diagram(project))
-    runner = SmartGenerationRunner(_build_request(), mode="modify")
+    runner = SmartGenerationRunner(_build_request(), mode="modify", runtime=current_runtime())
     runner.temp_dir, runner._seeded = str(tmp_path), True
 
     previous = runner._previous_domain_model()
@@ -143,21 +144,21 @@ def test_the_orchestrator_receives_the_previous_model(monkeypatch):
         original(self, **kwargs)
 
     monkeypatch.setattr(_StoringOrchestrator, "__init__", capture)
-    runner = SmartGenerationRunner(_build_request())
+    runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
 
     asyncio.run(_collect_frames(runner))
 
-    asyncio.run(SMART_RUN_REGISTRY.pop(runner.run_id))
+    asyncio.run(current_runtime().registry.pop(runner.run_id))
     assert received["previous_domain_model"] is sentinel
 
 
 def test_a_stored_class_diagram_that_does_not_convert_is_reported(tmp_path, caplog, monkeypatch):
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path.parent))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path.parent))
     store_generator_output(str(tmp_path), "backend", {"backend/main_api.py": b"app = 1\n"}, "8.0.0")
     store = json.loads((tmp_path / GENERATOR_OUTPUT_FILENAME).read_text(encoding="utf-8"))
     store["model"] = {"model": "not a diagram"}
     (tmp_path / GENERATOR_OUTPUT_FILENAME).write_text(json.dumps(store), encoding="utf-8")
-    runner = SmartGenerationRunner(_build_request(), mode="modify")
+    runner = SmartGenerationRunner(_build_request(), mode="modify", runtime=current_runtime())
     runner.temp_dir, runner._seeded = str(tmp_path), True
 
     assert runner._previous_domain_model() is None
@@ -176,12 +177,12 @@ def test_a_run_owns_the_files_it_carries_but_not_its_other_records():
 def test_a_workspace_outside_the_run_root_is_not_read(tmp_path, monkeypatch, caplog):
     """A resumed run finds its workspace from the request's run id; a path that resolves
     outside the shared run root is never read."""
-    monkeypatch.setattr(runner_module, "LLM_RUN_WORKSPACE_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path / "runs"))
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     store_generator_output(str(elsewhere), "backend", {"backend/main_api.py": b"app = 1\n"}, "8.0.0")
     attach_model(str(elsewhere), generation_class_diagram(_build_request().project))
-    runner = SmartGenerationRunner(_build_request(), mode="modify")
+    runner = SmartGenerationRunner(_build_request(), mode="modify", runtime=current_runtime())
     runner.temp_dir, runner._seeded = str(elsewhere), True
 
     assert runner._previous_domain_model() is None

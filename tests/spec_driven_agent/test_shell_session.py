@@ -232,7 +232,7 @@ def test_close_sessions_for_the_run_folder(tmp_path, fake_bwrap):
 @posix_only
 def test_an_idle_session_is_torn_down_and_the_next_command_is_told(
         tmp_path, fake_bwrap, monkeypatch):
-    monkeypatch.setenv(shell_session.IDLE_ENV, "1")
+    monkeypatch.setenv("BESSER_LLM_SHELL_SESSION_IDLE_SECONDS", "1")
     session = ShellSession(str(tmp_path))
     try:
         _run(session, "export KEPT=yes")
@@ -250,7 +250,7 @@ def test_an_idle_session_is_torn_down_and_the_next_command_is_told(
 
 @posix_only
 def test_a_busy_session_is_not_reaped(tmp_path, fake_bwrap, monkeypatch):
-    monkeypatch.setenv(shell_session.IDLE_ENV, "1")
+    monkeypatch.setenv("BESSER_LLM_SHELL_SESSION_IDLE_SECONDS", "1")
     session = ShellSession(str(tmp_path))
     try:
         assert _run(session, "sleep 3; echo done", timeout=10).stdout == "done\n"
@@ -260,7 +260,7 @@ def test_a_busy_session_is_not_reaped(tmp_path, fake_bwrap, monkeypatch):
 
 @posix_only
 def test_past_the_cap_a_command_runs_in_a_one_off_sandbox(tmp_path, fake_bwrap, monkeypatch):
-    monkeypatch.setenv(shell_session.MAX_ENV, "1")
+    monkeypatch.setenv("BESSER_LLM_SHELL_SESSION_MAX", "1")
     first, second = ShellSession(str(tmp_path / "a")), ShellSession(str(tmp_path / "b"))
     os.makedirs(first.workspace)
     os.makedirs(second.workspace)
@@ -281,7 +281,7 @@ def test_past_the_cap_a_command_runs_in_a_one_off_sandbox(tmp_path, fake_bwrap, 
 
 @posix_only
 def test_a_cap_of_zero_gives_every_command_its_own_sandbox(tmp_path, fake_bwrap, monkeypatch):
-    monkeypatch.setenv(shell_session.MAX_ENV, "0")
+    monkeypatch.setenv("BESSER_LLM_SHELL_SESSION_MAX", "0")
     session = ShellSession(str(tmp_path))
     _run(session, "true")
     _run(session, "true")

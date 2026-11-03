@@ -16,9 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from besser.llm.pricing import MODEL_PRICING, ZERO_PRICING
 from besser.spec_driven_agent.providers.llm_client import (
-    _MODEL_PRICING,
-    _ZERO_PRICING,
     create_llm_client,
 )
 
@@ -80,19 +79,19 @@ def test_paid_alts_use_command_codes_published_rates(lineup, alt):
     # These have no row in the vendored table; Command Code publishes them.
     client = create_llm_client(provider="free", model=alt)
     assert client.model == alt
-    assert client.usage.pricing != _MODEL_PRICING["gpt-4o"]
+    assert client.usage.pricing != MODEL_PRICING["gpt-4o"]
     assert client.usage.pricing["cache_read"] < client.usage.pricing["input"]
 
 
 def test_an_unpriced_paid_id_on_an_unknown_gateway_gets_the_conservative_rate():
-    from besser.spec_driven_agent.providers.llm_client import _get_pricing
+    from besser.llm.pricing import get_pricing
 
-    assert _get_pricing("meta/muse-spark-1.3", route="https://gateway.example/v1") == _MODEL_PRICING["gpt-4o"]
+    assert get_pricing("meta/muse-spark-1.3", route="https://gateway.example/v1") == MODEL_PRICING["gpt-4o"]
 
 
 def test_the_free_suffixed_alt_is_zero(lineup):
     client = create_llm_client(provider="free", model=LAGUNA)
-    assert client.usage.pricing == _ZERO_PRICING
+    assert client.usage.pricing == ZERO_PRICING
     assert _run_like_the_reviewed_one(client) == 0.0
 
 
@@ -169,7 +168,7 @@ def test_command_code_alternates_use_their_published_rates(model, rates):
 
 
 def test_the_same_id_on_another_route_keeps_that_routes_price():
-    from besser.spec_driven_agent.providers.llm_client import _get_pricing
+    from besser.llm.pricing import get_pricing
 
-    nebius = _get_pricing("moonshotai/Kimi-K3", billed=True, route="https://api.studio.nebius.ai/v1/")
+    nebius = get_pricing("moonshotai/Kimi-K3", billed=True, route="https://api.studio.nebius.ai/v1/")
     assert nebius["input"] == 3.0 and nebius["cache_read"] != 0.30

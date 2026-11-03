@@ -1300,7 +1300,9 @@ If BESSER saved you time, a [⭐ on GitHub](https://github.com/BESSER-PEARL/BESS
                 timeout=10
             )
 
-
+        # 404 is "no such file"; a revoked token or a GitHub outage is an error, not "missing".
+        if response.status_code >= 400 and response.status_code != 404:
+            response.raise_for_status()
         return response.status_code == 200
 
     async def get_repository_contents(

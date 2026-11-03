@@ -2,7 +2,7 @@
 
 The endpoint pushes the *stored* artifact of a finished spec-driven
 run (by ``run_id``) plus the re-importable model source to GitHub. These
-tests mock ``GitHubService`` and seed ``SMART_RUN_REGISTRY`` with a fake
+tests mock ``GitHubService`` and seed ``current_runtime().registry`` with a fake
 ``SmartRunEntry`` pointing at a temp dir we build, so nothing touches the
 real GitHub API.
 """
@@ -21,9 +21,9 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     CARRIED_RUN_FILES,
-    SMART_RUN_REGISTRY,
     SmartRunEntry,
 )
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
@@ -32,6 +32,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
 )
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
 
 
 BASE_URL = "http://testserver"
@@ -162,8 +163,8 @@ class _FakeGitHubService:
 
 def _install(monkeypatch, fake):
     """Patch the GitHub factory + token lookup in the router namespace."""
-    monkeypatch.setattr(router_module, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(router_module, "get_user_token", lambda sid: "fake-token")
+    monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
+    monkeypatch.setattr(router_module, "get_user_token", lambda _sessions, sid: "fake-token")
 
 
 def _project_export() -> dict:
@@ -223,7 +224,7 @@ def _seed_run(run_id: str, *, with_secret_env: bool = True) -> str:
         temp_dir=tmp,
         created_at=time.time(),
     )
-    asyncio.run(SMART_RUN_REGISTRY.put(run_id, entry))
+    asyncio.run(current_runtime().registry.put(run_id, entry))
     return tmp
 
 

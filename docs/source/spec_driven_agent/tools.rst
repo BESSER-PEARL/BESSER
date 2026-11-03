@@ -123,7 +123,8 @@ Each of these calls a BESSER :doc:`code generator <../generators>` directly —
 the same deterministic generator you would run yourself from Python. They are
 what makes the agent an orchestrator rather than a code writer: for anything
 BESSER already templates, the LLM asks for the template output and edits it
-instead of writing it from scratch.
+instead of writing it from scratch. They are declared with the generators
+themselves, in ``besser/generators/registry.py``.
 
 .. list-table::
    :header-rows: 1
@@ -393,5 +394,7 @@ only there so a runaway command cannot fill the disk.
    ``besser/spec_driven_agent/agent/tools.py``, an entry in
    ``_TOOL_MODEL_REQUIREMENTS`` in the same file (so the tool is only offered
    when the models it needs are present), and a handler in
-   ``ToolExecutor._handlers`` (``agent/tool_executor.py``). See
-   :doc:`../contributor_guide`.
+   ``ToolExecutor._handlers`` (``agent/tool_executor.py``). A generator tool is
+   the ``agent_tool`` of the generator's entry in
+   ``besser/generators/registry.py`` (declaration and requirements in one), its
+   id in ``AGENT_TOOL_ORDER``, plus the handler. See :doc:`../contributor_guide`.

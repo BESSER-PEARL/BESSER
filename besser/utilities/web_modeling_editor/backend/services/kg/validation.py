@@ -6,11 +6,12 @@ One place runs the OWL/SHACL consistency check for both callers:
 with the KG -> class diagram preflight, into a list of errors and warnings.
 
 The check itself (:func:`~besser.BUML.notations.kg_to_buml.consistency.check_kg_consistency`)
-runs pyshacl in a child process with a time budget. Here it also gets a
-process-wide cap on how many run at once (``KG_CONSISTENCY_MAX_CONCURRENT``):
-each one is a Python process holding pyshacl and owlrl for up to the timeout,
-so a request beyond the cap is refused with :class:`ConsistencyCheckBusy`
-rather than queued.
+runs pyshacl in a child process with a time budget. Here it also gets a cap
+on how many run at once (``KG_CONSISTENCY_MAX_CONCURRENT``, one semaphore per
+app built in the backend's lifespan by :func:`consistency_check_slots`): each
+one is a Python process holding pyshacl and owlrl for up to the timeout, so a
+request beyond the cap is refused with :class:`ConsistencyCheckBusy` rather
+than queued.
 """
 
 import asyncio
@@ -43,41 +44,28 @@ class ConsistencyCheckBusy(BesserError):
     """
 
 
-_SLOTS: Optional[threading.BoundedSemaphore] = None
-_SLOTS_LOCK = threading.Lock()
+def consistency_check_slots() -> threading.BoundedSemaphore:
+    """A fresh set of ``KG_CONSISTENCY_MAX_CONCURRENT`` check slots, for one app."""
+    return threading.BoundedSemaphore(KG_CONSISTENCY_MAX_CONCURRENT)
 
 
-def _slots() -> threading.BoundedSemaphore:
-    """The process-wide semaphore, built on first use from the current cap."""
-    global _SLOTS
-    with _SLOTS_LOCK:
-        if _SLOTS is None:
-            _SLOTS = threading.BoundedSemaphore(KG_CONSISTENCY_MAX_CONCURRENT)
-        return _SLOTS
-
-
-def _reset_slots_for_tests() -> None:
-    """Drop the semaphore so the next check rebuilds it (after patching the cap)."""
-    global _SLOTS
-    with _SLOTS_LOCK:
-        _SLOTS = None
-
-
-async def run_consistency_check(kg: KnowledgeGraph) -> ConsistencyReport:
+async def run_consistency_check(kg: KnowledgeGraph, slots: threading.BoundedSemaphore) -> ConsistencyReport:
     """Run the consistency check on ``kg`` off the event loop, under the concurrency cap.
 
     The slot is released by the worker thread when the check (and so its child
     process) is over, not when this coroutine ends: a client that disconnects
     must not free a slot whose validator is still running.
 
+    Args:
+        kg: The graph to check.
+        slots: The app's check slots (``KgConsistencySlotsDep``).
+
     Raises:
-        ConsistencyCheckBusy: ``KG_CONSISTENCY_MAX_CONCURRENT`` checks are
-            already running.
+        ConsistencyCheckBusy: every slot is taken.
         ConsistencyCheckTimeout: the check ran out of time.
         ConsistencyCheckError: the KG's shapes could not be loaded.
         ConfigurationError: pyshacl is not installed on this server.
     """
-    slots = _slots()
     if not slots.acquire(blocking=False):
         raise ConsistencyCheckBusy(
             "Too many consistency checks are running right now. Please retry in a moment."
@@ -129,7 +117,9 @@ def format_kg_finding(code: str, description: str, node_ids: Sequence[str]) -> s
     return text
 
 
-async def validate_knowledge_graph(kg: KnowledgeGraph) -> Tuple[List[str], List[str]]:
+async def validate_knowledge_graph(
+    kg: KnowledgeGraph, slots: threading.BoundedSemaphore,
+) -> Tuple[List[str], List[str]]:
     """The ``(errors, warnings)`` of ``kg`` for ``/validate-diagram``.
 
     The same two checks the editor's Refine KG modal runs, so validating through
@@ -150,7 +140,7 @@ async def validate_knowledge_graph(kg: KnowledgeGraph) -> Tuple[List[str], List[
         errors.append(format_kg_finding(issue.code, issue.description, issue.affected_node_ids))
 
     try:
-        consistency = await run_consistency_check(kg)
+        consistency = await run_consistency_check(kg, slots)
     except (ConsistencyCheckTimeout, ConsistencyCheckBusy, ConfigurationError) as exc:
         warnings.append(f"The consistency check did not run to completion: {exc}")
         return errors, warnings

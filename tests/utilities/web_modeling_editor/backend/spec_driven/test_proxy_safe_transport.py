@@ -25,9 +25,6 @@ import pytest
 from httpx._transports.asgi import ASGITransport
 
 from besser.utilities.web_modeling_editor.backend.backend import app
-from besser.utilities.web_modeling_editor.backend.routers import (
-    spec_driven_router as router_module,
-)
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     runner as runner_module,
 )
@@ -45,10 +42,8 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_spec_driven_ro
 @pytest.fixture(autouse=True)
 def reset_state():
     asyncio.run(_clear_registry())
-    router_module._idempotent_runs.clear()
     yield
     asyncio.run(_clear_registry())
-    router_module._idempotent_runs.clear()
 
 
 @pytest.fixture

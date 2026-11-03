@@ -223,7 +223,7 @@ are about to deploy before you deploy:
 
    docker run --rm -e BESSER_MODEL_CATALOG=/catalog.json \
      -v /home/ec2-user/model_catalog.json:/catalog.json:ro <backend image> \
-     python -c "from besser.spec_driven_agent.providers.model_catalog import load_model_catalog as l; print(sorted(l().providers))"
+     python -c "from besser.llm.catalog import load_model_catalog as l; print(sorted(l().providers))"
 
 It prints the provider ids, or a ``ModelCatalogError`` naming the field.
 
@@ -250,7 +250,7 @@ Run these on the host, in the directory of its compose file:
    curl -s http://127.0.0.1:9001/besser_api/spec-driven/config | python3 -m json.tool | grep -E 'shell_tools_enabled|toolchain_validation_enabled'
    # ... and off in the backend
    docker compose exec -T besser-wme-backend python -c \
-     "import besser.utilities.web_modeling_editor.backend.constants.constants as c; print(c.LLM_ENABLE_SHELL_TOOLS, c.LLM_ENABLE_TOOLCHAIN_VALIDATION)"
+     "from besser.utilities.web_modeling_editor.backend.settings import get_settings as g; print(g().llm_enable_shell_tools, g().llm_enable_toolchain_validation)"
 
    # The API answers through the public URL
    curl -s -o /dev/null -w '%{http_code}\n' https://<editor-host>/besser_api/

@@ -17,7 +17,7 @@ The pieces
 
    * - Where
      - What it owns
-   * - ``backend/services/deployment/github_oauth.py``
+   * - ``backend/routers/github_oauth.py``
      - OAuth sign-in, the server-side session store, sign-out with token
        revocation. The browser only ever holds an opaque session id.
    * - ``backend/services/deployment/github_service.py``
@@ -29,12 +29,13 @@ The pieces
        credential redaction, ``ModelMerge``.
    * - ``backend/services/deployment/model_merge.py``
      - The three-way merge of ``diagrams.json`` as data.
-   * - ``backend/services/deployment/github_deploy_api.py``
+   * - ``backend/routers/github_deploy_api.py``
      - The ``/github/*`` endpoints: save, load, create, repo summary, sync
        status, model history, pull requests, go live.
-   * - ``backend/routers/spec_driven_router.py``
+   * - ``backend/services/spec_driven/github_sync.py``
      - ``/spec-driven/import-github-run`` (a repository becomes a run) and
-       ``/spec-driven/push-to-github`` (a run goes back to the repository).
+       ``/spec-driven/push-to-github`` (a run goes back to the repository);
+       the routes are in ``backend/routers/spec_driven_router.py``.
    * - ``backend/services/reverse_engineering/``
      - Reads a repository BESSER did not create: ``code_reverse.py`` (exact,
        Python ``ast`` only, nothing is executed) and ``ai_reverse.py`` (a
@@ -96,7 +97,10 @@ that id in ``sessionStorage`` and sends it in the ``X-GitHub-Session`` header,
 never in a URL. For one release, ``/github/auth/status``, the star endpoints and
 logout still accept the old ``session_id`` query parameter when the header (or
 logout's body) is absent, and log a deprecation warning. Sessions live in the
-backend's memory, so a backend restart ends them.
+app's sign-in stores (``GitHubSessions``, built in the backend's lifespan): an
+encrypted file (``USER_TOKENS_PATH``, else ``SESSION_STORE_PATH``, else the
+temp directory) that outlives a restart, or memory, which does not, when the
+``cryptography`` package is missing.
 
 The editor has one sign-in store for the tab. Its states are ``checking`` (a
 stored session is being verified; actions wait instead of starting a new
@@ -106,6 +110,14 @@ from ``api-client.ts``, which marks the session expired everywhere at once. A
 remembered username without a session also reads as expired, so a linked
 project offers *Reconnect* after a reload; signing out forgets the username and
 revokes the token at GitHub.
+
+A GitHub API error reaches the editor with one mapping on every endpoint
+(``_github_status_error`` in ``routers/github_deploy_api.py``): 401, 403 and
+other 4xx keep their status, 422 (a name already taken, a branch that moved)
+becomes 409, and a 5xx becomes 502, each with GitHub's own message. Two
+exceptions: ``/spec-driven/import-github-run`` answers a missing repository
+with 404 ``repo_missing``, and ``/github/gist/create`` answers 403/404 with how
+to grant the ``gist`` scope.
 
 Sync state
 ----------

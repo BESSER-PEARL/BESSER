@@ -10,7 +10,9 @@ Architecture
 
 The backend uses a **modular router architecture**. The application factory
 (``backend.py``) registers middleware, includes routers, and starts background
-services. Endpoints are organized by concern:
+services. Routers are thin: a route parses the request, resolves its dependencies,
+calls a service under ``services/`` and turns the result or the service's exception
+into the HTTP response. Endpoints are organized by concern:
 
 - **``routers/generation_router.py``** -- Code generation (single-diagram and project-based) and agent-configuration recommendation
 - **``routers/conversion_router.py``** -- BUML import/export, CSV reverse engineering, image-to-model, SVG rendering
@@ -22,23 +24,81 @@ services. Endpoints are organized by concern:
 - **``routers/agent_simulator_router.py``** -- Live agent simulation (see `Agent Simulation`_)
 - **``routers/error_handler.py``** -- Centralized ``@handle_endpoint_errors`` decorator
 - **``routers/auth.py``** -- Shared GitHub-session gate (``require_github_session``, HTTP 401)
-
-GitHub OAuth and GitHub deployment are registered from
-``services/deployment/`` (``github_oauth.py`` and ``github_deploy_api.py``)
-rather than from ``routers/``.
+- **``routers/github_oauth.py``** -- GitHub sign-in, sign-out and the session lookup (``get_user_token``)
+- **``routers/github_deploy_api.py``** -- The ``/github/*`` endpoints: save, load, create, repo summary, sync status, model history, pull requests, deploy, go live
 
 Additional infrastructure:
 
 - **``middleware/request_logging.py``** -- Structured request logging with unique IDs and performance timing
 - **``services/cleanup.py``** -- Background temp-file cleanup (removes stale directories every hour)
-- **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError`` and ``ConfigurationError``.
+- **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError``, ``ConfigurationError`` and ``UpstreamError`` (an external service such as GitHub refused or failed; carries the HTTP status).
   ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
+- **``services/generation/``** -- Generator dispatch behind ``/generate-output`` and ``/generate-output-from-project``: ``dispatch.py`` picks the path from the generator's registry entry (``category``, ``required_diagram_type``, ``output_type``; ``needs_beyond_one_diagram`` refuses a generator one diagram cannot feed; generators with request options have a builder in ``_CLASS_DIAGRAM_BUILDERS``) and runs it, ``agents.py`` generates agents (BAF), ``downloads.py`` packs the output as a ``GeneratedOutput`` (a ZIP with its provenance file, or one file with its version comment), which the router sends as the download
 - **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions), ``llm.py`` (reaching the user's own LLM provider under one request deadline) and ``validation.py`` (the consistency check under its concurrency cap, and the KG findings of ``/validate-diagram``)
-- **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``sse_events.py`` (the typed event schema), ``secret_redaction.py``, ``telemetry.py``, ``incidents.py``
-- **``constants/constants.py``** -- API version, temp prefixes, generator defaults, CORS origins, and the ``BESSER_LLM_*`` caps and feature flags
-- **``models/responses.py``** -- Standardized Pydantic response models
+- **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``runtime.py`` (the per-app state of the runs, see `Runtime State`_), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``github_sync.py`` (a run pushed to GitHub, a GitHub repo imported as a run), ``sse_events.py`` (the typed event schema), ``telemetry.py``, ``incidents.py``. Frames, packaged workspaces and repo writes are redacted by ``besser.utilities.secret_redaction``
+- **``constants/constants.py``** -- API version, temp prefixes, generator defaults and the built-in CORS origins
+- **``settings.py``** -- ``BackendSettings``, every environment variable the backend reads (see `Environment Variables`_)
+- **``models/responses.py``** -- Standardized Pydantic response models. They derive from ``ResponseModel``, which marks every field the backend sends (defaults included) as required in the OpenAPI schema, and use ``Literal`` types and nested models for fields with a fixed set of values or a fixed shape, so the editor's generated client needs no casts. ``KGIssueResponse`` and ``KGActionResponse`` stay plain ``BaseModel`` classes: they are also part of a request body
 - **``models/kg.py``** -- Request models of the KG endpoints: ``KGDiagramInput`` (a ``DiagramInput`` plus the refinement fields, with typed ``resolutions`` and ``llmIssues``) and the LLM requests, which share ``KGLLMCredentials`` (``provider``, ``llm_model``, and the key as a ``SecretStr``). Data fields are camelCase; only the credentials keep the snake_case names of the other LLM features
 - **``models/spec_driven.py``** -- Request/response models for the spec-driven endpoints (the API key is a ``SecretStr``; the caps are clamped by field validators)
+- **``dependencies.py``** -- FastAPI dependencies that hand routes the state built in the lifespan
+
+Runtime State
+^^^^^^^^^^^^^
+
+The state the spec-driven runs share lives in one ``SpecDrivenRuntime``
+(``services/spec_driven/runtime.py``) per application, not in module globals:
+
+- ``registry`` -- the ``SmartRunRegistry`` of finished runs awaiting download,
+  push or a modify run;
+- ``durable_runs`` -- the ``DurableRunManager`` and its SQLite event store
+  (``BESSER_LLM_RUN_STORE_PATH``);
+- ``slots`` -- the ``BESSER_LLM_MAX_CONCURRENT_RUNS`` cap on runs and GitHub
+  imports;
+- ``active_runs`` -- the cancel event of each live run;
+- ``executor`` -- the thread pool the runs work on (``smartgen-*`` threads, the
+  cap plus four), kept apart from asyncio's default pool that the quick
+  endpoints use;
+- the ``Idempotency-Key`` map of recent run starts.
+
+The ``lifespan`` in ``backend.py`` builds it from ``BackendSettings``, stores it
+on ``app.state.spec_driven``, restores the persisted downloads and starts the
+two sweepers. On shutdown it cancels the sweepers and shuts the pool down
+without waiting; runs still in a thread finish before the interpreter exits.
+Routes take the runtime through ``Depends(get_spec_driven_runtime)``
+(``SpecDrivenRuntimeDep``) and pass it to each ``SmartGenerationRunner``, so
+two applications in one process (or two tests) never share spec-driven runs,
+slots or threads. The Spec-Driven worker container serves the same application, so it
+builds its own runtime the same way; the two containers meet through the
+shared run workspace, which ``SmartRunRegistry.get`` rescans on a miss.
+
+The lifespan also builds the rest of the per-app state, each handed to routes
+by a dependency in ``dependencies.py``:
+
+- ``app.state.github_sessions`` (``GitHubSessionsDep``) -- the GitHub sign-in
+  stores, ``GitHubSessions`` in ``services/deployment/session_store.py``: the
+  pending OAuth states (``OAUTH_SESSIONS_PATH``) and the signed-in sessions
+  (``USER_TOKENS_PATH``). ``github_oauth.get_user_token`` takes them;
+- ``app.state.agent_simulator`` (``AgentSimulatorDep``) -- the agent simulator's
+  rate limiter, session registry and background tasks
+  (``services/agent_simulation.py``);
+- ``app.state.kg_consistency_slots`` (``KgConsistencySlotsDep``) -- the
+  ``KG_CONSISTENCY_MAX_CONCURRENT`` cap on knowledge graph consistency checks;
+- ``app.state.sdmx_import_slots`` (``SdmxImportSlotsDep``) -- the
+  ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` cap on SDMX imports.
+
+Two applications in one process share none of this state. The sign-in stores
+are encrypted files, so two applications configured with the same paths still
+read the same sessions on disk, as a restarted backend does.
+
+Test clients built on ``httpx.ASGITransport`` do not run the lifespan: the
+backend tests' ``spec_driven_runtime`` and ``app_state`` fixtures install fresh
+state per test instead.
+
+Only state that belongs to the process rather than to one app stays in
+modules: caches of facts about the host (the sandbox self-test, the tokenizer,
+the model catalog, the settings), per-path file locks, and the agent's
+shell-session reaper, which the agent also uses outside the backend.
 
 Multi-Diagram Projects
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -237,7 +297,7 @@ optional ``llm_model`` (the provider's default otherwise) and the caller's own
 ``maxOrphanClassifyNodes`` per request (80 by default; the editor reads the
 limit from ``/kg/config`` and sends larger sets in batches). The key is a
 ``SecretStr`` and is never logged. OpenAI is reached
-through the transport in ``besser.utilities.llm_utils``; the other providers go
+through the transport in ``besser.llm.openai_chat``; the other providers go
 through the Spec-Driven Agent's provider clients, with their retry loop off:
 each model call is one attempt bounded by what is left of the request's
 deadline (``llmRequestTimeoutSeconds``). The server-paid tiers and the
@@ -443,11 +503,13 @@ Backend-side notes that do not belong in the contract:
   attributed to a person.
 - ``/spec-driven/push-to-github`` and ``/spec-driven/import-github-run`` require
   the ``X-GitHub-Session`` header, like the other GitHub endpoints below.
-- ``/spec-driven/import-github-run`` answers ``400`` for an owner or repository
+- ``/spec-driven/import-github-run`` answers ``422`` for an owner or repository
   name that does not match ``^[A-Za-z0-9_.-]+$`` or consists only of dots
-  (both are interpolated into GitHub API paths), and for a repository over the
-  import limits: a 100 MB archive, 500 MB unpacked, or 50,000 files. The
-  response detail says which limit was hit.
+  (both are interpolated into GitHub API paths) and for a ``model_path`` that
+  is not a relative ``.json`` path inside the repository. Like any invalid
+  body, this is checked before the ``X-GitHub-Session`` header. It answers
+  ``400`` for a repository over the import limits: a 100 MB archive, 500 MB
+  unpacked, or 50,000 files. The response detail says which limit was hit.
 
 Telemetry (research study mode)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -820,8 +882,23 @@ mistaken for a declaration. Turtle, N-Triples and N3 have no DTD and are not
 scanned.
 
 
+.. _web-editor-backend-env:
+
 Environment Variables
 ---------------------
+
+Each variable below is declared once, with its type, default and a one-line
+description, on ``BackendSettings`` in ``settings.py``, except
+``OPENAI_API_KEY`` (read by the code that uses it) and
+``BESSER_PILOT_LLM_MODEL`` (on the agent's ``AgentSettings``, see
+:doc:`spec_driven_agent/configuration`). The backend reads most of them once
+per process (``get_settings()``, built on first use; routes take it as
+``SettingsDep``); the variables marked *read per call* in their description
+there are read again at each use. A malformed value never stops the backend:
+numbers that do not parse fall back to their default (``SMTP_PORT`` stays
+text, so a bad port fails only the feedback mail), and a flag is on only for
+``1``, ``true``, ``yes`` or ``on`` (``BESSER_TELEMETRY_ENABLED`` only for
+``1`` or ``true``).
 
 **Required for GitHub integration:**
 
@@ -1016,9 +1093,9 @@ From a checkout, ``python -m besser.utilities.web_modeling_editor.backend.backen
 start the same server and take the same options. The backend always runs as a
 single process (see the note under `Agent Simulation`_).
 
-Startup and shutdown work (the temp-file cleanup, the spec-driven download
-registry restore and sweepers) runs in the FastAPI ``lifespan`` handler
-declared in ``backend.py``; the agent simulator service declares its own
+Startup and shutdown work (the temp-file cleanup, the spec-driven runtime
+with its download registry restore and sweepers, see `Runtime State`_) runs in
+the FastAPI ``lifespan`` handler declared in ``backend.py``; the agent simulator service declares its own
 ``lifespan`` in ``agent_simulator_api.py``.
 
 To use the Spec-Driven Agent's Local (e.g. Ollama) provider from this local

@@ -16,8 +16,8 @@ import pytest
 from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.web_app import WebAppGenerator
-from besser.utilities.web_modeling_editor.backend.services.spec_driven import secret_redaction
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import (
+from besser.utilities import secret_redaction
+from besser.utilities.secret_redaction import (
     REDACTED_SECRET,
     redact_text,
     scrub_secret_files,

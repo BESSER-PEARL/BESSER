@@ -25,7 +25,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     sponsored_tier_available,
 )
 from besser.utilities.kg_llm_to_buml import convert_spec_json_to_buml
-from besser.utilities.llm_utils import extract_json
+from besser.llm import extract_json
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.class_diagram_processor import (
     process_class_diagram,
 )
@@ -37,7 +37,7 @@ from besser.utilities.web_modeling_editor.backend.services.reverse_engineering.c
     SCHEMA_MODEL_SOURCE,
     CodeAnalysis,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_text
+from besser.utilities.secret_redaction import redact_text
 
 logger = logging.getLogger(__name__)
 

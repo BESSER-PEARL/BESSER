@@ -43,6 +43,8 @@ from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     PushSmartToGitHubResponse,
     SmartGenerateRequest,
     SmartPreviewRequest,
+    SmartPreviewResponse,
+    SpecDrivenConfigResponse,
 )
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
@@ -513,7 +515,7 @@ def _free_tier_model_choices() -> list[dict]:
     return choices
 
 
-@router.get("/spec-driven/config")
+@router.get("/spec-driven/config", response_model=SpecDrivenConfigResponse)
 async def smart_gen_config(settings: SettingsDep) -> dict:
     """Expose the server's current spec-driven generation configuration.
 
@@ -585,7 +587,7 @@ async def smart_gen_config(settings: SettingsDep) -> dict:
 # ---------------------------------------------------------------------
 
 
-@router.post("/spec-driven/preview")
+@router.post("/spec-driven/preview", response_model=SmartPreviewResponse)
 @handle_endpoint_errors("smart_preview")
 async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntimeDep) -> dict:
     """Return the plan spec-driven generate would run, without executing it.

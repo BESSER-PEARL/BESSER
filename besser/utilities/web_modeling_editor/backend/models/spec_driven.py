@@ -524,3 +524,119 @@ class SmartPreviewRequest(BaseModel):
         if self.mode == "generate" and self.base_run_id is not None:
             raise ValueError("base_run_id is only valid when preview mode is modify")
         return self
+
+
+class SmartPreviewModelSummaryResponse(ResponseModel):
+    """``AssembledModels.summary()``: the diagrams present, counts only."""
+
+    primary: str
+    # One entry per model present: ``kind`` plus that kind's counts.
+    present: list[dict[str, Any]]
+    assembly_issues: list[dict[str, str]]
+
+
+class RenamedElementResponse(ResponseModel):
+    """A class ("Room") or attribute ("Room.floor") kept under a new name."""
+
+    from_: str = Field(alias="from")
+    to: str
+
+
+class ModelChangeResponse(ResponseModel):
+    """``ModelChange.to_dict()``: how a modify's model relates to its base app's."""
+
+    verdict: Literal["small", "large", "unrelated"]
+    # "attributes": full models compared; "classes": an older recipe's class names only.
+    basis: Literal["attributes", "classes"]
+    gone: float
+    removed: list[str]
+    added: list[str]
+    renamed: list[RenamedElementResponse]
+    changes: list[str]
+
+
+class SmartPreviewResponse(ResponseModel):
+    """Response of ``POST /besser_api/spec-driven/preview``: ``PreviewPlan.to_dict()`` and the model."""
+
+    execution_mode: Literal["generate", "modify"]
+    primary_kind: str
+    auxiliary_kinds: list[str]
+    # None when the run writes the code from scratch.
+    target_generator: Optional[str]
+    target_generator_confidence: float
+    summary: str
+    estimated_turns: int
+    estimated_cost_usd: float
+    estimated_duration_seconds: int
+    notes: list[str]
+    model_summary: SmartPreviewModelSummaryResponse
+    # Modify with a known base run only; None = unknown, keep modifying.
+    model_change: Optional[ModelChangeResponse]
+
+
+class SpecDrivenCapsResponse(ResponseModel):
+    max_cost_usd_hard_cap: float
+    max_runtime_seconds_hard_cap: int
+    max_turns_hard_cap: int
+    default_max_cost_usd: float
+    default_max_runtime_seconds: int
+    default_max_turns: int
+
+
+class SpecDrivenConcurrencyResponse(ResponseModel):
+    max_concurrent_runs: int
+
+
+class SpecDrivenFeaturesResponse(ResponseModel):
+    tracing_enabled: bool
+    checkpointing_enabled: bool
+    resume_enabled: bool
+    toolchain_validation_enabled: bool
+    shell_tools_enabled: bool
+    per_write_diagnostics_enabled: bool
+    durable_runs_enabled: bool
+    event_replay_enabled: bool
+    cancel_abandoned_runs: bool
+    disconnected_grace_seconds: int
+
+
+class CatalogModelResponse(ResponseModel):
+    id: str
+    label: str
+    default: bool
+
+
+class CatalogProviderResponse(ResponseModel):
+    """A model-catalog provider as the key dialog shows it (``public_providers``)."""
+
+    id: str
+    label: str
+    hint: Optional[str]
+    key_prefix: Optional[str]
+    models: list[CatalogModelResponse]
+
+
+class FreeTierModelResponse(ResponseModel):
+    id: str
+    default: bool
+
+
+class FreeTierResponse(ResponseModel):
+    available: bool
+    model: Optional[str]
+    models: list[FreeTierModelResponse]
+    pilot_model: Optional[str]
+
+
+class SpecDrivenConfigResponse(ResponseModel):
+    """Response of ``GET /besser_api/spec-driven/config``: public caps and feature flags."""
+
+    caps: SpecDrivenCapsResponse
+    download_ttl_seconds: int
+    cost_emitter_interval_seconds: float
+    concurrency: SpecDrivenConcurrencyResponse
+    features: SpecDrivenFeaturesResponse
+    supported_providers: list[str]
+    providers: list[CatalogProviderResponse]
+    default_models: dict[str, str]
+    free_tier: FreeTierResponse

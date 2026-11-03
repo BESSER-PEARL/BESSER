@@ -24,10 +24,14 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
     KGConsistencyReportResponse,
     KGSeverityCountsResponse,
 )
+from besser.spec_driven_agent.planning import model_change
+from besser.utilities.web_modeling_editor.backend.models.responses import FeedbackResponse
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     CodeAnalysisResponse,
     ImportGitHubRunResponse,
+    ModelChangeResponse,
     PushSmartToGitHubResponse,
+    SmartPreviewResponse,
 )
 from besser.utilities.web_modeling_editor.backend.routers.github_deploy_api import (
     PendingChangeStatus,
@@ -54,6 +58,10 @@ def _literal_values(model, field: str) -> set:
     (DeployToGitHubResponse, "deployment_type", {"webapp", "chatbot"}),
     (KGConsistencyIssueResponse, "severity", {"info", "warning", "violation"}),
     (KGConsistencyReportResponse, "inferenceUsed", {"rdfs", "owlrl"}),
+    (FeedbackResponse, "status", {"success"}),
+    (SmartPreviewResponse, "execution_mode", {"generate", "modify"}),
+    (ModelChangeResponse, "verdict", {model_change.SMALL, model_change.LARGE, model_change.UNRELATED}),
+    (ModelChangeResponse, "basis", {model_change.FULL_MODEL, model_change.CLASS_NAMES}),
 ])
 def test_closed_value_sets(model, field, values):
     assert _literal_values(model, field) == values
@@ -158,3 +166,27 @@ def test_openapi_marks_sent_defaults_required_and_keeps_request_schemas(client):
     # Shared with the KGResolutionInput request body: one schema, defaults optional.
     assert not any(name.endswith(("-Input", "-Output")) for name in schemas)
     assert "affectedNodeIds" not in schemas["KGIssueResponse"]["required"]
+
+
+@pytest.mark.parametrize("method, path, model", [
+    ("post", "/besser_api/feedback", "FeedbackResponse"),
+    ("get", "/besser_api/spec-driven/config", "SpecDrivenConfigResponse"),
+    ("post", "/besser_api/spec-driven/preview", "SmartPreviewResponse"),
+])
+def test_feedback_config_and_preview_state_their_response(client, method, path, model):
+    """These answered an untyped object in the schema, so the editor kept hand-written types."""
+    spec = client.get("/openapi.json").json()
+    response = spec["paths"][path][method]["responses"]["200"]["content"]["application/json"]["schema"]
+
+    assert response == {"$ref": f"#/components/schemas/{model}"}
+    schema = spec["components"]["schemas"][model]
+    assert set(schema["required"]) == set(schema["properties"])
+
+
+def test_a_renamed_element_is_sent_as_from_and_to():
+    change = model_change.compare_models(
+        {"classes": {"author": {"attributes": {}}}}, {"classes": {"Author": {"attributes": {}}}})
+
+    sent = ModelChangeResponse.model_validate(change.to_dict()).model_dump(mode="json", by_alias=True)
+
+    assert sent == change.to_dict() and sent["renamed"] == [{"from": "author", "to": "Author"}]

@@ -90,8 +90,8 @@ class ApiInfoResponse(ResponseModel):
 
 class FeedbackResponse(ResponseModel):
     """Response for feedback submission."""
+    status: Literal["success"]
     message: str
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class SimulationSessionResponse(ResponseModel):

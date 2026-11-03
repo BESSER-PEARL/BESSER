@@ -282,6 +282,19 @@ def test_an_operation_reaches_its_tools_through_its_calls():
         ToolCall("claude", 0)
 
 
+def test_a_call_to_an_llm_can_record_its_tokens():
+    llm, editor = LLM("gpt-6-luna", provider="openai"), Editor("BESSER Web Modeling Editor")
+    call = ToolCall(llm, 0, started_at=T0, input_tokens=1200, output_tokens=340)
+    assert (call.input_tokens, call.output_tokens) == (1200, 340)
+    assert ToolCall(llm, 1, started_at=T0).input_tokens is None  # not reported
+    with pytest.raises(ValueError):
+        ToolCall(editor, 0, input_tokens=10)  # only an LLM call records tokens
+    with pytest.raises(ValueError):
+        call.output_tokens = -1
+    with pytest.raises(ValueError):
+        call.tool = editor  # a call with tokens stays a call to an LLM
+
+
 def test_validation_checks_tool_calls(generation_trace):
     trace, link, owner, book, _ = generation_trace
     stray = LLM("claude", provider="anthropic")  # never added to the trace's tools

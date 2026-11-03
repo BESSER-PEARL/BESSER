@@ -40,7 +40,8 @@ def trace():
     log = LogRecord("rename Libro to Book", 0, LogType.INPUT_REQUEST, timestamp=_at(2))
     modeling = Modeling([owner, assistant], changes=[created, rename], started_at=_at(1), ended_at=_at(3),
                          tool_calls=[ToolCall(editor, 0, started_at=_at(1), ended_at=_at(3)),
-                                     ToolCall(llm, 1, status=ExecutionStatus.FAILED, started_at=_at(2), logs=[log])],
+                                     ToolCall(llm, 1, status=ExecutionStatus.FAILED, started_at=_at(2), logs=[log],
+                                              input_tokens=1200, output_tokens=340)],
                          consumes=[model])
     generation = CodeGeneration([owner], status=ExecutionStatus.SUCCEEDED, started_at=_at(4),
                                 tool_calls=[ToolCall(generator, 0, started_at=_at(4), ended_at=_at(5))],

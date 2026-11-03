@@ -63,7 +63,9 @@ Concepts
   run, an editor session. It calls one tool, has its own ``ExecutionStatus``, start/end
   times and position in the operation (``sequence_number``), and holds the messages
   exchanged with the tool, in order (**LogRecord**: a request, an intermediate message,
-  an answer, an error, ... by ``LogType``; none for an editor session).
+  an answer, an error, ... by ``LogType``; none for an editor session). A call to an
+  ``LLM`` can record the tokens it read and wrote (``input_tokens``,
+  ``output_tokens``), what the call cost; only a call to an LLM records them.
 - **Change** -- one granular effect of a ``Modeling`` on one artifact: ``CREATED``,
   ``UPDATED`` or ``DELETED`` (``ChangeKind``). An update names the changed ``feature``
   (``name``, ``type``, ``multiplicity``, ...) with its old and new values.

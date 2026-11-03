@@ -77,8 +77,9 @@ turn on *Record traces for this project* on that page.
   enumeration, association, attribute, method and OCL constraint produced. A chat
   with the modeling assistant is a conversation: each request is a turn holding the
   request, the assistant's progress messages and its answer or error (a message is
-  kept up to 10,000 characters). The model the assistant answers with is not known
-  to the editor, so it is recorded as *BESSER modeling assistant model*. The
+  kept up to 10,000 characters). The assistant does not report the model it answers
+  with, so the editor records the modeling agent's default, ``gpt-6-luna`` (OpenAI);
+  a deployment or a user's own key can change it. The
   elements an assistant edit created or changed are linked from the request that
   asked for it, kept then as a prompt, so the lineage reads request -> element ->
   code. A conversation ends with *New chat* or after ten idle minutes.

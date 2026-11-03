@@ -82,6 +82,7 @@ def _tool_call(call: ToolCall) -> Dict[str, Any]:
          "status": call.status.value, "startedAt": utc_iso(call.started_at),
          "logs": [_log(log) for log in call.logs]},
         endedAt=utc_iso(call.ended_at) if call.ended_at else None,
+        inputTokens=call.input_tokens, outputTokens=call.output_tokens,
     )
 
 

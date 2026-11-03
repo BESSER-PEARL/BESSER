@@ -247,9 +247,11 @@ class _TraceWriter:
                 f"new_value={_optional(change.new_value)}, {_common(change)})")
 
     def _tool_call(self, call: ToolCall) -> str:
+        tokens = "".join(f", {name}={value}" for name, value in
+                         (("input_tokens", call.input_tokens), ("output_tokens", call.output_tokens)) if value is not None)
         return (f"ToolCall({self.vars[call.tool.id]}, {call.sequence_number}, "
                 f"status=ExecutionStatus.{call.status.name}, started_at={self._datetime(call.started_at)}, "
-                f"ended_at={self._datetime(call.ended_at)}, logs={self._refs(call.logs)}, id={_string(call.id)})")
+                f"ended_at={self._datetime(call.ended_at)}, logs={self._refs(call.logs)}{tokens}, id={_string(call.id)})")
 
     @staticmethod
     def _log(log: LogRecord) -> str:

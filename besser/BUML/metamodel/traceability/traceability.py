@@ -664,7 +664,8 @@ class LogRecord(TraceElement):
 
 class ToolCall(TraceElement):
     """One use of a tool within an operation: an LLM prompted, a generator run, an editor
-    session. It holds the messages exchanged with the tool, in order (none for an editor).
+    session. It holds the messages exchanged with the tool, in order (none for an editor),
+    and for an LLM the tokens it read and wrote, when the caller reports them (what the call cost).
 
     ``started_at`` is the element's timestamp.
 
@@ -675,18 +676,22 @@ class ToolCall(TraceElement):
         started_at (datetime): When it started (current time when None).
         ended_at (datetime): When it ended (None while it runs).
         logs (list[LogRecord]): The messages exchanged, in order.
+        input_tokens (int): Tokens the LLM read (None when not reported; only for an LLM).
+        output_tokens (int): Tokens the LLM wrote (None when not reported; only for an LLM).
         id (str): Persistent identifier.
     """
 
     def __init__(self, tool: Tool, sequence_number: int, status: ExecutionStatus = ExecutionStatus.SUCCEEDED,
                  started_at: datetime = None, ended_at: datetime = None, logs: List[LogRecord] = None,
-                 id: str = None):
+                 input_tokens: int = None, output_tokens: int = None, id: str = None):
         super().__init__(id, started_at)
         self.tool: Tool = tool
         self.sequence_number: int = sequence_number
         self.status: ExecutionStatus = status
         self.ended_at: Optional[datetime] = ended_at
         self.logs: List[LogRecord] = logs
+        self.input_tokens: Optional[int] = input_tokens
+        self.output_tokens: Optional[int] = output_tokens
 
     @property
     def tool(self) -> Tool:
@@ -695,8 +700,54 @@ class ToolCall(TraceElement):
 
     @tool.setter
     def tool(self, tool: Tool):
-        """Tool: Set the tool called."""
-        self.__tool = _instance(tool, Tool, "ToolCall", "tool")
+        """Tool: Set the tool called.
+
+        Raises:
+            ValueError: If the call records tokens and the tool is not an LLM.
+        """
+        _instance(tool, Tool, "ToolCall", "tool")
+        if not isinstance(tool, LLM) and (getattr(self, "_ToolCall__input_tokens", None) is not None
+                                          or getattr(self, "_ToolCall__output_tokens", None) is not None):
+            raise ValueError("A ToolCall that records tokens calls an LLM.")
+        self.__tool = tool
+
+    def _tokens(self, value: Optional[int], field: str) -> Optional[int]:
+        """A token count: None, or a non-negative int on a call to an LLM."""
+        if value is None:
+            return None
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(f"ToolCall.{field} must be a non-negative integer or None.")
+        if not isinstance(self.__tool, LLM):
+            raise ValueError(f"ToolCall.{field} is recorded only for a call to an LLM.")
+        return value
+
+    @property
+    def input_tokens(self) -> Optional[int]:
+        """int: Get how many tokens the LLM read (None when not reported)."""
+        return self.__input_tokens
+
+    @input_tokens.setter
+    def input_tokens(self, input_tokens: Optional[int]):
+        """int: Set how many tokens the LLM read.
+
+        Raises:
+            ValueError: If it is not a non-negative integer, or the tool is not an LLM.
+        """
+        self.__input_tokens = self._tokens(input_tokens, "input_tokens")
+
+    @property
+    def output_tokens(self) -> Optional[int]:
+        """int: Get how many tokens the LLM wrote (None when not reported)."""
+        return self.__output_tokens
+
+    @output_tokens.setter
+    def output_tokens(self, output_tokens: Optional[int]):
+        """int: Set how many tokens the LLM wrote.
+
+        Raises:
+            ValueError: If it is not a non-negative integer, or the tool is not an LLM.
+        """
+        self.__output_tokens = self._tokens(output_tokens, "output_tokens")
 
     @property
     def sequence_number(self) -> int:

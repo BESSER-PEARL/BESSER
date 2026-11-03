@@ -177,6 +177,8 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
                 status=_enum(ExecutionStatus, raw_call, "status", twhere),
                 started_at=_timestamp(raw_call, "startedAt", twhere),
                 ended_at=_timestamp(raw_call, "endedAt", twhere, optional=True),
+                input_tokens=_field(raw_call, "inputTokens", twhere, optional=True),
+                output_tokens=_field(raw_call, "outputTokens", twhere, optional=True),
                 logs=call_logs, id=_field(raw_call, "id", twhere)))
         common = {
             "performed_by": [_resolve(actors, i, "actor", where) for i in _list(raw, "performedBy", where)],

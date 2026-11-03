@@ -10,9 +10,9 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from besser.BUML.metamodel.traceability import (
-    LLM, AIEvidence, Agent, Change, ChangeEvidence, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
-    Conversation, Editor, LogRecord, LogType, ModelArtifact, Modeling, OperationStatus, Person, PromptArtifact,
-    RuleEvidence, TraceLink, TraceModel,
+    LLM, AIEvidence, Agent, Change, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
+    Conversation, Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, Modeling, Person, PromptArtifact,
+    RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
 from besser.utilities.utils import parse_iso_timestamp
 from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_SCHEMA_VERSION
@@ -83,7 +83,7 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
     if version != TRACE_SCHEMA_VERSION:
         raise ConversionError(f"Unsupported trace schemaVersion {version!r}; expected {TRACE_SCHEMA_VERSION}.")
 
-    actors, tools, artifacts, changes, logs, operations = {}, {}, {}, {}, {}, {}
+    actors, tools, artifacts, logs, operations = {}, {}, {}, {}, {}
 
     for raw in _list(data, "actors", "Trace"):
         where = f"Actor {raw.get('id') if isinstance(raw, dict) else raw!r}"
@@ -157,29 +157,36 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
                 old_value=_field(raw_change, "oldValue", cwhere, optional=True),
                 new_value=_field(raw_change, "newValue", cwhere, optional=True),
                 id=_field(raw_change, "id", cwhere), timestamp=_timestamp(raw_change, "timestamp", cwhere))
-            changes[change.id] = change
             op_changes.append(change)
-        op_logs = []
-        for raw_log in _list(raw, "logs", where):
-            lwhere = f"LogRecord {raw_log.get('id') if isinstance(raw_log, dict) else raw_log!r}"
-            tool_id = _field(raw_log, "toolId", lwhere, optional=True)
-            log = _build(
-                LogRecord, lwhere, content=_field(raw_log, "content", lwhere),
-                sequence_number=_field(raw_log, "sequenceNumber", lwhere),
-                log_type=_enum(LogType, raw_log, "logType", lwhere),
-                tool=_resolve(tools, tool_id, "tool", lwhere) if tool_id is not None else None,
-                id=_field(raw_log, "id", lwhere), timestamp=_timestamp(raw_log, "timestamp", lwhere))
-            logs[log.id] = log
-            op_logs.append(log)
+        op_calls = []
+        for raw_call in _list(raw, "toolCalls", where):
+            twhere = f"ToolCall {raw_call.get('id') if isinstance(raw_call, dict) else raw_call!r}"
+            call_logs = []
+            for raw_log in _list(raw_call, "logs", twhere):
+                lwhere = f"LogRecord {raw_log.get('id') if isinstance(raw_log, dict) else raw_log!r}"
+                log = _build(
+                    LogRecord, lwhere, content=_field(raw_log, "content", lwhere),
+                    sequence_number=_field(raw_log, "sequenceNumber", lwhere),
+                    log_type=_enum(LogType, raw_log, "logType", lwhere),
+                    id=_field(raw_log, "id", lwhere), timestamp=_timestamp(raw_log, "timestamp", lwhere))
+                logs[log.id] = log
+                call_logs.append(log)
+            op_calls.append(_build(
+                ToolCall, twhere, tool=_resolve(tools, _field(raw_call, "toolId", twhere), "tool", twhere),
+                sequence_number=_field(raw_call, "sequenceNumber", twhere),
+                status=_enum(ExecutionStatus, raw_call, "status", twhere),
+                started_at=_timestamp(raw_call, "startedAt", twhere),
+                ended_at=_timestamp(raw_call, "endedAt", twhere, optional=True),
+                logs=call_logs, id=_field(raw_call, "id", twhere)))
         common = {
             "performed_by": [_resolve(actors, i, "actor", where) for i in _list(raw, "performedBy", where)],
-            "status": _enum(OperationStatus, raw, "status", where),
+            "status": _enum(ExecutionStatus, raw, "status", where),
             "started_at": _timestamp(raw, "startedAt", where),
             "ended_at": _timestamp(raw, "endedAt", where, optional=True),
-            "uses": [_resolve(tools, i, "tool", where) for i in _list(raw, "uses", where)],
+            "tool_calls": op_calls,
             "consumes": [_resolve(artifacts, i, "artifact", where) for i in _list(raw, "consumes", where)],
             "produces": [_resolve(artifacts, i, "artifact", where) for i in _list(raw, "produces", where)],
-            "logs": op_logs, "id": _field(raw, "id", where),
+            "id": _field(raw, "id", where),
         }
         if kind == "Modeling":
             operation = _build(Modeling, where, changes=op_changes, **common)
@@ -194,17 +201,12 @@ def process_trace(data: Dict[str, Any]) -> TraceModel:
         for raw_ev in _list(raw, "evidence", where):
             ewhere = f"Evidence {raw_ev.get('id') if isinstance(raw_ev, dict) else raw_ev!r}"
             kind = _field(raw_ev, "type", ewhere)
-            common = {"id": _field(raw_ev, "id", ewhere), "timestamp": _timestamp(raw_ev, "timestamp", ewhere)}
+            common = {"id": _field(raw_ev, "id", ewhere), "timestamp": _timestamp(raw_ev, "timestamp", ewhere),
+                      "logs": [_resolve(logs, i, "log record", ewhere) for i in _list(raw_ev, "logIds", ewhere)]}
             if kind == "RuleEvidence":
                 ev = _build(RuleEvidence, ewhere, rule=_field(raw_ev, "rule", ewhere), **common)
             elif kind == "AIEvidence":
-                ev = _build(AIEvidence, ewhere, algorithm=_field(raw_ev, "algorithm", ewhere),
-                            logs=[_resolve(logs, i, "log record", ewhere) for i in _list(raw_ev, "logIds", ewhere)],
-                            **common)
-            elif kind == "ChangeEvidence":
-                ev = _build(ChangeEvidence, ewhere,
-                            changes=[_resolve(changes, i, "change", ewhere)
-                                     for i in _list(raw_ev, "changeIds", ewhere)], **common)
+                ev = _build(AIEvidence, ewhere, algorithm=_field(raw_ev, "algorithm", ewhere), **common)
             else:
                 raise ConversionError(f"{ewhere} has unknown type {kind!r}.")
             evidence[ev.id] = ev

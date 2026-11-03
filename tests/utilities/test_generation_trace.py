@@ -152,9 +152,8 @@ def test_build_generation_trace_over_several_files():
     book_artifact, close_artifact = trace.model_artifact_for("c1"), trace.model_artifact_for(close.element_id)
     assert by_path["routers/book.py"] in {link.target for link in trace.trace_links if link.source is book_artifact}
     assert close_artifact.parent is book_artifact
-    # Content is kept only for files with fragments (the views show their lines).
-    assert by_path["main_api.py"].content is not None and by_path["routers/book_methods.py"].content is not None
-    assert by_path["routers/book.py"].content is None and by_path["database.py"].content is None
+    # Every file under the cap keeps its content, fragments or not, so the views can show it.
+    assert {path: f.content for path, f in by_path.items()} == {f.path: f.content for f in files}
     assert all(f.content_hash for f in by_path.values())
 
 
@@ -165,3 +164,16 @@ def test_a_traced_block_records_its_element_owner():
     owner.id, method.id = "c1", "m1"
     _, (region,) = extract_trace_regions(_render("{% trace m %}def close(): pass{% endtrace %}", m=method))
     assert region.owner == ElementRef("c1", "Class", "Book")
+
+
+def test_a_parsed_constraint_is_recorded_as_a_constraint():
+    """The editor names an OCL box a Constraint; its parsed form (OCLConstraint) must match it."""
+    from besser.BUML.metamodel.structural import Class, Constraint
+
+    class ParsedConstraint(Constraint):
+        pass
+
+    positive = ParsedConstraint("PositivePages", Class("Book"), "context Book inv: self.pages > 0", "OCL")
+    positive.id = "ocl-1"
+    _, (region,) = extract_trace_regions(_render("{% trace c %}check{% endtrace %}", c=positive))
+    assert (region.element_type, region.rule.split("#")[1]) == ("Constraint", "Constraint")

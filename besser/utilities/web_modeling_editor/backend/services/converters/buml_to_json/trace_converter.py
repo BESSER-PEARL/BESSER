@@ -15,8 +15,8 @@ from typing import Any, Dict, Optional
 
 import besser.BUML.metamodel.traceability.traceability as traceability_module
 from besser.BUML.metamodel.traceability import (
-    AIEvidence, Artifact, Change, ChangeEvidence, CodeArtifact, Confidence, Evidence, LogRecord, ModelArtifact,
-    Modeling, Operation, PromptArtifact, RuleEvidence, TraceLink, TraceModel,
+    AIEvidence, Artifact, Change, CodeArtifact, Confidence, Evidence, LogRecord, ModelArtifact,
+    Modeling, Operation, PromptArtifact, RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_SCHEMA_VERSION
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
@@ -72,10 +72,16 @@ def _change(change: Change) -> Dict[str, Any]:
 
 
 def _log(log: LogRecord) -> Dict[str, Any]:
+    return {"id": log.id, "content": log.content, "sequenceNumber": log.sequence_number,
+            "logType": log.log_type.value, "timestamp": utc_iso(log.timestamp)}
+
+
+def _tool_call(call: ToolCall) -> Dict[str, Any]:
     return _with_optional(
-        {"id": log.id, "content": log.content, "sequenceNumber": log.sequence_number,
-         "logType": log.log_type.value, "timestamp": utc_iso(log.timestamp)},
-        toolId=log.tool.id if log.tool else None,
+        {"id": call.id, "toolId": call.tool.id, "sequenceNumber": call.sequence_number,
+         "status": call.status.value, "startedAt": utc_iso(call.started_at),
+         "logs": [_log(log) for log in call.logs]},
+        endedAt=utc_iso(call.ended_at) if call.ended_at else None,
     )
 
 
@@ -87,10 +93,9 @@ def _operation(operation: Operation) -> Dict[str, Any]:
             "status": operation.status.value,
             "startedAt": utc_iso(operation.started_at),
             "performedBy": [a.id for a in operation.performed_by],
-            "uses": [t.id for t in operation.uses],
+            "toolCalls": [_tool_call(call) for call in operation.tool_calls],
             "consumes": [a.id for a in operation.consumes],
             "produces": [a.id for a in operation.produces],
-            "logs": [_log(log) for log in operation.logs],
         },
         endedAt=utc_iso(operation.ended_at) if operation.ended_at else None,
     )
@@ -104,9 +109,9 @@ def _evidence(evidence: Evidence) -> Dict[str, Any]:
     if isinstance(evidence, RuleEvidence):
         data["rule"] = evidence.rule
     elif isinstance(evidence, AIEvidence):
-        data.update(algorithm=evidence.algorithm, logIds=[log.id for log in evidence.logs])
-    elif isinstance(evidence, ChangeEvidence):
-        data["changeIds"] = [c.id for c in evidence.changes]
+        data["algorithm"] = evidence.algorithm
+    if evidence.logs:  # left out when there are none, as optional fields are
+        data["logIds"] = [log.id for log in evidence.logs]
     return data
 
 

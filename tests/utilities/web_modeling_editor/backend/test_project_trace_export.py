@@ -72,7 +72,7 @@ def _record_editing(trace, diagram):
                     "timestamp": "2026-10-29T09:31:00.000Z"})
     trace["operations"].insert(0, {
         "id": "session", "type": "Modeling", "status": "SUCCEEDED", "startedAt": T, "performedBy": [actor],
-        "uses": [], "consumes": [], "produces": [], "logs": [], "changes": changes,
+        "toolCalls": [], "consumes": [], "produces": [], "changes": changes,
     })
     return trace
 

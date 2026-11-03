@@ -35,10 +35,10 @@ from jinja2 import nodes
 from jinja2.ext import Extension
 from markupsafe import Markup
 
-from besser.BUML.metamodel.structural import NamedElement
+from besser.BUML.metamodel.structural import Constraint, NamedElement
 from besser.BUML.metamodel.traceability import (
-    CodeArtifact, CodeGeneration, CodeGenerator, Confidence, ModelArtifact, OperationStatus, Person,
-    RuleEvidence, TraceLink, TraceModel,
+    CodeArtifact, CodeGeneration, CodeGenerator, Confidence, ExecutionStatus, ModelArtifact, Person,
+    RuleEvidence, ToolCall, TraceLink, TraceModel,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,13 +57,19 @@ class ElementRef:
     element_name: str
 
 
+# Specialisations recorded under the metaclass the editor names them by: an OCL constraint parsed
+# from the editor is an ``OCLConstraint``, but the editor records the constraint box as a ``Constraint``.
+_TRACED_AS = (Constraint,)
+
+
 def element_ref(element) -> Optional[ElementRef]:
     """The reference of a B-UML element, or None when it has no ``id`` (it cannot be traced)."""
     element_id = getattr(element, "id", None)
     if not element_id:
         return None
     name = element.name if isinstance(element, NamedElement) else element_id
-    return ElementRef(element_id, type(element).__name__, name)
+    metaclass = next((base for base in _TRACED_AS if isinstance(element, base)), type(element))
+    return ElementRef(element_id, metaclass.__name__, name)
 
 
 @dataclass(frozen=True)
@@ -130,16 +136,15 @@ class TraceExtension(Extension):
     @staticmethod
     def _traced(element, label, template, caller):
         body = caller()
-        element_id = getattr(element, "id", None)
-        if not element_id:
+        ref = element_ref(element)
+        if ref is None:
             return body
-        element_type = type(element).__name__
         owner = element_ref(getattr(element, "owner", None))
         payload = json.dumps({
-            "id": element_id,
-            "type": element_type,
-            "name": element.name if isinstance(element, NamedElement) else element_id,
-            "rule": f"{template}#{label or element_type}",
+            "id": ref.element_id,
+            "type": ref.element_type,
+            "name": ref.element_name,
+            "rule": f"{template}#{label or ref.element_type}",
             **({"owner": [owner.element_id, owner.element_type, owner.element_name]} if owner else {}),
         })
         start = f"{_START}trace:{payload}{_END}"
@@ -226,8 +231,8 @@ def build_generation_trace(
     fragments rendered from it, and from each whole-file source to its file, with
     the template rule as evidence and confidence 1 (they are made by construction).
 
-    A file's content is kept only when it has fragments (whose lines the views
-    show) and is at most ``max_stored_content_bytes`` (UTF-8); its hash always is.
+    A file's content is kept when it is at most ``max_stored_content_bytes``
+    (UTF-8), so the views can show it and its fragments' lines; its hash always is.
     The fragment's ``project_id`` is None: the caller merges it into the project trace.
     """
     actor = Person(actor_name)
@@ -256,12 +261,11 @@ def build_generation_trace(
     for generated in files:
         regions = generated.trace.regions
         stored = None
-        if regions:
-            if len(generated.content.encode("utf-8")) <= max_stored_content_bytes:
-                stored = generated.content
-            else:
-                logger.warning("Generated file %s is over %d bytes; the trace keeps only its hash.",
-                               generated.path, max_stored_content_bytes)
+        if len(generated.content.encode("utf-8")) <= max_stored_content_bytes:
+            stored = generated.content
+        else:
+            logger.warning("Generated file %s is over %d bytes; the trace keeps only its hash.",
+                           generated.path, max_stored_content_bytes)
         file_artifact = CodeArtifact(generated.path, generated.path, _sha256(generated.content), content=stored)
         artifacts.append(file_artifact)
         produces.append(file_artifact)
@@ -280,8 +284,9 @@ def build_generation_trace(
             link(element(ElementRef(region.element_id, region.element_type, region.element_name), owner),
                  fragment, region.rule)
 
-    operation = CodeGeneration([actor], status=OperationStatus.SUCCEEDED, started_at=started_at, ended_at=ended_at,
-                               uses=[tool], consumes=consumes, produces=produces)
+    run = ToolCall(tool, 0, status=ExecutionStatus.SUCCEEDED, started_at=started_at, ended_at=ended_at)
+    operation = CodeGeneration([actor], status=ExecutionStatus.SUCCEEDED, started_at=started_at, ended_at=ended_at,
+                               tool_calls=[run], consumes=consumes, produces=produces)
     trace_links = [TraceLink(source, target, operation, [evidence], Confidence(1.0, timestamp=ended_at),
                              timestamp=ended_at) for source, target, evidence in links]
     return TraceModel(actors=[actor], tools=[tool], artifacts=artifacts, operations=[operation],

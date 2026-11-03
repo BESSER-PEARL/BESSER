@@ -5,12 +5,15 @@ generated code) and the links derived between them. It follows W3C PROV:
 an :class:`Artifact` is an entity, an :class:`Operation` is an activity and an
 :class:`Actor` is an agent.
 
-* An :class:`Operation` is performed by Actors with Tools and consumes and
-  produces Artifacts. Its kind is its class: :class:`Modeling` edits models and
-  holds the granular :class:`Change` records of what it did, :class:`CodeGeneration`
-  (a :class:`Transformation`) derives code from models, :class:`Conversation` is
-  a dialogue between a user and an agent. Whether a person or an agent did the
+* An :class:`Operation` is performed by Actors and consumes and produces Artifacts.
+  Its kind is its class: :class:`Modeling` edits models and holds the granular
+  :class:`Change` records of what it did, :class:`CodeGeneration` (a
+  :class:`Transformation`) derives code from models, :class:`Conversation` is a
+  dialogue between a user and an agent. Whether a person or an agent did the
   work is told by its actors, not by its kind.
+* An operation reaches its Tools only through its :class:`ToolCall` records: each
+  call invokes one tool and holds the :class:`LogRecord` messages exchanged with it
+  (a prompt and its answer). The tools an operation used are derived from its calls.
 * A :class:`TraceLink` connects a source and a target Artifact (a class and the
   code generated from it). :class:`Evidence` says why the link holds and
   :class:`Confidence` how sure it is.
@@ -32,7 +35,7 @@ from typing import Iterable, List, Optional
 from besser.BUML.metamodel.structural import Element, Model
 
 __all__ = [
-    "OperationStatus",
+    "ExecutionStatus",
     "ChangeKind",
     "LogType",
     "TraceElement",
@@ -48,6 +51,7 @@ __all__ = [
     "CodeGenerator",
     "LLM",
     "LogRecord",
+    "ToolCall",
     "Change",
     "Operation",
     "Modeling",
@@ -57,15 +61,14 @@ __all__ = [
     "Evidence",
     "RuleEvidence",
     "AIEvidence",
-    "ChangeEvidence",
     "Confidence",
     "TraceLink",
     "TraceModel",
 ]
 
 
-class OperationStatus(Enum):
-    """Lifecycle state of an operation."""
+class ExecutionStatus(Enum):
+    """Lifecycle state of an execution: an :class:`Operation` or one of its :class:`ToolCall` records."""
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
@@ -106,6 +109,13 @@ def _optional_text(value, owner: str, field: str) -> Optional[str]:
     return value
 
 
+def _sequence_number(value, owner: str) -> int:
+    """``value`` when it is a non-negative int, else ValueError."""
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{owner}.sequence_number must be a non-negative integer.")
+    return value
+
+
 def _instance(value, expected_type, owner: str, field: str, optional: bool = False):
     """``value`` when it is an ``expected_type`` (or None when ``optional``), else TypeError."""
     if value is None and optional:
@@ -113,6 +123,20 @@ def _instance(value, expected_type, owner: str, field: str, optional: bool = Fal
     if not isinstance(value, expected_type):
         raise TypeError(f"{owner}.{field} must be a {expected_type.__name__}, got {type(value).__name__}.")
     return value
+
+
+def _end_time(ended_at: Optional[datetime], started_at: datetime, owner: str) -> Optional[datetime]:
+    """``ended_at`` as naive UTC (as ``Element.timestamp`` is, so the two compare), or None.
+
+    Raises:
+        ValueError: If it is before ``started_at``.
+    """
+    _instance(ended_at, datetime, owner, "ended_at", optional=True)
+    if ended_at is not None and ended_at.tzinfo is not None:
+        ended_at = ended_at.astimezone(timezone.utc).replace(tzinfo=None)
+    if ended_at is not None and ended_at < started_at:
+        raise ValueError(f"{owner}.ended_at cannot be before started_at.")
+    return ended_at
 
 
 def _instances(values: Optional[Iterable], expected_type, owner: str, field: str) -> list:
@@ -406,7 +430,7 @@ class CodeArtifact(Artifact):
 class PromptArtifact(Artifact):
     """A message given to an agent, kept as an artifact because something was derived from it
     (a requirement, a model element): it is the source of a trace link. The other messages of a
-    :class:`Conversation` stay in its log.
+    :class:`Conversation` stay in the logs of its tool calls.
 
     Args:
         name (str): Display name (a short label for the prompt).
@@ -580,24 +604,22 @@ class LLM(Tool):
 
 
 class LogRecord(TraceElement):
-    """One logged message of an operation (a prompt, a tool call, an error).
+    """One message exchanged in a :class:`ToolCall` (a prompt, an answer, an error).
 
     Args:
         content (str): The logged text.
-        sequence_number (int): Position of the record within its operation.
+        sequence_number (int): Position of the record within its call.
         log_type (LogType): Kind of record.
-        tool (Tool): The tool that produced or received it (None when not tool-specific).
         id (str): Persistent identifier.
         timestamp (datetime): When it was logged.
     """
 
-    def __init__(self, content: str, sequence_number: int, log_type: LogType, tool: Tool = None,
-                 id: str = None, timestamp: datetime = None):
+    def __init__(self, content: str, sequence_number: int, log_type: LogType, id: str = None,
+                 timestamp: datetime = None):
         super().__init__(id, timestamp)
         self.content: str = content
         self.sequence_number: int = sequence_number
         self.log_type: LogType = log_type
-        self.tool: Optional[Tool] = tool
 
     @property
     def content(self) -> str:
@@ -617,19 +639,17 @@ class LogRecord(TraceElement):
 
     @property
     def sequence_number(self) -> int:
-        """int: Get the position of the record within its operation."""
+        """int: Get the position of the record within its call."""
         return self.__sequence_number
 
     @sequence_number.setter
     def sequence_number(self, sequence_number: int):
-        """int: Set the position of the record within its operation.
+        """int: Set the position of the record within its call.
 
         Raises:
             ValueError: If it is not a non-negative integer.
         """
-        if not isinstance(sequence_number, int) or isinstance(sequence_number, bool) or sequence_number < 0:
-            raise ValueError("LogRecord.sequence_number must be a non-negative integer.")
-        self.__sequence_number = sequence_number
+        self.__sequence_number = _sequence_number(sequence_number, "LogRecord")
 
     @property
     def log_type(self) -> LogType:
@@ -641,15 +661,95 @@ class LogRecord(TraceElement):
         """LogType: Set the kind of record."""
         self.__log_type = _instance(log_type, LogType, "LogRecord", "log_type")
 
+
+class ToolCall(TraceElement):
+    """One use of a tool within an operation: an LLM prompted, a generator run, an editor
+    session. It holds the messages exchanged with the tool, in order (none for an editor).
+
+    ``started_at`` is the element's timestamp.
+
+    Args:
+        tool (Tool): The tool called.
+        sequence_number (int): Position of the call within its operation.
+        status (ExecutionStatus): How the call went (SUCCEEDED as default).
+        started_at (datetime): When it started (current time when None).
+        ended_at (datetime): When it ended (None while it runs).
+        logs (list[LogRecord]): The messages exchanged, in order.
+        id (str): Persistent identifier.
+    """
+
+    def __init__(self, tool: Tool, sequence_number: int, status: ExecutionStatus = ExecutionStatus.SUCCEEDED,
+                 started_at: datetime = None, ended_at: datetime = None, logs: List[LogRecord] = None,
+                 id: str = None):
+        super().__init__(id, started_at)
+        self.tool: Tool = tool
+        self.sequence_number: int = sequence_number
+        self.status: ExecutionStatus = status
+        self.ended_at: Optional[datetime] = ended_at
+        self.logs: List[LogRecord] = logs
+
     @property
-    def tool(self) -> Optional[Tool]:
-        """Tool: Get the tool the record belongs to."""
+    def tool(self) -> Tool:
+        """Tool: Get the tool called."""
         return self.__tool
 
     @tool.setter
-    def tool(self, tool: Optional[Tool]):
-        """Tool: Set the tool the record belongs to."""
-        self.__tool = _instance(tool, Tool, "LogRecord", "tool", optional=True)
+    def tool(self, tool: Tool):
+        """Tool: Set the tool called."""
+        self.__tool = _instance(tool, Tool, "ToolCall", "tool")
+
+    @property
+    def sequence_number(self) -> int:
+        """int: Get the position of the call within its operation."""
+        return self.__sequence_number
+
+    @sequence_number.setter
+    def sequence_number(self, sequence_number: int):
+        """int: Set the position of the call within its operation.
+
+        Raises:
+            ValueError: If it is not a non-negative integer.
+        """
+        self.__sequence_number = _sequence_number(sequence_number, "ToolCall")
+
+    @property
+    def status(self) -> ExecutionStatus:
+        """ExecutionStatus: Get how the call went."""
+        return self.__status
+
+    @status.setter
+    def status(self, status: ExecutionStatus):
+        """ExecutionStatus: Set how the call went."""
+        self.__status = _instance(status, ExecutionStatus, "ToolCall", "status")
+
+    @property
+    def started_at(self) -> datetime:
+        """datetime: Get when the call started (its timestamp)."""
+        return self.timestamp
+
+    @property
+    def ended_at(self) -> Optional[datetime]:
+        """datetime: Get when the call ended (None while it runs)."""
+        return self.__ended_at
+
+    @ended_at.setter
+    def ended_at(self, ended_at: Optional[datetime]):
+        """datetime: Set when the call ended.
+
+        Raises:
+            ValueError: If it is before ``started_at``.
+        """
+        self.__ended_at = _end_time(ended_at, self.started_at, "ToolCall")
+
+    @property
+    def logs(self) -> List[LogRecord]:
+        """list[LogRecord]: Get the messages exchanged, in order."""
+        return list(self.__logs)
+
+    @logs.setter
+    def logs(self, logs: List[LogRecord]):
+        """list[LogRecord]: Set the messages exchanged."""
+        self.__logs = _instances(logs, LogRecord, "ToolCall", "logs")
 
 
 class Change(TraceElement):
@@ -741,33 +841,30 @@ class Operation(TraceElement, ABC):
 
     Args:
         performed_by (list[Actor]): Who performed it (at least one): a Person, an Agent, or both.
-        status (OperationStatus): Lifecycle state (SUCCEEDED as default).
+        status (ExecutionStatus): Lifecycle state (SUCCEEDED as default).
         started_at (datetime): When it started (current time when None).
         ended_at (datetime): When it ended (None while it runs).
-        uses (list[Tool]): Tools it was carried out with.
+        tool_calls (list[ToolCall]): The tools it called, in order, with their messages.
         consumes (list[Artifact]): Artifacts it read.
         produces (list[Artifact]): Artifacts it created.
-        logs (list[LogRecord]): Its log records, in order.
         id (str): Persistent identifier.
 
     Raises:
         TypeError: When instantiated directly, or as a bare Transformation.
     """
 
-    def __init__(self, performed_by: List[Actor], status: OperationStatus = OperationStatus.SUCCEEDED,
-                 started_at: datetime = None, ended_at: datetime = None, uses: List[Tool] = None,
-                 consumes: List[Artifact] = None, produces: List[Artifact] = None, logs: List[LogRecord] = None,
-                 id: str = None):
+    def __init__(self, performed_by: List[Actor], status: ExecutionStatus = ExecutionStatus.SUCCEEDED,
+                 started_at: datetime = None, ended_at: datetime = None, tool_calls: List[ToolCall] = None,
+                 consumes: List[Artifact] = None, produces: List[Artifact] = None, id: str = None):
         if type(self) in (Operation, Transformation):
             raise TypeError(f"{type(self).__name__} is abstract: use Modeling, CodeGeneration or Conversation.")
         super().__init__(id, started_at)
         self.performed_by: List[Actor] = performed_by
-        self.status: OperationStatus = status
+        self.status: ExecutionStatus = status
         self.ended_at: Optional[datetime] = ended_at
-        self.uses: List[Tool] = uses
+        self.tool_calls: List[ToolCall] = tool_calls
         self.consumes: List[Artifact] = consumes
         self.produces: List[Artifact] = produces
-        self.logs: List[LogRecord] = logs
 
     @property
     def performed_by(self) -> List[Actor]:
@@ -787,14 +884,14 @@ class Operation(TraceElement, ABC):
         self.__performed_by = actors
 
     @property
-    def status(self) -> OperationStatus:
-        """OperationStatus: Get the lifecycle state."""
+    def status(self) -> ExecutionStatus:
+        """ExecutionStatus: Get the lifecycle state."""
         return self.__status
 
     @status.setter
-    def status(self, status: OperationStatus):
-        """OperationStatus: Set the lifecycle state."""
-        self.__status = _instance(status, OperationStatus, "Operation", "status")
+    def status(self, status: ExecutionStatus):
+        """ExecutionStatus: Set the lifecycle state."""
+        self.__status = _instance(status, ExecutionStatus, "Operation", "status")
 
     @property
     def started_at(self) -> datetime:
@@ -813,23 +910,22 @@ class Operation(TraceElement, ABC):
         Raises:
             ValueError: If it is before ``started_at``.
         """
-        _instance(ended_at, datetime, "Operation", "ended_at", optional=True)
-        if ended_at is not None and ended_at.tzinfo is not None:
-            # Stored as naive UTC, as Element.timestamp is, so the two compare.
-            ended_at = ended_at.astimezone(timezone.utc).replace(tzinfo=None)
-        if ended_at is not None and ended_at < self.started_at:
-            raise ValueError("Operation.ended_at cannot be before started_at.")
-        self.__ended_at = ended_at
+        self.__ended_at = _end_time(ended_at, self.started_at, "Operation")
 
     @property
-    def uses(self) -> List[Tool]:
-        """list[Tool]: Get the tools the operation was carried out with."""
-        return list(self.__uses)
+    def tool_calls(self) -> List[ToolCall]:
+        """list[ToolCall]: Get the tools the operation called, in order, with their messages."""
+        return list(self.__tool_calls)
 
-    @uses.setter
-    def uses(self, uses: List[Tool]):
-        """list[Tool]: Set the tools the operation was carried out with."""
-        self.__uses = _instances(uses, Tool, "Operation", "uses")
+    @tool_calls.setter
+    def tool_calls(self, tool_calls: List[ToolCall]):
+        """list[ToolCall]: Set the operation's tool calls."""
+        self.__tool_calls = _instances(tool_calls, ToolCall, "Operation", "tool_calls")
+
+    @property
+    def tools(self) -> List[Tool]:
+        """list[Tool]: ``Operation./tools``, derived: the distinct tools its calls invoked, in call order."""
+        return _instances([call.tool for call in self.__tool_calls], Tool, "Operation", "tools")
 
     @property
     def consumes(self) -> List[Artifact]:
@@ -850,16 +946,6 @@ class Operation(TraceElement, ABC):
     def produces(self, produces: List[Artifact]):
         """list[Artifact]: Set the artifacts the operation created."""
         self.__produces = _instances(produces, Artifact, "Operation", "produces")
-
-    @property
-    def logs(self) -> List[LogRecord]:
-        """list[LogRecord]: Get the operation's log records, in order."""
-        return list(self.__logs)
-
-    @logs.setter
-    def logs(self, logs: List[LogRecord]):
-        """list[LogRecord]: Set the operation's log records."""
-        self.__logs = _instances(logs, LogRecord, "Operation", "logs")
 
 
 class Modeling(Operation):
@@ -899,7 +985,7 @@ class Transformation(Operation, ABC):
 class CodeGeneration(Transformation):
     """A generation run: code derived from models, by a generator or by an LLM.
 
-    It uses at least one :class:`CodeGenerator` or :class:`LLM` (checked by
+    It calls at least one :class:`CodeGenerator` or :class:`LLM` (checked by
     ``TraceModel.validate``), consumes the model artifacts and produces the code artifacts
     it links them to. Which of the two made a link is told by its evidence: a
     :class:`RuleEvidence` for a generator's template, an :class:`AIEvidence` for an LLM.
@@ -907,7 +993,8 @@ class CodeGeneration(Transformation):
 
 
 class Conversation(Operation):
-    """A dialogue between a user and an agent (the BESSER assistant), with its messages in the log.
+    """A dialogue between a user and an agent (the BESSER assistant). Each turn is a
+    :class:`ToolCall` to the LLM the agent answers with, holding the turn's messages.
 
     What it leads to varies, so it is not a :class:`Transformation`: a clarification question
     produces nothing; stated requirements are artifacts it produces, linked from the
@@ -918,7 +1005,30 @@ class Conversation(Operation):
 
 
 class Evidence(TraceElement, ABC):
-    """Why a trace link holds. Its timestamp is when it was recorded."""
+    """Why a trace link holds. Its timestamp is when it was recorded.
+
+    Any evidence can rest on recorded messages: the prompt and answer behind an AI
+    decision, a generator's log of the run, the message in which a person stated the link.
+
+    Args:
+        logs (list[LogRecord]): The log records it is based on.
+        id (str): Persistent identifier.
+        timestamp (datetime): When it was recorded.
+    """
+
+    def __init__(self, logs: List[LogRecord] = None, id: str = None, timestamp: datetime = None):
+        super().__init__(id, timestamp)
+        self.logs: List[LogRecord] = logs
+
+    @property
+    def logs(self) -> List[LogRecord]:
+        """list[LogRecord]: Get the log records the evidence is based on."""
+        return list(self.__logs)
+
+    @logs.setter
+    def logs(self, logs: List[LogRecord]):
+        """list[LogRecord]: Set the log records the evidence is based on."""
+        self.__logs = _instances(logs, LogRecord, type(self).__name__, "logs")
 
 
 class RuleEvidence(Evidence):
@@ -926,12 +1036,13 @@ class RuleEvidence(Evidence):
 
     Args:
         rule (str): The rule, e.g. ``sql_alchemy_template.py.j2#class``.
+        logs (list[LogRecord]): The log records it is based on.
         id (str): Persistent identifier.
         timestamp (datetime): When it was recorded.
     """
 
-    def __init__(self, rule: str, id: str = None, timestamp: datetime = None):
-        super().__init__(id, timestamp)
+    def __init__(self, rule: str, logs: List[LogRecord] = None, id: str = None, timestamp: datetime = None):
+        super().__init__(logs, id, timestamp)
         self.rule: str = rule
 
     @property
@@ -946,70 +1057,29 @@ class RuleEvidence(Evidence):
 
 
 class AIEvidence(Evidence):
-    """The link was inferred by an AI technique, supported by log records (prompts, responses).
+    """The link was decided by an AI technique (an LLM, an embedding similarity), usually on the
+    strength of log records (the prompt and the answer).
 
     Args:
-        algorithm (str): The technique or model that inferred the link.
+        algorithm (str): The technique or model that decided the link.
         logs (list[LogRecord]): The log records it is based on.
         id (str): Persistent identifier.
         timestamp (datetime): When it was recorded.
     """
 
     def __init__(self, algorithm: str, logs: List[LogRecord] = None, id: str = None, timestamp: datetime = None):
-        super().__init__(id, timestamp)
+        super().__init__(logs, id, timestamp)
         self.algorithm: str = algorithm
-        self.logs: List[LogRecord] = logs
 
     @property
     def algorithm(self) -> str:
-        """str: Get the technique that inferred the link."""
+        """str: Get the technique that decided the link."""
         return self.__algorithm
 
     @algorithm.setter
     def algorithm(self, algorithm: str):
-        """str: Set the technique that inferred the link."""
+        """str: Set the technique that decided the link."""
         self.__algorithm = _text(algorithm, "AIEvidence", "algorithm")
-
-    @property
-    def logs(self) -> List[LogRecord]:
-        """list[LogRecord]: Get the log records the inference is based on."""
-        return list(self.__logs)
-
-    @logs.setter
-    def logs(self, logs: List[LogRecord]):
-        """list[LogRecord]: Set the log records the inference is based on."""
-        self.__logs = _instances(logs, LogRecord, "AIEvidence", "logs")
-
-
-class ChangeEvidence(Evidence):
-    """The link was inferred from changes (e.g. elements always edited together).
-
-    Args:
-        changes (list[Change]): The changes it is based on (at least one).
-        id (str): Persistent identifier.
-        timestamp (datetime): When it was recorded.
-    """
-
-    def __init__(self, changes: List[Change], id: str = None, timestamp: datetime = None):
-        super().__init__(id, timestamp)
-        self.changes: List[Change] = changes
-
-    @property
-    def changes(self) -> List[Change]:
-        """list[Change]: Get the changes the inference is based on."""
-        return list(self.__changes)
-
-    @changes.setter
-    def changes(self, changes: List[Change]):
-        """list[Change]: Set the changes the inference is based on.
-
-        Raises:
-            ValueError: If no change is given.
-        """
-        values = _instances(changes, Change, "ChangeEvidence", "changes")
-        if not values:
-            raise ValueError("ChangeEvidence is based on at least one Change.")
-        self.__changes = values
 
 
 class Confidence(TraceElement):
@@ -1312,8 +1382,11 @@ class TraceModel(Model):
             where = f"Operation {operation.id!r}"
             for actor in operation.performed_by:
                 check(actor, actors, "actor", where)
-            for tool in operation.uses:
-                check(tool, tools, "tool", where)
+            numbers = [call.sequence_number for call in operation.tool_calls]
+            if len(numbers) != len(set(numbers)):
+                errors.append(f"{where} has tool calls sharing a sequence number.")
+            for call in operation.tool_calls:
+                check(call.tool, tools, "tool", f"ToolCall {call.id!r}")
             for artifact in operation.consumes + operation.produces:
                 check(artifact, artifacts, "artifact", where)
             for artifact in operation.produces:
@@ -1321,24 +1394,26 @@ class TraceModel(Model):
                     errors.append(f"Artifact {artifact.id!r} is produced by both operation "
                                   f"{producer[id(artifact)]!r} and {operation.id!r}.")
                 producer[id(artifact)] = operation.id
-            for log in operation.logs:
-                check(log.tool, tools, "tool", f"LogRecord {log.id!r}")
             if isinstance(operation, Modeling):
                 if not operation.changes:
                     errors.append(f"{where} is a Modeling with no changes.")
                 for change in operation.changes:
                     check(change.artifact, artifacts, "artifact", f"Change {change.id!r}")
             elif isinstance(operation, CodeGeneration):
-                if not any(isinstance(tool, (CodeGenerator, LLM)) for tool in operation.uses):
-                    errors.append(f"{where} is a CodeGeneration that uses no CodeGenerator or LLM.")
+                if not any(isinstance(tool, (CodeGenerator, LLM)) for tool in operation.tools):
+                    errors.append(f"{where} is a CodeGeneration that calls no CodeGenerator or LLM.")
             elif isinstance(operation, Conversation):
                 if not any(isinstance(actor, Agent) for actor in operation.performed_by):
                     errors.append(f"{where} is a Conversation with no Agent among its actors.")
+        logs = {id(log) for operation in self.__operations for call in operation.tool_calls for log in call.logs}
         for link in self.__trace_links:
             where = f"TraceLink {link.id!r}"
             check(link.source, artifacts, "artifact", where)
             check(link.target, artifacts, "artifact", where)
             check(link.operation, operations, "operation", where)
+            for evidence in link.evidence:
+                for log in evidence.logs:
+                    check(log, logs, "log record", f"{type(evidence).__name__} {evidence.id!r}")
 
         seen: dict[str, str] = {}
         for element in self._all_elements():
@@ -1356,7 +1431,9 @@ class TraceModel(Model):
         """Every trace element owned by the model, each once."""
         elements: list = self.artifacts + self.actors + self.tools + self.operations
         for operation in self.__operations:
-            elements += operation.logs
+            for call in operation.tool_calls:
+                elements.append(call)
+                elements += call.logs
             if isinstance(operation, Modeling):
                 elements += operation.changes
         for link in self.__trace_links:

@@ -97,10 +97,9 @@ def test_trace_with_edits_round_trips(traced):
     trace["operations"].append({
         "id": "op-edit", "type": "Modeling", "status": "SUCCEEDED",
         "startedAt": "2026-10-29T10:00:00.000Z", "endedAt": "2026-10-29T10:05:00.000Z",
-        "performedBy": [trace["actors"][0]["id"]], "uses": [], "consumes": [], "produces": [],
+        "performedBy": [trace["actors"][0]["id"]], "toolCalls": [], "consumes": [], "produces": [],
         "changes": [{"id": "ch-1", "kind": "UPDATED", "artifactId": class_artifact["id"], "feature": "name",
                      "oldValue": "Libro", "newValue": "Book", "timestamp": "2026-10-29T10:01:00.000Z"}],
-        "logs": [],
     })
     trace["actors"].append({"id": "assistant", "type": "Agent", "name": "BESSER modeling assistant",
                             "timestamp": "2026-10-29T09:59:00.000Z"})
@@ -109,8 +108,8 @@ def test_trace_with_edits_round_trips(traced):
                                "contentHash": "h"})
     trace["operations"].append({
         "id": "op-chat", "type": "Conversation", "status": "SUCCEEDED", "startedAt": "2026-10-29T09:58:00.000Z",
-        "performedBy": [trace["actors"][0]["id"], "assistant"], "uses": [], "consumes": ["prompt-1"],
-        "produces": [], "logs": [],
+        "performedBy": [trace["actors"][0]["id"], "assistant"], "toolCalls": [], "consumes": ["prompt-1"],
+        "produces": [],
     })
     assert trace_buml_to_json(process_trace(trace)) == trace
 
@@ -181,5 +180,5 @@ def test_backend_trace_covers_its_files_and_points_at_their_lines(payload, trace
         assert lines[(name, "pydantic_classes.py", "class")].startswith(f"class {name}Create(")
         assert lines[(name, "sql_alchemy.py", "class")].startswith(f"class {name}(")
         assert f"{name.lower()}_router.router" in lines[(name, "main_api.py", "router_include")]
-    # Only files with fragments keep their content.
-    assert files["pydantic_classes.py"].get("content") and not files["routers/book.py"].get("content")
+    # Every file keeps its content as delivered, with fragments or without (database.py, the routers).
+    assert {path: f.get("content") for path, f in files.items()} == {path: entries[path] for path in files}

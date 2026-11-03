@@ -5,13 +5,13 @@ from datetime import datetime
 import pytest
 
 from besser.BUML.metamodel.traceability import (
-    LLM, AIEvidence, Agent, Change, ChangeEvidence, ChangeKind, CodeArtifact, CodeGenerator, Confidence, Editor,
-    LogRecord, LogType, ModelArtifact, Modeling, CodeGeneration, Conversation, OperationStatus, Person, PromptArtifact,
-    RuleEvidence, TraceLink,
+    LLM, AIEvidence, Agent, Change, ChangeKind, CodeArtifact, CodeGenerator, Confidence, Editor,
+    LogRecord, LogType, ModelArtifact, Modeling, CodeGeneration, Conversation, ExecutionStatus, Person, PromptArtifact,
+    RuleEvidence, ToolCall, TraceLink,
     TraceModel,
 )
 from besser.utilities.buml_code_builder.trace_model_builder import trace_model_to_code
-from besser.utilities.web_modeling_editor.backend.services.converters import parse_trace_code, trace_buml_to_json
+from besser.utilities.web_modeling_editor.backend.services.converters import parse_trace_code, process_trace, trace_buml_to_json
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 
@@ -37,24 +37,27 @@ def trace():
 
     rename = Change(ChangeKind.UPDATED, book, "name", "Libro", "Book", timestamp=_at(2))
     created = Change(ChangeKind.CREATED, book, timestamp=_at(1))
-    log = LogRecord("rename Libro to Book", 1, LogType.INPUT_REQUEST, tool=llm, timestamp=_at(2))
+    log = LogRecord("rename Libro to Book", 0, LogType.INPUT_REQUEST, timestamp=_at(2))
     modeling = Modeling([owner, assistant], changes=[created, rename], started_at=_at(1), ended_at=_at(3),
-                         uses=[editor, llm], consumes=[model], logs=[log])
-    generation = CodeGeneration([owner], status=OperationStatus.SUCCEEDED, started_at=_at(4),
-                                uses=[generator], consumes=[model, book], produces=[file, lines])
+                         tool_calls=[ToolCall(editor, 0, started_at=_at(1), ended_at=_at(3)),
+                                     ToolCall(llm, 1, status=ExecutionStatus.FAILED, started_at=_at(2), logs=[log])],
+                         consumes=[model])
+    generation = CodeGeneration([owner], status=ExecutionStatus.SUCCEEDED, started_at=_at(4),
+                                tool_calls=[ToolCall(generator, 0, started_at=_at(4), ended_at=_at(5))],
+                                consumes=[model, book], produces=[file, lines])
 
     rule = RuleEvidence("sql_alchemy_template.py.j2#class", timestamp=_at(5))
-    file_rule = RuleEvidence("generator:sqlalchemy", timestamp=_at(5))
+    file_rule = RuleEvidence("generator:sqlalchemy", logs=[log], timestamp=_at(5))  # rule evidence with a log
     ai = AIEvidence("embedding similarity", logs=[log], timestamp=_at(5))
-    from_changes = ChangeEvidence([rename], timestamp=_at(5))
     links = [
         TraceLink(book, lines, generation, [rule], Confidence(1.0, timestamp=_at(5)), timestamp=_at(5)),
-        TraceLink(model, file, generation, [file_rule, ai, from_changes],
+        TraceLink(model, file, generation, [file_rule, ai],
                   Confidence(0.75, explanation="multi\nline", timestamp=_at(5)), timestamp=_at(5)),
     ]
     prompt = PromptArtifact("Library", 'Books have a "title".\nAnd pages.', "c" * 64, timestamp=_at(0))
-    answer = LogRecord("Noted: Book(title, pages).", 2, LogType.OUTPUT_RESPONSE, tool=llm, timestamp=_at(0))
-    chat = Conversation([owner, assistant], started_at=_at(0), uses=[llm], consumes=[prompt], logs=[answer])
+    answer = LogRecord("Noted: Book(title, pages).", 0, LogType.OUTPUT_RESPONSE, timestamp=_at(0))
+    chat = Conversation([owner, assistant], started_at=_at(0), consumes=[prompt],
+                        tool_calls=[ToolCall(llm, 0, started_at=_at(0), logs=[answer])])
     links.append(TraceLink(prompt, book, modeling, [AIEvidence("llm", logs=[answer], timestamp=_at(1))],
                            timestamp=_at(1)))
     return TraceModel(project_id="project-1", actors=[owner, assistant], tools=[editor, generator, llm],
@@ -89,3 +92,11 @@ def test_code_with_a_call_outside_the_metamodel_is_refused(trace, tmp_path):
 def test_code_without_a_trace_is_refused():
     with pytest.raises(ConversionError, match="one TraceModel, found 0"):
         parse_trace_code('owner = Person("Ada")\n')
+
+
+def test_json_form_round_trips_every_element_kind(trace):
+    """Tool calls with their logs, and evidence of each kind resting on log records, survive the JSON form."""
+    data = trace_buml_to_json(trace)
+    assert trace_buml_to_json(process_trace(data)) == data
+    rule_with_log = next(e for link in data["traceLinks"] for e in link["evidence"] if e["type"] == "RuleEvidence" and "logIds" in e)
+    assert rule_with_log["logIds"] and "logIds" not in data["traceLinks"][0]["evidence"][0]  # left out when empty

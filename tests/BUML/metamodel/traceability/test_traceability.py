@@ -6,8 +6,9 @@ import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
 from besser.BUML.metamodel.traceability import (
-    LLM, Agent, Change, ChangeEvidence, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence, ModelArtifact,
-    Conversation, Modeling, Operation, Person, PromptArtifact, RuleEvidence, TraceLink, TraceModel, Transformation,
+    LLM, AIEvidence, Agent, Change, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
+    Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, Conversation, Modeling, Operation, Person, PromptArtifact,
+    RuleEvidence, ToolCall, TraceLink, TraceModel, Transformation,
 )
 
 T0 = datetime(2026, 10, 1, 12, 0, 0)
@@ -22,7 +23,8 @@ def generation_trace():
     title = ModelArtifact("title", "attr-1", "Property", parent=book)
     file = CodeArtifact("sql_alchemy.py", "sql_alchemy.py", "h0")
     fragment = CodeArtifact("Book (10-20)", "sql_alchemy.py", "h1", start_line=10, end_line=20, parent=file)
-    generation = CodeGeneration([owner], started_at=T0, uses=[generator], consumes=[book], produces=[file, fragment])
+    generation = CodeGeneration([owner], started_at=T0, tool_calls=[ToolCall(generator, 0, started_at=T0)],
+                                consumes=[book], produces=[file, fragment])
     evidence = RuleEvidence("sql_alchemy_template.py.j2#class", timestamp=T0)
     link = TraceLink(book, fragment, generation, [evidence], Confidence(1.0, timestamp=T0), timestamp=T0)
     trace = TraceModel(project_id="p1", artifacts=[book, title, file, fragment], operations=[generation],
@@ -115,9 +117,16 @@ def test_confidence_is_a_probability():
         Confidence(1.5)
 
 
-def test_change_evidence_needs_a_change():
-    with pytest.raises(ValueError):
-        ChangeEvidence([])
+def test_any_evidence_can_rest_on_log_records(generation_trace):
+    trace, link, owner, _, _ = generation_trace
+    generator = trace.tools[0]
+    warning = LogRecord("skipped the methods of Book", 0, LogType.INFO, timestamp=T0)
+    trace.operations[0].tool_calls = [ToolCall(generator, 0, started_at=T0, logs=[warning])]
+    link.evidence = [RuleEvidence("t#class", logs=[warning], timestamp=T0)]
+    assert link.evidence[0].logs == [warning]
+    assert trace.validate(raise_exception=False)["success"]
+    with pytest.raises(TypeError):
+        RuleEvidence("t#class", logs=["not a log record"])
 
 
 def test_validate_reports_references_outside_the_trace(generation_trace):
@@ -179,7 +188,7 @@ def test_validate_checks_each_operation_kind(generation_trace):
     trace.add_operation(Conversation([owner], started_at=T0))
     errors = trace.validate(raise_exception=False)["errors"]
     assert any("Modeling with no changes" in e for e in errors)
-    assert any("uses no CodeGenerator or LLM" in e for e in errors)
+    assert any("calls no CodeGenerator or LLM" in e for e in errors)
     assert any("Conversation with no Agent" in e for e in errors)
 
 
@@ -252,6 +261,42 @@ def test_code_can_be_generated_by_an_llm(generation_trace):
     trace, _, owner, book, _ = generation_trace
     llm = trace.add_tool(LLM("claude", provider="anthropic"))
     code = trace.add_artifact(CodeArtifact("app.py", "app.py", "h2"))
-    trace.add_operation(CodeGeneration([owner, trace.add_actor(Agent("assistant"))], started_at=T0, uses=[llm],
+    trace.add_operation(CodeGeneration([owner, trace.add_actor(Agent("assistant"))], started_at=T0,
+                                       tool_calls=[ToolCall(llm, 0, started_at=T0)],
                                        consumes=[book], produces=[code]))
     assert trace.validate(raise_exception=False)["success"]
+
+
+def test_an_operation_reaches_its_tools_through_its_calls():
+    owner, editor, llm = Person("Ada"), Editor("BESSER Web Modeling Editor"), LLM("claude", provider="anthropic")
+    prompt = LogRecord("Add a title to Book", 0, LogType.INPUT_REQUEST, timestamp=T0)
+    answer = LogRecord("Done: Book.title added.", 1, LogType.OUTPUT_RESPONSE, timestamp=T0)
+    turns = [ToolCall(llm, 0, started_at=T0, logs=[prompt, answer]), ToolCall(editor, 1, started_at=T0),
+             ToolCall(llm, 2, status=ExecutionStatus.FAILED, started_at=T0)]
+    chat = Conversation([owner, Agent("assistant")], started_at=T0, tool_calls=turns)
+    assert chat.tools == [llm, editor]  # derived: distinct, in call order
+    assert turns[0].logs == [prompt, answer] and turns[2].status is ExecutionStatus.FAILED
+    with pytest.raises(ValueError):
+        ToolCall(llm, 0, started_at=T0, ended_at=T0 - timedelta(seconds=1))
+    with pytest.raises(TypeError):
+        ToolCall("claude", 0)
+
+
+def test_validation_checks_tool_calls(generation_trace):
+    trace, link, owner, book, _ = generation_trace
+    stray = LLM("claude", provider="anthropic")  # never added to the trace's tools
+    trace.add_operation(Conversation([owner, trace.add_actor(Agent("assistant"))], started_at=T0,
+                                     tool_calls=[ToolCall(stray, 0, started_at=T0), ToolCall(stray, 0, started_at=T0)]))
+    elsewhere = LogRecord("not in any call of the trace", 0, LogType.OUTPUT_RESPONSE)
+    link.evidence = link.evidence + [AIEvidence("llm", logs=[elsewhere])]
+    errors = "\n".join(trace.validate(raise_exception=False)["errors"])
+    assert "references tool" in errors
+    assert "sharing a sequence number" in errors
+    assert "references log record" in errors
+
+
+def test_a_code_generation_calls_a_generator_or_an_llm(generation_trace):
+    trace, _, owner, book, _ = generation_trace
+    editor = trace.add_tool(Editor("BESSER Web Modeling Editor"))
+    trace.add_operation(CodeGeneration([owner], started_at=T0, tool_calls=[ToolCall(editor, 0, started_at=T0)]))
+    assert "calls no CodeGenerator or LLM" in "\n".join(trace.validate(raise_exception=False)["errors"])

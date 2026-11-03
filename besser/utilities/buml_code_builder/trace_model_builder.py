@@ -24,9 +24,9 @@ from collections import Counter
 from typing import Dict, Iterable, List, Optional, Sequence, TextIO, Tuple
 
 from besser.BUML.metamodel.traceability import (
-    AIEvidence, Agent, Artifact, Change, ChangeEvidence, CodeArtifact, CodeGeneration, Confidence, Evidence, LLM,
-    Conversation, LogRecord, ModelArtifact, Modeling, Operation, PromptArtifact, RuleEvidence, TraceElement, TraceLink,
-    TraceModel,
+    AIEvidence, Agent, Artifact, Change, CodeArtifact, CodeGeneration, Confidence, Evidence, LLM,
+    Conversation, LogRecord, ModelArtifact, Modeling, Operation, PromptArtifact, RuleEvidence, ToolCall, TraceElement,
+    TraceLink, TraceModel,
 )
 from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.utilities.buml_code_builder.common import (
@@ -38,15 +38,15 @@ __all__ = ["trace_model_to_code", "structural_variables", "TRACE_SECTION_KEYWORD
 
 #: The trace section's own variables (and names it reads): an element variable with one of
 #: these names would be shadowed before the trace references it, so it is not referenced.
-_TRACE_NAMES = re.compile(r"^((actor|tool|artifact|change|log|operation|evidence|confidence|link)_\d+|datetime)$")
+_TRACE_NAMES = re.compile(r"^((actor|tool|artifact|change|log|call|operation|evidence|confidence|link)_\d+|datetime)$")
 
 #: Section keyword of a trace in a project file; ``project_to_json`` splits on it.
 TRACE_SECTION_KEYWORD = "TRACEABILITY"
 
 _IMPORTED_NAMES = (
     "TraceModel, Person, Agent, Editor, CodeGenerator, LLM, ModelArtifact, CodeArtifact, PromptArtifact,\n"
-    "    Modeling, CodeGeneration, Conversation, OperationStatus, Change, ChangeKind, LogRecord, LogType,\n"
-    "    RuleEvidence, AIEvidence, ChangeEvidence, Confidence, TraceLink,"
+    "    Modeling, CodeGeneration, Conversation, ExecutionStatus, Change, ChangeKind, ToolCall, LogRecord, LogType,\n"
+    "    RuleEvidence, AIEvidence, Confidence, TraceLink,"
 )
 
 
@@ -224,15 +224,17 @@ class _TraceWriter:
             for change in operation.changes:
                 self._bind(change, "change", self._change(change))
             specific = f"changes={self._refs(operation.changes)}, "
-        for log in operation.logs:
-            self._bind(log, "log", self._log(log))
+        for call in operation.tool_calls:
+            for log in call.logs:
+                self._bind(log, "log", self._log(log))
+            self._bind(call, "call", self._tool_call(call))
         self._bind(operation, "operation", (
             f"{kind}({self._refs(operation.performed_by)}, {specific}"
-            f"status=OperationStatus.{operation.status.name}, "
-            f"started_at=datetime.datetime.fromisoformat({_string(operation.started_at.isoformat())}), "
-            f"ended_at={self._datetime(operation.ended_at)}, uses={self._refs(operation.uses)}, "
+            f"status=ExecutionStatus.{operation.status.name}, "
+            f"started_at={self._datetime(operation.started_at)}, ended_at={self._datetime(operation.ended_at)}, "
+            f"tool_calls={self._refs(operation.tool_calls)}, "
             f"consumes={self._refs(operation.consumes)}, produces={self._refs(operation.produces)}, "
-            f"logs={self._refs(operation.logs)}, id={_string(operation.id)})"
+            f"id={_string(operation.id)})"
         ))
 
     @staticmethod
@@ -244,18 +246,21 @@ class _TraceWriter:
                 f"feature={_optional(change.feature)}, old_value={_optional(change.old_value)}, "
                 f"new_value={_optional(change.new_value)}, {_common(change)})")
 
-    def _log(self, log: LogRecord) -> str:
-        tool = self.vars[log.tool.id] if log.tool is not None else "None"
-        return (f"LogRecord({_string(log.content)}, {log.sequence_number}, LogType.{log.log_type.name}, "
-                f"tool={tool}, {_common(log)})")
+    def _tool_call(self, call: ToolCall) -> str:
+        return (f"ToolCall({self.vars[call.tool.id]}, {call.sequence_number}, "
+                f"status=ExecutionStatus.{call.status.name}, started_at={self._datetime(call.started_at)}, "
+                f"ended_at={self._datetime(call.ended_at)}, logs={self._refs(call.logs)}, id={_string(call.id)})")
+
+    @staticmethod
+    def _log(log: LogRecord) -> str:
+        return f"LogRecord({_string(log.content)}, {log.sequence_number}, LogType.{log.log_type.name}, {_common(log)})"
 
     def _evidence(self, evidence: Evidence) -> str:
+        logs = f", logs={self._refs(evidence.logs)}" if evidence.logs else ""
         if isinstance(evidence, RuleEvidence):
-            return f"RuleEvidence({_string(evidence.rule)}, {_common(evidence)})"
+            return f"RuleEvidence({_string(evidence.rule)}{logs}, {_common(evidence)})"
         if isinstance(evidence, AIEvidence):
-            return f"AIEvidence({_string(evidence.algorithm)}, logs={self._refs(evidence.logs)}, {_common(evidence)})"
-        if isinstance(evidence, ChangeEvidence):
-            return f"ChangeEvidence({self._refs(evidence.changes)}, {_common(evidence)})"
+            return f"AIEvidence({_string(evidence.algorithm)}{logs}, {_common(evidence)})"
         raise TypeError(f"Unsupported evidence type {type(evidence).__name__}.")
 
     def _trace_link(self, link: TraceLink):

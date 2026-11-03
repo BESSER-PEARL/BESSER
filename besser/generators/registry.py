@@ -53,6 +53,9 @@ class GeneratorSpec:
     download_filename: str | None = None
     # Single-file generators: download under the name the generator chose.
     keep_generated_filename: bool = False
+    # What the generator needs besides one diagram (e.g. a GUI model), so
+    # ``/generate-output``, which carries one, cannot run it; None = one is enough.
+    needs_beyond_one_diagram: str | None = None
     agent_tool: AgentTool | None = None
 
     def load_class(self) -> type:
@@ -205,6 +208,10 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         output_type="zip",
         file_extension=".zip",
         download_filename="web_app.zip",
+        needs_beyond_one_diagram=(
+            "a GUI model (GUINoCodeDiagram) as well as the ClassDiagram; "
+            "use /generate-output-from-project with a project that has both"
+        ),
         agent_tool=AgentTool(
             name="generate_web_app",
             label="full-stack web app (FastAPI + React + Docker)",
@@ -418,6 +425,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         output_type="zip",
         file_extension=".zip",
         download_filename="react_app.zip",
+        needs_beyond_one_diagram="a GUI model (GUINoCodeDiagram) as well as the ClassDiagram",
         agent_tool=AgentTool(
             name="generate_react",
             label="React frontend",
@@ -437,6 +445,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         output_type="zip",
         file_extension=".zip",
         download_filename="flutter_app.zip",
+        needs_beyond_one_diagram="a GUI model (GUINoCodeDiagram) as well as the ClassDiagram",
     ),
     # Deployment generators. Not agent tools: the agent loads no deployment model.
     GeneratorSpec(
@@ -447,6 +456,7 @@ GENERATORS: tuple[GeneratorSpec, ...] = (
         file_extension=".zip",
         requires_class_diagram=False,
         download_filename="terraform.zip",
+        needs_beyond_one_diagram="a deployment model (the cloud clusters to provision), which no editor diagram holds",
     ),
     # Vendor-neutral BPMN 2.0 XML from a BPMNDiagram
     GeneratorSpec(

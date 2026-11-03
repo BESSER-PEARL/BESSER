@@ -28,6 +28,9 @@ class GeneratorInfo(NamedTuple):
     # chose instead of ``download_filename`` (e.g. Supabase's migration-style
     # ``<timestamp>_<slug>.sql``, whose name is meaningful).
     keep_generated_filename: bool = False
+    # What the generator needs besides one diagram, so ``/generate-output``
+    # refuses it (``GeneratorSpec.needs_beyond_one_diagram``).
+    needs_beyond_one_diagram: Optional[str] = None
 
 
 def _supported_generators() -> Dict[str, GeneratorInfo]:
@@ -43,6 +46,7 @@ def _supported_generators() -> Dict[str, GeneratorInfo]:
             required_diagram_type=spec.required_diagram_type,
             download_filename=spec.download_filename,
             keep_generated_filename=spec.keep_generated_filename,
+            needs_beyond_one_diagram=spec.needs_beyond_one_diagram,
         )
     return supported
 

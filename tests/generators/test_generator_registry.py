@@ -132,6 +132,7 @@ def test_supported_generators_come_from_the_registry():
             required_diagram_type=spec.required_diagram_type,
             download_filename=spec.download_filename,
             keep_generated_filename=spec.keep_generated_filename,
+            needs_beyond_one_diagram=spec.needs_beyond_one_diagram,
         )
 
 

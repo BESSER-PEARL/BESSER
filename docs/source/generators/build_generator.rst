@@ -61,6 +61,10 @@ A single-file generator whose own output filename is meaningful (the Supabase ge
 ``<timestamp>_<slug>.sql`` migration name, for example) can set ``keep_generated_filename=True`` instead,
 so the download keeps that name.
 
+A generator that needs a second model besides its diagram (the Web App, React and Flutter generators
+need a GUI model next to the class diagram) sets ``needs_beyond_one_diagram`` to what it needs:
+``/generate-output``, which carries one diagram, then answers 400 with that text instead of running it.
+
 Every entry is offered in the editor. ``agent_tool`` (default ``None``) also makes it a
 Spec-Driven Agent tool, with the tool's name, the short ``label`` the run preview shows, its
 description, input parameters and the models it needs (``requires``). An agent tool then needs:

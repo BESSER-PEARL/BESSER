@@ -238,7 +238,7 @@ in one response. (Spec-Driven code validation is a separate, fourth layer; see a
    (`"module:Class"`, imported lazily), `output_type` `"file"`/`"zip"`, `requires_class_diagram`,
    `required_diagram_type`, `download_filename` (without one the download falls back to
    `<key>_output<ext>`), `keep_generated_filename` (keeps a single-file generator's own filename),
-   `agent_tool`. Don't rename an existing `download_filename` — users rely on it.
+   `needs_beyond_one_diagram` (what it needs besides one diagram; `/generate-output` refuses it), `agent_tool`. Don't rename an existing `download_filename` — users rely on it.
    `tests/generators/test_generator_registry.py` pins both derived lists (snapshots in
    `tests/generators/snapshots/`)
 3. Tests in `tests/generators/<name>/`

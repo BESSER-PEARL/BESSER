@@ -35,7 +35,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "classes.py",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "java": {
       "generator_class": "besser.generators.java_classes.java_generator.JavaGenerator",
@@ -45,7 +46,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "java_classes.zip",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "pydantic": {
       "generator_class": "besser.generators.pydantic_classes.pydantic_classes_generator.PydanticGenerator",
@@ -55,7 +57,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "pydantic_classes.py",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "test_case": {
       "generator_class": "besser.generators.testgen.test_generator.TestCaseGenerator",
@@ -65,7 +68,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "test_hypothesis.py",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "django": {
       "generator_class": "besser.generators.django.django_generator.DjangoGenerator",
@@ -75,7 +79,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "django_project.zip",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "spring": {
       "generator_class": "besser.generators.spring.spring_backend_generator.SpringBackendGenerator",
@@ -85,7 +90,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "spring_boot_project.zip",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "backend": {
       "generator_class": "besser.generators.backend.backend_generator.BackendGenerator",
@@ -95,7 +101,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "fastapi_backend.zip",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "web_app": {
       "generator_class": "besser.generators.web_app.web_app_generator.WebAppGenerator",
@@ -105,7 +112,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "web_app.zip",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": "a GUI model (GUINoCodeDiagram) as well as the ClassDiagram; use /generate-output-from-project with a project that has both"
     },
     "sqlalchemy": {
       "generator_class": "besser.generators.sql_alchemy.sql_alchemy_generator.SQLAlchemyGenerator",
@@ -115,7 +123,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "sql_alchemy.py",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "sql": {
       "generator_class": "besser.generators.sql.sql_generator.SQLGenerator",
@@ -125,7 +134,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "tables.sql",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "supabase": {
       "generator_class": "besser.generators.supabase.supabase_generator.SupabaseGenerator",
@@ -135,7 +145,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": null,
-      "keep_generated_filename": true
+      "keep_generated_filename": true,
+      "needs_beyond_one_diagram": null
     },
     "jsonschema": {
       "generator_class": "besser.generators.json.json_schema_generator.JSONSchemaGenerator",
@@ -145,7 +156,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "json_schema.json",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "jsonobject": {
       "generator_class": "besser.generators.json.json_object_generator.JSONObjectGenerator",
@@ -155,7 +167,8 @@
       "requires_class_diagram": false,
       "required_diagram_type": null,
       "download_filename": "object_model.json",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "agent": {
       "generator_class": "besser.generators.agents.baf_generator.BAFGenerator",
@@ -165,7 +178,8 @@
       "requires_class_diagram": false,
       "required_diagram_type": null,
       "download_filename": "agent_output.zip",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "qiskit": {
       "generator_class": "besser.generators.qiskit.qiskit_generator.QiskitGenerator",
@@ -175,7 +189,8 @@
       "requires_class_diagram": false,
       "required_diagram_type": "QuantumCircuitDiagram",
       "download_filename": "qiskit_circuit.py",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "rdf": {
       "generator_class": "besser.generators.rdf.rdf_generator.RDFGenerator",
@@ -185,7 +200,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "vocabulary.ttl",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "rest_api": {
       "generator_class": "besser.generators.rest_api.rest_api_generator.RESTAPIGenerator",
@@ -195,7 +211,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "rest_api.zip",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "react": {
       "generator_class": "besser.generators.react.react.ReactGenerator",
@@ -205,7 +222,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "react_app.zip",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": "a GUI model (GUINoCodeDiagram) as well as the ClassDiagram"
     },
     "flutter": {
       "generator_class": "besser.generators.flutter.flutter_generator.FlutterGenerator",
@@ -215,7 +233,8 @@
       "requires_class_diagram": true,
       "required_diagram_type": null,
       "download_filename": "flutter_app.zip",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": "a GUI model (GUINoCodeDiagram) as well as the ClassDiagram"
     },
     "terraform": {
       "generator_class": "besser.generators.terraform.terraform_generator.TerraformGenerator",
@@ -225,7 +244,8 @@
       "requires_class_diagram": false,
       "required_diagram_type": null,
       "download_filename": "terraform.zip",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": "a deployment model (the cloud clusters to provision), which no editor diagram holds"
     },
     "bpmn": {
       "generator_class": "besser.generators.bpmn.bpmn_generator.BPMNGenerator",
@@ -235,7 +255,8 @@
       "requires_class_diagram": false,
       "required_diagram_type": "BPMNDiagram",
       "download_filename": "bpmn_diagram.bpmn",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "docker_compose": {
       "generator_class": "besser.generators.docker_compose.docker_compose_generator.DockerComposeGenerator",
@@ -245,7 +266,8 @@
       "requires_class_diagram": false,
       "required_diagram_type": "DeploymentDiagram",
       "download_filename": "docker_compose.zip",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "pytorch": {
       "generator_class": "besser.generators.nn.pytorch.pytorch_code_generator.PytorchGenerator",
@@ -255,7 +277,8 @@
       "requires_class_diagram": false,
       "required_diagram_type": "NNDiagram",
       "download_filename": "pytorch_nn.py",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "tensorflow": {
       "generator_class": "besser.generators.nn.tf.tf_code_generator.TFGenerator",
@@ -265,7 +288,8 @@
       "requires_class_diagram": false,
       "required_diagram_type": "NNDiagram",
       "download_filename": "tf_nn.py",
-      "keep_generated_filename": false
+      "keep_generated_filename": false,
+      "needs_beyond_one_diagram": null
     },
     "forecaster": {
       "generator_class": "besser.generators.nn.forecaster.forecaster_generator.TimeSeriesForecasterGenerator",
@@ -275,7 +299,8 @@
       "requires_class_diagram": false,
       "required_diagram_type": "NNDiagram",
       "download_filename": null,
-      "keep_generated_filename": true
+      "keep_generated_filename": true,
+      "needs_beyond_one_diagram": null
     }
   }
 }

@@ -91,17 +91,6 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 
 logger = logging.getLogger(__name__)
 
-# ``/generate-output`` carries one diagram; these generators need a model it
-# cannot carry. Generator id -> what is missing.
-_NOT_FROM_ONE_DIAGRAM = {
-    "web_app": "a GUI model (GUINoCodeDiagram) as well as the ClassDiagram; "
-               "use /generate-output-from-project with a project that has both",
-    "react": "a GUI model (GUINoCodeDiagram) as well as the ClassDiagram",
-    "flutter": "a GUI model (GUINoCodeDiagram) as well as the ClassDiagram",
-    "terraform": "a deployment model (the cloud clusters to provision), which no editor diagram holds",
-}
-
-
 async def generate_from_project(input_data: ProjectInput) -> GeneratedOutput:
     """Generate from a project: generators that need several diagrams (Web App,
     Docker Compose, the backend) or a non-class diagram, else the active diagram."""
@@ -193,14 +182,14 @@ async def generate_from_diagram(input_data: DiagramInput) -> GeneratedOutput:
                 f"Invalid generator type: {generator_type}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
             )
 
-        missing = _NOT_FROM_ONE_DIAGRAM.get(generator_type)
+        generator_info = get_generator_info(generator_type)
+
+        missing = generator_info.needs_beyond_one_diagram
         if missing:
             raise ValidationError(
                 f"The '{generator_type}' generator cannot run on a single "
                 f"{_get_diagram_type(json_data) or 'diagram'}: it needs {missing}."
             )
-
-        generator_info = get_generator_info(generator_type)
 
         # Handle agent generators (different diagram type)
         if generator_info.category == "ai_agent":

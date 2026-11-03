@@ -1,9 +1,11 @@
 import json
 import logging
 import os
+import time
 
 from besser.BUML.metamodel.state_machine.agent import AgentReply
 from besser.llm import openai_client
+from besser.llm.retry import backoff_seconds, is_quota_exhausted, is_retryable_status, status_code
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +14,15 @@ OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
 
 # Single default model for all OpenAI-backed personalization helpers.
 DEFAULT_OPENAI_MODEL = "gpt-5"
+
+# Retries after the first attempt, as many as the SDK's own default made.
+_MAX_RETRIES = 2
+
+
+def _is_transport_error(error: Exception) -> bool:
+    """No answer from OpenAI: a connection error or a timeout."""
+    from openai import APIConnectionError  # the client exists, so the SDK is installed
+    return isinstance(error, APIConnectionError)
 
 
 def _resolve_openai_api_key(config: dict = None, openai_api_key: str = None) -> str | None:
@@ -103,14 +114,27 @@ def call_openai_chat(system_prompt, user_prompt, model=DEFAULT_OPENAI_MODEL, ope
             f"OpenAI API key not found. Set '{OPENAI_API_KEY_ENV_VAR}' or pass it via generator config."
         )
 
-    client = openai_client(api_key=resolved_api_key)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-    )
+    # besser.llm's retry policy, not the SDK's: a spent quota fails at once.
+    client = openai_client(api_key=resolved_api_key, max_retries=0)
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+            )
+            break
+        except Exception as error:
+            status = status_code(error)
+            transient = is_retryable_status(status) if status is not None else _is_transport_error(error)
+            if attempt == _MAX_RETRIES or not transient or is_quota_exhausted(error):
+                raise
+            backoff = backoff_seconds(error, attempt)
+            logger.warning("OpenAI call failed (attempt %d/%d), retrying in %.1fs: %s",
+                           attempt + 1, _MAX_RETRIES + 1, backoff, type(error).__name__)
+            time.sleep(backoff)
     result = response.choices[0].message.content.strip()
     logger.debug("OpenAI response: %s", result)
     return result

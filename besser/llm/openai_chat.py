@@ -37,6 +37,13 @@ DEFAULT_REQUEST_TIMEOUT = 120
 _LOGGED_BODY_CHARS = 500
 
 
+def _wait_before_retry(error: Exception, attempt: int, max_retries: int, reason: str) -> None:
+    backoff = backoff_seconds(error, attempt)
+    logger.warning("OpenAI call failed (attempt %d/%d), retrying in %.1fs: %s",
+                   attempt + 1, max_retries + 1, backoff, reason)
+    time.sleep(backoff)
+
+
 def post_openai_chat(
     api_key: str,
     payload: dict,
@@ -84,7 +91,7 @@ def post_openai_chat(
             response = post(endpoint, headers=headers, json=payload, timeout=timeout)
         except requests.RequestException as exc:
             if attempt < max_retries and isinstance(exc, (requests.ConnectionError, requests.Timeout)):
-                time.sleep(backoff_seconds(exc, attempt))
+                _wait_before_retry(exc, attempt, max_retries, type(exc).__name__)
                 continue
             # The exception text can carry the URL; the class name is enough here.
             logger.warning("OpenAI request failed: %s", redact_literal(str(exc), key))
@@ -96,7 +103,7 @@ def post_openai_chat(
         failure = requests.HTTPError(f"HTTP {status} {getattr(response, 'text', '')}", response=response)
         if not is_retryable_status(status) or is_quota_exhausted(failure):
             break
-        time.sleep(backoff_seconds(failure, attempt))
+        _wait_before_retry(failure, attempt, max_retries, f"HTTP {status}")
 
     if not getattr(response, "ok", False):
         status = getattr(response, "status_code", None)

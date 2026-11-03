@@ -106,10 +106,23 @@ _SLOW_DOWN = (429, {"error": {"message": "slow down"}}, {"Retry-After": "120"})
 
 
 @pytest.mark.parametrize("server", [[_BUSY, _SLOW_DOWN, _OK]], indirect=True)
-def test_retries_wait_as_the_shared_policy_says(server, sleeps):
+def test_retries_wait_as_the_shared_policy_says(server, sleeps, caplog):
     # The first retry waits too, and a server's Retry-After is capped.
     assert post_openai_chat("k", {"model": "m"}, endpoint=server.url, max_retries=2) == "hello"
     assert sleeps == [0.5, 30.0]
+    assert [r.getMessage() for r in caplog.records if r.name == "besser.llm.openai_chat"] == [
+        "OpenAI call failed (attempt 1/3), retrying in 0.5s: HTTP 503",
+        "OpenAI call failed (attempt 2/3), retrying in 30.0s: HTTP 429",
+    ]
+
+
+def test_a_connection_failure_retry_is_logged(sleeps, caplog):
+    srv = _Server([])
+    url = srv.url
+    srv.close()
+    with pytest.raises(LLMUpstreamError):
+        post_openai_chat("k", {}, endpoint=url, max_retries=1)
+    assert "OpenAI call failed (attempt 1/2), retrying in 0.5s: ConnectionError" in caplog.messages
 
 
 _NO_QUOTA = (429, {"error": {"message": "You exceeded your current quota.", "code": "insufficient_quota"}})

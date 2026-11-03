@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-pytest.importorskip("openai")
+openai = pytest.importorskip("openai")
 
 from besser.generators.agents import agent_personalization  # noqa: E402
 
@@ -54,8 +54,10 @@ def test_a_spent_quota_is_sent_once(openai_server):
     replies, hits = openai_server
     replies.append(QUOTA)
 
-    with pytest.raises(Exception, match="insufficient_quota"):
+    # The SDK's message format varies by version; the status is stable.
+    with pytest.raises(openai.RateLimitError) as raised:
         agent_personalization.call_openai_chat("sys", "user", openai_api_key="sk-test")
+    assert raised.value.status_code == 429
 
     assert len(hits) == 1
 

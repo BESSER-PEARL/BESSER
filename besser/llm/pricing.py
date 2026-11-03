@@ -162,8 +162,7 @@ def vendored_prices() -> dict[str, dict[str, float]]:
     file rather than the package: an ``import litellm`` would break the
     offline on-prem install. Refresh with::
 
-        curl -s https://raw.githubusercontent.com/BerriAI/litellm/main/\\
-model_prices_and_context_window.json
+        curl -s https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json
 
     then keep rows whose ``litellm_provider`` is anthropic/openai/mistral/
     nebius/bedrock and the ``*_cost_per_token`` fields.

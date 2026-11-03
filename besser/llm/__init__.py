@@ -16,10 +16,15 @@ Of :mod:`besser.utilities` it uses ``secret_redaction``, which brings
   SDKs, imported lazily (the ``agents`` extra).
 * :mod:`besser.llm.replies`: reading the JSON out of a model's reply.
 * :mod:`besser.llm.errors`: :class:`LLMUpstreamError`, what a failed call raises.
+* :mod:`besser.llm.catalog`: the model catalog (``data/model_catalog.json`` with
+  ``BESSER_MODEL_CATALOG`` merged over it).
+* :mod:`besser.llm.pricing`: per-model token prices (catalog rates, then the
+  vendored public list ``data/model_prices.json``).
+* :mod:`besser.llm.settings`: the layer's environment variables.
 
-The Spec-Driven Agent's provider clients, their pricing and the model catalog
-are still in :mod:`besser.spec_driven_agent.providers`; they move here with the
-split of its ``llm_client``.
+The Spec-Driven Agent's provider clients are still in
+:mod:`besser.spec_driven_agent.providers.llm_client`; they move here with its
+split.
 """
 
 from besser.llm.errors import LLMUpstreamError

@@ -82,7 +82,7 @@ from besser.utilities.web_modeling_editor.backend.routers.github_deploy_api impo
 )
 from besser.spec_driven_agent.providers.llm_client import DEFAULT_MODELS as _LLM_DEFAULT_MODELS
 from besser.spec_driven_agent.providers.llm_client import default_model as _llm_default_model
-from besser.spec_driven_agent.providers.model_catalog import load_model_catalog
+from besser.llm.catalog import load_model_catalog
 from besser.spec_driven_agent.providers.llm_client import (
     free_alt_models,
     free_fallback_model,

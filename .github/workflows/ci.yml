@@ -117,8 +117,8 @@ jobs:
               import_module(f"besser.generators.{module.name}")
           root = files("besser")
           for path in (
-              "spec_driven_agent/providers/data/model_catalog.json",
-              "spec_driven_agent/providers/data/model_prices.json",
+              "llm/data/model_catalog.json",
+              "llm/data/model_prices.json",
               "generators/spring/resources/mvnw",
               "utilities/data/gitleaks_rules.toml",
           ):

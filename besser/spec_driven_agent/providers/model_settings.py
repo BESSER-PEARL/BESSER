@@ -13,7 +13,7 @@ What deliberately does NOT live here:
   default), and the precedence is the part that makes it correct. Flattening
   it into this table would lose the provenance ordering. Edit the tables in
   ``compaction.py``; this module intentionally keeps no copy.
-* **Pricing** -- ``llm_client._MODEL_PRICING``. Billing, not request shaping.
+* **Pricing** -- ``besser.llm.pricing``. Billing, not request shaping.
 
 Why rows are conservative: a wrong row is worse than a missing one. Every
 value below cites the vendor's own ``generation_config.json`` or model card,
@@ -23,7 +23,7 @@ left alone rather than guessed at.
 
 from dataclasses import dataclass, field, replace
 
-from besser.spec_driven_agent.providers.model_catalog import load_model_catalog
+from besser.llm.catalog import load_model_catalog
 
 # Output-token ceiling when neither the caller nor a row below says otherwise.
 # Shared by the Claude / OpenAI / Mistral / Nebius providers.

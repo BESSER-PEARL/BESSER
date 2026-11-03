@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response as StarletteResponse
 
-from besser.spec_driven_agent.providers.model_catalog import load_model_catalog
+from besser.llm.catalog import load_model_catalog
 from besser.utilities.provenance import get_besser_version, get_build_sha
 from besser.utilities.web_modeling_editor.backend.middleware import setup_middleware
 

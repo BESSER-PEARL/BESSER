@@ -20,7 +20,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     _get_pricing,
     create_llm_client,
 )
-from besser.spec_driven_agent.providers.model_catalog import (
+from besser.llm.catalog import (
     ModelCatalogError,
     load_model_catalog,
 )

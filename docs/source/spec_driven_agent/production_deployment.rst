@@ -223,7 +223,7 @@ are about to deploy before you deploy:
 
    docker run --rm -e BESSER_MODEL_CATALOG=/catalog.json \
      -v /home/ec2-user/model_catalog.json:/catalog.json:ro <backend image> \
-     python -c "from besser.spec_driven_agent.providers.model_catalog import load_model_catalog as l; print(sorted(l().providers))"
+     python -c "from besser.llm.catalog import load_model_catalog as l; print(sorted(l().providers))"
 
 It prints the provider ids, or a ``ModelCatalogError`` naming the field.
 

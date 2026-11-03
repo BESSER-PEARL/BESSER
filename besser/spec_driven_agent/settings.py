@@ -22,7 +22,9 @@ from typing import Annotated, Optional
 
 from pydantic import BeforeValidator, Field, SecretStr, ValidationInfo, field_validator
 from pydantic_core import PydanticUseDefault
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import SettingsConfigDict
+
+from besser.llm.settings import LLMSettings
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +63,11 @@ _IntOrEmpty = Annotated[int, BeforeValidator(_empty_is_default(int))]
 _CompactThreshold = Annotated[Optional[int], BeforeValidator(_empty_is_default(_at_least_8000))]
 
 
-class AgentSettings(BaseSettings):
-    """The Spec-Driven Agent's environment variables (all optional)."""
+class AgentSettings(LLMSettings):
+    """The Spec-Driven Agent's environment variables (all optional).
+
+    Inherits the LLM layer's (``BESSER_MODEL_CATALOG``) from :class:`LLMSettings`.
+    """
 
     # Defaults are final values, not raw text, so they are not parsed again.
     # No protected namespace: pydantic before 2.10 warns about ``model_catalog``.
@@ -71,9 +76,6 @@ class AgentSettings(BaseSettings):
         protected_namespaces=())
 
     # -- Models -----------------------------------------------------------------
-    model_catalog: str = Field(
-        "", validation_alias="BESSER_MODEL_CATALOG",
-        description="JSON file merged over the default model catalog; read once per process.")
     llm_planning_model: Optional[str] = Field(
         None, validation_alias="BESSER_LLM_PLANNING_MODEL",
         description="Model for planning calls; 'primary' uses the run's own model. Read per call.")

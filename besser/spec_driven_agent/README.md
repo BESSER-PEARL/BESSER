@@ -86,7 +86,7 @@ is capped at `MAX_SPILL_SIZE` so a runaway command cannot fill the disk.
 | Runtime probes | `validation/constructibility.py`, `validation/api_probe.py` |
 | Requirements and scoped acceptance | `planning/requirements_ledger.py`, `planning/fix_target.py`, `validation/acceptance.py` |
 | Persistence, tracing, context | `state/checkpoint.py`, `state/tracing.py`, `agent/compaction.py`, `agent/history_eviction.py`, `run_report.py` |
-| Providers, routing, usage | `providers/llm_client.py`, `providers/model_settings.py`, `providers/tool_input.py`, `providers/data/model_prices.json` |
+| Providers, routing, usage | `providers/llm_client.py`, `providers/model_settings.py`, `providers/tool_input.py`; prices and model catalog in `besser/llm/` (`pricing.py`, `catalog.py`, `data/`) |
 
 The shared `validation/` and `execution/` modules do not import the orchestrator
 or executor. Existing imports from `pipeline/orchestrator.py` and `agent/tool_executor.py` remain

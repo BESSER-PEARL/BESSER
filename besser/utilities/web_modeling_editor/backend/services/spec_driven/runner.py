@@ -53,7 +53,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     free_tier_model,
     is_free_fallback_choice,
 )
-from besser.spec_driven_agent.providers.model_catalog import load_model_catalog
+from besser.llm.catalog import load_model_catalog
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold

@@ -76,7 +76,7 @@ besser-wme-backend --port 9000      # same, via the console script (--host, --po
 The Spec-Driven Agent's Local (Ollama) provider needs `BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`
 (the local `docker-compose.yml` sets it; running the backend alone does not). Gateway providers such as
 PIA, and the key dialog's model lists, come from the model catalog (`BESSER_MODEL_CATALOG`, default in
-`besser/spec_driven_agent/providers/data/model_catalog.json`).
+`besser/llm/data/model_catalog.json`).
 
 ### Docker images
 The root `Dockerfile` has two targets. `backend` is Python + requirements + `besser`, no compilers.
@@ -96,7 +96,7 @@ optionally followed by the Spec-Driven Agent's LLM customization + validation.
 |------|------|
 | `besser/BUML/metamodel/` | Abstract syntax: `structural/` (DomainModel, Class, Property, associations, generalization), `state_machine/`, `gui/`, `action_language/` (BAL), `bpmn/`, `deployment/`, `feature_model/`, `nn/`, `object/`, `ocl/`, `project/`, `quantum/` |
 | `besser/BUML/notations/` | ANTLR-based parsers (PlantUML class/object, OCL, NN, deployment, BAL), draw.io import, LLM-assisted mockup → model, knowledge graph ↔ OWL/RDF/SHACL: import, export and the projection the conversion reads (`kg_rdf/`), KG → class diagram (`kg_to_buml/`) |
-| `besser/llm/` | What every LLM call shares: OpenAI chat over HTTP (`openai_chat.py`: timeout, optional retries, errors that never echo the provider's body), the one retry policy (`retry.py`, also used by the Spec-Driven Agent's clients), lazy `openai`/`anthropic` SDK clients (`sdk.py`), JSON-from-reply helpers. The agent's provider clients, pricing and model catalog are still in `spec_driven_agent/providers/` (they move with the `llm_client` split). `besser.utilities.llm_utils` re-exports the old names |
+| `besser/llm/` | What every LLM call shares: OpenAI chat over HTTP (`openai_chat.py`: timeout, optional retries, errors that never echo the provider's body), the one retry policy (`retry.py`, also used by the Spec-Driven Agent's clients), lazy `openai`/`anthropic` SDK clients (`sdk.py`), JSON-from-reply helpers, the model catalog (`catalog.py`) and per-model token prices (`pricing.py`), both reading `data/`. The agent's provider clients are still in `spec_driven_agent/providers/llm_client.py` (they move with its split); `providers/model_catalog.py` and `llm_client`'s pricing names re-export from `besser.llm`. `besser.utilities.llm_utils` re-exports the old names |
 | `besser/utilities/image_to_buml.py`, `kg_llm_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram via an LLM (`kg_to_buml.py` is its deprecated alias) |
 | `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
 | `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/`; `registry.py` is the one list of generators (web editor + agent tools) |
@@ -145,8 +145,8 @@ Pipeline, tools, severities, caps and configuration are documented in `docs/sour
 - `agent/tools.py` — the LLM's tool surface; `agent/tool_executor.py` — tool implementations and the
   `task_list` checklist; `agent/edit_apply.py` — the lenient match ladder behind `modify_file`;
   `agent/compaction.py` / `agent/history_eviction.py` — context management.
-- `providers/llm_client.py` — provider clients, keyless `free` and `sponsored` tiers, pricing, planning-model
-  routing, free-tier fallback chain. Its retry policy is `besser.llm.retry`.
+- `providers/llm_client.py` — provider clients, keyless `free` and `sponsored` tiers, planning-model
+  routing, free-tier fallback chain. Its retry policy is `besser.llm.retry`, its prices `besser.llm.pricing`.
 - `planning/gap_analyzer.py` — produces the Phase 2 checklist. Its return value is load-bearing: `None` =
   analysis failed, `[]` = scaffold already sufficient (Phase 2 may be skipped), a list = the tasks.
 - `validation/` — code checks; `validation/issues.py::_classify_issue` assigns severity.

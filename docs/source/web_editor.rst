@@ -88,7 +88,7 @@ turn on *Record traces for this project* on that page.
   elements and the elements' members, where a diagram shows the whole files generated
   from it, an element its lines, and both their history; and a *Coverage* matrix of
   generation runs against each diagram (its whole files) and its elements, where
-  anything changed after a run is marked *suspect* (its generated code may be stale);
+  anything changed after a run is marked *out of date* (its generated code may no longer match);
   and a *Lineage* graph of the whole project, or of one diagram or element: what was
   derived from what, following trace links in both directions, column by column. It
   starts with the diagrams, prompts and generation runs, the links between them
@@ -97,11 +97,13 @@ turn on *Record traces for this project* on that page.
   files, a file's fragments), and the links then reach them. *Expand all*, zoom and
   *Full screen* help with large projects. Selecting a part highlights its links and
   lists them. Links are coloured by their evidence (a generator rule, an AI step),
-  thicker with higher confidence, which a pill shows when below certain; a link whose
-  source changed since is *suspect*, and everything further downstream *stale
-  upstream*. Selecting a link shows its evidence, the operation, actor and tool that
-  made it, and the changes that made it suspect. Older generation runs are hidden
-  unless asked for.
+  thicker with higher confidence, which a pill shows when below certain. A link is
+  *out of date* (solid amber) when its source changed since it was made, or its target
+  was edited since (a class the assistant made, then changed by hand), and *upstream
+  changed* (dashed amber) when neither end changed but something its source was
+  derived from did. Selecting a link shows its evidence, the operation, actor and tool
+  that made it, and each reason it is out of date with the changes behind it. Older
+  generation runs are hidden unless asked for.
 * **Stored.** In the browser (IndexedDB), apart from the project. Deleting the
   project deletes its trace, and *Clear* on the page deletes it alone. The newest five
   runs of each generator keep their trace links; older runs keep only their files and

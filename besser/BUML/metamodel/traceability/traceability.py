@@ -30,7 +30,7 @@ import uuid
 from abc import ABC
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Set
 
 from besser.BUML.metamodel.structural import Element, Model
 
@@ -62,6 +62,7 @@ __all__ = [
     "RuleEvidence",
     "AIEvidence",
     "Confidence",
+    "OutOfDateReason",
     "TraceLink",
     "TraceModel",
 ]
@@ -82,6 +83,18 @@ class ChangeKind(Enum):
     CREATED = "CREATED"
     UPDATED = "UPDATED"
     DELETED = "DELETED"
+
+
+class OutOfDateReason(Enum):
+    """Why a :class:`TraceLink` may no longer hold: the values of ``TraceLink./outOfDate``, derived
+    by :meth:`TraceModel.out_of_date`."""
+    SOURCE_CHANGED = "SOURCE_CHANGED"
+    """The source changed after the link was made: the target may no longer match it."""
+    TARGET_CHANGED = "TARGET_CHANGED"
+    """The target was edited after the link was made: it may no longer be what was derived."""
+    UPSTREAM_CHANGED = "UPSTREAM_CHANGED"
+    """Neither end changed, but something the source was derived from did: the source may need
+    updating, and this link with it."""
 
 
 class LogType(Enum):
@@ -1178,8 +1191,8 @@ class Confidence(TraceElement):
 class TraceLink(TraceElement):
     """A directed link from a source artifact to a target artifact, made by an operation.
 
-    Its timestamp is when the link was created. It is *suspect* when its source
-    changed after that; see :meth:`TraceModel.is_suspect`.
+    Its timestamp is when the link was created. Whether it still holds is the derived attribute
+    ``/outOfDate``, computed by :meth:`TraceModel.out_of_date` from the changes recorded since.
 
     Args:
         source (Artifact): Where the link starts (a class).
@@ -1379,33 +1392,50 @@ class TraceModel(Model):
                    if c.artifact is artifact]
         return sorted(changes, key=lambda c: c.timestamp)
 
-    def is_suspect(self, trace_link: TraceLink) -> bool:
-        """True when the link's source, or a fragment of it, changed after the link was made:
-        the target may no longer match it."""
-        pending = [trace_link.source]
+    def with_fragments(self, artifact: Artifact) -> List[Artifact]:
+        """``artifact`` and all its fragments, recursively."""
+        result, pending = [], [artifact]
         while pending:
-            artifact = pending.pop()
-            if any(c.timestamp > trace_link.timestamp for c in self.changes_of(artifact)):
-                return True
-            pending.extend(self.fragments_of(artifact))
-        return False
+            current = pending.pop()
+            result.append(current)
+            pending.extend(self.fragments_of(current))
+        return result
 
-    def is_stale(self, trace_link: TraceLink) -> bool:
-        """``TraceLink./stale``, derived: the link may no longer hold, because it is suspect or
-        because a link into its source, further upstream, is stale."""
-        incoming: dict[int, List[TraceLink]] = {}
-        for link in self.__trace_links:
-            incoming.setdefault(id(link.target), []).append(link)
-        stale: dict[int, bool] = {}
+    def changed_since(self, artifact: Artifact, trace_link: TraceLink) -> List[Change]:
+        """The changes to ``artifact``, or a fragment of it, made after ``trace_link`` by another
+        operation than the link's (that operation's own changes are part of making the link), in
+        time order."""
+        parts = set(map(id, self.with_fragments(artifact)))
+        changes = [c for op in self.__operations if isinstance(op, Modeling) and op is not trace_link.operation
+                   for c in op.changes if id(c.artifact) in parts and c.timestamp > trace_link.timestamp]
+        return sorted(changes, key=lambda c: c.timestamp)
 
-        def visit(link: TraceLink) -> bool:
-            if id(link) not in stale:
-                stale[id(link)] = False  # a cycle back to this link adds nothing
-                stale[id(link)] = self.is_suspect(link) or any(
-                    visit(upstream) for upstream in incoming.get(id(link.source), []))
-            return stale[id(link)]
+    def out_of_date(self, trace_link: TraceLink) -> Set[OutOfDateReason]:
+        """``TraceLink./outOfDate``, derived: why the link may no longer hold, empty while it holds.
 
-        return visit(trace_link)
+        Only a changed source travels downstream: an edited target is the source of the next link,
+        which sees the edit itself.
+        """
+        reasons = set()
+        if self.changed_since(trace_link.source, trace_link):
+            reasons.add(OutOfDateReason.SOURCE_CHANGED)
+        if self.changed_since(trace_link.target, trace_link):
+            reasons.add(OutOfDateReason.TARGET_CHANGED)
+        if self._upstream_changed(trace_link.source, set()):
+            reasons.add(OutOfDateReason.UPSTREAM_CHANGED)
+        return reasons
+
+    def _upstream_changed(self, artifact: Artifact, visited: set) -> bool:
+        """True when a link into ``artifact`` (or a fragment of it) has a changed source, or is
+        itself upstream changed."""
+        if id(artifact) in visited:
+            return False  # a cycle back to this artifact adds nothing
+        visited.add(id(artifact))
+        parts = set(map(id, self.with_fragments(artifact)))
+        return any(
+            self.changed_since(link.source, link) or self._upstream_changed(link.source, visited)
+            for link in self.__trace_links if id(link.target) in parts
+        )
 
     def validate(self, raise_exception: bool = True) -> dict:
         """Check that every reference stays inside the trace and every id is unique.

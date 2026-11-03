@@ -7,8 +7,8 @@ import pytest
 from besser.BUML.metamodel.structural import Class, DomainModel, Property, StringType
 from besser.BUML.metamodel.traceability import (
     LLM, AIEvidence, Agent, Change, ChangeKind, CodeArtifact, CodeGeneration, CodeGenerator, Confidence,
-    Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, Conversation, Modeling, Operation, Person, PromptArtifact,
-    RuleEvidence, ToolCall, TraceLink, TraceModel, Transformation,
+    Editor, ExecutionStatus, LogRecord, LogType, ModelArtifact, Conversation, Modeling, Operation, OutOfDateReason,
+    Person, PromptArtifact, RuleEvidence, ToolCall, TraceLink, TraceModel, Transformation,
 )
 
 T0 = datetime(2026, 10, 1, 12, 0, 0)
@@ -48,18 +48,38 @@ def test_names_are_free_text():
     assert Person("BESSER User").name == "BESSER User"
 
 
-def test_link_is_suspect_only_after_a_later_change_of_its_source(generation_trace):
+SOURCE, TARGET, UPSTREAM = (OutOfDateReason.SOURCE_CHANGED, OutOfDateReason.TARGET_CHANGED,
+                            OutOfDateReason.UPSTREAM_CHANGED)
+
+
+def test_link_is_out_of_date_only_after_a_later_change_of_its_source(generation_trace):
     trace, link, owner, book, _ = generation_trace
     _edit(trace, owner, book, T0 - timedelta(minutes=5))
-    assert not trace.is_suspect(link)
+    assert trace.out_of_date(link) == set()
     _edit(trace, owner, book, T0 + timedelta(minutes=5))
-    assert trace.is_suspect(link)
+    assert trace.out_of_date(link) == {SOURCE}
 
 
-def test_change_of_a_fragment_makes_the_link_suspect(generation_trace):
+def test_change_of_a_fragment_makes_the_link_out_of_date(generation_trace):
     trace, link, owner, _, title = generation_trace
     _edit(trace, owner, title, T0 + timedelta(seconds=1))
-    assert trace.is_suspect(link)
+    assert trace.out_of_date(link) == {SOURCE}
+
+
+def test_an_edited_target_makes_the_link_out_of_date_but_not_what_follows(generation_trace):
+    """Prompt -> Book (by the assistant's edits) -> code; the user then edits Book."""
+    trace, link, owner, book, title = generation_trace
+    assistant = trace.add_actor(Agent("BESSER modeling assistant"))
+    earlier = T0 - timedelta(minutes=10)
+    prompt = trace.add_artifact(PromptArtifact("Add Book", "Add a Book class.", "h", timestamp=earlier))
+    edits = trace.add_operation(Modeling([owner, assistant], started_at=earlier))
+    derived = trace.add_trace_link(TraceLink(prompt, book, edits, timestamp=earlier))
+    # The same edits go on after the link (a later reply of the turn): part of making it.
+    edits.add_change(Change(ChangeKind.CREATED, title, timestamp=earlier + timedelta(seconds=5)))
+    assert trace.out_of_date(derived) == set()
+    _edit(trace, owner, book, T0 + timedelta(minutes=1))
+    assert trace.out_of_date(derived) == {TARGET}
+    assert trace.out_of_date(link) == {SOURCE}  # an edited target is not passed on as upstream
 
 
 def test_updated_change_needs_a_feature_and_others_have_none():
@@ -214,7 +234,8 @@ def test_a_prompt_is_the_source_of_what_was_derived_from_it(generation_trace):
     derived = trace.add_trace_link(TraceLink(requirement, book, edit, timestamp=earlier))
     assert trace.validate(raise_exception=False)["success"]
     _edit(trace, owner, requirement, T0 + timedelta(minutes=1))
-    assert trace.is_suspect(derived) and trace.is_stale(link)  # the code comes from a changed requirement
+    assert trace.out_of_date(derived) == {SOURCE}
+    assert trace.out_of_date(link) == {UPSTREAM}  # the code comes from a changed requirement
 
 
 def test_a_prompt_has_content():
@@ -222,23 +243,22 @@ def test_a_prompt_has_content():
         PromptArtifact("empty", "  ", "h")
 
 
-def test_stale_spreads_downstream_from_a_suspect_link(generation_trace):
+def test_a_changed_source_spreads_downstream_as_upstream_changed(generation_trace):
     trace, link, owner, book, _ = generation_trace
     requirement = trace.add_artifact(ModelArtifact("R1", "req-1", "Requirement"))
     derivation = Modeling([Agent("assistant")], started_at=T0 - timedelta(minutes=5))
     trace.add_operation(derivation)
     upstream = trace.add_trace_link(TraceLink(requirement, book, derivation, timestamp=T0 - timedelta(minutes=5)))
-    assert not trace.is_stale(link)
+    assert trace.out_of_date(link) == set()
     _edit(trace, owner, requirement, T0 + timedelta(minutes=1))
-    assert trace.is_suspect(upstream) and trace.is_stale(upstream)
-    assert not trace.is_suspect(link)  # Book itself did not change...
-    assert trace.is_stale(link)  # ...but what it was derived from did
+    assert trace.out_of_date(upstream) == {SOURCE}
+    assert trace.out_of_date(link) == {UPSTREAM}  # Book itself did not change, but what it came from did
 
 
-def test_stale_terminates_on_a_cycle(generation_trace):
+def test_out_of_date_terminates_on_a_cycle(generation_trace):
     trace, link, owner, book, _ = generation_trace
     trace.add_trace_link(TraceLink(link.target, book, trace.operations[0], timestamp=T0))
-    assert trace.is_stale(link) is False
+    assert trace.out_of_date(link) == set()
 
 
 def test_a_model_artifact_references_its_element_or_records_it():

@@ -77,11 +77,21 @@ Concepts
   decision's prompt and answer, a generator's log of the run. **Confidence** says how
   sure it is.
 
-A link is *suspect* when its source, or a fragment of it, changed after the link was
-made (``TraceModel.is_suspect``): the generated code may no longer match the model. A link is
-*stale* -- the derived attribute ``TraceLink./stale``, computed by
-``TraceModel.is_stale`` and never stored -- when it is suspect or a link into its
-source, further upstream, is stale: something it depends on changed.
+Whether a link still holds is the derived attribute ``TraceLink./outOfDate``, a set of
+``OutOfDateReason`` values computed by ``TraceModel.out_of_date`` and never stored; it is
+empty while the link holds (other tools call an out-of-date link *suspect*):
+
+- ``SOURCE_CHANGED`` -- the source, or a fragment of it, changed after the link was made: the
+  target (the generated code) may no longer match it.
+- ``TARGET_CHANGED`` -- the target, or a fragment of it, was edited after the link was made:
+  it may no longer be what was derived (a class the assistant made, then edited by hand).
+- ``UPSTREAM_CHANGED`` -- neither end changed, but a link into the source has a changed
+  source, or is itself upstream changed: the source may need updating, and this link with it.
+
+Changes made by the operation that made the link are part of making it and do not count.
+Only a changed source travels downstream: an edited target is the source of the next link,
+which sees the edit as its own changed source. Generated code is never edited in the
+editor, so a link into code is never ``TARGET_CHANGED``.
 ``TraceModel.validate()`` checks that every reference stays inside the trace (a tool
 call's tool, an ``AIEvidence``'s log records), that ids are unique and that the tool
 calls of an operation have distinct sequence numbers.
@@ -180,7 +190,7 @@ the ``TraceModel``, whose artifacts point at the real B-UML objects::
     exec(open("library.py").read(), namespace)
     trace = namespace["trace_model"]
     for link in trace.trace_links:
-        print(link.source.name, "->", link.target.name, trace.is_suspect(link))
+        print(link.source.name, "->", link.target.name, trace.out_of_date(link))
 
 The structural sections carry no element ids, so importing the file gives every
 element a new id. The importer loads the trace after the structural sections and

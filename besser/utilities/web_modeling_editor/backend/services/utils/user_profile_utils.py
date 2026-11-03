@@ -43,9 +43,9 @@ def safe_path(base_dir: str, user_filename: str) -> str:
     safe_name = os.path.basename(user_filename)
     full_path = os.path.realpath(os.path.join(base_dir, safe_name))
     real_base = os.path.realpath(base_dir)
-    # A prefix check on the resolved paths (the form CodeQL recognises as a
-    # path-injection guard); a path on another drive never matches.
-    if full_path != real_base and not full_path.startswith(real_base.rstrip(os.sep) + os.sep):
+    # A prefix check on the resolved path, the form CodeQL recognises as a
+    # path-injection guard; the base itself and another drive never match.
+    if not full_path.startswith(real_base.rstrip(os.sep) + os.sep):
         raise ValueError("Invalid path")
     return full_path
 

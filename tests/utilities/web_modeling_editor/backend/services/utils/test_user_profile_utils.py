@@ -302,3 +302,11 @@ def test_safe_path_rejects_a_symlink_that_leaves_the_base():
         with pytest.raises(ValueError, match="Invalid path"):
             safe_path(base, "escape")
 
+
+
+def test_safe_path_never_returns_the_base_directory_itself():
+    """An empty or ``.`` name resolves to base_dir; callers always need a child."""
+    with tempfile.TemporaryDirectory() as base:
+        for name in ("", ".", "./"):
+            with pytest.raises(ValueError, match="Invalid path"):
+                safe_path(base, name)

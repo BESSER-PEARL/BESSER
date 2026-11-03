@@ -503,11 +503,13 @@ Backend-side notes that do not belong in the contract:
   attributed to a person.
 - ``/spec-driven/push-to-github`` and ``/spec-driven/import-github-run`` require
   the ``X-GitHub-Session`` header, like the other GitHub endpoints below.
-- ``/spec-driven/import-github-run`` answers ``400`` for an owner or repository
+- ``/spec-driven/import-github-run`` answers ``422`` for an owner or repository
   name that does not match ``^[A-Za-z0-9_.-]+$`` or consists only of dots
-  (both are interpolated into GitHub API paths), and for a repository over the
-  import limits: a 100 MB archive, 500 MB unpacked, or 50,000 files. The
-  response detail says which limit was hit.
+  (both are interpolated into GitHub API paths) and for a ``model_path`` that
+  is not a relative ``.json`` path inside the repository. Like any invalid
+  body, this is checked before the ``X-GitHub-Session`` header. It answers
+  ``400`` for a repository over the import limits: a 100 MB archive, 500 MB
+  unpacked, or 50,000 files. The response detail says which limit was hit.
 
 Telemetry (research study mode)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -21,9 +21,9 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
+from besser.utilities.path_utils import is_repo_json_path
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.models.responses import CommitStatus, ResponseModel
-from besser.utilities.web_modeling_editor.backend.services.exceptions import ValidationError
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 # Model IDs are provider-specific but all follow a conservative
@@ -400,25 +400,20 @@ class ImportGitHubRunRequest(BaseModel):
     # found (``buml/diagrams.json``, else an older editor's save) when unset.
     model_path: Optional[str] = Field(default=None, max_length=500)
 
-    # These raise the backend's ValidationError, not ValueError: pydantic lets
-    # it through and the app answers 400 with its message, as the route did.
     @field_validator("owner", "repo")
     @classmethod
     def _github_name(cls, value: str) -> str:
         """Stripped; both are interpolated into GitHub API URL paths."""
         value = value.strip()
         if not _GITHUB_NAME_RE.fullmatch(value) or not value.strip("."):
-            raise ValidationError("Invalid GitHub owner or repository name.")
+            raise ValueError("Invalid GitHub owner or repository name.")
         return value
 
     @field_validator("model_path")
     @classmethod
     def _model_path_in_repo(cls, value: Optional[str]) -> Optional[str]:
-        # Imported here: repo_model sits above the request models.
-        from besser.utilities.web_modeling_editor.backend.services.deployment.repo_model import is_repo_json_path
-
         if value is not None and not is_repo_json_path(value):
-            raise ValidationError("model_path must be a relative repo path to a .json file")
+            raise ValueError("model_path must be a relative repo path to a .json file")
         return value
 
     def resolved_demo_token(self) -> str:

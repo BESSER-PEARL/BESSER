@@ -14,13 +14,13 @@ import tempfile
 import httpx
 import pytest
 from httpx._transports.asgi import ASGITransport
+from pydantic import ValidationError
 
 from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import ImportGitHubRunRequest
 from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
-from besser.utilities.web_modeling_editor.backend.services.exceptions import ValidationError
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
 from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
     _clear_registry,
@@ -233,13 +233,23 @@ class TestImportGitHubRun:
             ("test-owner", "my-app?ref=x"),
         ],
     )
-    def test_invalid_owner_or_repo_returns_400(self, monkeypatch, owner, repo):
+    def test_invalid_owner_or_repo_returns_422(self, monkeypatch, owner, repo):
+        """A request-model check like the other body fields: 422, not the backend's 400."""
         fake = _FakeGitHubService()
         _install(monkeypatch, fake)
 
         r = _post({"owner": owner, "repo": repo}, headers={"X-GitHub-Session": "sess"})
-        assert (r.status_code, r.json()) == (400, {"detail": "Invalid GitHub owner or repository name."})
+        assert r.status_code == 422
+        assert "Invalid GitHub owner or repository name." in r.json()["detail"][0]["msg"]
         assert fake.tarball_ref is None
+
+    def test_the_body_is_checked_before_the_session(self, monkeypatch):
+        """As for a missing ``owner``: a malformed body answers 422 even without a session."""
+        _install(monkeypatch, _FakeGitHubService())
+
+        assert _post({"owner": "../orgs", "repo": "my-app"}).status_code == 422
+        assert _post({"repo": "my-app"}).status_code == 422
+        assert _post({"owner": "test-owner", "repo": "my-app"}).status_code == 401
 
     def test_dotted_repo_name_is_accepted(self, monkeypatch):
         fake = _FakeGitHubService()

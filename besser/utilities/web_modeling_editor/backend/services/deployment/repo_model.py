@@ -227,14 +227,6 @@ def is_besser_project(document: object) -> bool:
     return isinstance(document, dict) and isinstance(project_of(document).get("diagrams"), dict)
 
 
-def is_repo_json_path(value: str) -> bool:
-    """A relative ``.json`` path inside a repository, without ``.`` or ``..`` segments."""
-    return (
-        value.endswith(".json") and not value.startswith("/") and "\\" not in value
-        and not any(part in ("", ".", "..") for part in value.split("/"))
-    )
-
-
 def saved_project_candidates(paths: Iterable[str]) -> list[str]:
     """The repo files, other than ``MODEL_FILE`` and ``LEGACY_PROJECT_FILE``, that may hold an older save.
 

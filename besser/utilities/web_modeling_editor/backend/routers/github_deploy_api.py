@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
 from pydantic import BaseModel, Field, field_validator
 from typing_extensions import NotRequired, TypedDict
 
+from besser.utilities.path_utils import is_repo_json_path
 from besser.utilities.secret_redaction import redact_credentials, sanitize_config
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
@@ -1243,7 +1244,7 @@ class SaveProjectRequest(BaseModel):
     @field_validator("legacy_file_path")
     @classmethod
     def _legacy_file_path_in_repo(cls, value: Optional[str]) -> Optional[str]:
-        if value is not None and not repo_model.is_repo_json_path(value):
+        if value is not None and not is_repo_json_path(value):
             raise ValueError("legacy_file_path must be a relative repo path to a .json file, without '..'")
         return value
 
@@ -1491,7 +1492,7 @@ def _commit_response(commit: dict) -> "GitHubCommitResponse":
 
 
 def _checked_model_path(model_path: Optional[str]) -> Optional[str]:
-    if model_path is not None and not repo_model.is_repo_json_path(model_path):
+    if model_path is not None and not is_repo_json_path(model_path):
         raise HTTPException(status_code=400, detail="model_path must be a relative repo path to a .json file")
     return model_path
 

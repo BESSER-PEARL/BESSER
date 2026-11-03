@@ -124,8 +124,8 @@ class {{ class.name }}(
     {%- if check_constraints.get(class.name) %}
     # CHECK constraints translated from the model's OCL invariants
     __table_args__ = (
-        {%- for check in check_constraints[class.name] %}
-        _CheckConstraint({{ check.expression }}, name="{{ check.name }}"),
+        {%- for check in check_constraints[class.name] %}{% trace check.constraint, "check_constraint" %}
+        _CheckConstraint({{ check.expression }}, name="{{ check.name }}"),{% endtrace %}
         {%- endfor %}
     )
     {%- endif %}
@@ -207,9 +207,9 @@ class {{ class.name }}(
     subtract two methods instead of two dates. #}
     {%- set column_names = class.all_attributes() | map(attribute='name') | list
                          + class.association_ends() | map(attribute='name') | list %}
-    {%- for method in class.methods|sort(attribute='name') if method.code and method.name not in column_names %}
+    {%- for method in class.methods|sort(attribute='name') if method.code and method.name not in column_names %}{% trace method, "method" %}
 
-{{ normalize_code(method.code, method.name) | indent(4, first=true) }}
+{{ normalize_code(method.code, method.name) | indent(4, first=true) }}{% endtrace %}
     {%- endfor %}
 {% endtrace %}{% endfor %}
 
@@ -230,8 +230,8 @@ class {{ asso_class.name }}(Base):
         {%- if own_key %}
         {{ unique_pair }},
         {%- endif %}
-        {%- for check in check_constraints[asso_class.name] %}
-        _CheckConstraint({{ check.expression }}, name="{{ check.name }}"),
+        {%- for check in check_constraints[asso_class.name] %}{% trace check.constraint, "check_constraint" %}
+        _CheckConstraint({{ check.expression }}, name="{{ check.name }}"),{% endtrace %}
         {%- endfor %}
     )
     {%- elif own_key %}

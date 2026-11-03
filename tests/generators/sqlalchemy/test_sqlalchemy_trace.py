@@ -57,3 +57,23 @@ def test_tracing_does_not_change_the_generated_code(tmp_path):
     assert traced == untraced
     assert untraced_generator.traced_files["sql_alchemy.py"].regions == ()
     assert "\x02" not in traced
+
+
+def test_a_check_constraint_is_traced_to_its_ocl_constraint(tmp_path):
+    from besser.BUML.metamodel.structural import Constraint, IntegerType
+    pages = Property("pages", IntegerType)
+    book = Class("Book", {Property("title", StringType), pages}, id="class-1")
+    pages.id = "attr-pages"
+    positive = Constraint("PositivePages", book, "context Book inv PositivePages: self.pages > 0", "OCL")
+    positive.id = "ocl-1"
+    generator = SQLAlchemyGenerator(DomainModel("Shop", types={book}, constraints={positive}), output_dir=str(tmp_path))
+    generator.generate(ocl_check_constraints=True)
+    lines = (tmp_path / "sql_alchemy.py").read_text(encoding="utf-8").split("\n")
+    regions = {r.element_id: r for r in generator.traced_files["sql_alchemy.py"].regions}
+
+    check = regions["ocl-1"]
+    assert (check.element_type, check.rule) == ("Constraint", "sql_alchemy_template.py.j2#check_constraint")
+    assert lines[check.start_line - 1].strip().startswith("_CheckConstraint(")
+    column = regions["attr-pages"]
+    assert lines[column.start_line - 1].strip().startswith("pages: Mapped_[int]")
+    assert column.owner.element_id == "class-1"

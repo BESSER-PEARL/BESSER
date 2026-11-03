@@ -762,7 +762,7 @@ def class_buml_to_json(domain_model):
             for kind, constraints in (("precondition", getattr(method, "pre", []) or []),
                                        ("postcondition", getattr(method, "post", []) or [])):
                 for constraint in constraints:
-                    box_id = str(uuid.uuid4())
+                    box_id = take_id(constraint)
                     elements[box_id] = {
                         "id": box_id,
                         "type": "ClassOCLConstraint",

@@ -86,10 +86,10 @@ def get_check_constraints(model: DomainModel, types: Dict[str, str],
         table_classes: Classes that are mapped to their own table.
 
     Returns:
-        Class name -> list of ``{"name": <constraint name>, "expression": <python>}``,
-        ordered by constraint name, where ``expression`` is a SQLAlchemy column
-        expression in the generated module's namespace. Classes without any
-        translatable constraint are absent.
+        Class name -> list of ``{"name": <constraint name>, "expression": <python>,
+        "constraint": <the OCL constraint>}``, ordered by constraint name, where
+        ``expression`` is a SQLAlchemy column expression in the generated module's
+        namespace. Classes without any translatable constraint are absent.
     """
     table_class_names = {cls.name for cls in table_classes}
     result: Dict[str, List[Dict[str, str]]] = {}
@@ -104,7 +104,7 @@ def get_check_constraints(model: DomainModel, types: Dict[str, str],
         if expression is None:
             continue
         name = _constraint_name(context.name, constraint.name, used_names)
-        result.setdefault(context.name, []).append({"name": name, "expression": expression})
+        result.setdefault(context.name, []).append({"name": name, "expression": expression, "constraint": constraint})
     return result
 
 

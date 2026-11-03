@@ -1046,11 +1046,13 @@ def _process_constraints(
             continue
         all_warnings.extend(warnings)
         # A box holding a single constraint is that constraint, so it carries
-        # the box's timestamp. Boxes with several blocks are split into
-        # separate constraints, which keep their own creation times.
+        # the box's id and timestamp. Boxes with several blocks are split into
+        # separate constraints, which keep their own creation times and no id.
         box_timestamp = parse_iso_timestamp(element.get("timestamp"))
-        if box_timestamp is not None and len(routing) == 1:
-            routing[0][1].timestamp = box_timestamp
+        if len(routing) == 1:
+            routing[0][1].id = element_id
+            if box_timestamp is not None:
+                routing[0][1].timestamp = box_timestamp
         for issue in parser_issues:
             conversion_issues.append({
                 **provenance(element_id, element, issue),

@@ -189,3 +189,32 @@ def test_the_spec_driven_push_writes_ids_only_when_the_deployment_turns_it_on(tm
     assert 'id="' not in pushed(tmp_path / "off")
     monkeypatch.setattr(spec_driven_router, "BUML_EMIT_IDS", True)
     assert 'id="library"' in pushed(tmp_path / "on")
+
+
+def _with_ocl_box(text: str) -> dict:
+    diagram = _diagram()
+    diagram["model"]["elements"]["ocl"]["constraint"] = text
+    return diagram
+
+
+def test_a_single_constraint_box_keeps_its_id():
+    """The box is the constraint: its id is the constraint's, so a trace can refer to it."""
+    model = process_class_diagram(_diagram())
+    (invariant,) = model.constraints
+    assert invariant.id == "ocl"
+    assert class_buml_to_json(model)["elements"]["ocl"]["type"] == "ClassOCLConstraint"
+
+
+def test_a_method_contract_box_keeps_its_id():
+    model = process_class_diagram(_with_ocl_box("context Library::renew(days: int) pre: days > 0"))
+    (renew,) = model.get_class_by_name("Library").methods
+    assert [c.id for c in renew.pre] == ["ocl"]
+    assert class_buml_to_json(model)["elements"]["ocl"]["type"] == "ClassOCLConstraint"
+
+
+def test_the_constraints_of_a_box_with_several_have_no_id():
+    """Split into several constraints, none of them is the box."""
+    model = process_class_diagram(_with_ocl_box(
+        "context Library inv named: self.name <> ''\n\ncontext Library inv short: self.name.size() < 50"))
+    assert sorted(c.name for c in model.constraints) == ["named", "short"]
+    assert [c.id for c in model.constraints] == [None, None]

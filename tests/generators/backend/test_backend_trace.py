@@ -5,8 +5,8 @@ import os
 import pytest
 
 from besser.BUML.metamodel.structural import (
-    BinaryAssociation, Class, DomainModel, Enumeration, EnumerationLiteral, IntegerType, Method, Multiplicity,
-    Property, StringType,
+    BinaryAssociation, Class, Constraint, DomainModel, Enumeration, EnumerationLiteral, IntegerType, Method,
+    Multiplicity, Property, StringType,
 )
 from besser.generators.backend import BackendGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
@@ -14,17 +14,21 @@ from besser.generators.pydantic_classes import PydanticGenerator
 
 def _model(with_ids: bool) -> DomainModel:
     genre = Enumeration("Genre", {EnumerationLiteral("NOVEL")})
-    library = Class("Library", {Property("name", StringType)}, methods={Method("open", type=StringType), Method("close")})
+    library = Class("Library", {Property("name", StringType)},
+                    methods={Method("open", type=StringType, code="def open(self):\n    return self.name\n"),
+                             Method("close")})
     book = Class("Book", {Property("title", StringType), Property("pages", IntegerType), Property("genre", genre)})
     holds = BinaryAssociation("holds", {Property("library", library, multiplicity=Multiplicity(1, 1)),
                                         Property("books", book, multiplicity=Multiplicity(0, 9999))})
-    model = DomainModel("Library", types={genre, library, book}, associations={holds})
+    pages = Constraint("PositivePages", book, "context Book inv PositivePages: self.pages > 0", "OCL")
+    model = DomainModel("Library", types={genre, library, book}, associations={holds}, constraints={pages})
     if with_ids:  # as the editor gives them; without ids nothing is traceable, and the model is otherwise the same
         for type_ in (genre, library, book):
             type_.id = f"id-{type_.name}"
             for member in [*getattr(type_, "attributes", ()), *getattr(type_, "methods", ()), *getattr(type_, "literals", ())]:
                 member.id = f"id-{type_.name}-{member.name}"
         holds.id = "id-holds"
+        pages.id = "id-PositivePages"
     return model
 
 
@@ -79,3 +83,24 @@ def test_each_file_names_what_it_was_rendered_from(traced):
     assert close.owner.element_name == "Library"
     assert [s.element.element_name for s in generator.traced_files["routers/book.py"].sources] == ["Book"]
     assert generator.traced_files["sql_alchemy.py"].regions  # the SQLAlchemy part keeps its own trace
+
+
+def test_members_and_constraints_have_their_own_lines(traced):
+    """Attributes, methods and OCL constraints are traced inside their class, nested under it."""
+    generator, files = traced
+    regions = {path: {(r.element_name, r.rule.split("#")[1]): r for r in trace.regions}
+               for path, trace in generator.traced_files.items()}
+    lines = lambda path, region: files[path].split("\n")[region.start_line - 1:region.end_line]
+
+    title = regions["sql_alchemy.py"][("title", "attribute")]
+    assert lines("sql_alchemy.py", title) == ["    title: Mapped_[str] = mapped_column(String_(100))"]
+    assert (title.element_type, title.owner.element_name) == ("Property", "Book")
+    assert lines("pydantic_classes.py", regions["pydantic_classes.py"][("title", "attribute")]) == ["    title: str"]
+    method = regions["sql_alchemy.py"][("open", "method")]
+    assert lines("sql_alchemy.py", method)[0] == "    def open(self):" and method.owner.element_name == "Library"
+    validator = regions["pydantic_classes.py"][("PositivePages", "ocl_validator")]
+    assert validator.element_type == "Constraint" and validator.owner is None
+    assert lines("pydantic_classes.py", validator)[0] == "    @field_validator('pages')"
+    # Each member lies within its class's block.
+    book = regions["sql_alchemy.py"][("Book", "class")]
+    assert book.start_line <= title.start_line <= title.end_line <= book.end_line

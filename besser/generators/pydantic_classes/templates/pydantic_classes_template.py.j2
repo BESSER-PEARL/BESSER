@@ -90,7 +90,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
         {%- set _is_server_owned = backend and is_server_owned_attribute(attribute) %}
         {%- if attribute.name not in inherited_attr_names and not _is_server_owned %}
         {%- set is_opt = attribute.is_optional and not attribute.is_id %}
-        {%- set attr_type_name = 'Any' if attribute.type.name == 'any' else attribute.type.name %}
+        {%- set attr_type_name = 'Any' if attribute.type.name == 'any' else attribute.type.name %}{% trace attribute, "attribute" %}
         {%- if is_opt and attribute.default_value is not none %}
     {{ attribute.name }}: Optional[{{ attr_type_name }}] = {% if attribute.type.__class__.__name__ == 'Enumeration' %}{{ enum_default(attribute.default_value, attr_type_name, members=attribute.type.literals, owner=class.name ~ '.' ~ attribute.name) }}{% else %}{{ attribute.default_value | python_default(attribute.type.name, owner=class.name ~ '.' ~ attribute.name) }}{% endif %}
         {%- elif is_opt %}
@@ -99,7 +99,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {{ attribute.name }}: {{ attr_type_name }} = {% if attribute.type.__class__.__name__ == 'Enumeration' %}{{ enum_default(attribute.default_value, attr_type_name, members=attribute.type.literals, owner=class.name ~ '.' ~ attribute.name) }}{% else %}{{ attribute.default_value | python_default(attribute.type.name, owner=class.name ~ '.' ~ attribute.name) }}{% endif %}
         {%- else %}
     {{ attribute.name }}: {{ attr_type_name }}
-        {%- endif %}{% if attribute.is_id %}  # the id{% endif %}
+        {%- endif %}{% if attribute.is_id %}  # the id{% endif %}{% endtrace %}
     {% set ns.has_field = true %}
 
         {% endif %}
@@ -346,7 +346,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {% endif %}
     {# OCL Constraint Validators #}
     {%- if constraints_map and class.name in constraints_map %}
-    {%- for constraint in constraints_map[class.name] %}
+    {%- for constraint in constraints_map[class.name] %}{% trace constraint.get('constraint'), "ocl_validator" %}
     {%- if constraint.skipped or constraint.rejected %}
 
     {% for comment_line in constraint.comment_lines %}
@@ -374,7 +374,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
             raise ValueError({{ constraint.message_repr }})
         {% endif %}
         return v
-    {%- endif %}
+    {%- endif %}{% endtrace %}
     {%- endfor %}
     {%- endif %}
 

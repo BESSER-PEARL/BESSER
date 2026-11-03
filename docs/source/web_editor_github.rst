@@ -97,7 +97,10 @@ that id in ``sessionStorage`` and sends it in the ``X-GitHub-Session`` header,
 never in a URL. For one release, ``/github/auth/status``, the star endpoints and
 logout still accept the old ``session_id`` query parameter when the header (or
 logout's body) is absent, and log a deprecation warning. Sessions live in the
-backend's memory, so a backend restart ends them.
+app's sign-in stores (``GitHubSessions``, built in the backend's lifespan): an
+encrypted file (``USER_TOKENS_PATH``, else ``SESSION_STORE_PATH``, else the
+temp directory) that outlives a restart, or memory, which does not, when the
+``cryptography`` package is missing.
 
 The editor has one sign-in store for the tab. Its states are ``checking`` (a
 stored session is being verified; actions wait instead of starting a new

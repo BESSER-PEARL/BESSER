@@ -203,7 +203,7 @@ class _ImportGitHub:
 
 def test_a_repo_imported_by_the_backend_is_found_by_the_worker(monkeypatch, shared_workspace):
     monkeypatch.setattr(github_sync, "create_github_service", lambda token: _ImportGitHub())
-    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda _sessions, sid: "token")
 
     r = _call("POST", "/besser_api/spec-driven/import-github-run",
               json={"owner": "me", "repo": "app"}, headers=SESSION)
@@ -273,7 +273,7 @@ def _seed_run(tmp_path) -> str:
 
 def _push(monkeypatch, fake, run_id, **deploy):
     monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda _sessions, sid: "token")
     body = {"run_id": run_id, "projectExport": _envelope(),
             "deploy_config": {"repo_name": "app", "use_existing": True, **deploy}}
     return _call("POST", "/besser_api/spec-driven/push-to-github", json=body, headers=SESSION)
@@ -408,7 +408,7 @@ class _SidebarGitHub:
 
 def _sidebar(monkeypatch, fake):
     monkeypatch.setattr(github_deploy_api, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(github_deploy_api, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(github_deploy_api, "get_user_token", lambda _sessions, sid: "token")
 
 
 def test_the_sidebar_saves_the_one_model_file_and_drops_the_legacy_one(monkeypatch):

@@ -43,7 +43,7 @@ def github(tmp_path, monkeypatch):
     fake = FakeGitHub(root=str(tmp_path / "github"))
     use_fake_github(monkeypatch, fake)
     for module in (spec_driven_router, github_deploy_api):
-        monkeypatch.setattr(module, "get_user_token", lambda sid: fake.token if sid == "sess" else None)
+        monkeypatch.setattr(module, "get_user_token", lambda _sessions, sid: fake.token if sid == "sess" else None)
     yield fake
     asyncio.run(_clear_registry())
 
@@ -419,7 +419,7 @@ def test_sign_in_then_out_revokes_the_token(github, monkeypatch, route_settings)
     for module in (spec_driven_router, github_deploy_api):
         monkeypatch.setattr(module, "get_user_token", github_oauth.get_user_token)
     state = "s" * 32
-    github_oauth._oauth_sessions.set(state, {"client_ip": "test"})
+    app.state.github_sessions.oauth_states.set(state, {"client_ip": "test"})
 
     callback = _call("GET", "/besser_api/github/auth/callback", params={"code": "c", "state": state})
     assert callback.status_code == 302, callback.text

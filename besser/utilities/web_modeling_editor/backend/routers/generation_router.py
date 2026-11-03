@@ -59,6 +59,10 @@ from besser.utilities.web_modeling_editor.backend.services.utils.gui_personaliza
 
 # Centralized error handling and shared auth gate
 from besser.utilities.web_modeling_editor.backend.routers.auth import require_github_session
+from besser.utilities.web_modeling_editor.backend.dependencies import GitHubSessionsDep
+from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import (
+    GitHubSessions,
+)
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
@@ -73,13 +77,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/besser_api", tags=["generation"])
 
 
-def _require_github_session(github_session: Optional[str]) -> None:
+def _require_github_session(github_sessions: GitHubSessions, github_session: Optional[str]) -> None:
     """Verify a GitHub OAuth session is present and active (HTTP 401 otherwise).
 
     Delegates to the shared ``routers.auth.require_github_session`` and passes
     this module's ``get_user_token`` so tests can keep patching it here.
     """
-    require_github_session(github_session, token_lookup=get_user_token)
+    require_github_session(github_sessions, github_session, token_lookup=get_user_token)
 
 
 def _utc_now_iso() -> str:
@@ -90,6 +94,7 @@ def _utc_now_iso() -> str:
 @router.post("/recommend-agent-config-llm")
 @handle_endpoint_errors("recommend_agent_config_llm")
 async def recommend_agent_config_llm(
+    github_sessions: GitHubSessionsDep,
     payload: Dict[str, Any] = Body(...),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
@@ -97,7 +102,7 @@ async def recommend_agent_config_llm(
 
     Requires authenticated GitHub session.
     """
-    _require_github_session(github_session)
+    _require_github_session(github_sessions, github_session)
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")
@@ -214,13 +219,14 @@ async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
 @router.get("/agent-config-manual-mapping")
 @handle_endpoint_errors("get_agent_config_manual_mapping")
 async def get_agent_config_manual_mapping(
+    github_sessions: GitHubSessionsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Return the complete rule mapping used for deterministic recommendations.
 
     Requires authenticated GitHub session.
     """
-    _require_github_session(github_session)
+    _require_github_session(github_sessions, github_session)
     return {
         "mapping": get_manual_agent_config_mapping(),
         "source": "manual_mapping",
@@ -231,6 +237,7 @@ async def get_agent_config_manual_mapping(
 @router.post("/recommend-agent-config-mapping")
 @handle_endpoint_errors("recommend_agent_config_mapping")
 async def recommend_agent_config_mapping(
+    github_sessions: GitHubSessionsDep,
     payload: Dict[str, Any] = Body(...),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
@@ -238,7 +245,7 @@ async def recommend_agent_config_mapping(
 
     Requires authenticated GitHub session.
     """
-    _require_github_session(github_session)
+    _require_github_session(github_sessions, github_session)
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")

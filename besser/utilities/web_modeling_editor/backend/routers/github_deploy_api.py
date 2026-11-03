@@ -31,7 +31,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
-from besser.utilities.web_modeling_editor.backend.dependencies import SettingsDep
+from besser.utilities.web_modeling_editor.backend.dependencies import GitHubSessionsDep, SettingsDep
+from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import GitHubSessions
 from besser.utilities.buml_code_builder import (
     domain_model_to_code,
     gui_model_to_code,
@@ -112,6 +113,7 @@ class DeployToGitHubResponse(BaseModel):
 
 @router.post("/deploy-webapp", response_model=DeployToGitHubResponse)
 async def deploy_webapp_to_github(
+    github_sessions: GitHubSessionsDep,
     request: Request,
     backend_settings: SettingsDep,
     body: dict = Body(...),
@@ -137,7 +139,7 @@ async def deploy_webapp_to_github(
                 detail="GitHub authentication required. Please sign in with GitHub first."
             )
 
-        access_token = get_user_token(github_session)
+        access_token = get_user_token(github_sessions, github_session)
         if not access_token:
             raise HTTPException(
                 status_code=401,
@@ -1281,13 +1283,14 @@ class CreateRepoForProjectResponse(BaseModel):
 
 @router.get("/repos", response_model=GitHubReposListResponse)
 async def get_user_repositories(
+    github_sessions: GitHubSessionsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
     """
     The repositories the signed-in user can open: their own, those they
     collaborate on and their organizations', most recently updated first.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         listing = await github.get_user_repositories()
         return GitHubReposListResponse(
@@ -1308,6 +1311,7 @@ class GitHubBranchesListResponse(BaseModel):
 
 @router.get("/branches", response_model=GitHubBranchesListResponse)
 async def get_repository_branches(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
@@ -1315,7 +1319,7 @@ async def get_repository_branches(
     """
     Get list of branches for a repository.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         branches = await github.get_branches(owner, repo)
         return GitHubBranchesListResponse(branches=branches)
@@ -1334,6 +1338,7 @@ class FileExistsResponse(BaseModel):
 
 @router.get("/file/exists", response_model=FileExistsResponse)
 async def check_file_exists(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     branch: str = Query("main", description="Branch name"),
@@ -1346,7 +1351,7 @@ async def check_file_exists(
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
 
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
 
@@ -1377,6 +1382,7 @@ class GitHubContentsResponse(BaseModel):
 
 @router.get("/contents", response_model=GitHubContentsResponse)
 async def get_repository_contents(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     path: str = Query("", description="Path to directory"),
@@ -1389,7 +1395,7 @@ async def get_repository_contents(
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
 
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
 
@@ -1416,6 +1422,7 @@ async def get_repository_contents(
 
 @router.get("/commits", response_model=GitHubCommitsListResponse)
 async def get_repository_commits(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     path: Optional[str] = Query(None, description="File path to filter commits"),
@@ -1427,7 +1434,7 @@ async def get_repository_commits(
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
 
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
 
@@ -1443,11 +1450,11 @@ async def get_repository_commits(
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching commits.")
 
 
-def _github_for(github_session: Optional[str]):
+def _github_for(github_sessions: GitHubSessions, github_session: Optional[str]):
     """The GitHubService for a request's session header; 401 when there is none."""
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
     return create_github_service(access_token)
@@ -1552,6 +1559,7 @@ def _github_http_error(exc: httpx.HTTPStatusError) -> HTTPException:
 
 @router.post("/project/save", response_model=SaveProjectResponse)
 async def save_project_to_github(
+    github_sessions: GitHubSessionsDep,
     request: SaveProjectRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
@@ -1565,7 +1573,7 @@ async def save_project_to_github(
     merged with the newer commits. An empty repository gets its first commit
     through the contents API first.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         files = repo_model.model_files(request.project_export or request.project_data)
         message = repo_model.with_origin(request.commit_message, repo_model.ORIGIN_EDITOR)
@@ -1610,6 +1618,7 @@ async def save_project_to_github(
 
 @router.get("/project/load", response_model=LoadProjectResponse)
 async def load_project_from_github(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     branch: str = Query("main", description="Branch name"),
@@ -1623,7 +1632,7 @@ async def load_project_from_github(
     (``buml/diagrams.json``) or, for an older repo, a bare project. ``sha`` is
     the branch head it was read at.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         head = await github.get_branch_head(owner, repo, branch)
         project = await _read_model(github, owner, repo, head, _checked_model_path(model_path)) if head else None
@@ -1641,6 +1650,7 @@ async def load_project_from_github(
 
 @router.get("/project/load-commit", response_model=LoadProjectFromCommitResponse)
 async def load_project_from_commit(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(..., description="Repository owner"),
     repo: str = Query(..., description="Repository name"),
     commit_sha: str = Query(..., description="Commit SHA to load from"),
@@ -1652,7 +1662,7 @@ async def load_project_from_commit(
 
     This allows restoring previous versions of the project.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         project = await _read_model(github, owner, repo, commit_sha, _checked_model_path(model_path))
         if project is None:
@@ -1695,6 +1705,7 @@ A [BESSER](https://github.com/BESSER-PEARL/BESSER) project.
 
 @router.post("/project/create-repo", response_model=CreateRepoForProjectResponse)
 async def create_repository_for_project(
+    github_sessions: GitHubSessionsDep,
     request: CreateRepoForProjectRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
@@ -1703,7 +1714,7 @@ async def create_repository_for_project(
 
     The first commit holds the model files and a README.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         user_info = await github.get_authenticated_user()
         username = user_info.get("login")
@@ -1767,6 +1778,7 @@ class RepoSummaryResponse(BaseModel):
 
 @router.get("/repo-summary", response_model=RepoSummaryResponse)
 async def get_repo_summary(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(...),
     repo: str = Query(...),
     branch: Optional[str] = Query(None, description="Branch; the repo default when omitted"),
@@ -1774,7 +1786,7 @@ async def get_repo_summary(
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
     """The model a repo holds (name, diagrams, classes), every model file in it, and its last commit."""
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     model_path = _checked_model_path(model_path)
     try:
         if not branch:
@@ -1844,6 +1856,7 @@ async def _pending_status(github, owner: str, repo: str, branch: str) -> Pending
 
 @router.get("/sync-status", response_model=SyncStatusResponse)
 async def get_sync_status(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(...),
     repo: str = Query(...),
     branch: str = Query("main"),
@@ -1857,7 +1870,7 @@ async def get_sync_status(
     (a conflict, or a pull request): the answer says whether its pull
     request was opened, merged or closed.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         head = await github.get_branch_head(owner, repo, branch)
         if not head:
@@ -1892,6 +1905,7 @@ _MODEL_HISTORY_LIMIT = 15
 
 @router.get("/model-history", response_model=ModelHistoryResponse)
 async def get_model_history(
+    github_sessions: GitHubSessionsDep,
     owner: str = Query(...),
     repo: str = Query(...),
     branch: str = Query("main"),
@@ -1906,7 +1920,7 @@ async def get_model_history(
     Each commit is compared with its first parent, not with the commit listed
     after it: after a merge, the next commit by date is on the other branch.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     model_path = _checked_model_path(model_path)
     try:
         head = await github.get_branch_head(owner, repo, branch)
@@ -1977,6 +1991,7 @@ class CreatePullRequestResponse(BaseModel):
 
 @router.post("/pull-request", response_model=CreatePullRequestResponse)
 async def create_pull_request(
+    github_sessions: GitHubSessionsDep,
     request: CreatePullRequestRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
@@ -1984,7 +1999,7 @@ async def create_pull_request(
 
     Asking again for a branch that already has an open pull request returns it.
     """
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         body = request.body or await _pull_request_body(
             github, request.owner, request.repo, request.base, request.head
@@ -2043,6 +2058,7 @@ class GoLiveResponse(BaseModel):
 
 @router.post("/app/go-live", response_model=GoLiveResponse)
 async def go_live(
+    github_sessions: GitHubSessionsDep,
     request: GoLiveRequest,
     settings: SettingsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
@@ -2057,7 +2073,7 @@ async def go_live(
     """
     if not settings.deploy_from_repo:
         raise HTTPException(status_code=404, detail="go_live_disabled")
-    github = _github_for(github_session)
+    github = _github_for(github_sessions, github_session)
     try:
         head = await github.get_branch_head(request.owner, request.repo, request.branch)
         if not head:
@@ -2147,6 +2163,7 @@ class CreateGistResponse(BaseModel):
 
 @router.post("/gist/create", response_model=CreateGistResponse)
 async def create_gist_from_project(
+    github_sessions: GitHubSessionsDep,
     request: CreateGistRequest,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
 ):
@@ -2159,7 +2176,7 @@ async def create_gist_from_project(
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
 
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
 

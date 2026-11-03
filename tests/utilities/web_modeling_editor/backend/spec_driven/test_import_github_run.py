@@ -118,7 +118,7 @@ class _FakeGitHubService:
 def _install(monkeypatch, fake):
     """Patch the GitHub factory + token lookup in the router namespace."""
     monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(router_module, "get_user_token", lambda sid: "fake-token")
+    monkeypatch.setattr(router_module, "get_user_token", lambda _sessions, sid: "fake-token")
 
 
 def _post(body: dict, headers: dict | None = None) -> httpx.Response:

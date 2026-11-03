@@ -372,7 +372,7 @@ def _import(monkeypatch, tmp_path, files=None, **body):
     monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
     fake = _ImportGitHub(files or {"prisma/schema.prisma": PRISMA, "src/types/order.ts": TS_TYPES})
     monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda _sessions, sid: "token")
 
     async def post():
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:

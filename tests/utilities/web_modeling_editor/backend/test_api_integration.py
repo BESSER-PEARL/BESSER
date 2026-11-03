@@ -1568,7 +1568,7 @@ class TestRecommendationEndpoints:
     def _bypass_github_auth(self, monkeypatch):
         """Neutralize the GitHub OAuth gate so the test can drive real logic."""
         from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
-        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+        monkeypatch.setattr(gr, "get_user_token", lambda _sessions, _session: "fake-token")
 
     def test_recommend_agent_config_llm_success_normalizes_output(self, client, monkeypatch):
         """LLM recommendation endpoint returns normalized config payload."""
@@ -1794,7 +1794,7 @@ class TestRecommendationEndpoints:
         )
         # The mapping endpoint does not require GitHub auth, but neutralize the
         # gate proactively in case item #1 adds it: our header is fake.
-        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+        monkeypatch.setattr(gr, "get_user_token", lambda _sessions, _session: "fake-token")
 
         payload = {
             "userProfileModel": self._build_user_profile_diagram_payload(age=72),
@@ -1838,7 +1838,7 @@ class TestRecommendationEndpoints:
         from besser.utilities.web_modeling_editor.backend.routers import (
             generation_router as gr,
         )
-        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+        monkeypatch.setattr(gr, "get_user_token", lambda _sessions, _session: "fake-token")
 
         canned_llm_response = {
             "presentation": {
@@ -1985,8 +1985,8 @@ class TestStandaloneChatbotDeploy:
         )
 
         # Auth gate: pass through to the chatbot path with a fake token.
-        monkeypatch.setattr(deploy_mod, "get_user_token", lambda _session: "fake-token")
-        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+        monkeypatch.setattr(deploy_mod, "get_user_token", lambda _sessions, _session: "fake-token")
+        monkeypatch.setattr(gr, "get_user_token", lambda _sessions, _session: "fake-token")
 
         captured: Dict[str, Any] = {
             "create_calls": 0,

@@ -177,12 +177,11 @@ RUNAWAY_PATTERN_TTL = _SHACL_PREFIX + """
 
 
 @pytest.fixture
-def one_slot(monkeypatch):
-    """A consistency-check cap of one, rebuilt for the test and reset after it."""
+def one_slot(monkeypatch, app_state):
+    """A consistency-check cap of one, as the app's slots for this test."""
     monkeypatch.setattr(kg_validation, "KG_CONSISTENCY_MAX_CONCURRENT", 1)
-    kg_validation._reset_slots_for_tests()
-    yield kg_validation._slots()
-    kg_validation._reset_slots_for_tests()
+    app_state.kg_consistency_slots = kg_validation.consistency_check_slots()
+    return app_state.kg_consistency_slots
 
 
 def test_unloadable_shapes_are_a_400_not_a_500(client, tmp_path):

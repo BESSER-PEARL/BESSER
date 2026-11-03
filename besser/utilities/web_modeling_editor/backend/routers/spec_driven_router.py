@@ -48,7 +48,11 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
 from besser.utilities.web_modeling_editor.backend.settings import is_demo_token
-from besser.utilities.web_modeling_editor.backend.dependencies import SettingsDep, SpecDrivenRuntimeDep
+from besser.utilities.web_modeling_editor.backend.dependencies import (
+    GitHubSessionsDep,
+    SettingsDep,
+    SpecDrivenRuntimeDep,
+)
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     DurableRunManager,
     SmartGenerationRunner,
@@ -852,6 +856,7 @@ async def download_smart(
 
 @router.post("/spec-driven/push-to-github", response_model=PushSmartToGitHubResponse)
 async def push_spec_driven_to_github(
+    github_sessions: GitHubSessionsDep,
     req: PushSmartToGitHubRequest,
     runtime: SpecDrivenRuntimeDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
@@ -883,7 +888,7 @@ async def push_spec_driven_to_github(
             status_code=401,
             detail="GitHub authentication required. Please sign in with GitHub first.",
         )
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(
             status_code=401,
@@ -921,6 +926,7 @@ async def push_spec_driven_to_github(
 
 @router.post("/spec-driven/import-github-run", response_model=ImportGitHubRunResponse)
 async def import_github_run(
+    github_sessions: GitHubSessionsDep,
     req: ImportGitHubRunRequest,
     runtime: SpecDrivenRuntimeDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
@@ -956,7 +962,7 @@ async def import_github_run(
             status_code=401,
             detail="GitHub authentication required. Please sign in with GitHub first.",
         )
-    access_token = get_user_token(github_session)
+    access_token = get_user_token(github_sessions, github_session)
     if not access_token:
         raise HTTPException(
             status_code=401,

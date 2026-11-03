@@ -71,7 +71,11 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     agent_simulator_router,
 )
 
-# Spec-driven runs, slots and thread pool: one per app, built in the lifespan
+# Per-app state, built in the lifespan (see dependencies.py)
+from besser.utilities.web_modeling_editor.backend.services.agent_simulation import AgentSimulatorState
+from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import GitHubSessions
+from besser.utilities.web_modeling_editor.backend.services.kg.validation import consistency_check_slots
+from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import sdmx_import_slots
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     SpecDrivenRuntime,
 )
@@ -213,7 +217,11 @@ async def lifespan(app: FastAPI):
     cleanup_old_temp_files()
     cleanup_task = schedule_cleanup()
 
-    # Routes reach it through dependencies.get_spec_driven_runtime.
+    # Routes reach this state through the dependencies in dependencies.py.
+    app.state.github_sessions = GitHubSessions.create(get_settings())
+    app.state.agent_simulator = AgentSimulatorState.create(get_settings())
+    app.state.kg_consistency_slots = consistency_check_slots()
+    app.state.sdmx_import_slots = sdmx_import_slots()
     runtime = SpecDrivenRuntime.create(get_settings())
     app.state.spec_driven = runtime
     logger.info("Spec-driven runtime started (%d run slots)", get_settings().llm_max_concurrent_runs)

@@ -143,7 +143,7 @@ def test_importing_a_non_besser_repo_proposes_a_model_the_editor_can_load(monkey
     monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
     fake = _ImportGitHub({"app/main.py": "from fastapi import FastAPI\napp = FastAPI()\n", "app/models.py": SQLALCHEMY_MODELS})
     monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda _sessions, sid: "token")
 
     async def post():
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:

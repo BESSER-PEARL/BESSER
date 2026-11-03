@@ -21,6 +21,12 @@ from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.constants.constants import AGENT_SIMULATOR_TOKEN_HEADER
 from besser.utilities.web_modeling_editor.backend.routers import agent_simulator_router as asr
 from besser.utilities.web_modeling_editor.backend.routers import auth as auth_module
+from besser.utilities.web_modeling_editor.backend.services import agent_simulation
+from besser.utilities.web_modeling_editor.backend.services.agent_simulation import (
+    AgentSimulatorState,
+    SimulationSessionRegistry,
+    SlidingWindowRateLimiter,
+)
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 BASE = "/besser_api/simulation"
@@ -108,11 +114,12 @@ def simulator(monkeypatch, route_settings):
     fake = _FakeSimulator()
     monkeypatch.setenv(SIM_TOKEN_ENV, SIM_TOKEN)
     monkeypatch.setattr(asr, "_http_transport", httpx.MockTransport(fake.handler))
-    monkeypatch.setattr(asr, "_rate_limiter", asr._SlidingWindowRateLimiter(60, 100, 1000))
-    monkeypatch.setattr(asr, "_session_registry", asr._SimulationSessionRegistry(1, 900))
+    app.state.agent_simulator = AgentSimulatorState(
+        rate_limiter=SlidingWindowRateLimiter(60, 100, 1000), sessions=SimulationSessionRegistry(1, 900),
+    )
     route_settings.agent_simulator_require_auth = True
     route_settings.agent_simulator_restrict_custom_code = True
-    monkeypatch.setattr(auth_module, "get_user_token", lambda s: "gh-token" if s in {ALICE, BOB} else None)
+    monkeypatch.setattr(auth_module, "get_user_token", lambda _sessions, s: "gh-token" if s in {ALICE, BOB} else None)
     return fake
 
 
@@ -316,7 +323,7 @@ def test_session_cap_frees_up_after_stop(simulator, fast_generation):
 
 
 def test_rate_limit_returns_429(simulator, fast_generation, monkeypatch):
-    monkeypatch.setattr(asr, "_rate_limiter", asr._SlidingWindowRateLimiter(60, 2, 1000))
+    app.state.agent_simulator.rate_limiter = SlidingWindowRateLimiter(60, 2, 1000)
     for _ in range(2):
         assert _request("POST", f"{BASE}/validate", ALICE, json=_session_payload()).status_code == 200
     resp = _request("POST", f"{BASE}/validate", ALICE, json=_session_payload())
@@ -327,7 +334,7 @@ def test_rate_limit_returns_429(simulator, fast_generation, monkeypatch):
 
 
 def test_rate_limiter_bounds_tracked_keys():
-    limiter = asr._SlidingWindowRateLimiter(window_seconds=60, max_requests=5, max_keys=3)
+    limiter = SlidingWindowRateLimiter(window_seconds=60, max_requests=5, max_keys=3)
     for i in range(10):
         limiter.check(f"actor-{i}")
     assert len(limiter) == 3
@@ -335,8 +342,8 @@ def test_rate_limiter_bounds_tracked_keys():
 
 def test_rate_limiter_prunes_idle_keys(monkeypatch):
     clock = [1000.0]
-    monkeypatch.setattr(asr.time, "monotonic", lambda: clock[0])
-    limiter = asr._SlidingWindowRateLimiter(window_seconds=10, max_requests=1, max_keys=100)
+    monkeypatch.setattr(agent_simulation.time, "monotonic", lambda: clock[0])
+    limiter = SlidingWindowRateLimiter(window_seconds=10, max_requests=1, max_keys=100)
     for i in range(5):
         limiter.check(f"actor-{i}")
     assert len(limiter) == 5
@@ -349,8 +356,8 @@ def test_rate_limiter_prunes_idle_keys(monkeypatch):
 
 def test_session_registry_forgets_expired_sessions(monkeypatch):
     clock = [1000.0]
-    monkeypatch.setattr(asr.time, "monotonic", lambda: clock[0])
-    registry = asr._SimulationSessionRegistry(max_sessions_per_actor=1, ttl_seconds=900)
+    monkeypatch.setattr(agent_simulation.time, "monotonic", lambda: clock[0])
+    registry = SimulationSessionRegistry(max_sessions_per_actor=1, ttl_seconds=900)
     session_id = registry.reserve("actor")
     assert registry.is_owner(session_id, "actor")
     clock[0] += 901
@@ -538,7 +545,7 @@ def test_ws_relays_after_first_frame_auth(simulator, fast_generation, fake_ws_co
         assert await ws.receive_json() == {"echo": "hello agent"}
 
         await ws.disconnect()
-        await asyncio.gather(*list(asr._background_tasks))
+        await asyncio.gather(*list(app.state.agent_simulator.background_tasks))
 
     _run(_scenario())
 
@@ -550,8 +557,8 @@ def test_ws_relays_after_first_frame_auth(simulator, fast_generation, fake_ws_co
     # The session is cleaned up on the simulator and forgotten locally.
     last = simulator.requests[-1]
     assert last.method == "DELETE" and last.headers[AGENT_SIMULATOR_TOKEN_HEADER] == SIM_TOKEN
-    assert len(asr._background_tasks) == 0
-    assert len(asr._session_registry) == 0
+    assert len(app.state.agent_simulator.background_tasks) == 0
+    assert len(app.state.agent_simulator.sessions) == 0
 
 
 @pytest.mark.parametrize(
@@ -619,7 +626,7 @@ def test_ws_other_actor_closes_4404(simulator, fast_generation, fake_ws_connect)
     _run(_scenario())
     assert "url" not in fake_ws_connect
     # Alice's session survives Bob's attempt.
-    assert len(asr._session_registry) == 1
+    assert len(app.state.agent_simulator.sessions) == 1
 
 
 def test_ws_invalid_session_id_closes_4400(simulator, fake_ws_connect):

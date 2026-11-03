@@ -104,7 +104,7 @@ class _CapturingGitHubService:
 
 def _install(monkeypatch, fake):
     monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(router_module, "get_user_token", lambda sid: "fake-token")
+    monkeypatch.setattr(router_module, "get_user_token", lambda _sessions, sid: "fake-token")
 
 
 def _export(name: str) -> dict:

@@ -24,7 +24,7 @@ into the HTTP response. Endpoints are organized by concern:
 - **``routers/agent_simulator_router.py``** -- Live agent simulation (see `Agent Simulation`_)
 - **``routers/error_handler.py``** -- Centralized ``@handle_endpoint_errors`` decorator
 - **``routers/auth.py``** -- Shared GitHub-session gate (``require_github_session``, HTTP 401)
-- **``routers/github_oauth.py``** -- GitHub sign-in, sign-out and the session store (``get_user_token``)
+- **``routers/github_oauth.py``** -- GitHub sign-in, sign-out and the session lookup (``get_user_token``)
 - **``routers/github_deploy_api.py``** -- The ``/github/*`` endpoints: save, load, create, repo summary, sync status, model history, pull requests, deploy, go live
 
 Additional infrastructure:
@@ -72,19 +72,33 @@ slots or threads. The Spec-Driven worker container serves the same application, 
 builds its own runtime the same way; the two containers meet through the
 shared run workspace, which ``SmartRunRegistry.get`` rescans on a miss.
 
-Test clients built on ``httpx.ASGITransport`` do not run the lifespan: the
-backend tests' ``spec_driven_runtime`` fixture installs a fresh runtime per test
-instead.
+The lifespan also builds the rest of the per-app state, each handed to routes
+by a dependency in ``dependencies.py``:
 
-Some process-wide state stays in modules on purpose: caches of facts about the
-host (the sandbox self-test, the tokenizer, the model catalog, the settings),
-per-path file locks, and the agent's shell-session reaper, which belong to the
-process rather than to one app, and which the agent also uses outside the
-backend. Two apps in one process also share the GitHub sign-in stores
-(``github_oauth._oauth_sessions`` and ``_user_tokens``), the agent simulator's
-rate limiter and session registry, and the concurrency slots of the knowledge
-graph consistency check (``kg/validation.py``) and of the SDMX import
-(``sdmx_reverse.py``).
+- ``app.state.github_sessions`` (``GitHubSessionsDep``) -- the GitHub sign-in
+  stores, ``GitHubSessions`` in ``services/deployment/session_store.py``: the
+  pending OAuth states (``OAUTH_SESSIONS_PATH``) and the signed-in sessions
+  (``USER_TOKENS_PATH``). ``github_oauth.get_user_token`` takes them;
+- ``app.state.agent_simulator`` (``AgentSimulatorDep``) -- the agent simulator's
+  rate limiter, session registry and background tasks
+  (``services/agent_simulation.py``);
+- ``app.state.kg_consistency_slots`` (``KgConsistencySlotsDep``) -- the
+  ``KG_CONSISTENCY_MAX_CONCURRENT`` cap on knowledge graph consistency checks;
+- ``app.state.sdmx_import_slots`` (``SdmxImportSlotsDep``) -- the
+  ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` cap on SDMX imports.
+
+Two applications in one process share none of this state. The sign-in stores
+are encrypted files, so two applications configured with the same paths still
+read the same sessions on disk, as a restarted backend does.
+
+Test clients built on ``httpx.ASGITransport`` do not run the lifespan: the
+backend tests' ``spec_driven_runtime`` and ``app_state`` fixtures install fresh
+state per test instead.
+
+Only state that belongs to the process rather than to one app stays in
+modules: caches of facts about the host (the sandbox self-test, the tokenizer,
+the model catalog, the settings), per-path file locks, and the agent's
+shell-session reaper, which the agent also uses outside the backend.
 
 Multi-Diagram Projects
 ^^^^^^^^^^^^^^^^^^^^^^

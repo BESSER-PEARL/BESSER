@@ -18,7 +18,7 @@ def test_logout_with_the_editors_json_body_ends_the_session_and_revokes_the_toke
     """The editor posts ``{"session_id": ...}``; the endpoint read a query parameter and answered 422."""
     store = SessionStore(store_path=str(tmp_path / "tokens.enc"), ttl=600)
     store.set("sess-1", {"access_token": "gho_user_token", "username": "octocat"})
-    monkeypatch.setattr(github_oauth, "_user_tokens", store)
+    monkeypatch.setattr(app.state.github_sessions, "user_tokens", store)
     route_settings.github_client_id = "client-id"
     route_settings.github_client_secret = SecretStr("client-secret")
 
@@ -44,7 +44,7 @@ def test_logout_with_the_editors_json_body_ends_the_session_and_revokes_the_toke
 def _store(monkeypatch, tmp_path):
     store = SessionStore(store_path=str(tmp_path / "tokens.enc"), ttl=600)
     store.set("sess-1", {"access_token": "gho_user_token", "username": "octocat"})
-    monkeypatch.setattr(github_oauth, "_user_tokens", store)
+    monkeypatch.setattr(app.state.github_sessions, "user_tokens", store)
     return store
 
 
@@ -113,7 +113,7 @@ def test_the_oauth_callback_hands_the_session_over_in_the_url_fragment(monkeypat
     _store(monkeypatch, tmp_path)
     states = SessionStore(store_path=str(tmp_path / "states.enc"), ttl=600)
     states.set("state-1", {"client_ip": "test"})
-    monkeypatch.setattr(github_oauth, "_oauth_sessions", states)
+    monkeypatch.setattr(app.state.github_sessions, "oauth_states", states)
 
     def github(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/login/oauth/access_token":

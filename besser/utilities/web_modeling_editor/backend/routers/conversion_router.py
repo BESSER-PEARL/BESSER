@@ -120,7 +120,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     ALLOWED_IMAGE_EXTENSIONS,
     ALLOWED_BUML_EXTENSIONS,
 )
-from besser.utilities.web_modeling_editor.backend.dependencies import SettingsDep
+from besser.utilities.web_modeling_editor.backend.dependencies import SdmxImportSlotsDep, SettingsDep
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 # Upload validation and async file I/O, shared with kg_router
@@ -782,7 +782,7 @@ async def get_sdmx_providers():
 
 @router.post("/sdmx-to-domain-model", response_model=DiagramExportResponse)
 @handle_endpoint_errors("sdmx_to_domain_model_endpoint")
-async def sdmx_to_domain_model_endpoint(request: SdmxImportRequest):
+async def sdmx_to_domain_model_endpoint(request: SdmxImportRequest, slots: SdmxImportSlotsDep):
     """
     Reads the structure of an SDMX dataflow (a preset provider or an https SDMX 2.1 API) and returns
     its B-UML domain model as JSON, in the same shape as ``/csv-to-domain-model``.
@@ -795,6 +795,7 @@ async def sdmx_to_domain_model_endpoint(request: SdmxImportRequest):
         agency=request.agency,
         version=request.version,
         model_name=request.modelName,
+        slots=slots,
     )
 
     diagram_type = "ClassDiagram"

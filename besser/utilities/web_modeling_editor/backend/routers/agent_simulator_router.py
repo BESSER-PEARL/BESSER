@@ -15,9 +15,10 @@ Security model:
   * Each session is bound to the actor that created it (GitHub session when
     sign-in is required, client IP otherwise); another actor gets 404.
   * The rate limiter, the per-actor session cap and the ownership map are
-    in-process state. This is correct because the backend runs as a single
-    uvicorn process (see ``backend.py`` and the Dockerfile ``CMD``); running
-    several workers would give each worker its own copy.
+    the app's in-process state (``services/agent_simulation.py``, built in the
+    lifespan). This is correct because the backend runs as a single uvicorn
+    process (see ``backend.py`` and the Dockerfile ``CMD``); running several
+    workers would give each worker its own copy.
 """
 
 import asyncio
@@ -26,11 +27,8 @@ import json
 import logging
 import os
 import tempfile
-import time
 import uuid
-from collections import OrderedDict, deque
-from threading import Lock
-from typing import Any, Deque, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import websockets
@@ -49,15 +47,21 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     AGENT_SIMULATOR_WS_AUTH_TIMEOUT_SECONDS,
     AGENT_SIMULATOR_WS_OPEN_TIMEOUT_SECONDS,
     AGENT_TEMP_DIR_PREFIX,
-    DEFAULT_AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS,
     OUTPUT_DIR_NAME,
     WS_CLOSE_BAD_REQUEST,
     WS_CLOSE_NOT_FOUND,
     WS_CLOSE_RATE_LIMITED,
     WS_CLOSE_UNAUTHORIZED,
 )
-from besser.utilities.web_modeling_editor.backend.dependencies import SettingsDep
-from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
+from besser.utilities.web_modeling_editor.backend.dependencies import (
+    AgentSimulatorDep,
+    GitHubSessionsDep,
+    SettingsDep,
+)
+from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import (
+    GitHubSessions,
+)
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 from besser.utilities.web_modeling_editor.backend.models import (
     SimulationLimitsResponse,
     SimulationSessionFilesResponse,
@@ -93,150 +97,24 @@ _SIMULATOR_UNAVAILABLE_MESSAGE = "Agent simulator service is unavailable. Please
 _http_transport: Optional[httpx.AsyncBaseTransport] = None
 _ws_connect = websockets.connect
 
-# Strong references to fire-and-forget tasks so they are not garbage-collected
-# before they finish (see the asyncio.create_task documentation).
-_background_tasks: Set["asyncio.Task[None]"] = set()
-
-
-# ---------------------------------------------------------------------------
-# In-process rate limiting and session ownership
-# ---------------------------------------------------------------------------
-
-class _SlidingWindowRateLimiter:
-    """Per-key sliding-window limiter with bounded memory.
-
-    Expired timestamps are dropped on every check, idle keys are swept once per
-    window, and at most ``max_keys`` keys are tracked (least recently used keys
-    are evicted first). Single-process only, see the module docstring.
-    """
-
-    def __init__(self, window_seconds: int, max_requests: int, max_keys: int):
-        self._window_seconds = max(window_seconds, 1)
-        self._max_requests = max(max_requests, 1)
-        self._max_keys = max(max_keys, 1)
-        self._events: "OrderedDict[str, Deque[float]]" = OrderedDict()
-        self._last_sweep = time.monotonic()
-        self._lock = Lock()
-
-    def __len__(self) -> int:
-        return len(self._events)
-
-    def _sweep(self, threshold: float) -> None:
-        for key in [k for k, events in self._events.items() if not events or events[-1] < threshold]:
-            del self._events[key]
-
-    def check(self, key: str) -> None:
-        """Record one request for ``key``; raise HTTP 429 when over the limit."""
-        now = time.monotonic()
-        threshold = now - self._window_seconds
-        with self._lock:
-            if now - self._last_sweep >= self._window_seconds:
-                self._sweep(threshold)
-                self._last_sweep = now
-
-            events = self._events.get(key)
-            if events is None:
-                if len(self._events) >= self._max_keys:
-                    self._sweep(threshold)
-                while len(self._events) >= self._max_keys:
-                    self._events.popitem(last=False)
-                events = deque()
-                self._events[key] = events
-            else:
-                self._events.move_to_end(key)
-                while events and events[0] < threshold:
-                    events.popleft()
-
-            if len(events) >= self._max_requests:
-                raise HTTPException(
-                    status_code=429,
-                    detail="Rate limit exceeded for agent simulator endpoints. Please retry shortly.",
-                    headers={"Retry-After": str(self._window_seconds)},
-                )
-            events.append(now)
-
-
-class _SimulationSessionRegistry:
-    """Maps each simulation session to the actor that created it.
-
-    Also enforces the per-actor concurrent-session cap. Entries are forgotten
-    when the session is stopped, when its WebSocket closes, or after the
-    simulator's session lifetime. Single-process only, see the module docstring.
-    """
-
-    def __init__(self, max_sessions_per_actor: int, ttl_seconds: int):
-        self._max_sessions_per_actor = max(max_sessions_per_actor, 1)
-        self._ttl_seconds = max(ttl_seconds, 1)
-        self._sessions: Dict[str, Tuple[str, float]] = {}
-        self._lock = Lock()
-
-    def __len__(self) -> int:
-        return len(self._sessions)
-
-    def _prune(self, now: float) -> None:
-        expired = [sid for sid, (_, created) in self._sessions.items() if now - created >= self._ttl_seconds]
-        for sid in expired:
-            del self._sessions[sid]
-
-    def reserve(self, actor: str) -> str:
-        """Allocate a new session id for ``actor``; raise HTTP 429 when at the cap."""
-        now = time.monotonic()
-        with self._lock:
-            self._prune(now)
-            active = sum(1 for owner, _ in self._sessions.values() if owner == actor)
-            if active >= self._max_sessions_per_actor:
-                raise HTTPException(
-                    status_code=429,
-                    detail=(
-                        f"You already have {active} active agent simulation session(s), the maximum allowed. "
-                        "Stop it before starting a new one."
-                    ),
-                )
-            session_id = str(uuid.uuid4())
-            self._sessions[session_id] = (actor, now)
-            return session_id
-
-    def release(self, session_id: str) -> None:
-        with self._lock:
-            self._sessions.pop(session_id, None)
-
-    def is_owner(self, session_id: str, actor: str) -> bool:
-        with self._lock:
-            self._prune(time.monotonic())
-            entry = self._sessions.get(session_id)
-            return entry is not None and entry[0] == actor
-
-    def require_owner(self, session_id: str, actor: str) -> None:
-        """Raise HTTP 404 unless ``actor`` created ``session_id``."""
-        if not self.is_owner(session_id, actor):
-            raise HTTPException(status_code=404, detail="Simulation session not found.")
-
-
-_rate_limiter = _SlidingWindowRateLimiter(
-    window_seconds=get_settings().agent_simulator_rate_limit_window_seconds,
-    max_requests=get_settings().agent_simulator_rate_limit_max_requests,
-    max_keys=get_settings().agent_simulator_rate_limit_max_keys,
-)
-
-_session_registry = _SimulationSessionRegistry(
-    max_sessions_per_actor=get_settings().agent_simulator_max_sessions_per_actor,
-    ttl_seconds=(get_settings().agent_simulator_session_lifetime_seconds
-                 or DEFAULT_AGENT_SIMULATOR_SESSION_LIFETIME_SECONDS),
-)
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _authenticate(settings: BackendSettings, github_session: Optional[str], client: Optional[Address]) -> str:
+def _authenticate(
+    settings: BackendSettings,
+    github_sessions: GitHubSessions,
+    github_session: Optional[str],
+    client: Optional[Address],
+) -> str:
     """Apply the sign-in gate and return the actor key the caller is tracked by.
 
     The actor is the GitHub session when sign-in is required (hashed, so the
     bearer value is never kept as a key or logged) and the client IP otherwise.
     """
     if settings.agent_simulator_require_auth:
-        require_github_session(github_session)
+        require_github_session(github_sessions, github_session)
         return "github:" + hashlib.sha256(github_session.encode("utf-8")).hexdigest()
     if client and client.host:
         return f"ip:{client.host}"
@@ -270,13 +148,6 @@ def _simulator_client(settings: BackendSettings, timeout: float) -> httpx.AsyncC
         headers=_simulator_headers(),
         transport=_http_transport,
     )
-
-
-def _spawn_background(coro) -> None:
-    """Run ``coro`` in the background while holding a reference to its task."""
-    task = asyncio.create_task(coro)
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
 
 
 def _model_has_custom_code_action(model: Dict[str, Any]) -> bool:
@@ -434,10 +305,11 @@ async def _delete_simulator_session(settings: BackendSettings, session_id: str) 
 async def get_simulation_limits(
     request: Request,
     settings: SettingsDep,
+    github_sessions: GitHubSessionsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Return the configured resource limits and quota settings for agent simulation."""
-    _authenticate(settings, github_session, request.client)
+    _authenticate(settings, github_sessions, github_session, request.client)
     return SimulationLimitsResponse(
         memoryMb=settings.agent_simulator_memory_mb,
         cpuCores=settings.agent_simulator_cpu_cores,
@@ -453,6 +325,8 @@ async def validate_agent(
     input_data: SimulationSessionInput,
     request: Request,
     settings: SettingsDep,
+    github_sessions: GitHubSessionsDep,
+    simulator: AgentSimulatorDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Check that an agent diagram can be simulated, without creating a session.
@@ -461,8 +335,8 @@ async def validate_agent(
     returned as ``valid=False`` with their messages; unexpected failures
     surface as HTTP errors through ``@handle_endpoint_errors``.
     """
-    actor = _authenticate(settings, github_session, request.client)
-    _rate_limiter.check(actor)
+    actor = _authenticate(settings, github_sessions, github_session, request.client)
+    simulator.rate_limiter.check(actor)
 
     if settings.agent_simulator_restrict_custom_code and _model_has_custom_code_action(input_data.model):
         return SimulationValidationResponse(
@@ -488,16 +362,18 @@ async def start_simulation_session(
     input_data: SimulationSessionInput,
     request: Request,
     settings: SettingsDep,
+    github_sessions: GitHubSessionsDep,
+    simulator: AgentSimulatorDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Generate agent code and start a simulator session owned by the caller."""
-    actor = _authenticate(settings, github_session, request.client)
-    _rate_limiter.check(actor)
+    actor = _authenticate(settings, github_sessions, github_session, request.client)
+    simulator.rate_limiter.check(actor)
 
     if settings.agent_simulator_restrict_custom_code and _model_has_custom_code_action(input_data.model):
         raise HTTPException(status_code=403, detail=_CUSTOM_CODE_RESTRICTED_MESSAGE)
 
-    session_id = _session_registry.reserve(actor)
+    session_id = simulator.sessions.reserve(actor)
     try:
         agent_code, config_yaml, event_list, support_files, workspace_paths = await _generate_agent_code_and_config(
             {"title": input_data.title, "model": input_data.model},
@@ -529,7 +405,7 @@ async def start_simulation_session(
             logger.error("Simulator rejected session creation (HTTP %s): %s", resp.status_code, resp.text[:500])
             raise HTTPException(status_code=502, detail="Agent simulator service rejected session creation.")
     except BaseException:
-        _session_registry.release(session_id)
+        simulator.sessions.release(session_id)
         raise
 
     return SimulationSessionResponse(sessionId=session_id, eventList=event_list)
@@ -541,12 +417,14 @@ async def get_session_files(
     session_id: str,
     request: Request,
     settings: SettingsDep,
+    github_sessions: GitHubSessionsDep,
+    simulator: AgentSimulatorDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Return the files the caller's running agent produced in its workspace."""
-    actor = _authenticate(settings, github_session, request.client)
+    actor = _authenticate(settings, github_sessions, github_session, request.client)
     _require_valid_session_id(session_id)
-    _session_registry.require_owner(session_id, actor)
+    simulator.sessions.require_owner(session_id, actor)
 
     try:
         async with _simulator_client(settings, AGENT_SIMULATOR_FILES_TIMEOUT_SECONDS) as client:
@@ -556,7 +434,7 @@ async def get_session_files(
         raise HTTPException(status_code=503, detail=_SIMULATOR_UNAVAILABLE_MESSAGE) from exc
 
     if resp.status_code == 404:
-        _session_registry.release(session_id)
+        simulator.sessions.release(session_id)
         raise HTTPException(status_code=404, detail="Simulation session not found.")
     if resp.status_code != 200:
         logger.error("Simulator file listing failed (HTTP %s): %s", resp.status_code, resp.text[:500])
@@ -574,13 +452,15 @@ async def stop_simulation_session(
     session_id: str,
     request: Request,
     settings: SettingsDep,
+    github_sessions: GitHubSessionsDep,
+    simulator: AgentSimulatorDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
 ):
     """Stop one of the caller's simulation sessions."""
-    actor = _authenticate(settings, github_session, request.client)
+    actor = _authenticate(settings, github_sessions, github_session, request.client)
     _require_valid_session_id(session_id)
-    _session_registry.require_owner(session_id, actor)
-    _session_registry.release(session_id)
+    simulator.sessions.require_owner(session_id, actor)
+    simulator.sessions.release(session_id)
     await _delete_simulator_session(settings, session_id)
     return SimulationSessionStopResponse(ok=True)
 
@@ -619,7 +499,13 @@ async def _receive_auth_frame(websocket: WebSocket) -> str:
 
 
 @router.websocket("/{session_id}/ws")
-async def simulator_session_ws(websocket: WebSocket, session_id: str, settings: SettingsDep):
+async def simulator_session_ws(
+    websocket: WebSocket,
+    session_id: str,
+    settings: SettingsDep,
+    github_sessions: GitHubSessionsDep,
+    simulator: AgentSimulatorDep,
+):
     """
     Relay WebSocket messages between the frontend and the agent simulator service.
 
@@ -650,16 +536,16 @@ async def simulator_session_ws(websocket: WebSocket, session_id: str, settings: 
         return
 
     try:
-        actor = _authenticate(settings, github_session, websocket.client)
+        actor = _authenticate(settings, github_sessions, github_session, websocket.client)
     except HTTPException as exc:
         await _close_with_error(websocket, WS_CLOSE_UNAUTHORIZED, str(exc.detail))
         return
     try:
-        _rate_limiter.check(actor)
+        simulator.rate_limiter.check(actor)
     except HTTPException as exc:
         await _close_with_error(websocket, WS_CLOSE_RATE_LIMITED, str(exc.detail))
         return
-    if not _session_registry.is_owner(session_id, actor):
+    if not simulator.sessions.is_owner(session_id, actor):
         await _close_with_error(websocket, WS_CLOSE_NOT_FOUND, "Simulation session not found.")
         return
 
@@ -717,5 +603,5 @@ async def simulator_session_ws(websocket: WebSocket, session_id: str, settings: 
         await asyncio.gather(_frontend_to_simulator(), _simulator_to_frontend(), return_exceptions=True)
     finally:
         await _close_simulator_ws()
-        _session_registry.release(session_id)
-        _spawn_background(_delete_simulator_session(settings, session_id))
+        simulator.sessions.release(session_id)
+        simulator.spawn(_delete_simulator_session(settings, session_id))

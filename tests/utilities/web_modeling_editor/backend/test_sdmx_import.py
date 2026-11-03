@@ -152,9 +152,9 @@ def test_provider_errors_map_to_http_statuses(monkeypatch, public_dns, error, st
     assert resp.json()["detail"] == str(error)
 
 
-def test_imports_beyond_the_concurrency_cap_are_refused(monkeypatch, public_dns):
+def test_imports_beyond_the_concurrency_cap_are_refused(monkeypatch, public_dns, app_state):
     """Imports cannot fill the shared thread pool: past the cap the server answers 503 at once."""
-    monkeypatch.setattr(sdmx_reverse, "_import_slots", threading.BoundedSemaphore(1))
+    app_state.sdmx_import_slots = threading.BoundedSemaphore(1)
     started, release = threading.Event(), threading.Event()
 
     def slow_fetch(self, ref, **kwargs):
@@ -164,7 +164,7 @@ def test_imports_beyond_the_concurrency_cap_are_refused(monkeypatch, public_dns)
 
     monkeypatch.setattr(SDMXClient, "fetch_structure", slow_fetch)
     first = threading.Thread(target=sdmx_reverse.sdmx_to_domain_model, args=("DF_TEST",),
-                             kwargs={"provider": "ecb"})
+                             kwargs={"provider": "ecb", "slots": app_state.sdmx_import_slots})
     first.start()
     try:
         assert started.wait(5)

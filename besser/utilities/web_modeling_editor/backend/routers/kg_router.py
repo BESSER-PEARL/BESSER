@@ -115,6 +115,7 @@ from besser.utilities.web_modeling_editor.backend.services.utils.upload_validati
 )
 
 # Centralized error handling
+from besser.utilities.web_modeling_editor.backend.dependencies import KgConsistencySlotsDep
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
@@ -252,7 +253,7 @@ async def export_kg_rdf(fmt: str, input_data: KGDiagramInput = Body(...)):
 
 @router.post("/consistency", response_model=KGConsistencyReportResponse)
 @handle_endpoint_errors("check_kg_consistency")
-async def check_kg_consistency_endpoint(input_data: KGDiagramInput):
+async def check_kg_consistency_endpoint(input_data: KGDiagramInput, slots: KgConsistencySlotsDep):
     """Run the OWL2 + SHACL consistency check on the supplied KG.
 
     Delegates to pyshacl (with OWL2-RL inference) plus a small OWL→SHACL
@@ -265,7 +266,7 @@ async def check_kg_consistency_endpoint(input_data: KGDiagramInput):
     """
     kg = kg_payload_to_kg(input_data)
     try:
-        report = await run_consistency_check(kg)
+        report = await run_consistency_check(kg, slots)
     except ConsistencyCheckBusy as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except ConsistencyCheckError as exc:

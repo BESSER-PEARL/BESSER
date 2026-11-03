@@ -59,7 +59,6 @@ fake = FakeGitHub(login="ana", token="gho_fake_token", root=os.path.join(WORKDIR
 httpx.AsyncClient = github_client_class(fake)
 
 from besser.utilities.web_modeling_editor.backend.backend import app  # noqa: E402
-from besser.utilities.web_modeling_editor.backend.routers import github_oauth  # noqa: E402
 from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model  # noqa: E402
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (  # noqa: E402
     SmartRunEntry, _seed_workspace_from_base, create_run_workspace, run_changes,
@@ -213,7 +212,7 @@ def state(repo: str, owner: str = "ana"):
 async def login(request: Request):
     """"Connect GitHub": skip github.com's consent page, keep the real callback."""
     state_token = uuid.uuid4().hex
-    github_oauth._oauth_sessions.set(state_token, {"client_ip": "harness"})
+    request.app.state.github_sessions.oauth_states.set(state_token, {"client_ip": "harness"})
     return RedirectResponse(f"/besser_api/github/auth/callback?code=fake&state={state_token}")
 
 

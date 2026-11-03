@@ -7,7 +7,7 @@ in ``settings.py`` (``BESSER_SDMX_TIMEOUT``, ``BESSER_SDMX_MAX_MB``, ``BESSER_SD
 ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS``, ``BESSER_SDMX_ALLOW_CUSTOM_URL``).
 """
 
-__all__ = ["custom_urls_allowed", "sdmx_providers", "sdmx_to_domain_model"]
+__all__ = ["custom_urls_allowed", "sdmx_import_slots", "sdmx_providers", "sdmx_to_domain_model"]
 
 import logging
 import threading
@@ -29,17 +29,9 @@ from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-_import_slots: Optional[threading.BoundedSemaphore] = None
-_slots_lock = threading.Lock()
-
-
-def _slots() -> threading.BoundedSemaphore:
-    """The import slots, built on first use so tests can change the cap before."""
-    global _import_slots
-    with _slots_lock:
-        if _import_slots is None:
-            _import_slots = threading.BoundedSemaphore(get_settings().sdmx_max_concurrent_imports)
-        return _import_slots
+def sdmx_import_slots() -> threading.BoundedSemaphore:
+    """A fresh set of ``BESSER_SDMX_MAX_CONCURRENT_IMPORTS`` import slots, for one app (built in the lifespan)."""
+    return threading.BoundedSemaphore(get_settings().sdmx_max_concurrent_imports)
 
 
 def sdmx_providers() -> list[dict]:
@@ -67,10 +59,13 @@ def sdmx_to_domain_model(
     agency: Optional[str] = None,
     version: Optional[str] = None,
     model_name: Optional[str] = None,
+    *,
+    slots: threading.BoundedSemaphore,
 ) -> DomainModel:
     """Fetch a dataflow's structure (safe mode) and build its domain model.
 
     Exactly one of ``provider`` (a preset key) and ``base_url`` (an https SDMX 2.1 API) is given.
+    ``slots`` are the app's import slots (``SdmxImportSlotsDep``).
 
     Raises:
         ValueError: invalid input (an unknown provider, a non-https or private URL, a bad dataflow id).
@@ -88,7 +83,6 @@ def sdmx_to_domain_model(
         raise ValueError("Only https SDMX endpoints are allowed")
     ref = parse_dataflow(dataflow, agency=agency or None, version=version or None)
     settings = get_settings()
-    slots = _slots()
     if not slots.acquire(blocking=False):
         logger.warning("SDMX import of %s refused: %d imports already running", ref.id,
                        settings.sdmx_max_concurrent_imports)

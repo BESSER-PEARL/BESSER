@@ -171,7 +171,7 @@ def _call(method, url, **kwargs):
 
 def _go_live(monkeypatch, fake, repo="room-booking"):
     monkeypatch.setattr(github_deploy_api, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(github_deploy_api, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(github_deploy_api, "get_user_token", lambda _sessions, sid: "token")
     return _call("POST", "/besser_api/github/app/go-live", headers=SESSION,
                  json={"owner": "me", "repo": repo, "branch": "main"})
 
@@ -276,7 +276,7 @@ def _push_run(monkeypatch, tmp_path, fake):
         temp_dir=str(run_dir), created_at=time.time(),
     )))
     monkeypatch.setattr(github_sync, "create_github_service", lambda token: fake)
-    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda sid: "token")
+    monkeypatch.setattr(spec_driven_router, "get_user_token", lambda _sessions, sid: "token")
     return _call("POST", "/besser_api/spec-driven/push-to-github", headers=SESSION, json={
         "run_id": "f" * 32, "deploy_config": {"repo_name": "room-booking", "use_existing": True}})
 

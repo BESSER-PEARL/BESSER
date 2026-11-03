@@ -27,6 +27,7 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
 
 # BESSER image-to-UML and BUML utilities
 from besser.utilities.image_to_buml import image_to_buml
+from besser.utilities.secret_redaction import sanitize_config
 
 # Custom exception types translated to HTTP codes by @handle_endpoint_errors.
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
@@ -887,7 +888,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
         if base_config is None:
             raise HTTPException(status_code=400, detail="Config is required for transformation")
 
-        logger.debug("[Agent transform] config: %s", json.dumps(base_config, indent=2, default=str))
+        logger.debug("[Agent transform] config: %s", json.dumps(sanitize_config(base_config), indent=2, default=str))
         config = deepcopy(base_config)
         user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
         if isinstance(user_profile_payload, dict):

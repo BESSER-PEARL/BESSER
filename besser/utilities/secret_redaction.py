@@ -256,14 +256,14 @@ def _redact_vendored_tokens(text: str) -> tuple[str, int]:
     return text, findings
 
 
-def _redact_db_url_passwords(text: str) -> tuple[str, int]:
+def _redact_db_url_passwords(text: str, *, keep_local: bool = True) -> tuple[str, int]:
     findings = 0
 
     def _replacement(match: re.Match[str]) -> str:
         nonlocal findings
         password, host = match.group("password"), match.group("host")
         if (_URL_TEMPLATE_RE.search(password) or _URL_TEMPLATE_RE.search(host)
-                or _is_placeholder(password) or _is_local_host(host)):
+                or _is_placeholder(password) or (keep_local and _is_local_host(host))):
             return match.group(0)
         findings += 1
         return match.group(0).replace(f":{password}@", f":{REDACTED_SECRET}@")
@@ -511,7 +511,8 @@ def sanitize_config(config: Any) -> Any:
 
     A value under a credential-looking key becomes ``***``; every other string
     goes through the value rules of :func:`redact_text` (provider tokens, the
-    vendored gitleaks rules, a database URL's password).
+    vendored gitleaks rules, a database URL's password), and a local host's
+    database URL password is masked too: only a generated app needs it.
     """
     if isinstance(config, dict):
         return {k: ("***" if _is_log_sensitive_key(k) else sanitize_config(v)) for k, v in config.items()}
@@ -520,7 +521,7 @@ def sanitize_config(config: Any) -> Any:
     if isinstance(config, tuple):
         return tuple(sanitize_config(item) for item in config)
     if isinstance(config, str):
-        return redact_text(config, env_style=False)[0]
+        return _redact_db_url_passwords(redact_text(config, env_style=False)[0], keep_local=False)[0]
     return config
 
 

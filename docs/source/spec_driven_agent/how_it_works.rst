@@ -297,7 +297,8 @@ reading a trace and wondering why a run did what it did.
 
        The rules live in one module, ``besser.utilities.secret_redaction``,
        which the trace (above), the LLM clients' error logs and the editor
-       backend's generator-config logs use as well.
+       backend's generator-config logs use as well. A log line masks a local
+       host's database password too: only the generated app needs it.
    * - Artifact exclusion
      - The download ZIP leaves out the same runtime and build artifacts as the
        GitHub push: ``*.log``, ``*.db``, ``*.sqlite`` / ``*.sqlite3``,

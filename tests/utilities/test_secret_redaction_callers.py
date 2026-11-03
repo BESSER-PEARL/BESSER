@@ -6,12 +6,15 @@ failed, the ``_redact`` helpers of ``llm_utils`` and the KG LLM service, and
 the generation router's key-name-only ``sanitize_config``. The expected
 outputs below are what those copies produced, plus what the last one missed.
 """
+import logging
 import subprocess
 import sys
 
 import pytest
 
-from besser.utilities.secret_redaction import redact_literal, redact_trace_text, sanitize_config
+from besser.utilities.secret_redaction import (
+    redact_literal, redact_text, redact_trace_text, sanitize_config,
+)
 
 JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbm4ifQ.c2lnbmF0dXJlLXZhbHVl"
 KEY = "sk-proj-" + "A" * 40
@@ -72,11 +75,41 @@ def test_sanitize_config_redacts_credentials_under_ordinary_keys():
     }
 
 
+@pytest.mark.parametrize("url, expected", [
+    ("postgresql://admin:pw@db/x", "postgresql://admin:[REDACTED]@db/x"),
+    ("redis://:S3cr3t@localhost:6379", "redis://:[REDACTED]@localhost:6379"),
+    ("mysql://root:hunter2@10.0.0.5/app", "mysql://root:[REDACTED]@10.0.0.5/app"),
+    # Code that builds a URL holds no password.
+    ("postgresql://admin:${DB_PASSWORD}@db/x", "postgresql://admin:${DB_PASSWORD}@db/x"),
+])
+def test_sanitize_config_masks_a_local_hosts_url_password(url, expected):
+    # Generated artifacts keep a local host's password (docker-compose sets the
+    # same value on the database); a log line has no such need.
+    assert sanitize_config({"database": url}) == {"database": expected}
+    assert redact_text(url, env_style=False)[0] == url
+
+
 def test_sanitize_config_leaves_ordinary_values_and_the_input_alone():
-    config = {"url": "postgresql://user:pw@db:5432/app", "retries": 3, "label": "task-list-item"}
+    config = {"url": "postgresql://db:5432/app", "retries": 3, "label": "task-list-item"}
 
     assert sanitize_config(config) == config
     assert sanitize_config(config) is not config
+
+
+def test_the_agent_transform_endpoint_logs_its_config_redacted(caplog):
+    # /transform-agent-model-json logged the raw config at DEBUG, OpenAI key included.
+    from fastapi.testclient import TestClient
+    from besser.utilities.web_modeling_editor.backend.backend import app
+
+    caplog.set_level(logging.DEBUG)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        client.post("/besser_api/transform-agent-model-json", json={
+            "title": "a", "model": {"type": "AgentDiagram", "elements": {}, "relationships": {}},
+            "config": {"openai_api_key": KEY, "language": "en"}})
+
+    logged = [r.getMessage() for r in caplog.records if r.getMessage().startswith("[Agent transform] config")]
+    assert logged and '"openai_api_key": "***"' in logged[0]
+    assert not [r for r in caplog.records if KEY in r.getMessage()]
 
 
 def _run(code: str) -> str:

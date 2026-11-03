@@ -102,6 +102,7 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     _FRONTEND_ASK_RE,
 )
 from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_data_requirement
+from besser.spec_driven_agent.planning.requested_routes import requested_route_tasks
 from besser.spec_driven_agent.planning.generator_keywords import (
     default_generator,
     keyword_generator,
@@ -3426,6 +3427,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             tasks.append(AGENT_DOMAIN_TASK.format(agent=self.agent_model.name))
         tasks.extend(action_gap_tasks(self.output_dir, self._expected_action_endpoints()))
         tasks.extend(self._unenforced_rule_tasks())
+        if not self._modify_mode and self._scaffold_family() == "fastapi":
+            # A path the user wrote must exist verbatim, whatever the planner judged.
+            tasks.extend(requested_route_tasks(
+                self.output_dir, _requirements_ledger.original_request(self._instructions)))
         tasks.extend(item["text"] for item in self._requirements_for_validation()
                      if item.get("conversion_issue_id"))
         return tasks

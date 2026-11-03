@@ -76,7 +76,7 @@ is capped at `MAX_SPILL_SIZE` so a runaway command cannot fill the disk.
 | --- | --- |
 | Public entry | `__init__.py`, `generator.py` (`LLMGenerator`), `errors.py` |
 | Run coordination | `pipeline/orchestrator.py`, `pipeline/modify_run.py`, `pipeline/phase3_repair.py`, `pipeline/edit_loop_guards.py`, `pipeline/constants.py` |
-| Planning, prompts, discovery | `planning/gap_analyzer.py`, `planning/action_inventory.py`, `planning/mutation_inventory.py`, `planning/stack_metadata.py`, `agent/prompt_builder.py`, `agent/runbook.py`, `model_serializer.py` |
+| Planning, prompts, discovery | `planning/gap_analyzer.py`, `planning/action_inventory.py`, `planning/requested_routes.py`, `planning/mutation_inventory.py`, `planning/stack_metadata.py`, `agent/prompt_builder.py`, `agent/runbook.py`, `model_serializer.py` |
 | Authoritative request | `planning/specification.py`, `planning/user_request.py` |
 | Tool contracts and execution | `agent/tools.py`, `agent/tool_executor.py`, `agent/edit_apply.py` |
 | Subprocess environment, sandbox and the per-run shell session | `execution/process.py`, `execution/sandbox.py`, `execution/shell_session.py` |

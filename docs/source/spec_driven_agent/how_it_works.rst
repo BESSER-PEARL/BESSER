@@ -92,7 +92,11 @@ The three phases
    as a change, or as removing the scaffold or switching its framework; the
    latter two are dropped, since the scaffold's stack is fixed. Only the
    planner's own empty list skips Phase 2: a list emptied by dropped tasks
-   runs Phase 2 from the request.
+   runs Phase 2 from the request. An HTTP path the request names (``GET
+   /stats``, "a /health/live endpoint") that no route decorator of a FastAPI
+   scaffold declares becomes a checklist item, so a scaffold serving
+   ``/statistics`` never counts as covering ``/stats``; the item closes only
+   once the route exists.
 
    A ``web_app`` target (an app, web app, UI, website, dashboard or portal
    with no other platform named) gets a frontend even without a GUI model:

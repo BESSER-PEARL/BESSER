@@ -526,3 +526,17 @@ def _pick_class_diagram(project: ProjectInput) -> Optional[DiagramInput]:
         if referenced is not None:
             return referenced
     return project.get_active_diagram("ClassDiagram")
+
+
+def generation_class_diagram(project: ProjectInput, updated_export: Optional[dict] = None) -> Optional[dict]:
+    """The class diagram (JSON) a run generated from: the model-synced export when the
+    run added classes, else the request's own diagram, exactly as sent."""
+    if updated_export:
+        project = ProjectInput.model_validate(updated_export)
+    diagram = _pick_class_diagram(project)
+    return diagram.model_dump(mode="json") if diagram is not None else None
+
+
+def class_diagram_model(diagram: dict) -> Any:
+    """The domain model of a diagram from :func:`generation_class_diagram`, converted as a run converts it."""
+    return process_class_diagram(DiagramInput.model_validate(diagram).model_dump())

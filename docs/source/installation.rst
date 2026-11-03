@@ -60,7 +60,8 @@ Optional dependencies
 
 .. code-block:: console
 
-   # OpenAI and Anthropic clients and tiktoken, for the Spec-Driven Agent
+   # OpenAI and Anthropic clients, tiktoken, Pygments and pygit2 (the merge of a
+   # model change into edited generated files), for the Spec-Driven Agent
    python -m pip install "besser[agents]"
 
    # Neural-network dependencies

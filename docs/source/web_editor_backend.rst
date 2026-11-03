@@ -740,8 +740,14 @@ the SHA-256 recorded when the run got them (the import is a git archive, which
 applies ``.gitattributes`` such as ``eol=crlf`` and ``export-subst``, so an
 untouched file can differ from its blob), a changed file keeps its mode,
 links and submodules are never touched, and a repository path the run could
-not hold (build and dependency output, ``*.db``, BESSER's ``.besser_*`` files,
-a scrubbed secret ``.env``) is not taken as a deletion. Only a run seeded from
+not hold (build and dependency output, ``*.db``, BESSER's other ``.besser_*``
+records, a scrubbed secret ``.env``) is not taken as a deletion. The records a
+run carries (``.besser_recipe.json``, ``.besser_attribution.json`` and
+``.besser_generator_output.json``) are its own: a push from a run seeded from
+the repository deletes them when the run no longer has them. The push marks
+them ``linguist-generated`` in ``.gitattributes``, keeping the repository's own
+lines (and a ``linguist-generated`` setting a line already gives one of them),
+so GitHub folds their diffs. Only a run seeded from
 the repository (``.besser_github_source.json`` names it) can delete files at
 all; any other run only adds and updates. A push with no change
 makes no commit. ``files_uploaded`` counts the files added, changed or deleted.

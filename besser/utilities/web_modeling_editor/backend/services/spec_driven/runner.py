@@ -58,7 +58,9 @@ from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
+from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state import agent_trace
+from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, attach_model, stored_model
 from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
     get_besser_version,
@@ -83,6 +85,8 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
     assemble_models_from_project,
+    class_diagram_model,
+    generation_class_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     telemetry,
@@ -126,6 +130,10 @@ _DOWNLOAD_MANIFEST_NAME = ".besser_download.json"
 # Written into a run imported from GitHub: where it came from. Its ``.besser_``
 # prefix keeps it out of every push and download.
 GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
+# BESSER's own files a later run reads back, so they ride in the ZIP and the
+# GitHub push: the recipe (generator, history), the line attribution, and the
+# generator's stored output (the base a model change is merged against).
+CARRIED_RUN_FILES = (RECIPE_FILENAME, agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME)
 _MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
 
 # Upper bound on queued SSE events so a runaway worker can't exhaust
@@ -1605,6 +1613,7 @@ class SmartGenerationRunner:
             # run()/resume(). model_dump(mode="json") keeps datetimes as
             # ISO strings so the push can re-validate it as a ProjectInput.
             source_project_export=self._source_project_export_dict(),
+            previous_domain_model=self._previous_domain_model(),
         )
         self._t_orchestrator = orchestrator
 
@@ -2188,6 +2197,7 @@ class SmartGenerationRunner:
         attribution_ok = self._attribution_ok and self._reconcile_attribution(
             result_path, agent_trace.ai_contributor(self._trace_model_id(), self.run_id),
         )
+        self._attach_generator_model(result_path)
 
         # An LLM-authored React frontend (the class-diagram path, where no GUI
         # model means generate_web_app is never offered) ships without a vite
@@ -2328,6 +2338,10 @@ class SmartGenerationRunner:
                 zf.write(provenance_path, PROVENANCE_FILENAME)
                 for path in trace_files:
                     zf.write(path, os.path.relpath(path, result_path))
+                for name in CARRIED_RUN_FILES:
+                    path = os.path.join(result_path, name)
+                    if os.path.isfile(path) and is_plain_entry(path):
+                        zf.write(path, name)
             entry = SmartRunEntry(
                 file_path=zip_path,
                 file_name=zip_name,
@@ -2446,6 +2460,42 @@ class SmartGenerationRunner:
                 self.run_id,
             )
             self.temp_dir = None
+
+    def _attach_generator_model(self, result_path: str) -> None:
+        """Store the run's class diagram with the generator's stored output, so a later
+        modify run can rebuild its merge base after a BESSER upgrade (#659)."""
+        if not os.path.lexists(os.path.join(result_path, GENERATOR_OUTPUT_FILENAME)):
+            return
+        try:
+            updated = self._t_orchestrator._updated_project_export if self._t_orchestrator is not None else None
+            diagram = generation_class_diagram(self.request.project, updated)
+        except Exception:
+            logger.warning("Run %s: its class diagram was not stored with the generator output",
+                           self.run_id, exc_info=True)
+            return
+        if diagram is not None:
+            attach_model(result_path, diagram)
+
+    def _previous_domain_model(self) -> Optional[Any]:
+        """The model the seed's stored generator output came from (a seeded modify run), or None."""
+        if self._mode != "modify" or not self._seeded or self.temp_dir is None:
+            return None
+        # A resumed run locates its workspace from the request's run id: read only inside the run root.
+        root = os.path.realpath(_run_workspace_root())
+        workspace = os.path.realpath(self.temp_dir)
+        if not workspace.startswith(os.path.join(root, "")):
+            logger.warning("Run %s: its workspace is outside the run root, so the stored model is not read",
+                           self.run_id)
+            return None
+        diagram = stored_model(workspace)
+        if diagram is None:
+            return None
+        try:
+            return class_diagram_model(diagram)
+        except Exception:
+            logger.warning("Run %s: the class diagram stored with the generator output does not convert, "
+                           "so a BESSER upgrade cannot rebuild the merge base", self.run_id, exc_info=True)
+            return None
 
     def _source_project_export_dict(self) -> Optional[dict]:
         """JSON-safe dict of the request's project, for modify() model-sync.

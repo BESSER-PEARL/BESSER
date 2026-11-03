@@ -866,3 +866,108 @@ def test_the_legacy_project_path_must_stay_inside_the_repo(github):
         r = _save_with_legacy(base, bad)
         assert r.status_code == 422, (bad, r.text)
     assert github.ref(repo, "main") == base
+
+
+# ---------------------------------------------------------------------
+# The generator's stored output survives the round trip (#659)
+# ---------------------------------------------------------------------
+
+
+def _generated_app(tmp_path) -> dict:
+    """A Book/Library FastAPI app as Phase 1 writes it, with the generator's stored output."""
+    from tests.spec_driven_agent.shelf_app import generate_backend, shelf_model
+
+    app_dir = tmp_path / "generated"
+    app_dir.mkdir()
+    generate_backend(app_dir, shelf_model())
+    return {p.relative_to(app_dir).as_posix(): p.read_bytes().decode("utf-8")
+            for p in app_dir.rglob("*") if p.is_file() and "__pycache__" not in p.parts}
+
+
+def test_an_edited_generated_file_merges_after_an_import_and_the_push_stores_the_new_output(github, tmp_path):
+    pytest.importorskip("pygit2")
+    from besser.spec_driven_agent.pipeline.regeneration import regenerate
+    from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME
+    from tests.spec_driven_agent.shelf_app import GENERATOR, shelf_model
+
+    repo = github.create_repo("shelf", files=_generated_app(tmp_path))
+    imported = _import("ana", "shelf")
+
+    def edit(workdir):
+        # A teammate's edit, committed to the repo between the runs.
+        with open(os.path.join(workdir, "backend", "pydantic_classes.py"), "ab") as fh:
+            fh.write(b"# validated by hand\n")
+
+    run_id = _modify_run(imported["run_id"], edit)
+    workdir = asyncio.run(current_runtime().registry.get(run_id)).temp_dir
+    regeneration, reason = regenerate(workdir, GENERATOR, shelf_model(isbn=True), set())
+    assert regeneration is not None, reason
+    assert regeneration.method == "merge" and "backend/pydantic_classes.py" in regeneration.merged
+
+    r = _push(run_id, "shelf", base_commit_sha=imported["commit_sha"])
+
+    assert r.status_code == 200, r.text
+    files = github.files(repo)
+    schemas = files["backend/pydantic_classes.py"][1].decode("utf-8")
+    assert "isbn: str" in schemas and "# validated by hand" in schemas
+    stored = json.loads(files[GENERATOR_OUTPUT_FILENAME][1])
+    assert "isbn: str" in stored["files"]["backend/pydantic_classes.py"]
+
+
+def test_a_push_deletes_a_generator_output_the_run_no_longer_has(github):
+    """BESSER's carried files are the run's own: a stale base would mislead the next merge."""
+    repo = github.create_repo("shop", files={
+        **IMPORTED_REPO, ".besser_generator_output.json": "{}", ".besser_checkpoint.json": "{}"})
+    imported = _import("ana", "shop")
+    run_id = _modify_run(imported["run_id"], lambda workdir: os.remove(
+        os.path.join(workdir, ".besser_generator_output.json")))
+
+    r = _push(run_id, "shop", base_commit_sha=imported["commit_sha"])
+
+    assert r.status_code == 200, r.text
+    files = github.files(repo)
+    assert ".besser_generator_output.json" not in files
+    # A record the run never carries is not the run's to delete.
+    assert ".besser_checkpoint.json" in files
+
+
+def _fresh_run_with_records() -> str:
+    run_id = uuid.uuid4().hex
+    workdir = create_run_workspace(run_id)
+    _write(workdir, "backend/main_api.py", "app = None\n")
+    _write(workdir, ".besser_recipe.json", '{"generator_used": "backend"}\n')
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "backend", "main_api.py"), file_name="app.zip", is_zip=True,
+        temp_dir=workdir, created_at=time.time(),
+    )))
+    return run_id
+
+
+def test_a_modify_push_keeps_the_gitattributes_the_first_push_wrote(github):
+    """Found in review: the first push writes .gitattributes into the pushed tree only, so a
+    modify run seeded from it lacks the file and its push deleted it from the repo."""
+    repo = github.create_repo("flip", files={"README.md": "# flip\n"})
+    first = _fresh_run_with_records()
+    assert _push(first, "flip", base_commit_sha=github.ref(repo, "main")).status_code == 200
+    written = github.files(repo)[".gitattributes"][1]
+    assert written == b"/.besser_recipe.json linguist-generated=true\n"
+
+    r = _push(_modify_run(first, lambda workdir: _write(workdir, "backend/main_api.py", "app = 1\n")), "flip")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "pushed"
+    assert github.files(repo)[".gitattributes"][1] == written
+
+
+def test_a_teammates_gitattributes_line_survives_the_next_push(github):
+    repo = github.create_repo("flip", files={"README.md": "# flip\n"})
+    first = _fresh_run_with_records()
+    assert _push(first, "flip", base_commit_sha=github.ref(repo, "main")).status_code == 200
+    teammate = github.files(repo)[".gitattributes"][1].decode() + "*.png binary\n"
+    github.commit_files(repo, {".gitattributes": teammate}, "Mark images binary", author="ben")
+
+    r = _push(_modify_run(first, lambda workdir: _write(workdir, "backend/main_api.py", "app = 1\n")), "flip")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] in ("pushed", "merged")
+    assert github.files(repo)[".gitattributes"][1].decode() == teammate

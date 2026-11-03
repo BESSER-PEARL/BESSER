@@ -275,6 +275,10 @@ _APPLICATION_OUTPUT_DIRS = {
     "generate_rest_api": "rest_api",
 }
 _APPLICATION_PRIMARY_TOOLS = frozenset(_APPLICATION_OUTPUT_DIRS)
+# The generators a modify run regenerates and merges after a model change (#659):
+# on 44 FastAPI runs, regenerating kept every app working. The web app's React
+# output has no determinism test yet, so it is not regenerated.
+REGENERABLE_GENERATORS = frozenset({"generate_fastapi_backend"})
 
 # Sub-generator tools that a chosen PRIMARY generator already bundles (e.g. a
 # FastAPI backend already contains SQLAlchemy models, Pydantic schemas and REST

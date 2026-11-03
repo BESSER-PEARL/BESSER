@@ -162,8 +162,14 @@ compares the run's files with GitHub's recursive tree of the base commit:
 - a changed file keeps its mode, so an executable stays executable;
 - symlinks and submodules in the repository are never touched;
 - a repository path the run could not hold (build and dependency output,
-  ``*.db``, BESSER's ``.besser_*`` files, a scrubbed secret ``.env``) is never
-  deleted;
+  ``*.db``, BESSER's other ``.besser_*`` files, a scrubbed secret ``.env``) is
+  never deleted. The records a run carries (``.besser_recipe.json``,
+  ``.besser_attribution.json``, ``.besser_generator_output.json``) are the run's
+  own: a seeded run deletes one it no longer has;
+- the push marks those three records ``linguist-generated`` in
+  ``.gitattributes``, so GitHub folds their diffs. The repository's own lines are
+  kept, and a record a line already sets ``linguist-generated`` for keeps that
+  setting;
 - only a run seeded from this repository can delete a file at all; a run
   generated from the model (a first generation) only adds and updates;
 - a seeded run deletes only paths it held: import and every push record the

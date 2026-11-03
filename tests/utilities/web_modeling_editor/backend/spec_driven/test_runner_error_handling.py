@@ -84,6 +84,7 @@ def test_scrub_skipped_files_never_reach_the_zip(tmp_path):
         names = set(archive.namelist())
         assert names == {
             "main.py", "README.md", "BESSER_GENERATION.md", f".agent-trace/{done.runId}.json",
+            ".besser_attribution.json",
         }
         assert all(TOKEN not in archive.read(n).decode() for n in names)
 

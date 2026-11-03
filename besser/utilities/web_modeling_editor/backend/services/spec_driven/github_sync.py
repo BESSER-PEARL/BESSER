@@ -23,7 +23,6 @@ from typing import Optional
 import httpx
 
 from besser.spec_driven_agent.providers.llm_client import FREE_TIER_PROVIDER, SPONSORED_PROVIDER
-from besser.spec_driven_agent.state.agent_trace import ATTRIBUTION_FILENAME
 from besser.utilities.provenance import PROVENANCE_FILENAME, add_readme_block, readme_besser_block
 from besser.utilities.secret_redaction import scrub_secret_files
 from besser.utilities.workspace_fs import copytree_plain, is_plain_entry
@@ -52,6 +51,7 @@ from besser.utilities.web_modeling_editor.backend.services.reverse_engineering i
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     _EXCLUDED_OUTPUT_DIRS,
+    CARRIED_RUN_FILES,
     GITHUB_SOURCE_FILENAME,
     SmartRunEntry,
     SmartRunRegistry,
@@ -82,9 +82,12 @@ def _hidden_from_run(path: str, scrubbed: list[str]) -> bool:
 
     The seed and the push copy skip ``_EXCLUDED_OUTPUT_DIRS`` and BESSER's
     internal files, and the push removes secret ``.env`` files (``scrubbed``).
+    The internal files a run carries are its own: a stale copy is deleted.
     """
     if path in scrubbed:
         return True
+    if path in CARRIED_RUN_FILES:
+        return False
     return any(
         fnmatch.fnmatch(part, pattern)
         for part in path.split("/")
@@ -147,22 +150,18 @@ async def push_run_to_github(
         prefix=f"{SMART_PUSH_TEMP_DIR_PREFIX}{uuid.uuid4().hex}_"
     ) as workdir:
         # ---- 3. Copy the stored tree, dropping build/dep dirs and
-        # `.besser_*` internal files (checkpoint / snapshot). The
-        # recipe is one internal file we KEEP: a repo imported
-        # back via continue-from-GitHub re-hydrates the seed's
-        # generator name and run history from it — without it the
-        # modify run loses the framework guard and gap analysis
-        # falls back to "build from scratch" framing.
+        # `.besser_*` internal files (checkpoint / snapshot), except
+        # those a continue-from-GitHub run reads back: the recipe (the
+        # seed's generator and run history; without it the modify run
+        # loses the framework guard), the line attribution (lines a
+        # person edited in between) and the generator's stored output
+        # (the base a model change is merged against).
         # Symlinks are dropped, never read through.
         copytree_plain(
             entry.temp_dir, workdir, [*_EXCLUDED_OUTPUT_DIRS, _RUN_INTERNAL_FILES],
             dirs_exist_ok=True,
         )
-        # The same goes for the line attribution state: the next
-        # continue-from-GitHub run diffs the repo against it to tell
-        # lines a person edited in between from the AI's and the
-        # generator's. It holds line hashes only, never content.
-        for _internal in (".besser_recipe.json", ATTRIBUTION_FILENAME):
+        for _internal in CARRIED_RUN_FILES:
             _src = os.path.join(entry.temp_dir, _internal)
             if os.path.isfile(_src) and is_plain_entry(_src):
                 shutil.copy2(_src, os.path.join(workdir, _internal))
@@ -227,6 +226,16 @@ async def push_run_to_github(
             model_source=model_source if os.path.isfile(os.path.join(workdir, *model_source.split("/"))) else None,
             has_provenance=os.path.isfile(os.path.join(workdir, PROVENANCE_FILENAME)),
         ), title=repo_name if is_first_push else None)
+
+        # ---- 5d. Fold BESSER's run records in GitHub diffs ----
+        # A run that did not start from this repo lacks the repo's own file, which the push would replace.
+        repo_gitattributes = None
+        if not is_first_push and not os.path.lexists(os.path.join(workdir, repo_model.GITATTRIBUTES_FILE)):
+            current = await github.get_file_content(
+                owner, repo_name, repo_model.GITATTRIBUTES_FILE, ref=target_branch,
+            )
+            repo_gitattributes = current.get("content") if current else None
+        repo_model.mark_generated(workdir, CARRIED_RUN_FILES, repo_gitattributes)
 
         # ---- 6. Push what the run changed ----
         # The tree is compared with the commit the run started from;
@@ -393,15 +402,17 @@ def _record_run_seed(run_dir: str, owner: str, repo: str, commit_sha: str, files
 
 
 def _plain_file_hashes(root: str) -> dict[str, str]:
-    """``repo path -> content_hash`` of the regular files under ``root``, BESSER's own records left out."""
+    """``repo path -> content_hash`` of the regular files under ``root``, BESSER's own records left
+    out except those a run carries (so a push can tell when one changed or is gone)."""
     found = {}
     for directory, dirs, names in os.walk(root):
         dirs[:] = [d for d in dirs if is_plain_entry(os.path.join(directory, d))]
         for name in names:
             full = os.path.join(directory, name)
-            if is_plain_entry(full) and not fnmatch.fnmatch(name, _RUN_INTERNAL_FILES):
+            rel = os.path.relpath(full, root).replace(os.sep, "/")
+            if is_plain_entry(full) and (rel in CARRIED_RUN_FILES or not fnmatch.fnmatch(name, _RUN_INTERNAL_FILES)):
                 with open(full, "rb") as fh:
-                    found[os.path.relpath(full, root).replace(os.sep, "/")] = content_hash(fh.read())
+                    found[rel] = content_hash(fh.read())
     return dict(sorted(found.items()))
 
 

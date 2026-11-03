@@ -74,20 +74,33 @@ turn on *Record traces for this project* on that page.
   ``anonymous``) and, for assistant edits, to the assistant. Layout changes are not
   recorded, and quick successive edits of one element are merged. A SQLAlchemy
   or *Full Backend* generation records which files and lines each class,
-  enumeration, association and method produced.
-* **Shown.** A *Timeline* of sessions and generation runs, each naming the models
+  enumeration, association, attribute, method and OCL constraint produced. A chat
+  with the modeling assistant is a conversation: each request is a turn holding the
+  request, the assistant's progress messages and its answer or error (a message is
+  kept up to 10,000 characters). The model the assistant answers with is not known
+  to the editor, so it is recorded as *BESSER modeling assistant model*. The
+  elements an assistant edit created or changed are linked from the request that
+  asked for it, kept then as a prompt, so the lineage reads request -> element ->
+  code. A conversation ends with *New chat* or after ten idle minutes.
+* **Shown.** A *Timeline* of sessions, generation runs and conversations, each naming the models
   (diagrams) it changed or read; *Diagrams*, a tree of the project's diagrams, their
   elements and the elements' members, where a diagram shows the whole files generated
   from it, an element its lines, and both their history; and a *Coverage* matrix of
   generation runs against each diagram (its whole files) and its elements, where
   anything changed after a run is marked *suspect* (its generated code may be stale);
-  and a *Lineage* graph of one diagram or element: what it was derived from and what
-  was derived from it, following trace links in both directions, column by column.
-  Each link shows its confidence (also as line thickness) and is coloured by its
-  evidence (a generator rule, an AI step); a link whose source changed since is
-  *suspect*, and everything further downstream *stale upstream*. Selecting a link
-  shows its evidence, the operation, actor and tool that made it, and the changes
-  that made it suspect. Older generation runs are hidden unless asked for.
+  and a *Lineage* graph of the whole project, or of one diagram or element: what was
+  derived from what, following trace links in both directions, column by column. It
+  starts with the diagrams, prompts and generation runs, the links between them
+  bundled (a pill counts them); clicking one shows its parts that take part in links
+  (a diagram's elements, an element's attributes, methods and constraints, a run's
+  files, a file's fragments), and the links then reach them. *Expand all*, zoom and
+  *Full screen* help with large projects. Selecting a part highlights its links and
+  lists them. Links are coloured by their evidence (a generator rule, an AI step),
+  thicker with higher confidence, which a pill shows when below certain; a link whose
+  source changed since is *suspect*, and everything further downstream *stale
+  upstream*. Selecting a link shows its evidence, the operation, actor and tool that
+  made it, and the changes that made it suspect. Older generation runs are hidden
+  unless asked for.
 * **Stored.** In the browser (IndexedDB), apart from the project. Deleting the
   project deletes its trace, and *Clear* on the page deletes it alone. The newest five
   runs of each generator keep their trace links; older runs keep only their files and

@@ -64,9 +64,10 @@ Running the application creates the SQLite database file under ``data/`` (unless
 
 After ``generate()``, ``backend.traced_files`` records what each file was rendered from, by path in the output
 folder, for the elements that have an ``id`` (as every element drawn in the web editor does): the lines of each
-class, enumeration and association in ``sql_alchemy.py`` (see :doc:`alchemy`), of each class and enumeration in
-``pydantic_classes.py``, of each class's ``include_router`` lines in ``main_api.py`` and of each method in
-``routers/<class>_methods.py``; ``routers/<class>.py`` is recorded as generated as a whole from its class.
+class, enumeration, association, attribute and method in ``sql_alchemy.py`` (see :doc:`alchemy`), of each class,
+enumeration and attribute and each OCL constraint's validator in ``pydantic_classes.py``, of each class's
+``include_router`` lines in ``main_api.py`` and of each method in ``routers/<class>_methods.py``;
+``routers/<class>.py`` is recorded as generated as a whole from its class.
 Recording them does not change the generated files. The web editor turns them into a :doc:`trace
 <../buml_language/model_types/traceability>` of the run.
 

@@ -36,6 +36,7 @@ and the model's contract.
    tools
    validation
    runs
+   regeneration
    configuration
    production_deployment
 

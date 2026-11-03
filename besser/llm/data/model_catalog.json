@@ -33,7 +33,9 @@
           "label": "Claude Haiku 5.5 — fast & cheap",
           "price": {
             "input": 0.1,
-            "output": 0.5
+            "output": 0.5,
+            "cache_read": 0.01,
+            "cache_write": 0.125
           }
         }
       ]

@@ -564,3 +564,59 @@ def test_the_sidebar_endpoints_map_github_errors_like_the_spec_driven_ones(monke
 
     assert (save.status_code, pull.status_code) == (expected, expected), (save.text, pull.text)
     assert "GitHub said no" in save.json()["detail"]
+
+
+@pytest.mark.parametrize("upstream, expected", [(401, 401), (422, 409), (503, 502)])
+@pytest.mark.parametrize("method, url, body", [
+    ("GET", "/besser_api/github/contents?owner=me&repo=app", None),
+    ("GET", "/besser_api/github/commits?owner=me&repo=app", None),
+    ("GET", "/besser_api/github/project/load?owner=me&repo=app", None),
+    ("GET", f"/besser_api/github/project/load-commit?owner=me&repo=app&commit_sha={BASE}", None),
+    ("POST", "/besser_api/github/project/create-repo", {"repo_name": "app", "project_data": _project()}),
+])
+def test_the_browse_load_and_create_endpoints_map_github_errors_too(monkeypatch, method, url, body, upstream, expected):
+    """These answered every GitHub error with 500, so a revoked token never offered Reconnect."""
+    _sidebar(monkeypatch, _FailingGitHub(upstream))
+
+    r = _call(method, url, headers=SESSION, json=body)
+
+    assert r.status_code == expected, r.text
+    assert "GitHub said no" in r.json()["detail"]
+
+
+def test_a_taken_repo_name_answers_409_with_githubs_reason(monkeypatch):
+    class _NameTaken(_FailingGitHub):
+        async def get_authenticated_user(self):
+            return {"login": "me"}
+
+    _sidebar(monkeypatch, _NameTaken(422))
+
+    r = _call("POST", "/besser_api/github/project/create-repo", headers=SESSION,
+              json={"repo_name": "app", "project_data": _project()})
+
+    assert r.status_code == 409, r.text
+
+
+def _github_answers(monkeypatch, status: int, body=None):
+    """GitHubService's requests all get ``status``; the test client keeps its own transport."""
+    real_client = httpx.AsyncClient
+    github = httpx.MockTransport(lambda request: httpx.Response(status, json=body))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: real_client(**{"transport": github, **kw}))
+
+
+@pytest.mark.parametrize("upstream, expected", [(401, 401), (503, 502)])
+def test_file_exists_reports_a_github_error_instead_of_a_missing_file(monkeypatch, upstream, expected):
+    """``file_exists`` read any non-200 as "missing": a revoked token answered 200 ``exists: false``."""
+    _github_answers(monkeypatch, upstream, {"message": "Bad credentials"})
+    monkeypatch.setattr(github_deploy_api, "get_user_token", lambda _sessions, sid: "token")
+
+    r = _call("GET", "/besser_api/github/file/exists?owner=me&repo=app&file_path=a.json", headers=SESSION)
+
+    assert r.status_code == expected, r.text
+    assert "Bad credentials" in r.json()["detail"]
+
+
+def test_file_exists_still_reads_404_as_missing(monkeypatch):
+    _github_answers(monkeypatch, 404)
+
+    assert asyncio.run(GitHubService("token").file_exists("me", "app", "a.json")) is False

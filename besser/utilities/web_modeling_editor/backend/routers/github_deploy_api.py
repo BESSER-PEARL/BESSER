@@ -1373,6 +1373,8 @@ async def check_file_exists(
         exists = await github.file_exists(owner, repo, file_path, branch)
 
         return FileExistsResponse(exists=exists, path=file_path)
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "check_file_exists") from exc
     except Exception:
         logger.exception("Unexpected error checking file existence on GitHub")
         raise HTTPException(status_code=500, detail="An internal error occurred while checking file existence.")
@@ -1428,6 +1430,8 @@ async def get_repository_contents(
                 for item in contents
             ]
         )
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "get_repository_contents") from exc
     except Exception:
         logger.exception("Unexpected error fetching GitHub repository contents")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching repository contents.")
@@ -1458,6 +1462,8 @@ async def get_repository_commits(
         return GitHubCommitsListResponse(
             commits=[_commit_response(c) for c in commits]
         )
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "get_repository_commits") from exc
     except Exception:
         logger.exception("Unexpected error fetching GitHub commits")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching commits.")
@@ -1650,6 +1656,8 @@ async def load_project_from_github(
         raise HTTPException(status_code=400, detail="Invalid project file format")
     except HTTPException:
         raise
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "load_project_from_github") from exc
     except Exception:
         logger.exception("Unexpected error loading project from GitHub")
         raise HTTPException(status_code=500, detail="An internal error occurred while loading the project.")
@@ -1688,6 +1696,8 @@ async def load_project_from_commit(
         raise HTTPException(status_code=400, detail="Invalid project file format")
     except HTTPException:
         raise
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "load_project_from_commit") from exc
     except Exception:
         logger.exception("Unexpected error loading project from GitHub commit")
         raise HTTPException(status_code=500, detail="An internal error occurred while loading the project from commit.")
@@ -1755,6 +1765,8 @@ async def create_repository_for_project(
             message=f"Repository '{repo_name}' created with project",
             branch=branch,
         )
+    except httpx.HTTPStatusError as exc:
+        raise _github_status_error(exc, "create_repository_for_project") from exc
     except Exception:
         logger.exception("Unexpected error creating GitHub repository for project")
         raise HTTPException(status_code=500, detail="An internal error occurred while creating the repository.")

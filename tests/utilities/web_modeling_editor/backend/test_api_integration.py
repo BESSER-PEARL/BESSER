@@ -2054,7 +2054,10 @@ class TestStandaloneChatbotDeploy:
                 return {"total_files": 7, "commit_sha": "deadbeef"}
 
             def get_deployment_urls(self, owner: str, repo_name: str):
+                # The two links GitHubService.get_deployment_urls always returns.
                 return {
+                    "github": f"https://github.com/{owner}/{repo_name}",
+                    "render": "https://render.com/deploy",
                     "render_dashboard": "https://dashboard.render.com/blueprints",
                 }
 

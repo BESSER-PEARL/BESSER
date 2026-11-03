@@ -11,11 +11,12 @@ import os
 import re
 import tempfile
 import uuid
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
 from pydantic import BaseModel, Field, field_validator
+from typing_extensions import NotRequired, TypedDict
 
 from besser.utilities.secret_redaction import redact_credentials, sanitize_config
 from besser.utilities.web_modeling_editor.backend.services.deployment import render_blueprint, repo_model
@@ -54,6 +55,7 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     GenerationError,
     ValidationError,
 )
+from besser.utilities.web_modeling_editor.backend.models.responses import CommitStatus, ResponseModel
 
 logger = logging.getLogger(__name__)
 
@@ -94,21 +96,33 @@ class DeployToGitHubRequest(BaseModel):
     )
 
 
+class DeploymentUrls(TypedDict):
+    """Links for a deployed repo; the live and dashboard ones only on a redeploy."""
+    github: str
+    render: str
+    live_frontend: NotRequired[str]  # web app
+    live_backend: NotRequired[str]  # web app
+    live_chatbot: NotRequired[str]  # chatbot
+    render_dashboard: NotRequired[str]
+
+
+# Not a ResponseModel: under its schema setting pydantic would list the
+# NotRequired links of DeploymentUrls as required. Every field is required instead.
 class DeployToGitHubResponse(BaseModel):
     """Response model for GitHub deployment."""
     success: bool
     repo_url: str
     repo_name: str
     owner: str
-    deployment_urls: dict
+    deployment_urls: DeploymentUrls
     files_uploaded: int
     message: str
     # True on the very first deploy to a repo (no previous ``render.yaml`` found),
     # False on every subsequent deploy. The frontend uses this to pick the right
     # "next action" button — create-blueprint vs. open-live-site.
-    is_first_deploy: bool = True
+    is_first_deploy: bool
     # Deployment flavor: ``webapp`` (Class+GUI) or ``chatbot`` (Agent-only).
-    deployment_type: str = "webapp"
+    deployment_type: Literal["webapp", "chatbot"]
 
 
 @router.post("/deploy-webapp", response_model=DeployToGitHubResponse)
@@ -1171,7 +1185,7 @@ VITE_AGENT_URLS='{json.dumps(local_agent_urls)}'
 # GitHub Project Storage API
 # ============================================================================
 
-class GitHubRepoResponse(BaseModel):
+class GitHubRepoResponse(ResponseModel):
     """Repository information response."""
     id: int
     name: str
@@ -1186,14 +1200,14 @@ class GitHubRepoResponse(BaseModel):
     can_push: bool = True
 
 
-class GitHubReposListResponse(BaseModel):
+class GitHubReposListResponse(ResponseModel):
     """Response for list of repositories."""
     repositories: List[GitHubRepoResponse]
     # True when the account has more repositories than the listing covers.
     truncated: bool = False
 
 
-class GitHubCommitResponse(BaseModel):
+class GitHubCommitResponse(ResponseModel):
     """Commit information response."""
     sha: str
     message: str
@@ -1204,7 +1218,7 @@ class GitHubCommitResponse(BaseModel):
     origin: Optional[str] = None
 
 
-class GitHubCommitsListResponse(BaseModel):
+class GitHubCommitsListResponse(ResponseModel):
     """Response for list of commits."""
     commits: List[GitHubCommitResponse]
 
@@ -1234,26 +1248,25 @@ class SaveProjectRequest(BaseModel):
         return value
 
 
-class SaveProjectResponse(BaseModel):
+class SaveProjectResponse(ResponseModel):
     """Response for project save."""
     success: bool
     commit_sha: str
     message: str
-    # "pushed", "merged" or "conflict" (see GitHubService.commit_tree).
-    status: str = "pushed"
+    status: CommitStatus = "pushed"
     conflict_branch: Optional[str] = None
     # What the user should know about a merged save (see GitHubService.commit_tree).
     warnings: List[str] = []
 
 
-class LoadProjectResponse(BaseModel):
+class LoadProjectResponse(ResponseModel):
     """Response for project load."""
     success: bool
     project: dict
     sha: str
 
 
-class LoadProjectFromCommitResponse(BaseModel):
+class LoadProjectFromCommitResponse(ResponseModel):
     """Response for loading project from specific commit."""
     success: bool
     project: dict
@@ -1271,7 +1284,7 @@ class CreateRepoForProjectRequest(BaseModel):
     project_export: Optional[dict] = None
 
 
-class CreateRepoForProjectResponse(BaseModel):
+class CreateRepoForProjectResponse(ResponseModel):
     """Response for creating repo with project."""
     success: bool
     repo_url: str
@@ -1304,7 +1317,7 @@ async def get_user_repositories(
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching repositories.")
 
 
-class GitHubBranchesListResponse(BaseModel):
+class GitHubBranchesListResponse(ResponseModel):
     """Response for list of branches."""
     branches: List[str]
 
@@ -1330,7 +1343,7 @@ async def get_repository_branches(
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching branches.")
 
 
-class FileExistsResponse(BaseModel):
+class FileExistsResponse(ResponseModel):
     """Response for file existence check."""
     exists: bool
     path: str
@@ -1366,7 +1379,7 @@ async def check_file_exists(
 
 
 
-class GitHubContentItem(BaseModel):
+class GitHubContentItem(ResponseModel):
     """Item in a repository directory."""
     name: str
     path: str
@@ -1375,7 +1388,7 @@ class GitHubContentItem(BaseModel):
     sha: str
 
 
-class GitHubContentsResponse(BaseModel):
+class GitHubContentsResponse(ResponseModel):
     """Response for repository contents."""
     contents: List[GitHubContentItem]
 
@@ -1751,7 +1764,7 @@ async def create_repository_for_project(
 # Linked repository: summary, sync status, model history, pull requests
 # ============================================================================
 
-class RepoSummaryResponse(BaseModel):
+class RepoSummaryResponse(ResponseModel):
     """What the repo browser shows on a repo card."""
     has_model: bool
     branch: str
@@ -1810,18 +1823,18 @@ async def get_repo_summary(
         raise HTTPException(status_code=500, detail="An internal error occurred while reading the repository.")
 
 
-class PendingChangeStatus(BaseModel):
+class PendingChangeStatus(ResponseModel):
     """Where a save or push that did not land on the branch stands."""
     branch: str
     # False once the branch was deleted (e.g. after its pull request was merged).
     branch_exists: bool
     pull_request_number: Optional[int] = None
     pull_request_url: Optional[str] = None
-    # "open", "closed" or "merged"; None while no pull request was opened.
-    pull_request_state: Optional[str] = None
+    # None while no pull request was opened.
+    pull_request_state: Optional[Literal["open", "closed", "merged"]] = None
 
 
-class SyncStatusResponse(BaseModel):
+class SyncStatusResponse(ResponseModel):
     """How a linked repo's branch relates to the commit the editor last synced."""
     head_sha: str
     # Commits on the branch since ``base_sha``, newest first.
@@ -1840,7 +1853,7 @@ async def _pending_status(github, owner: str, repo: str, branch: str) -> Pending
     pull = await github.get_pull_request_for_branch(owner, repo, branch)
     state = None
     if pull:
-        state = "merged" if pull["merged"] else pull["state"]
+        state = "merged" if pull["merged"] else pull["state"] or None
     return PendingChangeStatus(
         branch=branch, branch_exists=exists,
         pull_request_number=pull and pull["number"], pull_request_url=pull and pull["html_url"],
@@ -1889,7 +1902,7 @@ class ModelHistoryEntry(GitHubCommitResponse):
     changes: List[str]
 
 
-class ModelHistoryResponse(BaseModel):
+class ModelHistoryResponse(ResponseModel):
     commits: List[ModelHistoryEntry]
 
 
@@ -1978,7 +1991,7 @@ class CreatePullRequestRequest(BaseModel):
     body: str = ""
 
 
-class CreatePullRequestResponse(BaseModel):
+class CreatePullRequestResponse(ResponseModel):
     number: int
     html_url: str
 
@@ -2021,7 +2034,7 @@ async def _pull_request_body(github, owner: str, repo: str, base: str, head: str
 # Go live: deploy the project's own repository
 # ============================================================================
 
-class AppCapabilitiesResponse(BaseModel):
+class AppCapabilitiesResponse(ResponseModel):
     """Server features the editor switches on; read once per page load."""
     go_live: bool
 
@@ -2037,7 +2050,7 @@ class GoLiveRequest(BaseModel):
     branch: str = "main"
 
 
-class GoLiveResponse(BaseModel):
+class GoLiveResponse(ResponseModel):
     """The repo is ready for Render: ``render_deploy_url`` connects it once."""
     commit_sha: str
     # False when the repo already held these exact deploy files.
@@ -2147,7 +2160,7 @@ class CreateGistRequest(BaseModel):
     is_public: bool = False
 
 
-class CreateGistResponse(BaseModel):
+class CreateGistResponse(ResponseModel):
     """Response for Gist creation."""
     success: bool
     gist_url: str

@@ -21,10 +21,11 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.session_st
     GitHubSessions,
 )
 from besser.utilities.web_modeling_editor.backend.dependencies import GitHubSessionsDep, SettingsDep
+from besser.utilities.web_modeling_editor.backend.models.responses import ResponseModel
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 
-class GitHubOAuthResponse(BaseModel):
+class GitHubOAuthResponse(ResponseModel):
     """Response model for OAuth flow."""
     success: bool
     authenticated: Optional[bool] = None

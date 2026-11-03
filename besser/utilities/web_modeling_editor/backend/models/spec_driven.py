@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
+from besser.utilities.web_modeling_editor.backend.models.responses import CommitStatus, ResponseModel
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ValidationError
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
@@ -327,7 +328,7 @@ class PushSmartToGitHubRequest(BaseModel):
     deploy_config: SmartPushDeployConfig
 
 
-class PushSmartToGitHubResponse(BaseModel):
+class PushSmartToGitHubResponse(ResponseModel):
     """Response of ``POST /besser_api/spec-driven/push-to-github``."""
 
     success: bool
@@ -344,7 +345,7 @@ class PushSmartToGitHubResponse(BaseModel):
     # "pushed" (fast-forward), "merged" (merged with commits made since
     # ``base_commit_sha``), "conflict" (left on ``conflict_branch``) or
     # "pull_request" (opened ``pull_request_url``).
-    status: str = "pushed"
+    status: Literal[CommitStatus, "pull_request"] = "pushed"
     conflict_branch: Optional[str] = None
     pull_request_url: Optional[str] = None
     # The branch the pull request merges (``status`` "pull_request").
@@ -425,7 +426,29 @@ class ImportGitHubRunRequest(BaseModel):
         return "" if self.demo_token is None else self.demo_token.get_secret_value()
 
 
-class ImportGitHubRunResponse(BaseModel):
+class CodeAnalysisResponse(ResponseModel):
+    """What a repo's code holds: ``CodeAnalysis.to_dict()`` (reverse_engineering)."""
+
+    stack: list[str]
+    # "SQLAlchemy models", "Django models", ...; None when no model code was read.
+    model_source: Optional[str]
+    source_files: list[str]
+    entities: list[str]
+    # True when an LLM proposed the model from the code, not the exact reader.
+    ai: bool
+    # Relationships the model could not take, as "Source -> Target".
+    skipped_relationships: list[str]
+
+
+class ProposedDiagramResponse(ResponseModel):
+    """A class diagram read from a repo's code, in the shape the editor imports."""
+
+    title: str
+    model: dict[str, Any]
+    diagramType: str
+
+
+class ImportGitHubRunResponse(ResponseModel):
     """Response of ``POST /besser_api/spec-driven/import-github-run``."""
 
     # A fresh run id whose stored files are the repo's code tree; usable as
@@ -450,8 +473,8 @@ class ImportGitHubRunResponse(BaseModel):
     # accept. ``ai`` is true when no data classes were readable and an LLM
     # proposed the diagram from the code instead. proposed_diagram is None
     # when the repo has a model, or neither reading produced one.
-    analysis: Optional[dict] = None
-    proposed_diagram: Optional[dict] = None
+    analysis: Optional[CodeAnalysisResponse] = None
+    proposed_diagram: Optional[ProposedDiagramResponse] = None
     # Human-readable hint when there is no model (or it was unreadable).
     message: Optional[str] = None
     # True when an AI model could read the code for a better diagram and the

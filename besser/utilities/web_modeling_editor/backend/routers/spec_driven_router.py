@@ -1081,6 +1081,16 @@ async def push_spec_driven_to_github(
                 has_provenance=os.path.isfile(os.path.join(workdir, PROVENANCE_FILENAME)),
             ), title=repo_name if is_first_push else None)
 
+            # ---- 5d. Fold BESSER's run records in GitHub diffs ----
+            # A run that did not start from this repo lacks the repo's own file, which the push would replace.
+            repo_gitattributes = None
+            if not is_first_push and not os.path.lexists(os.path.join(workdir, repo_model.GITATTRIBUTES_FILE)):
+                current = await github.get_file_content(
+                    owner, repo_name, repo_model.GITATTRIBUTES_FILE, ref=target_branch,
+                )
+                repo_gitattributes = current.get("content") if current else None
+            repo_model.mark_generated(workdir, CARRIED_RUN_FILES, repo_gitattributes)
+
             # ---- 6. Push what the run changed ----
             # The tree is compared with the commit the run started from;
             # commits made on the branch since are merged in, never reverted.

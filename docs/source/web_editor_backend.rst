@@ -682,7 +682,9 @@ not hold (build and dependency output, ``*.db``, BESSER's other ``.besser_*``
 records, a scrubbed secret ``.env``) is not taken as a deletion. The records a
 run carries (``.besser_recipe.json``, ``.besser_attribution.json`` and
 ``.besser_generator_output.json``) are its own: a push deletes them when the
-run no longer has them, so a stale one never outlives its run. Only a run seeded from
+run no longer has them, so a stale one never outlives its run. The push marks
+them ``linguist-generated`` in ``.gitattributes``, keeping the repository's own
+lines, so GitHub folds their diffs. Only a run seeded from
 the repository (``.besser_github_source.json`` names it) can delete files at
 all; any other run only adds and updates. A push with no change
 makes no commit. ``files_uploaded`` counts the files added, changed or deleted.

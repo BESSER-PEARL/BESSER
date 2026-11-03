@@ -59,7 +59,9 @@ The records an app carries
 
 Three files at the root of the app make this possible. They travel with the
 app: into the next modify run's workspace, in the download ZIP and in the
-GitHub push. A run that continues from GitHub reads them back.
+GitHub push. A run that continues from GitHub reads them back. The push marks
+them ``linguist-generated`` in the repository's ``.gitattributes``, keeping the
+lines already there, so GitHub folds their diffs in commits and pull requests.
 
 .. list-table::
    :header-rows: 1
@@ -103,6 +105,11 @@ files an earlier run left to the agent: they keep an older base on purpose
 the run received, or the model-synced one when the run added classes. Only a
 store written in that run gets one. A store over 1.5 MB is not written, and a
 larger one is not read.
+
+The store holds the generated backend as text, so it is about as large as that
+code: about 58 KB for 3 classes, 300 KB for 20 and 750 KB for 50. Past about
+100 classes it reaches the 1.5 MB cap. Such an app gets no store, and its
+modify runs use the line attribution instead (:ref:`spec-driven-regeneration-fallback`).
 
 The line attribution (version 1)::
 

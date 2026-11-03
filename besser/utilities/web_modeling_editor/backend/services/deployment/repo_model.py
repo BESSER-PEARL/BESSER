@@ -38,6 +38,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
     assemble_models_from_project,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.secret_redaction import redact_credentials
+from besser.utilities.workspace_fs import is_plain_file, read_plain_text, write_atomic_plain
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ MODEL_DIR = "buml"
 MODEL_FILE = f"{MODEL_DIR}/diagrams.json"
 LEGACY_PROJECT_FILE = "besser-project.json"
 LINK_FILE = ".besser/project.json"
+GITATTRIBUTES_FILE = ".gitattributes"
 # The old editor sidebar saved the project as ``<dir>/<project-name>.json``.
 # Each candidate costs a read, so a repo full of JSON files is capped.
 _MAX_SAVED_PROJECT_CANDIDATES = 10
@@ -168,6 +170,31 @@ def write_model_files(workdir: str, project_export: Optional[dict]) -> None:
         os.makedirs(os.path.dirname(target), exist_ok=True)
         with open(target, "wb") as fh:
             fh.write(content)
+
+
+def mark_generated(workdir: str, repo_paths: Iterable[str], repo_text: Optional[str] = None) -> None:
+    """Mark ``repo_paths`` ``linguist-generated`` in ``workdir``'s ``.gitattributes``, so GitHub folds their diffs.
+
+    Only paths present in ``workdir`` are marked, and a path the file already
+    names (with any attributes) is left as it is. Every existing line is kept:
+    the run's own file, or ``repo_text`` (the repo's file) when the run holds none.
+    """
+    target = os.path.join(workdir, GITATTRIBUTES_FILE)
+    if os.path.lexists(target) and not is_plain_file(target, root=workdir):
+        logger.warning("%s in the pushed tree is not a plain file; its attributes are left alone", GITATTRIBUTES_FILE)
+        return
+    text = read_plain_text(target, root=workdir)
+    if text is None:
+        text = repo_text or ""
+    named = {line.split()[0].lstrip("/") for line in text.splitlines()
+             if line.strip() and not line.lstrip().startswith("#")}
+    missing = [path for path in repo_paths
+               if path not in named and is_plain_file(os.path.join(workdir, path), root=workdir)]
+    if not missing:
+        return
+    lines = [text.rstrip("\n")] if text.strip() else []
+    lines += [f"/{path} linguist-generated=true" for path in missing]
+    write_atomic_plain(target, "\n".join(lines) + "\n", root=workdir)
 
 
 def summarize(project_export: dict) -> dict:

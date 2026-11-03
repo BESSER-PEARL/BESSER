@@ -257,7 +257,7 @@ reading a trace and wondering why a run did what it did.
        Toggle with ``BESSER_LLM_ENABLE_CHECKPOINTING`` (default on).
    * - Tracing
      - Every phase transition, turn, tool call, cost update, compaction,
-       snapshot, rollback and validation finding is appended to
+       snapshot, rollback, regeneration and validation finding is appended to
        ``.besser_trace.jsonl`` in the workspace. A ``tool_call`` record holds
        the input and a ``result`` excerpt (its length and the first 500
        characters), with credential-shaped values redacted before the cut. It

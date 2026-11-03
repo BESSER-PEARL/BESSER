@@ -178,7 +178,10 @@ toolset and the agent's calls to them are refused: running one again would
 overwrite every edit made since. In a modify run on any other seed, only the
 generators whose output folder the seed already has (``backend/``,
 ``web_app/``, ``django/``, ``rest_api/``) are refused. A resumed
-run keeps the same lock. To change the stack, start a fresh run.
+run keeps the same lock. To change the stack, start a fresh run. The lock covers
+the agent's calls only: when the model changed, a modify run itself regenerates
+the generated files and merges the change into edited ones (see
+:ref:`spec-driven-regeneration`).
 
 .. _spec-driven-shell-tools:
 

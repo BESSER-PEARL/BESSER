@@ -110,6 +110,19 @@ OCL constraints are not compared. Elements are matched as described in
 only names its classes, and those include classes the agent added itself, so
 it gets no change list (logged as a warning).
 
+Bringing generated files up to a changed model
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When the model changed and the app's backend came from ``generate_fastapi_backend``,
+the generator runs again on the new model before Phase 2, and its output is
+merged into the app file by file, like ``git merge``: untouched files become the
+new output, edited files keep their edits and get the model change, and only
+what cannot be merged is left to the agent, with a precise note. The base of
+the merge is the generator's output as it was written, stored in
+``.besser_generator_output.json``, which travels with the app in the seed, the
+ZIP and the GitHub push. See :doc:`regeneration` for how it works, the records
+involved, worked examples and the measured results.
+
 After Phase 2 a deterministic check compares the FastAPI backend
 (``sql_alchemy.py`` and the ``<Class>Create`` schemas in
 ``pydantic_classes.py``) with the changed attributes. A removed attribute still
@@ -172,8 +185,9 @@ writes a file, its lines are recorded (as short hashes) in
 ``.besser_attribution.json``; at packaging time every line that differs from
 that record goes to the LLM. A line keeps its contributor however often the
 file was edited, as long as the line itself is unchanged. The record holds
-hashes only, never content, and is pushed to GitHub beside the recipe, so a
-continue-from-GitHub run can tell a person's edits from the AI's. Binary files
+hashes only, never content, and goes into the GitHub push and the download ZIP
+beside the recipe, so a continue-from-GitHub run can tell a person's edits from
+the AI's. Binary files
 and files over 2 MB are not attributed. In files longer than 5,000 lines only
 the unchanged lines at the start and the end keep their contributor: a change
 in the middle gives every line from the first change to the last one to the

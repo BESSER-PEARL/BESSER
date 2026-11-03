@@ -20,7 +20,9 @@ from besser.utilities.web_modeling_editor.backend.backend import app
 from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
+from besser.utilities.web_modeling_editor.backend.services.deployment import repo_model
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
+    CARRIED_RUN_FILES,
     SMART_RUN_REGISTRY,
     SmartRunEntry,
 )
@@ -57,8 +59,9 @@ class _FakeGitHubService:
     during the call, which is exactly what the endpoint does in practice.
     """
 
-    def __init__(self, *, branches=None, get_branches_404=False, default_branch="main"):
+    def __init__(self, *, branches=None, get_branches_404=False, default_branch="main", repo_files=None):
         self._branches = ["main"] if branches is None else branches
+        self._repo_files = repo_files or {}
         self._default_branch = default_branch
         self._get_branches_404 = get_branches_404
         self.created = False
@@ -99,7 +102,8 @@ class _FakeGitHubService:
         return "a" * 40
 
     async def get_file_content(self, owner, repo_name, file_path, branch="main", ref=None):
-        return None
+        content = self._repo_files.get(file_path)
+        return None if content is None else {"content": content}
 
     async def add_topic(self, owner, repo_name, topic):
         self.topics = getattr(self, "topics", []) + [topic]
@@ -142,6 +146,10 @@ class _FakeGitHubService:
         if os.path.isfile(readme):
             with open(readme, encoding="utf-8", newline="") as fh:
                 self.push["readme"] = fh.read()
+        gitattributes = os.path.join(directory_path, ".gitattributes")
+        if os.path.isfile(gitattributes):
+            with open(gitattributes, encoding="utf-8") as fh:
+                self.push["gitattributes"] = fh.read()
         return {
             "commit_sha": "d" * 40,
             "total_files": len(files),
@@ -187,6 +195,9 @@ def _seed_run(run_id: str, *, with_secret_env: bool = True) -> str:
     # Line attribution state: rides along for continue-from-GitHub (#620).
     with open(os.path.join(tmp, ".besser_attribution.json"), "w", encoding="utf-8") as fh:
         fh.write('{"version": 1, "contributors": [], "files": {}}')
+    # The generator's stored output: the base of the next model change's merge (#659).
+    with open(os.path.join(tmp, ".besser_generator_output.json"), "w", encoding="utf-8") as fh:
+        fh.write('{"format": 1, "out_dir": "backend", "files": {}}')
     os.makedirs(os.path.join(tmp, ".agent-trace"), exist_ok=True)
     with open(os.path.join(tmp, ".agent-trace", "run.json"), "w", encoding="utf-8") as fh:
         fh.write("{}")
@@ -306,6 +317,7 @@ class TestPushSmartToGitHub:
         # seed's generator + history; other internals and build dirs stay out.
         assert ".besser_recipe.json" in files
         assert ".besser_attribution.json" in files
+        assert ".besser_generator_output.json" in files
         assert ".agent-trace/run.json" in files
         assert not any(f.startswith(".besser_checkpoint") for f in files)
         assert not any(f.startswith(".besser_snapshot") for f in files)
@@ -412,3 +424,107 @@ class TestPushSmartToGitHub:
         assert r.status_code == 200, r.text
         assert fake.push["readme"].startswith("# my-generated-app\n\n<!-- besser:begin -->")
         assert "README.md" in fake.push["files"]
+
+    def test_the_run_records_are_marked_generated_so_github_folds_their_diffs(self, monkeypatch):
+        run_id = "f" * 32
+        _seed_run(run_id)
+        fake = _FakeGitHubService()
+        _install(monkeypatch, fake)
+
+        body = {"run_id": run_id, "projectExport": _project_export(),
+                "deploy_config": {"repo_name": "my-generated-app"}}
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        assert ".gitattributes" in fake.push["files"]
+        assert fake.push["gitattributes"] == (
+            "/.besser_recipe.json linguist-generated=true\n"
+            "/.besser_attribution.json linguist-generated=true\n"
+            "/.besser_generator_output.json linguist-generated=true\n"
+        )
+
+    def test_a_push_to_an_existing_repo_keeps_the_repos_own_gitattributes(self, monkeypatch):
+        # The run did not start from this repo, so it holds no .gitattributes; pushing a
+        # fresh one would replace the repo's.
+        run_id = "e" * 32
+        _seed_run(run_id)
+        # The owner's own setting for one record is kept; a line that does not set it does not count.
+        fake = _FakeGitHubService(repo_files={".gitattributes": (
+            "*.png binary\n/.besser_recipe.json -linguist-generated\n/.besser_attribution.json -diff\n")})
+        _install(monkeypatch, fake)
+
+        body = {"run_id": run_id, "projectExport": _project_export(),
+                "deploy_config": {"repo_name": "my-generated-app", "use_existing": True}}
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        assert fake.push["gitattributes"] == (
+            "*.png binary\n"
+            "/.besser_recipe.json -linguist-generated\n"
+            "/.besser_attribution.json -diff\n"
+            "/.besser_attribution.json linguist-generated=true\n"
+            "/.besser_generator_output.json linguist-generated=true\n"
+        )
+
+
+class TestMarkGenerated:
+    def _workdir(self, tmp_path, *names):
+        for name in names:
+            (tmp_path / name).write_text("{}", encoding="utf-8")
+        return str(tmp_path)
+
+    def _gitattributes(self, tmp_path):
+        return (tmp_path / ".gitattributes").read_text(encoding="utf-8")
+
+    def test_only_records_in_the_tree_are_marked(self, tmp_path):
+        workdir = self._workdir(tmp_path, ".besser_recipe.json")
+        repo_model.mark_generated(workdir, CARRIED_RUN_FILES)
+        assert self._gitattributes(tmp_path) == "/.besser_recipe.json linguist-generated=true\n"
+
+    def test_a_second_push_adds_nothing(self, tmp_path):
+        workdir = self._workdir(tmp_path, *CARRIED_RUN_FILES)
+        repo_model.mark_generated(workdir, CARRIED_RUN_FILES)
+        first = self._gitattributes(tmp_path)
+        repo_model.mark_generated(workdir, CARRIED_RUN_FILES)
+        assert self._gitattributes(tmp_path) == first
+
+    def test_the_runs_own_file_keeps_its_lines_and_wins_over_the_repos(self, tmp_path):
+        workdir = self._workdir(tmp_path, *CARRIED_RUN_FILES)
+        (tmp_path / ".gitattributes").write_text(
+            "# mine\n* text=auto\n.besser_attribution.json linguist-generated=false", encoding="utf-8",
+        )
+        repo_model.mark_generated(workdir, CARRIED_RUN_FILES, repo_text="*.zip binary\n")
+        assert self._gitattributes(tmp_path) == (
+            "# mine\n* text=auto\n.besser_attribution.json linguist-generated=false\n"
+            "/.besser_recipe.json linguist-generated=true\n"
+            "/.besser_generator_output.json linguist-generated=true\n"
+        )
+
+    def test_without_records_or_a_repo_file_no_file_is_written(self, tmp_path):
+        repo_model.mark_generated(str(tmp_path), CARRIED_RUN_FILES)
+        assert not (tmp_path / ".gitattributes").exists()
+
+    def test_the_repos_file_is_kept_even_when_nothing_is_added(self, tmp_path):
+        # The push would otherwise delete it as a file the run dropped.
+        repo_model.mark_generated(str(tmp_path), CARRIED_RUN_FILES, repo_text="*.zip binary\r\n")
+        assert (tmp_path / ".gitattributes").read_bytes() == b"*.zip binary\r\n"
+
+    def test_a_glob_line_setting_the_attribute_is_respected(self, tmp_path):
+        workdir = self._workdir(tmp_path, *CARRIED_RUN_FILES)
+        repo_model.mark_generated(workdir, CARRIED_RUN_FILES, repo_text="* text=auto\n.besser_* -linguist-generated\n")
+        assert self._gitattributes(tmp_path) == "* text=auto\n.besser_* -linguist-generated\n"
+
+    def test_lines_added_to_a_crlf_file_use_crlf(self, tmp_path):
+        workdir = self._workdir(tmp_path, ".besser_recipe.json")
+        repo_model.mark_generated(workdir, CARRIED_RUN_FILES, repo_text="*.png binary\r\n")
+        assert (tmp_path / ".gitattributes").read_bytes() == (
+            b"*.png binary\r\n/.besser_recipe.json linguist-generated=true\r\n")
+
+    def test_a_linked_gitattributes_is_left_alone(self, tmp_path):
+        workdir = self._workdir(tmp_path, *CARRIED_RUN_FILES)
+        outside = tmp_path.parent / f"{tmp_path.name}_outside"
+        outside.write_text("* text=auto\n", encoding="utf-8")
+        try:
+            os.symlink(outside, tmp_path / ".gitattributes")
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks are not available")
+        repo_model.mark_generated(workdir, CARRIED_RUN_FILES)
+        assert outside.read_text(encoding="utf-8") == "* text=auto\n"

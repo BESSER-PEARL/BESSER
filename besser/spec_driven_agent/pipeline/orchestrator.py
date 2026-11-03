@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
+from besser.BUML.metamodel.structural import DomainModel
 from besser.spec_driven_agent.agent.compaction import (
     COMPACT_RESERVE_TOKENS,
     # Re-exported on purpose: callers and tests import the threshold from
@@ -241,6 +242,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
 from besser.spec_driven_agent.pipeline.edit_loop_guards import EditLoopGuardsMixin
 from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
 from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin
+from besser.spec_driven_agent.pipeline.regeneration import Regeneration
 
 
 class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
@@ -300,6 +302,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         target_generator: str | None = None,
         target_generator_bound: bool = False,
         source_project_export: dict | None = None,
+        previous_domain_model: DomainModel | None = None,
         per_write_diagnostics: bool = True,
         enable_import_smoke_check: bool = True,
         enable_requirements_ledger: bool = True,
@@ -635,6 +638,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._updated_project_export: dict | None = None
         # The classes model sync added (its LLM answer), so a resume replays them.
         self._model_sync_classes: list[dict] = []
+        # The modify run's regeneration of the generated files (#659).
+        self._regeneration: Regeneration | None = None
+        # The model the app's stored generator output came from (modify runs), to
+        # rebuild the merge base after a BESSER upgrade (#659).
+        self._previous_domain_model = previous_domain_model
+        # Every file the seed run delivered (its recipe); None without a recipe.
+        self._seed_output_files: set[str] | None = None
+        # Generator files earlier runs' LLM edited, from the seed recipe.
+        self._seed_llm_modified: set[str] = set()
         # Why the model-sync call failed, for the trace and the recipe.
         self._model_sync_error: str | None = None
 
@@ -4470,7 +4482,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "size": os.path.getsize(full),
                         "source": "generator" if rel in generator_files else "llm",
                     }
-                    if os.path.normcase(os.path.normpath(full)) in llm_edited:
+                    if os.path.normcase(os.path.normpath(full)) in llm_edited or rel in self._seed_llm_modified:
                         entry["llm_modified"] = True
                     output_files.append(entry)
         except Exception:

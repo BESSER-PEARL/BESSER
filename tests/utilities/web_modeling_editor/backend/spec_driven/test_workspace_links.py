@@ -105,7 +105,7 @@ def test_download_zip_skips_symlinked_file_and_dir(tmp_path):
     with zipfile.ZipFile(entry.file_path) as archive:
         names = archive.namelist()
         trace = f".agent-trace/{done.runId}.json"
-        assert sorted(names) == [trace, "BESSER_GENERATION.md", "app.py", "main.py"]
+        assert sorted(names) == [trace, ".besser_attribution.json", "BESSER_GENERATION.md", "app.py", "main.py"]
         # Linked files are not attributed either.
         assert {f["path"] for f in json.loads(archive.read(trace))["files"]} == {"app.py", "main.py"}
         assert all(SECRET not in archive.read(n).decode("utf-8") for n in names)
@@ -208,3 +208,21 @@ def test_push_to_github_skips_symlinks(tmp_path, monkeypatch):
     assert "leak.txt" not in pushed
     assert ".besser_recipe.json" not in pushed
     assert not any(p.startswith("linked_dir/") for p in pushed)
+
+
+def test_a_linked_carried_file_never_reaches_the_zip(tmp_path):
+    """BESSER's own records ride in the ZIP (#659); one planted as a link must not leak its target."""
+    outside = _outside(tmp_path)
+    result_path = tmp_path / "result"
+    result_path.mkdir()
+    (result_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    (result_path / "app.py").write_text("app = 1\n", encoding="utf-8")
+    _symlink(outside / "secret.txt", result_path / ".besser_generator_output.json")
+
+    runner = SmartGenerationRunner(_build_request())
+    runner.temp_dir = str(tmp_path)
+    _, entry = runner._package_result(str(result_path))
+
+    with zipfile.ZipFile(entry.file_path) as archive:
+        assert ".besser_generator_output.json" not in archive.namelist()
+        assert all(SECRET not in archive.read(n).decode("utf-8") for n in archive.namelist())

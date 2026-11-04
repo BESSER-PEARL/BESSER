@@ -229,22 +229,40 @@ def test_a_model_added_only_in_the_override_reaches_the_picker(use_catalog):
     assert "base_url" not in providers["pia"]
 
 
-def test_a_gateway_run_announces_its_provider():
+@pytest.mark.parametrize("provider", ["pia", "gateway"])
+def test_a_gateway_run_announces_its_provider(provider):
     from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
         StartEvent,
     )
-    event = StartEvent(runId="r", provider="pia", llmModel="m", maxCost=1.0, maxRuntime=60)
-    assert event.provider == "pia"
+    event = StartEvent(runId="r", provider=provider, llmModel="m", maxCost=1.0, maxRuntime=60)
+    assert event.provider == provider
 
 
-def test_a_gateway_request_drops_a_stray_base_url():
+@pytest.mark.parametrize("provider", ["pia", "gateway"])
+def test_a_gateway_request_drops_a_stray_base_url(provider):
     """Its endpoint is the catalog's; a request URL must not trip the SSRF gate."""
     from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
         _build_request,
     )
-    request = _build_request(provider="pia", base_url="http://169.254.169.254/")
-    assert request.provider == "pia"
+    request = _build_request(provider=provider, base_url="http://169.254.169.254/")
+    assert request.provider == provider
     assert request.base_url is None
+
+
+def test_a_deployment_can_offer_a_second_gateway(use_catalog):
+    url = "https://second.example/v1"
+    use_catalog({"providers": {"gateway": {
+        "label": "Second gateway", "base_url": url, "models": [{"id": "vendor/m", "default": True}],
+    }}})
+    assert {p["id"]: p for p in _get_config()["providers"]}["gateway"]["label"] == "Second gateway"
+    client = create_llm_client(provider="gateway", api_key="sk-test", base_url="http://169.254.169.254/")
+    assert client._base_url == url
+    assert client._model == "vendor/m"
+
+
+def test_a_gateway_is_not_a_model_vendor():
+    from besser.spec_driven_agent.state.agent_trace import normalize_model_id
+    assert normalize_model_id("gateway", "m") == "m"
 
 
 # --- the provider's default model -------------------------------------------

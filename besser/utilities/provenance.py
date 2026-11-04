@@ -26,7 +26,11 @@ README_FILENAME = "README.md"
 AGENTS_FILENAME = "AGENTS.md"
 BESSER_BLOCK_BEGIN = "<!-- besser:begin -->"
 BESSER_BLOCK_END = "<!-- besser:end -->"
-_BESSER_BLOCK = re.compile(re.escape(BESSER_BLOCK_BEGIN) + r".*?" + re.escape(BESSER_BLOCK_END), re.DOTALL)
+# From the last begin marker before an end marker: text after a stray begin marker is someone's, not the block.
+_BESSER_BLOCK = re.compile(
+    re.escape(BESSER_BLOCK_BEGIN) + rf"(?:(?!{re.escape(BESSER_BLOCK_BEGIN)}).)*?" + re.escape(BESSER_BLOCK_END),
+    re.DOTALL,
+)
 
 
 @lru_cache(maxsize=1)

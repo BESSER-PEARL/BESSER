@@ -367,12 +367,11 @@ async def _hold_repo_agents_md(
     A run that did not start from this repo holds no copy of the file, or its own;
     the repo's text wins. So does a run whose archive left the file out. A link, a
     file that is not text, a file GitHub did not return or one added after the push's
-    base (the merge would see two new files) stays as it is: the recap is not worth
-    a failed push or a lost file.
+    base stays as it is: the recap is not worth a failed push or a lost file. In that
+    last case the run's own copy goes too, or the merge would see two new files.
     """
     path = os.path.join(workdir, AGENTS_FILENAME)
-    if seeded and os.path.lexists(path):
-        return True
+    run_holds_file = os.path.lexists(path)
     try:
         head = await github.get_branch_head(owner, repo, branch)
         entry = (await github.get_tree_entries(owner, repo, head)).get(AGENTS_FILENAME) if head else None
@@ -381,10 +380,14 @@ async def _hold_repo_agents_md(
         if entry["mode"] not in repo_model.REGULAR_FILE_MODES:
             return False
         if base_sha and base_sha != head and AGENTS_FILENAME not in await github.get_tree_entries(owner, repo, base_sha):
+            if run_holds_file:
+                os.remove(path)
             return False
+        if seeded and run_holds_file:
+            return True
         current = await github.get_file_content(owner, repo, AGENTS_FILENAME, ref=head)
     except (httpx.HTTPError, UnicodeDecodeError):
-        return False
+        return seeded and run_holds_file  # Its own copy of the repo's file merges without GitHub's answer here.
     if current and current.get("content"):
         with open_plain_write(path, "wb", root=workdir) as handle:
             handle.write(current["content"].encode("utf-8"))

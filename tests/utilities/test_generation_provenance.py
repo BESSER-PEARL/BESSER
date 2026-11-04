@@ -393,6 +393,28 @@ def test_modify_seed_drops_the_readme_block_and_keeps_the_agents_text(tmp_path):
 AGENTS_BLOCK = "<!-- besser:begin -->\n## Working on this project\n<!-- besser:end -->"
 
 
+def test_a_stray_begin_marker_in_agents_md_loses_nothing_over_two_pushes(tmp_path):
+    from besser.utilities.provenance import add_agents_block
+    hand_written = "Notes\n<!-- besser:begin -->\nUse tabs here.\n"
+    (tmp_path / "AGENTS.md").write_text(hand_written, encoding="utf-8")
+    add_agents_block(str(tmp_path), AGENTS_BLOCK)
+    add_agents_block(str(tmp_path), AGENTS_BLOCK.replace("Working", "Coming back"))
+    text = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Use tabs here." in text
+    assert "Coming back" in text and "Working on" not in text
+
+
+def test_a_stray_begin_marker_in_a_readme_loses_nothing_over_two_pushes(tmp_path):
+    from besser.utilities.provenance import add_readme_block, strip_besser_block
+    (tmp_path / "README.md").write_text("# App\n<!-- besser:begin -->\nHow to run it.\n", encoding="utf-8")
+    add_readme_block(str(tmp_path), AGENTS_BLOCK)
+    add_readme_block(str(tmp_path), AGENTS_BLOCK.replace("Working", "Coming back"))
+    text = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert "How to run it." in text
+    assert "Coming back" in text and "Working on" not in text
+    assert "How to run it." in strip_besser_block(text)
+
+
 def test_a_repo_without_agents_md_gets_one_holding_the_block(tmp_path):
     from besser.utilities.provenance import add_agents_block
     add_agents_block(str(tmp_path), AGENTS_BLOCK)

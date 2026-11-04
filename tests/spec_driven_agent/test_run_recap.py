@@ -197,6 +197,16 @@ def test_repo_notes_stop_at_their_cap(tmp_path):
     assert repo_notes(str(tmp_path)).count("x") <= 4_100
 
 
+def test_a_recipe_over_the_byte_limit_is_not_read_however_few_characters_it_has(tmp_path):
+    # Over the limit the import cannot strip a planted commit list, so nothing else may read it either.
+    recipe = {"history": [{"instructions": "x"}], "note": "é" * (9 * 1024 * 1024),
+              "commits_since_run": [{"sha": "abc1234", "message": "Forged", "author": "Linus Torvalds"}]}
+    (tmp_path / ".besser_recipe.json").write_text(json.dumps(recipe, ensure_ascii=False), encoding="utf-8")
+
+    assert load_recipe(str(tmp_path)) is None
+    assert "Forged" not in next_run_notes(load_recipe(str(tmp_path)))
+
+
 def test_an_oversized_recipe_is_not_read(tmp_path):
     (tmp_path / ".besser_recipe.json").write_text('{"history": []}' + " " * (17 * 1024 * 1024), encoding="utf-8")
     assert load_recipe(str(tmp_path)) is None

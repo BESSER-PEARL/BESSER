@@ -36,6 +36,7 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.model_attr
     ATTRIBUTION_KEY,
     attribute_project,
     with_well_formed_records,
+    without_records,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment.model_merge import (
     MergeConflict,
@@ -127,8 +128,9 @@ async def attribute_new_elements(
     """``export`` with the classes and members it adds over the repo's model credited to the signed-in user.
 
     ``ref`` is the commit ``export`` was derived from, else the head of ``branch``.
-    The credit is not worth a failed save: when GitHub does not answer, or the repo's
-    model cannot be read, ``export`` goes with its own records, only the well-formed ones.
+    The credit is not worth a failed save. When GitHub does not answer, ``export`` goes
+    with its well-formed records. When the repo's model cannot be read, it goes with none:
+    nothing backs them, and a model file anyone can break must not unlock a forged credit.
     """
     if not is_besser_project(export):
         return export
@@ -146,10 +148,14 @@ async def attribute_new_elements(
                 base = await read_project_file(github, owner, repo, path, commit)
                 if base is not None:
                     break
-    # RuntimeError: a model nested too deep to parse (RecursionError), or a tree too large to list.
-    except (httpx.HTTPError, ValueError, RuntimeError):
-        logger.warning("Could not read the model of %s/%s to credit new elements", owner, repo, exc_info=True)
+    except httpx.HTTPError:
+        logger.warning("GitHub did not answer for the model of %s/%s; new elements are not credited",
+                       owner, repo, exc_info=True)
         return _with_project(export, with_well_formed_records(project_of(export)))
+    # RuntimeError: a model nested too deep to parse (RecursionError), or a tree too large to list.
+    except (ValueError, RuntimeError):
+        logger.warning("Could not read the model of %s/%s; this save credits nobody", owner, repo, exc_info=True)
+        return _with_project(export, without_records(project_of(export)))
     if not login:
         logger.warning("GitHub named no user for %s/%s; new elements are not credited", owner, repo)
         return _with_project(export, with_well_formed_records(project_of(export)))
@@ -406,6 +412,16 @@ def _builds(project_export: dict) -> bool:
     return True
 
 
+def _keeping_records(document: Optional[dict], base: Optional[dict]) -> Optional[dict]:
+    """``document``, where having no records means nothing was said about them, not that they were deleted."""
+    if not is_besser_project(document) or not is_besser_project(base):
+        return document
+    project = project_of(document)
+    if ATTRIBUTION_KEY in project or ATTRIBUTION_KEY not in project_of(base):
+        return document
+    return _with_project(document, {**project, ATTRIBUTION_KEY: project_of(base)[ATTRIBUTION_KEY]})
+
+
 class ModelMerge:
     """How a commit that changed the model is merged with newer commits (``GitHubService.commit_tree``).
 
@@ -421,19 +437,12 @@ class ModelMerge:
         # Compared as stored: the repo copy has its credentials redacted.
         self.ours, _ = redact_credentials(ours_export, yaml_fields=AGENT_CONFIG_YAML_FIELDS)
 
-    def _keeping_records(self, base: Optional[dict]) -> dict:
-        """Our export, where having no records means nothing was said about them, not that they were deleted."""
-        ours = project_of(self.ours)
-        if ATTRIBUTION_KEY in ours or not is_besser_project(base) or ATTRIBUTION_KEY not in project_of(base):
-            return self.ours
-        return _with_project(self.ours, {**ours, ATTRIBUTION_KEY: project_of(base)[ATTRIBUTION_KEY]})
-
     def merge(self, base_text: Optional[str], theirs_text: Optional[str]) -> Optional[ModelFiles]:
         """The model files of the merged model, or None when the two versions conflict."""
         try:
             base = json.loads(base_text) if base_text else None
             theirs = json.loads(theirs_text) if theirs_text else None
-            merged = merge_documents(base, self._keeping_records(base), theirs)
+            merged = merge_documents(base, _keeping_records(self.ours, base), _keeping_records(theirs, base))
         except ValueError:
             logger.warning("The repo's %s is not valid JSON; the model is not merged", MODEL_FILE)
             return None

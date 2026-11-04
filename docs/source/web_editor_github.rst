@@ -215,7 +215,9 @@ Who added what
   GitHub user, the same identity as the commit's author. A save needs a session,
   so nothing is credited without one, and a model that nobody saves through
   BESSER (a hand edit of the file) simply has no record. When GitHub does not
-  answer, the save goes on without new records and logs a warning. The save
+  answer, the save goes on without new records and logs a warning; when the
+  repository's model cannot be read, it also carries no records from the client.
+  The save
   returns the records it wrote as ``attribution``.
 - **What it proves**: the records of the base commit stand and a client cannot
   rewrite them or claim an element it adds for someone else; a malformed record is
@@ -225,9 +227,10 @@ Who added what
   ``ProjectInput`` does not read it, so no converter or generator sees it, and
   the B-UML sources are the same with or without it.
 - **Merging**: an element's record merges like any other key, so two people's
-  additions both keep their credit. ``addedBy`` and ``addedAt`` keep this side's
-  value rather than conflict. A sender that dropped the block (an older editor)
-  does not erase it: the records of the base commit are kept. Records of removed
+  additions both keep their credit. ``addedBy`` and ``addedAt`` keep the
+  repository's value rather than conflict, since it was there first. A side that
+  dropped the block (an older editor) does not erase it: the records of the base
+  commit are kept. Records of removed
   elements are dropped.
 - **Older repositories**: elements already in the base commit get no record, so
   a repository saved before this block existed gets records only for what is

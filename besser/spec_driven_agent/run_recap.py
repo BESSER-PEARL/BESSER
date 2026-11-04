@@ -43,8 +43,8 @@ _MAX_OPEN_ITEMS = 8
 _MAX_COMMITS = 10
 # About 1,000 tokens: a file of conventions fits, a planted essay does not.
 _MAX_REPO_NOTES_CHARS = 4_000
-# The backend's cap on a run's record files.
-_MAX_RECIPE_CHARS = 16 * 1024 * 1024
+# The backend's cap on a run's record files: over it the import cannot strip a planted commit list.
+_MAX_RECIPE_BYTES = 16 * 1024 * 1024
 
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 # Any comment delimiter, as one match: removing an exact "<!--" can leave another one behind.
@@ -185,12 +185,16 @@ def _read_capped(workspace: str, name: str, max_chars: int) -> str | None:
 
 def load_recipe(workspace: str) -> Any:
     """The parsed recipe in ``workspace``, or None when it is absent, oversized or unreadable."""
-    text = _read_capped(workspace, RECIPE_FILENAME, _MAX_RECIPE_CHARS + 1)
-    if text and len(text) > _MAX_RECIPE_CHARS:
-        logger.warning("%s is over %d characters; it is not read", RECIPE_FILENAME, _MAX_RECIPE_CHARS)
+    try:
+        with open_plain(os.path.join(workspace, RECIPE_FILENAME), "rb", root=workspace) as handle:
+            data = handle.read(_MAX_RECIPE_BYTES + 1)
+    except OSError:
+        return None
+    if len(data) > _MAX_RECIPE_BYTES:
+        logger.warning("%s is over %d bytes; it is not read", RECIPE_FILENAME, _MAX_RECIPE_BYTES)
         return None
     try:
-        return json.loads(text) if text else None
+        return json.loads(data) if data else None
     except (ValueError, RecursionError):
         return None
 

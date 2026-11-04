@@ -1112,6 +1112,44 @@ def test_an_agents_md_added_after_the_import_does_not_make_the_push_conflict(git
     assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
 
 
+def test_a_seeded_run_that_wrote_its_own_agents_md_yields_to_a_teammates(github):
+    repo = github.create_repo("library", files={"src/app.py": "print('v1')\n"})
+    run = _modify_run(_import("ana", "library")["run_id"], lambda workdir: (
+        _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE)),
+        _write(workdir, "AGENTS.md", "What the run wrote.\n"),
+    ))
+    github.commit_files(repo, {"AGENTS.md": "Use tabs here.\n"}, "Teammate adds notes")
+
+    response = _push(run, "library")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] != "conflict"
+    assert github.files(repo)["AGENTS.md"][1] == b"Use tabs here.\n"
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+
+
+def test_a_fresh_run_that_wrote_its_own_agents_md_yields_to_one_added_after_its_base(github):
+    repo = github.create_repo("library", files={"src/app.py": "print('v1')\n"})
+    base_sha = github.ref(repo, "main")
+    workdir = create_run_workspace(uuid.uuid4().hex)
+    _write(workdir, "main.py", "print('fresh')\n")
+    _write(workdir, "AGENTS.md", "What the run wrote.\n")
+    _write(workdir, ".besser_recipe.json", json.dumps(RUN_RECIPE))
+    run_id = uuid.uuid4().hex
+    asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
+        file_path=os.path.join(workdir, "main.py"), file_name="main.py", is_zip=False, temp_dir=workdir,
+        created_at=time.time(),
+    )))
+    github.commit_files(repo, {"AGENTS.md": "Use tabs here.\n"}, "Teammate adds notes")
+
+    response = _push(run_id, "library", base_commit_sha=base_sha)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] != "conflict"
+    assert github.files(repo)["AGENTS.md"][1] == b"Use tabs here.\n"
+    assert any("AGENTS.md" in warning for warning in response.json()["warnings"])
+
+
 def test_a_fresh_run_that_wrote_its_own_agents_md_keeps_the_repos_text(github):
     repo = github.create_repo("library", files={"AGENTS.md": "Use tabs here.\n", "src/app.py": "print('v1')\n"})
     workdir = create_run_workspace(uuid.uuid4().hex)
@@ -1295,6 +1333,31 @@ def test_recording_the_commits_does_not_read_as_a_change_of_the_run(github):
 # ---------------------------------------------------------------------
 # A Spec-Driven push credits the classes it adds
 # ---------------------------------------------------------------------
+
+
+def test_a_push_of_a_run_seeded_before_a_pull_leaves_the_teammates_credit(github):
+    github.create_repo("shop", files={**IMPORTED_REPO, repo_model.MODEL_FILE: json.dumps(_envelope())})
+    imported = _import("ana", "shop")
+    run_id = _modify_run(imported["run_id"], lambda workdir: _write(workdir, "src/new.py", "NEW = 2\n"))
+    with_loan = _with_class(CLASS_DIAGRAM_MODEL, "Loan")
+    github.login = "ben"
+    teammate = _envelope(with_loan)
+    saved = _call("POST", "/besser_api/github/project/save", headers=SESSION, json={
+        "owner": "ana", "repo": "shop", "commit_message": "Add Loan", "project_data": teammate["project"],
+        "project_export": teammate, "base_commit_sha": imported["commit_sha"],
+    })
+    assert saved.status_code == 200, saved.text
+    github.login = "ana"
+
+    # Ana pressed Get latest, so her export holds Ben's class; her run still starts from the older commit.
+    r = _call("POST", "/besser_api/spec-driven/push-to-github", headers=SESSION, json={
+        "run_id": run_id, "projectExport": _envelope(with_loan),
+        "deploy_config": {"owner": "ana", "repo_name": "shop", "use_existing": True},
+    })
+
+    assert r.status_code == 200, r.text
+    project = json.loads(github.files(github.repos["ana/shop"])[repo_model.MODEL_FILE][1])["project"]
+    assert {record["addedBy"] for record in project["attribution"].values()} == {"ben"}
 
 
 def test_a_spec_driven_push_credits_what_it_adds_to_whoever_pushes(github):

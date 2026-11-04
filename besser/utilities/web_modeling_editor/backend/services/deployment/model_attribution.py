@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 from typing import Iterator, Optional
 
 ATTRIBUTION_KEY = "attribution"
-_LOGIN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?")
+# GitHub's managed users have an underscore in their login.
+_LOGIN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,38}(\[bot\])?")
 _TIME_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 _ATTRIBUTED_APOLLON_TYPES = frozenset({
     "Class", "AbstractClass", "Interface", "Enumeration", "ClassAttribute", "ClassMethod",
@@ -65,8 +66,13 @@ def attribution_records(project: dict) -> dict[str, dict[str, str]]:
     }
 
 
+def without_records(project: dict) -> dict:
+    """``project`` with no records, for a save whose repo model cannot be read: there is nothing to keep."""
+    return {key: value for key, value in project.items() if key != ATTRIBUTION_KEY}
+
+
 def with_well_formed_records(project: dict) -> dict:
-    """``project`` with only well-formed records, for a save that could not compare it with the repo."""
+    """``project`` with only well-formed records, for a save GitHub did not answer in time to compare."""
     return {**project, ATTRIBUTION_KEY: attribution_records(project)} if ATTRIBUTION_KEY in project else project
 
 

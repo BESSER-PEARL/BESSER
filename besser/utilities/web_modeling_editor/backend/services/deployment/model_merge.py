@@ -8,9 +8,10 @@ the same B-UML source). The model is data, so it is merged as data instead:
 - a list of objects that all carry a unique ``id`` (diagram elements in the
   React Flow format, diagrams of one type) merges item by item, as do lists of
   unique scalars (an Apollon class's attribute ids);
-- a value both sides changed differently is a conflict, except layout,
-  timestamps and who added an element, where this side's value is kept: two
-  people moving the same box is not worth a pull request.
+- a value both sides changed differently is a conflict, except layout and
+  timestamps, where this side's value is kept (two people moving the same box
+  is not worth a pull request), and who added an element, where the repository's
+  value is kept: it was there first.
 
 The format is not interpreted beyond that, so the merge holds for every
 diagram type and for both editor engines.
@@ -18,12 +19,13 @@ diagram type and for both editor engines.
 
 from typing import Any
 
-# Keys whose values only place, date or credit things; when both sides changed one, ours is kept.
+# Keys whose values only place or date things; when both sides changed one, ours is kept.
 OURS_WINS_KEYS = frozenset({
     "bounds", "position", "measured", "width", "height", "path",
     "exportedAt", "lastUpdate", "updatedAt", "lastModified",
-    "addedBy", "addedAt",
 })
+# Who added an element; when both sides say, the commit already in the repository was first.
+THEIRS_WINS_KEYS = frozenset({"addedBy", "addedAt"})
 
 
 class MergeConflict(Exception):
@@ -48,8 +50,11 @@ def merge_values(base: Any, ours: Any, theirs: Any, path: str = "") -> Any:
         return theirs
     if theirs == base:
         return ours
-    if path.rsplit(".", 1)[-1] in OURS_WINS_KEYS and ours is not _MISSING:
+    key = path.rsplit(".", 1)[-1]
+    if key in OURS_WINS_KEYS and ours is not _MISSING:
         return ours
+    if key in THEIRS_WINS_KEYS and theirs is not _MISSING:
+        return theirs
     if isinstance(ours, dict) and isinstance(theirs, dict):
         return _merge_dicts(base if isinstance(base, dict) else {}, ours, theirs, path)
     if isinstance(ours, list) and isinstance(theirs, list):

@@ -220,12 +220,49 @@ def test_the_merge_keeps_records_added_on_both_sides():
     assert merged["attribution"]["id-Loan"]["addedBy"] == "ben"
 
 
-def test_two_records_for_one_element_are_not_a_conflict():
-    """Both saved the same copied element: not worth a pull request, so this side's record is kept."""
-    ours = {"attribution": {"x": {"addedBy": "ana", "addedAt": "2026-11-04T12:00:00Z"}}}
-    theirs = {"attribution": {"x": {"addedBy": "ben", "addedAt": "2026-11-04T13:00:00Z"}}}
+def test_two_records_for_one_element_keep_the_one_already_in_the_repository():
+    """A run seeded before a pull re-adds what a teammate added: the push must not take the credit."""
+    ours = {"attribution": {"x": {"addedBy": "ana", "addedAt": "2026-11-04T13:00:00Z"}}}
+    theirs = {"attribution": {"x": {"addedBy": "ben", "addedAt": "2026-11-04T12:00:00Z"}}}
 
-    assert merge_documents({"attribution": {}}, ours, theirs) == ours
+    assert merge_documents({"attribution": {}}, ours, theirs) == theirs
+
+
+def test_a_commit_that_dropped_the_records_does_not_conflict_with_a_new_one():
+    # An older editor's save, or a hand edit, removed the block while this save added to it.
+    base = _envelope(_model("Book"), {"id-Book": ANA})
+    theirs = _envelope(_model("Book", "Loan"))
+    ours = _envelope(_model("Book", "Member"), {"id-Book": ANA, "id-Member": ANA})
+
+    files = repo_model.ModelMerge(ours).merge(json.dumps(base), json.dumps(theirs))
+
+    assert files is not None
+    assert set(json.loads(files.files[repo_model.MODEL_FILE])["project"]["attribution"]) == {"id-Book", "id-Member"}
+
+
+def test_a_login_with_an_underscore_keeps_its_credit():
+    # GitHub's managed users are named like this; the record used to vanish on the next save.
+    record = {"addedBy": "jane_acme", "addedAt": ANA["addedAt"]}
+    base = _envelope(_model("Book"), {"id-Book": record})["project"]
+
+    assert attribute_project(base, base, "ben", NOW)["attribution"] == {"id-Book": record}
+
+
+def test_an_unreadable_model_file_keeps_no_record_the_sender_claims(github):
+    # With nothing to compare against, a record in the request is only the sender's word.
+    repo = github.create_repo("library", files={"models/shop.json": "{not json"})
+    forged = {"id-Book": {"addedBy": "torvalds", "addedAt": ANA["addedAt"]}}
+    envelope = _envelope(_model("Book"), forged)
+    github.login = "ben"
+
+    response = _call("POST", "/besser_api/github/project/save", headers=SESSION, json={
+        "owner": "ana", "repo": "library", "commit_message": "Save", "project_data": envelope["project"],
+        "project_export": envelope, "base_commit_sha": github.ref(repo, "main"), "legacy_file_path": "models/shop.json",
+    })
+
+    assert response.status_code == 200, response.text
+    assert "attribution" not in _in_repo(github, repo)
+    assert response.json()["attribution"] == {}
 
 
 # ---------------------------------------------------------------------

@@ -1,0 +1,90 @@
+name: Claude review
+
+# Runs the team's `besser-review` skill (private, in BESSER-PEARL/besser-ops) on pull requests.
+# Comments only: inline for Blockers/Majors, plus one summary comment updated in place.
+# It never approves, requests changes, or edits code.
+#
+# Runs once when a non-draft PR into master or development opens, reopens or is marked
+# ready, and again when someone with write access comments `@claude review` on a PR (any PR,
+# including drafts and forks). Comment triggers use this file from the default branch.
+#
+# Secrets:
+#   CLAUDE_CODE_OAUTH_TOKEN  Claude auth, from a maintainer's `claude setup-token`.
+#   BESSER_OPS_DEPLOY_KEY    read-only deploy key on besser-ops, to fetch the skill.
+#
+# GitHub auth is the workflow's GITHUB_TOKEN (comments appear as github-actions[bot]); the Claude
+# GitHub App path requires this file to be identical on the default branch first.
+
+on:
+  pull_request:
+    branches: [master, development]
+    types: [opened, ready_for_review, reopened]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '**/*.rst'
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      (github.event_name == 'pull_request' &&
+        !github.event.pull_request.draft &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.actor != 'dependabot[bot]') ||
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        startsWith(github.event.comment.body, '@claude review') &&
+        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: refs/pull/${{ env.PR_NUMBER }}/merge
+          fetch-depth: 0 # the skill diffs base...head with three dots
+
+      - name: Fetch the review skill from besser-ops
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: BESSER-PEARL/besser-ops
+          ssh-key: ${{ secrets.BESSER_OPS_DEPLOY_KEY }}
+          path: .besser-ops-tmp
+          sparse-checkout: .claude/skills/besser-review
+
+      - name: Install the skill outside the workspace
+        # The action resets the workspace's .claude/ from the base branch, so install into $HOME.
+        run: |
+          mkdir -p ~/.claude/skills
+          cp -r .besser-ops-tmp/.claude/skills/besser-review ~/.claude/skills/
+          rm -rf .besser-ops-tmp
+          test -f ~/.claude/skills/besser-review/SKILL.md
+
+      - name: Review
+        uses: anthropics/claude-code-action@0e15314f8e5a161ef20b62a6092069c7dd88aa1d # v1.0.250
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          track_progress: true
+          use_sticky_comment: true
+          prompt: |
+            Use the `besser-review` skill (load it with the Skill tool, or invoke /besser-review)
+            to review PR #${{ env.PR_NUMBER }} of ${{ github.repository }} in CI mode. Follow the
+            skill's "CI mode" section exactly: never ask a question, post one inline comment per
+            Blocker and Major, and give the full report as your final response (the action writes
+            it into this PR's sticky comment).
+          # Read-only git/gh plus the inline-comment tool; the summary goes through the sticky comment.
+          claude_args: |
+            --max-turns 60
+            --allowedTools "Skill,Agent,Task,Read,Grep,Glob,LS,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git fetch:*),Bash(gh pr view:*),Bash(gh pr diff:*),mcp__github_inline_comment__create_inline_comment"

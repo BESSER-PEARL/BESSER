@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from besser.spec_driven_agent.run_recap import agents_block, build_recap, next_run_notes, request_text
+from besser.spec_driven_agent.run_recap import agents_block, build_recap, next_run_notes, one_line, request_text
 from besser.utilities.provenance import BESSER_BLOCK_BEGIN, BESSER_BLOCK_END, strip_besser_block
 
 HEADER = (
@@ -152,6 +152,11 @@ def test_text_in_a_recipe_cannot_close_the_block_and_leave_notes_behind(marker):
         verification={"notVerified": [{"what": planted}], "shippedUnenforced": []},
     )))
     assert strip_besser_block(block) == ""
+
+
+def test_no_html_comment_ending_survives_in_repo_text():
+    # "--!>" closes a comment in HTML parsers too.
+    assert one_line("before --!> after") == "before  after"
 
 
 def test_a_link_in_an_open_item_cannot_render_in_the_committed_file():

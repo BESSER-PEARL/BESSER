@@ -40,7 +40,7 @@ _MAX_COMMITS = 10
 _MAX_REPO_NOTES_CHARS = 4_000
 
 # Any comment delimiter, as one match: removing an exact "<!--" can leave another one behind.
-_COMMENT_DELIMITER_RE = re.compile(r"<!-+|-+>")
+_COMMENT_DELIMITER_RE = re.compile(r"<!-+|-+!?>")
 
 NO_REQUEST = "(request not recorded)"
 _ROLLED_BACK = "The last run's automatic repairs were rolled back, so they are not in the code"
